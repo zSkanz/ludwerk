@@ -671,6 +671,46 @@ TEST_CASE("a nine-slice in a box narrower than its own corners collapses the mid
     }
 }
 
+TEST_CASE("G8: Fit shows the whole picture in its shape, centred; Crop fills the box and cuts the overhang")
+{
+    ImageGuard guard;
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId label = fixture.child("ImageLabel", screen);
+    // A 64 x 32 picture in a 100 x 100 box.
+    fixture.object(label).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    fixture.object(label).backgroundTransparency = 1.0f;
+    scene::ImageLabelComponent* image = fixture.world->imageLabels().find(label);
+    REQUIRE(image != nullptr);
+    image->image = "asset://ui/panel.png";
+
+    image->scaleType = 3;
+    fixture.run();
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() == 1);
+    // Fit: 100 wide and 50 tall, centred top to bottom, the whole picture.
+    CHECK(list.quads[0].min.x == doctest::Approx(0.0));
+    CHECK(list.quads[0].max.x == doctest::Approx(100.0));
+    CHECK(list.quads[0].min.y == doctest::Approx(25.0));
+    CHECK(list.quads[0].max.y == doctest::Approx(75.0));
+    CHECK(list.quads[0].uvMin.x == doctest::Approx(0.0));
+    CHECK(list.quads[0].uvMax.x == doctest::Approx(1.0));
+
+    image->scaleType = 4;
+    fixture.run();
+    list = {};
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() == 1);
+    // Crop: the whole box, and the middle half of the picture across.
+    CHECK(list.quads[0].min.y == doctest::Approx(0.0));
+    CHECK(list.quads[0].max.y == doctest::Approx(100.0));
+    CHECK(list.quads[0].uvMin.x == doctest::Approx(0.25));
+    CHECK(list.quads[0].uvMax.x == doctest::Approx(0.75));
+    CHECK(list.quads[0].uvMin.y == doctest::Approx(0.0));
+    CHECK(list.quads[0].uvMax.y == doctest::Approx(1.0));
+}
+
 TEST_CASE("a tiled image repeats at its own size and is cut at the far edge")
 {
     ImageGuard guard;

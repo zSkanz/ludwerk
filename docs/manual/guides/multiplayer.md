@@ -360,6 +360,8 @@ call is delivered here as it would be across a network.
 A message carries values:
 
 - nil, booleans, numbers, strings and vectors;
+- `Color3`, `CFrame`, `Vector2`, `UDim`, `UDim2` and enum items (an item of an
+  enum the receiver's build does not have arrives as nil);
 - instances, each arriving as the receiver's own copy, or nil where the
   receiver does not have one;
 - tables of all of those, eight deep.
@@ -429,30 +431,15 @@ enemy.Parent = workspace
 `RemoteEvent`s and `RemoteFunction`s can live in `ReplicatedStorage` as well as
 in `Workspace`. A replica finds them with `WaitForChild` either way.
 
-## Sides: `Team`
+## Sides
 
-A side is a `Team` under `TeamService`, with a `Name` and a `Color`. Every team
-there reaches every replica, however far away, and so does each player's
-`Team`:
+A side is your game's own state: an attribute on the player, set on the
+authority, which every machine reads (attributes replicate):
 
 ```luau
-local TeamService = game:GetService("TeamService")
-
-local red = Instance.new("Team")
-red.Name = "Red"
-red.Color = Color3.fromRGB(220, 60, 60)
-red.Parent = TeamService
-
-NetworkService.PlayerAdded:Connect(function(player)
-    print(player.Name, "plays for", if player.Team then player.Team.Name else "nobody")
-end)
+player:SetAttribute("Team", "Red") -- on the authority
+print(player:GetAttribute("Team")) -- on any machine
 ```
-
-A player who joins is put on the team with the fewest players among those with
-`AutoAssign` on, ties going to the first. Turn it off for a team nobody joins by
-arriving -- referees, spectators -- and set `player.Team` yourself, on the
-authority. `Team:GetPlayers()` answers who is on a side, in the order they
-joined.
 
 ## Handing a part over: network ownership
 

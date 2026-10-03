@@ -384,6 +384,25 @@ void AnimationSystem::sample(f64 fixedDt)
         }
     }
 
+    // **And every mesh a `Bone` turns** (G9): `Transform` is an offset on the
+    // pose, and a mesh nothing plays has a pose to turn as much as one that
+    // walks.
+    // The ones turned last tick too, once more: a bone set back to the
+    // identity leaves a pose to take away.
+    for (const core::InstanceId mesh : turned_) {
+        if (world_->alive(mesh))
+            note(mesh);
+    }
+    turned_.clear();
+    world_->attachments().forEach([&](core::InstanceId id, const scene::AttachmentComponent& bone) {
+        if (bone.jointIndex >= 0 && !(bone.transform == core::CFrameD{})) {
+            const core::InstanceId rig = rigOf(id);
+            note(rig);
+            if (rig.valid() && std::find(turned_.begin(), turned_.end(), rig) == turned_.end())
+                turned_.push_back(rig);
+        }
+    });
+
     // A mesh with overrides and no track is deliberately NOT collected here.
     // It was, at first, on the reasoning that a limp ragdoll has no track and
     // so would never be visited -- but there is nothing to rebuild for it:
@@ -509,7 +528,11 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
         }
     }
 
-    if (!contributed) {
+    // What the mesh's bones turn (G9), by joint: `Bone.Transform` in the
+    // joint's own space, after whatever the clips did.
+    const std::vector<std::pair<u32, Mat4>> offsets = boneOffsets(meshPart, jointCount);
+
+    if (!contributed && offsets.empty()) {
         // Nothing drives this player any more. Its pose is taken away rather
         // than left holding the last thing that did -- a null pose means "bind
         // pose", and a stale palette would freeze the character mid-stride.
@@ -574,7 +597,11 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
                                restRotation[3]);
         }
 
-        const Mat4 local = composeTrs(translation, quaternion, boneScale);
+        Mat4 local = composeTrs(translation, quaternion, boneScale);
+        for (const auto& [turned, offset] : offsets) {
+            if (turned == joint)
+                local = local * offset;
+        }
         pose.local[joint] = local;
         // One forward pass, parents first -- which the loader guarantees by
         // sorting the joints (asset/model.h). A graph walk per frame would be
@@ -582,6 +609,45 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
         pose.model[joint] = bone.parent == asset::Joint::NoParent ? local : pose.model[bone.parent] * local;
         pose.palette[joint] = pose.model[joint] * bone.inverseBind;
     }
+}
+
+// The rig a bone is on: the nearest `MeshPart` above it, through the bones it
+// may hang from.
+core::InstanceId AnimationSystem::rigOf(core::InstanceId bone) const
+{
+    for (core::InstanceId at = world_->parentOf(bone); at.valid(); at = world_->parentOf(at)) {
+        if (world_->meshParts().find(at) != nullptr)
+            return at;
+        if (world_->attachments().find(at) == nullptr)
+            return {};
+    }
+    return {};
+}
+
+// Every bone of this rig that turns its joint, as the joint and the offset.
+std::vector<std::pair<core::u32, core::Mat4>> AnimationSystem::boneOffsets(core::InstanceId meshPart,
+                                                                           core::usize jointCount) const
+{
+    std::vector<std::pair<core::u32, Mat4>> out;
+    std::vector<core::InstanceId> stack;
+    for (core::InstanceId child = world_->firstChild(meshPart); child.valid(); child = world_->nextSibling(child))
+        stack.push_back(child);
+    while (!stack.empty()) {
+        const core::InstanceId id = stack.back();
+        stack.pop_back();
+        const scene::AttachmentComponent* bone = world_->attachments().find(id);
+        if (bone == nullptr)
+            continue;
+        if (bone->jointIndex >= 0 && static_cast<core::usize>(bone->jointIndex) < jointCount &&
+            !(bone->transform == core::CFrameD{}))
+            out.emplace_back(static_cast<core::u32>(bone->jointIndex), toMatrix(bone->transform));
+        // Bones hang from bones; another mesh below is another rig.
+        for (core::InstanceId child = world_->firstChild(id); child.valid(); child = world_->nextSibling(child))
+            stack.push_back(child);
+    }
+    // In joint order, so two bones on one joint compose the same way each run.
+    std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    return out;
 }
 
 // The first skinned mesh under `root` that carries clips, in tree order.

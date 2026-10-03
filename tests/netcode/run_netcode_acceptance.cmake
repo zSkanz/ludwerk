@@ -97,9 +97,16 @@ foreach(entry IN LISTS conditions)
     # counts the frames over three ticks both machines really had: the one a
     # condition hangs on purpose, and any a machine busy with the rest of the
     # gate makes of its own (a CI runner's server stalled and cost corrections
-    # the client's own count never saw). Every other tick of the walk is
+    # the client's own count never saw). **And one more where there was any**:
+    # the link loses 2%, and a packet lost in the ticks the stream recovers in
+    # costs one -- six runs of `hang150` on one machine took 0, 2, 0, 1, 2 and
+    # 0, and the Linux tier once took 3. Every other tick of the walk is
     # uncorrected.
-    math(EXPR allowed "2 * ${hitches}")
+    set(slack 0)
+    if(hitches GREATER 0)
+        set(slack 1)
+    endif()
+    math(EXPR allowed "2 * ${hitches} + ${slack}")
     if(corrections GREATER allowed)
         string(APPEND failures
              "  ${name}: ${corrections} corrections on a straight walk with ${hitches} long frames (at most ${allowed})\n")

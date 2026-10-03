@@ -2040,7 +2040,10 @@ void PhysicsSync::resolveAttachment(core::InstanceId id)
             if (rig == owner && attachment->jointIndex >= 0) {
                 core::CFrameD joint;
                 if (m_skeleton->jointModel(owner, static_cast<u32>(attachment->jointIndex), joint))
-                    base = part->cframe * joint * attachment->transform;
+                    // **The joint already carries the bone's `Transform`** (G9):
+                    // the pose applies it, so the joints below follow, and
+                    // multiplying it again here would turn the bone twice.
+                    base = part->cframe * joint;
             }
         }
     }

@@ -1732,135 +1732,6 @@
       "Events": []
     },
     {
-      "Name": "DragDetector",
-      "Extends": "Instance",
-      "Tags": [],
-      "Properties": [
-        {
-          "Name": "Axis",
-          "Type": "vector",
-          "Default": "vector.create(0, 1, 0)"
-        },
-        {
-          "Name": "CursorIcon",
-          "Type": "Content",
-          "Default": "\"\"",
-          "Inert": true
-        },
-        {
-          "Name": "DragStyle",
-          "Type": "Enum.DragDetectorDragStyle",
-          "Default": "Enum.DragDetectorDragStyle.TranslatePlane"
-        },
-        {
-          "Name": "Enabled",
-          "Type": "boolean",
-          "Default": "true"
-        },
-        {
-          "Name": "MaxActivationDistance",
-          "Type": "number",
-          "Default": "32"
-        },
-        {
-          "Name": "MaxDragAngle",
-          "Type": "number",
-          "Default": "0"
-        },
-        {
-          "Name": "MaxDragTranslation",
-          "Type": "number",
-          "Default": "0"
-        },
-        {
-          "Name": "MaxForce",
-          "Type": "number",
-          "Default": "10000"
-        },
-        {
-          "Name": "MaxTorque",
-          "Type": "number",
-          "Default": "10000",
-          "Inert": true
-        },
-        {
-          "Name": "MinDragAngle",
-          "Type": "number",
-          "Default": "0"
-        },
-        {
-          "Name": "MinDragTranslation",
-          "Type": "number",
-          "Default": "0"
-        },
-        {
-          "Name": "ReferenceInstance",
-          "Type": "Instance?",
-          "Default": "nil"
-        },
-        {
-          "Name": "ResponseStyle",
-          "Type": "Enum.DragDetectorResponseStyle",
-          "Default": "Enum.DragDetectorResponseStyle.Geometric"
-        },
-        {
-          "Name": "Responsiveness",
-          "Type": "number",
-          "Default": "10"
-        }
-      ],
-      "Methods": [],
-      "Events": [
-        {
-          "Name": "DragContinue",
-          "Parameters": [
-            {
-              "Name": "player",
-              "Type": "Player"
-            },
-            {
-              "Name": "cursorOrigin",
-              "Type": "vector"
-            },
-            {
-              "Name": "cursorDirection",
-              "Type": "vector"
-            }
-          ]
-        },
-        {
-          "Name": "DragEnd",
-          "Parameters": [
-            {
-              "Name": "player",
-              "Type": "Player"
-            }
-          ]
-        },
-        {
-          "Name": "DragStart",
-          "Parameters": [
-            {
-              "Name": "player",
-              "Type": "Player"
-            },
-            {
-              "Name": "cursorOrigin",
-              "Type": "vector"
-            },
-            {
-              "Name": "cursorDirection",
-              "Type": "vector"
-            },
-            {
-              "Name": "hitPoint",
-              "Type": "vector"
-            }
-          ]
-        }
-      ]
-    },
-    {
       "Name": "EchoSoundEffect",
       "Extends": "SoundEffect",
       "Tags": [],
@@ -4431,10 +4302,6 @@
           "Type": "Part2D?"
         },
         {
-          "Name": "Team",
-          "Type": "Team?"
-        },
-        {
           "Name": "UserId",
           "Type": "number",
           "ReadOnly": true,
@@ -4577,153 +4444,6 @@
       ],
       "Methods": [],
       "Events": []
-    },
-    {
-      "Name": "ProximityPrompt",
-      "Extends": "Instance",
-      "Tags": [],
-      "Properties": [
-        {
-          "Name": "ActionText",
-          "Type": "string",
-          "Default": "\"Interact\""
-        },
-        {
-          "Name": "Enabled",
-          "Type": "boolean",
-          "Default": "true"
-        },
-        {
-          "Name": "Exclusivity",
-          "Type": "Enum.ProximityPromptExclusivity",
-          "Default": "Enum.ProximityPromptExclusivity.OnePerButton"
-        },
-        {
-          "Name": "GamepadKeyCode",
-          "Type": "Enum.KeyCode",
-          "Default": "Enum.KeyCode.ButtonWest"
-        },
-        {
-          "Name": "HoldDuration",
-          "Type": "number",
-          "Default": "0"
-        },
-        {
-          "Name": "KeyboardKeyCode",
-          "Type": "Enum.KeyCode",
-          "Default": "Enum.KeyCode.E"
-        },
-        {
-          "Name": "MaxActivationDistance",
-          "Type": "number",
-          "Default": "10"
-        },
-        {
-          "Name": "ObjectText",
-          "Type": "string",
-          "Default": "\"\""
-        },
-        {
-          "Name": "RequiresLineOfSight",
-          "Type": "boolean",
-          "Default": "true"
-        },
-        {
-          "Name": "Style",
-          "Type": "Enum.ProximityPromptStyle",
-          "Default": "Enum.ProximityPromptStyle.Default"
-        },
-        {
-          "Name": "UIOffset",
-          "Type": "Vector2",
-          "Default": "Vector2.new(0, 0)"
-        }
-      ],
-      "Methods": [],
-      "Events": [
-        {
-          "Name": "PromptButtonHoldBegan",
-          "Parameters": [
-            {
-              "Name": "player",
-              "Type": "Player"
-            }
-          ]
-        },
-        {
-          "Name": "PromptButtonHoldEnded",
-          "Parameters": [
-            {
-              "Name": "player",
-              "Type": "Player"
-            }
-          ]
-        },
-        {
-          "Name": "PromptHidden",
-          "Parameters": []
-        },
-        {
-          "Name": "PromptShown",
-          "Parameters": [
-            {
-              "Name": "inputType",
-              "Type": "Enum.ProximityPromptInputType"
-            }
-          ]
-        },
-        {
-          "Name": "TriggerEnded",
-          "Parameters": [
-            {
-              "Name": "player",
-              "Type": "Player"
-            }
-          ]
-        },
-        {
-          "Name": "Triggered",
-          "Parameters": [
-            {
-              "Name": "player",
-              "Type": "Player"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "Name": "ProximityPromptService",
-      "Extends": "Instance",
-      "Tags": ["NotCreatable", "Service"],
-      "Properties": [
-        {
-          "Name": "Enabled",
-          "Type": "boolean",
-          "Default": "true"
-        },
-        {
-          "Name": "MaxPromptsVisible",
-          "Type": "number",
-          "Default": "16"
-        }
-      ],
-      "Methods": [],
-      "Events": [
-        {
-          "Name": "PromptTriggered",
-          "Parameters": [
-            {
-              "Name": "prompt",
-              "Type": "ProximityPrompt"
-            },
-            {
-              "Name": "player",
-              "Type": "Player"
-            }
-          ]
-        }
-      ]
     },
     {
       "Name": "Ragdoll",
@@ -6062,47 +5782,6 @@
             }
           ],
           "Returns": ["{Instance}"],
-          "ThreadSafety": "ReadParallel"
-        }
-      ],
-      "Events": []
-    },
-    {
-      "Name": "Team",
-      "Extends": "Instance",
-      "Tags": [],
-      "Properties": [
-        {
-          "Name": "AutoAssign",
-          "Type": "boolean",
-          "Default": "true"
-        },
-        {
-          "Name": "Color",
-          "Type": "Color3",
-          "Default": "Color3.new(1, 1, 1)"
-        }
-      ],
-      "Methods": [
-        {
-          "Name": "GetPlayers",
-          "Parameters": [],
-          "Returns": ["{ Player }"],
-          "ThreadSafety": "ReadParallel"
-        }
-      ],
-      "Events": []
-    },
-    {
-      "Name": "TeamService",
-      "Extends": "Instance",
-      "Tags": ["NotCreatable", "Service"],
-      "Properties": [],
-      "Methods": [
-        {
-          "Name": "GetTeams",
-          "Parameters": [],
-          "Returns": ["{ Team }"],
           "ThreadSafety": "ReadParallel"
         }
       ],
@@ -11549,52 +11228,6 @@
       ]
     },
     {
-      "Name": "DragDetectorDragStyle",
-      "Items": [
-        {
-          "Name": "RotateAxis",
-          "Value": 3
-        },
-        {
-          "Name": "RotateTrackball",
-          "Value": 4
-        },
-        {
-          "Name": "Scriptable",
-          "Value": 5
-        },
-        {
-          "Name": "TranslateLine",
-          "Value": 0
-        },
-        {
-          "Name": "TranslatePlane",
-          "Value": 1
-        },
-        {
-          "Name": "TranslateViewPlane",
-          "Value": 2
-        }
-      ]
-    },
-    {
-      "Name": "DragDetectorResponseStyle",
-      "Items": [
-        {
-          "Name": "Custom",
-          "Value": 2
-        },
-        {
-          "Name": "Geometric",
-          "Value": 0
-        },
-        {
-          "Name": "Physical",
-          "Value": 1
-        }
-      ]
-    },
-    {
       "Name": "EasingDirection",
       "Items": [
         {
@@ -12815,53 +12448,6 @@
       ]
     },
     {
-      "Name": "ProximityPromptExclusivity",
-      "Items": [
-        {
-          "Name": "AlwaysShow",
-          "Value": 2
-        },
-        {
-          "Name": "OneGlobally",
-          "Value": 1
-        },
-        {
-          "Name": "OnePerButton",
-          "Value": 0
-        }
-      ]
-    },
-    {
-      "Name": "ProximityPromptInputType",
-      "Items": [
-        {
-          "Name": "Gamepad",
-          "Value": 1
-        },
-        {
-          "Name": "Keyboard",
-          "Value": 0
-        },
-        {
-          "Name": "Touch",
-          "Value": 2
-        }
-      ]
-    },
-    {
-      "Name": "ProximityPromptStyle",
-      "Items": [
-        {
-          "Name": "Custom",
-          "Value": 1
-        },
-        {
-          "Name": "Default",
-          "Value": 0
-        }
-      ]
-    },
-    {
       "Name": "RaycastFilterType",
       "Items": [
         {
@@ -12948,6 +12534,14 @@
     {
       "Name": "ScaleType",
       "Items": [
+        {
+          "Name": "Crop",
+          "Value": 4
+        },
+        {
+          "Name": "Fit",
+          "Value": 3
+        },
         {
           "Name": "Slice",
           "Value": 1

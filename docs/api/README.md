@@ -36,7 +36,6 @@ guided tour.
 | [`NavigationService`](navigationservice.md) | [`Instance`](instance.md) | Where an agent can walk, and how it gets somewhere (ADR 0089). |
 | [`NetworkService`](networkservice.md) | [`Instance`](instance.md) | What this process is in a networked game, and the way to join, host or leave one (ADR 0069, ADR 0106). |
 | [`PhysicsService`](physicsservice.md) | [`Instance`](instance.md) | The simulation tick grid and the physics controls that do not belong on an individual part. |
-| [`ProximityPromptService`](proximitypromptservice.md) | [`Instance`](instance.md) | Every `ProximityPrompt` at once (ADR 0126): whether any show, how many at most, and a signal for any of them triggered. |
 | [`ReplicatedStorage`](replicatedstorage.md) | [`Instance`](instance.md) | What every machine has and nobody sees (ADR 0080): templates to clone, `RemoteEvent`s, anything a game keeps rather than shows. |
 | [`RunService`](runservice.md) | [`Instance`](instance.md) | The frame loop: the phase signals per-frame work hangs off, and the clock that work reads. |
 | [`SaveService`](saveservice.md) | [`Instance`](instance.md) | Where a game keeps what has to outlive a run (ADR 0111): progress, settings, a best time. |
@@ -45,7 +44,6 @@ guided tour.
 | [`ServerStorage`](serverstorage.md) | [`Instance`](instance.md) | What only the authority has (ADR 0080): templates and data a client has no business holding. |
 | [`StreamingService`](streamingservice.md) | [`Instance`](instance.md) | The streamed world's controls (api-design.md §2.1). |
 | [`TagService`](tagservice.md) | [`Instance`](instance.md) | Finds instances by tag. |
-| [`TeamService`](teamservice.md) | [`Instance`](instance.md) | Where the sides of a game live (ADR 0099): every `Team` under it reaches every replica, whatever their distance, as `ReplicatedStorage`'s contents do. |
 | [`TweenService`](tweenservice.md) | [`Instance`](instance.md) | Property animation (§2.1). |
 | [`UIService`](uiservice.md) | [`Instance`](instance.md) | The parent of every `ScreenGui` and the source of the two numbers a layout needs about the screen it is on (§2.1). |
 | [`VoxelService`](voxelservice.md) | [`Instance`](instance.md) | A world made of blocks: the service for block games -- mining, building, a world of cubes in chunks. |
@@ -84,7 +82,6 @@ guided tour.
 | [`Decal`](decal.md) | [`Instance`](instance.md) | An image projected onto whatever lies inside a box (F2): a scorch mark, a footprint, a poster, a crack. |
 | [`DepthOfFieldEffect`](depthoffieldeffect.md) | [`PostEffect`](posteffect.md) | Focus by distance, as a camera lens has it: a band of the world in focus, and what is nearer or further softening away from it. |
 | [`DistortionSoundEffect`](distortionsoundeffect.md) | [`SoundEffect`](soundeffect.md) | Pushes the sound until it breaks up: a megaphone, a blown speaker, an electric guitar. |
-| [`DragDetector`](dragdetector.md) | [`Instance`](instance.md) | Makes the part or model it is in something a player drags (ADR 0126): a drawer pulled along a line, a lever turned about an axis, a crate pushed across the floor. |
 | [`EchoSoundEffect`](echosoundeffect.md) | [`SoundEffect`](soundeffect.md) | What is played, again after a moment, and again more quietly: a canyon, a tunnel, a dub delay. |
 | [`EqualizerSoundEffect`](equalizersoundeffect.md) | [`SoundEffect`](soundeffect.md) | Three tone controls: the low notes, the middle and the high, each turned up or down. |
 | [`FixedConstraint`](fixedconstraint.md) | [`Constraint`](constraint.md) | A joint with no freedom at all: two bodies the solver treats as one rigid assembly. |
@@ -120,7 +117,6 @@ guided tour.
 | [`PointLight`](pointlight.md) | [`Instance`](instance.md) | A light radiating equally in every direction. |
 | [`PostEffect`](posteffect.md) | [`Instance`](instance.md) | The abstract base of the effects that change the finished picture rather than the world in it (ADR 0096). |
 | [`PrismaticConstraint`](prismaticconstraint.md) | [`Constraint`](constraint.md) | A joint free to slide along one line and to do nothing else: a lift, a drawer, a piston. |
-| [`ProximityPrompt`](proximityprompt.md) | [`Instance`](instance.md) | A prompt that appears when a player comes near the part, attachment or model it is in -- **Open**, **Talk**, **Pick up** -- and is triggered by a key, a gamepad button or a tap (ADR 0126). |
 | [`Ragdoll`](ragdoll.md) | [`Instance`](instance.md) | Makes a character's pose come from the simulation instead of from a clip. |
 | [`RemoteEvent`](remoteevent.md) | [`Instance`](instance.md) | A message a game sends between machines (ADR 0077): "I bought the sword" from a client to the server, "the round starts" from the server to everyone. |
 | [`RemoteFunction`](remotefunction.md) | [`Instance`](instance.md) | A question a client asks the server and waits for the answer to (ADR 0079): "what is in my inventory?", "may I open this door?". |
@@ -140,7 +136,6 @@ guided tour.
 | [`SubWorld`](subworld.md) | [`Instance`](instance.md) | A scene running beside this one (ADR 0107): an arcade cabinet you can play, a game on a computer inside the game, a snow globe with its own weather. |
 | [`SunRaysEffect`](sunrayseffect.md) | [`PostEffect`](posteffect.md) | Shafts of light streaming from the sun past whatever stands in front of it. |
 | [`SurfaceGui`](surfacegui.md) | [`Instance`](instance.md) | A UI tree drawn onto one face of a part (F3): a screen on a wall, a sign, a scoreboard, a label on a crate. |
-| [`Team`](team.md) | [`Instance`](instance.md) | A side (ADR 0099): a name -- its `Name` -- a colour, and the players whose `Player.Team` is it. |
 | [`Terrain`](terrain.md) | [`Instance`](instance.md) | A sculpted, collidable landscape: ground you dig into rather than a floor made of parts. |
 | [`TextButton`](textbutton.md) | [`TextLabel`](textlabel.md) | A `TextLabel` that is meant to be pressed. |
 | [`TextInput`](textinput.md) | [`TextLabel`](textlabel.md) | An editable field (ADR 0139), on one line or on several: a chat box, a name, a server's address. |

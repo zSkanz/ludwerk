@@ -288,12 +288,7 @@ describe("terrain", function()
             terrain:PaintBall(vector.create(0, 0, 0), 3, Sand, { Strength = 0 / 0 })
         end):ToThrow()
         expect(function()
-            terrain:PaintBall(
-                vector.create(0, 0, 0),
-                3,
-                Sand,
-                { Mode = Enum.DragDetectorDragStyle.TranslateLine } :: any
-            )
+            terrain:PaintBall(vector.create(0, 0, 0), 3, Sand, { Mode = Enum.ScaleType.Fit } :: any)
         end):ToThrow()
     end)
 

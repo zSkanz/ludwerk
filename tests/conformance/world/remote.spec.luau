@@ -48,6 +48,38 @@ describe("remote events", function()
         crate:Destroy()
     end)
 
+    it("carries a colour, a place, a 2D point, a layout size and an enum item (G12)", function()
+        local remote = Instance.new("RemoteEvent")
+        remote.Parent = workspace
+        local received: { any }? = nil
+        remote.ServerReceived:Connect(function(_, ...)
+            received = { ... }
+        end)
+        local place = CFrame.new(1, 2, 3) * CFrame.fromEuler(0, math.pi / 2, 0)
+        remote:FireServer(
+            Color3.new(0.25, 0.5, 1),
+            place,
+            Vector2.new(4, 5),
+            UDim.new(0.5, 10),
+            UDim2.new(0.25, 1, 0.75, 2),
+            Enum.PartShape.Ball,
+            { tint = Color3.new(1, 0, 0) }
+        )
+        step(2)
+        expect(received ~= nil):ToBe(true)
+        if received then
+            expect(received[1]):ToBe(Color3.new(0.25, 0.5, 1))
+            expect(vector.magnitude(received[2].Position - place.Position) < 1e-6):ToBe(true)
+            expect(vector.magnitude(received[2].LookVector - place.LookVector) < 1e-6):ToBe(true)
+            expect(received[3]):ToBe(Vector2.new(4, 5))
+            expect(received[4]):ToBe(UDim.new(0.5, 10))
+            expect(received[5]):ToBe(UDim2.new(0.25, 1, 0.75, 2))
+            expect(received[6]):ToBe(Enum.PartShape.Ball)
+            expect(received[7].tint):ToBe(Color3.new(1, 0, 0))
+        end
+        remote:Destroy()
+    end)
+
     it("delivers FireClient and FireAllClients to the local player's ClientReceived", function()
         local remote = Instance.new("RemoteEvent")
         remote.Parent = workspace

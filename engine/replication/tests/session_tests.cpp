@@ -2095,77 +2095,7 @@ TEST_CASE("the world's blur travels under Lighting, and a camera's stays on its 
 
 // --- ADR 0099 -------------------------------------------------------------------
 
-namespace {
-
-// A `TeamService` on one side, with its teams made by `team`.
-core::InstanceId teamServiceOf(RealSide& side)
-{
-    const core::InstanceId id = side.world.create(side.classes.findId(side.atoms.intern("TeamService")));
-    REQUIRE(id.valid());
-    side.world.setName(id, side.atoms.intern("TeamService"));
-    REQUIRE_FALSE(side.world.setParent(id, side.dataModel).has_value());
-    return id;
-}
-
-core::InstanceId team(RealSide& side, core::InstanceId service, std::string_view name, core::Color3 color)
-{
-    const core::InstanceId id = side.world.create(side.classes.findId(side.atoms.intern("Team")));
-    REQUIRE(id.valid());
-    side.world.setName(id, side.atoms.intern(name));
-    side.world.teams().find(id)->color = color;
-    REQUIRE_FALSE(side.world.setParent(id, service).has_value());
-    return id;
-}
-
-} // namespace
-
-TEST_CASE("a player who joins is put on the open team with the fewest players, and a team gone is none")
-{
-    RealSide side;
-    const core::InstanceId service = teamServiceOf(side);
-    const core::InstanceId red = team(side, service, "Red", {1.0f, 0.0f, 0.0f});
-    const core::InstanceId closed = team(side, service, "Referees", {0.0f, 0.0f, 0.0f});
-    side.world.teams().find(closed)->autoAssign = false;
-    const core::InstanceId blue = team(side, service, "Blue", {0.0f, 0.0f, 1.0f});
-
-    const core::InstanceId first = scene::createPlayer(side.world, side.network, 1, true);
-    const core::InstanceId second = scene::createPlayer(side.world, side.network, 2, false);
-    const core::InstanceId third = scene::createPlayer(side.world, side.network, 3, false);
-    // Ties to the first in child order; never the closed one.
-    CHECK(side.world.players().find(first)->team == red);
-    CHECK(side.world.players().find(second)->team == blue);
-    CHECK(side.world.players().find(third)->team == red);
-
-    REQUIRE(side.world.destroy(red));
-    side.world.retireDestroyed();
-    CHECK_FALSE(side.world.players().find(first)->team.valid());
-}
-
-TEST_CASE("each machine's Player.Team is its own copy of the team the authority named, colour and all")
-{
-    PlayedMatch match;
-    const core::InstanceId serverTeams = teamServiceOf(match.server);
-    const core::InstanceId clientTeams = teamServiceOf(match.client);
-    const core::InstanceId red = team(match.server, serverTeams, "Red", {1.0f, 0.2f, 0.2f});
-    match.server.world.engineState().streamingLoadRadius = 50.0;
-    const core::InstanceId racer = match.part("Racer", core::DVec3{0.0, 1.0, 0.0});
-    match.server.world.players().find(match.remote())->character = racer;
-    match.server.world.players().find(match.remote())->team = red;
-    match.run(4);
-
-    // Whatever the distance -- a team has none -- into the replica's own service.
-    const core::InstanceId redHere = match.copyOf(red);
-    REQUIRE(redHere.valid());
-    CHECK(match.client.world.parentOf(redHere) == clientTeams);
-    CHECK(static_cast<double>(match.client.world.teams().find(redHere)->color.g) == doctest::Approx(0.2));
-    CHECK(match.client.world.players().find(match.me)->team == redHere);
-
-    // A side taken away is taken away everywhere.
-    match.server.world.players().find(match.remote())->team = {};
-    match.run(2);
-    CHECK_FALSE(match.client.world.players().find(match.me)->team.valid());
-    CHECK(match.replica->checksumFailures() == 0);
-}
+namespace {} // namespace
 
 TEST_CASE("a part handed to a replica is simulated there, followed by the authority, and handed back")
 {
@@ -2227,24 +2157,17 @@ TEST_CASE("a detector replicates, and a replica's click reaches the authority fr
     REQUIRE(detector.valid());
     REQUIRE_FALSE(match.server.world.setParent(detector, crate).has_value());
     match.server.world.clickDetectors().find(detector)->maxActivationDistance = 12.0;
-    const core::InstanceId prompt =
-        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("ProximityPrompt")));
-    REQUIRE_FALSE(match.server.world.setParent(prompt, crate).has_value());
-    match.server.world.proximityPrompts().find(prompt)->actionText = match.server.atoms.intern("Open");
     match.run(3);
 
-    // The replica has both, with what the authority set.
+    // The replica has it, with what the authority set.
     const core::InstanceId detectorHere = match.copyOf(detector);
-    const core::InstanceId promptHere = match.copyOf(prompt);
     REQUIRE(detectorHere.valid());
-    REQUIRE(promptHere.valid());
     CHECK(match.client.world.clickDetectors().find(detectorHere)->maxActivationDistance == 12.0);
-    CHECK(match.client.atoms.text(match.client.world.proximityPrompts().find(promptHere)->actionText) == "Open");
 
     match.client.world.engineState().detectorOutbox.push_back(
         scene::DetectorMessage{detectorHere, {}, scene::DetectorMessage::Kind::Click, 0});
     match.client.world.engineState().detectorOutbox.push_back(
-        scene::DetectorMessage{promptHere, {}, scene::DetectorMessage::Kind::Triggered, 0});
+        scene::DetectorMessage{detectorHere, {}, scene::DetectorMessage::Kind::RightClick, 0});
     match.run(2);
 
     const std::vector<scene::DetectorMessage>& arrived = match.server.world.engineState().detectorInbox;
@@ -2253,55 +2176,7 @@ TEST_CASE("a detector replicates, and a replica's click reaches the authority fr
     CHECK(arrived[0].kind == scene::DetectorMessage::Kind::Click);
     // **The sender is the connection's player**, never one the message names.
     CHECK(arrived[0].player == match.remote());
-    CHECK(arrived[1].detector == prompt);
-    CHECK(arrived[1].kind == scene::DetectorMessage::Kind::Triggered);
-}
-
-TEST_CASE("a drag detector replicates, and a replica's drag reaches the authority with its ray (ADR 0126 §3)")
-{
-    PlayedMatch match;
-    const core::InstanceId drawer = match.part("Drawer", core::DVec3{0.0, 1.0, 0.0});
-    const core::InstanceId detector =
-        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("DragDetector")));
-    REQUIRE(detector.valid());
-    REQUIRE_FALSE(match.server.world.setParent(detector, drawer).has_value());
-    scene::DragDetectorComponent* component = match.server.world.dragDetectors().find(detector);
-    component->dragStyle = 0;
-    component->axis = core::Vec3{1.0f, 0.0f, 0.0f};
-    component->maxDragTranslation = 0.5;
-    match.run(3);
-
-    const core::InstanceId here = match.copyOf(detector);
-    REQUIRE(here.valid());
-    const scene::DragDetectorComponent* copy = match.client.world.dragDetectors().find(here);
-    REQUIRE(copy != nullptr);
-    CHECK(copy->dragStyle == 0);
-    CHECK(copy->axis.x == doctest::Approx(1.0));
-    CHECK(copy->maxDragTranslation == doctest::Approx(0.5));
-
-    scene::DetectorMessage began{here, {}, scene::DetectorMessage::Kind::DragStart, 0};
-    began.origin = core::DVec3{0.0, 5.0, 0.0};
-    began.direction = core::Vec3{0.0f, -1.0f, 0.0f};
-    began.hit = core::DVec3{0.0, 1.5, 0.0};
-    match.client.world.engineState().detectorOutbox.push_back(began);
-    // A ray that is not one is dropped on the way in.
-    scene::DetectorMessage broken = began;
-    broken.kind = scene::DetectorMessage::Kind::DragContinue;
-    broken.direction = core::Vec3{std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f};
-    match.client.world.engineState().detectorOutbox.push_back(broken);
-    match.client.world.engineState().detectorOutbox.push_back(
-        scene::DetectorMessage{here, {}, scene::DetectorMessage::Kind::DragEnd, 0});
-    match.run(2);
-
-    const std::vector<scene::DetectorMessage>& arrived = match.server.world.engineState().detectorInbox;
-    REQUIRE(arrived.size() == 2);
-    CHECK(arrived[0].detector == detector);
-    CHECK(arrived[0].kind == scene::DetectorMessage::Kind::DragStart);
-    CHECK(arrived[0].player == match.remote());
-    CHECK(arrived[0].origin.y == doctest::Approx(5.0));
-    CHECK(arrived[0].direction.y == doctest::Approx(-1.0));
-    CHECK(arrived[0].hit.y == doctest::Approx(1.5));
-    CHECK(arrived[1].kind == scene::DetectorMessage::Kind::DragEnd);
+    CHECK(arrived[1].kind == scene::DetectorMessage::Kind::RightClick);
 }
 
 TEST_CASE("a peer's non-finite state and invented intents do not reach the authority (audit E3)")
@@ -2456,8 +2331,9 @@ TEST_CASE("a hostile authority's message is refused whole, and never sizes the r
     // claim, the allocation failed and took the process with it.
     fake.deliver(Bytes{}.u8v(14).text("x").u32v(0xFFFFFFFFu));
     CHECK_FALSE(changed);
-    // The same message telling the truth still changes the scene.
-    fake.deliver(Bytes{}.u8v(14).text("x").u32v(2).u8v(7).u8v(9));
+    // The same message telling the truth still changes the scene -- with the
+    // authority's load number after its data (protocol 35, G18).
+    fake.deliver(Bytes{}.u8v(14).text("x").u32v(2).u8v(7).u8v(9).u32v(1));
     CHECK(changed);
 
     // Sixty-five thousand tile blocks, none of them there.

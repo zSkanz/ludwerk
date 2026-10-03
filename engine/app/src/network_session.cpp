@@ -219,6 +219,9 @@ void NetworkSession::wire()
         WorldHost* host = hostOf();
         if (host == nullptr)
             return;
+        // **Said here as `LoadScene` says it on the authority** (G13): a
+        // loading screen hung on `SceneLoading` never showed on a replica.
+        script::fireSceneLoading(host->runtime().state(), path);
         if (const std::optional<core::EngineError> error = host->loadScene(path, std::move(data)); error.has_value()) {
             core::logText(core::LogLevel::Error, error->message);
             return;

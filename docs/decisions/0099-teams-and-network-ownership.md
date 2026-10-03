@@ -109,3 +109,10 @@ owner within whatever checks the game adds.
 - **An owner is followed at its reach, never refused.** A place further than
   two metres a tick is taken as far as two metres a tick go; a refusal was for
   good, since the owner never hears it and moves on from where it is.
+
+## Amended, 2026-10-03 (protocol 35)
+
+- **Teams withdrawn by the owner**: a side is the game's own state -- an
+  attribute on the `Player`, which replicates (ADR 0106). `TeamService`, `Team`,
+  `Player.Team` and `AutoAssign` are gone, and so is the roster's team column.
+  Network ownership stands as written.

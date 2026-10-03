@@ -111,3 +111,11 @@ What §3 left open, as built:
 - `ReferenceInstance` is not replicated: the replica drags in the world's
   frame, which only a `Physical` drag it holds moves by.
 
+## Amended, 2026-10-03 (protocol 35)
+
+- **`ProximityPrompt` and `DragDetector` withdrawn by the owner**: a prompt and
+  a world drag are the game's own code -- a distance from the character, a hint
+  and an input action; a click to take hold and the pointer's ray sent while
+  held. `examples/30-interactions` shows both written in a game's own Luau.
+  `ClickDetector` stays, as the engine's pointer picking, and `UIDragDetector`
+  stays, as the interface's drag events.

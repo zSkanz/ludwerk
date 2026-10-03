@@ -58,6 +58,9 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
   it; see Findings for the one measured.
 - [x] `GetStats()`: `Corrections` (counted), `InterpolationDelay`,
   `InputReanchors` beside what was there.
+- [x] A long frame is allowed two corrections, and one more where there was
+  any: a packet the 2% loss takes in the ticks of the recovery costs one (six
+  runs of `hang150` took 0 to 2; the Linux tier once took 3).
 - [x] Long frames counted on both machines (over three ticks), and the gate
   run alone: CI's Windows runner, two cores shared with the suite, cost one or
   two corrections a walk through server stalls the client's own count never
@@ -192,8 +195,8 @@ reproduced with real processes.
 - [ ] **K2** A scene's scripts start before its streamed parts exist: an
   authority that serves others holding the whole world, or a "loaded around"
   signal -- an amendment to ADR 0053.
-- [ ] **K3** Render-step callbacks in a headless run that draws for
-  `--screenshot`. [ ] **K4** `HingeConstraint.CurrentAngle`,
+- [x] **K3** Render-step callbacks in a headless run that draws for
+  `--screenshot`: D493 (G11). [ ] **K4** `HingeConstraint.CurrentAngle`,
   `PrismaticConstraint.CurrentPosition`.
 
 ### From the FPS game (2026-10-03)
@@ -210,7 +213,8 @@ of their own.
 - [ ] **G1** A placed stamp stores a world-space transform on every part, so a
   part moved inside the stamp file never moves in a copy placed away from the
   origin: the instance should store its root's transform, its children
-  relative (a design change to ADR 0049).
+  relative (a design change to ADR 0049). Left out of the FPS batch by
+  ludwerk-08's decision, so the rest shipped sooner; it heads the next batch.
 - [x] **G2** `"stamp": "barril"` in a scene is found as `Instance.stamp`
   finds it: D488.
 - [x] **G3** A connection a scene script makes through a global module ends
@@ -218,16 +222,26 @@ of their own.
 - [x] **G4** `Anchored` holds a `CharacterBody`: D486.
 - [ ] **G5** A first-person layer drawn over the world with its own field of
   view, lit by the world (a feature).
-- [ ] **G6** A billboard label draws a box for a glyph, and fills the glyph
-  cache; labels made before the cache clears draw garbage after it.
-- [ ] **G7** No `ViewportFrame` draws when the workspace has no camera.
-- [ ] **G8** `Enum.ScaleType` has `Stretch` and `Slice`; `Fit` and `Crop` are
-  what an icon in a box wants.
-- [ ] **G9** `Bone.Transform` moves nothing: a chest bone turned eighty degrees
-  leaves the figure, and the hand bone after it, as they were.
+- [x] **G6** A frame whose text filled the glyph store is built again: D492.
+  The box was the billboard's anchor part in front of its label; a billboard's
+  text is laid out at its canvas's size, so there is no size per distance to
+  quantize.
+- [x] **G7** A `ViewportFrame` draws without `Workspace.CurrentCamera`: D496.
+- [x] **G8** `Enum.ScaleType.Fit` and `Crop` (protocol 35).
+- [x] **G9** `Bone.Transform` turns its joint, and the joints below it: D491.
 - [x] **G10** `HostFailed`'s reason is the words alone: D485.
-- [ ] The scene format's rotation is column by column, `m[column][row]`: say
-  so in the format's documentation.
+- [x] **G11** The render-rate steps run headless: D493, which closes K3.
+- [x] **G12** `Color3`, `CFrame`, `Vector2`, `UDim`, `UDim2` and `EnumItem`
+  through a remote: D495.
+- [x] **G13**, **G14**, **G15**, **G18** A server's load of its own scene
+  restarts a client's scene code, with `SceneLoading`: D489.
+- [x] **G16** Ancestry asked of a destroyed instance answers `false`: D494.
+  `Name`, `ClassName` and `IsA` raise once the instance is swept.
+- [x] **G17** A locked pointer reaches no part of the interface: D490.
+- [x] Teams, `ProximityPrompt` and `DragDetector` withdrawn by the owner
+  (protocol 35; ADRs 0099 and 0126 amended), and text chat (ADR 0132).
+- [x] The scene format's rotation is column by column, `m[column][row]`: said
+  in `docs/manual/world/scenes.md`.
 
 ## Findings
 

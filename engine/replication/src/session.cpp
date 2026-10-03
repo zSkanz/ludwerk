@@ -1820,52 +1820,12 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 const u8 kind = reader.u8v();
                 const InstanceId detector = instanceOfNet(world, netId);
                 if (!reader.ok() || !reader.done() || !detector.valid() ||
-                    kind > static_cast<u8>(scene::DetectorMessage::Kind::HoldEnded)) {
+                    kind > static_cast<u8>(scene::DetectorMessage::Kind::RightClick)) {
                     m_stats.messagesDropped += 1;
                     break;
                 }
                 world.engineState().detectorInbox.push_back(
                     scene::DetectorMessage{detector, peer->player, static_cast<scene::DetectorMessage::Kind>(kind), 0});
-                m_stats.messagesReceived += 1;
-            }
-            else if (type == MessageType::DragInput && peer->welcomed && peer->player.valid()) {
-                // A drag (ADR 0126 §3): the connection's player, and a ray the
-                // tick works the drag out from -- never a position to put the
-                // part at.
-                if (peer->messageBudget == 0) {
-                    m_stats.messagesDropped += 1;
-                    peer->floodedThisTick = true;
-                    break;
-                }
-                peer->messageBudget -= 1;
-                peer->messagesThisTick += 1;
-                const u32 netId = reader.u32v();
-                const u8 kind = reader.u8v();
-                scene::DetectorMessage message;
-                message.origin = core::DVec3{readF64(reader), readF64(reader), readF64(reader)};
-                message.direction = core::Vec3{readF32(reader), readF32(reader), readF32(reader)};
-                message.hit = core::DVec3{readF64(reader), readF64(reader), readF64(reader)};
-                const InstanceId detector = instanceOfNet(world, netId);
-                const f32 length = core::length(message.direction);
-                // An end carries no ray; a beginning and a tick carry one that
-                // is finite and of length one, near enough.
-                const bool rayed = kind < 2;
-                const bool finite = core::isFinite(message.origin.x) && core::isFinite(message.origin.y) &&
-                                    core::isFinite(message.origin.z) && core::isFinite(message.hit.x) &&
-                                    core::isFinite(message.hit.y) && core::isFinite(message.hit.z) &&
-                                    core::isFinite(length);
-                if (!reader.ok() || !reader.done() || !detector.valid() || kind > 2 || !finite ||
-                    (rayed && (length < 0.5f || length > 2.0f))) {
-                    m_stats.messagesDropped += 1;
-                    break;
-                }
-                if (rayed)
-                    message.direction = message.direction * (1.0f / length);
-                message.detector = detector;
-                message.player = peer->player;
-                message.kind = static_cast<scene::DetectorMessage::Kind>(
-                    static_cast<u8>(scene::DetectorMessage::Kind::DragStart) + kind);
-                world.engineState().detectorInbox.push_back(message);
                 m_stats.messagesReceived += 1;
             }
             break;
@@ -2202,7 +2162,6 @@ void AuthoritySession::send(const scene::World& world, InstanceId root, u64 tick
             continue;
         roster.push_back(player->userId);
         roster.push_back(player->character.valid() ? netIdOf(player->character).value : 0u);
-        roster.push_back(player->team.valid() ? netIdOf(player->team).value : 0u);
     }
 
     for (Peer& peer : m_peers) {
@@ -2329,7 +2288,7 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
     if (!peer.rosterSent || peer.roster != roster) {
         Writer players;
         players.u8v(static_cast<u8>(MessageType::Players));
-        players.u32v(static_cast<u32>(roster.size() / 3));
+        players.u32v(static_cast<u32>(roster.size() / 2));
         for (const u32 value : roster)
             players.u32v(value);
         sendBytes(m_transport, peer.id, players.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
@@ -2339,7 +2298,10 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
 
     // --- The scene the authority is in (ADR 0106), before anything of it is
     // spawned: once to a peer that joins, and whenever it changes.
-    if (const std::string& scene = m_world->engineState().currentScene; !peer.sceneSent || peer.scene != scene) {
+    // **And whenever it is loaded again** (G18): the next match in the same
+    // scene is a change as much as a move to another is.
+    if (const std::string& scene = m_world->engineState().currentScene;
+        !peer.sceneSent || peer.scene != scene || peer.sceneLoad != m_world->engineState().sceneLoads) {
         Writer change;
         change.u8v(static_cast<u8>(MessageType::SceneChange));
         change.text(scene);
@@ -2347,8 +2309,10 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         change.u32v(static_cast<u32>(data.size()));
         for (const u8 byte : data)
             change.u8v(byte);
+        change.u32v(m_world->engineState().sceneLoads);
         sendBytes(m_transport, peer.id, change.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
         peer.scene = scene;
+        peer.sceneLoad = m_world->engineState().sceneLoads;
         peer.sceneSent = true;
     }
 
@@ -2959,8 +2923,8 @@ void ReplicaSession::sendMessages(scene::World& world)
         m_stats.messagesSent += 1;
     }
 
-    // Clicks and prompts (ADR 0126): the detector by the id the authority
-    // knows it by, and what was done to it.
+    // Clicks (ADR 0126): the detector by the id the authority knows it by, and
+    // which button.
     std::vector<scene::DetectorMessage> pressed;
     pressed.swap(world.engineState().detectorOutbox);
     for (scene::DetectorMessage& message : pressed) {
@@ -2973,27 +2937,9 @@ void ReplicaSession::sendMessages(scene::World& world)
             continue;
         }
         Writer out;
-        if (message.kind >= scene::DetectorMessage::Kind::DragStart) {
-            // A drag's, with its ray (ADR 0126 §3, protocol 26).
-            out.u8v(static_cast<u8>(MessageType::DragInput));
-            out.u32v(detector);
-            out.u8v(static_cast<u8>(static_cast<u8>(message.kind) -
-                                    static_cast<u8>(scene::DetectorMessage::Kind::DragStart)));
-            writeF64(out, message.origin.x);
-            writeF64(out, message.origin.y);
-            writeF64(out, message.origin.z);
-            writeF32(out, message.direction.x);
-            writeF32(out, message.direction.y);
-            writeF32(out, message.direction.z);
-            writeF64(out, message.hit.x);
-            writeF64(out, message.hit.y);
-            writeF64(out, message.hit.z);
-        }
-        else {
-            out.u8v(static_cast<u8>(MessageType::DetectorInput));
-            out.u32v(detector);
-            out.u8v(static_cast<u8>(message.kind));
-        }
+        out.u8v(static_cast<u8>(MessageType::DetectorInput));
+        out.u32v(detector);
+        out.u8v(static_cast<u8>(message.kind));
         sendBytes(m_transport, m_authority, out.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
         m_stats.messagesSent += 1;
     }
@@ -3106,12 +3052,6 @@ void ReplicaSession::resolveCharacters(scene::World& world, InstanceId root)
         const auto named = m_characters.find(player->userId);
         const auto local = named != m_characters.end() ? m_locals.find(named->second) : m_locals.end();
         player->character = local != m_locals.end() && world.alive(local->second) ? local->second : InstanceId{};
-        const auto side = m_teams.find(player->userId);
-        const auto team = side != m_teams.end() && side->second != 0 ? m_locals.find(side->second) : m_locals.end();
-        player->team =
-            team != m_locals.end() && world.alive(team->second) && world.teams().find(team->second) != nullptr
-                ? team->second
-                : InstanceId{};
         if (player->local) {
             const u32 owned = named != m_characters.end() && local != m_locals.end() ? named->second : 0u;
             if (owned != m_owned) {
@@ -3236,13 +3176,21 @@ void ReplicaSession::onSceneChange(scene::World& world, std::span<const u8> byte
     // **The bytes the message has, never the count it claims**: reserved from
     // the claim, seven bytes asked for four gigabytes and the allocation that
     // failed took the process with it (audit N1's review).
-    if (!reader.ok() || reader.remaining() != length)
+    if (!reader.ok() || reader.remaining() != static_cast<usize>(length) + 4u)
         return;
     const std::span<const u8> rest = reader.bytes().subspan(reader.at(), length);
     std::vector<u8> data(rest.begin(), rest.end());
+    Reader tail(reader.bytes().subspan(reader.at() + length));
+    const u32 load = tail.u32v();
     // **Already there** is what a replica that joined into the scene it booted
-    // hears, and it is not a reason to load it again.
-    if (path.empty() || path == world.engineState().currentScene || !m_sceneChanger)
+    // hears, and it is not a reason to load it again -- the first change it
+    // hears only. After that a load the authority made is one this replica
+    // makes, the same scene again included (G18): it was taken for the join's,
+    // and the last match's client code ran on over the next.
+    const bool again = m_sceneHeard && load != m_sceneLoad;
+    m_sceneHeard = true;
+    m_sceneLoad = load;
+    if (path.empty() || !m_sceneChanger || (path == world.engineState().currentScene && !again))
         return;
     m_sceneChanger(world, path, std::move(data));
 }
@@ -3831,19 +3779,15 @@ void ReplicaSession::onPlayers(scene::World& world, InstanceId root, std::span<c
         return;
     std::vector<u32> roster;
     std::map<u32, u32> characters;
-    std::map<u32, u32> teams;
     for (u32 at = 0; at < count && reader.ok(); ++at) {
         const u32 userId = reader.u32v();
         const u32 character = reader.u32v();
-        const u32 team = reader.u32v();
         roster.push_back(userId);
         characters[userId] = character;
-        teams[userId] = team;
     }
     if (!reader.ok() || !reader.done())
         return;
     m_characters = std::move(characters);
-    m_teams = std::move(teams);
     const InstanceId network = scene::networkServiceOf(world, world.parentOf(root));
     if (!network.valid())
         return;
@@ -3994,10 +3938,11 @@ void ReplicaSession::resetForRejoin(scene::World& world)
     m_departed.clear();
     m_names.clear();
     m_states.clear();
+    // A rejoin's first scene is the join's (G18).
+    m_sceneHeard = false;
     m_samples.clear();
     m_samples2d.clear();
     m_characters.clear();
-    m_teams.clear();
     m_ownedParts.clear();
     m_predicted.clear();
     m_predicted2d.clear();

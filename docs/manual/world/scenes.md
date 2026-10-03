@@ -62,7 +62,10 @@ A few things worth reading off that:
 
 - **Classes are named by their class name**, and properties by their property
   name — the same names a script uses.
-- **A `CFrame` is twelve numbers**: three of translation, then the basis.
+- **A `CFrame` is twelve numbers**: three of translation, then the basis
+  **column by column** -- the right vector's three, then the up vector's,
+  then the back vector's (`RightVector`, `UpVector`, and `-LookVector`). In
+  the example above, `0.0, 0.97, -0.24` is the up vector of a camera tilted down.
 - **An instance reference is a path**, resolved after the whole tree is built,
   so an instance can refer to one declared later.
 - Tags and attributes travel with an instance too.

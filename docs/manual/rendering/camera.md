@@ -142,6 +142,12 @@ camera with it. `camera.orbit` is the same rig turning by itself.
 `rig:Basis()` returns the rig's forward and right vectors, flattened, which is
 what turns a two-axis input into a world-space movement direction.
 
+**A rig whose subject leaves the world holds still** -- a character that died
+and was destroyed -- until `rig.Subject` is given the next one: a respawn
+reassigns the subject rather than building a second rig. `rig:Destroy()` stops
+a rig for good, unbinding its render step; the camera stays, as it may be the
+scene's own.
+
 ### First person
 
 `camera.firstPerson` puts the camera at the subject's eyes -- `Height` above

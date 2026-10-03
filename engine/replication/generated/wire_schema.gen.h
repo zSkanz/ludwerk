@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 34;
+inline constexpr u32 ProtocolVersion = 35;
 
 // How a field's bytes are laid down. Every one is fixed-width and
 // little-endian, with no variable-length forms and no nesting -- a wire format
@@ -246,19 +246,6 @@ inline constexpr FieldDesc ClickDetectorFields[] = {
     {"CursorIcon", 2, Encoding::NameAtom, Source::Component, "clickDetectors"},
 };
 
-inline constexpr FieldDesc ProximityPromptFields[] = {
-    {"ActionText", 1, Encoding::NameAtom, Source::Component, "proximityPrompts"},
-    {"ObjectText", 2, Encoding::NameAtom, Source::Component, "proximityPrompts"},
-    {"KeyboardKeyCode", 3, Encoding::I32, Source::Component, "proximityPrompts"},
-    {"GamepadKeyCode", 4, Encoding::I32, Source::Component, "proximityPrompts"},
-    {"HoldDuration", 5, Encoding::F32, Source::Component, "proximityPrompts"},
-    {"MaxActivationDistance", 6, Encoding::F32, Source::Component, "proximityPrompts"},
-    {"RequiresLineOfSight", 7, Encoding::Bool, Source::Component, "proximityPrompts"},
-    {"Exclusivity", 8, Encoding::I32, Source::Component, "proximityPrompts"},
-    {"Style", 9, Encoding::I32, Source::Component, "proximityPrompts"},
-    {"Enabled", 10, Encoding::Bool, Source::Component, "proximityPrompts"},
-};
-
 inline constexpr FieldDesc WaterFields[] = {
     {"Shape", 1, Encoding::I32, Source::Component, "waters"},
     {"SurfaceLevel", 2, Encoding::F32, Source::Component, "waters"},
@@ -280,22 +267,6 @@ inline constexpr FieldDesc WaterWaveFields[] = {
 
 inline constexpr FieldDesc WaterPointFields[] = {
     {"Position", 1, Encoding::Vector3, Source::Component, "waterPoints"},
-};
-
-inline constexpr FieldDesc DragDetectorFields[] = {
-    {"DragStyle", 1, Encoding::I32, Source::Component, "dragDetectors"},
-    {"ResponseStyle", 2, Encoding::I32, Source::Component, "dragDetectors"},
-    {"Axis", 3, Encoding::Vector3, Source::Component, "dragDetectors"},
-    {"MinDragTranslation", 4, Encoding::F32, Source::Component, "dragDetectors"},
-    {"MaxDragTranslation", 5, Encoding::F32, Source::Component, "dragDetectors"},
-    {"MinDragAngle", 6, Encoding::F32, Source::Component, "dragDetectors"},
-    {"MaxDragAngle", 7, Encoding::F32, Source::Component, "dragDetectors"},
-    {"MaxForce", 8, Encoding::F32, Source::Component, "dragDetectors"},
-    {"MaxTorque", 9, Encoding::F32, Source::Component, "dragDetectors"},
-    {"Responsiveness", 10, Encoding::F32, Source::Component, "dragDetectors"},
-    {"MaxActivationDistance", 11, Encoding::F32, Source::Component, "dragDetectors"},
-    {"CursorIcon", 12, Encoding::NameAtom, Source::Component, "dragDetectors"},
-    {"Enabled", 13, Encoding::Bool, Source::Component, "dragDetectors"},
 };
 
 inline constexpr FieldDesc BloomEffectFields[] = {
@@ -358,11 +329,6 @@ inline constexpr FieldDesc SkyFields[] = {
     {"CloudCover", 14, Encoding::F32, Source::Component, "skies"},
     {"CloudDensity", 15, Encoding::F32, Source::Component, "skies"},
     {"CloudColor", 16, Encoding::Color3, Source::Component, "skies"},
-};
-
-inline constexpr FieldDesc TeamFields[] = {
-    {"Color", 1, Encoding::Color3, Source::Component, "teams"},
-    {"AutoAssign", 2, Encoding::Bool, Source::Component, "teams"},
 };
 
 inline constexpr FieldDesc WorkspaceFields[] = {
@@ -549,11 +515,9 @@ inline constexpr ClassDesc Classes[] = {
     {"Part2D", Part2DFields, -1, false, false},
     {"Tilemap2D", Tilemap2DFields, -1, false, false},
     {"ClickDetector", ClickDetectorFields, -1, false, false},
-    {"ProximityPrompt", ProximityPromptFields, -1, false, false},
     {"Water", WaterFields, -1, false, false},
     {"WaterWave", WaterWaveFields, -1, false, false},
     {"WaterPoint", WaterPointFields, -1, false, false},
-    {"DragDetector", DragDetectorFields, -1, false, false},
     {"BloomEffect", BloomEffectFields, -1, false, false},
     {"ColorCorrectionEffect", ColorCorrectionEffectFields, -1, false, false},
     {"BlurEffect", BlurEffectFields, -1, false, false},
@@ -561,24 +525,22 @@ inline constexpr ClassDesc Classes[] = {
     {"SunRaysEffect", SunRaysEffectFields, -1, false, false},
     {"Atmosphere", AtmosphereFields, -1, false, false},
     {"Sky", SkyFields, -1, false, false},
-    {"TeamService", {}, -1, true, true},
-    {"Team", TeamFields, -1, false, false},
     {"Workspace", WorkspaceFields, -1, true, false},
     {"Attachment", AttachmentFields, -1, false, false},
     {"Constraint", ConstraintFields, -1, false, false},
-    {"BallSocketConstraint", BallSocketConstraintFields, 31, false, false},
-    {"HingeConstraint", HingeConstraintFields, 31, false, false},
-    {"FixedConstraint", {}, 31, false, false},
-    {"PrismaticConstraint", PrismaticConstraintFields, 31, false, false},
-    {"RopeConstraint", RopeConstraintFields, 31, false, false},
-    {"RodConstraint", RodConstraintFields, 31, false, false},
-    {"SpringConstraint", SpringConstraintFields, 31, false, false},
-    {"LinearVelocity", LinearVelocityFields, 31, false, false},
-    {"AngularVelocity", AngularVelocityFields, 31, false, false},
-    {"AlignPosition", AlignPositionFields, 31, false, false},
-    {"AlignOrientation", AlignOrientationFields, 31, false, false},
-    {"VectorForce", VectorForceFields, 31, false, false},
-    {"Torque", TorqueFields, 31, false, false},
+    {"BallSocketConstraint", BallSocketConstraintFields, 27, false, false},
+    {"HingeConstraint", HingeConstraintFields, 27, false, false},
+    {"FixedConstraint", {}, 27, false, false},
+    {"PrismaticConstraint", PrismaticConstraintFields, 27, false, false},
+    {"RopeConstraint", RopeConstraintFields, 27, false, false},
+    {"RodConstraint", RodConstraintFields, 27, false, false},
+    {"SpringConstraint", SpringConstraintFields, 27, false, false},
+    {"LinearVelocity", LinearVelocityFields, 27, false, false},
+    {"AngularVelocity", AngularVelocityFields, 27, false, false},
+    {"AlignPosition", AlignPositionFields, 27, false, false},
+    {"AlignOrientation", AlignOrientationFields, 27, false, false},
+    {"VectorForce", VectorForceFields, 27, false, false},
+    {"Torque", TorqueFields, 27, false, false},
     {"Weld", WeldFields, -1, false, false},
     {"WeldConstraint", WeldConstraintFields, -1, false, false},
     {"NoCollisionConstraint", NoCollisionConstraintFields, -1, false, false},
@@ -696,7 +658,6 @@ enum class MessageType : u8
     SceneChange = 14,
     Attributes = 15,
     DetectorInput = 16,
-    DragInput = 21,
     TerrainChunks = 17,
     TerrainLook = 18,
     VoxelChunks = 19,
@@ -739,7 +700,6 @@ inline constexpr MessageDesc Messages[] = {
     {"SceneChange", MessageType::SceneChange, 0, Direction::ToReplica},
     {"Attributes", MessageType::Attributes, 0, Direction::ToReplica},
     {"DetectorInput", MessageType::DetectorInput, 0, Direction::ToAuthority},
-    {"DragInput", MessageType::DragInput, 0, Direction::ToAuthority},
     {"TerrainChunks", MessageType::TerrainChunks, 0, Direction::ToReplica},
     {"TerrainLook", MessageType::TerrainLook, 0, Direction::ToReplica},
     {"VoxelChunks", MessageType::VoxelChunks, 0, Direction::ToReplica},

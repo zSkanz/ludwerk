@@ -783,110 +783,6 @@ void submitCameraVolumes(const scene::World& world, std::span<const core::Instan
     }
 }
 
-// **The engine's look for a `ProximityPrompt`** (ADR 0126): a dark box above
-// where it hangs, the key on its left -- a ring filling under it for a held
-// prompt -- and the two texts. The same box, at the same place, the tick
-// hit-tests a tap against (`scene::PromptWidth`).
-void appendPrompts(scene::World& world, const render::DrawPoses& poses, const render::RenderCamera& camera,
-                   core::Vec2 viewport, ui::DrawList& out)
-{
-    scene::EngineState& state = world.engineState();
-    if (state.shownPrompts.empty() || !camera.valid || viewport.x <= 0.0f || viewport.y <= 0.0f) {
-        // Drawn nowhere this frame -- a minimised window -- so a tap is not
-        // tested against where it was drawn the last time it was.
-        for (scene::ShownPrompt& shown : state.shownPrompts)
-            shown.drawn = false;
-        return;
-    }
-    const ViewportRect rect{0.0f, 0.0f, viewport.x, viewport.y};
-    const auto keyName = [&world](core::i32 keyCode) -> std::string {
-        const scene::EnumItemDesc* item = world.enums().findValue(scene::generated::KeyCodeEnumId, keyCode);
-        std::string name = item != nullptr ? std::string(world.atoms().text(item->name)) : std::string{};
-        // The standard layout's face buttons by the letters printed on them.
-        if (name == "ButtonSouth")
-            return "A";
-        if (name == "ButtonEast")
-            return "B";
-        if (name == "ButtonWest")
-            return "X";
-        if (name == "ButtonNorth")
-            return "Y";
-        return name;
-    };
-    const core::Color3 panel{0.08f, 0.09f, 0.11f};
-    const core::Color3 keyFill{0.92f, 0.93f, 0.95f};
-    const core::Color3 ink{0.08f, 0.09f, 0.11f};
-    const core::Color3 white{1.0f, 1.0f, 1.0f};
-    const core::Color3 muted{0.72f, 0.74f, 0.78f};
-    for (scene::ShownPrompt& shown : state.shownPrompts) {
-        const scene::ProximityPromptComponent* prompt = world.proximityPrompts().find(shown.prompt);
-        if (prompt == nullptr)
-            continue;
-        // Where what it hangs from is drawn (ADR 0134), not where the tick
-        // left it: a prompt over a moving cart otherwise shook against it.
-        core::DVec3 anchor = shown.anchor;
-        if (world.alive(shown.hangsFrom)) {
-            anchor = world.attachments().find(shown.hangsFrom) != nullptr ? poses.attachment(shown.hangsFrom).position
-                                                                          : poses.part(shown.hangsFrom).position;
-        }
-        const std::optional<core::Vec2> at =
-            worldToViewport(camera.projection, camera.view, camera.origin, rect, anchor);
-        if (!at.has_value()) {
-            shown.drawn = false;
-            continue;
-        }
-        const core::Vec2 centre{at->x + prompt->uiOffset.x, at->y + prompt->uiOffset.y - scene::PromptLift};
-        // And a tap is tested here, on the box drawn.
-        shown.drawnAt = centre;
-        shown.drawn = true;
-        const core::Vec2 min{centre.x - scene::PromptWidth * 0.5f, centre.y - scene::PromptHeight * 0.5f};
-        const core::Vec2 max{centre.x + scene::PromptWidth * 0.5f, centre.y + scene::PromptHeight * 0.5f};
-
-        ui::DrawQuad box;
-        box.min = min;
-        box.max = max;
-        box.color = panel;
-        box.alpha = 0.78f;
-        box.cornerRadius = 10.0f;
-        out.quads.push_back(box);
-
-        const f32 key = scene::PromptHeight - 16.0f;
-        ui::DrawQuad cap;
-        cap.min = core::Vec2{min.x + 8.0f, min.y + 8.0f};
-        cap.max = core::Vec2{cap.min.x + key, cap.min.y + key};
-        cap.color = keyFill;
-        cap.cornerRadius = shown.inputType == 2 ? key * 0.5f : 6.0f;
-        out.quads.push_back(cap);
-        if (shown.holdProgress > 0.0f) {
-            ui::DrawQuad fill;
-            fill.min = core::Vec2{cap.min.x, cap.max.y - 4.0f};
-            fill.max = core::Vec2{cap.min.x + key * std::min(1.0f, shown.holdProgress), cap.max.y};
-            fill.color = core::Color3{0.30f, 0.62f, 1.0f};
-            fill.cornerRadius = 2.0f;
-            out.quads.push_back(fill);
-        }
-        const std::string label = shown.inputType == 2   ? core::engineCatalog().format(ENG_TR("ui.prompt.tap"))
-                                  : shown.inputType == 1 ? keyName(prompt->gamepadKeyCode)
-                                                         : keyName(prompt->keyboardKeyCode);
-        ui::buildTextGeometry(label, "", label.size() > 2 ? 12.0f : 20.0f, 0.0f, core::Rect{cap.min, cap.max}, 1, 1,
-                              ink, 1.0f, 0, out.quads);
-
-        const core::Rect words{core::Vec2{cap.max.x + 10.0f, min.y + 6.0f}, core::Vec2{max.x - 8.0f, max.y - 6.0f}};
-        const std::string_view object = world.atoms().text(prompt->objectText);
-        const std::string_view action = world.atoms().text(prompt->actionText);
-        if (object.empty()) {
-            ui::buildTextGeometry(action, "", 18.0f, 0.0f, words, 0, 1, white, 1.0f, 0, out.quads);
-        }
-        else {
-            const f32 middle = (words.min.y + words.max.y) * 0.5f;
-            ui::buildTextGeometry(object, "", 13.0f, 0.0f, core::Rect{words.min, core::Vec2{words.max.x, middle}}, 0, 2,
-                                  muted, 1.0f, 0, out.quads);
-            ui::buildTextGeometry(action, "", 18.0f, 0.0f, core::Rect{core::Vec2{words.min.x, middle}, words.max}, 0, 0,
-                                  white, 1.0f, 0, out.quads);
-        }
-    }
-}
-
 // **What a joint or a mover is doing, as lines** (ADR 0127): every one whose
 // `Visible` is on, and every one that is selected. A line between its two
 // ends; a hinge's or a rail's axis; where an `AlignPosition` pulls to; which
@@ -1017,29 +913,19 @@ void submitConstraints(const scene::World& world, const render::DrawPoses& poses
     });
 }
 
-// **How far a click, a prompt or a drag reaches** (ADR 0126), drawn round a
-// selected `ClickDetector`, `ProximityPrompt` or `DragDetector` -- or round the
-// part holding one -- at the part or attachment it hangs from.
+// **How far a click reaches** (ADR 0126), drawn round a selected
+// `ClickDetector` -- or round the part holding one -- at the part or
+// attachment it hangs from.
 void submitDetectorVolumes(const scene::World& world, std::span<const core::InstanceId> selection,
                            core::DVec3 cameraOrigin, render::DebugDraw& draw)
 {
     const auto drawOne = [&](core::InstanceId id) {
         f64 reach = 0.0;
         render::DebugColor colour = render::DebugColor::fromLinear(0.30f, 0.62f, 1.0f);
-        if (const scene::ClickDetectorComponent* click = world.clickDetectors().find(id)) {
+        if (const scene::ClickDetectorComponent* click = world.clickDetectors().find(id))
             reach = click->maxActivationDistance;
-        }
-        else if (const scene::ProximityPromptComponent* prompt = world.proximityPrompts().find(id)) {
-            reach = prompt->maxActivationDistance;
-            colour = render::DebugColor::fromLinear(1.0f, 0.78f, 0.25f);
-        }
-        else if (const scene::DragDetectorComponent* drag = world.dragDetectors().find(id)) {
-            reach = drag->maxActivationDistance;
-            colour = render::DebugColor::fromLinear(0.40f, 0.90f, 0.55f);
-        }
-        else {
+        else
             return;
-        }
         const core::InstanceId parent = world.parentOf(id);
         core::DVec3 at;
         if (const scene::PartComponent* part = world.parts().find(parent))
@@ -5637,7 +5523,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // the game still running, and no amount of arbitrating who wins the
             // camera would make that untrue.
             const bool worldIsRunning = !options.editor || advancing(editor.runState());
-            if (!options.headless && worldIsRunning) {
+            // **And without a window** (G11, K3): render-rate input, render
+            // steps and `PreRender` are a frame's, and a headless run has
+            // frames -- skipped, an injected stick read nothing in a `Render`
+            // context and a render step bound for a `--screenshot` never ran.
+            // A dedicated server draws nothing and runs none of it.
+            const bool rendersFrames = options.network.topology != replication::Topology::Dedicated;
+            if (rendersFrames && worldIsRunning) {
                 const core::u64 renderPhaseNs = platform::nowNs();
                 host->preRender(frame.renderDt, &framePoses);
                 phaseRenderScriptsMs += msSince(renderPhaseNs);
@@ -5987,6 +5879,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // **Where the pointer is, and what it did, from the events that
             // said so** (D430): a tap's place is the tap's, not the mouse's.
             uiPointer.fill(interaction, devices.pointer);
+            interaction.pointerLocked = pointerLocked;
             interaction.text = uiTypedText;
             interaction.backspace = uiBackspace;
             interaction.forwardDelete = uiForwardDelete;
@@ -6070,35 +5963,39 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 }
             }
 
-            ui::buildDrawList(host->world(), host->uiService(), uiDrawList);
-            // Prompts over the game's own screen, never under it (ADR 0126).
-            appendPrompts(host->world(), framePoses, snapshot.camera, uiViewport, uiDrawList);
-            // Index 0 is "no texture" and every entry after it is a texture the
-            // UI can name. The glyph atlas is index 1 when a face has been
-            // rasterised; images follow it.
-            // Index 0 is "no texture" and resolves to the renderer's white
-            // pixel; index 1 is the glyph atlas and everything after it is an
-            // image. The table is rebuilt each frame because a texture handle
-            // is four bytes and a stale one is a picture from a world that has
-            // been unloaded.
-            uiTextures.clear();
-            uiTextures.push_back(rhi::TextureHandle{});
-            uiTextures.push_back(uiText.atlasTexture());
-            for (const rhi::TextureHandle image : uiText.images())
-                uiTextures.push_back(image);
-            uiGradients.clear();
-            // A picture for each `CanvasGroup`, before the geometry that is
-            // drawn into them (ADR 0128).
-            uiGroupPictures.prepare(uiRenderer.valid() ? device.get() : nullptr, uiDrawList, uiColorFormat, ++uiFrame);
-            buildUiGeometry(uiDrawList, uiViewport, uiVertices, uiRuns, uiTextures, uiGradients,
-                            uiGroupPictures.textures());
+            // **Built against the atlas it leaves** (G6): text that filled the
+            // glyph store mid-frame cleared it, and every label built before
+            // the clear drew garbage -- so a frame that cleared is built again.
+            ui::buildWithSettledGlyphs([&] {
+                ui::buildDrawList(host->world(), host->uiService(), uiDrawList);
+                // Index 0 is "no texture" and every entry after it is a texture the
+                // UI can name. The glyph atlas is index 1 when a face has been
+                // rasterised; images follow it.
+                // Index 0 is "no texture" and resolves to the renderer's white
+                // pixel; index 1 is the glyph atlas and everything after it is an
+                // image. The table is rebuilt each frame because a texture handle
+                // is four bytes and a stale one is a picture from a world that has
+                // been unloaded.
+                uiTextures.clear();
+                uiTextures.push_back(rhi::TextureHandle{});
+                uiTextures.push_back(uiText.atlasTexture());
+                for (const rhi::TextureHandle image : uiText.images())
+                    uiTextures.push_back(image);
+                uiGradients.clear();
+                // A picture for each `CanvasGroup`, before the geometry that is
+                // drawn into them (ADR 0128).
+                uiGroupPictures.prepare(uiRenderer.valid() ? device.get() : nullptr, uiDrawList, uiColorFormat,
+                                        ++uiFrame);
+                buildUiGeometry(uiDrawList, uiViewport, uiVertices, uiRuns, uiTextures, uiGradients,
+                                uiGroupPictures.textures());
 
-            // **The world's UI, into the picture the renderer is about to
-            // draw** (F3): laid out and drawn by the same code as the screen's,
-            // placed on its parts and billboards, and sharing the screen's
-            // glyph atlas and images.
-            buildWorldUi(host->world(), host->workspace(), host->uiService(), uiViewport, uiTextures, worldUiDrawList,
-                         snapshot, &uiGradients, &framePoses);
+                // **The world's UI, into the picture the renderer is about to
+                // draw** (F3): laid out and drawn by the same code as the screen's,
+                // placed on its parts and billboards, and sharing the screen's
+                // glyph atlas and images.
+                buildWorldUi(host->world(), host->workspace(), host->uiService(), uiViewport, uiTextures,
+                             worldUiDrawList, snapshot, &uiGradients, &framePoses);
+            });
 
             frameVisibleObjects = 0;
             frameTriangles = 0;
@@ -6320,7 +6217,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // feed on a monitor shows this frame's picture. Each is the world
             // extracted from its camera and drawn with its own renderer state;
             // a camera that sees its own texture sees the last picture.
-            if (useRenderer && stageOf() == nullptr) {
+            //
+            // **Whether or not the world has a camera of its own** (G7): a
+            // `ViewportFrame` looks through its own, and a menu -- an empty
+            // world and a screen of item previews -- showed every one empty.
+            if (renderer != nullptr && renderer->valid() && stageOf() == nullptr) {
                 // **Each running sub-world's content, loaded as the game's
                 // is** (ADR 0107 §3), whether or not its picture is drawn this
                 // frame: a mesh that lands also tells its physics what it

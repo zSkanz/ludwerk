@@ -177,6 +177,35 @@ TEST_CASE("hover is a pair of edges rather than a state")
     (void)button;
 }
 
+TEST_CASE("G17: a locked pointer is the game's, whatever the interface has under it")
+{
+    // The FPS game: a damage vignette and a hit mark under the frozen pointer
+    // took the mouse, and the camera stopped turning until the pointer was let
+    // go. A locked pointer is a first-person mouse: nothing of the interface
+    // is under it, nothing is pressed, and the motion is the game's.
+    Fixture fixture;
+    const InstanceId vignette = fixture.box(fixture.screen, 0.0f, 0.0f, 400.0f, 400.0f);
+    fixture.run();
+    (void)fixture.events();
+
+    ui::InteractionInput locked;
+    locked.pointer = Vec2{50.0f, 50.0f};
+    locked.pointerLocked = true;
+    CHECK_FALSE(ui::updateInteraction(*fixture.world, fixture.service, locked).pointerOverUi);
+    locked.pressed = true;
+    (void)ui::updateInteraction(*fixture.world, fixture.service, locked);
+    locked.pressed = false;
+    locked.released = true;
+    (void)ui::updateInteraction(*fixture.world, fixture.service, locked);
+    const std::vector<std::string> fired = fixture.events();
+    CHECK(std::ranges::find(fired, "Activated") == fired.end());
+    CHECK(std::ranges::find(fired, "PointerEntered") == fired.end());
+
+    // Let go, the same place is the interface's again.
+    CHECK(fixture.interact(Vec2{50.0f, 50.0f}).pointerOverUi);
+    (void)vignette;
+}
+
 TEST_CASE("Activated needs both ends of the press on one element")
 {
     Fixture fixture;

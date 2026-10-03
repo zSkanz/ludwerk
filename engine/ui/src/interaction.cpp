@@ -709,8 +709,10 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
 
     // The screen first, because it is drawn over the world; a button printed on
     // a wall answers only where no screen element covers it.
-    const core::InstanceId onScreen = hitTest(world, uiService, input.pointer);
-    const core::InstanceId over = onScreen.valid() ? onScreen : input.worldOver;
+    // A locked pointer is over nothing of it (G17).
+    const core::InstanceId onScreen =
+        input.pointerLocked ? core::InstanceId{} : hitTest(world, uiService, input.pointer);
+    const core::InstanceId over = onScreen.valid() || input.pointerLocked ? onScreen : input.worldOver;
     result.pointerOverUi = over.valid();
 
     // Hover, as a pair of edges rather than a state a handler has to compare

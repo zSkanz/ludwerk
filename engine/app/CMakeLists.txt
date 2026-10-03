@@ -530,6 +530,14 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "Could not create a graphics device"
         TIMEOUT 120)
 
+    # **The render half of the frame runs headless** (G11, K3): a Render-rate
+    # context reads an injected stick and a bound render step runs.
+    add_test(NAME host_headless_render_rate
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/renderrate" --headless --rhi=null --frames=60 --exit)
+    set_tests_properties(host_headless_render_rate PROPERTIES
+        PASS_REGULAR_EXPRESSION "\\[renderrate\\] render=1 simulation=1 steps=true"
+        TIMEOUT 60)
+
     # A headless run with no budget has no window to close, so it would never
     # stop. Rejected up front rather than left to a CI timeout to discover.
     add_test(NAME host_headless_needs_frames COMMAND engine_host --headless)
@@ -1298,6 +1306,19 @@ if(ENG_BUILD_TESTS)
             -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/block-faces.png
             -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_block_faces.cmake)
     set_tests_properties(block_faces_colours PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
+    # **A ViewportFrame draws in a world with no camera** (G7): the views were
+    # drawn only when the world had one, and a menu's previews were empty.
+    add_test(NAME viewport_frame_without_world_camera
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/viewportnocamera
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/viewport-no-camera.png
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_viewport_no_camera.cmake)
+    set_tests_properties(viewport_frame_without_world_camera PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 

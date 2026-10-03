@@ -560,8 +560,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // `ClearMaterialParameter`; 122 with `Sound:Resume`, when `Play` came to
     // start from the start; and 125 with `NavigationService`'s `DefineAgent`,
     // `SetAreaCost` and `FindPath2D` (ADR 0098); and 129 with `BasePart`'s
-    // `SetNetworkOwner` and `GetNetworkOwner`, `Team:GetPlayers` and
-    // `TeamService:GetTeams` (ADR 0099); and 132 with `RunService`'s
+    // `SetNetworkOwner` and `GetNetworkOwner` (ADR 0099) -- and `Team:GetPlayers`
+    // and `TeamService:GetTeams`, which left with teams; and 132 with `RunService`'s
     // `SaveSimulation`, `RestoreSimulation` and `StepSimulation` (ADR 0101); and
     // 134 with `SceneService`'s `LoadScene` and `GetLoadData`, and 137 with
     // `NetworkService`'s `Join`, `Host` and `Disconnect` (ADR 0106), and 144 with
@@ -572,7 +572,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // `GetRenderCFrame` on `BasePart`, `Attachment` and `Camera` and
     // `RunService`'s `BindToRenderStep` and `UnbindFromRenderStep` (ADR 0136);
     // and 174 with `TextInput`'s `CaptureFocus`, `ReleaseFocus` and `IsFocused`
-    // and `UIService:GetFocusedTextInput` (ADR 0139).
+    // and `UIService:GetFocusedTextInput` (ADR 0139); and 212 when teams left
+    // the engine (protocol 35).
     // This number is what makes a
     // DECLARED-but-unbound method impossible to ship: the IDL would count it and the binding table would not, which is
     // `Inert` for a method.
@@ -580,8 +581,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // **It earned its keep at F1.** Five methods were declared in the IDL in one
     // commit and this failed on the next build, before anything could reach a
     // script and find a name that answered nothing.
-    CHECK(coverage.declared == 214);
-    CHECK(coverage.bound == 214);
+    CHECK(coverage.declared == 212);
+    CHECK(coverage.bound == 212);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

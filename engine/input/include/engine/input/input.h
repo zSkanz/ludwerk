@@ -264,9 +264,9 @@ public:
 
     [[nodiscard]] const DeviceState& snapshot() const noexcept { return m_state; }
     // Whether the last dispatch gave this `Enum.KeyCode` to something above the
-    // engine's own uses of it -- the interface, or a context that sinks it. A
-    // `ProximityPrompt`'s key is the engine's, below every context a game
-    // makes (ADR 0126), and asks this before it acts.
+    // engine's own uses of it -- the interface, or a context that sinks it. An
+    // engine use of a key below every context a game makes asks this before
+    // it acts.
     [[nodiscard]] bool consumed(i32 keyCode) const noexcept
     {
         return keyCode >= 0 && static_cast<usize>(keyCode) < kKeyCodeCount && m_consumed[static_cast<usize>(keyCode)];

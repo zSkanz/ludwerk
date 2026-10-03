@@ -817,6 +817,19 @@ local Definition: Schema.Definition = {
                     Value = 2,
                     Doc = "Repeated at its own size until the box is full.",
                 },
+                {
+                    Name = "Fit",
+                    Value = 3,
+                    Doc = "The whole image, as large as the box allows without changing its shape, "
+                        .. "centred: what an icon in a box wants. The box shows through where the image "
+                        .. "does not reach.",
+                },
+                {
+                    Name = "Crop",
+                    Value = 4,
+                    Doc = "The whole box covered, the image keeping its shape and what overhangs cut off "
+                        .. "equally from both sides: what a picture filling a card wants.",
+                },
             } :: { Schema.EnumItem },
         },
         {
@@ -1188,57 +1201,6 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         -- ADR 0126. At the END.
-        {
-            Name = "ProximityPromptExclusivity",
-            Doc = "Which of several `ProximityPrompt`s in reach show.",
-            Items = {
-                { Name = "OnePerButton", Value = 0, Doc = "The nearest of those on the same key." },
-                { Name = "OneGlobally", Value = 1, Doc = "The nearest of all that are `OneGlobally`." },
-                { Name = "AlwaysShow", Value = 2, Doc = "This one whenever it is in reach." },
-            } :: { Schema.EnumItem },
-        },
-        {
-            Name = "ProximityPromptStyle",
-            Doc = "Who draws a `ProximityPrompt`.",
-            Items = {
-                { Name = "Default", Value = 0, Doc = "The engine: the key, the texts and a hold ring." },
-                { Name = "Custom", Value = 1, Doc = "The game, on `PromptShown` and `PromptHidden`." },
-            } :: { Schema.EnumItem },
-        },
-        {
-            Name = "ProximityPromptInputType",
-            Doc = "The input a shown `ProximityPrompt` is drawn for.",
-            Items = {
-                { Name = "Keyboard", Value = 0, Doc = "A key." },
-                { Name = "Gamepad", Value = 1, Doc = "A gamepad button." },
-                { Name = "Touch", Value = 2, Doc = "A tap on the prompt." },
-            } :: { Schema.EnumItem },
-        },
-        {
-            Name = "DragDetectorDragStyle",
-            Doc = "How a `DragDetector` turns the pointer's motion into its part's (ADR 0126).",
-            Items = {
-                { Name = "TranslateLine", Value = 0, Doc = "Along `Axis`, through where it was grabbed." },
-                { Name = "TranslatePlane", Value = 1, Doc = "Across the plane `Axis` is the normal of." },
-                { Name = "TranslateViewPlane", Value = 2, Doc = "Across the plane facing the camera." },
-                { Name = "RotateAxis", Value = 3, Doc = "Turned about `Axis`, through its pivot." },
-                { Name = "RotateTrackball", Value = 4, Doc = "Turned any way about its pivot, as a ball." },
-                { Name = "Scriptable", Value = 5, Doc = "Not moved: the events say where the pointer is." },
-            } :: { Schema.EnumItem },
-        },
-        {
-            Name = "DragDetectorResponseStyle",
-            Doc = "What a `DragDetector` does with where its part is dragged to.",
-            Items = {
-                { Name = "Geometric", Value = 0, Doc = "Puts it there." },
-                {
-                    Name = "Physical",
-                    Value = 1,
-                    Doc = "Pulls an unanchored part there with a force under `MaxForce`; an anchored one is put there.",
-                },
-                { Name = "Custom", Value = 2, Doc = "Nothing: the events report, and the game moves it." },
-            } :: { Schema.EnumItem },
-        },
         {
             Name = "TerrainPaintMode",
             Doc = "What a stroke of `Terrain:PaintBall` does with the two materials a voxel holds (ADR 0114).",

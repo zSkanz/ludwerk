@@ -1798,3 +1798,82 @@ TEST_CASE("D482: an assembly handed over the moment it is made is where the auth
     CHECK(log.contains("server-chassis:true"));
     CHECK_MESSAGE(log.firstError().empty(), log.firstError());
 }
+
+TEST_CASE("G18: a server that loads its own scene again restarts a replica's scene code, and says so")
+{
+    // The owner's first match with a friend froze both: the server loaded the
+    // same scene for the next match, and a replica heard nothing -- a scene
+    // change to the scene it was in was taken for the join's -- so the last
+    // match's client code ran on over the new world, `SceneLoading` never
+    // fired, the old loader stayed in the tree, and the character was the
+    // last match's, destroyed. Then the menu path: a change to another scene
+    // restarts that scene's client code too, and fires both events.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    const auto scene = [](std::string_view name) {
+        const std::string tag = std::string(name);
+        return R"json({"format":"scene","version":2,"root":{},"storage":{)json"
+               R"json("ClientScriptService":{"class":"ClientScriptService","name":"ClientScriptService","children":[)json"
+               R"json({"class":"Script","name":"Loader","properties":{"Source":"print(`)json" +
+               tag +
+               R"json(-client:{game:GetService('NetworkService').Authority}`)"}}]},)json"
+               R"json("ServerScriptService":{"class":"ServerScriptService","name":"ServerScriptService","children":[)json"
+               R"json({"class":"Script","name":"Bodies","properties":{"Source":)json"
+               R"json("local N = game:GetService('NetworkService') )json"
+               R"json(local function give(p) local b = Instance.new('Part') b.Anchored = true b.Parent = workspace p.Character = b end )json"
+               R"json(for _, p in N:GetPlayers() do give(p) end N.PlayerAdded:Connect(give)"}}]}}})json";
+    };
+    const auto content = [&](Machine& machine) {
+        machine.project.write("content/scenes/a.scene.json", scene("a"));
+        machine.project.write("content/scenes/b.scene.json", scene("b"));
+        machine.project.write("src/client/watch.luau", R"(
+            local NetworkService = game:GetService("NetworkService")
+            local SceneService = game:GetService("SceneService")
+            local RunService = game:GetService("RunService")
+            SceneService.SceneLoading:Connect(function(path: string)
+                print(`loading:{path}:{NetworkService.Authority}`)
+            end)
+            SceneService.SceneLoaded:Connect(function(path: string)
+                print(`loaded:{path}:{NetworkService.Authority}`)
+            end)
+            RunService.Heartbeat:Connect(function()
+                local me = NetworkService.LocalPlayer
+                local body = me and me.Character
+                if body ~= nil and not pcall(function() return body.Parent end) then
+                    print("dead-character")
+                end
+            end)
+        )");
+    };
+
+    Machine server;
+    content(server);
+    server.project.write("src/client/host.luau", R"(game:GetService("NetworkService"):Host(47136))");
+    server.boot(wire, scene::NetworkTopology::Solo, "scenes/a.scene.json");
+    Machine client;
+    content(client);
+    client.project.write("src/client/join.luau", R"(game:GetService("NetworkService"):Join("memory:47136"))");
+    client.boot(wire, scene::NetworkTopology::Solo, "scenes/a.scene.json");
+    run(server, client, 90);
+    REQUIRE(client.topology() == scene::NetworkTopology::Replica);
+    // The first join is into the scene the client booted: not loaded again
+    // (D433), its client code started once in the server's world.
+    CHECK(occurrences(log, "a-client:false") == 1);
+    CHECK(occurrences(log, "loading:scenes/a.scene.json:false") == 0);
+
+    // The next match: the same scene again.
+    REQUIRE_FALSE(server.host->loadScene("scenes/a.scene.json", {}).has_value());
+    run(server, client, 90);
+    CHECK(occurrences(log, "a-client:false") == 2);
+    CHECK(occurrences(log, "loading:scenes/a.scene.json:false") == 1);
+    CHECK(occurrences(log, "loaded:scenes/a.scene.json:false") == 1);
+
+    // And another scene: the menu path.
+    REQUIRE_FALSE(server.host->loadScene("scenes/b.scene.json", {}).has_value());
+    run(server, client, 90);
+    CHECK(occurrences(log, "b-client:false") == 1);
+    CHECK(occurrences(log, "loading:scenes/b.scene.json:false") == 1);
+    CHECK(occurrences(log, "loaded:scenes/b.scene.json:false") == 1);
+    CHECK(occurrences(log, "dead-character") == 0);
+    CHECK(client.topology() == scene::NetworkTopology::Replica);
+}

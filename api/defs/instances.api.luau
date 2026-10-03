@@ -146,13 +146,13 @@ local Classes: { Schema.Class } = {
                 Name = "IsAncestorOf",
                 Parameters = { { Name = "descendant", Type = "Instance" } },
                 Returns = { "boolean" },
-                Doc = "Whether descendant sits anywhere below this instance; read strictly, so an instance is not its own ancestor.",
+                Doc = "Whether descendant sits anywhere below this instance; read strictly, so an instance is not its own ancestor. False when either is destroyed, so a check needs no pcall.",
             },
             {
                 Name = "IsDescendantOf",
                 Parameters = { { Name = "ancestor", Type = "Instance" } },
                 Returns = { "boolean" },
-                Doc = "Whether this instance sits anywhere below ancestor; read strictly, so an instance is not its own descendant.",
+                Doc = "Whether this instance sits anywhere below ancestor; read strictly, so an instance is not its own descendant. False when either is destroyed, so a check needs no pcall.",
             },
             {
                 Name = "Clone",
@@ -164,7 +164,7 @@ local Classes: { Schema.Class } = {
                 Name = "Destroy",
                 Parameters = {},
                 Returns = {},
-                Doc = "Removes this instance and its children from the tree synchronously, clears its tags, locks Parent to nil and defers Destroying; the handle stops resolving at the end of that drain.",
+                Doc = "Removes this instance and its children from the tree synchronously, clears its tags, locks Parent to nil and defers Destroying; the handle stops resolving at the end of that drain. After that, Parent still reads nil and IsDescendantOf and IsAncestorOf answer false -- what defensive code asks -- while Name, ClassName and IsA raise, the instance's data being gone.",
             },
             {
                 Name = "GetAttribute",
@@ -4447,7 +4447,9 @@ local Classes: { Schema.Class } = {
                     .. "takes it when it draws a background -- `BackgroundTransparency` under 1 -- so a veil "
                     .. "behind a dialog blocks what is under it, and a clear frame that only holds a layout "
                     .. "lets every press through. Write it and what you wrote stands: `true` on a clear "
-                    .. "frame makes an invisible blocker, `false` on a button makes it something to look at.",
+                    .. "frame makes an invisible blocker, `false` on a button makes it something to look at.\n\n"
+                    .. "**Never while `InputService.PointerLocked`**: a locked pointer is the game's, and nothing "
+                    .. "takes it.",
             },
             {
                 Name = "Visible",
@@ -7502,281 +7504,6 @@ local Classes: { Schema.Class } = {
                 Doc = "A corner here, where the curve would round it.",
             },
         } :: { Schema.Property },
-    },
-    {
-        Name = "DragDetector",
-        Extends = "Instance",
-        Module = "scene",
-        Parents = under("BasePart", "Model"),
-        Storage = "DragDetector",
-        Doc = "Makes the part or model it is in something a player drags (ADR 0126): a drawer pulled "
-            .. "along a line, a lever turned about an axis, a crate pushed across the floor. The engine "
-            .. "casts the pointer -- the mouse, or a finger -- into the world once a tick; a press on the "
-            .. "part within reach begins the drag, and each tick after moves the part the way `DragStyle` "
-            .. "says, within its limits, until the button or the finger comes up.\n\n"
-            .. "**The limits are measured from where the part rested** the first time it was dragged -- or "
-            .. "from `ReferenceInstance`, when it names a part -- so a drawer pulled out and pushed back "
-            .. "never drifts.\n\n"
-            .. "**In a match** the machine that drags tells the authority, which checks the reach from the "
-            .. "player's character and moves a `Geometric` drag there, so every player sees it. A "
-            .. "`Physical` drag of an unanchored part hands the part to the dragging player for its "
-            .. "duration (ADR 0099), and back after.",
-        Properties = {
-            {
-                Name = "DragStyle",
-                Type = "Enum.DragDetectorDragStyle",
-                Default = "Enum.DragDetectorDragStyle.TranslatePlane",
-                Doc = "How the pointer's motion moves the part: along a line, across a plane, turned about an "
-                    .. "axis, turned as a ball, or not at all.",
-            },
-            {
-                Name = "Axis",
-                Type = "vector",
-                Default = "vector.create(0, 1, 0)",
-                ErrorKey = "scene.err.vector_direction",
-                Doc = "The line a `TranslateLine` drag moves along, the normal of a `TranslatePlane` drag's "
-                    .. "plane, or the axis a `RotateAxis` drag turns about -- in `ReferenceInstance`'s frame "
-                    .. "when it names a part, in the world's otherwise.",
-            },
-            {
-                Name = "ReferenceInstance",
-                Type = "Instance?",
-                Default = "nil",
-                Doc = "A part whose frame `Axis` is in, whose position a turn is about, and that the limits "
-                    .. "are measured from. Nil is the world's frame, the part's own pivot and where it rested "
-                    .. "when first dragged. The authority's: a replica drags in the world's frame.",
-            },
-            {
-                Name = "MinDragTranslation",
-                Type = "number",
-                Default = "0",
-                ErrorKey = "scene.err.number_finite",
-                Doc = "How far back along `Axis`, in metres, a `TranslateLine` drag may go from where the part "
-                    .. "rests. Equal to `MaxDragTranslation` is no limit.",
-            },
-            {
-                Name = "MaxDragTranslation",
-                Type = "number",
-                Default = "0",
-                ErrorKey = "scene.err.number_finite",
-                Doc = "How far along `Axis`, in metres, a `TranslateLine` drag may go from where the part rests; "
-                    .. "for a plane, how far from it in any direction. Equal to `MinDragTranslation` is no "
-                    .. "limit.",
-            },
-            {
-                Name = "MinDragAngle",
-                Type = "number",
-                Default = "0",
-                ErrorKey = "scene.err.number_finite",
-                Doc = "How far a `RotateAxis` drag may turn the other way, in degrees, from where the part "
-                    .. "rests. Equal to `MaxDragAngle` is no limit.",
-            },
-            {
-                Name = "MaxDragAngle",
-                Type = "number",
-                Default = "0",
-                ErrorKey = "scene.err.number_finite",
-                Doc = "How far a `RotateAxis` drag may turn, in degrees, from where the part rests. Equal to "
-                    .. "`MinDragAngle` is no limit.",
-            },
-            {
-                Name = "ResponseStyle",
-                Type = "Enum.DragDetectorResponseStyle",
-                Default = "Enum.DragDetectorResponseStyle.Geometric",
-                Doc = "Whether the drag puts the part where it is dragged, pulls it there with a force, or "
-                    .. "only reports. A turn is put there either way: a force turns nothing yet.",
-            },
-            {
-                Name = "MaxForce",
-                Type = "number",
-                Default = "10000",
-                ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "The most force a `Physical` drag pulls with, in newtons.",
-            },
-            {
-                Name = "MaxTorque",
-                Type = "number",
-                Default = "10000",
-                ErrorKey = "scene.err.number_at_least_zero",
-                Inert = true,
-                Doc = "The most torque a `Physical` turn would twist with. Stored, replicated and not used: a "
-                    .. "turn is put where it is dragged (the toolkit's F1 ledger).",
-            },
-            {
-                Name = "Responsiveness",
-                Type = "number",
-                Default = "10",
-                ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How quickly a `Physical` drag closes the gap: the speed it asks for is the distance "
-                    .. "times this, each second.",
-            },
-            {
-                Name = "MaxActivationDistance",
-                Type = "number",
-                Default = "32",
-                ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How far from the player's character, in metres, a drag may begin -- from the camera "
-                    .. "when there is no character.",
-            },
-            {
-                Name = "CursorIcon",
-                Type = "Content",
-                Default = '""',
-                ContentKind = "Texture",
-                Inert = true,
-                Doc = "The picture the pointer shows over it. Stored, replicated and not drawn yet, as "
-                    .. "`ClickDetector`'s.",
-            },
-            {
-                Name = "Enabled",
-                Type = "boolean",
-                Default = "true",
-                Doc = "Whether it can be dragged. Turned off mid-drag, the drag ends.",
-            },
-        } :: { Schema.Property },
-        Events = {
-            {
-                Name = "DragStart",
-                Parameters = {
-                    { Name = "player", Type = "Player" },
-                    { Name = "cursorOrigin", Type = "vector" },
-                    { Name = "cursorDirection", Type = "vector" },
-                    { Name = "hitPoint", Type = "vector" },
-                },
-                Doc = "A press on it within reach began a drag: the pointer's ray, and where it met the part.",
-            },
-            {
-                Name = "DragContinue",
-                Parameters = {
-                    { Name = "player", Type = "Player" },
-                    { Name = "cursorOrigin", Type = "vector" },
-                    { Name = "cursorDirection", Type = "vector" },
-                },
-                Doc = "A tick of the drag, with the pointer's ray: every tick, whether the pointer moved or not.",
-            },
-            {
-                Name = "DragEnd",
-                Parameters = { { Name = "player", Type = "Player" } },
-                Doc = "The button or the finger came up, or the detector went away or was turned off.",
-            },
-        } :: { Schema.Event },
-    },
-    {
-        Name = "ProximityPrompt",
-        Extends = "Instance",
-        Module = "scene",
-        Parents = under("BasePart", "Attachment", "Model"),
-        Storage = "ProximityPrompt",
-        Doc = "A prompt that appears when a player comes near the part, attachment or model it is in -- "
-            .. "**Open**, **Talk**, **Pick up** -- and is triggered by a key, a gamepad button or a tap "
-            .. "(ADR 0126). The engine draws it: the key, the two texts and, for a held prompt, a ring that "
-            .. "fills; `Style = Custom` draws nothing and leaves `PromptShown` and `PromptHidden` to the "
-            .. "game. Its keys go through an input context the engine owns, below a game's own, so a game's "
-            .. "context that sinks the same key wins. **In a match** it is triggered here, and checked and "
-            .. "fired on the authority with the player.",
-        Properties = {
-            {
-                Name = "ActionText",
-                Type = "string",
-                Default = '"Interact"',
-                Doc = "What triggering it does, such as `Open`.",
-            },
-            {
-                Name = "ObjectText",
-                Type = "string",
-                Default = '""',
-                Doc = "What it is, such as `Door`. Empty shows the action alone.",
-            },
-            {
-                Name = "KeyboardKeyCode",
-                Type = "Enum.KeyCode",
-                Default = "Enum.KeyCode.E",
-                Doc = "The key that triggers it.",
-            },
-            {
-                Name = "GamepadKeyCode",
-                Type = "Enum.KeyCode",
-                Default = "Enum.KeyCode.ButtonWest",
-                Doc = "The gamepad button that triggers it.",
-            },
-            {
-                Name = "HoldDuration",
-                Type = "number",
-                Default = "0",
-                ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How long the key must be held, in seconds. 0 triggers on the press.",
-            },
-            {
-                Name = "MaxActivationDistance",
-                Type = "number",
-                Default = "10",
-                ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How near, in metres, the player's character must be for it to show.",
-            },
-            {
-                Name = "RequiresLineOfSight",
-                Type = "boolean",
-                Default = "true",
-                Doc = "Whether something between the character and it hides it.",
-            },
-            {
-                Name = "Exclusivity",
-                Type = "Enum.ProximityPromptExclusivity",
-                Default = "Enum.ProximityPromptExclusivity.OnePerButton",
-                Doc = "Which of several prompts in reach show: the nearest per key, the nearest of all, or "
-                    .. "this one always.",
-            },
-            {
-                Name = "UIOffset",
-                Type = "Vector2",
-                Default = "Vector2.new(0, 0)",
-                Doc = "Moves the drawn prompt on the screen, in pixels, from where it is anchored.",
-            },
-            {
-                Name = "Style",
-                Type = "Enum.ProximityPromptStyle",
-                Default = "Enum.ProximityPromptStyle.Default",
-                Doc = "`Default` is drawn by the engine; `Custom` draws nothing.",
-            },
-            {
-                Name = "Enabled",
-                Type = "boolean",
-                Default = "true",
-                Doc = "Whether it shows and can be triggered.",
-            },
-        } :: { Schema.Property },
-        Events = {
-            {
-                Name = "Triggered",
-                Parameters = { { Name = "player", Type = "Player" } },
-                Doc = "Pressed -- or held for `HoldDuration` -- while shown.",
-            },
-            {
-                Name = "TriggerEnded",
-                Parameters = { { Name = "player", Type = "Player" } },
-                Doc = "The key that triggered it was let go.",
-            },
-            {
-                Name = "PromptButtonHoldBegan",
-                Parameters = { { Name = "player", Type = "Player" } },
-                Doc = "A held prompt's key went down.",
-            },
-            {
-                Name = "PromptButtonHoldEnded",
-                Parameters = { { Name = "player", Type = "Player" } },
-                Doc = "A held prompt's key came up, triggered or not.",
-            },
-            {
-                Name = "PromptShown",
-                Parameters = { { Name = "inputType", Type = "Enum.ProximityPromptInputType" } },
-                Doc = "It appeared on this machine, for the kind of input the player is using.",
-            },
-            {
-                Name = "PromptHidden",
-                Parameters = {},
-                Doc = "It went away on this machine.",
-            },
-        } :: { Schema.Event },
     },
 }
 

@@ -646,6 +646,45 @@ TEST_CASE("a joint answers where the clip put it once one is playing")
     CHECK(at.position.y == doctest::Approx(3.0).epsilon(0.01));
 }
 
+TEST_CASE("G9: a bone's Transform turns its joint, and the joints below it follow")
+{
+    // `Bone.Transform` was documented as the writable half of procedural
+    // animation and moved nothing: a chest turned eighty degrees left the
+    // figure, and the hand bone, as they were -- with a clip and without.
+    Fixture fixture;
+    (void)fixture.rig(threeJointChain());
+    render::AnimationSystem animation(fixture.world, fixture.skeletons);
+
+    // A `Bone` on the middle joint, a quarter turn about Z in its own space.
+    const core::InstanceId bone = fixture.world.create(fixture.instanceClass);
+    scene::AttachmentComponent attachment;
+    attachment.jointIndex = 1;
+    // Columns are the axes: right becomes up, up becomes left.
+    attachment.transform.rotation.m[0][0] = 0.0f;
+    attachment.transform.rotation.m[0][1] = 1.0f;
+    attachment.transform.rotation.m[1][0] = -1.0f;
+    attachment.transform.rotation.m[1][1] = 0.0f;
+    fixture.world.attachments().add(bone, attachment);
+    (void)fixture.world.setParent(bone, fixture.mesh);
+
+    animation.sample(1.0 / 60.0);
+    core::CFrameD at;
+    // The middle joint stays where it was, turned.
+    REQUIRE(animation.jointModel(fixture.mesh, 1, at));
+    CHECK(at.position.y == doctest::Approx(1.0).epsilon(0.01));
+    // The hand, a unit along the turned joint's up: to its side now, not above.
+    REQUIRE(animation.jointModel(fixture.mesh, 2, at));
+    CHECK(at.position.x == doctest::Approx(-1.0).epsilon(0.01));
+    CHECK(at.position.y == doctest::Approx(1.0).epsilon(0.01));
+
+    // The identity again is a bone nobody drives.
+    fixture.world.attachments().find(bone)->transform = core::CFrameD{};
+    animation.sample(1.0 / 60.0);
+    REQUIRE(animation.jointModel(fixture.mesh, 2, at));
+    CHECK(at.position.x == doctest::Approx(0.0).epsilon(0.01));
+    CHECK(at.position.y == doctest::Approx(2.0).epsilon(0.01));
+}
+
 TEST_CASE("an override moves the joints below it")
 {
     // A ragdoll simulates a dozen bones and a hand has twenty. The ones it does

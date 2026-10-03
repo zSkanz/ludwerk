@@ -531,21 +531,6 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         return false;
     }
 
-    if (field.pool == "teams") {
-        const scene::TeamComponent* team = world.teams().find(id);
-        if (team == nullptr)
-            return false;
-        if (field.name == "Color") {
-            setVec3(out, core::Vec3{team->color.r, team->color.g, team->color.b});
-            return true;
-        }
-        if (field.name == "AutoAssign") {
-            setBool(out, team->autoAssign);
-            return true;
-        }
-        return false;
-    }
-
     if (field.pool == "workspaces") {
         const scene::WorkspaceComponent* workspace = world.workspaces().find(id);
         if (workspace == nullptr)
@@ -724,66 +709,6 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         return false;
     }
 
-    if (field.pool == "dragDetectors") {
-        const scene::DragDetectorComponent* component = world.dragDetectors().find(id);
-        if (component == nullptr) {
-            return false;
-        }
-        if (field.name == "DragStyle") {
-            setI32(out, component->dragStyle);
-            return true;
-        }
-        if (field.name == "ResponseStyle") {
-            setI32(out, component->responseStyle);
-            return true;
-        }
-        if (field.name == "Axis") {
-            setVec3(out, component->axis);
-            return true;
-        }
-        if (field.name == "MinDragTranslation") {
-            setF32(out, static_cast<core::f32>(component->minDragTranslation));
-            return true;
-        }
-        if (field.name == "MaxDragTranslation") {
-            setF32(out, static_cast<core::f32>(component->maxDragTranslation));
-            return true;
-        }
-        if (field.name == "MinDragAngle") {
-            setF32(out, static_cast<core::f32>(component->minDragAngle));
-            return true;
-        }
-        if (field.name == "MaxDragAngle") {
-            setF32(out, static_cast<core::f32>(component->maxDragAngle));
-            return true;
-        }
-        if (field.name == "MaxForce") {
-            setF32(out, static_cast<core::f32>(component->maxForce));
-            return true;
-        }
-        if (field.name == "MaxTorque") {
-            setF32(out, static_cast<core::f32>(component->maxTorque));
-            return true;
-        }
-        if (field.name == "Responsiveness") {
-            setF32(out, static_cast<core::f32>(component->responsiveness));
-            return true;
-        }
-        if (field.name == "MaxActivationDistance") {
-            setF32(out, static_cast<core::f32>(component->maxActivationDistance));
-            return true;
-        }
-        if (field.name == "CursorIcon") {
-            setU32(out, component->cursorIcon.id);
-            return true;
-        }
-        if (field.name == "Enabled") {
-            setBool(out, component->enabled);
-            return true;
-        }
-        return false;
-    }
-
     if (field.pool == "clickDetectors") {
         const scene::ClickDetectorComponent* component = world.clickDetectors().find(id);
         if (component == nullptr) {
@@ -795,54 +720,6 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "CursorIcon") {
             setU32(out, component->cursorIcon.id);
-            return true;
-        }
-        return false;
-    }
-
-    if (field.pool == "proximityPrompts") {
-        const scene::ProximityPromptComponent* component = world.proximityPrompts().find(id);
-        if (component == nullptr) {
-            return false;
-        }
-        if (field.name == "ActionText") {
-            setU32(out, component->actionText.id);
-            return true;
-        }
-        if (field.name == "ObjectText") {
-            setU32(out, component->objectText.id);
-            return true;
-        }
-        if (field.name == "KeyboardKeyCode") {
-            setI32(out, component->keyboardKeyCode);
-            return true;
-        }
-        if (field.name == "GamepadKeyCode") {
-            setI32(out, component->gamepadKeyCode);
-            return true;
-        }
-        if (field.name == "HoldDuration") {
-            setF32(out, static_cast<core::f32>(component->holdDuration));
-            return true;
-        }
-        if (field.name == "MaxActivationDistance") {
-            setF32(out, static_cast<core::f32>(component->maxActivationDistance));
-            return true;
-        }
-        if (field.name == "RequiresLineOfSight") {
-            setBool(out, component->requiresLineOfSight);
-            return true;
-        }
-        if (field.name == "Exclusivity") {
-            setI32(out, component->exclusivity);
-            return true;
-        }
-        if (field.name == "Style") {
-            setI32(out, component->style);
-            return true;
-        }
-        if (field.name == "Enabled") {
-            setBool(out, component->enabled);
             return true;
         }
         return false;
@@ -1458,66 +1335,6 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         return false;
     }
 
-    if (field.pool == "dragDetectors") {
-        scene::DragDetectorComponent* component = world.dragDetectors().find(id);
-        if (component == nullptr) {
-            return false;
-        }
-        if (field.name == "DragStyle") {
-            component->dragStyle = asI32(value);
-            return true;
-        }
-        if (field.name == "ResponseStyle") {
-            component->responseStyle = asI32(value);
-            return true;
-        }
-        if (field.name == "Axis") {
-            component->axis = asVec3(value);
-            return true;
-        }
-        if (field.name == "MinDragTranslation") {
-            component->minDragTranslation = static_cast<core::f64>(asF32(value));
-            return true;
-        }
-        if (field.name == "MaxDragTranslation") {
-            component->maxDragTranslation = static_cast<core::f64>(asF32(value));
-            return true;
-        }
-        if (field.name == "MinDragAngle") {
-            component->minDragAngle = static_cast<core::f64>(asF32(value));
-            return true;
-        }
-        if (field.name == "MaxDragAngle") {
-            component->maxDragAngle = static_cast<core::f64>(asF32(value));
-            return true;
-        }
-        if (field.name == "MaxForce") {
-            component->maxForce = static_cast<core::f64>(asF32(value));
-            return true;
-        }
-        if (field.name == "MaxTorque") {
-            component->maxTorque = static_cast<core::f64>(asF32(value));
-            return true;
-        }
-        if (field.name == "Responsiveness") {
-            component->responsiveness = static_cast<core::f64>(asF32(value));
-            return true;
-        }
-        if (field.name == "MaxActivationDistance") {
-            component->maxActivationDistance = static_cast<core::f64>(asF32(value));
-            return true;
-        }
-        if (field.name == "CursorIcon") {
-            component->cursorIcon = core::NameAtom{asU32(value)};
-            return true;
-        }
-        if (field.name == "Enabled") {
-            component->enabled = asBool(value);
-            return true;
-        }
-        return false;
-    }
-
     if (field.pool == "clickDetectors") {
         scene::ClickDetectorComponent* component = world.clickDetectors().find(id);
         if (component == nullptr) {
@@ -1529,54 +1346,6 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "CursorIcon") {
             component->cursorIcon = core::NameAtom{asU32(value)};
-            return true;
-        }
-        return false;
-    }
-
-    if (field.pool == "proximityPrompts") {
-        scene::ProximityPromptComponent* component = world.proximityPrompts().find(id);
-        if (component == nullptr) {
-            return false;
-        }
-        if (field.name == "ActionText") {
-            component->actionText = core::NameAtom{asU32(value)};
-            return true;
-        }
-        if (field.name == "ObjectText") {
-            component->objectText = core::NameAtom{asU32(value)};
-            return true;
-        }
-        if (field.name == "KeyboardKeyCode") {
-            component->keyboardKeyCode = asI32(value);
-            return true;
-        }
-        if (field.name == "GamepadKeyCode") {
-            component->gamepadKeyCode = asI32(value);
-            return true;
-        }
-        if (field.name == "HoldDuration") {
-            component->holdDuration = static_cast<core::f64>(asF32(value));
-            return true;
-        }
-        if (field.name == "MaxActivationDistance") {
-            component->maxActivationDistance = static_cast<core::f64>(asF32(value));
-            return true;
-        }
-        if (field.name == "RequiresLineOfSight") {
-            component->requiresLineOfSight = asBool(value);
-            return true;
-        }
-        if (field.name == "Exclusivity") {
-            component->exclusivity = asI32(value);
-            return true;
-        }
-        if (field.name == "Style") {
-            component->style = asI32(value);
-            return true;
-        }
-        if (field.name == "Enabled") {
-            component->enabled = asBool(value);
             return true;
         }
         return false;
@@ -1954,22 +1723,6 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "Flying") {
             body->flying = asBool(value);
-            return true;
-        }
-        return false;
-    }
-
-    if (field.pool == "teams") {
-        scene::TeamComponent* team = world.teams().find(id);
-        if (team == nullptr)
-            return false;
-        if (field.name == "Color") {
-            const core::Vec3 v = asVec3(value);
-            team->color = core::Color3{v.x, v.y, v.z};
-            return true;
-        }
-        if (field.name == "AutoAssign") {
-            team->autoAssign = asBool(value);
             return true;
         }
         return false;
@@ -2488,7 +2241,7 @@ usize clearForReplica(scene::World& world, InstanceId workspace, ScriptTemplates
         const std::string_view name = world.atoms().text(descriptor->name);
         // `Lighting`'s children travel too (ADR 0096): the authority's
         // effects, air and sky replace whatever the replica's scene put there.
-        if (name == "ReplicatedStorage" || name == "Lighting" || name == "TeamService") {
+        if (name == "ReplicatedStorage" || name == "Lighting") {
             cleared += clearReplicatedTaking(world, service, taking);
         }
         else if (name == "ServerStorage" || name == "ServerScriptService") {

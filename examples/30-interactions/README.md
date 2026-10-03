@@ -1,15 +1,12 @@
 # 30-interactions
 
-A room used without a line of input code (ADR 0126). A red button on the wall
-has a `ClickDetector`: click it -- or tap it -- and the lamp turns on. The door
-has a `ProximityPrompt`: walk up to it and a prompt appears; hold E, or the
-gamepad's X, or tap the prompt, and the door swings open. The drawer in the desk
-and the lever on the west wall have `DragDetector`s: pull the drawer out along
-its runners, and turn the lever about its hinge to brighten or dim the lamp.
-
-The engine casts the pointer into the world once a tick, measures the reach
-from your character, draws the prompt with its hold ring, and fires the events
-on the authority with the player who pressed -- so the server's script is the
-whole of the room's behaviour, and the same in a match as alone.
+A room where a click is the engine's and the rest is the game's own code. The
+red button on the wall has a `ClickDetector`: click it -- or tap it -- and the
+lamp turns on. The door opens when you hold E near it: the server measures
+the distance from your character and how long you held, and the client shows a
+hint while you are in reach. The drawer in the desk and the lever on the west
+wall are taken hold of with a click and moved with the pointer: the client
+sends the pointer's ray while it holds one, and the server moves it, along the
+runners or about the hinge, within its limits.
 
 Run it with `run.bat`. WASD walks.

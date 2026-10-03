@@ -74,6 +74,11 @@ export type Rig = {
     --- character's movement should be expressed in: pressing "forward" means
     --- away from the camera, not along the world's -Z.
     Basis: (self: Rig) -> (vector, vector),
+    --- Stops the rig: its render step is unbound and it moves the camera no
+    --- more. The camera stays -- it may be the scene's own. A rig whose
+    --- subject has left the world (a character that died) holds still until
+    --- it is given another, so this is for a rig that is done for good.
+    Destroy: (self: Rig) -> (),
 }
 
 export type Options = {
@@ -113,6 +118,21 @@ export type Options = {
 
 local RigImpl = {}
 RigImpl.__index = RigImpl
+
+-- Whether the subject is in the world to be followed. A character that died
+-- is destroyed while the rig that followed it is still bound; asking its
+-- position would raise every frame until the game made a new rig.
+local function present(self: any): boolean
+    return self.Subject:IsDescendantOf(game)
+end
+
+local function destroy(self: any)
+    if self.Step ~= nil then
+        RunService:UnbindFromRenderStep(self.Step)
+        self.Step = nil
+    end
+end
+RigImpl.Destroy = destroy
 
 -- **Yaw DECREASES to turn right, and the minus signs below are why.** The rig's
 -- forward is `(-sin y, 0, -cos y)`: at a yaw of zero it looks down -Z, and
@@ -179,12 +199,14 @@ local function frame(self: any, dt: number)
         self:Look(self.LookAction:GetState() :: Vector2)
     end
     self.Yaw += self.Spin * dt
-    place(self, self.Subject:GetRenderCFrame().Position, dt)
+    if present(self) then
+        place(self, self.Subject:GetRenderCFrame().Position, dt)
+    end
 end
 
 function RigImpl.Update(self: any, dt: number)
     -- A frame drives it where one is drawn.
-    if self.Framed then
+    if self.Framed or not present(self) then
         return
     end
     self.Yaw += self.Spin * dt
@@ -258,7 +280,8 @@ function Camera.thirdPerson(options: Options): Rig
     -- Every drawn frame, at the camera's place in the frame (ADR 0136). The
     -- binding goes with the script that made the rig, and its scene.
     Rigs += 1
-    RunService:BindToRenderStep(`engine.camera.rig{Rigs}`, Enum.RenderPriority.Camera.Value, function(dt: number)
+    rigAny.Step = `engine.camera.rig{Rigs}`
+    RunService:BindToRenderStep(rigAny.Step, Enum.RenderPriority.Camera.Value, function(dt: number)
         frame(rigAny, dt)
     end)
 
@@ -300,15 +323,19 @@ local function frameFirst(self: any, dt: number)
     if everyFrame(self.LookAction) and InputService.PointerLocked then
         self:Look(self.LookAction:GetState() :: Vector2)
     end
-    placeFirst(self, self.Subject:GetRenderCFrame().Position)
+    if present(self) then
+        placeFirst(self, self.Subject:GetRenderCFrame().Position)
+    end
 end
 
 function FirstImpl.Update(self: any, _dt: number)
-    if self.Framed then
+    if self.Framed or not present(self) then
         return
     end
     placeFirst(self, self.Subject.Position)
 end
+
+FirstImpl.Destroy = destroy
 
 --- A first-person rig: the camera at the subject's eyes, looking where the
 --- pointer or the stick has turned it.
@@ -365,7 +392,8 @@ function Camera.firstPerson(options: Options): Rig & { Pitch: number }
     placeFirst(rigAny, options.Subject.Position)
 
     Rigs += 1
-    RunService:BindToRenderStep(`engine.camera.rig{Rigs}`, Enum.RenderPriority.Camera.Value, function(dt: number)
+    rigAny.Step = `engine.camera.rig{Rigs}`
+    RunService:BindToRenderStep(rigAny.Step, Enum.RenderPriority.Camera.Value, function(dt: number)
         frameFirst(rigAny, dt)
     end)
 

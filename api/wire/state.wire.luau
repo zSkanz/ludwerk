@@ -729,26 +729,6 @@ local SkyFields: { Schema.Field } = {
 
 local NoFields: { Schema.Field } = {}
 
-local TeamFields: { Schema.Field } = {
-    {
-        Name = "Color",
-        Id = 1,
-        Encoding = "Color3",
-        Source = "Component",
-        Component = "teams",
-        Doc = "What a side looks like on every machine: a name tag painted on one replica and not another "
-            .. "is two games.",
-    },
-    {
-        Name = "AutoAssign",
-        Id = 2,
-        Encoding = "Bool",
-        Source = "Component",
-        Component = "teams",
-        Doc = "Only the authority assigns, but a replica's scripts may show which sides are open.",
-    },
-}
-
 local LightingFields: { Schema.Field } = {
     {
         Name = "ClockTime",
@@ -1496,199 +1476,9 @@ local WaterPointFields: { Schema.Field } = {
 -- part it is handed, to pull it: the shape, the limits, the force. Not
 -- `ReferenceInstance`, which is the authority's -- a replica drags in the
 -- world's frame, and a `Geometric` drag is moved by the authority anyway.
-local DragDetectorFields: { Schema.Field } = {
-    {
-        Name = "DragStyle",
-        Id = 1,
-        Encoding = "I32",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "`Enum.DragDetectorDragStyle`: a replica decides a drag's shape where it drags.",
-    },
-    {
-        Name = "ResponseStyle",
-        Id = 2,
-        Encoding = "I32",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "`Enum.DragDetectorResponseStyle`: whether the replica pulls a part it holds, or asks.",
-    },
-    {
-        Name = "Axis",
-        Id = 3,
-        Encoding = "Vector3",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "The line, the plane's normal or the axis a replica drags along, in the world's frame.",
-    },
-    {
-        Name = "MinDragTranslation",
-        Id = 4,
-        Encoding = "F32",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "The line's limit back, from where the part rested.",
-    },
-    {
-        Name = "MaxDragTranslation",
-        Id = 5,
-        Encoding = "F32",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "The line's limit out, and a plane's radius.",
-    },
-    {
-        Name = "MinDragAngle",
-        Id = 6,
-        Encoding = "F32",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "A turn's limit the other way, in degrees.",
-    },
-    {
-        Name = "MaxDragAngle",
-        Id = 7,
-        Encoding = "F32",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "A turn's limit, in degrees.",
-    },
-    {
-        Name = "MaxForce",
-        Id = 8,
-        Encoding = "F32",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "A `Physical` drag is pulled on the machine that holds the part.",
-    },
-    {
-        Name = "MaxTorque",
-        Id = 9,
-        Encoding = "F32",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "Stored and inert, as on the authority.",
-    },
-    {
-        Name = "Responsiveness",
-        Id = 10,
-        Encoding = "F32",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "How quickly a `Physical` drag the replica holds closes the gap.",
-    },
-    {
-        Name = "MaxActivationDistance",
-        Id = 11,
-        Encoding = "F32",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "A replica decides what its pointer can begin a drag on.",
-    },
-    {
-        Name = "CursorIcon",
-        Id = 12,
-        Encoding = "NameAtom",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "What the pointer shows over it, on the machine that points.",
-    },
-    {
-        Name = "Enabled",
-        Id = 13,
-        Encoding = "Bool",
-        Source = "Component",
-        Component = "dragDetectors",
-        Doc = "A replica begins no drag on one turned off.",
-    },
-}
-
 -- Everything a replica needs to show a prompt and trigger it: the texts, the
 -- keys, the reach, the rules. `UIOffset` is not carried -- it moves a drawn
 -- box by pixels, and a game that sets it sets it where the prompt is drawn.
-local ProximityPromptFields: { Schema.Field } = {
-    {
-        Name = "ActionText",
-        Id = 1,
-        Encoding = "NameAtom",
-        Source = "Component",
-        Component = "proximityPrompts",
-        Doc = "The words of the action, drawn on the prompt.",
-    },
-    {
-        Name = "ObjectText",
-        Id = 2,
-        Encoding = "NameAtom",
-        Source = "Component",
-        Component = "proximityPrompts",
-        Doc = "What it is, drawn above the action.",
-    },
-    {
-        Name = "KeyboardKeyCode",
-        Id = 3,
-        Encoding = "I32",
-        Source = "Component",
-        Component = "proximityPrompts",
-        Doc = "The key that triggers it, which the replica listens for.",
-    },
-    {
-        Name = "GamepadKeyCode",
-        Id = 4,
-        Encoding = "I32",
-        Source = "Component",
-        Component = "proximityPrompts",
-        Doc = "The gamepad button that triggers it.",
-    },
-    {
-        Name = "HoldDuration",
-        Id = 5,
-        Encoding = "F32",
-        Source = "Component",
-        Component = "proximityPrompts",
-        Doc = "How long the replica holds before it triggers.",
-    },
-    {
-        Name = "MaxActivationDistance",
-        Id = 6,
-        Encoding = "F32",
-        Source = "Component",
-        Component = "proximityPrompts",
-        Doc = "How near a replica's character must be for it to show; the authority checks the same.",
-    },
-    {
-        Name = "RequiresLineOfSight",
-        Id = 7,
-        Encoding = "Bool",
-        Source = "Component",
-        Component = "proximityPrompts",
-        Doc = "Whether the replica hides it behind something.",
-    },
-    {
-        Name = "Exclusivity",
-        Id = 8,
-        Encoding = "I32",
-        Source = "Component",
-        Component = "proximityPrompts",
-        Doc = "Which of several show.",
-    },
-    {
-        Name = "Style",
-        Id = 9,
-        Encoding = "I32",
-        Source = "Component",
-        Component = "proximityPrompts",
-        Doc = "Whether the engine draws it.",
-    },
-    {
-        Name = "Enabled",
-        Id = 10,
-        Encoding = "Bool",
-        Source = "Component",
-        Component = "proximityPrompts",
-        Doc = "A disabled prompt shows nowhere.",
-    },
-}
-
 --- **Joints on the wire** (protocol 34, NA34). They were excluded on the
 --- argument that a replica's bodies are kinematic and solve nothing -- true of
 --- what the authority simulates, and false of what a replica OWNS (ADR 0099) or
@@ -2746,12 +2536,6 @@ local Classes: { Schema.Class } = {
         Fields = ClickDetectorFields,
     },
     {
-        Name = "ProximityPrompt",
-        Doc = "A prompt a player triggers (ADR 0126, protocol 21). Shown and triggered on the machine near it, "
-            .. "checked and fired on the authority.",
-        Fields = ProximityPromptFields,
-    },
-    {
         Name = "Water",
         Doc = "Water (ADR 0118, protocol 28): its surface and what it does to what floats in it.",
         Fields = WaterFields,
@@ -2765,12 +2549,6 @@ local Classes: { Schema.Class } = {
         Name = "WaterPoint",
         Doc = "A point a river runs through (ADR 0118, protocol 28).",
         Fields = WaterPointFields,
-    },
-    {
-        Name = "DragDetector",
-        Doc = "A part a player drags (ADR 0126, protocol 26). Each machine begins its own drags and tells the "
-            .. "authority, so the detector has to be there.",
-        Fields = DragDetectorFields,
     },
     {
         Name = "BloomEffect",
@@ -2806,20 +2584,6 @@ local Classes: { Schema.Class } = {
         Name = "Sky",
         Doc = "The world's look under `Lighting` (ADR 0096, protocol 13): the authority's is every replica's. A camera's stays on its own screen.",
         Fields = SkyFields,
-    },
-    {
-        Name = "TeamService",
-        Service = true,
-        Contents = true,
-        Doc = "Where the sides live (ADR 0099, protocol 14): every `Team` under it reaches every "
-            .. "replica, whatever its distance, as `ReplicatedStorage`'s contents do.",
-        Fields = NoFields,
-    },
-    {
-        Name = "Team",
-        Doc = "A side (ADR 0099, protocol 14). Who is on it is not a field of the team: it is the "
-            .. "roster's third column, beside each player's character.",
-        Fields = TeamFields,
     },
     {
         Name = "Workspace",
@@ -2981,8 +2745,9 @@ local Excluded: { Schema.Excluded } = {
         Name = "Player",
         Reason = "Lives under `NetworkService`, which is not replicated, and each end makes its own: an "
             .. "authority one per peer, a replica one for itself and one for each player the `Players` "
-            .. "roster names. What a replica knows of a player -- their number, their character and "
-            .. "their team -- is the roster, not a snapshot of the instance.",
+            .. "roster names. What a replica knows of a player -- their number and their character -- "
+            .. "is the roster, not a snapshot of the instance; their attributes travel on their own "
+            .. "(ADR 0106), a side included.",
     },
     {
         Name = "DataModel",
@@ -3503,12 +3268,12 @@ local Messages: { Schema.Message } = {
                 Each = {
                     { Name = "userId", Type = "u32" },
                     { Name = "character", Type = "u32", Doc = "The network id of their `Character`, or 0." },
-                    { Name = "team", Type = "u32", Doc = "The network id of their `Team`, or 0." },
                 },
             },
         },
-        Doc = "Who is taking part: every player's number, their character's network id and their "
-            .. "team's (protocol 14), zero for none, sent whole whenever any of it changes and "
+        Doc = "Who is taking part: every player's number and their character's network id, zero for "
+            .. "none -- the team's column went with teams (protocol 35) -- sent whole whenever any of it "
+            .. "changes and "
             .. "once on welcome. Whole rather than as joins and leaves, because a roster is a few "
             .. "numbers and a list a replica can only ever replace cannot drift from the authority's.",
     },
@@ -3689,6 +3454,13 @@ local Messages: { Schema.Message } = {
                     { Name = "byte", Type = "u8" },
                 },
             },
+            {
+                Name = "load",
+                Type = "u32",
+                Doc = "How many scenes the authority has loaded (protocol 35, G18). A replica already in "
+                    .. "`path` loads it again when this moved: the next match in the same scene is a scene change, "
+                    .. "and was taken for the join's.",
+            },
         },
         Doc = "The scene the authority is in (ADR 0106, protocol 16). Sent when it changes, and once to "
             .. "every replica that joins. The replica loads the same scene from its own package, without "
@@ -3735,42 +3507,18 @@ local Messages: { Schema.Message } = {
             {
                 Name = "detector",
                 Type = "u32",
-                Doc = "The network id of the `ClickDetector` or the `ProximityPrompt`.",
+                Doc = "The network id of the `ClickDetector`.",
             },
             {
                 Name = "kind",
                 Type = "u8",
-                Doc = "0 a click, 1 a right click, 2 triggered, 3 trigger ended, 4 hold began, 5 hold ended.",
+                Doc = "0 a click, 1 a right click (a prompt's kinds went with prompts, protocol 35).",
             },
         },
         Doc = "A player pressed something (ADR 0126, protocol 21). The replica fired it already, for its own "
             .. "scripts; the authority checks it -- the detector is live and enabled, and within reach of the "
             .. "sender's character -- and fires it there with the connection's player, never one the message "
             .. "names. Counted against the same per-tick limit as `RemoteToAuthority`.",
-    },
-    {
-        Name = "DragInput",
-        Id = 21,
-        Channel = "Control",
-        Direction = "ToAuthority",
-        Layout = {
-            { Name = "detector", Type = "u32", Doc = "The network id of the `DragDetector`." },
-            { Name = "kind", Type = "u8", Doc = "0 the drag began, 1 a tick of it, 2 it ended." },
-            { Name = "originX", Type = "u64", Doc = "The pointer's ray: where it starts, an f64's bits." },
-            { Name = "originY", Type = "u64" },
-            { Name = "originZ", Type = "u64" },
-            { Name = "directionX", Type = "f32", Doc = "Its direction, of length one." },
-            { Name = "directionY", Type = "f32" },
-            { Name = "directionZ", Type = "f32" },
-            { Name = "hitX", Type = "u64", Doc = "Where a drag that began met the part, an f64's bits." },
-            { Name = "hitY", Type = "u64" },
-            { Name = "hitZ", Type = "u64" },
-        },
-        Doc = "A player dragging something (ADR 0126, protocol 26). The replica fired it already; the "
-            .. "authority checks the beginning -- the detector is live and enabled, the hit within reach of the "
-            .. "sender's character -- and from then on works the drag out from the rays itself, the way the "
-            .. "replica did: a `Geometric` drag is moved there, and a `Physical` one of an unanchored part is "
-            .. "handed to the player until it ends. Counted against the per-tick limit of `RemoteToAuthority`.",
     },
     {
         Name = "TerrainChunks",

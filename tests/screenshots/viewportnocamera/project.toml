@@ -1,0 +1,13 @@
+# A ViewportFrame draws with its own camera when the world has none (G7): a
+# menu that shows item previews over an empty world showed empty frames.
+
+[project]
+name = "Ludwerk Viewport Without Camera"
+id = "dev.ludwerk.viewportnocamera"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Viewport Without Camera"
+width = 960
+height = 540

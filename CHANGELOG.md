@@ -19,8 +19,24 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
-- **The wire is protocol 34**: a client and a server of different builds refuse
+- **The wire is protocol 35**: a client and a server of different builds refuse
   each other -- and now say so (`JoinFailed`, "another version of the game").
+- **Teams are withdrawn** (ADR 0099, amended by the owner): `TeamService`,
+  `Team`, `Player.Team` and `AutoAssign` are gone. A side is the game's own
+  state -- `player:SetAttribute("Team", "Red")` on the authority, which every
+  machine reads. Network ownership is unchanged.
+- **`ProximityPrompt`, `ProximityPromptService` and `DragDetector` are
+  withdrawn** (ADR 0126, amended by the owner), with their enums
+  (`ProximityPromptStyle`, `ProximityPromptExclusivity`,
+  `ProximityPromptInputType`, `DragDetectorDragStyle`,
+  `DragDetectorResponseStyle`): a prompt and a world drag are the game's own
+  code, and `examples/30-interactions` writes both in Luau. `ClickDetector`
+  and `UIDragDetector` stay. A scene that holds one of the withdrawn classes
+  loads without it. Text chat (ADR 0132) will not be built: a game's chat is
+  its own code on `RemoteEvent`.
+- **A locked pointer reaches no part of the interface** (D490): nothing under
+  it is hovered, pressed or activated; a game that clicked a button with the
+  pointer locked frees it first.
 - **A property read through `game`, `workspace` or `script` is read when it
   runs** (D481); it was the value the script started with.
 - **A join changes nothing until the server takes it** (ADR 0106, amended): a
@@ -167,6 +183,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A remote carries `Color3`, `CFrame`, `Vector2`, `UDim`, `UDim2` and
+  `EnumItem`** (D495), each arriving equal to what was sent.
+- **`Enum.ScaleType.Fit` and `Crop`**: an image shown whole in its box's
+  shape, centred, or filling the box with the overhang cut.
 - **Joints travel** (NA34): attachments, every constraint, welds, movers and
   `NoCollisionConstraint` reach the replicas, and the machine that owns a
   vehicle's parts solves its hinges and drives its motors; `Workspace.Gravity`
@@ -972,6 +992,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A server that loads its own scene again restarts every client's scene
+  code** (D489), and `SceneLoading` fires on a client before its scene changes;
+  a round restarted by `LoadScene` used to restart on the server alone.
+- **`Bone.Transform` turns its joint**, and the joints below it follow (D491).
+- **`PreRender` and `BindToRenderStep` run without a window** (D493), so a bot
+  or a headless test reads input and moves its camera as a player's machine
+  does; and **a `ViewportFrame` draws when the world has no camera** (D496).
+- **A camera rig whose subject died holds still** (D497) where it raised every
+  frame, and `rig:Destroy()` stops a rig for good.
+- **`IsDescendantOf` and `IsAncestorOf` answer `false` for a destroyed
+  instance** (D494), and a frame whose text filled the glyph store is built
+  again rather than drawn with glyphs that had moved (D492).
 - **Parts that vanished on Windows** (D484): an instanced run drawn after single
   draws on other meshes read every instance from the first under D3D12 -- an
   SDL backend defect, patched. A `MeshPart` with its own materials, or a new

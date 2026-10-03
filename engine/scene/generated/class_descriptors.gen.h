@@ -80,42 +80,37 @@ inline constexpr EnumId BorderStrokePositionEnumId = 39;
 inline constexpr EnumId ViewQualityEnumId = 40;
 inline constexpr EnumId SceneLoadStatusEnumId = 41;
 inline constexpr EnumId AssetFetchStatusEnumId = 42;
-inline constexpr EnumId ProximityPromptExclusivityEnumId = 43;
-inline constexpr EnumId ProximityPromptStyleEnumId = 44;
-inline constexpr EnumId ProximityPromptInputTypeEnumId = 45;
-inline constexpr EnumId DragDetectorDragStyleEnumId = 46;
-inline constexpr EnumId DragDetectorResponseStyleEnumId = 47;
-inline constexpr EnumId TerrainPaintModeEnumId = 48;
-inline constexpr EnumId WaterShapeEnumId = 49;
-inline constexpr EnumId RenderPriorityEnumId = 50;
-inline constexpr EnumId FocusLossReasonEnumId = 51;
-inline constexpr EnumId TextInputKeyboardEnumId = 52;
-inline constexpr EnumId SwipeDirectionEnumId = 53;
-inline constexpr EnumId PlatformEnumId = 54;
-inline constexpr EnumId ActuatorTypeEnumId = 55;
-inline constexpr EnumId ActuatorRelativeToEnumId = 56;
-inline constexpr EnumId VelocityConstraintModeEnumId = 57;
-inline constexpr EnumId PositionAlignmentModeEnumId = 58;
-inline constexpr EnumId OrientationAlignmentModeEnumId = 59;
-inline constexpr EnumId VibrationMotorEnumId = 60;
-inline constexpr EnumId HighlightDepthModeEnumId = 61;
-inline constexpr EnumId TextureModeEnumId = 62;
-inline constexpr EnumId StartCornerEnumId = 63;
-inline constexpr EnumId UIFlexAlignmentEnumId = 64;
-inline constexpr EnumId UIFlexModeEnumId = 65;
-inline constexpr EnumId ItemLineAlignmentEnumId = 66;
-inline constexpr EnumId AspectTypeEnumId = 67;
-inline constexpr EnumId DominantAxisEnumId = 68;
-inline constexpr EnumId UIDragDetectorDragStyleEnumId = 69;
-inline constexpr EnumId UIDragDetectorResponseStyleEnumId = 70;
-inline constexpr EnumId GraphicsQualityEnumId = 71;
-inline constexpr EnumId GraphicsLevelEnumId = 72;
-inline constexpr EnumId GraphicsGroupEnumId = 73;
-inline constexpr EnumId ShadowQualityEnumId = 74;
-inline constexpr EnumId AntiAliasingModeEnumId = 75;
-inline constexpr EnumId TextureQualityEnumId = 76;
-inline constexpr EnumId WindowModeEnumId = 77;
-inline constexpr EnumId SettingSourceEnumId = 78;
+inline constexpr EnumId TerrainPaintModeEnumId = 43;
+inline constexpr EnumId WaterShapeEnumId = 44;
+inline constexpr EnumId RenderPriorityEnumId = 45;
+inline constexpr EnumId FocusLossReasonEnumId = 46;
+inline constexpr EnumId TextInputKeyboardEnumId = 47;
+inline constexpr EnumId SwipeDirectionEnumId = 48;
+inline constexpr EnumId PlatformEnumId = 49;
+inline constexpr EnumId ActuatorTypeEnumId = 50;
+inline constexpr EnumId ActuatorRelativeToEnumId = 51;
+inline constexpr EnumId VelocityConstraintModeEnumId = 52;
+inline constexpr EnumId PositionAlignmentModeEnumId = 53;
+inline constexpr EnumId OrientationAlignmentModeEnumId = 54;
+inline constexpr EnumId VibrationMotorEnumId = 55;
+inline constexpr EnumId HighlightDepthModeEnumId = 56;
+inline constexpr EnumId TextureModeEnumId = 57;
+inline constexpr EnumId StartCornerEnumId = 58;
+inline constexpr EnumId UIFlexAlignmentEnumId = 59;
+inline constexpr EnumId UIFlexModeEnumId = 60;
+inline constexpr EnumId ItemLineAlignmentEnumId = 61;
+inline constexpr EnumId AspectTypeEnumId = 62;
+inline constexpr EnumId DominantAxisEnumId = 63;
+inline constexpr EnumId UIDragDetectorDragStyleEnumId = 64;
+inline constexpr EnumId UIDragDetectorResponseStyleEnumId = 65;
+inline constexpr EnumId GraphicsQualityEnumId = 66;
+inline constexpr EnumId GraphicsLevelEnumId = 67;
+inline constexpr EnumId GraphicsGroupEnumId = 68;
+inline constexpr EnumId ShadowQualityEnumId = 69;
+inline constexpr EnumId AntiAliasingModeEnumId = 70;
+inline constexpr EnumId TextureQualityEnumId = 71;
+inline constexpr EnumId WindowModeEnumId = 72;
+inline constexpr EnumId SettingSourceEnumId = 73;
 
 } // namespace generated
 
@@ -789,64 +784,6 @@ bool setWaterPointSharp(World& world, core::InstanceId id, const Value& value);
 void attachWaterPointComponents(World& world, core::InstanceId id);
 void detachWaterPointComponents(World& world, core::InstanceId id);
 
-// DragDetector
-Value getDragDetectorDragStyle(const World& world, core::InstanceId id);
-bool setDragDetectorDragStyle(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorAxis(const World& world, core::InstanceId id);
-bool setDragDetectorAxis(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorReferenceInstance(const World& world, core::InstanceId id);
-bool setDragDetectorReferenceInstance(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorMinDragTranslation(const World& world, core::InstanceId id);
-bool setDragDetectorMinDragTranslation(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorMaxDragTranslation(const World& world, core::InstanceId id);
-bool setDragDetectorMaxDragTranslation(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorMinDragAngle(const World& world, core::InstanceId id);
-bool setDragDetectorMinDragAngle(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorMaxDragAngle(const World& world, core::InstanceId id);
-bool setDragDetectorMaxDragAngle(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorResponseStyle(const World& world, core::InstanceId id);
-bool setDragDetectorResponseStyle(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorMaxForce(const World& world, core::InstanceId id);
-bool setDragDetectorMaxForce(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorMaxTorque(const World& world, core::InstanceId id);
-bool setDragDetectorMaxTorque(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorResponsiveness(const World& world, core::InstanceId id);
-bool setDragDetectorResponsiveness(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorMaxActivationDistance(const World& world, core::InstanceId id);
-bool setDragDetectorMaxActivationDistance(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorCursorIcon(const World& world, core::InstanceId id);
-bool setDragDetectorCursorIcon(World& world, core::InstanceId id, const Value& value);
-Value getDragDetectorEnabled(const World& world, core::InstanceId id);
-bool setDragDetectorEnabled(World& world, core::InstanceId id, const Value& value);
-void attachDragDetectorComponents(World& world, core::InstanceId id);
-void detachDragDetectorComponents(World& world, core::InstanceId id);
-
-// ProximityPrompt
-Value getProximityPromptActionText(const World& world, core::InstanceId id);
-bool setProximityPromptActionText(World& world, core::InstanceId id, const Value& value);
-Value getProximityPromptObjectText(const World& world, core::InstanceId id);
-bool setProximityPromptObjectText(World& world, core::InstanceId id, const Value& value);
-Value getProximityPromptKeyboardKeyCode(const World& world, core::InstanceId id);
-bool setProximityPromptKeyboardKeyCode(World& world, core::InstanceId id, const Value& value);
-Value getProximityPromptGamepadKeyCode(const World& world, core::InstanceId id);
-bool setProximityPromptGamepadKeyCode(World& world, core::InstanceId id, const Value& value);
-Value getProximityPromptHoldDuration(const World& world, core::InstanceId id);
-bool setProximityPromptHoldDuration(World& world, core::InstanceId id, const Value& value);
-Value getProximityPromptMaxActivationDistance(const World& world, core::InstanceId id);
-bool setProximityPromptMaxActivationDistance(World& world, core::InstanceId id, const Value& value);
-Value getProximityPromptRequiresLineOfSight(const World& world, core::InstanceId id);
-bool setProximityPromptRequiresLineOfSight(World& world, core::InstanceId id, const Value& value);
-Value getProximityPromptExclusivity(const World& world, core::InstanceId id);
-bool setProximityPromptExclusivity(World& world, core::InstanceId id, const Value& value);
-Value getProximityPromptUIOffset(const World& world, core::InstanceId id);
-bool setProximityPromptUIOffset(World& world, core::InstanceId id, const Value& value);
-Value getProximityPromptStyle(const World& world, core::InstanceId id);
-bool setProximityPromptStyle(World& world, core::InstanceId id, const Value& value);
-Value getProximityPromptEnabled(const World& world, core::InstanceId id);
-bool setProximityPromptEnabled(World& world, core::InstanceId id, const Value& value);
-void attachProximityPromptComponents(World& world, core::InstanceId id);
-void detachProximityPromptComponents(World& world, core::InstanceId id);
-
 // DataModel
 Value getDataModelEngineVersion(const World& world, core::InstanceId id);
 Value getDataModelLuauVersion(const World& world, core::InstanceId id);
@@ -952,20 +889,6 @@ bool setGraphicsServiceBackgroundFrameRate(World& world, core::InstanceId id, co
 Value getGraphicsServiceBrightness(const World& world, core::InstanceId id);
 bool setGraphicsServiceBrightness(World& world, core::InstanceId id, const Value& value);
 
-// Team
-Value getTeamColor(const World& world, core::InstanceId id);
-bool setTeamColor(World& world, core::InstanceId id, const Value& value);
-Value getTeamAutoAssign(const World& world, core::InstanceId id);
-bool setTeamAutoAssign(World& world, core::InstanceId id, const Value& value);
-void attachTeamComponents(World& world, core::InstanceId id);
-void detachTeamComponents(World& world, core::InstanceId id);
-
-// ProximityPromptService
-Value getProximityPromptServiceEnabled(const World& world, core::InstanceId id);
-bool setProximityPromptServiceEnabled(World& world, core::InstanceId id, const Value& value);
-Value getProximityPromptServiceMaxPromptsVisible(const World& world, core::InstanceId id);
-bool setProximityPromptServiceMaxPromptsVisible(World& world, core::InstanceId id, const Value& value);
-
 // NetworkService
 Value getNetworkServiceAuthority(const World& world, core::InstanceId id);
 Value getNetworkServiceTopology(const World& world, core::InstanceId id);
@@ -976,8 +899,6 @@ Value getNetworkServiceLocalPlayer(const World& world, core::InstanceId id);
 
 // Player
 Value getPlayerUserId(const World& world, core::InstanceId id);
-Value getPlayerTeam(const World& world, core::InstanceId id);
-bool setPlayerTeam(World& world, core::InstanceId id, const Value& value);
 Value getPlayerCharacter(const World& world, core::InstanceId id);
 bool setPlayerCharacter(World& world, core::InstanceId id, const Value& value);
 Value getPlayerCharacter2D(const World& world, core::InstanceId id);

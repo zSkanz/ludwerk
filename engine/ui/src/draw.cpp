@@ -345,6 +345,42 @@ void appendImageQuads(core::Rect box, const ResolvedImage& image, bool ready, i3
     case 2:
         appendTile(box, image, tint, scissor, out);
         return;
+    case 3:
+    case 4: {
+        // **Fit and Crop** (G8): the picture keeps its shape. Fit scales it to
+        // the smaller of the two ratios and centres it in the box; Crop to the
+        // larger, fills the box, and takes the overhang off the source --
+        // equally from both sides, so the middle of the picture is what shows.
+        core::Rect source{{0.0f, 0.0f}, {static_cast<f32>(image.width), static_cast<f32>(image.height)}};
+        if (rectSize.x != 0.0f && rectSize.y != 0.0f)
+            source = core::Rect{rectOffset, Vec2{rectOffset.x + rectSize.x, rectOffset.y + rectSize.y}};
+        const f32 sourceWidth = std::fabs(source.max.x - source.min.x);
+        const f32 sourceHeight = std::fabs(source.max.y - source.min.y);
+        const f32 boxWidth = box.max.x - box.min.x;
+        const f32 boxHeight = box.max.y - box.min.y;
+        if (!(sourceWidth > 0.0f) || !(sourceHeight > 0.0f) || !(boxWidth > 0.0f) || !(boxHeight > 0.0f))
+            return;
+        const f32 across = boxWidth / sourceWidth;
+        const f32 down = boxHeight / sourceHeight;
+        if (scaleType == 3) {
+            const f32 scale = std::fmin(across, down);
+            const Vec2 size{sourceWidth * scale, sourceHeight * scale};
+            const Vec2 corner{box.min.x + (boxWidth - size.x) * 0.5f, box.min.y + (boxHeight - size.y) * 0.5f};
+            pushImageQuad(core::Rect{corner, Vec2{corner.x + size.x, corner.y + size.y}}, source, image, tint, scissor,
+                          cornerRadius, out);
+            return;
+        }
+        const f32 scale = std::fmax(across, down);
+        // What of the source the box shows, in the source's own direction.
+        const f32 keepX = (boxWidth / scale) / sourceWidth;
+        const f32 keepY = (boxHeight / scale) / sourceHeight;
+        const Vec2 span{source.max.x - source.min.x, source.max.y - source.min.y};
+        const Vec2 cut{span.x * (1.0f - keepX) * 0.5f, span.y * (1.0f - keepY) * 0.5f};
+        const core::Rect shown{Vec2{source.min.x + cut.x, source.min.y + cut.y},
+                               Vec2{source.max.x - cut.x, source.max.y - cut.y}};
+        pushImageQuad(box, shown, image, tint, scissor, cornerRadius, out);
+        return;
+    }
     default: {
         // Stretch: the whole picture into the whole box, aspect ratio and all
         // -- or, with `ImageRectSize`, that part of it. A negative size reads

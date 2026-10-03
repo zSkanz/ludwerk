@@ -173,6 +173,19 @@ describe("Instance Destroy", function()
             expect(alive):ToBe(false)
         end)
 
+        it("answers IsDescendantOf and IsAncestorOf with false, either way round", function()
+            -- G16: "is it still there?" asked by ancestry raised on a handle
+            -- the world had let go of, and every such check needed a pcall.
+            local victim = namedFolder("Victim", root)
+            victim:Destroy()
+            task.wait()
+
+            expect(victim:IsDescendantOf(workspace)):ToBe(false)
+            expect(victim:IsAncestorOf(workspace)):ToBe(false)
+            expect(workspace:IsAncestorOf(victim)):ToBe(false)
+            expect(root:IsAncestorOf(victim)):ToBe(false)
+        end)
+
         it("raises script.err.instance_dead on a property write", function()
             local victim = namedFolder("Victim", root)
             victim:Destroy()

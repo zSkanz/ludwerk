@@ -186,60 +186,22 @@ struct RemoteMessage
     u16 held = 0;
 };
 
-// ADR 0126: a click or a prompt's trigger, on its way from a replica to the
-// authority or arrived at one -- which checks it and fires it with the player.
+// ADR 0126: a click, on its way from a replica to the authority or arrived at
+// one -- which checks it and fires it with the player.
 struct DetectorMessage
 {
-    // `Click`, `RightClick`, `Triggered`, `TriggerEnded`, `HoldBegan`,
-    // `HoldEnded`, and a `DragDetector`'s three, in that order from 0.
     enum class Kind : u8
     {
         Click,
         RightClick,
-        Triggered,
-        TriggerEnded,
-        HoldBegan,
-        HoldEnded,
-        DragStart,
-        DragContinue,
-        DragEnd,
     };
-    // The `ClickDetector`, the `ProximityPrompt` or the `DragDetector`.
+    // The `ClickDetector`.
     core::InstanceId detector;
     // Arrived at an authority: the player who sent it.
     core::InstanceId player;
     Kind kind = Kind::Click;
     // Sends waited through for the detector to get a network id.
     u16 held = 0;
-    // A drag's: the pointer's ray, and where a drag that began met the part.
-    core::DVec3 origin{};
-    core::Vec3 direction{};
-    core::DVec3 hit{};
-};
-
-// The engine's look for a prompt, in pixels: the tick hit-tests a tap against
-// the same box the frame draws, centred this far above where it hangs.
-inline constexpr f32 PromptWidth = 200.0f;
-inline constexpr f32 PromptHeight = 56.0f;
-inline constexpr f32 PromptLift = 48.0f;
-
-// A prompt shown on this machine, for the frame to draw (ADR 0126).
-struct ShownPrompt
-{
-    core::InstanceId prompt;
-    // Where it hangs, in the world, as the simulation has it.
-    core::DVec3 anchor;
-    // How far a hold has got, 0 to 1.
-    f32 holdProgress = 0.0f;
-    // `Enum.ProximityPromptInputType`.
-    u8 inputType = 0;
-    // **What it hangs from** -- a part or an attachment -- so the frame draws
-    // it where that is drawn (ADR 0134); and where the frame last drew the
-    // box's centre, in pixels, which is where a tap on it is tested. A
-    // prompt no frame has drawn is tested where the tick's camera sees it.
-    core::InstanceId hangsFrom;
-    core::Vec2 drawnAt{};
-    bool drawn = false;
 };
 
 struct EngineState
@@ -417,6 +379,10 @@ struct EngineState
     // not what the world is, so none of it reaches the hash.
     std::string currentScene;
     std::vector<u8> sceneLoadData;
+    // **How many scenes this world has loaded** (G18): raised by every load,
+    // the same scene again included, so a replica can tell the next match in
+    // the same scene from the scene it joined.
+    u32 sceneLoads = 0;
 
     // **`SaveService.Version`** (ADR 0111): the game's save layout, set by a
     // script before its first slot. A fact about the game's files, not about
@@ -440,12 +406,7 @@ struct EngineState
     bool subWorld = false;
     u32 maxSubWorlds = 2;
 
-    // `ProximityPromptService` (ADR 0126): whether any prompt shows, and how
-    // many at most; the prompts this machine shows now, nearest first; and the
-    // clicks and triggers crossing to the authority.
-    bool promptsEnabled = true;
-    f64 maxPromptsVisible = 16.0;
-    std::vector<ShownPrompt> shownPrompts;
+    // The clicks crossing to the authority (ADR 0126).
     std::vector<DetectorMessage> detectorOutbox;
     std::vector<DetectorMessage> detectorInbox;
     // `Load()`ed and not `Unload()`ed, in the order they were asked for; and
@@ -536,7 +497,6 @@ struct NameIndex
     X(TerrainComponent, terrains)                                                                                      \
     X(VoxelComponent, voxels)                                                                                          \
     X(PlayerComponent, players)                                                                                        \
-    X(TeamComponent, teams)                                                                                            \
     X(ModelComponent, models)                                                                                          \
     X(ScriptComponent, scripts)                                                                                        \
     X(SoundComponent, sounds)                                                                                          \
@@ -598,11 +558,9 @@ struct NameIndex
     X(FoliageLayerComponent, foliageLayers)                                                                            \
     X(FoliageMeshComponent, foliageMeshes)                                                                             \
     X(ClickDetectorComponent, clickDetectors)                                                                          \
-    X(DragDetectorComponent, dragDetectors)                                                                            \
     X(WaterComponent, waters)                                                                                          \
     X(WaterWaveComponent, waterWaves)                                                                                  \
     X(WaterPointComponent, waterPoints)                                                                                \
-    X(ProximityPromptComponent, proximityPrompts)                                                                      \
     X(SkyComponent, skies)                                                                                             \
     X(NameIndex, nameIndices)                                                                                          \
     X(AttributeMap, attributes)                                                                                        \
@@ -1232,9 +1190,6 @@ public:
     [[nodiscard]] ComponentPool<PlayerComponent>& players() noexcept { return m_players; }
     [[nodiscard]] const ComponentPool<PlayerComponent>& players() const noexcept { return m_players; }
 
-    [[nodiscard]] ComponentPool<TeamComponent>& teams() noexcept { return m_teams; }
-    [[nodiscard]] const ComponentPool<TeamComponent>& teams() const noexcept { return m_teams; }
-
     [[nodiscard]] ComponentPool<AttachmentComponent>& attachments() noexcept { return m_attachments; }
     [[nodiscard]] const ComponentPool<AttachmentComponent>& attachments() const noexcept { return m_attachments; }
     [[nodiscard]] ComponentPool<ConstraintComponent>& constraints() noexcept { return m_constraints; }
@@ -1374,13 +1329,6 @@ public:
     [[nodiscard]] const ComponentPool<WaterWaveComponent>& waterWaves() const noexcept { return m_waterWaves; }
     [[nodiscard]] ComponentPool<WaterPointComponent>& waterPoints() noexcept { return m_waterPoints; }
     [[nodiscard]] const ComponentPool<WaterPointComponent>& waterPoints() const noexcept { return m_waterPoints; }
-    [[nodiscard]] ComponentPool<DragDetectorComponent>& dragDetectors() noexcept { return m_dragDetectors; }
-    [[nodiscard]] const ComponentPool<DragDetectorComponent>& dragDetectors() const noexcept { return m_dragDetectors; }
-    [[nodiscard]] ComponentPool<ProximityPromptComponent>& proximityPrompts() noexcept { return m_proximityPrompts; }
-    [[nodiscard]] const ComponentPool<ProximityPromptComponent>& proximityPrompts() const noexcept
-    {
-        return m_proximityPrompts;
-    }
     [[nodiscard]] ComponentPool<SkyComponent>& skies() noexcept { return m_skies; }
     [[nodiscard]] const ComponentPool<SkyComponent>& skies() const noexcept { return m_skies; }
 

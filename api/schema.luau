@@ -417,13 +417,11 @@ local ServiceNameExceptions = {
 --- ADR 0126's detectors are the same trade, decided by the owner with the
 --- toolkit: `MouseClick`, `RightMouseClick`, `MouseHoverEnter` and
 --- `MouseHoverLeave` are the names a person arriving reaches for on a
---- `ClickDetector`; `PromptButtonHoldBegan` is `InputBegan`'s case; and
---- `PromptShown` and `PromptHidden` are past participles the pattern cannot
---- see, as `FocusLost` is. `DragStart`, `DragContinue` and `DragEnd` are the
---- `DragDetector`'s, named in ADR 0126 for the same reason as the first four.
+--- `ClickDetector`. `DragStart`, `DragContinue` and `DragEnd` are the
+--- `UIDragDetector`'s, named for the same reason as the first four.
 ---
 --- `Broken` is ADR 0127's, on a constraint that gave under load: a past
---- participle the pattern cannot see, as `PromptShown` is.
+--- participle the pattern cannot see, as `FocusLost` is.
 ---
 --- ADR 0128's are the same two cases. `PageEnter` and `PageLeave` are the
 --- names a person arriving reaches for on a `UIPageLayout`, named in the ADR
@@ -441,9 +439,6 @@ local EventNameExceptions = {
     RightMouseClick = true,
     MouseHoverEnter = true,
     MouseHoverLeave = true,
-    PromptButtonHoldBegan = true,
-    PromptShown = true,
-    PromptHidden = true,
     DragStart = true,
     DragContinue = true,
     DragEnd = true,

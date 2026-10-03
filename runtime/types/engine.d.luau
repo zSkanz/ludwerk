@@ -156,21 +156,6 @@ end
 declare extern type EnumAssetFetchStatus extends EnumItem with
 end
 
-declare extern type EnumProximityPromptExclusivity extends EnumItem with
-end
-
-declare extern type EnumProximityPromptStyle extends EnumItem with
-end
-
-declare extern type EnumProximityPromptInputType extends EnumItem with
-end
-
-declare extern type EnumDragDetectorDragStyle extends EnumItem with
-end
-
-declare extern type EnumDragDetectorResponseStyle extends EnumItem with
-end
-
 declare extern type EnumTerrainPaintMode extends EnumItem with
 end
 
@@ -926,17 +911,19 @@ declare extern type Instance with
     --- false rather than raising, because the point is to test names you do not trust.
     function IsA(self, className: string): boolean
     --- Whether descendant sits anywhere below this instance; read strictly, so an instance is not its
-    --- own ancestor.
+    --- own ancestor. False when either is destroyed, so a check needs no pcall.
     function IsAncestorOf(self, descendant: Instance): boolean
     --- Whether this instance sits anywhere below ancestor; read strictly, so an instance is not its own
-    --- descendant.
+    --- descendant. False when either is destroyed, so a check needs no pcall.
     function IsDescendantOf(self, ancestor: Instance): boolean
     --- Deep-copies this subtree unparented -- children, properties, attributes and tags at every depth
     --- -- rewiring object references that point inside the copy and leaving those that point outside it
     --- on the originals.
     function Clone(self): Instance
     --- Removes this instance and its children from the tree synchronously, clears its tags, locks
-    --- Parent to nil and defers Destroying; the handle stops resolving at the end of that drain.
+    --- Parent to nil and defers Destroying; the handle stops resolving at the end of that drain. After
+    --- that, Parent still reads nil and IsDescendantOf and IsAncestorOf answer false -- what defensive
+    --- code asks -- while Name, ClassName and IsA raise, the instance's data being gone.
     function Destroy(self): ()
     --- The value of that attribute, or nil when it has never been set; attribute names are
     --- case-sensitive.
@@ -2549,7 +2536,8 @@ declare extern type UIObject extends Instance with
     --- `BackgroundTransparency` under 1 -- so a veil behind a dialog blocks what is under it, and a
     --- clear frame that only holds a layout lets every press through. Write it and what you wrote
     --- stands: `true` on a clear frame makes an invisible blocker, `false` on a button makes it
-    --- something to look at.
+    --- something to look at. **Never while `InputService.PointerLocked`**: a locked pointer is the
+    --- game's, and nothing takes it.
     Active: boolean
     --- Whether this object and its descendants are laid out, drawn and hit-tested. All three together:
     --- an invisible element that still swallowed clicks is the defect this sentence exists to rule out.
@@ -3575,95 +3563,6 @@ declare extern type WaterPoint extends Instance with
     Sharp: boolean
 end
 
-declare extern type DragDetector extends Instance with
-    --- How the pointer's motion moves the part: along a line, across a plane, turned about an axis,
-    --- turned as a ball, or not at all.
-    DragStyle: EnumDragDetectorDragStyle
-    --- The line a `TranslateLine` drag moves along, the normal of a `TranslatePlane` drag's plane, or
-    --- the axis a `RotateAxis` drag turns about -- in `ReferenceInstance`'s frame when it names a part,
-    --- in the world's otherwise.
-    Axis: vector
-    --- A part whose frame `Axis` is in, whose position a turn is about, and that the limits are
-    --- measured from. Nil is the world's frame, the part's own pivot and where it rested when first
-    --- dragged. The authority's: a replica drags in the world's frame.
-    ReferenceInstance: Instance?
-    --- How far back along `Axis`, in metres, a `TranslateLine` drag may go from where the part rests.
-    --- Equal to `MaxDragTranslation` is no limit.
-    MinDragTranslation: number
-    --- How far along `Axis`, in metres, a `TranslateLine` drag may go from where the part rests; for a
-    --- plane, how far from it in any direction. Equal to `MinDragTranslation` is no limit.
-    MaxDragTranslation: number
-    --- How far a `RotateAxis` drag may turn the other way, in degrees, from where the part rests. Equal
-    --- to `MaxDragAngle` is no limit.
-    MinDragAngle: number
-    --- How far a `RotateAxis` drag may turn, in degrees, from where the part rests. Equal to
-    --- `MinDragAngle` is no limit.
-    MaxDragAngle: number
-    --- Whether the drag puts the part where it is dragged, pulls it there with a force, or only
-    --- reports. A turn is put there either way: a force turns nothing yet.
-    ResponseStyle: EnumDragDetectorResponseStyle
-    --- The most force a `Physical` drag pulls with, in newtons.
-    MaxForce: number
-    --- The most torque a `Physical` turn would twist with. Stored, replicated and not used: a turn is
-    --- put where it is dragged (the toolkit's F1 ledger).
-    MaxTorque: number
-    --- How quickly a `Physical` drag closes the gap: the speed it asks for is the distance times this,
-    --- each second.
-    Responsiveness: number
-    --- How far from the player's character, in metres, a drag may begin -- from the camera when there
-    --- is no character.
-    MaxActivationDistance: number
-    --- The picture the pointer shows over it. Stored, replicated and not drawn yet, as
-    --- `ClickDetector`'s.
-    CursorIcon: Content
-    --- Whether it can be dragged. Turned off mid-drag, the drag ends.
-    Enabled: boolean
-    --- A press on it within reach began a drag: the pointer's ray, and where it met the part.
-    read DragStart: Signal<Player, vector, vector, vector>
-    --- A tick of the drag, with the pointer's ray: every tick, whether the pointer moved or not.
-    read DragContinue: Signal<Player, vector, vector>
-    --- The button or the finger came up, or the detector went away or was turned off.
-    read DragEnd: Signal<Player>
-end
-
-declare extern type ProximityPrompt extends Instance with
-    --- What triggering it does, such as `Open`.
-    ActionText: string
-    --- What it is, such as `Door`. Empty shows the action alone.
-    ObjectText: string
-    --- The key that triggers it.
-    KeyboardKeyCode: EnumKeyCode
-    --- The gamepad button that triggers it.
-    GamepadKeyCode: EnumKeyCode
-    --- How long the key must be held, in seconds. 0 triggers on the press.
-    HoldDuration: number
-    --- How near, in metres, the player's character must be for it to show.
-    MaxActivationDistance: number
-    --- Whether something between the character and it hides it.
-    RequiresLineOfSight: boolean
-    --- Which of several prompts in reach show: the nearest per key, the nearest of all, or this one
-    --- always.
-    Exclusivity: EnumProximityPromptExclusivity
-    --- Moves the drawn prompt on the screen, in pixels, from where it is anchored.
-    UIOffset: Vector2
-    --- `Default` is drawn by the engine; `Custom` draws nothing.
-    Style: EnumProximityPromptStyle
-    --- Whether it shows and can be triggered.
-    Enabled: boolean
-    --- Pressed -- or held for `HoldDuration` -- while shown.
-    read Triggered: Signal<Player>
-    --- The key that triggered it was let go.
-    read TriggerEnded: Signal<Player>
-    --- A held prompt's key went down.
-    read PromptButtonHoldBegan: Signal<Player>
-    --- A held prompt's key came up, triggered or not.
-    read PromptButtonHoldEnded: Signal<Player>
-    --- It appeared on this machine, for the kind of input the player is using.
-    read PromptShown: Signal<EnumProximityPromptInputType>
-    --- It went away on this machine.
-    read PromptHidden: Signal<()>
-end
-
 declare extern type DataModel extends Instance with
     --- The version of the engine runtime executing this VM, as `project.toml` pins it. Read-only: the
     --- runtime is chosen before the VM exists, so nothing a script does can change it.
@@ -3684,9 +3583,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "GraphicsService"): GraphicsService
     function GetService(self, name: "HapticService"): HapticService
     function GetService(self, name: "CryptoService"): CryptoService
-    function GetService(self, name: "TeamService"): TeamService
     function GetService(self, name: "ContentProvider"): ContentProvider
-    function GetService(self, name: "ProximityPromptService"): ProximityPromptService
     function GetService(self, name: "SceneService"): SceneService
     function GetService(self, name: "ServerStorage"): ServerStorage
     function GetService(self, name: "NetworkService"): NetworkService
@@ -4094,21 +3991,6 @@ declare extern type CryptoService extends Instance with
     function VerifyPasswordAsync(self, password: string, hash: string): boolean
 end
 
-declare extern type TeamService extends Instance with
-    --- Every team under this service, in child order.
-    function GetTeams(self): { Team }
-end
-
-declare extern type Team extends Instance with
-    --- The side's colour, for a game to paint name tags, scoreboards and shirts with.
-    Color: Color3
-    --- Whether a player who joins may be put on this team. The engine picks the `AutoAssign` team with
-    --- the fewest players.
-    AutoAssign: boolean
-    --- Every player on this team, in the order they joined.
-    function GetPlayers(self): { Player }
-end
-
 declare extern type ContentProvider extends Instance with
     --- How many of the assets `PreloadAsync` was asked for are still on their way.
     read RequestQueueSize: number
@@ -4118,15 +4000,6 @@ declare extern type ContentProvider extends Instance with
     --- Meshes and pictures are loaded onto the GPU; a sound is opened and its length read; anything
     --- else is found or not.
     function PreloadAsync(self, items: { string | Instance }, callback: ((item: string | Instance, status: EnumAssetFetchStatus) -> ())?): ()
-end
-
-declare extern type ProximityPromptService extends Instance with
-    --- False hides every prompt and triggers none -- a cutscene, a menu.
-    Enabled: boolean
-    --- The most prompts shown at once, nearest first.
-    MaxPromptsVisible: number
-    --- Any prompt was triggered, with the player who triggered it.
-    read PromptTriggered: Signal<ProximityPrompt, Player>
 end
 
 declare extern type SceneService extends Instance with
@@ -4281,10 +4154,6 @@ declare extern type Player extends Instance with
     --- up for replicas in the order they joined. Never reused within a session, and not an account: a
     --- reconnect is a new number.
     read UserId: number
-    --- The side this player is on (ADR 0099), or `nil` for none. **The authority's game sets it**, and
-    --- every replica learns it with the roster. A player who joins is put on the `AutoAssign` team with
-    --- the fewest players -- ties to the first -- or on none when there is no such team.
-    Team: Team?
     --- The part that is this player in the world -- a `CharacterBody`, a racer, whatever the game moves
     --- for them; a hero on the 2D plane is `Character2D`. **The authority's game sets it**, and every
     --- replica learns it: each machine's `Player` for someone points at that machine's copy of their
@@ -4566,7 +4435,11 @@ declare extern type InputService extends Instance with
     --- Whether the pointer is locked to the window and reporting motion instead of position -- what a
     --- first-person camera wants. While it is locked, `GetPointerPosition` keeps reporting the position
     --- the pointer had when it was locked, because there is no other honest answer, and a `Direction2D`
-    --- action bound to `MouseMovement` is the way to read the motion.
+    --- action bound to `MouseMovement` is the way to read the motion. **A locked pointer is the
+    --- game's.** Nothing of the interface is under it: no hover, no press, and no `Active` object takes
+    --- its motion, whatever was left under the place it was locked at. The keyboard and a gamepad still
+    --- select the interface. A game that wants a click on its interface lets the pointer go first, as a
+    --- menu does.
     PointerLocked: boolean
     --- Whether the system cursor is drawn. Independent of `PointerLocked`, because the two are separate
     --- wishes: a strategy game hides the cursor during a cutscene without locking it.
@@ -5170,6 +5043,8 @@ declare Enum: {
         Stretch: EnumScaleType,
         Slice: EnumScaleType,
         Tile: EnumScaleType,
+        Fit: EnumScaleType,
+        Crop: EnumScaleType,
         GetEnumItems: (self: any) -> { EnumScaleType },
     },
     NetworkTopology: {
@@ -5285,38 +5160,6 @@ declare Enum: {
         Success: EnumAssetFetchStatus,
         Failure: EnumAssetFetchStatus,
         GetEnumItems: (self: any) -> { EnumAssetFetchStatus },
-    },
-    ProximityPromptExclusivity: {
-        OnePerButton: EnumProximityPromptExclusivity,
-        OneGlobally: EnumProximityPromptExclusivity,
-        AlwaysShow: EnumProximityPromptExclusivity,
-        GetEnumItems: (self: any) -> { EnumProximityPromptExclusivity },
-    },
-    ProximityPromptStyle: {
-        Default: EnumProximityPromptStyle,
-        Custom: EnumProximityPromptStyle,
-        GetEnumItems: (self: any) -> { EnumProximityPromptStyle },
-    },
-    ProximityPromptInputType: {
-        Keyboard: EnumProximityPromptInputType,
-        Gamepad: EnumProximityPromptInputType,
-        Touch: EnumProximityPromptInputType,
-        GetEnumItems: (self: any) -> { EnumProximityPromptInputType },
-    },
-    DragDetectorDragStyle: {
-        TranslateLine: EnumDragDetectorDragStyle,
-        TranslatePlane: EnumDragDetectorDragStyle,
-        TranslateViewPlane: EnumDragDetectorDragStyle,
-        RotateAxis: EnumDragDetectorDragStyle,
-        RotateTrackball: EnumDragDetectorDragStyle,
-        Scriptable: EnumDragDetectorDragStyle,
-        GetEnumItems: (self: any) -> { EnumDragDetectorDragStyle },
-    },
-    DragDetectorResponseStyle: {
-        Geometric: EnumDragDetectorResponseStyle,
-        Physical: EnumDragDetectorResponseStyle,
-        Custom: EnumDragDetectorResponseStyle,
-        GetEnumItems: (self: any) -> { EnumDragDetectorResponseStyle },
     },
     TerrainPaintMode: {
         Replace: EnumTerrainPaintMode,
@@ -5888,9 +5731,6 @@ declare Instance: {
         & (("Water") -> Water)
         & (("WaterWave") -> WaterWave)
         & (("WaterPoint") -> WaterPoint)
-        & (("DragDetector") -> DragDetector)
-        & (("ProximityPrompt") -> ProximityPrompt)
-        & (("Team") -> Team)
         & (("RemoteEvent") -> RemoteEvent)
         & (("RemoteFunction") -> RemoteFunction),
     stamp: (name: string, linked: boolean?) -> Instance,

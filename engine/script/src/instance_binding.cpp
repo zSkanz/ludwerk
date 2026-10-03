@@ -72,6 +72,11 @@ using scene::World;
     return *id;
 }
 
+// Defined with the other methods, and answered by the dispatch below for a
+// destroyed instance as well (G16).
+int methodIsAncestorOf(lua_State* L);
+int methodIsDescendantOf(lua_State* L);
+
 // --- Property dispatch -------------------------------------------------------
 
 [[noreturn]] void raiseUnknownInstanceMember(lua_State* L, core::InstanceId id, const char* member)
@@ -125,6 +130,17 @@ int instanceIndex(lua_State* L)
         if (const char* key = lua_tostring(L, 2); key != nullptr && std::string_view{key} == "Parent") {
             lua_pushnil(L);
             return 1;
+        }
+        // And its ancestry, reached as a member as well as called (G16).
+        if (const char* key = lua_tostring(L, 2); key != nullptr) {
+            if (std::string_view{key} == "IsDescendantOf") {
+                lua_pushcfunction(L, methodIsDescendantOf, "IsDescendantOf");
+                return 1;
+            }
+            if (std::string_view{key} == "IsAncestorOf") {
+                lua_pushcfunction(L, methodIsAncestorOf, "IsAncestorOf");
+                return 1;
+            }
         }
     }
 
@@ -296,6 +312,16 @@ int instanceNewIndex(lua_State* L)
 
 int instanceNamecall(lua_State* L)
 {
+    // The ancestry questions are answered on a destroyed instance (G16).
+    if (const core::InstanceId* dead = toInstance(L, 1); dead != nullptr && !world(L).alive(*dead)) {
+        if (const char* asked = lua_namecallatom(L, nullptr); asked != nullptr) {
+            const std::string_view name{asked};
+            if (name == "IsDescendantOf")
+                return methodIsDescendantOf(L);
+            if (name == "IsAncestorOf")
+                return methodIsAncestorOf(L);
+        }
+    }
     const core::InstanceId id = liveInstance(L, 1);
 
     int atom = -1;
@@ -507,23 +533,32 @@ int methodIsA(lua_State* L)
     return 1;
 }
 
-int methodIsAncestorOf(lua_State* L)
+// **Ancestry answers for a destroyed instance too** (G16): a thing the world
+// let go of is the descendant and the ancestor of nothing, and "is it still
+// there?" -- asked either way round -- must not need a `pcall`.
+[[nodiscard]] bool related(lua_State* L, bool ancestorFirst)
 {
-    const core::InstanceId id = liveInstance(L, 1);
+    const core::InstanceId* self = toInstance(L, 1);
+    if (self == nullptr)
+        luaL_checkudatatagged(L, 1, static_cast<int>(UserdataTag::Instance));
     const core::InstanceId* other = toInstance(L, 2);
     if (other == nullptr)
         luaL_checkudatatagged(L, 2, static_cast<int>(UserdataTag::Instance));
-    lua_pushboolean(L, other != nullptr && world(L).isAncestorOf(id, *other));
+    const World& w = world(L);
+    if (self == nullptr || other == nullptr || !w.alive(*self) || !w.alive(*other))
+        return false;
+    return ancestorFirst ? w.isAncestorOf(*self, *other) : w.isAncestorOf(*other, *self);
+}
+
+int methodIsAncestorOf(lua_State* L)
+{
+    lua_pushboolean(L, related(L, true));
     return 1;
 }
 
 int methodIsDescendantOf(lua_State* L)
 {
-    const core::InstanceId id = liveInstance(L, 1);
-    const core::InstanceId* other = toInstance(L, 2);
-    if (other == nullptr)
-        luaL_checkudatatagged(L, 2, static_cast<int>(UserdataTag::Instance));
-    lua_pushboolean(L, other != nullptr && world(L).isAncestorOf(*other, id));
+    lua_pushboolean(L, related(L, false));
     return 1;
 }
 

@@ -54,6 +54,39 @@ TEST_CASE("the store fills on demand and answers a repeat from what it has")
     CHECK(glyphCacheStats().hits >= 3);
 }
 
+TEST_CASE("G6: a frame whose text filled the glyph store is built again against the store it left")
+{
+    // The FPS game: name tags filled the store mid-frame, it was cleared, and
+    // every label built before the clear drew with places in an atlas that
+    // were no longer its glyphs -- garbage until the next frame, and every
+    // frame while the clears went on.
+    resetGlyphCache();
+    int builds = 0;
+    engine::core::u64 clearsInLast = 0;
+    engine::ui::buildWithSettledGlyphs([&] {
+        ++builds;
+        const engine::core::u64 before = glyphCacheStats().clears;
+        (void)quadsOf("HUD");
+        // The first build asks for more sizes than the store holds.
+        if (builds == 1) {
+            for (int size = 0; size < 2100; ++size)
+                (void)measureText("a", {}, 6.0f + static_cast<f32>(size), 0.0f);
+        }
+        clearsInLast = glyphCacheStats().clears - before;
+    });
+    CHECK(builds == 2);
+    // The second build cleared nothing: what it drew is in the atlas it left.
+    CHECK(clearsInLast == 0);
+
+    // A frame that cleared nothing is built once.
+    builds = 0;
+    engine::ui::buildWithSettledGlyphs([&] {
+        ++builds;
+        (void)quadsOf("HUD");
+    });
+    CHECK(builds == 1);
+}
+
 TEST_CASE("size is part of the key, which is what stops M7 being a rewrite")
 {
     // For THIS face the size half of the key is redundant, because a vector

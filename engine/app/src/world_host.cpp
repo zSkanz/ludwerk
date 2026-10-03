@@ -581,11 +581,6 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
         }
     }
 
-    // The player at this machine was made before the scene brought its teams:
-    // they join a side now, before any script asks which (ADR 0099).
-    if (options.networkTopology != scene::NetworkTopology::Replica)
-        scene::assignTeam(*m_world, scene::localPlayerOf(*m_world));
-
     // What the scene put under `Workspace`, counted before a line of script has
     // run -- see the warning after the drain.
     core::u32 authoredByScene = 0;
@@ -1616,6 +1611,7 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
 
     w.engineState().currentScene = path;
     w.engineState().sceneLoadData = std::move(data);
+    w.engineState().sceneLoads += 1;
     remountSceneScripts(path);
 
     // **The new scene's scripts start**, and only those: `GlobalScriptService`'s

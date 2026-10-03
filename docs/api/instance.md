@@ -31,7 +31,7 @@ Deep-copies this subtree unparented -- children, properties, attributes and tags
 
 ### `Destroy()`
 
-Removes this instance and its children from the tree synchronously, clears its tags, locks Parent to nil and defers Destroying; the handle stops resolving at the end of that drain.
+Removes this instance and its children from the tree synchronously, clears its tags, locks Parent to nil and defers Destroying; the handle stops resolving at the end of that drain. After that, Parent still reads nil and IsDescendantOf and IsAncestorOf answer false -- what defensive code asks -- while Name, ClassName and IsA raise, the instance's data being gone.
 
 ### `FindFirstAncestor(name: string): Instance?`
 
@@ -95,11 +95,11 @@ Whether this instance is of that class or descends from it; a string naming no c
 
 ### `IsAncestorOf(descendant: Instance): boolean`
 
-Whether descendant sits anywhere below this instance; read strictly, so an instance is not its own ancestor.
+Whether descendant sits anywhere below this instance; read strictly, so an instance is not its own ancestor. False when either is destroyed, so a check needs no pcall.
 
 ### `IsDescendantOf(ancestor: Instance): boolean`
 
-Whether this instance sits anywhere below ancestor; read strictly, so an instance is not its own descendant.
+Whether this instance sits anywhere below ancestor; read strictly, so an instance is not its own descendant. False when either is destroyed, so a check needs no pcall.
 
 ### `RemoveTag(tag: string)`
 

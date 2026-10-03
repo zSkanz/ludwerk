@@ -370,8 +370,10 @@ private:
         // changes.
         std::vector<u32> roster;
         bool rosterSent = false;
-        // The scene it was last told the authority is in (ADR 0106).
+        // The scene it was last told the authority is in (ADR 0106), and at
+        // which of the authority's loads (G18).
         std::string scene;
+        u32 sceneLoad = 0;
         bool sceneSent = false;
         // Whether it has been sent the attributes of the owners that are not
         // spawned -- players, `GlobalScriptService` -- since it was welcomed.
@@ -688,6 +690,10 @@ private:
     bool m_lost = false;
     // Welcomed at least once on any connection, so the next welcome is a rejoin.
     bool m_joinedBefore = false;
+    // The authority's scene load this replica last followed (G18), and whether
+    // it has heard one since it joined: the first is the join's.
+    u32 m_sceneLoad = 0;
+    bool m_sceneHeard = false;
     u32 m_freshJoins = 0;
     PlayerToken m_token;
     u32 m_playerId = 0;
@@ -722,8 +728,6 @@ private:
     Stats m_stats;
     // Every player's character by user id, as the last roster named it.
     std::map<u32, u32> m_characters;
-    // Each player's team, by the network id the roster named (ADR 0099).
-    std::map<u32, u32> m_teams;
     // The NetId of this machine's own player's character, or zero.
     u32 m_owned = 0;
     // Whether the own character has taken the authority's state since it

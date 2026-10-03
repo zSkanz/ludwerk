@@ -128,8 +128,8 @@ std::string sceneDefinitions(const scene::World& world)
     // is typed where a script requires it.
     for (const std::string_view storage :
          {std::string_view{"ReplicatedStorage"}, std::string_view{"ServerStorage"}, std::string_view{"UIService"},
-          std::string_view{"TeamService"}, std::string_view{"GlobalScriptService"},
-          std::string_view{"ServerScriptService"}, std::string_view{"ClientScriptService"}}) {
+          std::string_view{"GlobalScriptService"}, std::string_view{"ServerScriptService"},
+          std::string_view{"ClientScriptService"}}) {
         for (core::InstanceId service = dataModel.valid() ? world.firstChild(dataModel) : core::InstanceId{};
              service.valid(); service = world.nextSibling(service)) {
             if (classNameOf(world, service) != storage)

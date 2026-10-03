@@ -8,15 +8,18 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 #include "engine/core/error.h"
 #include "engine/core/i18n.h"
 #include "engine/scene/players.h"
 #include "engine/scene/world.h"
 #include "engine/script/binding.h"
+#include "engine/script/datatypes.h"
 #include "engine/script/services.h"
 #include "engine/script/signals.h"
 
@@ -40,6 +43,13 @@ enum class Tag : u8
     Vector = 5,
     Instance = 6,
     Table = 7,
+    // The datatypes a game sends every day (G12, protocol 35).
+    Color3 = 8,
+    CFrame = 9,
+    Vector2 = 10,
+    UDim = 11,
+    UDim2 = 12,
+    EnumItem = 13,
 };
 
 [[nodiscard]] World& world(lua_State* L) noexcept
@@ -51,6 +61,18 @@ void putU32(std::vector<u8>& out, u32 value)
 {
     for (int at = 0; at < 4; ++at)
         out.push_back(static_cast<u8>(value >> (8 * at)));
+}
+
+void putF32(std::vector<u8>& out, float value)
+{
+    putU32(out, std::bit_cast<u32>(value));
+}
+
+void putF64(std::vector<u8>& out, double value)
+{
+    const auto bits = std::bit_cast<core::u64>(value);
+    for (int at = 0; at < 8; ++at)
+        out.push_back(static_cast<u8>(bits >> (8 * at)));
 }
 
 struct Encoder
@@ -105,6 +127,8 @@ struct Encoder
             break;
         }
         case LUA_TUSERDATA: {
+            if (datatype(index, key))
+                break;
             const core::InstanceId* instance = toInstance(L, index);
             if (instance == nullptr)
                 refuse(index);
@@ -147,6 +171,75 @@ struct Encoder
         checkSize();
     }
 
+    // **A datatype a game sends every day** (G12): a colour, a place, a 2D
+    // point, a layout size, an enum item. Never a key, as a vector is not.
+    [[nodiscard]] bool datatype(int index, bool key)
+    {
+        const auto as = [&](scene::ValueType type) -> scene::Value {
+            if (key)
+                refuseKey(index);
+            const std::optional<scene::Value> value = toValue(L, index, type);
+            if (!value.has_value())
+                refuse(index);
+            return *value;
+        };
+        switch (static_cast<UserdataTag>(lua_userdatatag(L, index))) {
+        case UserdataTag::Color3: {
+            const auto colour = std::get<core::Color3>(as(scene::ValueType::Color3));
+            out.push_back(static_cast<u8>(Tag::Color3));
+            putF32(out, colour.r);
+            putF32(out, colour.g);
+            putF32(out, colour.b);
+            return true;
+        }
+        case UserdataTag::CFrame: {
+            const auto frame = std::get<core::CFrameD>(as(scene::ValueType::CFrame));
+            out.push_back(static_cast<u8>(Tag::CFrame));
+            putF64(out, frame.position.x);
+            putF64(out, frame.position.y);
+            putF64(out, frame.position.z);
+            for (int column = 0; column < 3; ++column) {
+                for (int row = 0; row < 3; ++row)
+                    putF32(out, frame.rotation.m[column][row]);
+            }
+            return true;
+        }
+        case UserdataTag::Vector2: {
+            const auto point = std::get<core::Vec2>(as(scene::ValueType::Vector2));
+            out.push_back(static_cast<u8>(Tag::Vector2));
+            putF32(out, point.x);
+            putF32(out, point.y);
+            return true;
+        }
+        case UserdataTag::UDim: {
+            const auto size = std::get<core::UDim>(as(scene::ValueType::UDim));
+            out.push_back(static_cast<u8>(Tag::UDim));
+            putF32(out, size.scale);
+            putF32(out, size.offset);
+            return true;
+        }
+        case UserdataTag::UDim2: {
+            const auto size = std::get<core::UDim2>(as(scene::ValueType::UDim2));
+            out.push_back(static_cast<u8>(Tag::UDim2));
+            putF32(out, size.x.scale);
+            putF32(out, size.x.offset);
+            putF32(out, size.y.scale);
+            putF32(out, size.y.offset);
+            return true;
+        }
+        case UserdataTag::EnumItem: {
+            const auto item = std::get<scene::EnumValue>(as(scene::ValueType::EnumItem));
+            out.push_back(static_cast<u8>(Tag::EnumItem));
+            out.push_back(static_cast<u8>(item.enumId & 0xFFu));
+            out.push_back(static_cast<u8>(item.enumId >> 8));
+            putU32(out, static_cast<u32>(item.value));
+            return true;
+        }
+        default:
+            return false;
+        }
+    }
+
     [[noreturn]] void refuse(int index) const
     {
         const core::I18nArg args[] = {{"type", std::string_view{luaL_typename(L, index)}}};
@@ -187,6 +280,24 @@ struct Decoder
         for (usize byte = 0; byte < width; ++byte)
             value |= static_cast<core::u64>(bytes[at + byte]) << (8 * byte);
         at += width;
+        return true;
+    }
+
+    [[nodiscard]] bool readF32(float& value)
+    {
+        core::u64 bits = 0;
+        if (!read(4, bits))
+            return false;
+        value = std::bit_cast<float>(static_cast<u32>(bits));
+        return true;
+    }
+
+    [[nodiscard]] bool readF64(double& value)
+    {
+        core::u64 bits = 0;
+        if (!read(8, bits))
+            return false;
+        value = std::bit_cast<double>(bits);
         return true;
     }
 
@@ -237,6 +348,62 @@ struct Decoder
             // An instance the receiver does not have arrives as nil: it was
             // out of this machine's interest, or never replicated.
             pushInstance(L, refs[static_cast<usize>(index)]);
+            return true;
+        }
+        case Tag::Color3: {
+            core::Color3 colour;
+            if (!readF32(colour.r) || !readF32(colour.g) || !readF32(colour.b))
+                return false;
+            pushValue(L, scene::Value{colour});
+            return true;
+        }
+        case Tag::CFrame: {
+            core::CFrameD frame;
+            if (!readF64(frame.position.x) || !readF64(frame.position.y) || !readF64(frame.position.z))
+                return false;
+            for (int column = 0; column < 3; ++column) {
+                for (int row = 0; row < 3; ++row) {
+                    if (!readF32(frame.rotation.m[column][row]))
+                        return false;
+                }
+            }
+            pushValue(L, scene::Value{frame});
+            return true;
+        }
+        case Tag::Vector2: {
+            core::Vec2 point;
+            if (!readF32(point.x) || !readF32(point.y))
+                return false;
+            pushValue(L, scene::Value{point});
+            return true;
+        }
+        case Tag::UDim: {
+            core::UDim size;
+            if (!readF32(size.scale) || !readF32(size.offset))
+                return false;
+            pushValue(L, scene::Value{size});
+            return true;
+        }
+        case Tag::UDim2: {
+            core::UDim2 size;
+            if (!readF32(size.x.scale) || !readF32(size.x.offset) || !readF32(size.y.scale) || !readF32(size.y.offset))
+                return false;
+            pushValue(L, scene::Value{size});
+            return true;
+        }
+        case Tag::EnumItem: {
+            core::u64 id = 0;
+            core::u64 raw = 0;
+            if (!read(2, id) || !read(4, raw))
+                return false;
+            // An item of an enum this build does not have, or a value it does
+            // not name, arrives as nil: a peer's word, never trusted.
+            const scene::EnumValue item{static_cast<core::u16>(id), static_cast<core::i32>(static_cast<u32>(raw))};
+            if (world(L).enums().findValue(item.enumId, item.value) == nullptr) {
+                lua_pushnil(L);
+                return true;
+            }
+            pushEnumItem(L, item);
             return true;
         }
         case Tag::Table: {

@@ -148,15 +148,14 @@ TEST_CASE("the generated schema is what the module was built against")
     // BasePart, CharacterBody, Model, Lighting, Decal, ParticleEmitter, Folder,
     // RemoteEvent, ReplicatedStorage, RemoteFunction and Part2D (protocol 11),
     // ADR 0096's five effects, `Atmosphere` and `Sky` (protocol 13), and
-    // `TeamService` and `Team` (protocol 14), `Tilemap2D` (protocol 15), and
-    // `Workspace` for its wind (protocol 19), and `ClickDetector` and
-    // `ProximityPrompt` (protocol 21), `DragDetector` (protocol 26), and
-    // `Water`, `WaterWave` and `WaterPoint` (protocol 28), and `Part` for its
-    // shape and `MeshPart` for its mesh (protocol 30), and the joints --
-    // `Attachment`, `Constraint` and the seven kinds and six movers that
-    // extend it, `Weld`, `WeldConstraint` and `NoCollisionConstraint`
-    // (protocol 34, NA34).
-    CHECK(std::size(generated::Classes) == 48);
+    // `Tilemap2D` (protocol 15), and `Workspace` for its wind (protocol 19),
+    // and `ClickDetector` (protocol 21), and `Water`, `WaterWave` and
+    // `WaterPoint` (protocol 28), and `Part` for its shape and `MeshPart` for
+    // its mesh (protocol 30), and the joints -- `Attachment`, `Constraint` and
+    // the seven kinds and six movers that extend it, `Weld`, `WeldConstraint`
+    // and `NoCollisionConstraint` (protocol 34, NA34). Teams, prompts and the
+    // world's drags left with protocol 35.
+    CHECK(std::size(generated::Classes) == 44);
     CHECK(std::size(generated::Channels) == 4);
 
     // Channel 3 was claimed from protocol 1 so the numbering could not shift

@@ -143,29 +143,6 @@ Which axis a `UIAspectRatioConstraint` keeps when it scales with its parent.
 | `Width` | 0 | As wide as the parent; the height follows. |
 | `Height` | 1 | As tall as the parent; the width follows. |
 
-## Enum.DragDetectorDragStyle
-
-How a `DragDetector` turns the pointer's motion into its part's (ADR 0126).
-
-| Item | Value | Description |
-|---|---|---|
-| `TranslateLine` | 0 | Along `Axis`, through where it was grabbed. |
-| `TranslatePlane` | 1 | Across the plane `Axis` is the normal of. |
-| `TranslateViewPlane` | 2 | Across the plane facing the camera. |
-| `RotateAxis` | 3 | Turned about `Axis`, through its pivot. |
-| `RotateTrackball` | 4 | Turned any way about its pivot, as a ball. |
-| `Scriptable` | 5 | Not moved: the events say where the pointer is. |
-
-## Enum.DragDetectorResponseStyle
-
-What a `DragDetector` does with where its part is dragged to.
-
-| Item | Value | Description |
-|---|---|---|
-| `Geometric` | 0 | Puts it there. |
-| `Physical` | 1 | Pulls an unanchored part there with a force under `MaxForce`; an anchored one is put there. |
-| `Custom` | 2 | Nothing: the events report, and the game moves it. |
-
 ## Enum.EasingDirection
 
 Which end of a tween the easing applies to (§2.1).
@@ -634,35 +611,6 @@ Where a `Promise` is in its life (ADR 0094). Settled once, and never again.
 | `Rejected` | 2 | Rejected, with the values its handlers receive. |
 | `Cancelled` | 3 | Cancelled before it settled: its executor stopped and its handlers will not run. |
 
-## Enum.ProximityPromptExclusivity
-
-Which of several `ProximityPrompt`s in reach show.
-
-| Item | Value | Description |
-|---|---|---|
-| `OnePerButton` | 0 | The nearest of those on the same key. |
-| `OneGlobally` | 1 | The nearest of all that are `OneGlobally`. |
-| `AlwaysShow` | 2 | This one whenever it is in reach. |
-
-## Enum.ProximityPromptInputType
-
-The input a shown `ProximityPrompt` is drawn for.
-
-| Item | Value | Description |
-|---|---|---|
-| `Keyboard` | 0 | A key. |
-| `Gamepad` | 1 | A gamepad button. |
-| `Touch` | 2 | A tap on the prompt. |
-
-## Enum.ProximityPromptStyle
-
-Who draws a `ProximityPrompt`.
-
-| Item | Value | Description |
-|---|---|---|
-| `Default` | 0 | The engine: the key, the texts and a hold ring. |
-| `Custom` | 1 | The game, on `PromptShown` and `PromptHidden`. |
-
 ## Enum.RaycastFilterType
 
 Whether a `RaycastParams` filter list names what a cast may hit or what it must ignore (§2.3).
@@ -716,6 +664,8 @@ How an `ImageLabel` fits its image into its box (§2.2).
 | `Stretch` | 0 | The whole image into the whole box, aspect ratio and all. |
 | `Slice` | 1 | Nine-slice: the four corners are drawn at their own size, the four edges stretch along one axis and the middle stretches along both. `SliceCenter` says where the cuts are. This is how a panel or a button keeps its rounded corners at any size. |
 | `Tile` | 2 | Repeated at its own size until the box is full. |
+| `Fit` | 3 | The whole image, as large as the box allows without changing its shape, centred: what an icon in a box wants. The box shows through where the image does not reach. |
+| `Crop` | 4 | The whole box covered, the image keeping its shape and what overhangs cut off equally from both sides: what a picture filling a card wants. |
 
 ## Enum.SceneLoadStatus
 

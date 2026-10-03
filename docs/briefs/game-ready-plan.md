@@ -44,7 +44,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 | [x] 2 | **B1** terrain layers are materials · **B2** rules by slope and height | world | The base of everything the terrain does next |
 | [~] 2b | **A2b** a scene closes as a game does, and `game` and `scene` are mailboxes (ADR 0124) · **A2c** a scene prepared in the background (ADR 0125), built together | foundation | Found in use on 2026-09-27: a close handler never ran under Stop; loading screens freeze |
 | [x] 2c | **F8** `ContentProvider:PreloadAsync` | toolkit | Shares A2c's warming path |
-| [x] 2d | **F1** `ClickDetector`, `ProximityPrompt`, `DragDetector` | toolkit | The owner: "certain we need it" |
+| [x] 2d | **F1** `ClickDetector` (`ProximityPrompt` and `DragDetector` withdrawn by the owner, 2026-10-03) | toolkit | The owner: "certain we need it" |
 | [x] 3 | **B5** wind | world | Small, and foliage needs it |
 | [~] 4 | **B6** foliage | world | The largest visual gain |
 | [x] 5 | **B3** two materials a voxel, paint modes, the seam · **B4** terrain tools | world | Painting as a person expects it |
@@ -60,7 +60,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 | [ ] 10 | **E0 to E4** actors: scripts in parallel, committed in a fixed order | parallel | A game's own logic on every core |
 | [ ] 11 | **D1** `EditableImage` and `AudioStream` · **D3** `EditableMesh` | media | Creativity |
 | [ ] 12 | **C4** encryption, a player is a key, relay | network | Multiplayer across the internet |
-| [ ] 12b | **F7** text chat | toolkit | After encryption and a player's identity |
+| -- 12b | **F7** text chat -- withdrawn by the owner, 2026-10-03: a game's chat is its own code | toolkit | Not to be built |
 | [ ] 13 | **D2** `VideoPlayer` | media | Builds on D1 and C1 |
 | [ ] 14 | **C2** TCP, UDP and listening · **C3** the Network panel | network | The rarer cases |
 

@@ -342,6 +342,21 @@ void setImageProvider(ImageProvider provider, void* user) noexcept;
 // caller that swaps a face at runtime -- which is the case the key exists for.
 void resetGlyphCache() noexcept;
 
+// **A frame's text built against one atlas** (G6). The geometry of a label is
+// the place of each glyph in the atlas when it was built, and a store that
+// fills is cleared -- so a label built before a clear in the same frame draws
+// whatever the atlas holds there now. `build` is the frame's whole interface,
+// and it is built again, once, when its glyphs cleared the store: the second
+// build finds this frame's glyphs already there.
+template <class Build>
+void buildWithSettledGlyphs(Build&& build)
+{
+    const u64 before = glyphCacheStats().clears;
+    build();
+    if (glyphCacheStats().clears != before)
+        build();
+}
+
 // **The size a `TextScaled` label draws at, from the size that would exactly
 // fill its box.** Never larger, so the text still fits, and on a ladder rather
 // than continuous: whole pixels up to 24, every 2 px up to 48, every 4 px up
@@ -493,6 +508,12 @@ struct TextCommand
 struct InteractionInput
 {
     core::Vec2 pointer;
+    // **`InputService.PointerLocked`** (G17): a first-person mouse, and the
+    // game's -- nothing of the interface is under it, nothing it presses is a
+    // press, and its motion is never sunk. The keyboard and the gamepad still
+    // select (ADR 0128); a game that wants a click on its interface lets the
+    // pointer go, as a menu does.
+    bool pointerLocked = false;
     bool pressed = false;
     bool released = false;
     // **Both in one frame, and the release came first** (D362): the end of one

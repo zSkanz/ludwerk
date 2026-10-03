@@ -1234,56 +1234,6 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Method },
     },
     {
-        Name = "TeamService",
-        Extends = "Instance",
-        Module = "scene",
-        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
-        Doc = "Where the sides of a game live (ADR 0099): every `Team` under it reaches every replica, "
-            .. "whatever their distance, as `ReplicatedStorage`'s contents do. It is saved with the scene.",
-        Methods = {
-            {
-                Name = "GetTeams",
-                Parameters = {},
-                Returns = { "{ Team }" },
-                ThreadSafety = "ReadParallel",
-                Doc = "Every team under this service, in child order.",
-            },
-        } :: { Schema.Method },
-    },
-    {
-        Name = "Team",
-        Extends = "Instance",
-        Module = "scene",
-        Storage = "Team",
-        Parents = { "TeamService", "ReplicatedStorage", "ServerStorage" },
-        Doc = "A side (ADR 0099): a name -- its `Name` -- a colour, and the players whose `Player.Team` is "
-            .. "it. It counts only under `TeamService`, which is what carries it to every replica.",
-        Properties = {
-            {
-                Name = "Color",
-                Type = "Color3",
-                Default = "Color3.new(1, 1, 1)",
-                Doc = "The side's colour, for a game to paint name tags, scoreboards and shirts with.",
-            },
-            {
-                Name = "AutoAssign",
-                Type = "boolean",
-                Default = "true",
-                Doc = "Whether a player who joins may be put on this team. The engine picks the "
-                    .. "`AutoAssign` team with the fewest players.",
-            },
-        } :: { Schema.Property },
-        Methods = {
-            {
-                Name = "GetPlayers",
-                Parameters = {},
-                Returns = { "{ Player }" },
-                ThreadSafety = "ReadParallel",
-                Doc = "Every player on this team, in the order they joined.",
-            },
-        } :: { Schema.Method },
-    },
-    {
         Name = "ContentProvider",
         Extends = "Instance",
         Module = "scene",
@@ -1323,36 +1273,6 @@ local Classes: { Schema.Class } = {
                     .. "GPU; a sound is opened and its length read; anything else is found or not.",
             },
         } :: { Schema.Method },
-    },
-    {
-        Name = "ProximityPromptService",
-        Extends = "Instance",
-        Module = "scene",
-        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
-        Doc = "Every `ProximityPrompt` at once (ADR 0126): whether any show, how many at most, and a "
-            .. "signal for any of them triggered.",
-        Properties = {
-            {
-                Name = "Enabled",
-                Type = "boolean",
-                Default = "true",
-                Doc = "False hides every prompt and triggers none -- a cutscene, a menu.",
-            },
-            {
-                Name = "MaxPromptsVisible",
-                Type = "number",
-                Default = "16",
-                ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "The most prompts shown at once, nearest first.",
-            },
-        } :: { Schema.Property },
-        Events = {
-            {
-                Name = "PromptTriggered",
-                Parameters = { { Name = "prompt", Type = "ProximityPrompt" }, { Name = "player", Type = "Player" } },
-                Doc = "Any prompt was triggered, with the player who triggered it.",
-            },
-        } :: { Schema.Event },
     },
     {
         Name = "SceneService",
@@ -1668,8 +1588,9 @@ local Classes: { Schema.Class } = {
             .. "like any instance; a replica finds it with `WaitForChild`.\n\n"
             .. "**A client says what it did, never what happened**: the authority learns who sent a "
             .. "message from the connection, not from anything in it, so one client cannot speak for "
-            .. "another. What travels is values -- nil, booleans, numbers, strings, vectors, instances "
-            .. "and tables of them, eight deep -- and an instance arrives as the receiver's own copy, or "
+            .. "another. What travels is values -- nil, booleans, numbers, strings, vectors, `Color3`, "
+            .. "`CFrame`, `Vector2`, `UDim`, `UDim2`, enum items, instances and tables of them, eight deep "
+            .. "-- and an instance arrives as the receiver's own copy, or "
             .. "nil where the receiver does not have it. A function, a thread or a table that refers to "
             .. "itself is refused at the call, and so is a message larger than 64 KiB.\n\n"
             .. "**One script runs solo, hosting and networked.** On an authority, `FireServer` reaches "
@@ -1777,14 +1698,6 @@ local Classes: { Schema.Class } = {
                 Doc = "The authority's number for this player: 1 for whoever sits at a solo or hosting "
                     .. "machine, 2 and up for replicas in the order they joined. Never reused within a "
                     .. "session, and not an account: a reconnect is a new number.",
-            },
-            {
-                Name = "Team",
-                Type = "Team?",
-                Doc = "The side this player is on (ADR 0099), or `nil` for none. **The authority's game sets it**, "
-                    .. "and every replica learns it with the roster. A player who joins is put on the "
-                    .. "`AutoAssign` team with the fewest players -- ties to the first -- or on none when "
-                    .. "there is no such team.",
             },
             {
                 Name = "Character",
@@ -2493,7 +2406,11 @@ local Classes: { Schema.Class } = {
                     .. "what a first-person camera wants. While it is locked, `GetPointerPosition` keeps "
                     .. "reporting the position the pointer had when it was locked, because there is no other "
                     .. "honest answer, and a `Direction2D` action bound to `MouseMovement` is the way to read "
-                    .. "the motion.",
+                    .. "the motion.\n\n"
+                    .. "**A locked pointer is the game's.** Nothing of the interface is under it: no hover, no "
+                    .. "press, and no `Active` object takes its motion, whatever was left under the place it was "
+                    .. "locked at. The keyboard and a gamepad still select the interface. A game that wants a "
+                    .. "click on its interface lets the pointer go first, as a menu does.",
             },
             {
                 Name = "PointerVisible",

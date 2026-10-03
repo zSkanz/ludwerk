@@ -364,4 +364,36 @@ describe("@engine/camera.firstPerson", function()
         expect(rig.Pitch < math.pi / 2):ToBe(true)
         expect(rig.Camera.CFrame.LookVector.y > 0.99):ToBe(true)
     end)
+
+    it("holds still when its subject dies, and is stopped by Destroy", function()
+        -- D497: a character destroyed under a bound rig raised every frame,
+        -- for as long as the game ran, from the rig's render step.
+        local camera = require("@engine/camera")
+        local body = character(vector.create(0, 30, 0))
+        body.GravityScale = 0
+        local rig = camera.firstPerson({ Subject = body })
+        table.insert(spawned, rig.Camera)
+        rig:Update(1 / 60)
+        local before = rig.Camera.CFrame.Position
+        body:Destroy()
+        table.remove(spawned, table.find(spawned, body))
+        task.wait()
+
+        local ok = pcall(function()
+            rig:Update(1 / 60)
+        end)
+        expect(ok):ToBe(true)
+        expect(vector.magnitude(rig.Camera.CFrame.Position - before)):ToBeCloseTo(0, 0.0001)
+
+        -- Given another, it follows that one.
+        local next = character(vector.create(5, 30, 0))
+        next.GravityScale = 0
+        rig.Subject = next
+        -- Whichever moves it here: the update, or a frame's render step.
+        rig:Update(1 / 60)
+        task.wait()
+        expect(rig.Camera.CFrame.Position.x):ToBeCloseTo(5, 0.001)
+        rig:Destroy()
+        rig:Destroy()
+    end)
 end)

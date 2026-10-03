@@ -201,6 +201,11 @@ private:
     static constexpr u32 NoClip = 0xFFFFFFFFu;
 
     void rebuildPose(core::InstanceId meshPart, const SkeletonLibrary::Entry& skeleton);
+    // `Bone.Transform` (G9): the rig a bone is on, and every turn its bones ask
+    // of it.
+    [[nodiscard]] core::InstanceId rigOf(core::InstanceId bone) const;
+    [[nodiscard]] std::vector<std::pair<core::u32, core::Mat4>> boneOffsets(core::InstanceId meshPart,
+                                                                            core::usize jointCount) const;
 
     // The skeleton a `MeshPart` renders, or null. One lookup, written once.
     [[nodiscard]] const SkeletonLibrary::Entry* skeletonOf(core::InstanceId meshPart) const;
@@ -281,6 +286,8 @@ private:
     // The meshes whose pose this tick has to rebuild, collected before the walk
     // so it is one pass per mesh rather than one per track.
     std::vector<core::InstanceId> meshes_;
+    // The meshes a `Bone` turned this tick (G9).
+    std::vector<core::InstanceId> turned_;
     std::vector<core::DVec3> translation_;
     std::vector<f32> rotation_;
     std::vector<core::Vec3> scale_;

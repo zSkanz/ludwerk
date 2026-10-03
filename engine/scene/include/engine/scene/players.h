@@ -32,12 +32,6 @@ void removePlayer(World& world, core::InstanceId networkService, core::InstanceI
 // handlers of their `PlayerRemoving` have had them. Once a tick, at its start.
 void finishLeavingPlayers(World& world);
 
-// **Puts a player with no side on one** (ADR 0099): the `AutoAssign` team under
-// `TeamService` with the fewest players, ties to the first in child order. A
-// player already on a team, or a world with no such team, is left alone.
-// Authority-side: a replica learns its sides from the roster.
-void assignTeam(World& world, core::InstanceId player);
-
 // The player at this machine, or invalid.
 [[nodiscard]] core::InstanceId localPlayerOf(const World& world) noexcept;
 

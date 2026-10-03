@@ -1,0 +1,9 @@
+# The render half of the frame in a run with no window (G11): a Render-rate
+# InputContext reads an injected stick as a Simulation one does, and a bound
+# render step runs. A project, so the host runs it the way a game runs.
+
+[project]
+name = "Ludwerk Render Rate"
+id = "dev.ludwerk.renderrate"
+version = "1.0.0"
+engine = "0.1"

@@ -142,13 +142,13 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("IsAncestorOf"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Whether descendant sits anywhere below this instance; read strictly, so an instance is not its own ancestor.",
+            .doc = "Whether descendant sits anywhere below this instance; read strictly, so an instance is not its own ancestor. False when either is destroyed, so a check needs no pcall.",
         },
         MethodDesc{
             .name = atoms.intern("IsDescendantOf"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Whether this instance sits anywhere below ancestor; read strictly, so an instance is not its own descendant.",
+            .doc = "Whether this instance sits anywhere below ancestor; read strictly, so an instance is not its own descendant. False when either is destroyed, so a check needs no pcall.",
         },
         MethodDesc{
             .name = atoms.intern("Clone"),
@@ -160,7 +160,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("Destroy"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Removes this instance and its children from the tree synchronously, clears its tags, locks Parent to nil and defers Destroying; the handle stops resolving at the end of that drain.",
+            .doc = "Removes this instance and its children from the tree synchronously, clears its tags, locks Parent to nil and defers Destroying; the handle stops resolving at the end of that drain. After that, Parent still reads nil and IsDescendantOf and IsAncestorOf answer false -- what defensive code asks -- while Name, ClassName and IsA raise, the instance's data being gone.",
         },
         MethodDesc{
             .name = atoms.intern("GetAttribute"),
@@ -4148,375 +4148,6 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     waterPointDesc.detachComponents = native::detachWaterPointComponents;
     classes.registerClass(waterPointDesc);
 
-    // --- DragDetector ---
-    static std::array<PropertyDesc, 14> dragDetectorProperties;
-    dragDetectorProperties = {{
-        PropertyDesc{
-            .name = atoms.intern("DragStyle"),
-            .type = ValueType::EnumItem,
-            .enumName = atoms.intern("DragDetectorDragStyle"),
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "How the pointer's motion moves the part: along a line, across a plane, turned about an axis, turned as a ball, or not at all.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
-            .get = native::getDragDetectorDragStyle,
-            .set = native::setDragDetectorDragStyle,
-        },
-        PropertyDesc{
-            .name = atoms.intern("Axis"),
-            .type = ValueType::Vector3,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "The line a `TranslateLine` drag moves along, the normal of a `TranslatePlane` drag's plane, or the axis a `RotateAxis` drag turns about -- in `ReferenceInstance`'s frame when it names a part, in the world's otherwise.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.vector_direction"),
-            .get = native::getDragDetectorAxis,
-            .set = native::setDragDetectorAxis,
-        },
-        PropertyDesc{
-            .name = atoms.intern("ReferenceInstance"),
-            .type = ValueType::Instance,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "A part whose frame `Axis` is in, whose position a turn is about, and that the limits are measured from. Nil is the world's frame, the part's own pivot and where it rested when first dragged. The authority's: a replica drags in the world's frame.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
-            .get = native::getDragDetectorReferenceInstance,
-            .set = native::setDragDetectorReferenceInstance,
-        },
-        PropertyDesc{
-            .name = atoms.intern("MinDragTranslation"),
-            .type = ValueType::Number,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "How far back along `Axis`, in metres, a `TranslateLine` drag may go from where the part rests. Equal to `MaxDragTranslation` is no limit.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
-            .get = native::getDragDetectorMinDragTranslation,
-            .set = native::setDragDetectorMinDragTranslation,
-        },
-        PropertyDesc{
-            .name = atoms.intern("MaxDragTranslation"),
-            .type = ValueType::Number,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "How far along `Axis`, in metres, a `TranslateLine` drag may go from where the part rests; for a plane, how far from it in any direction. Equal to `MinDragTranslation` is no limit.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
-            .get = native::getDragDetectorMaxDragTranslation,
-            .set = native::setDragDetectorMaxDragTranslation,
-        },
-        PropertyDesc{
-            .name = atoms.intern("MinDragAngle"),
-            .type = ValueType::Number,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "How far a `RotateAxis` drag may turn the other way, in degrees, from where the part rests. Equal to `MaxDragAngle` is no limit.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
-            .get = native::getDragDetectorMinDragAngle,
-            .set = native::setDragDetectorMinDragAngle,
-        },
-        PropertyDesc{
-            .name = atoms.intern("MaxDragAngle"),
-            .type = ValueType::Number,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "How far a `RotateAxis` drag may turn, in degrees, from where the part rests. Equal to `MinDragAngle` is no limit.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
-            .get = native::getDragDetectorMaxDragAngle,
-            .set = native::setDragDetectorMaxDragAngle,
-        },
-        PropertyDesc{
-            .name = atoms.intern("ResponseStyle"),
-            .type = ValueType::EnumItem,
-            .enumName = atoms.intern("DragDetectorResponseStyle"),
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "Whether the drag puts the part where it is dragged, pulls it there with a force, or only reports. A turn is put there either way: a force turns nothing yet.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
-            .get = native::getDragDetectorResponseStyle,
-            .set = native::setDragDetectorResponseStyle,
-        },
-        PropertyDesc{
-            .name = atoms.intern("MaxForce"),
-            .type = ValueType::Number,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "The most force a `Physical` drag pulls with, in newtons.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
-            .get = native::getDragDetectorMaxForce,
-            .set = native::setDragDetectorMaxForce,
-        },
-        PropertyDesc{
-            .name = atoms.intern("MaxTorque"),
-            .type = ValueType::Number,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = true,
-            .doc = "The most torque a `Physical` turn would twist with. Stored, replicated and not used: a turn is put where it is dragged (the toolkit's F1 ledger).",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
-            .get = native::getDragDetectorMaxTorque,
-            .set = native::setDragDetectorMaxTorque,
-        },
-        PropertyDesc{
-            .name = atoms.intern("Responsiveness"),
-            .type = ValueType::Number,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "How quickly a `Physical` drag closes the gap: the speed it asks for is the distance times this, each second.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
-            .get = native::getDragDetectorResponsiveness,
-            .set = native::setDragDetectorResponsiveness,
-        },
-        PropertyDesc{
-            .name = atoms.intern("MaxActivationDistance"),
-            .type = ValueType::Number,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "How far from the player's character, in metres, a drag may begin -- from the camera when there is no character.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
-            .get = native::getDragDetectorMaxActivationDistance,
-            .set = native::setDragDetectorMaxActivationDistance,
-        },
-        PropertyDesc{
-            .name = atoms.intern("CursorIcon"),
-            .type = ValueType::String,
-            .contentKind = atoms.intern("Texture"),
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = true,
-            .doc = "The picture the pointer shows over it. Stored, replicated and not drawn yet, as `ClickDetector`'s.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
-            .get = native::getDragDetectorCursorIcon,
-            .set = native::setDragDetectorCursorIcon,
-        },
-        PropertyDesc{
-            .name = atoms.intern("Enabled"),
-            .type = ValueType::Bool,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "Whether it can be dragged. Turned off mid-drag, the drag ends.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
-            .get = native::getDragDetectorEnabled,
-            .set = native::setDragDetectorEnabled,
-        },
-    }};
-    static std::array<EventDesc, 3> dragDetectorEvents;
-    dragDetectorEvents = {{
-        EventDesc{
-            .name = atoms.intern("DragStart"),
-            .slot = 7,
-            .doc = "A press on it within reach began a drag: the pointer's ray, and where it met the part.",
-        },
-        EventDesc{
-            .name = atoms.intern("DragContinue"),
-            .slot = 8,
-            .doc = "A tick of the drag, with the pointer's ray: every tick, whether the pointer moved or not.",
-        },
-        EventDesc{
-            .name = atoms.intern("DragEnd"),
-            .slot = 9,
-            .doc = "The button or the finger came up, or the detector went away or was turned off.",
-        },
-    }};
-    ClassDescriptor dragDetectorDesc;
-    dragDetectorDesc.name = atoms.intern("DragDetector");
-    dragDetectorDesc.super = instanceClass;
-    dragDetectorDesc.flags = ClassFlags::None;
-    dragDetectorDesc.defaultName = atoms.intern("DragDetector");
-    dragDetectorDesc.doc = "Makes the part or model it is in something a player drags (ADR 0126): a drawer pulled along a line, a lever turned about an axis, a crate pushed across the floor. The engine casts the pointer -- the mouse, or a finger -- into the world once a tick; a press on the part within reach begins the drag, and each tick after moves the part the way `DragStyle` says, within its limits, until the button or the finger comes up.\012\012**The limits are measured from where the part rested** the first time it was dragged -- or from `ReferenceInstance`, when it names a part -- so a drawer pulled out and pushed back never drifts.\012\012**In a match** the machine that drags tells the authority, which checks the reach from the player's character and moves a `Geometric` drag there, so every player sees it. A `Physical` drag of an unanchored part hands the part to the dragging player for its duration (ADR 0099), and back after.";
-    static constexpr std::array<std::string_view, 4> dragDetectorParents{{"BasePart", "Model", "ReplicatedStorage", "ServerStorage"}};
-    dragDetectorDesc.parents = dragDetectorParents;
-    dragDetectorDesc.properties = dragDetectorProperties;
-    dragDetectorDesc.events = dragDetectorEvents;
-    dragDetectorDesc.attachComponents = native::attachDragDetectorComponents;
-    dragDetectorDesc.detachComponents = native::detachDragDetectorComponents;
-    classes.registerClass(dragDetectorDesc);
-
-    // --- ProximityPrompt ---
-    static std::array<PropertyDesc, 11> proximityPromptProperties;
-    proximityPromptProperties = {{
-        PropertyDesc{
-            .name = atoms.intern("ActionText"),
-            .type = ValueType::String,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "What triggering it does, such as `Open`.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
-            .get = native::getProximityPromptActionText,
-            .set = native::setProximityPromptActionText,
-        },
-        PropertyDesc{
-            .name = atoms.intern("ObjectText"),
-            .type = ValueType::String,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "What it is, such as `Door`. Empty shows the action alone.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
-            .get = native::getProximityPromptObjectText,
-            .set = native::setProximityPromptObjectText,
-        },
-        PropertyDesc{
-            .name = atoms.intern("KeyboardKeyCode"),
-            .type = ValueType::EnumItem,
-            .enumName = atoms.intern("KeyCode"),
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "The key that triggers it.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
-            .get = native::getProximityPromptKeyboardKeyCode,
-            .set = native::setProximityPromptKeyboardKeyCode,
-        },
-        PropertyDesc{
-            .name = atoms.intern("GamepadKeyCode"),
-            .type = ValueType::EnumItem,
-            .enumName = atoms.intern("KeyCode"),
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "The gamepad button that triggers it.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
-            .get = native::getProximityPromptGamepadKeyCode,
-            .set = native::setProximityPromptGamepadKeyCode,
-        },
-        PropertyDesc{
-            .name = atoms.intern("HoldDuration"),
-            .type = ValueType::Number,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "How long the key must be held, in seconds. 0 triggers on the press.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
-            .get = native::getProximityPromptHoldDuration,
-            .set = native::setProximityPromptHoldDuration,
-        },
-        PropertyDesc{
-            .name = atoms.intern("MaxActivationDistance"),
-            .type = ValueType::Number,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "How near, in metres, the player's character must be for it to show.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
-            .get = native::getProximityPromptMaxActivationDistance,
-            .set = native::setProximityPromptMaxActivationDistance,
-        },
-        PropertyDesc{
-            .name = atoms.intern("RequiresLineOfSight"),
-            .type = ValueType::Bool,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "Whether something between the character and it hides it.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
-            .get = native::getProximityPromptRequiresLineOfSight,
-            .set = native::setProximityPromptRequiresLineOfSight,
-        },
-        PropertyDesc{
-            .name = atoms.intern("Exclusivity"),
-            .type = ValueType::EnumItem,
-            .enumName = atoms.intern("ProximityPromptExclusivity"),
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "Which of several prompts in reach show: the nearest per key, the nearest of all, or this one always.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
-            .get = native::getProximityPromptExclusivity,
-            .set = native::setProximityPromptExclusivity,
-        },
-        PropertyDesc{
-            .name = atoms.intern("UIOffset"),
-            .type = ValueType::Vector2,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "Moves the drawn prompt on the screen, in pixels, from where it is anchored.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector2"),
-            .get = native::getProximityPromptUIOffset,
-            .set = native::setProximityPromptUIOffset,
-        },
-        PropertyDesc{
-            .name = atoms.intern("Style"),
-            .type = ValueType::EnumItem,
-            .enumName = atoms.intern("ProximityPromptStyle"),
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "`Default` is drawn by the engine; `Custom` draws nothing.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
-            .get = native::getProximityPromptStyle,
-            .set = native::setProximityPromptStyle,
-        },
-        PropertyDesc{
-            .name = atoms.intern("Enabled"),
-            .type = ValueType::Bool,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "Whether it shows and can be triggered.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
-            .get = native::getProximityPromptEnabled,
-            .set = native::setProximityPromptEnabled,
-        },
-    }};
-    static std::array<EventDesc, 6> proximityPromptEvents;
-    proximityPromptEvents = {{
-        EventDesc{
-            .name = atoms.intern("Triggered"),
-            .slot = 7,
-            .doc = "Pressed -- or held for `HoldDuration` -- while shown.",
-        },
-        EventDesc{
-            .name = atoms.intern("TriggerEnded"),
-            .slot = 8,
-            .doc = "The key that triggered it was let go.",
-        },
-        EventDesc{
-            .name = atoms.intern("PromptButtonHoldBegan"),
-            .slot = 9,
-            .doc = "A held prompt's key went down.",
-        },
-        EventDesc{
-            .name = atoms.intern("PromptButtonHoldEnded"),
-            .slot = 10,
-            .doc = "A held prompt's key came up, triggered or not.",
-        },
-        EventDesc{
-            .name = atoms.intern("PromptShown"),
-            .slot = 11,
-            .doc = "It appeared on this machine, for the kind of input the player is using.",
-        },
-        EventDesc{
-            .name = atoms.intern("PromptHidden"),
-            .slot = 12,
-            .doc = "It went away on this machine.",
-        },
-    }};
-    ClassDescriptor proximityPromptDesc;
-    proximityPromptDesc.name = atoms.intern("ProximityPrompt");
-    proximityPromptDesc.super = instanceClass;
-    proximityPromptDesc.flags = ClassFlags::None;
-    proximityPromptDesc.defaultName = atoms.intern("ProximityPrompt");
-    proximityPromptDesc.doc = "A prompt that appears when a player comes near the part, attachment or model it is in -- **Open**, **Talk**, **Pick up** -- and is triggered by a key, a gamepad button or a tap (ADR 0126). The engine draws it: the key, the two texts and, for a held prompt, a ring that fills; `Style = Custom` draws nothing and leaves `PromptShown` and `PromptHidden` to the game. Its keys go through an input context the engine owns, below a game's own, so a game's context that sinks the same key wins. **In a match** it is triggered here, and checked and fired on the authority with the player.";
-    static constexpr std::array<std::string_view, 5> proximityPromptParents{{"BasePart", "Attachment", "Model", "ReplicatedStorage", "ServerStorage"}};
-    proximityPromptDesc.parents = proximityPromptParents;
-    proximityPromptDesc.properties = proximityPromptProperties;
-    proximityPromptDesc.events = proximityPromptEvents;
-    proximityPromptDesc.attachComponents = native::attachProximityPromptComponents;
-    proximityPromptDesc.detachComponents = native::detachProximityPromptComponents;
-    classes.registerClass(proximityPromptDesc);
-
     // --- DataModel ---
     static std::array<PropertyDesc, 2> dataModelProperties;
     dataModelProperties = {{
@@ -5529,74 +5160,6 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     cryptoServiceDesc.methods = cryptoServiceMethods;
     classes.registerClass(cryptoServiceDesc);
 
-    // --- TeamService ---
-    static std::array<MethodDesc, 1> teamServiceMethods;
-    teamServiceMethods = {{
-        MethodDesc{
-            .name = atoms.intern("GetTeams"),
-            .yields = false,
-            .threadSafety = ThreadSafety::ReadParallel,
-            .doc = "Every team under this service, in child order.",
-        },
-    }};
-    ClassDescriptor teamServiceDesc;
-    teamServiceDesc.name = atoms.intern("TeamService");
-    teamServiceDesc.super = instanceClass;
-    teamServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
-    teamServiceDesc.defaultName = atoms.intern("TeamService");
-    teamServiceDesc.doc = "Where the sides of a game live (ADR 0099): every `Team` under it reaches every replica, whatever their distance, as `ReplicatedStorage`'s contents do. It is saved with the scene.";
-    teamServiceDesc.methods = teamServiceMethods;
-    classes.registerClass(teamServiceDesc);
-
-    // --- Team ---
-    static std::array<PropertyDesc, 2> teamProperties;
-    teamProperties = {{
-        PropertyDesc{
-            .name = atoms.intern("Color"),
-            .type = ValueType::Color3,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "The side's colour, for a game to paint name tags, scoreboards and shirts with.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
-            .get = native::getTeamColor,
-            .set = native::setTeamColor,
-        },
-        PropertyDesc{
-            .name = atoms.intern("AutoAssign"),
-            .type = ValueType::Bool,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "Whether a player who joins may be put on this team. The engine picks the `AutoAssign` team with the fewest players.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
-            .get = native::getTeamAutoAssign,
-            .set = native::setTeamAutoAssign,
-        },
-    }};
-    static std::array<MethodDesc, 1> teamMethods;
-    teamMethods = {{
-        MethodDesc{
-            .name = atoms.intern("GetPlayers"),
-            .yields = false,
-            .threadSafety = ThreadSafety::ReadParallel,
-            .doc = "Every player on this team, in the order they joined.",
-        },
-    }};
-    ClassDescriptor teamDesc;
-    teamDesc.name = atoms.intern("Team");
-    teamDesc.super = instanceClass;
-    teamDesc.flags = ClassFlags::None;
-    teamDesc.defaultName = atoms.intern("Team");
-    teamDesc.doc = "A side (ADR 0099): a name -- its `Name` -- a colour, and the players whose `Player.Team` is it. It counts only under `TeamService`, which is what carries it to every replica.";
-    static constexpr std::array<std::string_view, 3> teamParents{{"TeamService", "ReplicatedStorage", "ServerStorage"}};
-    teamDesc.parents = teamParents;
-    teamDesc.properties = teamProperties;
-    teamDesc.methods = teamMethods;
-    teamDesc.attachComponents = native::attachTeamComponents;
-    teamDesc.detachComponents = native::detachTeamComponents;
-    classes.registerClass(teamDesc);
-
     // --- ContentProvider ---
     static std::array<MethodDesc, 1> contentProviderMethods;
     contentProviderMethods = {{
@@ -5615,50 +5178,6 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     contentProviderDesc.doc = "Loads assets before anything shows them (ADR 0131): a level's meshes and pictures read and on the GPU while a loading screen is up, so the first frame of play has nothing popping in. The same path a scene prepared with `SceneService:LoadSceneAsync` warms by.";
     contentProviderDesc.methods = contentProviderMethods;
     classes.registerClass(contentProviderDesc);
-
-    // --- ProximityPromptService ---
-    static std::array<PropertyDesc, 2> proximityPromptServiceProperties;
-    proximityPromptServiceProperties = {{
-        PropertyDesc{
-            .name = atoms.intern("Enabled"),
-            .type = ValueType::Bool,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "False hides every prompt and triggers none -- a cutscene, a menu.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
-            .get = native::getProximityPromptServiceEnabled,
-            .set = native::setProximityPromptServiceEnabled,
-        },
-        PropertyDesc{
-            .name = atoms.intern("MaxPromptsVisible"),
-            .type = ValueType::Number,
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "The most prompts shown at once, nearest first.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
-            .get = native::getProximityPromptServiceMaxPromptsVisible,
-            .set = native::setProximityPromptServiceMaxPromptsVisible,
-        },
-    }};
-    static std::array<EventDesc, 1> proximityPromptServiceEvents;
-    proximityPromptServiceEvents = {{
-        EventDesc{
-            .name = atoms.intern("PromptTriggered"),
-            .slot = 7,
-            .doc = "Any prompt was triggered, with the player who triggered it.",
-        },
-    }};
-    ClassDescriptor proximityPromptServiceDesc;
-    proximityPromptServiceDesc.name = atoms.intern("ProximityPromptService");
-    proximityPromptServiceDesc.super = instanceClass;
-    proximityPromptServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
-    proximityPromptServiceDesc.defaultName = atoms.intern("ProximityPromptService");
-    proximityPromptServiceDesc.doc = "Every `ProximityPrompt` at once (ADR 0126): whether any show, how many at most, and a signal for any of them triggered.";
-    proximityPromptServiceDesc.properties = proximityPromptServiceProperties;
-    proximityPromptServiceDesc.events = proximityPromptServiceEvents;
-    classes.registerClass(proximityPromptServiceDesc);
 
     // --- SceneService ---
     static std::array<MethodDesc, 5> sceneServiceMethods;
@@ -5937,7 +5456,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     remoteEventDesc.super = instanceClass;
     remoteEventDesc.flags = ClassFlags::None;
     remoteEventDesc.defaultName = atoms.intern("RemoteEvent");
-    remoteEventDesc.doc = "A message a game sends between machines (ADR 0077): \"I bought the sword\" from a client to the server, \"the round starts\" from the server to everyone. Create it on the authority under `Workspace` -- in a `Folder`, if you like -- and it reaches every replica like any instance; a replica finds it with `WaitForChild`.\012\012**A client says what it did, never what happened**: the authority learns who sent a message from the connection, not from anything in it, so one client cannot speak for another. What travels is values -- nil, booleans, numbers, strings, vectors, instances and tables of them, eight deep -- and an instance arrives as the receiver's own copy, or nil where the receiver does not have it. A function, a thread or a table that refers to itself is refused at the call, and so is a message larger than 64 KiB.\012\012**One script runs solo, hosting and networked.** On an authority, `FireServer` reaches its own `ServerReceived` from its local player, and a host's messages to its own player reach its own `ClientReceived`. Messages are reliable, and delivered as deferred signals at the start of the tick after they arrive.";
+    remoteEventDesc.doc = "A message a game sends between machines (ADR 0077): \"I bought the sword\" from a client to the server, \"the round starts\" from the server to everyone. Create it on the authority under `Workspace` -- in a `Folder`, if you like -- and it reaches every replica like any instance; a replica finds it with `WaitForChild`.\012\012**A client says what it did, never what happened**: the authority learns who sent a message from the connection, not from anything in it, so one client cannot speak for another. What travels is values -- nil, booleans, numbers, strings, vectors, `Color3`, `CFrame`, `Vector2`, `UDim`, `UDim2`, enum items, instances and tables of them, eight deep -- and an instance arrives as the receiver's own copy, or nil where the receiver does not have it. A function, a thread or a table that refers to itself is refused at the call, and so is a message larger than 64 KiB.\012\012**One script runs solo, hosting and networked.** On an authority, `FireServer` reaches its own `ServerReceived` from its local player, and a host's messages to its own player reach its own `ClientReceived`. Messages are reliable, and delivered as deferred signals at the start of the tick after they arrive.";
     remoteEventDesc.methods = remoteEventMethods;
     remoteEventDesc.events = remoteEventEvents;
     classes.registerClass(remoteEventDesc);
@@ -5962,7 +5481,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(remoteFunctionDesc);
 
     // --- Player ---
-    static std::array<PropertyDesc, 4> playerProperties;
+    static std::array<PropertyDesc, 3> playerProperties;
     playerProperties = {{
         PropertyDesc{
             .name = atoms.intern("UserId"),
@@ -5974,18 +5493,6 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
             .get = native::getPlayerUserId,
             .set = nullptr,
-        },
-        PropertyDesc{
-            .name = atoms.intern("Team"),
-            .type = ValueType::Instance,
-            .instanceClass = atoms.intern("Team"),
-            .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = false,
-            .inert = false,
-            .doc = "The side this player is on (ADR 0099), or `nil` for none. **The authority's game sets it**, and every replica learns it with the roster. A player who joins is put on the `AutoAssign` team with the fewest players -- ties to the first -- or on none when there is no such team.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
-            .get = native::getPlayerTeam,
-            .set = native::setPlayerTeam,
         },
         PropertyDesc{
             .name = atoms.intern("Character"),
@@ -8248,7 +7755,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(automaticSizeDesc);
 
     // --- ScaleType ---
-    static std::array<EnumItemDesc, 3> scaleTypeItems;
+    static std::array<EnumItemDesc, 5> scaleTypeItems;
     scaleTypeItems = {{
         EnumItemDesc{
             .name = atoms.intern("Stretch"),
@@ -8263,6 +7770,16 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
         EnumItemDesc{
             .name = atoms.intern("Tile"),
             .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Fit"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Crop"),
+            .value = 4,
             .docKey = {},
         },
     }};
@@ -8751,141 +8268,6 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     assetFetchStatusDesc.docKey = {};
     assetFetchStatusDesc.items = assetFetchStatusItems;
     enums.registerEnum(assetFetchStatusDesc);
-
-    // --- ProximityPromptExclusivity ---
-    static std::array<EnumItemDesc, 3> proximityPromptExclusivityItems;
-    proximityPromptExclusivityItems = {{
-        EnumItemDesc{
-            .name = atoms.intern("OnePerButton"),
-            .value = 0,
-            .docKey = {},
-        },
-        EnumItemDesc{
-            .name = atoms.intern("OneGlobally"),
-            .value = 1,
-            .docKey = {},
-        },
-        EnumItemDesc{
-            .name = atoms.intern("AlwaysShow"),
-            .value = 2,
-            .docKey = {},
-        },
-    }};
-    EnumDescriptor proximityPromptExclusivityDesc;
-    proximityPromptExclusivityDesc.name = atoms.intern("ProximityPromptExclusivity");
-    proximityPromptExclusivityDesc.docKey = {};
-    proximityPromptExclusivityDesc.items = proximityPromptExclusivityItems;
-    enums.registerEnum(proximityPromptExclusivityDesc);
-
-    // --- ProximityPromptStyle ---
-    static std::array<EnumItemDesc, 2> proximityPromptStyleItems;
-    proximityPromptStyleItems = {{
-        EnumItemDesc{
-            .name = atoms.intern("Default"),
-            .value = 0,
-            .docKey = {},
-        },
-        EnumItemDesc{
-            .name = atoms.intern("Custom"),
-            .value = 1,
-            .docKey = {},
-        },
-    }};
-    EnumDescriptor proximityPromptStyleDesc;
-    proximityPromptStyleDesc.name = atoms.intern("ProximityPromptStyle");
-    proximityPromptStyleDesc.docKey = {};
-    proximityPromptStyleDesc.items = proximityPromptStyleItems;
-    enums.registerEnum(proximityPromptStyleDesc);
-
-    // --- ProximityPromptInputType ---
-    static std::array<EnumItemDesc, 3> proximityPromptInputTypeItems;
-    proximityPromptInputTypeItems = {{
-        EnumItemDesc{
-            .name = atoms.intern("Keyboard"),
-            .value = 0,
-            .docKey = {},
-        },
-        EnumItemDesc{
-            .name = atoms.intern("Gamepad"),
-            .value = 1,
-            .docKey = {},
-        },
-        EnumItemDesc{
-            .name = atoms.intern("Touch"),
-            .value = 2,
-            .docKey = {},
-        },
-    }};
-    EnumDescriptor proximityPromptInputTypeDesc;
-    proximityPromptInputTypeDesc.name = atoms.intern("ProximityPromptInputType");
-    proximityPromptInputTypeDesc.docKey = {};
-    proximityPromptInputTypeDesc.items = proximityPromptInputTypeItems;
-    enums.registerEnum(proximityPromptInputTypeDesc);
-
-    // --- DragDetectorDragStyle ---
-    static std::array<EnumItemDesc, 6> dragDetectorDragStyleItems;
-    dragDetectorDragStyleItems = {{
-        EnumItemDesc{
-            .name = atoms.intern("TranslateLine"),
-            .value = 0,
-            .docKey = {},
-        },
-        EnumItemDesc{
-            .name = atoms.intern("TranslatePlane"),
-            .value = 1,
-            .docKey = {},
-        },
-        EnumItemDesc{
-            .name = atoms.intern("TranslateViewPlane"),
-            .value = 2,
-            .docKey = {},
-        },
-        EnumItemDesc{
-            .name = atoms.intern("RotateAxis"),
-            .value = 3,
-            .docKey = {},
-        },
-        EnumItemDesc{
-            .name = atoms.intern("RotateTrackball"),
-            .value = 4,
-            .docKey = {},
-        },
-        EnumItemDesc{
-            .name = atoms.intern("Scriptable"),
-            .value = 5,
-            .docKey = {},
-        },
-    }};
-    EnumDescriptor dragDetectorDragStyleDesc;
-    dragDetectorDragStyleDesc.name = atoms.intern("DragDetectorDragStyle");
-    dragDetectorDragStyleDesc.docKey = {};
-    dragDetectorDragStyleDesc.items = dragDetectorDragStyleItems;
-    enums.registerEnum(dragDetectorDragStyleDesc);
-
-    // --- DragDetectorResponseStyle ---
-    static std::array<EnumItemDesc, 3> dragDetectorResponseStyleItems;
-    dragDetectorResponseStyleItems = {{
-        EnumItemDesc{
-            .name = atoms.intern("Geometric"),
-            .value = 0,
-            .docKey = {},
-        },
-        EnumItemDesc{
-            .name = atoms.intern("Physical"),
-            .value = 1,
-            .docKey = {},
-        },
-        EnumItemDesc{
-            .name = atoms.intern("Custom"),
-            .value = 2,
-            .docKey = {},
-        },
-    }};
-    EnumDescriptor dragDetectorResponseStyleDesc;
-    dragDetectorResponseStyleDesc.name = atoms.intern("DragDetectorResponseStyle");
-    dragDetectorResponseStyleDesc.docKey = {};
-    dragDetectorResponseStyleDesc.items = dragDetectorResponseStyleItems;
-    enums.registerEnum(dragDetectorResponseStyleDesc);
 
     // --- TerrainPaintMode ---
     static std::array<EnumItemDesc, 4> terrainPaintModeItems;

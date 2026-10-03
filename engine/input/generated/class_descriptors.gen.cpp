@@ -312,7 +312,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .readOnly = false,
             .inert = false,
             .transient = true,
-            .doc = "Whether the pointer is locked to the window and reporting motion instead of position -- what a first-person camera wants. While it is locked, `GetPointerPosition` keeps reporting the position the pointer had when it was locked, because there is no other honest answer, and a `Direction2D` action bound to `MouseMovement` is the way to read the motion.",
+            .doc = "Whether the pointer is locked to the window and reporting motion instead of position -- what a first-person camera wants. While it is locked, `GetPointerPosition` keeps reporting the position the pointer had when it was locked, because there is no other honest answer, and a `Direction2D` action bound to `MouseMovement` is the way to read the motion.\012\012**A locked pointer is the game's.** Nothing of the interface is under it: no hover, no press, and no `Active` object takes its motion, whatever was left under the place it was locked at. The keyboard and a gamepad still select the interface. A game that wants a click on its interface lets the pointer go first, as a menu does.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getInputServicePointerLocked,
             .set = native::setInputServicePointerLocked,

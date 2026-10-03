@@ -37,14 +37,16 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
   from the camera and the viewport as the tick begins, so the answer is a
   function of the input and replays); hover; the four signals;
   `MaxActivationDistance`. **`CursorIcon` is stored and not drawn** (`Inert`).
-- [x] `ProximityPrompt` and `ProximityPromptService`: the properties and signals
+- [x] (withdrawn by the owner on 2026-10-03, protocol 35: a prompt is the
+  game's own code) `ProximityPrompt` and `ProximityPromptService`: the properties and signals
   of ADR 0126 §2; the default look (the key, the texts, a hold bar filling
   under the key), drawn into the screen's draw list above the game's UI;
   `Custom` style; tap on touch; the keys below every game context (a key a
   game's context sank, or the interface took, is not the prompt's --
   `InputSystem::consumed`). `GamepadKeyCode` defaults to `ButtonWest`: the
   enum has no `ButtonX`.
-- [x] `DragDetector`: the six drag styles, limits from where the part rested,
+- [x] (withdrawn by the owner on 2026-10-03, protocol 35: a world drag is the
+  game's own code) `DragDetector`: the six drag styles, limits from where the part rested,
   `Geometric`/`Physical`/`Custom` responses, the three signals with the
   pointer's ray. A `Physical` turn is put there (`MaxTorque` inert: no angular
   impulse yet).
@@ -157,15 +159,11 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
   against the dry one and against what the effect is for); vibration calls
   reach the device (a fake standing where SDL does).
 
-## Stage F7 — text chat (ADR 0132)
+## Stage F7 — text chat (ADR 0132) -- dropped
 
-- [ ] `TextChatService`, `TextChannel`, `TextChatMessage`, `TextChatCommand`.
-- [ ] Default channels, team channels, whispers, commands.
-- [ ] Through the authority: length, rate, membership, filter, `ShouldDeliver`.
-- [ ] The default chat window, input bar and bubbles; configuration objects;
-  themed and i18n'd.
-- [ ] Tests: a message reaches its channel's members only; the rate limit drops
-  a flood; a filter rewrites; a whisper reaches one player.
+Withdrawn by the owner on 2026-10-03: a game's chat is the game's own code on
+`RemoteEvent` and the encrypted transport, and the engine ships nothing
+chat-specific. None of it is to be built.
 
 ## Stage F8 — preloading (ADR 0131 §3)
 

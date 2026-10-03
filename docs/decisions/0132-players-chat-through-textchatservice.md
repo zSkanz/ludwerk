@@ -1,6 +1,6 @@
 # 0132 — Players chat through `TextChatService`
 
-- Status: accepted (to be built; see `docs/briefs/toolkit-kickoff.md`, F7)
+- Status: **withdrawn by the owner on 2026-10-03**: a game's chat is the game's own code, built on `RemoteEvent` (ADR 0077) and the transport's encryption; the engine ships nothing chat-specific. The text below is kept as the record of what was decided and undone.
 - Date: 2026-09-27
 - Decided by: the owner, on 2026-09-27, approving text chat from a survey of
   public documentation (R7).
