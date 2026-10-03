@@ -1106,7 +1106,11 @@ jobs:
       # status line to learn from.
       #
       # `-LE gpu-golden` for the reason every other tier excludes them: a pixel
-      # golden is tied to the GPU that recorded it, and this is not it.
+      # golden is tied to the GPU that recorded it, and this is not it. And
+      # `netcode`: the acceptance gate is two real-time processes for two and a
+      # half minutes, run alone after the rest of the suite, and on this
+      # runner that took the job past its twenty minutes -- the whole run was
+      # cancelled for it. Linux and Windows run it; nothing in it is macOS's.
       # Where the engine looks for them: `content/shaders` beside the host.
       - name: The shaders a Tier-2 host compiled (D167)
         uses: actions/download-artifact@v4
@@ -1118,7 +1122,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          ctest --preset macos-clang-dev -LE gpu-golden --no-tests=error --output-on-failure -j 4 2>&1 | tee ctest.log
+          ctest --preset macos-clang-dev -LE "gpu-golden|netcode" --no-tests=error --output-on-failure -j 4 2>&1 | tee ctest.log
           status=${PIPESTATUS[0]}
           set -e
           exit "$status"
