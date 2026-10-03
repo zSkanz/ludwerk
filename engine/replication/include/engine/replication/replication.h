@@ -100,6 +100,11 @@ public:
     using SceneChanger = std::function<void(scene::World&, const std::string&, std::vector<core::u8>)>;
     virtual void setSceneChanger(SceneChanger changer) = 0;
 
+    // **Called when the authority first takes a replica** (N1), before
+    // anything it sends is applied: where a host makes its world the server's.
+    // Ignored by an authority.
+    virtual void setWelcomeHandler(std::function<void(scene::World&)> handler) = 0;
+
     // **Where a replica keeps its own scripts** (ADR 0138 §6), asked at each
     // spawn (`ReplicaSession::setScriptTemplates`). Ignored by an authority.
     virtual void setScriptTemplates(std::function<ScriptTemplates*()> templates) = 0;

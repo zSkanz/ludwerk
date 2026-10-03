@@ -383,9 +383,18 @@ struct EngineState
         f64 lossPercent = 0.0;
         f64 snapshotsPerSecond = 0.0;
         f64 correctionsPerSecond = 0.0;
+        // Every correction since the session began, counted, not a rate: what
+        // a test or a game's own counter reads exactly.
+        u64 corrections = 0;
         f64 lastCorrectionMetres = 0.0;
         u32 inputBufferDepth = 0;
         u64 inputStarvations = 0;
+        // How many times the authority anchored this player's input again
+        // because its clock had moved (D480), and how far in the past a
+        // client draws the others, in milliseconds, as the link has made it
+        // (NA14).
+        u64 inputReanchors = 0;
+        f64 interpolationDelayMs = 0.0;
         // A replica's own simulation (ADR 0133): the loose parts it predicts,
         // the re-simulations a second and the ticks they stepped, and what
         // one took on average over that second, in milliseconds.

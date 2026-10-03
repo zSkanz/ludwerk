@@ -117,6 +117,9 @@
 #endif
 
 namespace engine::app {
+
+// How many ticks a headless server runs back to back to catch up a long frame.
+constexpr core::u32 ServerCatchUpTicks = 30;
 namespace {
 
 // **What was typed during play survives the stop** (the owner: a variable
@@ -2160,6 +2163,25 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     };
 
     FrameScheduler scheduler;
+    // **A long frame says where its time went** (N11): the scheduler could
+    // say only how long, and a player's log of "Frame took 400 ms" could not
+    // be diagnosed by anyone. The phases are the ones `--frame-stats` splits.
+    scheduler.setQuiet(true);
+    struct FramePhases
+    {
+        f64 simMs = 0.0;
+        f64 waitMs = 0.0;
+        f64 renderScriptsMs = 0.0;
+    };
+    FramePhases lastPhases;
+    core::u64 lastLongFrameWarnNs = 0;
+    // **A server catches up rather than dropping time** (NA3): a frame of its
+    // over four ticks long -- a garbage collection, a large join -- dropped the
+    // rest, and every client's input queue was left that much deeper, silently,
+    // until it was caught up by skipping. Half a second is run back to back.
+    if (options.headless && (options.network.topology == replication::Topology::Host ||
+                             options.network.topology == replication::Topology::Dedicated))
+        scheduler.setMaxCatchUpTicks(ServerCatchUpTicks);
 
     // The world and the VM. Booted before the loop because every entry script's
     // first resumption is a deferred callback, and the first drain is inside the
@@ -2743,6 +2765,19 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             scheduler.rebase(nowNs);
 
         const Frame frame = scheduler.beginFrame(nowNs);
+        if (frame.clamped && (lastLongFrameWarnNs == 0 || nowNs - lastLongFrameWarnNs >= 5'000'000'000ull)) {
+            lastLongFrameWarnNs = nowNs != 0 ? nowNs : 1;
+            const f64 totalMs = frame.renderDt * 1000.0;
+            const f64 otherMs =
+                std::max(0.0, totalMs - lastPhases.simMs - lastPhases.waitMs - lastPhases.renderScriptsMs);
+            const std::array<I18nArg, 6> args{I18nArg{"ms", totalMs},
+                                              I18nArg{"simulation", lastPhases.simMs},
+                                              I18nArg{"scripts", lastPhases.renderScriptsMs},
+                                              I18nArg{"waiting", lastPhases.waitMs},
+                                              I18nArg{"other", otherMs},
+                                              I18nArg{"ticks", static_cast<core::i64>(frame.simTicks)}};
+            core::log(LogLevel::Warn, ENG_TR("engine.frame.warn.long_frame"), args);
+        }
 
         // The gizmo target is armed BEFORE the ticks, not with the rest of the
         // rendering. `DebugService:DrawLine` is documented as drawing "for one
@@ -2871,10 +2906,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                      .focus = focusPosition});
             }
             lastFrameNs = sampleNs;
-            phaseSimMs = 0.0;
-            phaseWaitMs = 0.0;
-            phaseRenderScriptsMs = 0.0;
         }
+        // What this frame spent, for the next one's warning if it was long.
+        lastPhases = FramePhases{phaseSimMs, phaseWaitMs, phaseRenderScriptsMs};
+        phaseSimMs = 0.0;
+        phaseWaitMs = 0.0;
+        phaseRenderScriptsMs = 0.0;
         // **`--pace`**: the rest of the frame's share of a second, waited out
         // and left out of what the frame is measured to have cost.
         if (options.paceHz != 0) {
@@ -2898,6 +2935,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             state.minimized = platform::windowMinimized(*window);
             state.refreshRate = platform::windowRefreshRate(*window);
             state.presented = framePresented;
+            state.networked = network.active();
             const core::u64 now = platform::nowNs();
             if (pacedFrameNs != 0 && framePresented && state.focused)
                 syncWatch.sample(now - pacedFrameNs, state.refreshRate);
@@ -6766,6 +6804,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     host->close(std::min(30.0, platform::stopDeadlineSeconds()), [&] {
         if (window != nullptr)
             (void)platform::pumpEvents();
+        // **The network is served while the close handlers run** (NA10): a
+        // "the server is restarting" fired from `BindToClose` never left, and
+        // a long grace timed the clients out with "the server is gone".
+        network.receive(false);
+        network.sendMessages();
     });
     // Closed and saved: a console handler holding the process open for this
     // may let it go.

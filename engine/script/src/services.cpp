@@ -1364,6 +1364,9 @@ int networkServiceGetStats(lua_State* L)
     field("LastCorrection", stats.lastCorrectionMetres);
     field("InputBufferDepth", static_cast<double>(stats.inputBufferDepth));
     field("InputStarvations", static_cast<double>(stats.inputStarvations));
+    field("InputReanchors", static_cast<double>(stats.inputReanchors));
+    field("Corrections", static_cast<double>(stats.corrections));
+    field("InterpolationDelay", stats.interpolationDelayMs);
     field("PredictedParts", static_cast<double>(stats.predictedParts));
     field("ResimulationsPerSecond", stats.resimulationsPerSecond);
     field("ResimulatedTicksPerSecond", stats.resimulatedTicksPerSecond);

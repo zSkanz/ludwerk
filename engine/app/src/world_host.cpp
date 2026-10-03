@@ -1671,7 +1671,7 @@ void WorldHost::warnScriptsInStorage()
 // scripts inside them, which the join had replaced with the authority's --
 // and the server code started again, fresh. The simplest honest mechanism, as
 // the ADR allows: a game that went solo is a game that just loaded its scene.
-void WorldHost::returnToSolo()
+void WorldHost::returnToSolo(std::string_view scene)
 {
 #if ENG_ENABLE_REPLICATION
     // What a join kept for the authority's instances: the scene read again
@@ -1679,7 +1679,7 @@ void WorldHost::returnToSolo()
     if (m_scriptTemplates)
         m_scriptTemplates->clear(*m_world);
 #endif
-    const std::string current = m_world->engineState().currentScene;
+    const std::string current = scene.empty() ? m_world->engineState().currentScene : std::string(scene);
     if (!current.empty()) {
         if (const std::optional<core::EngineError> error = loadScene(current); error.has_value())
             core::logText(LogLevel::Error, error->message);

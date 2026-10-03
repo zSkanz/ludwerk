@@ -77,6 +77,9 @@
 #include "engine/physics/backends.h"
 
 namespace engine::physics {
+
+// The fastest a body spins, in radians a second (K1).
+constexpr float MaxAngularVelocity = 500.0f;
 namespace {
 
 // **What a terrain chunk's band triangles are marked with** (ADR 0143): 1 in
@@ -3345,6 +3348,18 @@ private:
         // not, and it is as deterministic as the step it is part of.
         settings.mMotionQuality =
             motion == MotionType::Dynamic ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
+        // **A round body may spin as fast as a wheel does** (K1). Jolt's own
+        // ceiling is a quarter turn a step -- 47 rad/s at sixty -- so a kart's
+        // 0.27 m wheel could not pass 46 km/h whatever its motor asked. A ball,
+        // and a cylinder no longer than it is wide -- a wheel, a disc, a fan --
+        // sweep little new as they turn, so they may turn at highway speed;
+        // anything else keeps the ceiling, which is what stops a tumbling log
+        // tunnelling through a floor (D417's logs fell through it at five
+        // hundred).
+        const bool wheel = desc.shape.type == ShapeType::Sphere ||
+                           (desc.shape.type == ShapeType::Cylinder && desc.shape.size.y <= desc.shape.size.x);
+        if (wheel)
+            settings.mMaxAngularVelocity = MaxAngularVelocity;
         settings.mUserData = packHandle(handle);
         // Mass is volume times `BasePart.Density`, and there is no `Mass`
         // property precisely so that the two cannot disagree. `CalculateInertia`

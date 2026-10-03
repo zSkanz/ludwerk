@@ -1259,3 +1259,33 @@ TEST_CASE("D462: two fingers apart are a pinch by how far, and a swipe's length 
     const platform::Event far[] = {finger(platform::EventType::FingerMoved, 9, 260.0f, 100.0f)};
     CHECK(countOf(gesturesOf(fixture, far, ++tick), Gesture::Kind::Swipe) == 1);
 }
+
+TEST_CASE("NA25: a key pressed and let go between two ticks is down for one of them")
+{
+    // At thirty frames a second -- ten in the background -- a quick tap fell
+    // between two ticks and was never down at either.
+    Fixture fixture;
+    const InstanceId context = fixture.context();
+    const InstanceId jump = fixture.action(context, input::ActionType::Bool);
+    const InstanceId binding = fixture.binding(jump);
+    fixture.world->inputBindings().find(binding)->keyCode = fixture.keyCode("Space");
+    fixture.system.dispatchSimTick(*fixture.world, 1);
+    (void)fixture.drainEvents();
+
+    fixture.press("Space");
+    fixture.release("Space");
+    fixture.system.dispatchSimTick(*fixture.world, 2);
+    CHECK(fixture.state(jump).pressed);
+    CHECK(fixture.drainEvents() == std::vector<std::string>{"Pressed", "StateChanged"});
+    fixture.system.dispatchSimTick(*fixture.world, 3);
+    CHECK_FALSE(fixture.state(jump).pressed);
+    CHECK(fixture.drainEvents() == std::vector<std::string>{"Released", "StateChanged"});
+
+    // A key held across ticks is let go when it is let go, not a tick later.
+    fixture.press("Space");
+    fixture.system.dispatchSimTick(*fixture.world, 4);
+    (void)fixture.drainEvents();
+    fixture.release("Space");
+    fixture.system.dispatchSimTick(*fixture.world, 5);
+    CHECK_FALSE(fixture.state(jump).pressed);
+}

@@ -68,6 +68,22 @@ inline constexpr usize StateHistory = 64;
 // this many messages a tick from one peer and drops the rest. A message waits
 // this many sends for its event to reach the network before it is dropped.
 inline constexpr u32 MaxRemoteMessagesPerTick = 256;
+// **A client's messages are budgeted over time** (NA22, NA23): what it has in
+// hand, and what it gains a tick -- remote calls, clicks and drags together,
+// and their bytes. A server frame of 200 ms packs twelve of a client's ticks
+// into one of its own, and a per-tick limit dropped what a game had sent
+// legitimately; a burst of a thousand is read whole. A peer that keeps past
+// its budget for `FloodTicks` ticks in a row is let go: limits nobody pays
+// for are only a slower flood.
+inline constexpr u32 RemoteMessageBurst = 1024;
+inline constexpr u32 RemoteMessagesPerTick = 64;
+inline constexpr usize RemoteByteBurst = 1024u * 1024u;
+inline constexpr usize RemoteBytesPerTick = 64u * 1024u;
+inline constexpr u32 FloodTicks = 300;
+// **How far an owner may move what it owns in a tick** (NA24): two metres,
+// 120 m/s. A drag, a throw, a vehicle -- all under it; a part put across the
+// map by a client that holds it is refused, and the authority's place stands.
+inline constexpr core::f64 MaxOwnedMetresPerTick = 2.0;
 inline constexpr u16 MaxRemoteHeldSends = 300;
 // The script module's own payload ceiling, plus the few bytes of its header.
 inline constexpr usize MaxRemoteWirePayload = 64u * 1024u + 16u;
@@ -78,6 +94,14 @@ inline constexpr usize MaxRemoteWirePayload = 64u * 1024u + 16u;
 // is a refusal of the whole message. The byte budget is what `RemoteEvent`
 // payloads may add up to, on top of the message count above.
 inline constexpr u32 MaxIntentsPerTick = 8;
+// **Intent messages are budgeted over time, not by tick** (NA3): a peer has
+// `MaxIntentBurst` in hand and gains `IntentBudgetPerTick` a tick. A replica
+// sends one a tick, so its budget is always full; a burst after a hitch -- a
+// server frame of 200 ms packs twelve of a client's ticks into one of its own --
+// is all read, where eight a tick dropped the newest four; and a peer flooding
+// is held to two a tick for as long as it floods.
+inline constexpr u32 MaxIntentBurst = 32;
+inline constexpr u32 IntentBudgetPerTick = 2;
 inline constexpr u16 MaxIntentEntries = 256;
 
 // **Intents, buffered and applied one a tick** (the multiplayer smoothness
@@ -108,7 +132,7 @@ inline constexpr u32 StandInLifetimeTicks = 30;
 
 // The visual slide of a correction: what is left of it after each tick, and
 // the distance past which a correction is a teleport and drawn as one.
-inline constexpr core::f64 VisualDecayPerTick = 0.6;
+inline constexpr core::f64 VisualDecayPerTick = 0.55;
 
 // **What a replica predicts besides its character** (ADR 0133): the loose
 // parts within this many metres of it, nearest first, up to a count; one that
@@ -138,7 +162,10 @@ inline constexpr usize MaxHeldMessages = 4096;
 inline constexpr usize MaxHeldBytes = 16u * 1024u * 1024u;
 // **A connection that never says hello is let go**, in authority receives --
 // ten seconds at sixty. A handshake is one reliable round trip.
-inline constexpr u32 MaxUnwelcomedReceives = 600;
+inline constexpr u32 MaxUnwelcomedReceives = 180;
+// Why a replica was refused (`Refused`, NA8).
+inline constexpr u8 RefusedVersion = 1;
+inline constexpr u8 RefusedFull = 2;
 // Players this authority remembers across connections (ADR 0085). Past it,
 // the longest-known one not connected now is forgotten: its next visit is a
 // new player, which is what an authority that restarted would say too.
@@ -146,6 +173,32 @@ inline constexpr usize MaxKnownIdentities = 65536;
 // The largest message an authority accepts from a peer: an owned state of
 // `MaxOwnedRecords` parts, a `RemoteEvent` at its ceiling, with room.
 inline constexpr usize MaxAuthorityMessageBytes = 1024u * 1024u;
+// **A snapshot too large to go as one unreliable message** (NA1): past this
+// it is sent reliably, in parts of `SnapshotPartBytes`, and nothing more is
+// sent to that peer until it is acknowledged. An unreliable message ENet
+// fragments is lost whole when one fragment is, and a world's first snapshot --
+// every record whole, no baseline -- was resent every other tick until one got
+// through: 29 seconds to join a world of 1 000 parts on this machine's own
+// loopback, and never at 5 000.
+inline constexpr usize ReliableSnapshotBytes = 16u * 1024u;
+// **How long a connected peer may say nothing before it is gone**, in ticks:
+// ten seconds, the transport's own default. The transport is serviced by a
+// thread of its own (N9), so a process whose game froze still answers it --
+// and a server stuck in a script, or a client whose window hung, was a
+// connection that never ended. A replica hears a snapshot every few ticks and
+// an authority an intent every tick, so silence this long is a peer that
+// stopped.
+inline constexpr u32 SilentPeerTicks = 600;
+inline constexpr usize SnapshotPartBytes = 32u * 1024u;
+// The most a replica will join from snapshot parts: a world of some hundred
+// thousand parts, and not an authority's way to fill a player's memory.
+inline constexpr usize MaxReplicaSnapshotBytes = 64u * 1024u * 1024u;
+// **A move this far in a tick is a teleport, not a motion** (NA15): drawn as a
+// step at its tick rather than a slide across the map. Two metres a tick is
+// 120 m/s -- faster than anything a game walks, drives or flies on purpose.
+inline constexpr core::f64 TeleportMetresPerTick = 2.0;
+// The most the adaptive interpolation delay adds over what it was set to.
+inline constexpr u32 MaxAddedInterpolationDelay = 20;
 // Connections one address may hold on an authority: a household behind one
 // router is a few players, and a flood from one machine is not a crowd.
 inline constexpr usize MaxPeersPerAddress = 8;
@@ -198,6 +251,11 @@ struct WorldState
 class AuthoritySession
 {
 public:
+    // **How many players this authority takes** (NA8). Zero: as many as the
+    // transport holds. Past it a replica is told `Refused` and let go -- the
+    // transport keeps one slot over so that there is a connection to say it on.
+    void setMaxPlayers(u32 players) noexcept { m_maxPlayers = players; }
+
     explicit AuthoritySession(net::ITransport& transport) noexcept : m_transport(transport) {}
 
     // Handshakes, acknowledgements, departures and intent. A welcomed peer
@@ -238,6 +296,19 @@ private:
         bool welcomed = false;
         // The newest state this peer has proved it holds. Zero: none yet.
         u64 acked = 0;
+        // The snapshot ticks this peer was sent, newest last: an
+        // acknowledgement names one of them or is not taken (NA1) -- a
+        // client acknowledging a tick it was never sent would have bought
+        // full snapshots for ever.
+        std::deque<u64> sentTicks;
+        // **The last snapshot sent reliably, in parts** (NA1), with what this
+        // peer held then: kept here because the history may have moved past
+        // it by the time the peer has it all. While `pinnedPending`, nothing
+        // more is sent to the peer -- each snapshot after would be as large.
+        std::shared_ptr<const WorldState> pinnedState;
+        std::vector<u32> pinnedHeld;
+        u64 pinnedTick = 0;
+        bool pinnedPending = false;
         // Network ids this peer has been told exist, sorted.
         std::vector<u32> known;
         // Its player, and the newest intent applied from it -- older ones
@@ -278,6 +349,7 @@ private:
         // which is put back when the run turns out to have been the peer's
         // clock and not its packets.
         u32 lateIntentTicks = 0;
+        u32 intentBudget = MaxIntentBurst;
         bool lateIntentCounted = false;
         // The stream was anchored again and has not been started since: the
         // next start is on the newest tick queued, not the oldest, and a tick
@@ -285,8 +357,10 @@ private:
         // queued again by the messages that arrive with it.
         bool anchoredAgain = false;
         u64 anchorFloor = 0;
-        // Ticks since an intent message last came from this peer.
+        // Ticks since an intent message last came from this peer, and since
+        // any message did.
         u32 silentTicks = 0;
+        u32 quietTicks = 0;
         // The newest tick this peer has sent: a late tick past it is one the
         // authority has never seen, and a press in it has never been applied.
         u64 newestIntentSeen = 0;
@@ -316,6 +390,10 @@ private:
         // `RemoteEvent` messages this tick, against the flood limit, and what
         // this tick's intents, owned states and payload bytes came to.
         u32 messagesThisTick = 0;
+        u32 messageBudget = RemoteMessageBurst;
+        usize byteBudget = RemoteByteBurst;
+        bool floodedThisTick = false;
+        u32 floodTicks = 0;
         u32 intentsThisTick = 0;
         u32 ownedThisTick = 0;
         usize remoteBytesThisTick = 0;
@@ -368,6 +446,8 @@ private:
     // Everything of the ground that differs from the scene, to a peer that
     // has not been sent it.
     void sendGroundWhole(Peer& peer, const scene::World& world);
+    template <typename Send>
+    void encodeGroundWhole(const scene::World& world, Send send);
     // One intent a peer, the next in tick order, as this tick's.
     void applyIntents(scene::World& world);
     void sendAttributes(Peer& peer, const std::vector<u32>& entering);
@@ -401,6 +481,7 @@ private:
     // What each id is spawned as, by the authority's class name atom.
     std::map<u32, core::NameAtom> m_classNames;
     std::deque<std::shared_ptr<const WorldState>> m_history;
+    u32 m_maxPlayers = 0;
     // The world's atom table, for the strings a message carries. Captured by
     // `send`, which is the only caller that can need it.
     // The last capture's walk, in pre-order, and each network id's place in
@@ -449,6 +530,11 @@ private:
     // This send's changes, as whole messages for every peer already holding
     // the ground.
     std::vector<std::vector<u8>> m_groundEdits;
+    // **The whole ground, encoded once for every peer that needs it** (NA2):
+    // a scene change with thirty peers encoded the world thirty times in one
+    // tick. Made again when the ground changes (`diffGround` clears it).
+    std::vector<std::vector<u8>> m_groundWhole;
+    bool m_groundWholeValid = false;
     const scene::World* m_world = nullptr;
     u64 m_tick = 0;
     Stats m_stats;
@@ -515,6 +601,14 @@ public:
     {
         m_sceneChanger = std::move(changer);
     }
+    // **Called when the authority first takes this replica** (N1), before
+    // anything it sends is applied: where a host clears its world for the
+    // server's. Until then the machine is what it was -- a join that fails
+    // leaves its menu standing.
+    void setWelcomeHandler(std::function<void(scene::World&)> handler) { m_welcomeHandler = std::move(handler); }
+    // Why the authority refused this replica, or 0 (`RefusedVersion`,
+    // `RefusedFull`).
+    [[nodiscard]] u8 refused() const noexcept { return m_refused; }
     // The newest state applied to the world. Zero before the first.
     [[nodiscard]] u64 appliedTick() const noexcept { return m_applied; }
     // This replica's player number, as the authority's welcome named it.
@@ -550,6 +644,9 @@ private:
     // starts from.
     void updatePredicted(scene::World& world);
     void onSnapshot(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
+    // A part of a snapshot sent reliably (NA1): joined, and applied whole
+    // when the last part is in.
+    void onSnapshotPart(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
     void onSpawn(scene::World& world, std::span<const u8> bytes);
     void onDespawn(scene::World& world, std::span<const u8> bytes);
     // Every record of these ids this session keeps, gone: the local mapping,
@@ -595,6 +692,13 @@ private:
     PlayerToken m_token;
     u32 m_playerId = 0;
     u64 m_applied = 0;
+    // Ticks since anything came from the authority (`SilentPeerTicks`).
+    u32 m_quietTicks = 0;
+    // The snapshot whose parts are arriving: its tick, the next part's index,
+    // and its bytes so far.
+    u64 m_partTick = 0;
+    u32 m_partNext = 0;
+    std::vector<u8> m_partBytes;
     // The authority's name atoms, as this world's.
     std::map<u32, core::NameAtom> m_names;
     // Network id to local instance, for everything spawned and not despawned.
@@ -608,6 +712,8 @@ private:
     std::map<u32, u64> m_departed;
     std::function<bool(core::InstanceId)> m_probe;
     std::function<void(scene::World&, const std::string&, std::vector<core::u8>)> m_sceneChanger;
+    std::function<void(scene::World&)> m_welcomeHandler;
+    u8 m_refused = 0;
     std::function<ScriptTemplates*()> m_templates;
     // Husks made since the host last drained them.
     std::vector<core::InstanceId> m_streamedOut;
@@ -637,6 +743,10 @@ private:
     // What is left to slide of the corrections so far, and whose.
     core::InstanceId m_visualCharacter;
     core::DVec3 m_visualOffset{};
+    // An offset was added this tick: it is drawn whole once before it decays
+    // (NA16). Decayed in the receive that added it, 40% of a correction was a
+    // pop on its first frame.
+    bool m_visualFresh = false;
     core::DVec3 m_displaced{};
     // The parts this replica owns (ADR 0099): simulated here, sent up, and
     // never overwritten by a snapshot.
@@ -677,12 +787,27 @@ private:
     std::deque<Sample2D> m_predicted2d;
     u64 m_serverClock = 0;
     u32 m_interpolationDelay = DefaultInterpolationDelay;
+    // **The delay adapts to the link** (NA14): what it was set to is the
+    // least it is; how late snapshots arrive against the clock, and how
+    // unevenly, and the ticks between them, say how much more it needs.
+    u32 m_baseDelay = DefaultInterpolationDelay;
+    core::f64 m_lateAverage = 0.0;
+    core::f64 m_lateSpread = 0.0;
+    core::f64 m_snapshotInterval = 1.0;
+    u64 m_lastSnapshotTick = 0;
+    u32 m_delayTicks = 0;
 
 public:
-    // How many ticks behind the server's clock remote parts are drawn. Zero
-    // applies each snapshot as it arrives, which is what a test comparing two
-    // worlds pixel for pixel wants.
-    void setInterpolationDelay(u32 ticks) noexcept { m_interpolationDelay = ticks; }
+    // How many ticks behind the server's clock remote parts are drawn, at
+    // least: the link may make it more (NA14). Zero applies each snapshot as
+    // it arrives, which is what a test comparing two worlds pixel for pixel
+    // wants, and does not adapt.
+    void setInterpolationDelay(u32 ticks) noexcept
+    {
+        m_interpolationDelay = ticks;
+        m_baseDelay = ticks;
+    }
+    [[nodiscard]] u32 interpolationDelay() const noexcept { return m_interpolationDelay; }
 
     // Whether a script holds an instance, asked before one that left interest
     // is removed: held, it becomes a husk (reparented to nil) and is reported

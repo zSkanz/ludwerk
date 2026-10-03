@@ -34,6 +34,9 @@ public:
         if (m_config.topology == Topology::Replica) {
             transport.port = 0;
             transport.maxPeers = 1;
+            transport.simulatedDelayMs = m_config.simulatedDelayMs;
+            transport.simulatedJitterMs = m_config.simulatedJitterMs;
+            transport.simulatedLossPercent = m_config.simulatedLossPercent;
             if (auto error = m_transport->open(transport); error.has_value())
                 return error;
             net::PeerId authority;
@@ -48,16 +51,19 @@ public:
             m_replica->setCharacterReplay(m_characterReplay);
             m_replica->setSceneChanger(m_sceneChanger);
             m_replica->setScriptTemplates(m_templates);
+            m_replica->setWelcomeHandler(m_welcomeHandler);
             return std::nullopt;
         }
         transport.port = m_config.port;
-        transport.maxPeers = m_config.maxPeers;
+        // One over the players: a connection to say "full" on (NA8).
+        transport.maxPeers = std::min<usize>(static_cast<usize>(m_config.maxPeers) + 1, net::EnetPeerCap);
         // What a client sends up is small, and a client is not trusted.
         transport.maxMessageBytes = MaxAuthorityMessageBytes;
         transport.maxPeersPerAddress = MaxPeersPerAddress;
         if (auto error = m_transport->open(transport); error.has_value())
             return error;
         m_authority.emplace(*m_transport);
+        m_authority->setMaxPlayers(m_config.maxPeers);
         return std::nullopt;
     }
 
@@ -92,6 +98,8 @@ public:
             m_authority->sendMessages(world);
         else if (m_replica.has_value())
             m_replica->sendMessages(world);
+        // The tick's sends leave now, together (N9).
+        m_transport->flush();
     }
 
     [[nodiscard]] Status status() const override
@@ -112,6 +120,7 @@ public:
             status.peerCount = m_replica->welcomed() ? 1 : 0;
             status.welcomed = m_replica->welcomed();
             status.lost = m_replica->lost();
+            status.refused = m_replica->refused();
             status.token = m_replica->playerToken();
             status.freshJoins = m_replica->freshJoins();
             const net::PeerLink link = m_replica->link();
@@ -141,6 +150,13 @@ public:
         m_sceneChanger = std::move(changer);
         if (m_replica.has_value())
             m_replica->setSceneChanger(m_sceneChanger);
+    }
+
+    void setWelcomeHandler(std::function<void(scene::World&)> handler) override
+    {
+        m_welcomeHandler = std::move(handler);
+        if (m_replica.has_value())
+            m_replica->setWelcomeHandler(m_welcomeHandler);
     }
 
     void setScriptTemplates(std::function<ScriptTemplates*()> templates) override
@@ -191,6 +207,9 @@ private:
     void redial()
     {
         m_receives += 1;
+        // Refused is an answer: dialling again would be asked again.
+        if (m_replica->refused() != 0)
+            return;
         if (!m_replica->lost()) {
             if (m_attempts > 0)
                 m_sayWhenWelcomed = true;
@@ -241,6 +260,7 @@ private:
     std::function<bool(core::InstanceId)> m_probe;
     scene::ICharacterReplay* m_characterReplay = nullptr;
     SceneChanger m_sceneChanger;
+    std::function<void(scene::World&)> m_welcomeHandler;
     std::function<ScriptTemplates*()> m_templates;
     u64 m_tick = 0;
 };

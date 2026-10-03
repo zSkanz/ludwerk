@@ -97,6 +97,9 @@ public:
     void setFixedDt(f64 seconds) noexcept { timing_.fixedDt = seconds; }
     // How many ticks a frame may run to catch up; see `catchUpTicksFor`.
     void setMaxCatchUpTicks(u32 ticks) noexcept { timing_.maxCatchUpTicks = ticks > 0 ? ticks : 1; }
+    // The frame loop says where a long frame's time went itself (N11), so the
+    // scheduler's own line, which can only say how long, is not wanted.
+    void setQuiet(bool quiet) noexcept { quiet_ = quiet; }
 
     // **The clock it is fed changed** (audit A9): the synthetic clock counts
     // from zero and the real one from boot, so the first real frame after a
@@ -127,6 +130,7 @@ private:
     // keep up says so every few seconds and not every frame (audit A14).
     u64 lastWarnNs_ = 0;
     bool warned_ = false;
+    bool quiet_ = false;
 };
 
 } // namespace engine::app

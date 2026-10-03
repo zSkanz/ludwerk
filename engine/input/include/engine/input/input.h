@@ -366,6 +366,15 @@ private:
     void collectRawEvents(core::Vec2 pointerDelta, core::Vec2 wheel);
 
     DeviceState m_state;
+    // **A press a tick has not seen yet, and a release that waits for it**
+    // (NA25). Buttons were recorded as held or not when the frame's events
+    // were folded in, so a key pressed and let go between two of them was
+    // never down at any tick: at thirty frames a second, or ten in the
+    // background, a quick tap vanished. A button that goes down stays down
+    // until a simulation tick has read it, and its release is applied after.
+    std::array<bool, kKeyCodeCount> m_downUnseen{};
+    std::array<bool, kKeyCodeCount> m_releaseDeferred{};
+    void setHeld(i32 code, bool down) noexcept;
     // Accumulated since the last `Simulation` dispatch and since the last
     // `Render` one, separately: a frame may carry several ticks or none, and a
     // delta consumed by one rate must still be there for the other.

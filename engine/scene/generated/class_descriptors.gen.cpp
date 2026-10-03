@@ -5832,7 +5832,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("GetStats"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "**How the connection is doing**, for a game that shows a connection-quality mark: the round trip in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets lost in percent (`Loss`), snapshots a second, corrections of this machine's own character a second and how far the last one moved it in metres (`LastCorrection`), and the authority's queue of this player's input -- how many ticks it holds (`InputBufferDepth`) and how many times it ran dry (`InputStarvations`). On a client, what it simulates itself: the loose parts near its character it predicts (`PredictedParts`), the times a second a correction stepped them again and the ticks it stepped, and what one took on average in milliseconds (`ResimulationTime`). On an authority, the worst peer's link and the deepest queue. All zero solo.",
+            .doc = "**How the connection is doing**, for a game that shows a connection-quality mark: the round trip in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets lost in percent (`Loss`), snapshots a second, corrections of this machine's own character a second, and in all since it joined (`Corrections`), and how far the last one moved it in metres (`LastCorrection`), and the authority's queue of this player's input -- how many ticks it holds (`InputBufferDepth`), how many times it ran dry (`InputStarvations`) and how many times it was started again because the player's clock had moved -- a long frame (`InputReanchors`). How far in the past the others are drawn, in milliseconds (`InterpolationDelay`): two snapshot intervals and the link's jitter, adapting as the link does. On a client, what it simulates itself: the loose parts near its character it predicts (`PredictedParts`), the times a second a correction stepped them again and the ticks it stepped, and what one took on average in milliseconds (`ResimulationTime`). On an authority, the worst peer's link and the deepest queue. All zero solo.",
         },
         MethodDesc{
             .name = atoms.intern("Join"),
@@ -5853,7 +5853,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "Leaves the match, or stops hosting, and goes back to solo in the scene it is in; the game's code decides what next. Server code starts again, fresh, since this machine decides the world again. `Disconnected` fires. A dedicated server may not call it.",
         },
     }};
-    static std::array<EventDesc, 5> networkServiceEvents;
+    static std::array<EventDesc, 6> networkServiceEvents;
     networkServiceEvents = {{
         EventDesc{
             .name = atoms.intern("Connected"),
@@ -5863,21 +5863,26 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
         EventDesc{
             .name = atoms.intern("JoinFailed"),
             .slot = 8,
-            .doc = "The join did not succeed, and this machine is solo again. The reason is readable text.",
+            .doc = "The join did not succeed, and this machine is solo again. The reason is readable text: nothing answered, the server is full, or it runs another version. **The machine is as it was**: a join changes nothing until the server takes it, so the menu that called `Join` is still there to hear this.",
+        },
+        EventDesc{
+            .name = atoms.intern("HostFailed"),
+            .slot = 9,
+            .doc = "`Host` could not open its port -- something else holds it -- and this machine is still what it was. The reason is readable text.",
         },
         EventDesc{
             .name = atoms.intern("Disconnected"),
-            .slot = 9,
+            .slot = 10,
             .doc = "The connection ended -- the server left, the network dropped, or `Disconnect` was called -- and this machine is solo again.",
         },
         EventDesc{
             .name = atoms.intern("PlayerAdded"),
-            .slot = 10,
+            .slot = 11,
             .doc = "Somebody joined. Deferred like every signal (ADR 0015), so a script that connects in its file scope and then walks `GetPlayers()` sees each player exactly once.",
         },
         EventDesc{
             .name = atoms.intern("PlayerRemoving"),
-            .slot = 11,
+            .slot = 12,
             .doc = "Somebody is leaving: the player still resolves inside the handler, for the reason `Destroying` does, so a game can save what it needs from them.",
         },
     }};
@@ -8488,7 +8493,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(screenOrientationDesc);
 
     // --- NetworkState ---
-    static std::array<EnumItemDesc, 5> networkStateItems;
+    static std::array<EnumItemDesc, 6> networkStateItems;
     networkStateItems = {{
         EnumItemDesc{
             .name = atoms.intern("Offline"),
@@ -8513,6 +8518,11 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
         EnumItemDesc{
             .name = atoms.intern("Serving"),
             .value = 4,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Reconnecting"),
+            .value = 5,
             .docKey = {},
         },
     }};

@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 32;
+inline constexpr u32 ProtocolVersion = 33;
 
 // How a field's bytes are laid down. Every one is fixed-width and
 // little-endian, with no variable-length forms and no nesting -- a wire format
@@ -452,6 +452,8 @@ enum class MessageType : u8
     TerrainLook = 18,
     VoxelChunks = 19,
     VoxelTypes = 20,
+    SnapshotPart = 22,
+    Refused = 23,
 };
 
 // Which direction a message may travel. A server that accepted a
@@ -493,6 +495,8 @@ inline constexpr MessageDesc Messages[] = {
     {"TerrainLook", MessageType::TerrainLook, 0, Direction::ToReplica},
     {"VoxelChunks", MessageType::VoxelChunks, 0, Direction::ToReplica},
     {"VoxelTypes", MessageType::VoxelTypes, 0, Direction::ToReplica},
+    {"SnapshotPart", MessageType::SnapshotPart, 0, Direction::ToReplica},
+    {"Refused", MessageType::Refused, 0, Direction::ToReplica},
 };
 
 } // namespace engine::replication::generated

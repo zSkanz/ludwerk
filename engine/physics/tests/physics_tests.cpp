@@ -124,6 +124,26 @@ TEST_CASE("an anchored part does not fall")
     CHECK(fixture.physics->bodyState(fixture.world, body).transform.position.y == doctest::Approx(10.0));
 }
 
+TEST_CASE("K1: a body spins as fast as it is spun, past Jolt's own 47 rad/s")
+{
+    // A kart's wheel of 0.27 m at 100 km/h turns at 103 rad/s.
+    Fixture fixture;
+    fixture.physics->setGravity(fixture.world, core::Vec3{0.0f, 0.0f, 0.0f});
+    BodyDesc round = cubeDesc({0.0, 10.0, 0.0}, 3);
+    round.shape.type = ShapeType::Cylinder;
+    round.shape.size = core::Vec3{0.54f, 0.3f, 0.54f};
+    const BodyHandle wheel = fixture.physics->createBody(fixture.world, round);
+    fixture.physics->setBodyVelocity(fixture.world, wheel, core::Vec3{}, core::Vec3{0.0f, 200.0f, 0.0f});
+    fixture.run(2);
+    const float spin = fixture.physics->bodyState(fixture.world, wheel).angularVelocity.y;
+    CHECK(static_cast<double>(spin) > 150.0);
+    // A box keeps Jolt's ceiling: it sweeps space as it turns.
+    const BodyHandle box = fixture.physics->createBody(fixture.world, cubeDesc({5.0, 10.0, 0.0}, 4));
+    fixture.physics->setBodyVelocity(fixture.world, box, core::Vec3{}, core::Vec3{0.0f, 200.0f, 0.0f});
+    fixture.run(2);
+    CHECK(static_cast<double>(fixture.physics->bodyState(fixture.world, box).angularVelocity.y) < 50.0);
+}
+
 TEST_CASE("density decides mass, and mass decides which way a seesaw tips")
 {
     Fixture fixture;

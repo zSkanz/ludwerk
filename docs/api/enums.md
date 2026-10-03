@@ -545,6 +545,7 @@ Where this machine stands in a networked game (ADR 0106): what `NetworkService.S
 | `Connected` | 2 | In a match another machine decides: this one is a client. |
 | `Hosting` | 3 | This machine decides the world, a player sits at it, and others may join. |
 | `Serving` | 4 | A dedicated server (`--serve`): it decides the world and nobody sits at it. |
+| `Reconnecting` | 5 | The connection to the server was lost and this machine is dialling it again. The world stands as it was; a game can say so and stop predicting. |
 
 ## Enum.NetworkTopology
 

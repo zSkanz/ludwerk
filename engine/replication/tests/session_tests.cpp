@@ -5,13 +5,16 @@
 // so a failure reproduces exactly -- which is the property a replication bug
 // most needs and a socket least provides.
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <deque>
 #include <doctest/doctest.h>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
+#include <thread>
 
 #include "../../scene/tests/scene_fixture.h"
 #include "class_descriptors.gen.h"
@@ -1150,8 +1153,9 @@ TEST_CASE("a correction is drawn sliding over a tenth of a second, and a telepor
     CHECK(match.replica->stats().lastCorrectionMetres == doctest::Approx(0.5));
     const replication::VisualCorrection slide = match.replica->visualCorrection();
     CHECK(slide.character == mine);
-    CHECK(slide.offset.x < -0.2);
-    CHECK(slide.offset.x >= -0.5);
+    // Drawn whole on its first frame -- where the character was -- and not
+    // 40% of the way already (NA16).
+    CHECK(slide.offset.x == doctest::Approx(-0.5));
     // A tenth of a second later it is there.
     match.run(6);
     CHECK(std::abs(match.replica->visualCorrection().offset.x) < 0.02);
@@ -1500,12 +1504,14 @@ TEST_CASE("a replica's message reaches the authority from its own player, and an
     CHECK(match.server.world.engineState().remoteInbox.empty());
     CHECK(match.authority->stats().messagesDropped == droppedBefore + 1);
 
-    // **Nor flood it**: past the per-tick limit, the rest is dropped.
-    for (core::u32 at = 0; at < MaxRemoteMessagesPerTick + 44; ++at)
+    // **Nor flood it**: past the budget, the rest is dropped (NA22: a burst
+    // is budgeted over time, so the budget is what it has in hand).
+    match.run(30);
+    for (core::u32 at = 0; at < RemoteMessageBurst + 44; ++at)
         match.client.world.engineState().remoteOutbox.push_back(up);
     // Sent at the end of one step, taken in at the start of the next.
     match.run(2);
-    CHECK(match.server.world.engineState().remoteInbox.size() == MaxRemoteMessagesPerTick);
+    CHECK(match.server.world.engineState().remoteInbox.size() == RemoteMessageBurst);
     CHECK(match.authority->stats().messagesDropped == droppedBefore + 1 + 44);
     CHECK(match.replica->checksumFailures() == 0);
 }
@@ -2174,27 +2180,28 @@ TEST_CASE("a part handed to a replica is simulated there, followed by the author
     CHECK(match.client.world.rigidBodies().find(mine)->networkOwner == 2);
 
     // The owner kicks it: the authority takes where it went, and the replica's
-    // own copy is not pulled back by a snapshot a round trip old.
-    match.client.world.parts().find(mine)->cframe.position = core::DVec3{7.0, 1.0, 0.0};
+    // own copy is not pulled back by a snapshot a round trip old. Within reach
+    // of where it was (NA24): an owner is not let put it anywhere at once.
+    match.client.world.parts().find(mine)->cframe.position = core::DVec3{2.5, 1.0, 0.0};
     match.client.world.rigidBodies().find(mine)->linearVelocity = core::Vec3{3.0f, 0.0f, 0.0f};
     match.run(3);
-    CHECK(match.server.world.parts().find(ball)->cframe.position.x == doctest::Approx(7.0));
+    CHECK(match.server.world.parts().find(ball)->cframe.position.x == doctest::Approx(2.5));
     CHECK(static_cast<double>(match.server.world.rigidBodies().find(ball)->linearVelocity.x) == doctest::Approx(3.0));
-    match.client.world.parts().find(mine)->cframe.position = core::DVec3{8.0, 1.0, 0.0};
+    match.client.world.parts().find(mine)->cframe.position = core::DVec3{3.5, 1.0, 0.0};
     match.run(1);
-    CHECK(match.client.world.parts().find(mine)->cframe.position.x == doctest::Approx(8.0));
+    CHECK(match.client.world.parts().find(mine)->cframe.position.x == doctest::Approx(3.5));
 
-    // Handed back: the state still in flight -- the 8 -- is dropped, since the
+    // Handed back: the state still in flight -- the 3.5 -- is dropped, since the
     // authority takes only what it gave and it has taken this back; the
     // replica's copy goes back to where the authority has it, not where it had
     // rolled to since; and what the replica does to it no longer reaches the
     // authority.
     match.server.world.rigidBodies().find(ball)->networkOwner = 0;
-    match.client.world.parts().find(mine)->cframe.position = core::DVec3{12.0, 1.0, 0.0};
+    match.client.world.parts().find(mine)->cframe.position = core::DVec3{4.5, 1.0, 0.0};
     match.run(1);
     CHECK(match.client.world.rigidBodies().find(mine)->networkOwner == 0);
     const double settled = match.server.world.parts().find(ball)->cframe.position.x;
-    CHECK(settled == doctest::Approx(7.0));
+    CHECK(settled == doctest::Approx(2.5));
     CHECK(match.client.world.parts().find(mine)->cframe.position.x == doctest::Approx(settled));
     match.client.world.parts().find(mine)->cframe.position = core::DVec3{-40.0, 1.0, 0.0};
     match.run(8);
@@ -2483,11 +2490,11 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
     REQUIRE(ballNet.valid());
     (void)match.server.atoms.intern("Move");
 
-    // Twenty intent messages in one tick: eight are read -- the replica's own
-    // from the last step among them -- and the rest are a peer making the
-    // authority parse.
+    // Forty intent messages in one tick: a burst's worth is read -- the
+    // replica's own from the last step among them -- and the rest are a peer
+    // making the authority parse (NA3: budgeted over time, `MaxIntentBurst`).
     const core::u64 droppedBefore = match.authority->stats().messagesDropped;
-    for (core::u32 at = 1; at <= 20; ++at) {
+    for (core::u32 at = 1; at <= 40; ++at) {
         Bytes intent;
         intent.u8v(7)
             .u8v(1)
@@ -2503,7 +2510,7 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
             match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
     }
     match.authority->receive(match.server.world, match.server.workspace);
-    CHECK(match.authority->stats().messagesDropped == droppedBefore + 13);
+    CHECK(match.authority->stats().messagesDropped == droppedBefore + 41 - MaxIntentBurst);
 
     // More ticks than a message carries, or more entries than an input map
     // has, is refused whole.
@@ -2518,7 +2525,7 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
     REQUIRE_FALSE(match.clientTransport->send(match.toServer, five.data, net::Delivery::Unreliable, 2).has_value());
     REQUIRE_FALSE(match.clientTransport->send(match.toServer, many.data, net::Delivery::Unreliable, 2).has_value());
     match.authority->receive(match.server.world, match.server.workspace);
-    CHECK(match.authority->stats().messagesDropped == droppedBefore + 15);
+    CHECK(match.authority->stats().messagesDropped == droppedBefore + 41 - MaxIntentBurst + 2);
 
     // An owned state whose second record is cut short moves nothing -- and
     // does not make the whole one after it, at the same tick, look old.
@@ -2561,8 +2568,10 @@ TEST_CASE("a connection that never says hello is let go, and a message naming to
     REQUIRE_FALSE(silent->connect("memory", Port, toServer).has_value());
     match.authority->receive(match.server.world, match.server.workspace);
     CHECK(match.serverTransport->peerCount() == 2);
+    // The match goes on meanwhile: a welcomed replica that said nothing for
+    // as long would be let go as well (`SilentPeerTicks`).
     for (core::u32 at = 0; at <= MaxUnwelcomedReceives; ++at)
-        match.authority->receive(match.server.world, match.server.workspace);
+        match.step();
     CHECK(match.serverTransport->peerCount() == 1);
     CHECK(match.authority->peerCount() == 1);
 
@@ -3252,6 +3261,278 @@ TEST_CASE("D480: both sessions real, a stick held through two frames of 400 ms f
         CHECK(still == 0);
     }
     CHECK(match.authority->stats().intentReanchors >= 1);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+// --- Over the real transport (the netcode audit) ----------------------------------
+
+namespace {
+
+// An authority and a replica over ENet on this machine's loopback, configured
+// as `createReplication` configures them. **The memory transport enforces
+// none of what these are about** -- a size cap, fragments, a send buffer --
+// which is why the suite was green on every one of them.
+struct EnetMatch
+{
+    std::unique_ptr<net::ITransport> serverTransport = net::createEnetTransport();
+    std::unique_ptr<net::ITransport> clientTransport = net::createEnetTransport();
+    RealSide server;
+    RealSide client;
+    core::InstanceId host;
+    core::InstanceId me;
+    std::optional<AuthoritySession> authority;
+    std::optional<ReplicaSession> replica;
+    net::PeerId toServer;
+    core::u64 tick = 0;
+
+    explicit EnetMatch(core::u16 port)
+    {
+        seedCatalog();
+        REQUIRE_FALSE(serverTransport
+                          ->open(net::TransportConfig{.port = port,
+                                                      .maxPeers = 4,
+                                                      .channels = 4,
+                                                      .timeoutMs = 10000,
+                                                      .maxMessageBytes = MaxAuthorityMessageBytes,
+                                                      .maxPeersPerAddress = MaxPeersPerAddress})
+                          .has_value());
+        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+        REQUIRE_FALSE(clientTransport->connect("127.0.0.1", port, toServer).has_value());
+        host = scene::createPlayer(server.world, server.network, 1, true);
+        me = scene::createPlayer(client.world, client.network, 0, true);
+        authority.emplace(*serverTransport);
+        replica.emplace(*clientTransport, toServer);
+    }
+
+    void step()
+    {
+        tick += 1;
+        authority->receive(server.world, server.workspace);
+        authority->send(server.world, server.workspace, tick);
+        authority->sendMessages(server.world);
+        replica->receive(client.world, client.workspace);
+        replica->sendIntent(client.world, tick);
+        replica->sendMessages(client.world);
+    }
+
+    // Parts under the replica's workspace.
+    [[nodiscard]] usize replicaParts() const
+    {
+        usize count = 0;
+        for (core::InstanceId at = client.world.firstChild(client.workspace); at.valid();
+             at = client.world.nextSibling(at))
+            count += client.world.parts().find(at) != nullptr ? 1 : 0;
+        return count;
+    }
+};
+
+// Steps a match at sixty ticks a second of wall time until `done` or the
+// seconds run out; returns the seconds it took, or a negative number.
+template <typename Done>
+double stepUntil(EnetMatch& match, double seconds, Done done)
+{
+    const auto began = std::chrono::steady_clock::now();
+    auto next = began;
+    while (true) {
+        const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
+        if (done())
+            return elapsed;
+        if (elapsed > seconds)
+            return -1.0;
+        match.step();
+        next += std::chrono::microseconds(16667);
+        std::this_thread::sleep_until(next);
+    }
+}
+
+} // namespace
+
+TEST_CASE("NA1: a world of ten thousand parts is joined in seconds, over the real transport")
+{
+    // Measured before (ludwerk-08, 2026-10-02): 1 000 parts 29 s, 5 000 never,
+    // on the loopback with nothing lost -- the first snapshot whole,
+    // unreliable and fragmented, resent every other tick, and past a
+    // megabyte never sent at all.
+    EnetMatch match(47941);
+    for (int index = 0; index < 10000; ++index) {
+        const core::InstanceId id =
+            match.server.world.create(match.server.classes.findId(match.server.atoms.intern("Part")));
+        REQUIRE(id.valid());
+        match.server.world.setName(id, match.server.atoms.intern("Brick"));
+        match.server.world.parts().find(id)->cframe.position =
+            core::DVec3{static_cast<double>(index % 100), 1.0, static_cast<double>(index / 100)};
+        match.server.world.rigidBodies().find(id)->anchored = true;
+        REQUIRE_FALSE(match.server.world.setParent(id, match.server.workspace).has_value());
+    }
+    const double took = stepUntil(match, 10.0, [&] { return match.replicaParts() >= 10000; });
+    CAPTURE(match.replicaParts());
+    CHECK(took >= 0.0);
+    CHECK(took < 3.0);
+    CHECK(match.authority->stats().snapshotsInParts >= 1);
+    CHECK(match.authority->stats().sendFailures == 0);
+    CHECK(match.replica->checksumFailures() == 0);
+
+    // And after it, a moved brick reaches the replica as a small diff.
+    const core::InstanceId moved = match.server.world.firstChild(match.server.workspace);
+    match.server.world.parts().find(moved)->cframe.position.y = 9.0;
+    const double after = stepUntil(match, 3.0, [&] {
+        for (core::InstanceId at = match.client.world.firstChild(match.client.workspace); at.valid();
+             at = match.client.world.nextSibling(at)) {
+            const scene::PartComponent* part = match.client.world.parts().find(at);
+            if (part != nullptr && part->cframe.position.y == 9.0)
+                return true;
+        }
+        return false;
+    });
+    CHECK(after >= 0.0);
+    CHECK(after < 1.0);
+}
+
+TEST_CASE("NA3: twelve intents that a server hitch packed into one tick are all read")
+{
+    // A server frame of 200 ms: twelve of the client's ticks arrive at once.
+    // Eight a tick dropped the newest four -- the ones the next ticks needed.
+    PlayedMatch match;
+    match.run(10);
+    MoveStream stream(match);
+    core::u64 sent = match.tick;
+    for (int at = 0; at < 20; ++at) {
+        stream.send(++sent, 0.0f);
+        stream.tick();
+    }
+    const core::u64 droppedBefore = match.authority->stats().messagesDropped;
+    for (int at = 0; at < 12; ++at)
+        stream.send(++sent, 1.0f);
+    stream.tick();
+    CHECK(match.authority->stats().messagesDropped == droppedBefore);
+}
+
+TEST_CASE("NA6: a body the authority puts somewhere is there on its own replica, not twice as far")
+{
+    // N7, measured three times in five: on joining -- and rejoining -- a game
+    // the server puts the body at its saved place, and the replica's own body
+    // read exactly twice that for its first ticks.
+    // Put there as the player arrives, and put there later: both.
+    for (int settle : {0, 1, 2, 10}) {
+        CAPTURE(settle);
+        PlayedMatch match;
+        const core::InstanceId body = match.part("Body", core::DVec3{0.0, 0.0, 0.0});
+        match.server.world.players().find(match.remote())->character = body;
+        match.run(settle);
+        match.server.world.parts().find(body)->cframe.position = core::DVec3{0.5, 27.9, 0.5};
+        double highest = 0.0;
+        for (int at = 0; at < 20; ++at) {
+            match.step();
+            const core::InstanceId mine = match.copyOf(body);
+            if (mine.valid())
+                highest = std::max(highest, match.client.world.parts().find(mine)->cframe.position.y);
+        }
+        CHECK(highest <= 27.9 + 1e-6);
+        const core::InstanceId mine = match.copyOf(body);
+        REQUIRE(mine.valid());
+        CHECK(match.client.world.parts().find(mine)->cframe.position.y == doctest::Approx(27.9));
+    }
+}
+
+TEST_CASE("NA15: a teleport is drawn as a step at its tick, not a slide across the map")
+{
+    PlayedMatch match;
+    const core::InstanceId crate = match.part("Crate", core::DVec3{0.0, 1.0, 0.0});
+    match.run(20);
+    match.server.world.parts().find(crate)->cframe.position = core::DVec3{500.0, 1.0, 0.0};
+    bool between = false;
+    for (int at = 0; at < 20; ++at) {
+        match.step();
+        const core::InstanceId copy = match.copyOf(crate);
+        REQUIRE(copy.valid());
+        const double x = match.client.world.parts().find(copy)->cframe.position.x;
+        between = between || (x > 1.0 && x < 499.0);
+    }
+    CHECK_FALSE(between);
+    CHECK(match.client.world.parts().find(match.copyOf(crate))->cframe.position.x == doctest::Approx(500.0));
+}
+
+TEST_CASE("NA14: how far in the past others are drawn grows with the link's jitter, and says so")
+{
+    // A fixed four ticks was eaten by any route with more spread than that,
+    // and remote parts stepped at the snapshot rate or stood still.
+    net::LossConfig loss;
+    loss.seed = 5;
+    loss.jitterPolls = 6;
+    PlayedMatch match(&loss);
+    const core::InstanceId crate = match.part("Crate", core::DVec3{0.0, 1.0, 0.0});
+    match.run(10);
+    const core::u32 base = match.replica->interpolationDelay();
+    for (int at = 0; at < 600; ++at) {
+        match.server.world.parts().find(crate)->cframe.position.x += 0.05;
+        match.step();
+    }
+    CHECK(match.replica->interpolationDelay() > base);
+    CHECK(match.replica->interpolationDelay() <= base + MaxAddedInterpolationDelay);
+    CHECK(match.replica->stats().interpolationDelayTicks == match.replica->interpolationDelay());
+}
+
+TEST_CASE("NA24: an owner cannot put what it owns across the map in one message")
+{
+    PlayedMatch match;
+    const core::InstanceId ball = match.part("Ball", core::DVec3{0.0, 1.0, 0.0});
+    match.run(3);
+    const core::InstanceId mine = match.copyOf(ball);
+    REQUIRE(mine.valid());
+    match.server.world.rigidBodies().find(ball)->networkOwner = 2;
+    match.run(3);
+    match.client.world.parts().find(mine)->cframe.position = core::DVec3{900.0, 1.0, 0.0};
+    match.run(3);
+    CHECK(match.server.world.parts().find(ball)->cframe.position.x < 10.0);
+    // And no faster than reach allows, whatever speed it says.
+    match.client.world.parts().find(mine)->cframe.position = core::DVec3{1.0, 1.0, 0.0};
+    match.client.world.rigidBodies().find(mine)->linearVelocity = core::Vec3{1.0e5f, 0.0f, 0.0f};
+    match.run(3);
+    CHECK(static_cast<double>(match.server.world.rigidBodies().find(ball)->linearVelocity.x) <=
+          MaxOwnedMetresPerTick * 60.0 + 1e-3);
+}
+
+TEST_CASE("N9: a peer that says nothing for ten seconds is gone, on either side")
+{
+    // The transport's own thread answers for a process whose game froze, so
+    // the transport no longer notices one: the sessions do.
+    PlayedMatch match;
+    match.run(10);
+    REQUIRE(match.authority->peerCount() == 1);
+    REQUIRE(match.remote().valid());
+    // The replica stops: the authority goes on ticking.
+    for (core::u32 at = 0; at <= SilentPeerTicks + 1; ++at)
+        match.authority->receive(match.server.world, match.server.workspace);
+    CHECK(match.authority->peerCount() == 0);
+    CHECK_FALSE(match.remote().valid());
+
+    // And the other way: an authority that stops is lost to its replica.
+    PlayedMatch other;
+    other.run(10);
+    REQUIRE_FALSE(other.replica->lost());
+    for (core::u32 at = 0; at <= SilentPeerTicks + 1; ++at)
+        other.replica->receive(other.client.world, other.client.workspace);
+    CHECK(other.replica->lost());
+}
+
+TEST_CASE("NA1: an acknowledgement of a tick that was never sent is refused")
+{
+    PlayedMatch match;
+    match.run(20);
+    const core::u64 refusedBefore = match.authority->stats().acksRefused;
+    Bytes ack;
+    ack.u8v(6).u64v(std::numeric_limits<core::u64>::max());
+    REQUIRE_FALSE(match.clientTransport->send(match.toServer, ack.data, net::Delivery::Reliable, 0).has_value());
+    match.run(3);
+    CHECK(match.authority->stats().acksRefused == refusedBefore + 1);
+    // The match goes on diffing against what the replica really holds.
+    const core::InstanceId part = match.part("Mover", core::DVec3{0.0, 1.0, 0.0});
+    match.run(5);
+    match.server.world.parts().find(part)->cframe.position.x = 4.0;
+    match.run(5);
+    const core::InstanceId copy = match.copyOf(part);
+    REQUIRE(copy.valid());
+    CHECK(match.client.world.parts().find(copy)->cframe.position.x == 4.0);
     CHECK(match.replica->checksumFailures() == 0);
 }
 

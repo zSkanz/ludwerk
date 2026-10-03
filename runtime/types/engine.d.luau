@@ -4197,8 +4197,14 @@ declare extern type NetworkService extends Instance with
     read LocalPlayer: Player?
     --- The join succeeded: this machine is in the server's match.
     read Connected: Signal<()>
-    --- The join did not succeed, and this machine is solo again. The reason is readable text.
+    --- The join did not succeed, and this machine is solo again. The reason is readable text: nothing
+    --- answered, the server is full, or it runs another version. **The machine is as it was**: a join
+    --- changes nothing until the server takes it, so the menu that called `Join` is still there to hear
+    --- this.
     read JoinFailed: Signal<string>
+    --- `Host` could not open its port -- something else holds it -- and this machine is still what it
+    --- was. The reason is readable text.
+    read HostFailed: Signal<string>
     --- The connection ended -- the server left, the network dropped, or `Disconnect` was called -- and
     --- this machine is solo again.
     read Disconnected: Signal<string>
@@ -4213,14 +4219,18 @@ declare extern type NetworkService extends Instance with
     function GetPlayers(self): {Player}
     --- **How the connection is doing**, for a game that shows a connection-quality mark: the round trip
     --- in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets lost in percent
-    --- (`Loss`), snapshots a second, corrections of this machine's own character a second and how far
-    --- the last one moved it in metres (`LastCorrection`), and the authority's queue of this player's
-    --- input -- how many ticks it holds (`InputBufferDepth`) and how many times it ran dry
-    --- (`InputStarvations`). On a client, what it simulates itself: the loose parts near its character
-    --- it predicts (`PredictedParts`), the times a second a correction stepped them again and the ticks
-    --- it stepped, and what one took on average in milliseconds (`ResimulationTime`). On an authority,
-    --- the worst peer's link and the deepest queue. All zero solo.
-    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number }
+    --- (`Loss`), snapshots a second, corrections of this machine's own character a second, and in all
+    --- since it joined (`Corrections`), and how far the last one moved it in metres (`LastCorrection`),
+    --- and the authority's queue of this player's input -- how many ticks it holds
+    --- (`InputBufferDepth`), how many times it ran dry (`InputStarvations`) and how many times it was
+    --- started again because the player's clock had moved -- a long frame (`InputReanchors`). How far
+    --- in the past the others are drawn, in milliseconds (`InterpolationDelay`): two snapshot intervals
+    --- and the link's jitter, adapting as the link does. On a client, what it simulates itself: the
+    --- loose parts near its character it predicts (`PredictedParts`), the times a second a correction
+    --- stepped them again and the ticks it stepped, and what one took on average in milliseconds
+    --- (`ResimulationTime`). On an authority, the worst peer's link and the deepest queue. All zero
+    --- solo.
+    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number }
     --- Connects to a server at `address` (`host` or `host:port`), or to `[network] server` from
     --- `project.toml` with none. **Joining replaces this machine's scene with the server's**: what it
     --- replicates arrives, and server code stops, since this machine no longer decides the world.
@@ -5220,6 +5230,7 @@ declare Enum: {
         Connected: EnumNetworkState,
         Hosting: EnumNetworkState,
         Serving: EnumNetworkState,
+        Reconnecting: EnumNetworkState,
         GetEnumItems: (self: any) -> { EnumNetworkState },
     },
     GradientType: {

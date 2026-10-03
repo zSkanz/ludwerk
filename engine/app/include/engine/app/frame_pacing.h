@@ -46,6 +46,11 @@ struct FrameWindowState
     bool presented = true;
     // Whether the sync is holding frames to the refresh (`SyncWatch`).
     bool syncHeld = true;
+    // Whether this machine is in a networked session -- hosting, serving or
+    // joined (NA4). Such a window in the background still runs at the
+    // simulation's rate: its snapshots and its intents are other players'
+    // game.
+    bool networked = false;
 };
 
 // **The cap for this frame**, in frames a second; 0 is none.

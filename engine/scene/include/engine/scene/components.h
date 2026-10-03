@@ -158,6 +158,11 @@ struct RigidBodyComponent
     f32 angularDamping = 0.05f;
     // `ContactDetails`: whether `Collided` is queued for this part.
     bool contactDetails = false;
+    // Written by REPLICATION: the authority sent this part (NA17). On a
+    // replica only what the authority sends is the authority's to move; a
+    // part this machine's own scripts made -- debris, a shell, a projectile
+    // only it sees -- is simulated here.
+    bool fromAuthority = false;
 
     // Written by the MIRROR when the body is made or reshaped: what it weighs,
     // as the solver worked it out from the shape and the density.

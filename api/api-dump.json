@@ -3953,7 +3953,7 @@
         {
           "Name": "GetStats",
           "Parameters": [],
-          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number }"],
+          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number }"],
           "ThreadSafety": "Unsafe"
         },
         {
@@ -3988,6 +3988,15 @@
         },
         {
           "Name": "Disconnected",
+          "Parameters": [
+            {
+              "Name": "reason",
+              "Type": "string"
+            }
+          ]
+        },
+        {
+          "Name": "HostFailed",
           "Parameters": [
             {
               "Name": "reason",
@@ -12630,6 +12639,10 @@
         {
           "Name": "Offline",
           "Value": 0
+        },
+        {
+          "Name": "Reconnecting",
+          "Value": 5
         },
         {
           "Name": "Serving",

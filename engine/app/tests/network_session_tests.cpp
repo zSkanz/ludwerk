@@ -44,7 +44,8 @@ struct Machine
     std::unique_ptr<app::NetworkSession> network;
 
     void boot(const std::shared_ptr<net::MemoryNetwork>& wire,
-              scene::NetworkTopology topology = scene::NetworkTopology::Solo, std::string_view scene = {})
+              scene::NetworkTopology topology = scene::NetworkTopology::Solo, std::string_view scene = {},
+              core::u32 maxPlayers = 32)
     {
         app::WorldHostOptions options = bootOptions(project.root);
         options.networkTopology = topology;
@@ -64,6 +65,7 @@ struct Machine
         replication::Config base;
         base.ticksPerSnapshot = 1;
         base.interpolationDelayTicks = 0;
+        base.maxPeers = maxPlayers;
         network = std::make_unique<app::NetworkSession>([this]() { return host.get(); }, base,
                                                         [wire]() { return net::createMemoryTransport(wire); });
         network->setJoinTimeout(0.5);
@@ -428,6 +430,8 @@ namespace {
 
 // Enum.NetworkState.Connecting.
 constexpr core::i32 Connecting = 1;
+// N13: dialling a server that went, as against dialling one for the first time.
+constexpr core::i32 Reconnecting = 5;
 
 // A scene with one part, so a machine has a scene and its scene's scripts.
 const char* const kSceneOfOne = R"json({"format":"scene","version":2,"root":{"children":[)json"
@@ -526,7 +530,7 @@ TEST_CASE("D432: a server that goes is Connecting, then Disconnected and solo af
     server.reset();
     for (int at = 0; at < 200 && client.state() == Connected; ++at)
         client.frame();
-    CHECK(client.state() == Connecting);
+    CHECK(client.state() == Reconnecting);
     CHECK(client.topology() == scene::NetworkTopology::Replica);
     CHECK(occurrences(log, "across-disconnected") == 0);
 
@@ -534,7 +538,7 @@ TEST_CASE("D432: a server that goes is Connecting, then Disconnected and solo af
     now += 5'000'000'000ull;
     for (int at = 0; at < 30; ++at)
         client.frame();
-    CHECK(client.state() == Connecting);
+    CHECK(client.state() == Reconnecting);
 
     // Past it: given up. `Disconnected`, and this machine decides its own
     // world again -- with its scene's client code started in it.
@@ -567,7 +571,7 @@ TEST_CASE("D432: a server that restarts is a fresh join -- a new world, and Conn
     first.reset();
     for (int at = 0; at < 200 && client.state() == Connected; ++at)
         client.frame();
-    REQUIRE(client.state() == Connecting);
+    REQUIRE(client.state() == Reconnecting);
 
     // Another server on the same port, which has never heard of this player.
     Machine second;
@@ -638,6 +642,149 @@ TEST_CASE("a join nothing answers is JoinFailed, and the game stays solo")
     CHECK(log.contains("join-failed:true state:Offline"));
     CHECK(client.topology() == scene::NetworkTopology::Solo);
     CHECK_FALSE(client.network->active());
+}
+
+TEST_CASE("N1: a join nothing answers leaves the game exactly as it was")
+{
+    // A menu that offers "join by address": its parts, the address typed into
+    // it and the handler for `JoinFailed` were cleared away by the join, and
+    // the failure then reloaded the scene under them.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine client;
+    client.project.write("src/server/rules.luau", "print('client-rules-started')");
+    client.project.write("src/client/menu.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        local marker = Instance.new("Part")
+        marker.Name = "MenuMarker"
+        marker.Parent = workspace
+        NetworkService.JoinFailed:Connect(function(reason: string)
+            print(`join-failed marker:{workspace:FindFirstChild("MenuMarker") ~= nil} state:{NetworkService.State.Name}`)
+        end)
+        NetworkService:Join("memory:47998")
+    )");
+    client.boot(wire);
+    for (int at = 0; at < 60; ++at)
+        client.frame();
+    CHECK(log.contains("join-failed marker:true state:Offline"));
+    // Its own server code ran once, and was never stopped and started again.
+    CHECK(occurrences(log, "client-rules-started") == 1);
+    CHECK(client.serverCode() == 1);
+    CHECK(client.topology() == scene::NetworkTopology::Solo);
+}
+
+TEST_CASE("NA8: a full server says so, and the player who asked hears why")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/client/host.luau", R"(game:GetService("NetworkService"):Host(47102))");
+    server.boot(wire, scene::NetworkTopology::Solo, {}, 1);
+    Machine first;
+    first.project.write("src/client/join.luau", R"(game:GetService("NetworkService"):Join("memory:47102"))");
+    first.boot(wire);
+    Machine second;
+    second.project.write("src/client/join.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.JoinFailed:Connect(function(reason: string)
+            print(`second-refused:{reason}`)
+        end)
+        task.wait(0.5)
+        NetworkService:Join("memory:47102")
+    )");
+    second.boot(wire);
+    for (int at = 0; at < 90; ++at) {
+        server.frame();
+        first.frame();
+        second.frame();
+    }
+    CHECK(first.state() == Connected);
+    CHECK(second.state() == Offline);
+    CHECK(log.contains("second-refused:"));
+    CHECK(log.contains("full"));
+}
+
+TEST_CASE("NA7: a host that cannot open its port says so to the game")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine first;
+    first.project.write("src/client/host.luau", R"(game:GetService("NetworkService"):Host(47103))");
+    first.boot(wire);
+    Machine second;
+    second.project.write("src/client/host.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.HostFailed:Connect(function(reason: string)
+            print(`host-failed:{reason ~= ""} state:{NetworkService.State.Name}`)
+        end)
+        task.wait(0.2)
+        NetworkService:Host(47103)
+    )");
+    second.boot(wire);
+    for (int at = 0; at < 40; ++at) {
+        first.frame();
+        second.frame();
+    }
+    CHECK(first.state() == Hosting);
+    CHECK(log.contains("host-failed:true state:Offline"));
+}
+
+TEST_CASE("N2: a client whose server goes is player 1 again, in its own world")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/client/host.luau", R"(game:GetService("NetworkService"):Host(47104))");
+    server.boot(wire);
+    Machine client;
+    client.project.write("src/client/join.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.Connected:Connect(function()
+            print(`joined-as:{(NetworkService.LocalPlayer :: Player).UserId}`)
+        end)
+        NetworkService.Disconnected:Connect(function()
+            print(`solo-as:{(NetworkService.LocalPlayer :: Player).UserId}`)
+        end)
+        NetworkService:Join("memory:47104")
+    )");
+    client.boot(wire);
+    run(server, client, 30);
+    REQUIRE(client.state() == Connected);
+    CHECK(log.contains("joined-as:2"));
+    server.host->world().engineState().pendingNetwork =
+        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0};
+    run(server, client, 30);
+    CHECK(client.state() == Offline);
+    CHECK(log.contains("solo-as:1"));
+}
+
+TEST_CASE("NA17: a part a client's own script makes falls on that client")
+{
+    // Debris, a shell, a projectile only this machine sees: every loose body
+    // on a replica was treated as the authority's to move, and one the
+    // authority never heard of hung in the air.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/client/host.luau", R"(game:GetService("NetworkService"):Host(47105))");
+    server.boot(wire);
+    Machine client;
+    client.project.write("src/client/join.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.Connected:Connect(function()
+            local debris = Instance.new("Part")
+            debris.Size = Vector3.new(1, 1, 1)
+            debris.Position = Vector3.new(0, 50, 0)
+            debris.Parent = workspace
+            task.wait(1)
+            print(`debris-fell:{debris.Position.y < 45}`)
+        end)
+        NetworkService:Join("memory:47105")
+    )");
+    client.boot(wire);
+    run(server, client, 120);
+    REQUIRE(client.state() == Connected);
+    CHECK(log.contains("debris-fell:true"));
 }
 
 TEST_CASE("a join waits by the clock, not by frames, and one from the command line keeps dialling (audit A3)")

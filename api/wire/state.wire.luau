@@ -2409,7 +2409,7 @@ local Messages: { Schema.Message } = {
                 Doc = "How many ticks the authority has found none of this replica's intents to apply "
                     .. "(protocol 22), for its network overlay.",
             },
-            { Name = "atomCount", Type = "u16" },
+            { Name = "atomCount", Type = "u32", Doc = "32 bits from protocol 33: 16 wrapped past 65 535 names." },
             {
                 Name = "atoms",
                 Type = "repeat",
@@ -2450,7 +2450,8 @@ local Messages: { Schema.Message } = {
         Doc = "The tick's diff against the peer's last acknowledged baseline, with a checksum over "
             .. "what was applied. **The checksum catches apply bugs and nothing else** -- interest "
             .. "gives a replica a strict subset of the world, so its hash is not the authority's and "
-            .. "comparing them would be comparing two different worlds.",
+            .. "comparing them would be comparing two different worlds. One larger than 16 KiB is "
+            .. "sent as `SnapshotPart`s instead.",
     },
     {
         Name = "Ack",
@@ -2968,6 +2969,46 @@ local Messages: { Schema.Message } = {
         },
         Doc = "The block world's types and fluid reactions, whole (ADR 0135, protocol 24): once to a replica "
             .. "that joins, and whenever they changed.",
+    },
+    {
+        Name = "SnapshotPart",
+        Id = 22,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "tick", Type = "u64", Doc = "The snapshot's tick." },
+            { Name = "index", Type = "u16", Doc = "This part's place, from 0." },
+            { Name = "count", Type = "u16", Doc = "How many parts the snapshot is in." },
+            { Name = "byteCount", Type = "u32" },
+            {
+                Name = "bytes",
+                Type = "repeat",
+                Count = "byteCount",
+                Each = { { Name = "byte", Type = "u8" } },
+                Doc = "The next piece of a `Snapshot` message, from its type byte on.",
+            },
+        },
+        Doc = "A piece of a `Snapshot` too large to go as one unreliable message (protocol 33, NA1): "
+            .. "a world's first, every record whole, or one an instance-heavy tick made. Reliable and in "
+            .. "order behind the spawns it names; the replica joins the pieces and applies them as the "
+            .. "snapshot they were. The authority sends that peer no other snapshot until it is "
+            .. "acknowledged.",
+    },
+    {
+        Name = "Refused",
+        Id = 23,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            {
+                Name = "reason",
+                Type = "u8",
+                Doc = "1: the replica speaks another protocol. 2: the server is full.",
+            },
+        },
+        Doc = "Why the authority will not take this replica (protocol 33, NA8), sent before it lets the "
+            .. "connection go. Before it, a full server or one of another version answered nothing, and "
+            .. "the player waited out the join's timeout with no reason.",
     },
 }
 

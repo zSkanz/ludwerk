@@ -216,6 +216,40 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.network.maxPeers = static_cast<engine::core::u32>(count);
             continue;
         }
+        // **Where this run keeps its saves** (N5): a server and a player of one
+        // exported game on one machine shared the player's folder, and each
+        // overwrote the other's slots.
+        if (arg.starts_with("--saves=")) {
+            options.saveDirectory = std::filesystem::path(std::string(arg.substr(std::string_view("--saves=").size())));
+            options.saveDirectoryGiven = true;
+            continue;
+        }
+        // **A worse network than the one there is** (netcode ledger A): this
+        // machine's link to the server it joins, held, jittered and lost both
+        // ways, below the transport. For measuring; a shipping build has no
+        // use for it and refuses it.
+        if (arg.starts_with("--net-delay=") || arg.starts_with("--net-jitter=") || arg.starts_with("--net-loss=")) {
+            if (std::string_view(ENG_PROFILE_NAME) == "shipping") {
+                const std::array<I18nArg, 1> refused{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.not_in_shipping"), refused);
+                return kExitUsage;
+            }
+            engine::core::u64 value = 0;
+            const std::string_view number = arg.substr(arg.find('=') + 1);
+            const bool loss = arg.starts_with("--net-loss=");
+            if (!numericValue(number, value) || value > (loss ? 100u : 10000u)) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            if (arg.starts_with("--net-delay="))
+                options.network.simulatedDelayMs = static_cast<engine::core::u32>(value);
+            else if (arg.starts_with("--net-jitter="))
+                options.network.simulatedJitterMs = static_cast<engine::core::u32>(value);
+            else
+                options.network.simulatedLossPercent = static_cast<engine::core::f32>(value);
+            continue;
+        }
         if (arg == "--exit") {
             options.exitAfterFrames = true;
             continue;
@@ -953,7 +987,10 @@ int main(int argc, char** argv)
         options.overlayKey = engine::platform::keyFromName(config.overlayKey);
         options.developerWarnings =
             isProject && (options.editor || !options.devControlUrl.empty() || !options.windowLabel.empty());
-        if (!options.conformanceRoot.empty()) {
+        if (options.saveDirectoryGiven) {
+            // `--saves=DIR` said where (N5).
+        }
+        else if (!options.conformanceRoot.empty()) {
             std::error_code tempError;
             options.saveDirectory = std::filesystem::temp_directory_path(tempError) /
                                     ("engine-conformance-saves-" + std::to_string(engine::platform::nowNs()));
@@ -993,6 +1030,13 @@ int main(int argc, char** argv)
             options.network.topology = engine::replication::Topology::Dedicated;
             options.network.port = kDefaultGamePort;
             options.headless = true;
+        }
+        // The flag beats everything: a server and a player started from the
+        // same game can be told apart (N5). A dedicated server with no flag
+        // keeps its own, beside the player's, rather than in it.
+        if (!options.saveDirectoryGiven && options.network.topology == engine::replication::Topology::Dedicated &&
+            !options.saveDirectory.empty() && options.conformanceRoot.empty()) {
+            options.saveDirectory = options.saveDirectory.parent_path() / "saves-server";
         }
         if (!config.icon.empty())
             options.projectIcon = options.scriptPath / std::filesystem::path(config.icon);

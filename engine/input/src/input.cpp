@@ -261,6 +261,23 @@ std::string_view keyCodeName(i32 keyCode) noexcept
     return {};
 }
 
+void InputSystem::setHeld(i32 code, bool down) noexcept
+{
+    const auto at = static_cast<usize>(code);
+    if (down) {
+        m_state.held[at] = true;
+        m_downUnseen[at] = true;
+        m_releaseDeferred[at] = false;
+    }
+    else if (m_downUnseen[at]) {
+        // Pressed and let go before a tick read it: down for that tick, then up.
+        m_releaseDeferred[at] = true;
+    }
+    else {
+        m_state.held[at] = false;
+    }
+}
+
 void InputSystem::pumpFrame(std::span<const platform::Event> events)
 {
     for (const platform::Event& event : events) {
@@ -277,7 +294,7 @@ void InputSystem::pumpFrame(std::span<const platform::Event> events)
             // A repeat is a key that is already down. Recording it as a fresh
             // press would make `Pressed` fire again every autorepeat interval,
             // which is a jump per repeat rather than a jump per press.
-            m_state.held[static_cast<usize>(code)] = event.type == platform::EventType::KeyDown;
+            setHeld(code, event.type == platform::EventType::KeyDown);
             m_state.lastDevice = DeviceType::KeyboardMouse;
             break;
         }
@@ -286,7 +303,7 @@ void InputSystem::pumpFrame(std::span<const platform::Event> events)
             const i32 code = keyCodeOf(event.button);
             if (!valid(code))
                 break;
-            m_state.held[static_cast<usize>(code)] = event.type == platform::EventType::MouseButtonDown;
+            setHeld(code, event.type == platform::EventType::MouseButtonDown);
             m_state.lastDevice = DeviceType::KeyboardMouse;
             break;
         }
@@ -312,7 +329,7 @@ void InputSystem::pumpFrame(std::span<const platform::Event> events)
             const i32 code = keyCodeOf(event.gamepadButton);
             if (!valid(code))
                 break;
-            m_state.held[static_cast<usize>(code)] = event.type == platform::EventType::GamepadButtonDown;
+            setHeld(code, event.type == platform::EventType::GamepadButtonDown);
             m_state.lastDevice = DeviceType::Gamepad;
             break;
         }
@@ -550,8 +567,12 @@ void InputSystem::setActionState(std::string_view action, core::Vec3 value, bool
 
 bool InputSystem::isKeyDown(i32 keyCode) const noexcept
 {
-    // The same `digital`, with nothing consumed: a poll is about the device.
+    // The same `digital`, with nothing consumed: a poll is about the device --
+    // so a tap held down for the tick that has not read it yet is up here.
     static const std::array<bool, kKeyCodeCount> nothingConsumed{};
+    if (keyCode >= 0 && static_cast<usize>(keyCode) < m_releaseDeferred.size() &&
+        m_releaseDeferred[static_cast<usize>(keyCode)])
+        return false;
     return digital(m_state, nothingConsumed, keyCode);
 }
 
@@ -1103,6 +1124,14 @@ void InputSystem::dispatch(scene::World& world, Rate rate)
 void InputSystem::dispatchSimTick(scene::World& world, u64)
 {
     dispatch(world, Rate::Simulation);
+    // What this tick saw is seen; a tap's release is due now.
+    for (usize at = 0; at < m_downUnseen.size(); ++at) {
+        m_downUnseen[at] = false;
+        if (m_releaseDeferred[at]) {
+            m_releaseDeferred[at] = false;
+            m_state.held[at] = false;
+        }
+    }
 }
 
 void InputSystem::dispatchRenderRate(scene::World& world)
@@ -1113,6 +1142,8 @@ void InputSystem::dispatchRenderRate(scene::World& world)
 void InputSystem::releaseAll(scene::World& world)
 {
     m_state.held.fill(false);
+    m_downUnseen.fill(false);
+    m_releaseDeferred.fill(false);
     m_state.axis.fill(0.0f);
     m_state.fingers.fill(Finger{});
     // Nothing a lost window was in the middle of is finished as a gesture.

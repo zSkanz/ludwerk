@@ -316,10 +316,12 @@ physics::BodyDesc PhysicsSync::descOf(core::InstanceId id, const PartComponent& 
     //
     // **Except what this replica owns** (ADR 0099): it simulates that itself,
     // and the authority is the one that follows. A replica holds an owner only
-    // for its own parts, so any owner here is this machine.
+    // for its own parts, so any owner here is this machine. **And except what
+    // the authority never sent** (NA17): a part this machine's own scripts
+    // made hung in the air, driven by snapshots that would never mention it.
     const NetworkTopology topology = m_scene.engineState().networkTopology;
-    const bool replicated =
-        topology == NetworkTopology::Replica && !body.anchored && body.networkOwner == 0 && !body.predicted;
+    const bool replicated = topology == NetworkTopology::Replica && body.fromAuthority && !body.anchored &&
+                            body.networkOwner == 0 && !body.predicted;
     const bool ownedElsewhere = topology != NetworkTopology::Replica && body.networkOwner != 0;
     const bool driven = isDriven(id) || replicated || ownedElsewhere || (body.anchored && movingAnchored);
     desc.motion = driven          ? physics::MotionType::Kinematic

@@ -14,6 +14,8 @@
 
 #include "engine/asset/terrain_cell.h"
 #include "engine/core/finite.h"
+#include "engine/core/i18n.h"
+#include "engine/core/log.h"
 #include "engine/replication/script_templates.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/components.h"
@@ -497,11 +499,19 @@ void writeF64(Writer& out, f64 value)
     return value;
 }
 
-void sendBytes(net::ITransport& transport, net::PeerId peer, const std::vector<u8>& bytes, net::Delivery delivery,
+// Whether the transport took it. **A refusal is counted, never passed over**
+// (NA1): a message too large for the transport was dropped in silence and
+// counted as sent, and the snapshot it was is the one a joining player waited
+// on for ever.
+bool sendBytes(net::ITransport& transport, net::PeerId peer, const std::vector<u8>& bytes, net::Delivery delivery,
                u8 channel, Stats& stats)
 {
-    if (!transport.send(peer, bytes, delivery, channel).has_value())
-        stats.bytesSent += bytes.size();
+    if (transport.send(peer, bytes, delivery, channel).has_value()) {
+        stats.sendFailures += 1;
+        return false;
+    }
+    stats.bytesSent += bytes.size();
+    return true;
 }
 
 // The flags byte after a message's call number (protocol 8).
@@ -980,11 +990,14 @@ void writeKey(Writer& out, core::i32 x, core::i32 y, core::i32 z)
 void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
 {
     m_groundEdits.clear();
+    // Whatever changes below makes the whole ground a peer is sent another.
+    const auto invalidate = [this]() { m_groundWholeValid = false; };
     const bool restored = m_ground.restores != world.restores();
     m_ground.restores = world.restores();
 
     // **A new scene is every peer's own ground again**: each loads it.
     if (const std::string& scene = world.engineState().currentScene; scene != m_ground.scene) {
+        invalidate();
         m_ground.scene = scene;
         m_ground.terrain = InstanceId{};
         m_ground.terrainChunks.clear();
@@ -1011,6 +1024,7 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
     const InstanceId terrainId = groundTerrainUnder(world, root);
     const scene::TerrainComponent* terrain = terrainId.valid() ? world.terrains().find(terrainId) : nullptr;
     if (terrainId != m_ground.terrain) {
+        invalidate();
         if (m_ground.terrain.valid() || m_ground.baseSet) {
             if (!m_ground.baseSet) {
                 m_ground.base = m_ground.terrainShipped;
@@ -1058,7 +1072,11 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
     // The block world, the same way.
     const InstanceId voxelsId = groundVoxelsOf(world);
     const scene::VoxelComponent* voxels = voxelsId.valid() ? world.voxels().find(voxelsId) : nullptr;
+    if (!m_groundEdits.empty())
+        invalidate();
     if (voxels == nullptr) {
+        if (m_ground.voxelRevision != ~u64{0})
+            invalidate();
         m_ground.voxelChunks.clear();
         m_ground.voxelShipped.clear();
         m_ground.voxelTypes.clear();
@@ -1086,13 +1104,26 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
         m_groundEdits.insert(m_groundEdits.begin(), types);
         m_ground.voxelTypes = std::move(types);
     }
+    if (!m_groundEdits.empty())
+        invalidate();
 }
 
 void AuthoritySession::sendGroundWhole(Peer& peer, const scene::World& world)
 {
-    const auto send = [&](const std::vector<u8>& bytes) {
+    if (!m_groundWholeValid) {
+        m_groundWhole.clear();
+        // Made with the messages each peer is sent, in the order it is sent them.
+        const auto send = [&](std::vector<u8> bytes) { m_groundWhole.push_back(std::move(bytes)); };
+        encodeGroundWhole(world, send);
+        m_groundWholeValid = true;
+    }
+    for (const std::vector<u8>& bytes : m_groundWhole)
         sendBytes(m_transport, peer.id, bytes, net::Delivery::Reliable, ControlChannel, m_stats);
-    };
+}
+
+template <typename Send>
+void AuthoritySession::encodeGroundWhole(const scene::World& world, Send send)
+{
     if (const scene::TerrainComponent* terrain =
             m_ground.terrain.valid() ? world.terrains().find(m_ground.terrain) : nullptr;
         terrain != nullptr) {
@@ -1183,21 +1214,32 @@ void AuthoritySession::sendMessages(scene::World& world)
         peer.held.pop_front();
         m_stats.messagesDropped += 1;
     };
+    // **In order per remote, not across them** (NA21): one message to an event
+    // this peer does not hold -- inside a model out of its interest, say --
+    // held every message to every other event behind it, for up to five
+    // seconds. What waits for an event now holds back only what follows it to
+    // the same event.
     const auto flush = [&](Peer& peer) {
         peer.flushes += 1;
-        while (!peer.held.empty()) {
-            Peer::Held& next = peer.held.front();
-            if (!std::binary_search(peer.known.begin(), peer.known.end(), next.remote)) {
-                if (peer.flushes - next.heldAt > MaxRemoteHeldSends) {
-                    dropFront(peer);
-                    continue;
-                }
-                return;
+        std::vector<u32> waiting;
+        for (auto at = peer.held.begin(); at != peer.held.end();) {
+            const bool known = std::binary_search(peer.known.begin(), peer.known.end(), at->remote);
+            const bool behind = std::find(waiting.begin(), waiting.end(), at->remote) != waiting.end();
+            if (known && !behind) {
+                sendBytes(m_transport, peer.id, at->bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+                m_stats.messagesSent += 1;
+                peer.heldBytes -= at->bytes.size();
+                at = peer.held.erase(at);
+                continue;
             }
-            sendBytes(m_transport, peer.id, next.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
-            m_stats.messagesSent += 1;
-            peer.heldBytes -= next.bytes.size();
-            peer.held.pop_front();
+            if (!known && !behind && peer.flushes - at->heldAt > MaxRemoteHeldSends) {
+                peer.heldBytes -= at->bytes.size();
+                at = peer.held.erase(at);
+                m_stats.messagesDropped += 1;
+                continue;
+            }
+            waiting.push_back(at->remote);
+            ++at;
         }
     };
     for (Peer& peer : m_peers) {
@@ -1227,7 +1269,9 @@ void AuthoritySession::sendMessages(scene::World& world)
         for (Peer& peer : m_peers) {
             if (!peer.welcomed || (message.userId != 0 && peer.userId != message.userId))
                 continue;
-            if (peer.held.empty() && std::binary_search(peer.known.begin(), peer.known.end(), remote.value)) {
+            const bool waiting = std::any_of(peer.held.begin(), peer.held.end(),
+                                             [&](const Peer::Held& held) { return held.remote == remote.value; });
+            if (!waiting && std::binary_search(peer.known.begin(), peer.known.end(), remote.value)) {
                 sendBytes(m_transport, peer.id, out.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
                 m_stats.messagesSent += 1;
             }
@@ -1257,6 +1301,21 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
             continue;
         peer.messagesThisTick = 0;
         peer.intentsThisTick = 0;
+        peer.messageBudget = std::min(peer.messageBudget + RemoteMessagesPerTick, RemoteMessageBurst);
+        peer.byteBudget = std::min(peer.byteBudget + RemoteBytesPerTick, RemoteByteBurst);
+        peer.floodTicks = peer.floodedThisTick ? peer.floodTicks + 1 : 0;
+        peer.floodedThisTick = false;
+        if (peer.welcomed && peer.floodTicks > FloodTicks) {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"user", static_cast<core::i64>(peer.userId)}};
+            core::log(core::LogLevel::Warn, ENG_TR("net.warn.peer_flooding"), args);
+            silent.push_back(peer.id);
+            continue;
+        }
+        peer.intentBudget = std::min(peer.intentBudget + IntentBudgetPerTick, MaxIntentBurst);
+        // A welcomed peer silent for ten seconds is gone, as the transport
+        // would have said before its thread kept a frozen process answering.
+        if (peer.welcomed && ++peer.quietTicks > SilentPeerTicks)
+            silent.push_back(peer.id);
         peer.lateIntentCounted = false;
         peer.ownedThisTick = 0;
         peer.remoteBytesThisTick = 0;
@@ -1264,7 +1323,11 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
             silent.push_back(peer.id);
     }
     for (const net::PeerId gone : silent) {
-        m_transport.disconnect(gone);
+        // A player whose connection went silent leaves, as one whose
+        // connection closed does.
+        if (const Peer* leaving = peerFor(gone); leaving != nullptr && leaving->player.valid())
+            scene::removePlayer(world, network, leaving->player);
+        m_transport.drop(gone);
         std::erase_if(m_peers, [&](const Peer& peer) { return peer.id == gone; });
     }
     std::vector<net::TransportEvent> events;
@@ -1289,6 +1352,7 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
             Peer* peer = peerFor(event.peer);
             if (peer == nullptr)
                 break;
+            peer->quietTicks = 0;
             m_stats.bytesReceived += event.payload.size();
             Reader reader(event.payload);
             const auto type = static_cast<MessageType>(reader.u8v());
@@ -1299,10 +1363,12 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 // One a tick is what a replica sends; a few more is a burst
                 // after a stall. Past that, and past a count no input map
                 // has, it is a peer making the authority parse.
-                if (++peer->intentsThisTick > MaxIntentsPerTick) {
+                if (peer->intentBudget == 0) {
                     m_stats.messagesDropped += 1;
                     break;
                 }
+                peer->intentBudget -= 1;
+                peer->intentsThisTick += 1;
                 // **Up to four ticks, oldest first** (protocol 22): read whole,
                 // then queued -- a tick already applied or already queued is a
                 // redundant copy, and nothing.
@@ -1527,6 +1593,17 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     if (!core::isWorldPosition(frame.position) || !core::isRotation(frame.rotation) ||
                         !core::isFinite(speed) || !core::isFinite(spin))
                         continue;
+                    // **Within reach of where it is** (NA24): ownership was a
+                    // licence to put the part anywhere in the world in one
+                    // message, the authority taking it back a tick after.
+                    const u64 elapsed = peer->ownedTick != 0 ? std::min<u64>(tick - peer->ownedTick, 30) : 1;
+                    const core::DVec3 moved = frame.position - part->cframe.position;
+                    const core::f64 reach =
+                        MaxOwnedMetresPerTick * static_cast<core::f64>(std::max<u64>(elapsed, 1)) + 1.0;
+                    if (moved.x * moved.x + moved.y * moved.y + moved.z * moved.z > reach * reach) {
+                        m_stats.messagesDropped += 1;
+                        continue;
+                    }
                     records.push_back(OwnedRecord{part, body, frame, speed, spin});
                 }
                 if (!reader.ok() || !reader.done()) {
@@ -1534,9 +1611,11 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     break;
                 }
                 peer->ownedTick = tick;
+                // And no faster than it may move (NA24).
+                constexpr core::f32 MaxOwnedSpeed = static_cast<core::f32>(MaxOwnedMetresPerTick * 60.0);
                 for (const OwnedRecord& record : records) {
                     record.part->cframe = record.frame;
-                    record.body->linearVelocity = core::sanitize(record.speed, core::MaxSpeed);
+                    record.body->linearVelocity = core::sanitize(record.speed, MaxOwnedSpeed);
                     record.body->angularVelocity = core::sanitize(record.spin, core::MaxSpeed);
                 }
                 break;
@@ -1552,6 +1631,14 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 token.high = reader.u64v();
                 token.low = reader.u64v();
                 if (!reader.ok() || version != generated::ProtocolVersion || peer->welcomed) {
+                    // **Said, not just done** (NA8): the replica learns why.
+                    if (reader.ok() && !peer->welcomed) {
+                        Writer refused;
+                        refused.u8v(static_cast<u8>(MessageType::Refused));
+                        refused.u8v(RefusedVersion);
+                        (void)sendBytes(m_transport, peer->id, refused.bytes, net::Delivery::Reliable, ControlChannel,
+                                        m_stats);
+                    }
                     m_transport.disconnect(peer->id);
                     break;
                 }
@@ -1582,7 +1669,23 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     if (peer == nullptr)
                         break;
                 }
-                else {
+                // **A full server says so** (NA8), after a returning player's
+                // old connection was let go -- that seat is theirs.
+                if (m_maxPlayers != 0) {
+                    u32 seated = 0;
+                    for (const Peer& other : m_peers)
+                        seated += other.welcomed ? 1u : 0u;
+                    if (seated >= m_maxPlayers) {
+                        Writer refused;
+                        refused.u8v(static_cast<u8>(MessageType::Refused));
+                        refused.u8v(RefusedFull);
+                        (void)sendBytes(m_transport, peer->id, refused.bytes, net::Delivery::Reliable, ControlChannel,
+                                        m_stats);
+                        m_transport.disconnect(peer->id);
+                        break;
+                    }
+                }
+                if (userId == 0) {
                     userId = m_nextUserId++;
                     token = freshToken();
                     // **Bounded**: a peer that throws its token away and
@@ -1618,23 +1721,41 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
             }
             else if (type == MessageType::Ack) {
                 const u64 tick = reader.u64v();
-                if (reader.ok())
+                // **Only a tick this peer was sent** (NA1): acknowledging one
+                // it never was -- the largest number there is, say -- pinned
+                // the authority to diffing against nothing.
+                const bool sent = tick == peer->pinnedTick || std::find(peer->sentTicks.begin(), peer->sentTicks.end(),
+                                                                        tick) != peer->sentTicks.end();
+                if (!reader.ok() || !sent) {
+                    m_stats.acksRefused += 1;
+                }
+                else {
                     peer->acked = std::max(peer->acked, tick);
+                    if (peer->pinnedPending && peer->acked >= peer->pinnedTick)
+                        peer->pinnedPending = false;
+                }
             }
             else if (type == MessageType::RemoteToAuthority && peer->welcomed && peer->player.valid()) {
                 // **The sender is the connection's player**, never anything
                 // the message says; and a client is not trusted to be polite.
-                if (peer->messagesThisTick >= MaxRemoteMessagesPerTick) {
+                if (peer->messageBudget == 0) {
                     m_stats.messagesDropped += 1;
+                    peer->floodedThisTick = true;
                     break;
                 }
+                peer->messageBudget -= 1;
                 peer->messagesThisTick += 1;
                 RemoteOnWire wire;
-                if (!readRemote(reader, wire) ||
-                    peer->remoteBytesThisTick + event.payload.size() > MaxRemoteBytesPerTick) {
+                if (!readRemote(reader, wire)) {
                     m_stats.messagesDropped += 1;
                     break;
                 }
+                if (event.payload.size() > peer->byteBudget) {
+                    m_stats.messagesDropped += 1;
+                    peer->floodedThisTick = true;
+                    break;
+                }
+                peer->byteBudget -= event.payload.size();
                 peer->remoteBytesThisTick += event.payload.size();
                 const InstanceId remote = instanceOfNet(world, wire.remote);
                 // A client asks and never answers: a reply from one is not a
@@ -1658,10 +1779,12 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 // **The sender is the connection's player** here too; whether
                 // it could have pressed the thing is the tick's to check
                 // (ADR 0126), against the world as it stands then.
-                if (peer->messagesThisTick >= MaxRemoteMessagesPerTick) {
+                if (peer->messageBudget == 0) {
                     m_stats.messagesDropped += 1;
+                    peer->floodedThisTick = true;
                     break;
                 }
+                peer->messageBudget -= 1;
                 peer->messagesThisTick += 1;
                 const u32 netId = reader.u32v();
                 const u8 kind = reader.u8v();
@@ -1679,10 +1802,12 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 // A drag (ADR 0126 §3): the connection's player, and a ray the
                 // tick works the drag out from -- never a position to put the
                 // part at.
-                if (peer->messagesThisTick >= MaxRemoteMessagesPerTick) {
+                if (peer->messageBudget == 0) {
                     m_stats.messagesDropped += 1;
+                    peer->floodedThisTick = true;
                     break;
                 }
+                peer->messageBudget -= 1;
                 peer->messagesThisTick += 1;
                 const u32 netId = reader.u32v();
                 const u8 kind = reader.u8v();
@@ -2290,12 +2415,24 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
     while (peer.interest.size() > StateHistory)
         peer.interest.pop_front();
 
+    // --- A snapshot sent in parts and not yet all in: nothing more until it
+    // is (NA1). Everything above -- spawns, ground, ownership -- still goes,
+    // and the next snapshot after the acknowledgement covers what changed.
+    if (peer.pinnedPending)
+        return;
+
     // --- The snapshot, against what this peer last proved it holds.
     const WorldState* baseline = peer.acked != 0 ? historyAt(peer.acked) : nullptr;
     const std::vector<u32>* heldThen = nullptr;
     for (const PeerInterest& held : peer.interest) {
         if (held.tick == peer.acked)
             heldThen = &held.ids;
+    }
+    // The one sent in parts, which the history may have dropped by now.
+    if ((baseline == nullptr || heldThen == nullptr) && peer.acked != 0 && peer.acked == peer.pinnedTick &&
+        peer.pinnedState != nullptr) {
+        baseline = peer.pinnedState.get();
+        heldThen = &peer.pinnedHeld;
     }
     if (heldThen == nullptr)
         baseline = nullptr;
@@ -2352,8 +2489,9 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
     }
     // The names this message's fields mention, by the authority's atom. The
     // replica interns each once and keeps the mapping, so a name costs its
-    // bytes on the wire when it changes rather than every tick.
-    snapshot.u16v(static_cast<u16>(atoms.size()));
+    // bytes on the wire when it changes rather than every tick. A count of 32
+    // bits (protocol 33, NA33): sixteen wrapped past 65 535 names.
+    snapshot.u32v(static_cast<u32>(atoms.size()));
     for (const u32 atom : atoms) {
         snapshot.u32v(atom);
         snapshot.text(m_world->atoms().text(core::NameAtom{atom}));
@@ -2370,8 +2508,41 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
             encodeField(snapshot.bytes, fieldAt(desc, at)->encoding, record.entity->fields[at]);
         }
     }
-    sendBytes(m_transport, peer.id, snapshot.bytes, net::Delivery::UnreliableSequenced, StateChannel, m_stats);
+    peer.sentTicks.push_back(current.tick);
+    while (peer.sentTicks.size() > StateHistory)
+        peer.sentTicks.pop_front();
+    if (snapshot.bytes.size() <= ReliableSnapshotBytes) {
+        if (sendBytes(m_transport, peer.id, snapshot.bytes, net::Delivery::UnreliableSequenced, StateChannel, m_stats))
+            m_stats.snapshotsSent += 1;
+        return;
+    }
+    // **Too large for one unreliable message: reliable, in parts, once**
+    // (NA1). On the control channel, after the spawns it names; kept with
+    // what this peer held, since the history may move past it before the
+    // last part is in; and nothing more to this peer until it is.
+    const usize parts = (snapshot.bytes.size() + SnapshotPartBytes - 1) / SnapshotPartBytes;
+    bool whole = parts <= 0xFFFFu;
+    for (usize index = 0; index < parts && whole; ++index) {
+        const usize from = index * SnapshotPartBytes;
+        const usize size = std::min(SnapshotPartBytes, snapshot.bytes.size() - from);
+        Writer part;
+        part.u8v(static_cast<u8>(MessageType::SnapshotPart));
+        part.u64v(current.tick);
+        part.u16v(static_cast<u16>(index));
+        part.u16v(static_cast<u16>(parts));
+        part.u32v(static_cast<u32>(size));
+        part.bytes.insert(part.bytes.end(), snapshot.bytes.begin() + static_cast<std::ptrdiff_t>(from),
+                          snapshot.bytes.begin() + static_cast<std::ptrdiff_t>(from + size));
+        whole = sendBytes(m_transport, peer.id, part.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+    }
+    if (!whole)
+        return;
     m_stats.snapshotsSent += 1;
+    m_stats.snapshotsInParts += 1;
+    peer.pinnedState = m_history.back();
+    peer.pinnedHeld = peer.known;
+    peer.pinnedTick = current.tick;
+    peer.pinnedPending = true;
 }
 
 // --- Replica ------------------------------------------------------------------
@@ -2393,6 +2564,16 @@ const WorldState* ReplicaSession::stateAt(u64 tick) const noexcept
 
 void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
 {
+    // **An authority silent for ten seconds is gone** (`SilentPeerTicks`): the
+    // transport's thread answers for a server whose game froze, and the
+    // transport alone would never have said so.
+    if (ticking && m_welcomed && ++m_quietTicks > SilentPeerTicks) {
+        m_quietTicks = 0;
+        m_transport.disconnect(m_authority);
+        m_connected = false;
+        m_welcomed = false;
+        m_lost = true;
+    }
     std::vector<net::TransportEvent> events;
     (void)m_transport.poll(events, 0);
     u32 remotesThisTick = 0;
@@ -2418,6 +2599,7 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
         }
         if (event.kind != net::TransportEvent::Kind::Message || event.payload.empty())
             continue;
+        m_quietTicks = 0;
         m_stats.bytesReceived += event.payload.size();
         switch (static_cast<MessageType>(event.payload[0])) {
         case MessageType::Welcome: {
@@ -2430,9 +2612,12 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             token.high = reader.u64v();
             token.low = reader.u64v();
             if (!reader.ok() || version != generated::ProtocolVersion) {
+                m_refused = RefusedVersion;
                 m_transport.disconnect(m_authority);
                 break;
             }
+            if (!m_joinedBefore && m_welcomeHandler)
+                m_welcomeHandler(world);
             if (m_joinedBefore)
                 resetForRejoin(world);
             // The token shown was not known: this authority is not the one
@@ -2462,6 +2647,18 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
         case MessageType::Snapshot:
             onSnapshot(world, root, event.payload);
             break;
+        case MessageType::SnapshotPart:
+            onSnapshotPart(world, root, event.payload);
+            break;
+        case MessageType::Refused: {
+            Reader reader(event.payload);
+            (void)reader.u8v();
+            const u8 reason = reader.u8v();
+            m_refused = reader.ok() && reason != 0 ? reason : RefusedVersion;
+            m_lost = true;
+            m_welcomed = false;
+            break;
+        }
         case MessageType::Players:
             onPlayers(world, root, event.payload);
             break;
@@ -2530,6 +2727,20 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
         return;
     updatePredicted(world);
     m_serverClock += 1;
+    // The delay follows what the link needs: two snapshot intervals and twice
+    // the spread of their lateness, never less than it was set to. A tick at
+    // a time, every half second, so nothing drawn jumps when it moves.
+    if (m_baseDelay > 0 && ++m_delayTicks >= 30) {
+        m_delayTicks = 0;
+        const u32 wanted =
+            std::clamp(static_cast<u32>(std::ceil(2.0 * m_snapshotInterval + 2.0 * m_lateSpread + m_lateAverage)),
+                       m_baseDelay, m_baseDelay + MaxAddedInterpolationDelay);
+        if (wanted > m_interpolationDelay)
+            m_interpolationDelay += 1;
+        else if (wanted < m_interpolationDelay)
+            m_interpolationDelay -= 1;
+    }
+    m_stats.interpolationDelayTicks = m_interpolationDelay;
     interpolate(world);
     decayVisualOffset();
 }
@@ -2655,6 +2866,10 @@ void ReplicaSession::updatePredicted(scene::World& world)
 
 void ReplicaSession::decayVisualOffset() noexcept
 {
+    if (m_visualFresh) {
+        m_visualFresh = false;
+        return;
+    }
     m_visualOffset = core::DVec3{m_visualOffset.x * VisualDecayPerTick, m_visualOffset.y * VisualDecayPerTick,
                                  m_visualOffset.z * VisualDecayPerTick};
     const core::DVec3& o = m_visualOffset;
@@ -2775,6 +2990,13 @@ void ReplicaSession::interpolate(scene::World& world)
             part->cframe = target < samples.front().tick ? samples.front().cframe : before->cframe;
             continue;
         }
+        // A teleport is a step at its tick, not a slide across the map (NA15).
+        const core::DVec3 moved = after->cframe.position - before->cframe.position;
+        const f64 reach = TeleportMetresPerTick * static_cast<f64>(after->tick - before->tick);
+        if (moved.x * moved.x + moved.y * moved.y + moved.z * moved.z > reach * reach) {
+            part->cframe = before->cframe;
+            continue;
+        }
         const f64 alpha = static_cast<f64>(target - before->tick) / static_cast<f64>(after->tick - before->tick);
         part->cframe = core::lerp(before->cframe, after->cframe, alpha);
     }
@@ -2801,6 +3023,16 @@ void ReplicaSession::interpolate(scene::World& world)
             const Sample2D& held = target < samples.front().tick ? samples.front() : *before;
             sprite->position = held.position;
             sprite->rotation = held.rotation;
+            continue;
+        }
+        // A teleport is a step at its tick, not a slide (NA15).
+        const core::Vec2 moved = after->position - before->position;
+        const f64 reach = TeleportMetresPerTick * static_cast<f64>(after->tick - before->tick);
+        const f64 movedX = static_cast<f64>(moved.x);
+        const f64 movedY = static_cast<f64>(moved.y);
+        if (movedX * movedX + movedY * movedY > reach * reach) {
+            sprite->position = before->position;
+            sprite->rotation = before->rotation;
             continue;
         }
         const core::f32 alpha = static_cast<core::f32>(static_cast<f64>(target - before->tick) /
@@ -3592,6 +3824,8 @@ void ReplicaSession::onSpawn(scene::World& world, std::span<const u8> bytes)
         if (classId == scene::InvalidClass)
             continue;
         const InstanceId local = world.create(classId);
+        if (scene::RigidBodyComponent* body = world.rigidBodies().find(local); body != nullptr)
+            body->fromAuthority = true;
         if (!local.valid())
             continue;
         m_locals[id] = local;
@@ -3758,8 +3992,10 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     if (baseTick != 0 && base == nullptr)
         return;
 
-    const u16 atomCount = reader.u16v();
-    for (u16 at = 0; at < atomCount && reader.ok(); ++at) {
+    const u32 atomCount = reader.u32v();
+    if (atomCount > MaxReplicaNames)
+        reader.fail();
+    for (u32 at = 0; at < atomCount && reader.ok(); ++at) {
         const u32 atom = reader.u32v();
         const std::string_view text = reader.text();
         // The atom table never frees: past the bound, a server naming new
@@ -3847,12 +4083,29 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
         m_states.pop_front();
     m_applied = tick;
     m_stats.snapshotsReceived += 1;
+    // **How this snapshot came, against the clock** (NA14): late by how
+    // many ticks, how unevenly, and how many ticks since the one before --
+    // what the interpolation delay is sized from.
+    {
+        const f64 late = m_serverClock > tick ? static_cast<f64>(m_serverClock - tick) : 0.0;
+        m_lateSpread = 0.9 * m_lateSpread + 0.1 * std::abs(late - m_lateAverage);
+        m_lateAverage = 0.9 * m_lateAverage + 0.1 * late;
+        if (m_lastSnapshotTick != 0 && tick > m_lastSnapshotTick)
+            m_snapshotInterval =
+                0.9 * m_snapshotInterval + 0.1 * static_cast<f64>(std::min<u64>(tick - m_lastSnapshotTick, 30));
+        m_lastSnapshotTick = tick;
+    }
     // The server's clock, as far as this replica can tell: the newest tick it
     // has heard of, advanced one a tick between snapshots (`receive`). Pulled
     // forward by a snapshot from further ahead, and snapped when it has drifted
-    // more than a handful of ticks behind.
+    // more than a handful of ticks behind -- and **nudged back a tick** when a
+    // snapshot is later than this link's own spread explains (NA14): a clock
+    // that only ever moved forward ate the delay for the rest of the session
+    // after a route grew slower.
     if (tick > m_serverClock || m_serverClock - tick > 8)
         m_serverClock = tick;
+    else if (static_cast<f64>(m_serverClock - tick) > m_lateAverage + 2.0 * m_lateSpread + 1.0)
+        m_serverClock -= 1;
     m_ackedIntent = intentTick;
     applyToWorld(world, root, *state);
 
@@ -3860,6 +4113,40 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     ack.u8v(static_cast<u8>(MessageType::Ack));
     ack.u64v(tick);
     sendBytes(m_transport, m_authority, ack.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+}
+
+void ReplicaSession::onSnapshotPart(scene::World& world, InstanceId root, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u64 tick = reader.u64v();
+    const u16 index = reader.u16v();
+    const u16 count = reader.u16v();
+    const u32 size = reader.u32v();
+    if (!reader.ok() || count == 0 || index >= count || size > bytes.size())
+        return;
+    // A first part starts a snapshot; any other must follow the one before.
+    // The channel is reliable and in order, so a gap is a new snapshot that
+    // replaced this one, and what was joined so far goes.
+    if (index == 0) {
+        m_partTick = tick;
+        m_partNext = 0;
+        m_partBytes.clear();
+    }
+    if (tick != m_partTick || index != m_partNext || m_partBytes.size() + size > MaxReplicaSnapshotBytes) {
+        m_partBytes.clear();
+        m_partNext = 0;
+        return;
+    }
+    const std::span<const u8> payload = bytes.subspan(bytes.size() - size);
+    m_partBytes.insert(m_partBytes.end(), payload.begin(), payload.end());
+    m_partNext += 1;
+    if (m_partNext < count)
+        return;
+    std::vector<u8> joined = std::move(m_partBytes);
+    m_partBytes.clear();
+    m_partNext = 0;
+    onSnapshot(world, root, joined);
 }
 
 void ReplicaSession::reconcile(scene::World& world, InstanceId character,
@@ -4014,9 +4301,16 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
         }
     }
     if (!comparing) {
-        // Nothing to step again: taken as it stands.
+        // Nothing to step again: taken as it stands -- and **so is every
+        // prediction made after the tick it answers** (NA6). Left at what
+        // they were, the next answer found one, read the whole distance the
+        // take had just moved the character as an error, and added it to a
+        // character already holding the authority's place: a body put at
+        // (0.5, 27.9, 0.5) by the server stood at twice that.
         part->cframe = authority;
         std::erase_if(m_predicted, [this](const Sample& sample) { return sample.tick <= m_ackedIntent; });
+        for (Sample& sample : m_predicted)
+            sample.cframe = authority;
         return;
     }
 
@@ -4068,6 +4362,11 @@ void ReplicaSession::reconcile2d(scene::World& world, InstanceId character, core
         sprite->position = position;
         sprite->rotation = rotation;
         std::erase_if(m_predicted2d, [this](const Sample2D& sample) { return sample.tick <= m_ackedIntent; });
+        // What was predicted after the answered tick is taken too (NA6).
+        for (Sample2D& sample : m_predicted2d) {
+            sample.position = position;
+            sample.rotation = rotation;
+        }
         return;
     }
     const core::Vec2 error = position - predicted->position;
@@ -4337,6 +4636,7 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
             m_visualOffset = core::DVec3{};
         m_visualCharacter = answeredCharacter;
         m_visualOffset = m_visualOffset + moved;
+        m_visualFresh = distance > 0.0;
         const core::DVec3& o = m_visualOffset;
         if (std::sqrt(o.x * o.x + o.y * o.y + o.z * o.z) > VisualSnapMetres)
             m_visualOffset = core::DVec3{};

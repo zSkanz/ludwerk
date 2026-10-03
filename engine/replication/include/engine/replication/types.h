@@ -115,6 +115,12 @@ struct Config
     // are drawn, so there is a snapshot on each side of the moment shown
     // (ADR 0076). Zero applies each snapshot as it arrives.
     u32 interpolationDelayTicks = 4;
+    // A worse network than the one there is, for measuring (netcode ledger A):
+    // see `net::TransportConfig::simulatedDelayMs`. Applied to a replica's
+    // link, both ways.
+    u32 simulatedDelayMs = 0;
+    u32 simulatedJitterMs = 0;
+    core::f32 simulatedLossPercent = 0.0f;
     // How long the other end may go silent before it is gone, in
     // milliseconds: `[network] timeout` (D208). See `TransportConfig`.
     u32 timeoutMs = 10000;
@@ -148,6 +154,8 @@ struct Status
     // connection went and has not come back (ADR 0106).
     bool welcomed = false;
     bool lost = false;
+    // A replica: why the authority refused it, or 0 (`Refused`, NA8).
+    u8 refused = 0;
     // A replica: the player the authority welcomed it as, to present again on
     // the next join to the same server (D207). Invalid until a welcome.
     PlayerToken token;
@@ -188,6 +196,9 @@ struct Stats
     // its island again, and how many ticks they stepped in all; and the time
     // they took, in microseconds -- measured, never simulated with.
     u32 predictedBodies = 0;
+    // A replica: how many ticks behind the server's clock others are drawn,
+    // as the link has made it (NA14).
+    u32 interpolationDelayTicks = 0;
     u64 resimulations = 0;
     u64 resimulatedTicks = 0;
     u64 resimulationMicros = 0;
@@ -199,6 +210,14 @@ struct Stats
     u64 messagesSent = 0;
     u64 messagesReceived = 0;
     u64 messagesDropped = 0;
+    // Messages the transport refused to send -- too large, its queue full, a
+    // peer gone (NA1). Before, they were counted as sent.
+    u64 sendFailures = 0;
+    // Snapshots sent reliably in parts because they were too large to go
+    // unreliable (NA1), and the acknowledgements refused because they named a
+    // tick this peer was never sent.
+    u64 snapshotsInParts = 0;
+    u64 acksRefused = 0;
 };
 
 // **Where the own character is drawn, against where it is** (the multiplayer

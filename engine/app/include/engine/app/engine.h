@@ -190,6 +190,8 @@ struct EngineOptions
     // Where `SaveService` writes, and its limits (ADR 0111): decided in `main`
     // from what kind of run this is. Empty keeps saves in memory.
     std::filesystem::path saveDirectory;
+    // Whether `--saves=DIR` named it (N5): nothing chooses it for the run then.
+    bool saveDirectoryGiven = false;
     core::u64 saveMaxSlotBytes = 4u * 1024u * 1024u;
     core::u32 saveMaxSlots = 64;
     // `[scene] close_grace_seconds` (ADR 0124).

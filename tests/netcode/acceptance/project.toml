@@ -1,0 +1,10 @@
+# The netcode acceptance gate's game (docs/briefs/netcode-acceptance.md, B):
+# a predicted character walked by a bot, measured under a worse network.
+# `run_netcode_acceptance.cmake` copies it for each condition and writes
+# `src/client/Condition.luau` into the copy.
+
+[project]
+name = "Netcode Acceptance"
+id = "dev.ludwerk.netcode-acceptance"
+version = "1.0.0"
+engine = "0.1"

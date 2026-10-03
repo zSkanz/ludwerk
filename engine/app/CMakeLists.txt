@@ -708,6 +708,22 @@ if(ENG_BUILD_TESTS)
     # builds it. So this halves a ceiling that measured nothing, and leaves the
     # tightening that the 47 MiB peak would justify to somebody who can watch
     # all three tiers go green.
+    # **The netcode acceptance gate** (docs/briefs/netcode-acceptance.md, B):
+    # a real server and a real client, the client's link held, jittered and
+    # lost by the link conditioner, at 0, 50, 150 and 300 ms round trip and
+    # with frames of 150 and 400 ms -- a predicted character walked a straight
+    # line and stopped, held to no correction, to where the authority stopped,
+    # and to a remote answering within the ping, a tick and a frame. Real time,
+    # so two and a half minutes; the table is written beside it.
+    add_test(NAME netcode_acceptance
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/acceptance
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-acceptance
+            -DPORT=47960
+            -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_netcode_acceptance.cmake)
+    set_tests_properties(netcode_acceptance PROPERTIES TIMEOUT 600 LABELS "netcode")
+
     add_test(NAME openworld_soak
         COMMAND ${CMAKE_COMMAND}
             -DHOST=$<TARGET_FILE:engine_host>

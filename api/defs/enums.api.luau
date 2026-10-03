@@ -1020,6 +1020,12 @@ local Definition: Schema.Definition = {
                     Value = 4,
                     Doc = "A dedicated server (`--serve`): it decides the world and nobody sits at it.",
                 },
+                {
+                    Name = "Reconnecting",
+                    Value = 5,
+                    Doc = "The connection to the server was lost and this machine is dialling it again. The "
+                        .. "world stands as it was; a game can say so and stop predicting.",
+                },
             } :: { Schema.EnumItem },
         },
         -- ADR 0110, the six a gradient and a stroke are described with. At the END.

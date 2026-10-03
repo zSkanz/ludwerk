@@ -158,3 +158,21 @@ TEST_CASE("the watch says the sync is not holding only after frames it could not
         watch.sample(Millisecond / 2, 0.0f);
     CHECK(watch.held());
 }
+
+TEST_CASE("NA4: a window in the background in a networked session runs at the simulation's rate")
+{
+    const app::FramePacing pacing{.vsync = true, .maxFrameRate = 0, .backgroundFrameRate = 10};
+    app::FrameWindowState window;
+    window.focused = false;
+    CHECK(app::frameCapFor(pacing, window) == 10u);
+    window.networked = true;
+    CHECK(app::frameCapFor(pacing, window) == 60u);
+    window.minimized = true;
+    CHECK(app::frameCapFor(pacing, window) == 60u);
+    // A cap the game asked for still stands, and a higher background rate is
+    // the game's to keep.
+    const app::FramePacing capped{.vsync = true, .maxFrameRate = 30, .backgroundFrameRate = 10};
+    CHECK(app::frameCapFor(capped, window) == 30u);
+    const app::FramePacing generous{.vsync = true, .maxFrameRate = 0, .backgroundFrameRate = 120};
+    CHECK(app::frameCapFor(generous, window) == 120u);
+}

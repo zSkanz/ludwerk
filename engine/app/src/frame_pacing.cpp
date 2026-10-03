@@ -22,10 +22,22 @@ constexpr u32 AssumedRefresh = 60;
 
 } // namespace
 
+// What a window in the background is held to at least while it is in a
+// networked session: the simulation's own sixty a second.
+constexpr u32 NetworkedBackgroundRate = 60;
+
 u32 frameCapFor(const FramePacing& pacing, const FrameWindowState& window) noexcept
 {
-    if ((!window.focused || window.minimized) && pacing.backgroundFrameRate != 0)
-        return lowerCap(pacing.backgroundFrameRate, pacing.maxFrameRate);
+    if ((!window.focused || window.minimized) && pacing.backgroundFrameRate != 0) {
+        // **Never below the simulation's rate in a networked session** (NA4):
+        // a host behind another window at ten frames a second sent its
+        // snapshots in bursts a tenth of a second apart, longer than every
+        // client's interpolation delay, and each saw the others freeze and
+        // jump; a client there sent its intents six at a time.
+        const u32 background = window.networked ? std::max(pacing.backgroundFrameRate, NetworkedBackgroundRate)
+                                                : pacing.backgroundFrameRate;
+        return lowerCap(background, pacing.maxFrameRate);
+    }
 
     u32 cap = pacing.maxFrameRate;
     if (pacing.vsync && (!window.presented || !window.syncHeld)) {

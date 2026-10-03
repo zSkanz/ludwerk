@@ -409,7 +409,9 @@ public:
     void restartServerCode();
     // Solo again after a join (ADR 0137 §5): the current scene loaded again,
     // the server code restarted, every script checked against "live".
-    void returnToSolo();
+    // `scene` is the one to load: the scene a join was made from (N2). Empty,
+    // the one the world is in now.
+    void returnToSolo(std::string_view scene = {});
     // **The scene's client code, held and let go** (D433). Held: a join is
     // under way and what is under `ClientScriptService` stops. Let go: the
     // world it runs in is here -- the server's, or this machine's own again

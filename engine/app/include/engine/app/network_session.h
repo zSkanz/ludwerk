@@ -134,6 +134,9 @@ private:
     core::u64 m_rateResimulatedTicks = 0;
     core::u64 m_rateResimulationMicros = 0;
     std::string m_address;
+    // The scene this machine was in when a script joined (N2): where it goes
+    // back to when the match ends.
+    std::string m_sceneBeforeJoin;
     // **Who this machine was on each server it joined** (D207), by
     // `address:port`: a script's `Join` after a drop presents the same token,
     // and the authority welcomes the same player back -- the `UserId` a game

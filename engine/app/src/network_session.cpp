@@ -8,6 +8,7 @@
 #include "engine/replication/extract.h"
 #include "engine/replication/replication.h"
 #include "engine/replication/script_templates.h"
+#include "engine/replication/session.h"
 #include "engine/scene/players.h"
 #include "engine/scene/world.h"
 #include "engine/script/modules.h"
@@ -31,32 +32,68 @@ namespace {
 [[maybe_unused]] constexpr core::i32 StateConnected = 2;
 [[maybe_unused]] constexpr core::i32 StateHosting = 3;
 [[maybe_unused]] constexpr core::i32 StateServing = 4;
+[[maybe_unused]] constexpr core::i32 StateReconnecting = 5;
 
 constexpr core::u16 DefaultPort = 7777;
 
-// `host` or `host:port`. A port that does not parse is the default, and the
-// connect that follows says whether the host answers.
-void splitAddress(std::string_view address, std::string& host, core::u16& port)
+// `host`, `host:port`, or `[address]:port`. **A port that does not parse is
+// refused, not replaced** (NA11): `host:77x` used to dial 7777, and the player
+// was told nothing answered at an address they never typed.
+[[nodiscard]] bool splitAddress(std::string_view address, std::string& host, core::u16& port)
 {
     port = DefaultPort;
-    const std::size_t colon = address.rfind(':');
-    if (colon == std::string_view::npos) {
-        host.assign(address);
-        return;
+    std::string_view rest;
+    if (address.starts_with('[')) {
+        const std::size_t close = address.find(']');
+        if (close == std::string_view::npos)
+            return false;
+        host.assign(address.substr(1, close - 1));
+        rest = address.substr(close + 1);
+        if (rest.empty())
+            return !host.empty();
+        if (!rest.starts_with(':'))
+            return false;
+        rest = rest.substr(1);
     }
-    host.assign(address.substr(0, colon));
-    const std::string_view digits = address.substr(colon + 1);
+    else {
+        const std::size_t colon = address.rfind(':');
+        if (colon == std::string_view::npos) {
+            host.assign(address);
+            return !host.empty();
+        }
+        host.assign(address.substr(0, colon));
+        rest = address.substr(colon + 1);
+    }
     unsigned value = 0;
-    if (const auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
-        error == std::errc{} && end == digits.data() + digits.size() && value >= 1 && value <= 65535)
-        port = static_cast<core::u16>(value);
+    const auto [end, error] = std::from_chars(rest.data(), rest.data() + rest.size(), value);
+    if (error != std::errc{} || end != rest.data() + rest.size() || value < 1 || value > 65535 || host.empty())
+        return false;
+    port = static_cast<core::u16>(value);
+    return true;
+}
+
+// The words for why an authority refused this machine (NA8).
+[[maybe_unused]] [[nodiscard]] std::string refusalText(core::u8 reason)
+{
+#if ENG_ENABLE_REPLICATION
+    if (reason == replication::RefusedFull)
+        return core::engineCatalog().format(ENG_TR("net.err.refused_full"));
+#endif
+    (void)reason;
+    return core::engineCatalog().format(ENG_TR("net.err.refused_version"));
 }
 
 } // namespace
 
 NetworkSession::NetworkSession(std::function<WorldHost*()> host, replication::Config base, TransportFactory transports)
     : m_host(std::move(host)), m_base(std::move(base)), m_transports(std::move(transports))
-{}
+{
+    // **`[network] timeout` is the join's too** (NA28): it reached only the
+    // transport, and a join gave up after its own ten seconds whatever the
+    // project said.
+    if (m_base.timeoutMs > 0)
+        m_joinTimeoutSeconds = static_cast<core::f64>(m_base.timeoutMs) / 1000.0;
+}
 
 NetworkSession::~NetworkSession()
 {
@@ -140,6 +177,30 @@ void NetworkSession::wire()
     m_replication->setScriptTemplates([hostOf]() -> replication::ScriptTemplates* {
         WorldHost* host = hostOf();
         return host != nullptr ? host->scriptTemplates() : nullptr;
+    });
+    // **The world becomes the server's when the server takes this machine,
+    // not when it asks** (N1): until the welcome a join is only a question,
+    // and a join nobody answers leaves the game -- its menu, the address
+    // typed in it, the handler waiting for `JoinFailed` -- as it was.
+    m_replication->setWelcomeHandler([hostOf](scene::World&) {
+        WorldHost* host = hostOf();
+        if (host == nullptr)
+            return;
+        scene::EngineState& state = host->world().engineState();
+        if (state.networkTopology == scene::NetworkTopology::Replica)
+            return;
+        state.networkTopology = scene::NetworkTopology::Replica;
+        // Any scene change this machine was making is the server's to make
+        // now (audit A10).
+        host->cancelSceneChanges();
+        // **Joining replaces this machine's scene with the server's**: what
+        // the authority replicates is cleared, and server code with it.
+        (void)replication::clearForReplica(host->world(), host->workspace(), host->scriptTemplates());
+        // And every script is checked against "live" for a replica (ADR
+        // 0137 §5): what does not run here stops -- the scene's client code
+        // with it, until the server's world is here (D433).
+        state.sceneClientHeld = true;
+        script::reconcileAllScripts(host->runtime().state());
     });
     m_replication->setSceneChanger([hostOf](scene::World&, const std::string& path, std::vector<core::u8> data) {
         WorldHost* host = hostOf();
@@ -255,11 +316,21 @@ void NetworkSession::goSolo(std::string_view event, std::string_view reason, boo
     }
     for (const core::InstanceId player : others)
         (void)world.destroy(player);
+    // **The player at this machine is player 1 again** (N2): the number the
+    // server gave it was the server's.
+    if (const core::InstanceId local = scene::localPlayerOf(world); local.valid()) {
+        if (scene::PlayerComponent* component = world.players().find(local); component != nullptr)
+            component->userId = 1;
+        world.setName(local, world.atoms().intern("Player1"));
+    }
 
     // This machine decides the world again: what a solo boot of its scene runs,
-    // starts (ADR 0137 §5).
+    // starts (ADR 0137 §5) -- **the scene it joined from** (N2), not the
+    // server's run alone with its server code: a client that lost its server
+    // became the authority of a world it had only ever been a guest in.
     if (!wasAuthority)
-        host->returnToSolo();
+        host->returnToSolo(m_sceneBeforeJoin);
+    m_sceneBeforeJoin.clear();
     script::fireNetworkEvent(host->runtime().state(), event, reason);
 }
 
@@ -284,26 +355,20 @@ void NetworkSession::update()
                 goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.left")), wasAuthority);
             std::string address;
             core::u16 port = DefaultPort;
-            splitAddress(request.address, address, port);
+            if (!splitAddress(request.address, address, port)) {
+                const std::array<core::I18nArg, 1> args{core::I18nArg{"address", std::string_view{request.address}}};
+                script::fireNetworkEvent(host->runtime().state(), "JoinFailed",
+                                         core::engineCatalog().format(ENG_TR("net.err.bad_address"), args));
+                break;
+            }
             if (std::optional<core::EngineError> error = begin(replication::Topology::Replica, address, port, false);
                 error.has_value()) {
                 script::fireNetworkEvent(host->runtime().state(), "JoinFailed", error->message);
                 break;
             }
-            state.networkTopology = scene::NetworkTopology::Replica;
-            // Any scene change this machine was making is the server's to make
-            // now (audit A10).
-            host->cancelSceneChanges();
-#if ENG_ENABLE_REPLICATION
-            // **Joining replaces this machine's scene with the server's**: what
-            // the authority replicates is cleared, and server code with it.
-            (void)replication::clearForReplica(host->world(), host->workspace(), host->scriptTemplates());
-#endif
-            // And every script is checked against "live" for a replica (ADR
-            // 0137 §5): what does not run here stops -- the scene's client
-            // code with it, until the server's world is here (D433).
-            state.sceneClientHeld = true;
-            script::reconcileAllScripts(host->runtime().state());
+            // The world stays this machine's until the server takes it: the
+            // welcome handler (`wire`) makes it the server's then.
+            m_sceneBeforeJoin = state.currentScene;
             m_connecting = true;
             m_joinStartedNs = m_clock ? m_clock() : platform::nowNs();
             m_address = request.address;
@@ -320,7 +385,10 @@ void NetworkSession::update()
                 goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.left")), wasAuthority);
             if (std::optional<core::EngineError> error = begin(replication::Topology::Host, {}, request.port, false);
                 error.has_value()) {
+                // **Said to the game, not only to the log** (NA7): a port in
+                // use left `State` at Offline and the script waiting.
                 core::logText(core::LogLevel::Error, error->message);
+                script::fireNetworkEvent(host->runtime().state(), "HostFailed", error->message);
                 break;
             }
             state.networkTopology = scene::NetworkTopology::Host;
@@ -357,6 +425,9 @@ void NetworkSession::update()
         shown.lastCorrectionMetres = stats.lastCorrectionMetres;
         shown.inputBufferDepth = stats.intentDepth;
         shown.inputStarvations = stats.intentStarvations;
+        shown.inputReanchors = stats.intentReanchors;
+        shown.corrections = stats.corrections;
+        shown.interpolationDelayMs = static_cast<core::f64>(stats.interpolationDelayTicks) * 1000.0 / 60.0;
         shown.predictedParts = stats.predictedBodies;
         const core::u64 now = m_clock ? m_clock() : platform::nowNs();
         const core::u64 snapshots = status.authority ? stats.snapshotsSent : stats.snapshotsReceived;
@@ -394,8 +465,14 @@ void NetworkSession::update()
         }
     }
 
-    // --- A replica: did the join take, and is the server still there?
-    if (state.networkTopology != scene::NetworkTopology::Replica)
+    // --- A replica: did the join take, and is the server still there? A
+    // script's join is still the machine's own world until the welcome, so
+    // this is asked whatever the topology says.
+    if (m_connecting && status.refused != 0) {
+        goSolo("JoinFailed", refusalText(status.refused), state.networkTopology != scene::NetworkTopology::Replica);
+        return;
+    }
+    if (!m_connecting && state.networkTopology != scene::NetworkTopology::Replica)
         return;
     if (m_connecting) {
         if (status.welcomed) {
@@ -415,12 +492,17 @@ void NetworkSession::update()
                  (status.lost || static_cast<core::f64>((m_clock ? m_clock() : platform::nowNs()) - m_joinStartedNs) >
                                      m_joinTimeoutSeconds * 1'000'000'000.0)) {
             const std::array<core::I18nArg, 1> args{core::I18nArg{"address", std::string_view{m_address}}};
-            goSolo("JoinFailed", core::engineCatalog().format(ENG_TR("net.err.join_failed"), args), false);
+            goSolo("JoinFailed", core::engineCatalog().format(ENG_TR("net.err.join_failed"), args),
+                   state.networkTopology != scene::NetworkTopology::Replica);
         }
         return;
     }
     // A join from the command line dials again, as it always has (ADR 0085);
     // one a script made hands the decision back to the game.
+    if (status.refused != 0) {
+        goSolo("Disconnected", refusalText(status.refused), false);
+        return;
+    }
     if (status.lost && !m_redial) {
         goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.server_gone")), false);
         return;
@@ -434,7 +516,9 @@ void NetworkSession::update()
         const core::u64 now = m_clock ? m_clock() : platform::nowNs();
         if (m_lostSinceNs == 0) {
             m_lostSinceNs = now != 0 ? now : 1;
-            setState(StateConnecting);
+            // **Its own state** (N13): a game can say "reconnecting" and stop
+            // predicting, where `Connecting` was what a first join says.
+            setState(StateReconnecting);
         }
         else if (static_cast<core::f64>(now - std::min(now, m_lostSinceNs)) > m_joinTimeoutSeconds * 1'000'000'000.0) {
             m_lostSinceNs = 0;
