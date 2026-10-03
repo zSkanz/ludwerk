@@ -12,6 +12,7 @@
 #include "class_descriptors.gen.h"
 #include "engine/core/dmath.h"
 #include "engine/core/math.h"
+#include "engine/core/profile.h"
 #include "engine/input/input.h"
 #include "engine/physics/physics.h"
 #include "engine/scene/physics_sync.h"
@@ -193,7 +194,11 @@ struct Hit
     physics::QueryFilter filter;
     if (own != 0)
         filter.userData = std::span<const u64>(&own, 1);
-    sync->syncForQuery();
+    {
+        ENG_PROFILE_SCOPE("physics.query_sync");
+        sync->syncForQuery();
+    }
+    ENG_PROFILE_SCOPE("physics.raycast");
     if (!sync->backend().raycast(sync->worldHandle(), query, filter, hit))
         return std::nullopt;
     return Hit{sync->instanceOf(hit.userData), hit.position, hit.distance};
@@ -282,9 +287,13 @@ void stepClicks(lua_State* L, const Classes& classes, InstanceId player, const V
     ServiceState& services = *context(L).services;
     DetectorState& state = services.detectors;
 
-    // What is under a pixel, and within reach.
+    // What is under a pixel, and within reach. **Nothing, without a detector
+    // in the world** (H8): the ray, and bringing the physics up to date for
+    // it, cost every tick of every game -- a quarter of a millisecond a part
+    // made since the last one, in a game making a projectile a shot.
+    const bool anyDetector = w.clickDetectors().size() != 0;
     const auto under = [&](Vec2 pixel) -> InstanceId {
-        if (!view.valid())
+        if (!view.valid() || !anyDetector)
             return {};
         const std::optional<Hit> hit = cast(services, view.rayThrough(pixel), PointerReach, characterOf(w, player));
         if (!hit.has_value() || !hit->instance.valid())

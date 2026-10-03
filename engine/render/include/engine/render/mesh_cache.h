@@ -153,9 +153,12 @@ public:
     // rather than clamped, since a skin stream half as long as the mesh is a
     // file the importer should have rejected. `Static` only: a skinned mesh is
     // an imported asset, and the ring is for geometry rebuilt every frame.
+    // Its levels of detail are `create`'s: index ranges over the same
+    // vertices, which the one skin stream serves at every level.
     [[nodiscard]] MeshHandle createSkinned(rhi::IDevice& device, rhi::ICmdList& cmd, const asset::Mesh& mesh,
                                            std::span<const asset::SkinVertex> skin,
-                                           core::EngineError* outError = nullptr);
+                                           core::EngineError* outError = nullptr,
+                                           std::span<const MeshLodRange> lods = {});
 
     // Releases a static mesh's buffers, or gives a pooled mesh's slices back
     // to their pages. A dynamic handle is not released here; the ring reclaims

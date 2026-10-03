@@ -143,6 +143,8 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         settings.contactShadows = *overrides.contactShadows;
     if (overrides.forcedSurface)
         settings.forcedSurface = *overrides.forcedSurface;
+    if (overrides.instancing)
+        settings.instancing = *overrides.instancing;
     if (overrides.debugView) {
         settings.debugView = *overrides.debugView;
         // The sky and the ground must stay two colours to the last pixel: a
@@ -428,6 +430,8 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
             carried.forcedSurface = instruments->forcedSurface;
         if (instruments->debugView != render::DebugView::None)
             carried.debugView = instruments->debugView;
+        if (!instruments->instancing)
+            carried.instancing = false;
         applyOverrides(carried, settings);
     }
     return render::clampSettings(settings);

@@ -11,6 +11,7 @@
 #include "engine/asset/archive.h"
 #include "engine/asset/icon_set.h"
 #include "engine/asset/image.h"
+#include "engine/asset/mesh_format.h"
 #include "engine/assetc/compiler.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
@@ -182,6 +183,12 @@ void usage()
 
 int main(int argc, char** argv)
 {
+    // **The mesh format this compiler writes** (D517), as a bare number for
+    // `ludwerk build` to ask the player it packages about.
+    if (argc > 1 && std::strcmp(argv[1], "--mesh-format") == 0) {
+        std::cout << engine::asset::MeshFormatVersion << "\n";
+        return 0;
+    }
     if (argc > 1 && std::strcmp(argv[1], "icon") == 0) {
         (void)engine::core::engineCatalog().loadFromFile(
             (engine::platform::paths().contentDir / "i18n" / "en.json").string());

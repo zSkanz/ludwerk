@@ -96,6 +96,42 @@ TEST_CASE("a handle nobody issued resolves to nothing")
     CHECK_FALSE(fixture.physics->bodyState(fixture.world, body).active);
 }
 
+TEST_CASE("H8: a hundred bodies of one point cloud build its hull once; another scale or cloud builds its own")
+{
+    // Every body of a mesh built its convex hull again -- a quarter of a
+    // millisecond each, so a game making a projectile a shot paid a hull a
+    // shot.
+    Fixture fixture;
+    const std::vector<core::Vec3> points{
+        {-0.5f, -0.5f, -0.5f}, {0.5f, -0.5f, -0.5f}, {0.0f, 0.5f, -0.5f}, {0.0f, 0.0f, 0.5f}, {0.2f, 0.1f, 0.3f}};
+    BodyDesc desc;
+    desc.shape.type = ShapeType::ConvexHull;
+    desc.shape.points = points;
+    desc.shape.pointsRevision = 7;
+    desc.motion = MotionType::Static;
+
+    const core::u64 before = fixture.physics->shapesBuilt(fixture.world);
+    std::vector<BodyHandle> made;
+    for (int index = 0; index < 100; ++index) {
+        desc.transform.position = core::DVec3{static_cast<double>(index) * 2.0, 0.0, 0.0};
+        made.push_back(fixture.physics->createBody(fixture.world, desc));
+        REQUIRE(made.back().valid());
+    }
+    CHECK(fixture.physics->shapesBuilt(fixture.world) == before + 1);
+    // Destroyed and made again: still the one hull.
+    for (const BodyHandle body : made)
+        fixture.physics->destroyBody(fixture.world, body);
+    REQUIRE(fixture.physics->createBody(fixture.world, desc).valid());
+    CHECK(fixture.physics->shapesBuilt(fixture.world) == before + 1);
+
+    desc.shape.pointScale = core::Vec3{2.0f, 2.0f, 2.0f};
+    REQUIRE(fixture.physics->createBody(fixture.world, desc).valid());
+    CHECK(fixture.physics->shapesBuilt(fixture.world) == before + 2);
+    desc.shape.pointsRevision = 8;
+    REQUIRE(fixture.physics->createBody(fixture.world, desc).valid());
+    CHECK(fixture.physics->shapesBuilt(fixture.world) == before + 3);
+}
+
 TEST_CASE("a cube falls onto the ground and stops there")
 {
     Fixture fixture;

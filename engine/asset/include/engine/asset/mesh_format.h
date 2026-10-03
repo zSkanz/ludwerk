@@ -49,7 +49,15 @@ inline constexpr char MeshMagic[4] = {'L', 'G', 'M', 'S'};
 // absolute error the runtime selector reads. A `.lmesh` built before the change
 // carries a number in units nothing can interpret, and a stale one loading
 // silently would put a mesh at the wrong level rather than fail.
-inline constexpr u32 MeshFormatVersion = 2;
+//
+// 3: an animation channel says how its keys are joined (D515). A version 2 file
+// is still read -- its channels are all linear, which is what they were -- and
+// a file NEWER than this build reads is refused by name (D517): a player
+// handed a mesh from a newer compiler says so, rather than that the file is
+// malformed.
+inline constexpr u32 MeshFormatVersion = 3;
+// The oldest format this build reads.
+inline constexpr u32 MeshFormatOldest = 2;
 
 // The ceiling on one mesh, and it exists for a reason the fuzz case found: the
 // vertex and skin streams are meshopt-COMPRESSED, so their element count cannot

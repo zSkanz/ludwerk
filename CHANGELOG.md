@@ -196,6 +196,26 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   the default route's first, never loopback, link-local or a virtual adapter
   -- and the port of the match it hosts or joined: what a host shows the
   friends on its Wi-Fi to type.
+- **Where each frame's time goes** (H0): `--frame-stats` prints a tree of
+  scoped timers -- the simulation's phases, physics' steps, animation, the
+  scripts by phase, the network, the UI, the renderer's passes and the waits --
+  with each scope's median, p95, worst frame, calls a frame, and what no scope
+  inside it accounts for.
+- **A crowd of one skinned mesh is drawn in one call a pass** (H2): every
+  skinned run's palettes in one storage buffer, read by instance; five hundred
+  animated enemies went from 1,800 draws to a few dozen. `--no-instancing`
+  draws every object alone, for comparing.
+- **Animation is posed as often as it is seen** (H3): a rig neither the camera
+  nor a shadow reaches is not posed, and a small one is posed every second,
+  fourth or eighth tick; its clips keep time, and a joint a script or a `Bone`
+  asks about is posed when asked. `AnimationPlayer.CullingMode =
+  AlwaysAnimate` for the hero. A world with nobody looking poses every tick.
+- **Skinned meshes have levels of detail** (H4), as static ones do.
+- **`Swarm`** (ADR 0156): a crowd on open ground that the engine steers --
+  hundreds of agents walking at a target, pushed apart, climbing and standing
+  on one another, on the terrain's height and round obstacles, thinking less
+  often far away; scripts add, remove, push and query in bulk. Five hundred
+  and fifty agents cost about a third of a millisecond a tick.
 - **`ScrollFrame` scrolls as a phone's list does** (G40), with no code:
   - **a fling**: let go while moving and it glides on and slows; a press
     catches it and presses nothing;
@@ -1090,6 +1110,22 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   `Model` that has its joints -- a shirt, trousers, hair -- by joint name, as an
   `AnimationPlayer` on the Model does. The other meshes used to stay in the air
   at their last pose while the body fell.
+- **A glTF clip plays as it was keyed** (D515): `STEP` holds each key and
+  `CUBICSPLINE` follows its tangents; both were read as linear, and a cubic
+  spline's tangents played as poses. Meshes compile again (mesh format 3; 2
+  still reads).
+- **Idle skinned bodies cost nothing** (D516): a mesh whose tracks are all
+  stopped is posed once, not every tick.
+- **An exported game's characters are not boxes** (D517): `ludwerk build`
+  compiles with the asset compiler of the player's own build and refuses a
+  pair that do not agree on the mesh format; a mesh from a newer compiler says
+  so instead of "malformed".
+- **Bodies of one mesh share its collision hull** (D518): a part made a shot
+  built the mesh's hull again, a quarter of a millisecond each; and the click
+  detectors' pick no longer runs in a world with no detector.
+- **Text is broken into lines once** (D519): a screen laid out again because a
+  label moved no longer re-measures every label on it, and wrapping a long text
+  is no longer quadratic in its length.
 - **A server that loads its own scene again restarts every client's scene
   code** (D489), and `SceneLoading` fires on a client before its scene changes;
   a round restarted by `LoadScene` used to restart on the server alone.

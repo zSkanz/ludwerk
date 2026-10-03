@@ -100,6 +100,16 @@ struct Pose
     std::vector<core::Mat4> local;
 };
 
+// **A skinned mesh the renderer drew a frame of** (H3): the camera or a shadow
+// reached it, and its bounding sphere's diameter covered `screenHeight` of the
+// picture's height. What decides how often a mesh nobody needs every tick of
+// is posed.
+struct SeenSkin
+{
+    core::InstanceId meshPart;
+    f32 screenHeight = 0.0f;
+};
+
 // **Two hosts, one implementation**, and they are separate interfaces on
 // purpose: `AnimationHost` is about tracks and weights and names no joint,
 // while `SkeletonHost` is about joints and names no track. A caller that wants
@@ -139,6 +149,28 @@ public:
     // driving it. Read by the renderer; null means "draw it in bind pose", which
     // is what an unanimated skinned mesh should look like.
     [[nodiscard]] const Pose* pose(core::InstanceId meshPart) const noexcept;
+
+    // How many poses have been built since this system was made: what a test
+    // counts to know that a pose nobody changed was not built again.
+    [[nodiscard]] core::u64 posesBuilt() const noexcept { return posesBuilt_; }
+
+    // **What the renderer saw** (H3), once a frame: every skinned mesh the
+    // camera or a shadow reached, and how big. `fresh` starts the frame's list
+    // -- the main view's -- and the views drawn after it add to it. Until the
+    // first report every mesh is posed every tick, which is what a server and
+    // a replay, with nobody looking, keep doing.
+    void reportSeen(std::span<const SeenSkin> seen, bool fresh);
+
+    // Whether `meshPart` wears a skeleton this system poses: what the renderer
+    // reports on.
+    [[nodiscard]] bool animates(core::InstanceId meshPart) const;
+
+    // How often a mesh seen this big is posed: every tick, or every second,
+    // fourth or eighth. Public so the thresholds are a thing a test holds.
+    [[nodiscard]] static core::u32 updateInterval(f32 screenHeight) noexcept
+    {
+        return screenHeight >= 0.12f ? 1u : screenHeight >= 0.06f ? 2u : screenHeight >= 0.03f ? 4u : 8u;
+    }
 
 private:
     struct Track
@@ -201,7 +233,24 @@ private:
         // and the handler that reacts to it.
         bool holding = false;
         bool alive = true;
+        // **What the track was when a pose last took it in** (D516): a track
+        // not playing, at the time, weight and hold it was posed at, has
+        // nothing new to say -- and three hundred idle bodies in a pool were
+        // three hundred poses rebuilt to the same answer every tick.
+        bool posed = false;
+        bool posedPlaying = false;
+        bool posedHolding = false;
+        f32 posedWeight = 0.0f;
+        f64 posedTime = 0.0;
     };
+
+    // Whether a track has nothing to change in a pose: stopped or holding,
+    // and as it was when it was last posed.
+    [[nodiscard]] static bool quiet(const Track& track) noexcept
+    {
+        return !track.playing && track.posed && !track.posedPlaying && track.posedHolding == track.holding &&
+               track.posedWeight == track.weight && track.posedTime == track.time;
+    }
 
     static constexpr u32 NoClip = 0xFFFFFFFFu;
 
@@ -294,6 +343,27 @@ private:
     // The meshes whose pose this tick has to rebuild, collected before the walk
     // so it is one pass per mesh rather than one per track.
     std::vector<core::InstanceId> meshes_;
+    core::u64 posesBuilt_ = 0;
+
+    // **The update rate** (H3). What the renderer last reported, by mesh: how
+    // much of the picture's height it covered. Looked up, never iterated (R10).
+    std::unordered_map<core::u64, f32> seen_;
+    bool seeing_ = false;
+    // Ticks sampled, which staggers the meshes that skip: a crowd's posing is
+    // spread across the ticks rather than all on one of every eight.
+    core::u64 sampled_ = 0;
+    // The meshes posed every tick whatever is seen: an `AlwaysAnimate` player's,
+    // a rig a `Bone` hangs from, one a ragdoll drove last tick.
+    std::vector<core::InstanceId> always_;
+    std::vector<core::InstanceId> overridden_;
+    // The meshes that skipped a pose they were due, carried to the next tick so
+    // the pose catches up whatever their tracks do meanwhile; and, by key,
+    // those whose pose is behind -- built when a joint of one is asked for.
+    std::vector<core::InstanceId> skipped_;
+    std::unordered_map<core::u64, bool> stale_;
+
+    // Builds `meshPart`'s pose now, if it is behind (H3).
+    void catchUp(core::InstanceId meshPart);
     // The meshes a `Bone` turned this tick (G9).
     std::vector<core::InstanceId> turned_;
     std::vector<core::DVec3> translation_;

@@ -1038,6 +1038,18 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         // `kMaxSkinJoints` rather than refused -- a rig past the budget draws
         // its first sixty-four joints posed and the rest in bind, which is
         // visibly wrong in a way that says what happened.
+        // **What the animation's update rate is decided from** (H3): a rig
+        // the camera sees, or close enough to cast into the view, and how
+        // much of the picture's height its bounds cover.
+        if (animation != nullptr && animation->animates(id)) {
+            const f32 distance = core::length(core::center(worldBounds));
+            const f32 radius = 0.5f * core::length(core::size(worldBounds));
+            if (core::intersects(out.camera.frustum, worldBounds) || distance <= shadowRadius + radius) {
+                const f32 covered = distance > 1.0e-3f ? radius * out.camera.projection.m[1][1] / distance : 1.0f;
+                out.seenSkins.push_back(SeenSkin{id, covered});
+            }
+        }
+
         u32 firstBone = 0;
         u32 boneCount = 0;
         if (animation != nullptr) {

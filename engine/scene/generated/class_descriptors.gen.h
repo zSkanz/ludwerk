@@ -113,6 +113,7 @@ inline constexpr EnumId WindowModeEnumId = 72;
 inline constexpr EnumId SettingSourceEnumId = 73;
 inline constexpr EnumId ScrollingDirectionEnumId = 74;
 inline constexpr EnumId ElasticBehaviorEnumId = 75;
+inline constexpr EnumId AnimationCullingModeEnumId = 76;
 
 } // namespace generated
 
@@ -717,6 +718,28 @@ Value getNavigationLinkLabel(const World& world, core::InstanceId id);
 bool setNavigationLinkLabel(World& world, core::InstanceId id, const Value& value);
 void attachNavigationLinkComponents(World& world, core::InstanceId id);
 void detachNavigationLinkComponents(World& world, core::InstanceId id);
+
+// Swarm
+Value getSwarmTarget(const World& world, core::InstanceId id);
+bool setSwarmTarget(World& world, core::InstanceId id, const Value& value);
+Value getSwarmEnabled(const World& world, core::InstanceId id);
+bool setSwarmEnabled(World& world, core::InstanceId id, const Value& value);
+Value getSwarmCellSize(const World& world, core::InstanceId id);
+bool setSwarmCellSize(World& world, core::InstanceId id, const Value& value);
+Value getSwarmMaxNeighbours(const World& world, core::InstanceId id);
+bool setSwarmMaxNeighbours(World& world, core::InstanceId id, const Value& value);
+Value getSwarmGravity(const World& world, core::InstanceId id);
+bool setSwarmGravity(World& world, core::InstanceId id, const Value& value);
+Value getSwarmClimbSpeed(const World& world, core::InstanceId id);
+bool setSwarmClimbSpeed(World& world, core::InstanceId id, const Value& value);
+Value getSwarmStopDistance(const World& world, core::InstanceId id);
+bool setSwarmStopDistance(World& world, core::InstanceId id, const Value& value);
+Value getSwarmNearDistance(const World& world, core::InstanceId id);
+bool setSwarmNearDistance(World& world, core::InstanceId id, const Value& value);
+Value getSwarmFarDistance(const World& world, core::InstanceId id);
+bool setSwarmFarDistance(World& world, core::InstanceId id, const Value& value);
+void attachSwarmComponents(World& world, core::InstanceId id);
+void detachSwarmComponents(World& world, core::InstanceId id);
 
 // NavigationAgent
 Value getNavigationAgentTarget(const World& world, core::InstanceId id);

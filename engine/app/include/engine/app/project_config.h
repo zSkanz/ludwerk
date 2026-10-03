@@ -52,6 +52,7 @@ struct GraphicsOverrides
     std::optional<std::string> forcedSurface;
     // `--debug-view=NAME`: a test instrument (terrain audit T0).
     std::optional<render::DebugView> debugView;
+    std::optional<bool> instancing;
 };
 
 struct ProjectConfig

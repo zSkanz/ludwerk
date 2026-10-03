@@ -23,6 +23,7 @@
 #include "engine/app/script_package.h"
 #include "engine/app/script_sides.h"
 #include "engine/app/two_worlds.h"
+#include "engine/asset/mesh_format.h"
 #include "engine/core/build_info.h"
 #include "engine/core/content_path.h"
 #include "engine/core/error.h"
@@ -498,6 +499,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.terrainFullDetail = value == "full";
             continue;
         }
+        if (arg == "--no-instancing") {
+            graphics.instancing = false;
+            continue;
+        }
         if (arg.starts_with("--debug-view=")) {
             const std::string_view value = arg.substr(arg.find('=') + 1);
             const std::optional<engine::render::DebugView> view = engine::render::parseDebugView(value);
@@ -876,6 +881,18 @@ int main(int argc, char** argv)
     if (!args.empty() && args[0] == "--version") {
         printVersion();
         return kExitOk;
+    }
+
+    // **Whether this player reads a mesh format** (D517), asked by `ludwerk
+    // build` of the player it is about to package, with the format its asset
+    // compiler writes: an answer in the exit code, so no text is printed.
+    if (!args.empty() && args[0].starts_with("--reads-mesh-format=")) {
+        const std::string_view number = args[0].substr(std::string_view{"--reads-mesh-format="}.size());
+        engine::core::u32 format = 0;
+        const auto parsed = std::from_chars(number.data(), number.data() + number.size(), format);
+        const bool reads = parsed.ec == std::errc{} && parsed.ptr == number.data() + number.size() &&
+                           format >= engine::asset::MeshFormatOldest && format <= engine::asset::MeshFormatVersion;
+        return reads ? kExitOk : kExitUsage;
     }
 
     if (!args.empty() && args[0] == "--help") {

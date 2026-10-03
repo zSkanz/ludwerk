@@ -46,11 +46,13 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
+#include "engine/core/profile.h"
 #include "engine/core/text_key.h"
 #include "engine/platform/file.h"
 #include "engine/platform/platform.h"
@@ -844,6 +846,11 @@ void breakLines(std::string_view text, Face& face, f32 pixelSize, f32 scale, f32
     usize lineBegin = 0;
     usize lastSpace = std::string_view::npos;
     usize index = 0;
+    // The line so far, in face units: carried along rather than measured from
+    // the line's start at every character, which made wrapping a long text
+    // quadratic in its length (H9). The same advances in the same order, so
+    // the same sum.
+    f32 running = 0.0f;
 
     const auto flush = [&](usize end, usize nextBegin) {
         Line line;
@@ -853,6 +860,7 @@ void breakLines(std::string_view text, Face& face, f32 pixelSize, f32 scale, f32
         out.push_back(line);
         lineBegin = nextBegin;
         lastSpace = std::string_view::npos;
+        running = 0.0f;
     };
 
     while (index < text.size()) {
@@ -868,10 +876,10 @@ void breakLines(std::string_view text, Face& face, f32 pixelSize, f32 scale, f32
         // wrapping rather than two or three -- and so a break can never land in
         // the middle of one and produce two invalid sequences.
         const Decoded decoded = decodeUtf8(text, index);
+        const f32 advance = store().entries[glyphIndex(face, pixelSize, decoded.codepoint)].advance;
 
         if (maxWidth > 0.0f) {
-            const f32 width =
-                widthOf(text.substr(lineBegin, index + decoded.length - lineBegin), face, pixelSize) * scale;
+            const f32 width = (running + advance) * scale;
             if (width > maxWidth && index > lineBegin) {
                 if (lastSpace != std::string_view::npos && lastSpace > lineBegin) {
                     // Break at the space and drop it: a trailing space would
@@ -885,9 +893,54 @@ void breakLines(std::string_view text, Face& face, f32 pixelSize, f32 scale, f32
                 continue;
             }
         }
+        running += advance;
         index += decoded.length;
     }
     flush(text.size(), text.size());
+}
+
+// **Text broken into lines once, not every frame** (H9): by its bytes, its
+// face, its size and its width. A label that moves, fades or is drawn again
+// asks the same question, and a screen of them laid out again because one
+// moved asked it of every one -- breaking each into lines and measuring each
+// line every frame. The face is part of the key, so the cache is emptied when
+// faces are (`resetGlyphCache`); bounded, and emptied when full.
+struct LineCache
+{
+    std::unordered_map<std::string, std::vector<Line>> entries;
+    std::string key;
+};
+
+[[nodiscard]] LineCache& lineCache()
+{
+    static LineCache cache;
+    return cache;
+}
+
+[[nodiscard]] const std::vector<Line>& linesOf(std::string_view text, Face& face, f32 pixelSize, f32 scale,
+                                               f32 maxWidth)
+{
+    LineCache& cache = lineCache();
+    cache.key.assign(text);
+    const Face* faceAddress = &face;
+    const auto append = [&cache](const void* data, usize size) {
+        cache.key.append(static_cast<const char*>(data), size);
+    };
+    cache.key.push_back('\0');
+    append(&faceAddress, sizeof(faceAddress));
+    append(&pixelSize, sizeof(pixelSize));
+    append(&maxWidth, sizeof(maxWidth));
+    if (const auto found = cache.entries.find(cache.key); found != cache.entries.end()) {
+        ++store().stats.lineHits;
+        return found->second;
+    }
+    ++store().stats.lineMisses;
+    constexpr usize MostEntries = 4096;
+    if (cache.entries.size() >= MostEntries)
+        cache.entries.clear();
+    std::vector<Line> lines;
+    breakLines(text, face, pixelSize, scale, maxWidth, lines);
+    return cache.entries.emplace(cache.key, std::move(lines)).first->second;
 }
 
 // --- Rich text (F3) ------------------------------------------------------------
@@ -1294,6 +1347,8 @@ const GlyphCacheStats& glyphCacheStats() noexcept
 
 void resetGlyphCache() noexcept
 {
+    // Lines are keyed by face, and the faces are going.
+    lineCache().entries.clear();
     GlyphStore& cache = store();
     cache.entries.clear();
     cache.quads.clear();
@@ -1335,14 +1390,14 @@ f32 textLineHeight(std::string_view font, f32 pixelSize)
 
 TextRunMetrics measureText(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth)
 {
+    ENG_PROFILE_SCOPE("ui.text.measure");
     // `font` SELECTS the face now rather than only keying the cache, which is
     // what took `TextLabel.Font` off the `Inert` list (roadmap M7). An empty
     // name is the default face; a name the provider cannot resolve falls back to
     // it and warns once.
     Face& face = faceFor(font);
     const f32 scale = scaleFor(face, pixelSize);
-    std::vector<Line> lines;
-    breakLines(text, face, pixelSize, scale, maxWidth, lines);
+    const std::vector<Line>& lines = linesOf(text, face, pixelSize, scale, maxWidth);
 
     TextRunMetrics metrics;
     metrics.lineCount = static_cast<u32>(lines.size());
@@ -1385,8 +1440,8 @@ void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSi
 {
     Face& face = faceFor(font);
     const f32 scale = scaleFor(face, pixelSize);
-    std::vector<Line> lines;
-    breakLines(text, face, pixelSize, scale, maxWidth, lines);
+    // Held by reference: filling glyphs below never touches the line cache.
+    const std::vector<Line>& lines = linesOf(text, face, pixelSize, scale, maxWidth);
 
     const f32 lineHeight = lineHeightOf(face, pixelSize);
     const f32 totalHeight = static_cast<f32>(lines.size()) * lineHeight;
@@ -1455,6 +1510,7 @@ void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSi
 
 TextRunMetrics measureRichText(std::string_view markup, std::string_view font, f32 pixelSize, f32 maxWidth)
 {
+    ENG_PROFILE_SCOPE("ui.text.measure");
     Face& face = faceFor(font);
     RichStyle base;
     base.size = pixelSize;

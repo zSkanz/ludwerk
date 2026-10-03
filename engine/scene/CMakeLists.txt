@@ -33,6 +33,7 @@ engine_add_module(scene
         src/native_accessors_movers.cpp
         src/physics_movers.cpp
         src/native_accessors_nav.cpp
+        src/swarm.cpp
         src/partition.cpp
         src/pivot.cpp
         src/physics_sync.cpp
@@ -88,6 +89,7 @@ engine_add_module_tests(scene
         tests/material_world_tests.cpp
         tests/scene_file_tests.cpp
         tests/pivot_tests.cpp
+        tests/swarm_tests.cpp
         tests/stamp_tests.cpp
         tests/wind_tests.cpp
         tests/partition_tests.cpp

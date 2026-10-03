@@ -971,6 +971,40 @@ TEST_CASE_FIXTURE(CatalogFixture, "gltf: a skinned mesh loads its skeleton, its 
     CHECK(model.clips[0].channels[0].values.size() == 12);
 }
 
+TEST_CASE_FIXTURE(CatalogFixture, "D515: a clip keeps how its keys are joined -- step, and cubic spline's three values")
+{
+    // A `STEP` clip was blended between its keys, and a `CUBICSPLINE` one
+    // read as three keys for every one it has.
+    std::string text = fixtureText("skinned_bar.gltf");
+    const std::string linear = "\"LINEAR\"";
+    REQUIRE(text.find(linear) != std::string::npos);
+    text.replace(text.find(linear), linear.size(), "\"STEP\"");
+    Model stepped;
+    REQUIRE_FALSE(importGltf(toBytes(text), dataDirectory(), GltfImportOptions{}, stepped).has_value());
+    REQUIRE(stepped.clips.size() == 1);
+    CHECK(stepped.clips[0].channels[0].interpolation == engine::asset::AnimationChannel::Interpolation::Step);
+    CHECK(stepped.clips[0].channels[0].values.size() == 12);
+
+    Model cubic;
+    REQUIRE_FALSE(
+        importGltf(readFixture("skinned_bar_cubic.gltf"), dataDirectory(), GltfImportOptions{}, cubic).has_value());
+    REQUIRE(cubic.clips.size() == 1);
+    const engine::asset::AnimationChannel& channel = cubic.clips[0].channels[0];
+    CHECK(channel.interpolation == engine::asset::AnimationChannel::Interpolation::CubicSpline);
+    CHECK(channel.times.size() == 3);
+    // Three keys, three values each, four floats a value.
+    CHECK(channel.values.size() == 36);
+    // The middle of a key's three is the key: the linear fixture's own.
+    Model plain;
+    REQUIRE_FALSE(importGltf(readFixture("skinned_bar.gltf"), dataDirectory(), GltfImportOptions{}, plain).has_value());
+    for (std::size_t key = 0; key < 3; ++key) {
+        for (std::size_t lane = 0; lane < 4; ++lane) {
+            CHECK(channel.values[(key * 3 + 1) * 4 + lane] == plain.clips[0].channels[0].values[key * 4 + lane]);
+            CHECK(channel.values[(key * 3) * 4 + lane] == 0.0f);
+        }
+    }
+}
+
 TEST_CASE_FIXTURE(CatalogFixture, "gltf: bone weights are normalized on load")
 {
     // An exporter is allowed to emit weights that do not sum to one, and a

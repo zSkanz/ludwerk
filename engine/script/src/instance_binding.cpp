@@ -19,6 +19,7 @@
 #include "engine/scene/players.h"
 #include "engine/scene/ragdoll_build.h"
 #include "engine/scene/scene_file.h"
+#include "engine/scene/swarm.h"
 #include "engine/scene/ui_pages.h"
 #include "engine/scene/water.h"
 #include "engine/scene/world.h"
@@ -1051,6 +1052,198 @@ int methodApplyImpulse(lua_State* L)
     // them one after another would do anyway.
     if (scene::RigidBodyComponent* body = world(L).rigidBodies().find(id); body != nullptr)
         body->pendingImpulse = body->pendingImpulse + impulse;
+    return 0;
+}
+
+// --- Swarm (ADR 0156) ------------------------------------------------------------
+
+// The swarm a method was called on.
+[[nodiscard]] scene::SwarmComponent& swarmOf(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    scene::SwarmComponent* swarm = world(L).swarms().find(id);
+    if (swarm == nullptr)
+        raise(L, ENG_TR("script.err.instance_dead"));
+    return *swarm;
+}
+
+// A number argument that is finite, or an error.
+[[nodiscard]] double checkFinite(lua_State* L, int index)
+{
+    const double value = luaL_checknumber(L, index);
+    if (!std::isfinite(value))
+        raise(L, ENG_TR("script.err.not_finite"));
+    return value;
+}
+
+[[nodiscard]] core::Vec3 checkFiniteVector(lua_State* L, int index)
+{
+    const core::Vec3 value = checkVector3(L, index);
+    if (!core::isFinite(value))
+        raise(L, ENG_TR("script.err.not_finite"));
+    return value;
+}
+
+[[nodiscard]] core::u32 checkAgent(lua_State* L, int index)
+{
+    const double agent = checkFinite(L, index);
+    return agent >= 1.0 && agent < 4294967296.0 ? static_cast<core::u32>(agent) : 0u;
+}
+
+// `AddAgent(body, settings?)`: an agent standing where the body is.
+int methodSwarmAddAgent(lua_State* L)
+{
+    scene::SwarmComponent& swarm = swarmOf(L);
+    const core::InstanceId body = checkInstance(L, 2);
+    const scene::PartComponent* part = world(L).parts().find(body);
+    if (part == nullptr)
+        raise(L, ENG_TR("script.err.swarm_body_not_part"));
+    scene::SwarmAgentSettings settings;
+    if (lua_istable(L, 3)) {
+        const auto number = [L](const char* name, f32& out) {
+            lua_getfield(L, 3, name);
+            if (lua_isnumber(L, -1)) {
+                const double value = lua_tonumber(L, -1);
+                if (!std::isfinite(value))
+                    raise(L, ENG_TR("script.err.not_finite"));
+                out = static_cast<f32>(value);
+            }
+            lua_pop(L, 1);
+        };
+        const auto flag = [L](const char* name, bool& out) {
+            lua_getfield(L, 3, name);
+            if (lua_isboolean(L, -1))
+                out = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        };
+        number("Radius", settings.radius);
+        number("Height", settings.height);
+        number("Speed", settings.speed);
+        number("FloatHeight", settings.floatHeight);
+        flag("Floats", settings.floats);
+        flag("Climbs", settings.climbs);
+    }
+    // It starts where its body stands. The swarm places the body by its
+    // `CFrame`, so the body's origin is the agent's feet.
+    lua_pushnumber(L, static_cast<double>(scene::addSwarmAgent(swarm, body, part->cframe.position, settings)));
+    return 1;
+}
+
+int methodSwarmRemoveAgent(lua_State* L)
+{
+    scene::SwarmComponent& swarm = swarmOf(L);
+    (void)scene::removeSwarmAgent(swarm, checkAgent(L, 2));
+    return 0;
+}
+
+int methodSwarmSetAgentSpeed(lua_State* L)
+{
+    scene::SwarmComponent& swarm = swarmOf(L);
+    scene::SwarmAgent* agent = scene::swarmAgent(swarm, checkAgent(L, 2));
+    const double speed = checkFinite(L, 3);
+    if (agent != nullptr)
+        agent->speed = static_cast<f32>(std::max(speed, 0.0));
+    return 0;
+}
+
+int methodSwarmSetAgentPosition(lua_State* L)
+{
+    scene::SwarmComponent& swarm = swarmOf(L);
+    scene::SwarmAgent* agent = scene::swarmAgent(swarm, checkAgent(L, 2));
+    const core::Vec3 position = checkFiniteVector(L, 3);
+    if (agent != nullptr) {
+        agent->position =
+            core::DVec3{static_cast<f64>(position.x), static_cast<f64>(position.y), static_cast<f64>(position.z)};
+        agent->verticalSpeed = 0.0f;
+        agent->groundX = 1.0e30;
+    }
+    return 0;
+}
+
+int methodSwarmPush(lua_State* L)
+{
+    scene::SwarmComponent& swarm = swarmOf(L);
+    scene::SwarmAgent* agent = scene::swarmAgent(swarm, checkAgent(L, 2));
+    const core::Vec3 velocity = checkFiniteVector(L, 3);
+    if (agent != nullptr) {
+        agent->pushX += velocity.x;
+        agent->pushZ += velocity.z;
+    }
+    return 0;
+}
+
+int methodSwarmGetAgentPosition(lua_State* L)
+{
+    scene::SwarmComponent& swarm = swarmOf(L);
+    const scene::SwarmAgent* agent = scene::swarmAgent(swarm, checkAgent(L, 2));
+    if (agent == nullptr) {
+        lua_pushnil(L);
+        return 1;
+    }
+    pushVector3(L, core::Vec3{static_cast<f32>(agent->position.x), static_cast<f32>(agent->position.y),
+                              static_cast<f32>(agent->position.z)});
+    return 1;
+}
+
+int methodSwarmGetAgents(lua_State* L)
+{
+    const scene::SwarmComponent& swarm = swarmOf(L);
+    lua_createtable(L, static_cast<int>(swarm.agents.size() - swarm.free.size()), 0);
+    int written = 0;
+    for (usize slot = 0; slot < swarm.agents.size(); ++slot) {
+        if (!swarm.agents[slot].alive)
+            continue;
+        lua_pushnumber(L, static_cast<double>(slot + 1));
+        lua_rawseti(L, -2, ++written);
+    }
+    return 1;
+}
+
+int methodSwarmGetPositions(lua_State* L)
+{
+    const scene::SwarmComponent& swarm = swarmOf(L);
+    lua_createtable(L, static_cast<int>(swarm.agents.size() - swarm.free.size()), 0);
+    int written = 0;
+    for (const scene::SwarmAgent& agent : swarm.agents) {
+        if (!agent.alive)
+            continue;
+        pushVector3(L, core::Vec3{static_cast<f32>(agent.position.x), static_cast<f32>(agent.position.y),
+                                  static_cast<f32>(agent.position.z)});
+        lua_rawseti(L, -2, ++written);
+    }
+    return 1;
+}
+
+int methodSwarmQueryRadius(lua_State* L)
+{
+    const scene::SwarmComponent& swarm = swarmOf(L);
+    const core::Vec3 centre = checkFiniteVector(L, 2);
+    const double radius = checkFinite(L, 3);
+    std::vector<core::u32> found;
+    scene::querySwarmRadius(
+        swarm, core::DVec3{static_cast<f64>(centre.x), static_cast<f64>(centre.y), static_cast<f64>(centre.z)},
+        std::max(radius, 0.0), found);
+    lua_createtable(L, static_cast<int>(found.size()), 0);
+    for (usize index = 0; index < found.size(); ++index) {
+        lua_pushnumber(L, static_cast<double>(found[index]));
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
+int methodSwarmAddObstacle(lua_State* L)
+{
+    scene::SwarmComponent& swarm = swarmOf(L);
+    const core::Vec3 position = checkFiniteVector(L, 2);
+    const double radius = checkFinite(L, 3);
+    swarm.obstacles.push_back(scene::SwarmObstacle{static_cast<f64>(position.x), static_cast<f64>(position.z),
+                                                   static_cast<f32>(std::max(radius, 0.0))});
+    return 0;
+}
+
+int methodSwarmClearObstacles(lua_State* L)
+{
+    swarmOf(L).obstacles.clear();
     return 0;
 }
 
@@ -2680,6 +2873,17 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"PVInstance", "PivotTo", methodPivotTo},
     {"Model", "GetExtentsSize", methodGetExtentsSize},
     {"BasePart", "ApplyImpulse", methodApplyImpulse},
+    {"Swarm", "AddAgent", methodSwarmAddAgent},
+    {"Swarm", "RemoveAgent", methodSwarmRemoveAgent},
+    {"Swarm", "SetAgentSpeed", methodSwarmSetAgentSpeed},
+    {"Swarm", "SetAgentPosition", methodSwarmSetAgentPosition},
+    {"Swarm", "Push", methodSwarmPush},
+    {"Swarm", "GetAgentPosition", methodSwarmGetAgentPosition},
+    {"Swarm", "GetAgents", methodSwarmGetAgents},
+    {"Swarm", "GetPositions", methodSwarmGetPositions},
+    {"Swarm", "QueryRadius", methodSwarmQueryRadius},
+    {"Swarm", "AddObstacle", methodSwarmAddObstacle},
+    {"Swarm", "ClearObstacles", methodSwarmClearObstacles},
     {"BasePart", "SetNetworkOwner", methodSetNetworkOwner},
     {"BasePart", "GetRenderCFrame", methodGetRenderCFrame},
     {"Attachment", "GetRenderCFrame", methodGetRenderCFrame},

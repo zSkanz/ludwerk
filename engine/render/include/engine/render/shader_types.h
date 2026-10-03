@@ -227,6 +227,20 @@ struct GpuInstance
 
 static_assert(sizeof(GpuInstance) == 80, "GpuInstance is a vertex stride; see pbr_instanced.hlsl");
 
+// One entry of a SKINNED run's per-instance stream (H2), at slot 2: what
+// `GpuInstance` carries, and where in the frame's palette buffer this
+// instance's joints begin -- a float, because the vertex formats have no
+// integer one (ADR 0037), exact to sixteen million joints.
+struct GpuSkinnedInstance
+{
+    core::Mat4 model;
+    f32 alphaTint[4]{1.0f, 1.0f, 1.0f, 1.0f};
+    f32 palette[4]{0.0f, 0.0f, 0.0f, 0.0f};
+};
+
+static_assert(sizeof(GpuSkinnedInstance) == 96,
+              "GpuSkinnedInstance is a vertex stride; see pbr_skinned_instanced.hlsl");
+
 // Vertex stage, `b0 space1`, for the shadow pass. Depth only, so there is
 // nothing else it needs.
 struct GpuShadowUniforms

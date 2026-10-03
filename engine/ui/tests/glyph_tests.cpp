@@ -54,6 +54,34 @@ TEST_CASE("the store fills on demand and answers a repeat from what it has")
     CHECK(glyphCacheStats().hits >= 3);
 }
 
+TEST_CASE("H9: text is broken into lines once -- a label measured, moved and drawn again asks the cache")
+{
+    // A screen laid out again because one damage number moved measured every
+    // label on it, every frame.
+    resetGlyphCache();
+    const char* const words = "the quick brown fox jumps over the lazy dog";
+    const auto first = measureText(words, {}, 12.0f, 60.0f);
+    CHECK(glyphCacheStats().lineMisses == 1);
+    CHECK(glyphCacheStats().lineHits == 0);
+    const auto second = measureText(words, {}, 12.0f, 60.0f);
+    CHECK(glyphCacheStats().lineHits == 1);
+    CHECK(second.lineCount == first.lineCount);
+    CHECK(second.size.x == first.size.x);
+    // Drawn, at the same size and width: the same lines.
+    std::vector<DrawQuad> out;
+    buildTextGeometry(words, {}, 12.0f, 60.0f, Rect{Vec2{0.0f, 0.0f}, Vec2{60.0f, 200.0f}}, 0, 0,
+                      Color3{1.0f, 1.0f, 1.0f}, 1.0f, 0, out);
+    CHECK(glyphCacheStats().lineHits == 2);
+    // Another width is another question.
+    (void)measureText(words, {}, 12.0f, 90.0f);
+    CHECK(glyphCacheStats().lineMisses == 2);
+
+    // **And wrapping is the same answer it was**, line for line: every line
+    // fits, and none could have taken the next word.
+    CHECK(first.lineCount > 1);
+    CHECK(first.size.x <= 60.0f);
+}
+
 TEST_CASE("G6: a frame whose text filled the glyph store is built again against the store it left")
 {
     // The FPS game: name tags filled the store mid-frame, it was cleared, and

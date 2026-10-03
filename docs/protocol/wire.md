@@ -1128,6 +1128,7 @@ Every other concrete class is deliberately off the wire, and this is why.
 | NavigationArea | What it says is a question only the authority's navigation asks (ADR 0098): a path is searched where the game's scripts run, and a replica that wants one asks with a remote. The part it labels is replicated; the label is not something a replica draws. |
 | NavigationLink | A way across for the authority's paths. The same as `NavigationArea`. |
 | NavigationAgent | It walks its part on the authority's tick, and the part's `CFrame` is what arrives -- interpolated like any other part's. Sending the agent too would send a second account of one motion. |
+| Swarm | It walks its agents' bodies where it runs (ADR 0156), and those bodies' `CFrame`s are what arrives, as `NavigationAgent`'s part's do. Its agents are rows, not instances, and a replica that wants a horde of its own runs one where it is seen. |
 | Frame | Screen-space UI. The same as `ScreenGui`. |
 | TextLabel | Screen-space UI. The same as `ScreenGui`. |
 | TextButton | Screen-space UI. The same as `ScreenGui`. |

@@ -3,6 +3,7 @@
 #include "engine/app/world_host.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
+#include "engine/core/profile.h"
 #include "engine/platform/platform.h"
 #include "engine/render/transform_history.h"
 #include "engine/replication/extract.h"
@@ -582,11 +583,23 @@ void receiveDrawn(WorldHost& host, NetworkSession& network, render::TransformHis
 
 void runDrawnTick(WorldHost& host, NetworkSession& network, render::TransformHistory& history)
 {
-    history.capture(host.world());
-    receiveDrawn(host, network, history, true);
-    host.tick();
-    network.send();
-    network.sendMessages();
+    {
+        ENG_PROFILE_SCOPE("transforms.history");
+        history.capture(host.world());
+    }
+    {
+        ENG_PROFILE_SCOPE("net.receive");
+        receiveDrawn(host, network, history, true);
+    }
+    {
+        ENG_PROFILE_SCOPE("tick");
+        host.tick();
+    }
+    {
+        ENG_PROFILE_SCOPE("net.send");
+        network.send();
+        network.sendMessages();
+    }
 }
 
 } // namespace engine::app

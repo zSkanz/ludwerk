@@ -391,6 +391,43 @@ std::optional<core::EngineError> compileMesh(const Model& model, std::span<const
     constexpr usize positionStride = sizeof(Vertex);
     const f32 scale = meshopt_simplifyScale(positions, out.vertices.size(), positionStride);
 
+    // **A skinned mesh keeps the vertices it bends on** (H4). The simplifier
+    // judges error in the bind pose, where an elbow's vertices lie along a
+    // straight arm and are the first to go -- and a level without them does
+    // not bend. So a vertex whose weights are blended, or whose main joint is
+    // not its neighbour's, is locked: a rigid stretch of one bone still
+    // simplifies, a joint never loses its hinge.
+    std::vector<unsigned char> locks;
+    if (!out.skin.empty() && out.skin.size() == out.vertices.size()) {
+        const auto mainJoint = [&](u32 vertex) {
+            const SkinVertex& skin = out.skin[vertex];
+            usize best = 0;
+            for (usize lane = 1; lane < 4; ++lane) {
+                if (skin.weights[lane] > skin.weights[best])
+                    best = lane;
+            }
+            return skin.joints[best];
+        };
+        locks.assign(out.vertices.size(), 0);
+        for (usize vertex = 0; vertex < out.skin.size(); ++vertex) {
+            const SkinVertex& skin = out.skin[vertex];
+            const f32 strongest = std::max({skin.weights[0], skin.weights[1], skin.weights[2], skin.weights[3]});
+            if (strongest < 0.99f)
+                locks[vertex] = meshopt_SimplifyVertex_Lock;
+        }
+        const std::vector<u32>& triangles = model.mesh.indices;
+        for (usize first = 0; first + 2 < triangles.size(); first += 3) {
+            for (usize side = 0; side < 3; ++side) {
+                const u32 a = triangles[first + side];
+                const u32 b = triangles[first + (side + 1) % 3];
+                if (a < locks.size() && b < locks.size() && mainJoint(a) != mainJoint(b)) {
+                    locks[a] = meshopt_SimplifyVertex_Lock;
+                    locks[b] = meshopt_SimplifyVertex_Lock;
+                }
+            }
+        }
+    }
+
     // Each level simplifies each SUBMESH separately, so a material boundary is
     // never welded across -- a tree whose leaves start being drawn with the
     // trunk's shader is the failure that buys.
@@ -420,8 +457,12 @@ std::optional<core::EngineError> compileMesh(const Model& model, std::span<const
             std::vector<u32> destination(source.size());
             f32 error = 0.0f;
             const usize produced =
-                meshopt_simplify(destination.data(), source.data(), source.size(), positions, out.vertices.size(),
-                                 positionStride, target, options.lodTargetError, 0, &error);
+                locks.empty()
+                    ? meshopt_simplify(destination.data(), source.data(), source.size(), positions, out.vertices.size(),
+                                       positionStride, target, options.lodTargetError, 0, &error)
+                    : meshopt_simplifyWithAttributes(destination.data(), source.data(), source.size(), positions,
+                                                     out.vertices.size(), positionStride, nullptr, 0, nullptr, 0,
+                                                     locks.data(), target, options.lodTargetError, 0, &error);
             destination.resize(produced);
 
             next.indices.insert(next.indices.end(), destination.begin(), destination.end());
@@ -594,7 +635,9 @@ std::vector<std::byte> encodeMesh(const CompiledMesh& mesh)
 
         for (const AnimationChannel& channel : clip.channels) {
             channels.u32v(channel.joint);
-            channels.u32v(static_cast<u32>(channel.target));
+            // The interpolation rides in the target's second byte, so a file
+            // written before it existed reads as linear, which it was.
+            channels.u32v(static_cast<u32>(channel.target) | (static_cast<u32>(channel.interpolation) << 8u));
             channels.u32v(channel.stride);
             channels.u32v(static_cast<u32>(animationFloats.size() / 4));
             channels.u32v(static_cast<u32>(channel.times.size()));
@@ -710,7 +753,11 @@ std::optional<core::EngineError> decodeMesh(std::span<const std::byte> bytes, Co
 
     Reader header(bytes, 4);
     const u32 version = header.u32v();
-    if (version != MeshFormatVersion) {
+    if (version > MeshFormatVersion) {
+        const I18nArg args[] = {{"found", std::to_string(version)}, {"reads", std::to_string(MeshFormatVersion)}};
+        return core::makeError(ENG_TR("asset.mesh.err.newer"), args);
+    }
+    if (version < MeshFormatOldest) {
         const I18nArg args[] = {{"found", std::to_string(version)}, {"expected", std::to_string(MeshFormatVersion)}};
         return core::makeError(ENG_TR("asset.mesh.err.version"), args);
     }
@@ -1001,10 +1048,16 @@ std::optional<core::EngineError> decodeMesh(std::span<const std::byte> bytes, Co
             const u32 timesCount = reader.u32v();
             const u32 valuesOffset = reader.u32v();
             const u32 valuesCount = reader.u32v();
-            if (!reader.ok() || target > static_cast<u32>(AnimationChannel::Target::Scale)) {
+            const u32 targetKind = target & 0xFFu;
+            const u32 interpolation = target >> 8u;
+            // Format 2 had no interpolation to say: its second byte is zero.
+            if (!reader.ok() || targetKind > static_cast<u32>(AnimationChannel::Target::Scale) ||
+                interpolation > static_cast<u32>(AnimationChannel::Interpolation::CubicSpline) ||
+                (version < 3 && interpolation != 0)) {
                 return malformed();
             }
-            channel.target = static_cast<AnimationChannel::Target>(target);
+            channel.target = static_cast<AnimationChannel::Target>(targetKind);
+            channel.interpolation = static_cast<AnimationChannel::Interpolation>(interpolation);
             if (!readFloats(timesOffset, timesCount, channel.times) ||
                 !readFloats(valuesOffset, valuesCount, channel.values)) {
                 return malformed();
@@ -1015,7 +1068,8 @@ std::optional<core::EngineError> decodeMesh(std::span<const std::byte> bytes, Co
             // not own. And the joint is one the skeleton has.
             const u32 stride = channel.target == AnimationChannel::Target::Rotation ? 4u : 3u;
             if (channel.stride != stride ||
-                channel.values.size() < static_cast<usize>(channel.times.size()) * static_cast<usize>(stride) ||
+                channel.values.size() <
+                    static_cast<usize>(channel.times.size()) * static_cast<usize>(stride) * channel.valuesPerKey() ||
                 channel.joint >= out.joints.size()) {
                 return malformed();
             }

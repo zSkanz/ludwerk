@@ -5,6 +5,7 @@
 
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
+#include "engine/core/profile.h"
 #include "engine/render/render_world.h"
 #include "engine/scene/wind.h"
 #include "engine/scene/world.h"
@@ -107,6 +108,7 @@ void ParticleSystem::spawn(Emitter& emitter, const core::CFrameD& frame, core::V
 
 void ParticleSystem::update(const scene::World& world, core::InstanceId root, f64 dt, const DrawPoses* poses)
 {
+    ENG_PROFILE_SCOPE("particles.update");
     DrawPoses still;
     const DrawPoses& posed =
         poses != nullptr && poses->world() == &world ? *poses : (still.begin(world, nullptr, 0.0f), still);

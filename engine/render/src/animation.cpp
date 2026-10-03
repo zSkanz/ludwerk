@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "engine/core/profile.h"
 #include "engine/scene/world.h"
 
 namespace engine::render {
@@ -36,18 +37,62 @@ using core::Vec3;
     return std::clamp((time - times[key]) / span, 0.0f, 1.0f);
 }
 
-// Linear interpolation between two keys of a channel, into `out`.
+// A channel between two keys, into `out`: held, along a line, or along the
+// cubic spline its tangents describe (D515).
 [[nodiscard]] bool sampleChannel(const asset::AnimationChannel& channel, f32 time, f32* out) noexcept
 {
     const usize stride = channel.stride;
+    const usize perKey = channel.valuesPerKey();
     // `decodeMesh` refuses anything else (audit F1); a channel built in memory
     // is not decoded, and a sample past these four floats is somebody's stack.
-    if ((stride != 3 && stride != 4) || channel.times.empty() || channel.values.size() < channel.times.size() * stride)
+    if ((stride != 3 && stride != 4) || channel.times.empty() ||
+        channel.values.size() < channel.times.size() * stride * perKey)
         return false;
     const usize key = keyBefore(channel.times, time);
+    const bool last = key + 1 >= channel.times.size();
+    // A key's value: the middle of its three on a spline.
+    const auto valueOf = [&](usize index) {
+        return &channel.values[(index * perKey + (perKey == 3 ? 1 : 0)) * stride];
+    };
+    const f32* from = valueOf(key);
+    const f32* to = last ? from : valueOf(key + 1);
+
+    if (channel.interpolation == asset::AnimationChannel::Interpolation::Step || last) {
+        for (usize lane = 0; lane < stride; ++lane)
+            out[lane] = from[lane];
+        return true;
+    }
+
+    if (channel.interpolation == asset::AnimationChannel::Interpolation::CubicSpline) {
+        // Hermite between the two keys, its tangents scaled by the time
+        // between them -- glTF's own definition -- and a rotation normalized
+        // after, as the spec says a sampled quaternion is.
+        const f32 span = channel.times[key + 1] - channel.times[key];
+        const f32 s = fractionBetween(channel.times, key, time);
+        const f32 s2 = s * s;
+        const f32 s3 = s2 * s;
+        const f32* leaving = &channel.values[(key * 3 + 2) * stride];
+        const f32* arriving = &channel.values[((key + 1) * 3) * stride];
+        f32 length = 0.0f;
+        for (usize lane = 0; lane < stride; ++lane) {
+            out[lane] = (2.0f * s3 - 3.0f * s2 + 1.0f) * from[lane] + (s3 - 2.0f * s2 + s) * span * leaving[lane] +
+                        (-2.0f * s3 + 3.0f * s2) * to[lane] + (s3 - s2) * span * arriving[lane];
+            length += out[lane] * out[lane];
+        }
+        if (stride == 4) {
+            length = std::sqrt(length);
+            if (length <= 0.0f) {
+                out[0] = out[1] = out[2] = 0.0f;
+                out[3] = 1.0f;
+                return true;
+            }
+            for (usize lane = 0; lane < 4; ++lane)
+                out[lane] /= length;
+        }
+        return true;
+    }
+
     const f32 alpha = fractionBetween(channel.times, key, time);
-    const f32* from = &channel.values[key * stride];
-    const f32* to = key + 1 < channel.times.size() ? &channel.values[(key + 1) * stride] : from;
 
     if (stride == 4) {
         // Two quaternions describe one rotation with opposite signs, and
@@ -319,10 +364,26 @@ void AnimationSystem::sample(f64 fixedDt)
     // so the pose walk is one pass per mesh rather than one per track.
     meshes_.clear();
 
+    // Collected, then sorted and made unique below: a search per note was a
+    // pass over every mesh for every track, quadratic in a crowd.
     const auto note = [this](core::InstanceId mesh) {
-        if (mesh.valid() && std::find(meshes_.begin(), meshes_.end(), mesh) == meshes_.end())
+        if (mesh.valid())
             meshes_.push_back(mesh);
     };
+    // A track whose player says `AlwaysAnimate` (H3): its meshes are posed
+    // every tick, seen or not.
+    always_.clear();
+    const auto alwaysFor = [this](const Track& track) {
+        const scene::AnimationPlayerComponent* player = world_->animationPlayers().find(track.player);
+        return player != nullptr && player->cullingMode == 1;
+    };
+    // What skipped a pose it was due: noted again, so it catches up.
+    for (const core::InstanceId mesh : skipped_)
+        note(mesh);
+    skipped_.clear();
+    // What a ragdoll drove last tick (`commitOverrides`) is posed every tick.
+    for (const core::InstanceId mesh : overridden_)
+        always_.push_back(mesh);
 
     for (usize index = 1; index < tracks_.size(); ++index) {
         Track& track = tracks_[index];
@@ -333,8 +394,11 @@ void AnimationSystem::sample(f64 fixedDt)
         // it sees a track rather than a hole.
         if (!track.alive || !bindTrack(track))
             continue;
+        if (alwaysFor(track))
+            always_.push_back(track.meshPart);
         if (!track.playing) {
-            note(track.meshPart);
+            if (!quiet(track))
+                note(track.meshPart);
             continue;
         }
 
@@ -387,10 +451,11 @@ void AnimationSystem::sample(f64 fixedDt)
     // have its pose rebuilt -- a body that walks and a shirt that stands still.
     for (usize index = 1; index < tracks_.size(); ++index) {
         const Track& track = tracks_[index];
-        if (!track.alive || !track.driveRoot.valid() || track.clip == NoClip)
+        if (!track.alive || !track.driveRoot.valid() || track.clip == NoClip || quiet(track))
             continue;
         std::vector<core::InstanceId> descendants;
         world_->collectDescendants(track.driveRoot, descendants);
+        const bool always = alwaysFor(track);
         for (const core::InstanceId id : descendants) {
             const scene::MeshPartComponent* mesh = world_->meshParts().find(id);
             if (mesh == nullptr)
@@ -398,6 +463,8 @@ void AnimationSystem::sample(f64 fixedDt)
             if (const SkeletonLibrary::Entry* entry = skeletons_->find(mesh->meshContent);
                 entry != nullptr && !entry->joints.empty()) {
                 note(id);
+                if (always)
+                    always_.push_back(id);
             }
         }
     }
@@ -413,8 +480,15 @@ void AnimationSystem::sample(f64 fixedDt)
     }
     turned_.clear();
     world_->attachments().forEach([&](core::InstanceId id, const scene::AttachmentComponent& bone) {
-        if (bone.jointIndex >= 0 && !(bone.transform == core::CFrameD{})) {
-            const core::InstanceId rig = rigOf(id);
+        if (bone.jointIndex < 0)
+            return;
+        const core::InstanceId rig = rigOf(id);
+        // **A rig a `Bone` hangs from is posed every tick** (H3): what hangs
+        // there -- a sword, a hitbox, a camera -- follows the joint, and is
+        // gameplay as much as it is a picture.
+        if (rig.valid())
+            always_.push_back(rig);
+        if (!(bone.transform == core::CFrameD{})) {
             note(rig);
             if (rig.valid() && std::find(turned_.begin(), turned_.end(), rig) == turned_.end())
                 turned_.push_back(rig);
@@ -427,17 +501,58 @@ void AnimationSystem::sample(f64 fixedDt)
     // `commitOverrides` builds a pose from the rest chain when it finds none,
     // and a mesh no clip drives has no clip to rebuild from. Adding the visit
     // changed no observable behaviour, so it is not here.
+    // In id order: what a pose is does not depend on which is built first,
+    // and a sorted list is the same list on every run (R10).
+    std::sort(meshes_.begin(), meshes_.end(), [](core::InstanceId a, core::InstanceId b) {
+        return a.index != b.index ? a.index < b.index : a.generation < b.generation;
+    });
+    meshes_.erase(std::unique(meshes_.begin(), meshes_.end()), meshes_.end());
+    const auto byId = [](core::InstanceId a, core::InstanceId b) {
+        return a.index != b.index ? a.index < b.index : a.generation < b.generation;
+    };
+    std::sort(always_.begin(), always_.end(), byId);
+    ++sampled_;
     for (const core::InstanceId meshPart : meshes_) {
         const scene::MeshPartComponent* mesh = world_->meshParts().find(meshPart);
         if (mesh == nullptr)
             continue;
-        if (const SkeletonLibrary::Entry* entry = skeletons_->find(mesh->meshContent); entry != nullptr)
-            rebuildPose(meshPart, *entry);
+        const SkeletonLibrary::Entry* entry = skeletons_->find(mesh->meshContent);
+        if (entry == nullptr)
+            continue;
+        // **Posed as often as it is seen** (H3): not at all where neither the
+        // camera nor a shadow reached it last frame, and every second, fourth
+        // or eighth tick as it gets small -- staggered by id, so a crowd's
+        // poses are spread over the ticks. Its clips keep time regardless, and
+        // what skipped is carried to the next tick, so the pose it gets is the
+        // one it would have had.
+        if (seeing_ && !std::binary_search(always_.begin(), always_.end(), meshPart, byId)) {
+            const auto seen = seen_.find(keyOf(meshPart));
+            const core::u32 interval = seen == seen_.end() ? 0u : updateInterval(seen->second);
+            if (interval == 0 || (sampled_ + meshPart.index) % interval != 0) {
+                skipped_.push_back(meshPart);
+                stale_[keyOf(meshPart)] = true;
+                continue;
+            }
+        }
+        rebuildPose(meshPart, *entry);
+        stale_.erase(keyOf(meshPart));
+    }
+
+    // Every track is now as the poses took it in.
+    for (usize index = 1; index < tracks_.size(); ++index) {
+        Track& track = tracks_[index];
+        track.posed = true;
+        track.posedPlaying = track.playing;
+        track.posedHolding = track.holding;
+        track.posedWeight = track.weight;
+        track.posedTime = track.time;
     }
 }
 
 void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibrary::Entry& skeleton)
 {
+    ENG_PROFILE_SCOPE("animation.pose");
+    ++posesBuilt_;
     const usize jointCount = skeleton.joints.size();
     if (jointCount == 0)
         return;
@@ -816,6 +931,11 @@ bool AnimationSystem::jointModel(core::InstanceId meshPart, core::u32 joint, cor
     const SkeletonLibrary::Entry* entry = skeletonOf(meshPart);
     if (entry == nullptr || joint >= entry->joints.size())
         return false;
+    // **A pose that skipped its tick is built when a joint is asked for** (H3):
+    // the answer is the one every tick would have given. Logically const -- the
+    // pose is a cache of the tracks' state -- which is what the cast says.
+    if (!stale_.empty() && stale_.contains(keyOf(meshPart)))
+        const_cast<AnimationSystem*>(this)->catchUp(meshPart);
 
     // The posed transform when there is a pose, and the REST chain when there is
     // not -- a character standing still has no pose at all, and a socket on its
@@ -881,8 +1001,38 @@ void AnimationSystem::clearJointOverrides(core::InstanceId meshPart)
     }
 }
 
+void AnimationSystem::catchUp(core::InstanceId meshPart)
+{
+    const scene::MeshPartComponent* mesh = world_->meshParts().find(meshPart);
+    const SkeletonLibrary::Entry* entry = mesh != nullptr ? skeletons_->find(mesh->meshContent) : nullptr;
+    if (entry != nullptr)
+        rebuildPose(meshPart, *entry);
+    stale_.erase(keyOf(meshPart));
+}
+
+void AnimationSystem::reportSeen(std::span<const SeenSkin> seen, bool fresh)
+{
+    if (fresh)
+        seen_.clear();
+    seeing_ = true;
+    for (const SeenSkin& skin : seen) {
+        f32& size = seen_[keyOf(skin.meshPart)];
+        size = std::max(size, skin.screenHeight);
+    }
+}
+
+bool AnimationSystem::animates(core::InstanceId meshPart) const
+{
+    const SkeletonLibrary::Entry* entry = skeletonOf(meshPart);
+    return entry != nullptr && !entry->joints.empty();
+}
+
 void AnimationSystem::commitOverrides()
 {
+    // What a ragdoll drives this tick is posed every tick from the next (H3).
+    overridden_.clear();
+    for (const OverrideSet& set : overrides_)
+        overridden_.push_back(set.meshPart);
     for (const OverrideSet& set : overrides_) {
         const SkeletonLibrary::Entry* entry = skeletonOf(set.meshPart);
         if (entry == nullptr || set.joints.empty())

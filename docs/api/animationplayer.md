@@ -21,6 +21,12 @@ v1 is clip playback and linear blending -- no state machines, no IK, and no root
 offers is on the base's page, which is what keeps one added member on
 `Instance` from being a change to every page here.
 
+## Properties
+
+| Name | Type | Default | Access | Description |
+|---|---|---|---|---|
+| `CullingMode` | `Enum.AnimationCullingMode` | `Enum.AnimationCullingMode.Automatic` | read/write | How often its meshes are posed (H3). `Automatic`: as often as they are seen -- every tick up close, every second, fourth or eighth tick as they get smaller on the screen, and not at all where neither the camera nor a shadow reaches them; the clips keep time either way, and a joint a script or a `Bone` asks about is posed when asked. A world with nobody looking -- a server, a replay -- poses every tick. `AlwaysAnimate`: every tick, seen or not. |
+
 ## Methods
 
 ### `LoadAnimation(content: Content): AnimationTrack`

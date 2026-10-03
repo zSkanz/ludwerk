@@ -275,6 +275,10 @@ struct GlyphCacheStats
     // something is asking for a new size every frame; see `text.cpp`.
     u64 clears = 0;
     u64 missingGlyphs = 0;
+    // Text broken into lines (H9): found in the line cache, and broken anew.
+    // A label that moves, fades or is drawn again is a hit.
+    u64 lineHits = 0;
+    u64 lineMisses = 0;
 };
 
 // The glyph atlas: single-channel COVERAGE, one byte a texel, row-major.

@@ -202,13 +202,14 @@ engine-host [script.luau | project-dir]
    --shadow-resolution=N --shadow-cascades=N --shadow-distance=F
    --light-budget=N --[no-]bloom --[no-]ambient-occlusion
    --[no-]contact-shadows --[no-]anti-aliasing --[no-]auto-exposure]
-  [--screenshot-every=N --debug-view=VIEW --terrain-detail=full|distance]
+  [--screenshot-every=N --debug-view=VIEW --terrain-detail=full|distance
+   --no-instancing]
   [--pace=HZ]
   [--[no-]vsync --max-frame-rate=N --background-frame-rate=N]
   | --run-tests=DIR | --replay=DIR [--record-replay] | --version | --help
 ```
 
-**Three test instruments**, for a picture that proves something:
+**Four test instruments**, for a picture that proves something:
 
 - `--screenshot-every=N` takes a picture every N frames, not only the last,
   each named after `--screenshot` with its number: `shot.png` becomes
@@ -228,6 +229,16 @@ engine-host [script.luau | project-dir]
 - `--terrain-detail=full` draws every terrain at its finest level whatever the
   distance: the shape as it was sculpted, which a coarse level is held
   against.
+- `--no-instancing` draws every object with a call of its own: the picture
+  that runs of a mesh -- static or skinned -- drawn in one call have to match
+  pixel for pixel.
+
+**`--frame-stats`** prints, after the run, the frames' median and tail, and
+then where the time went, scope by scope: the simulation's phases, the
+physics' steps, animation, the scripts by phase, the network, the UI, the
+renderer's passes and the waits, each with its median, p95, worst frame, how
+many times it ran a frame, and its `self` -- what no scope inside it accounts
+for. A cost nobody has named yet shows up as a parent's `self`.
 
 `--pace=HZ` makes a headless run wait out each frame's share of a second, the
 wait left out of `--frame-stats`: without it a headless flight is over in a

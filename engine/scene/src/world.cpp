@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "engine/core/profile.h"
 #include "engine/scene/scene_file.h"
 
 namespace engine::scene {
@@ -65,6 +66,7 @@ World::World(ClassRegistry& classes, EnumRegistry& enums, core::AtomTable& atoms
 
 core::InstanceId World::create(ClassId classId)
 {
+    ENG_PROFILE_SCOPE("instance.create");
     ++m_mutations;
     const ClassDescriptor* descriptor = m_classes.find(classId);
     if (descriptor == nullptr || hasFlag(descriptor->flags, ClassFlags::Abstract))
@@ -99,6 +101,7 @@ core::InstanceId World::create(ClassId classId)
 
 bool World::destroy(core::InstanceId id)
 {
+    ENG_PROFILE_SCOPE("instance.destroy");
     ++m_mutations;
     InstanceRecord* record = m_instances.find(id);
     if (record == nullptr || record->destroyed)

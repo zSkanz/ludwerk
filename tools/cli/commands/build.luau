@@ -289,9 +289,22 @@ local function run(options: Options): number
     local sideManifest: string? = nil
     if fs.exists(content) then
         local packed = progress.step(reporter, "pack", function(): string?
-            local assetc = projectlib.findTool("assetc")
+            local assetc = projectlib.findToolFor("assetc", player)
             if assetc == nil then
                 return tr("cli.assets.err.no_compiler")
+            end
+            -- **And the player reads what it writes** (D517), asked of a player
+            -- that runs here: a mesh format newer than the player's is a game
+            -- whose every animated character is a box.
+            if chosen.platform == targets.hostPlatform() then
+                local asked = process.run({ assetc, "--mesh-format" })
+                local format = if asked.ok then string.match(asked.stdout, "%d+") else nil
+                if format ~= nil then
+                    local reads = process.run({ player, `--reads-mesh-format={format}` })
+                    if not reads.ok then
+                        return tr("cli.build.err.mesh_format", { compiler = assetc, player = player, format = format })
+                    end
+                end
             end
             -- **Staged for every side**, a one-sided game's too: the scripts a
             -- scene, a stamp or `global.json` carries are compiled in the

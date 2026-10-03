@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <doctest/doctest.h>
@@ -324,6 +325,75 @@ TEST_CASE("a skinned mesh carries its skeleton and its clips")
     CHECK(decoded.clips[0].channels[0].target == AnimationChannel::Target::Rotation);
     CHECK(decoded.clips[0].channels[0].times == channel.times);
     CHECK(decoded.clips[0].channels[0].values == channel.values);
+    CHECK(decoded.clips[0].channels[0].interpolation == AnimationChannel::Interpolation::Linear);
+
+    SUBCASE("D515: a step or cubic-spline channel keeps how its keys are joined")
+    {
+        model.clips[0].channels[0].interpolation = AnimationChannel::Interpolation::Step;
+        AnimationChannel spline = channel;
+        spline.target = AnimationChannel::Target::Translation;
+        spline.stride = 3;
+        spline.interpolation = AnimationChannel::Interpolation::CubicSpline;
+        spline.values.assign(3 * 3 * 3, 0.5f);
+        model.clips[0].channels.push_back(spline);
+        CompiledMesh both;
+        REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, both).has_value());
+        CompiledMesh back;
+        REQUIRE_FALSE(decodeMesh(encodeMesh(both), back).has_value());
+        REQUIRE(back.clips[0].channels.size() == 2);
+        CHECK(back.clips[0].channels[0].interpolation == AnimationChannel::Interpolation::Step);
+        CHECK(back.clips[0].channels[1].interpolation == AnimationChannel::Interpolation::CubicSpline);
+        CHECK(back.clips[0].channels[1].values.size() == 27);
+    }
+}
+
+TEST_CASE("H4: a skinned mesh's levels keep every vertex where one joint gives way to another")
+{
+    // The simplifier judges error in the bind pose, where an elbow's vertices
+    // lie along a straight arm and go first -- and a level without them does
+    // not bend.
+    seedRealCatalog();
+    Model model = gridModel(24);
+    model.skin.resize(model.mesh.vertices.size());
+    for (usize i = 0; i < model.skin.size(); ++i) {
+        // The near half on one joint, the far half on another.
+        model.skin[i].joints[0] = model.mesh.vertices[i].position.x < 5.0f ? 0.0f : 1.0f;
+        model.skin[i].weights[0] = 1.0f;
+    }
+    Joint root;
+    root.name = "root";
+    model.joints.push_back(root);
+    Joint other;
+    other.name = "other";
+    other.parent = 0;
+    model.joints.push_back(other);
+
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+    REQUIRE(compiled.lods.size() > 1);
+
+    // The vertices on the seam: a joint-0 vertex with a joint-1 neighbour, or
+    // the other way round. Every level draws every one of them.
+    std::vector<u32> seam;
+    const std::vector<u32>& triangles = model.mesh.indices;
+    for (usize first = 0; first + 2 < triangles.size(); first += 3) {
+        for (usize side = 0; side < 3; ++side) {
+            const u32 a = triangles[first + side];
+            const u32 b = triangles[first + (side + 1) % 3];
+            if (model.skin[a].joints[0] != model.skin[b].joints[0]) {
+                seam.push_back(a);
+                seam.push_back(b);
+            }
+        }
+    }
+    REQUIRE_FALSE(seam.empty());
+    for (usize level = 1; level < compiled.lods.size(); ++level) {
+        const std::vector<u32>& indices = compiled.lods[level].indices;
+        for (const u32 vertex : seam)
+            CHECK(std::find(indices.begin(), indices.end(), vertex) != indices.end());
+        // And it is still a coarser level.
+        CHECK(indices.size() < compiled.lods[0].indices.size());
+    }
 }
 
 TEST_CASE("a static mesh has no skin section at all")
@@ -416,6 +486,38 @@ TEST_CASE("a corrupted mesh is an error and never a crash")
             (void)decodeMesh(corrupted, decoded);
         }
     }
+}
+
+TEST_CASE("D517: a mesh from a newer compiler says so, and the format before this one still reads")
+{
+    // A player given meshes from a newer asset compiler called each of them
+    // malformed -- which reads as a corrupt file, not as two builds mixed.
+    seedRealCatalog();
+    Model model = gridModel(4);
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+    const std::vector<std::byte> good = encodeMesh(compiled);
+
+    const auto withVersion = [&good](engine::core::u32 version) {
+        std::vector<std::byte> bytes = good;
+        // Bytes 4..7, after the magic, little-endian.
+        for (usize at = 0; at < 4; ++at)
+            bytes[4 + at] = static_cast<std::byte>((version >> (8 * at)) & 0xFFu);
+        return bytes;
+    };
+
+    CompiledMesh decoded;
+    auto error = decodeMesh(withVersion(MeshFormatVersion + 1), decoded);
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("asset.mesh.err.newer") != std::string::npos);
+    CHECK(error->message.find(std::to_string(MeshFormatVersion + 1)) != std::string::npos);
+
+    error = decodeMesh(withVersion(MeshFormatOldest - 1), decoded);
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("asset.mesh.err.version") != std::string::npos);
+
+    // Format 2 had no interpolation: what it says is what it was.
+    CHECK_FALSE(decodeMesh(withVersion(MeshFormatOldest), decoded).has_value());
 }
 
 TEST_CASE("a mesh from another format is refused by name")

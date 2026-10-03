@@ -160,6 +160,56 @@ end)
 A crowd agent moves the part's `CFrame`; it does not push a `CharacterBody`.
 For a body with physics, walk a `FindPath` yourself as above.
 
+## A swarm on open ground
+
+A crowd agent follows the mesh. A horde does not need one: hundreds of enemies
+walking straight at the player across a field, pushing one another apart,
+climbing the one in front when the way is blocked and piling into a tower
+under the player. That is a `Swarm` (ADR 0156), and the engine walks it --
+nothing runs per enemy in Luau.
+
+```luau
+local swarm = Instance.new("Swarm")
+swarm.Parent = workspace
+
+local function spawnEnemy(body: BasePart): number
+    return swarm:AddAgent(body, { Radius = 0.45, Height = 1.2, Speed = 4 })
+end
+
+RunService.Heartbeat:Connect(function()
+    swarm.Target = player.Position
+    -- Who has reached the player, and who the sword hits.
+    for _, agent in swarm:QueryRadius(player.Position, 1.5) do
+        hurtPlayer(agent)
+    end
+end)
+```
+
+- **An agent is a number, not an instance.** `AddAgent(body, settings)` starts
+  it where `body` stands and returns its number; the swarm places `body` every
+  tick, facing `Target`. `RemoveAgent` forgets it, and its number goes to the
+  next agent added.
+- **Settings**: `Radius` (0.5), `Height` (1), `Speed` (4 metres a second),
+  `Climbs` (true), and `Floats` with `FloatHeight` (1) for a flier that keeps
+  over the ground and out of the pushing.
+- **Asked in bulk**: `GetAgents()` and `GetPositions()` in one call each,
+  `GetAgentPosition(agent)`, and `QueryRadius(centre, radius)` for what a weapon
+  aims at.
+- **Told in bulk**: `SetAgentSpeed` (zero holds one where it stands, still
+  pushed), `SetAgentPosition`, and `Push(agent, velocity)`, a knock-back that
+  dies away.
+- **The ground** is the terrain's height under each agent, or what a ray down
+  finds where there is none. Trees and rocks are `AddObstacle(position,
+  radius)` circles to walk round.
+- **Far from `Target` it thinks less**: every second tick past `NearDistance`
+  (24 m), every fourth past `FarDistance` (48 m), with the time it skipped.
+
+It steps on the simulation tick after `PreSimulation`, every agent in order, so
+the same orders give the same crowd every run. Five hundred and fifty agents
+cost about a third of a millisecond a tick on a desktop. An agent's body should
+be anchored and not collide -- the swarm moves it, and physics fighting it for
+the part loses.
+
 ## On the plane
 
 A 2D game asks `FindPath2D(from, to)` with two `Vector2`s. There is no mesh:

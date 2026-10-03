@@ -109,7 +109,16 @@ using asset::AssetKind;
 //
 // 4: an FBX, Collada or other assimp file with bones brings its skeleton, its
 // skin and its clips, and its vertices move into the file's world.
-constexpr core::u32 kCompilerRules = 4;
+//
+// 5: a glTF clip keeps its keys' interpolation -- step and cubic spline were
+// read as linear (D515).
+//
+// 6: and says so in mesh format 3 (D517). A build between the two wrote the
+// interpolation into format 2, which no player reads; this makes those
+// compile again.
+//
+// 7: a skinned mesh's levels keep the vertices it bends on (H4).
+constexpr core::u32 kCompilerRules = 7;
 
 // What one source compiled to, remembered between runs.
 //

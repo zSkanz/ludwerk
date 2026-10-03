@@ -14,6 +14,7 @@
 
 #include "engine/asset/terrain_mesher.h"
 #include "engine/asset/voxel_mesher.h"
+#include "engine/core/profile.h"
 #include "engine/jobs/jobs.h"
 #include "engine/scene/players.h"
 #include "engine/scene/voxel_fluid.h"
@@ -2943,37 +2944,60 @@ void PhysicsSync::step(f64 fixedDt)
         return;
 
     const auto begin = std::chrono::steady_clock::now();
-    // **The water's push and drag first** (ADR 0118), onto the pending
-    // impulses the mirror is about to apply -- here, so every step takes it:
-    // a tick, a rollback's re-simulation, a replica's prediction.
-    applyWaterForces(m_scene, m_workspace, fixedDt);
-    applyScene();
+    {
+        ENG_PROFILE_SCOPE("physics.apply");
+        // **The water's push and drag first** (ADR 0118), onto the pending
+        // impulses the mirror is about to apply -- here, so every step takes
+        // it: a tick, a rollback's re-simulation, a replica's prediction.
+        applyWaterForces(m_scene, m_workspace, fixedDt);
+        applyScene();
+    }
     const auto applied = std::chrono::steady_clock::now();
 
     if (const WorkspaceComponent* workspace = m_scene.workspaces().find(m_workspace); workspace != nullptr)
         m_backend.setGravity(m_world, workspace->gravity);
 
-    // **The movers and the springs, as forces** (ADR 0127): after every body
-    // and joint is as the scene says, and before the solver takes the step.
-    applyMovers(static_cast<f32>(fixedDt));
+    {
+        ENG_PROFILE_SCOPE("physics.movers");
+        // **The movers and the springs, as forces** (ADR 0127): after every
+        // body and joint is as the scene says, and before the solver takes
+        // the step.
+        applyMovers(static_cast<f32>(fixedDt));
+    }
 
-    m_backend.step(m_world, static_cast<f32>(fixedDt));
+    {
+        ENG_PROFILE_SCOPE("physics.solve");
+        m_backend.step(m_world, static_cast<f32>(fixedDt));
+    }
     const auto stepped = std::chrono::steady_clock::now();
 
-    writeBack();
-    readConstraints(static_cast<f32>(fixedDt));
-    // After the writeback, so a driven part follows where its anchor ENDED UP
-    // this tick rather than where it was at the start of it.
-    resolveWelds();
-    resolveAttachments();
-    driveRagdolls();
+    {
+        ENG_PROFILE_SCOPE("physics.writeback");
+        writeBack();
+        readConstraints(static_cast<f32>(fixedDt));
+    }
+    {
+        ENG_PROFILE_SCOPE("physics.attachments");
+        // After the writeback, so a driven part follows where its anchor ENDED
+        // UP this tick rather than where it was at the start of it.
+        resolveWelds();
+        resolveAttachments();
+    }
+    {
+        ENG_PROFILE_SCOPE("animation.ragdolls");
+        driveRagdolls();
+    }
     // And the pose is committed after everything that could have moved a joint,
     // because `commitOverrides` re-runs the forward pass and anything written
-    // afterwards would be a frame behind. Nothing sets an override yet; this is
-    // where a ragdoll's writes land when one exists.
-    if (m_skeleton != nullptr)
+    // afterwards would be a frame behind.
+    if (m_skeleton != nullptr) {
+        ENG_PROFILE_SCOPE("animation.overrides");
         m_skeleton->commitOverrides();
-    publishContacts();
+    }
+    {
+        ENG_PROFILE_SCOPE("physics.contacts");
+        publishContacts();
+    }
     const auto end = std::chrono::steady_clock::now();
 
     m_timings.apply = std::chrono::duration<f64>(applied - begin).count();

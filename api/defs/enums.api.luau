@@ -1890,6 +1890,25 @@ local Definition: Schema.Definition = {
                 { Name = "Never", Value = 2, Doc = "A hard stop at either end." },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "AnimationCullingMode",
+            Doc = "How often an `AnimationPlayer`'s meshes are posed when nobody needs every tick of it " .. "(H3).",
+            Items = {
+                {
+                    Name = "Automatic",
+                    Value = 0,
+                    Doc = "As often as it is seen: every tick up close, every second, fourth or eighth tick as it "
+                        .. "gets smaller on the screen, and not at all where neither the camera nor a shadow "
+                        .. "reaches it. Its clips keep time either way, so it is where it should be the moment "
+                        .. "it is seen.",
+                },
+                {
+                    Name = "AlwaysAnimate",
+                    Value = 1,
+                    Doc = "Every tick, seen or not: the hero, or a character whose pose a script reads.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

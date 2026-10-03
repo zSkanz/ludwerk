@@ -2069,6 +2069,21 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(skyDesc);
 
     // --- AnimationPlayer ---
+    static std::array<scene::PropertyDesc, 1> animationPlayerProperties;
+    animationPlayerProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("CullingMode"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("AnimationCullingMode"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How often its meshes are posed (H3). `Automatic`: as often as they are seen -- every tick up close, every second, fourth or eighth tick as they get smaller on the screen, and not at all where neither the camera nor a shadow reaches them; the clips keep time either way, and a joint a script or a `Bone` asks about is posed when asked. A world with nobody looking -- a server, a replay -- poses every tick. `AlwaysAnimate`: every tick, seen or not.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getAnimationPlayerCullingMode,
+            .set = native::setAnimationPlayerCullingMode,
+        },
+    }};
     static std::array<scene::MethodDesc, 1> animationPlayerMethods;
     animationPlayerMethods = {{
         scene::MethodDesc{
@@ -2086,7 +2101,10 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     animationPlayerDesc.doc = "Plays a skinned mesh's animation clips (\302\247" "2.2).\012\012**Parent it to the `Model` whose character it is, and it drives every skinned `MeshPart` under that model.** A character is a body, a shirt and a pair of trousers -- several meshes wearing the same skeleton -- and one clip has to move all of them. Only one of the pieces needs to carry the animation; the clip is taken from the first that does, in tree order.\012\012**The joints are matched by NAME across the pieces, never by index.** Two files exported separately wear the same skeleton in the sense that matters -- the same joints, named the same -- and in no other: an exporter is free to order them differently, and a clip applied through the wrong index twists a sleeve in a way that looks like a broken animation rather than a mismatched rig. A joint one piece does not have is skipped, so a shirt with no fingers keeps its own sleeve.\012\012Parenting it straight to a `MeshPart` still works and drives exactly that mesh, which is what a character made of one piece wants.\012\012It stores nothing: the tracks are the state, and each one is a handle a script holds rather than a child in the tree. Sampling happens at `PreAnimation` on the SimClock, so a clip's position at a given tick is the same in a replay as it was live.\012\012v1 is clip playback and linear blending -- no state machines, no IK, and no root motion.";
     static constexpr std::array<std::string_view, 3> animationPlayerParents{{"Model", "ReplicatedStorage", "ServerStorage"}};
     animationPlayerDesc.parents = animationPlayerParents;
+    animationPlayerDesc.properties = animationPlayerProperties;
     animationPlayerDesc.methods = animationPlayerMethods;
+    animationPlayerDesc.attachComponents = native::attachAnimationPlayerComponents;
+    animationPlayerDesc.detachComponents = native::detachAnimationPlayerComponents;
     classes.registerClass(animationPlayerDesc);
 
     // --- FoliageLayer ---

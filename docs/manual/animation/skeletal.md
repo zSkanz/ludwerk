@@ -134,6 +134,24 @@ clip's position at a given tick is the same in a replay as it was live. A looped
 track wraps keeping the fraction of a tick it overshot by, so a loop does not
 drift against everything else in the scene.
 
+## As often as it is seen
+
+A crowd of characters is posed as often as each is seen, not every tick. A rig
+neither the camera nor a shadow reaches last frame is not posed at all, and one
+small on the screen is posed every second, fourth or eighth tick, the ticks
+spread across the crowd. Its clips keep time either way, so it is where it
+should be the moment it is seen, and a joint a script or a `Bone` asks about is
+posed when asked. A world with nobody looking -- a server, a replay -- poses
+every tick.
+
+`AnimationPlayer.CullingMode = Enum.AnimationCullingMode.AlwaysAnimate` poses
+its meshes every tick, seen or not: the hero, or a character whose pose a
+script reads from a distance.
+
+A crowd of one skinned mesh is also drawn in one call a pass, each copy posed
+by its own palette, and a skinned mesh has levels of detail as a static one
+does.
+
 ## What is not here
 
 Clip playback and linear blending, and that is the whole feature. No state

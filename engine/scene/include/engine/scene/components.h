@@ -635,6 +635,13 @@ struct DecalComponent
 // is here is only what a script can set: the renderer reads it on the frame
 // and keeps whatever it needs to draw it (a trail's pieces) on its own side.
 // None of it is in the world hash, and none of it is simulated.
+// `AnimationPlayer` (H3): how often its meshes are posed.
+struct AnimationPlayerComponent
+{
+    // `Enum.AnimationCullingMode`: 0 Automatic, 1 AlwaysAnimate.
+    i32 cullingMode = 0;
+};
+
 struct HighlightComponent
 {
     core::InstanceId adornee;
@@ -1321,6 +1328,55 @@ struct NavigationLinkComponent
 // A `NavigationAgent` (ADR 0098): where its part is walking, and how. The
 // crowd that moves it is the host's and is rebuilt from these, so nothing
 // else about it is state.
+// One agent of a `Swarm` (ADR 0156): a row the swarm keeps, not an instance.
+struct SwarmAgent
+{
+    core::InstanceId body;
+    core::DVec3 position;
+    f32 verticalSpeed = 0.0f;
+    // A knock-back along the ground, dying away.
+    f32 pushX = 0.0f;
+    f32 pushZ = 0.0f;
+    f32 radius = 0.5f;
+    f32 height = 1.0f;
+    f32 speed = 4.0f;
+    f32 floatHeight = 1.0f;
+    bool floats = false;
+    bool climbs = true;
+    bool alive = false;
+    // The ground under it as last found, and where: found again when it has
+    // moved, because a ray a tick for every agent is the cost of the crowd.
+    f64 ground = 0.0;
+    f64 groundX = 1.0e30;
+    f64 groundZ = 1.0e30;
+};
+
+struct SwarmObstacle
+{
+    f64 x = 0.0;
+    f64 z = 0.0;
+    f32 radius = 0.0f;
+};
+
+// `Swarm` (ADR 0156): its settings, its agents as rows, and its obstacles.
+struct SwarmComponent
+{
+    core::DVec3 target{};
+    bool enabled = true;
+    f32 cellSize = 1.5f;
+    u32 maxNeighbours = 14;
+    f32 gravity = 30.0f;
+    f32 climbSpeed = 6.0f;
+    f32 stopDistance = 0.55f;
+    f32 nearDistance = 24.0f;
+    f32 farDistance = 48.0f;
+
+    std::vector<SwarmAgent> agents;
+    // Slots of removed agents, the next agent's first.
+    std::vector<u32> free;
+    std::vector<SwarmObstacle> obstacles;
+};
+
 struct NavigationAgentComponent
 {
     core::DVec3 target{};

@@ -2433,6 +2433,34 @@ namespace {
 
 } // namespace
 
+void attachAnimationPlayerComponents(scene::World& world, core::InstanceId id)
+{
+    world.animationPlayers().add(id, scene::AnimationPlayerComponent{});
+}
+
+void detachAnimationPlayerComponents(scene::World& world, core::InstanceId id)
+{
+    world.animationPlayers().remove(id);
+}
+
+Value getAnimationPlayerCullingMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::AnimationPlayerComponent* self = world.animationPlayers().find(id);
+    return self == nullptr ? Value{}
+                           : Value{scene::EnumValue{generated::AnimationCullingModeEnumId, self->cullingMode}};
+}
+
+bool setAnimationPlayerCullingMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AnimationPlayerComponent* self = world.animationPlayers().find(id);
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    if (self == nullptr || item == nullptr || item->enumId != generated::AnimationCullingModeEnumId ||
+        world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    self->cullingMode = item->value;
+    return true;
+}
+
 void attachHighlightComponents(scene::World& world, core::InstanceId id)
 {
     world.highlights().add(id, scene::HighlightComponent{});

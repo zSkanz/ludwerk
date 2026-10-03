@@ -28,6 +28,7 @@ engine_add_module(core
         src/easing.cpp
         src/math.cpp
         src/phase.cpp
+        src/profile.cpp
         src/name_atom.cpp
         src/number_parse.cpp
         src/random.cpp
@@ -57,6 +58,7 @@ engine_add_module_tests(core
         tests/error_tests.cpp
         tests/math_tests.cpp
         tests/phase_tests.cpp
+        tests/profile_tests.cpp
         tests/slotmap_tests.cpp
         tests/name_atom_tests.cpp
         tests/random_tests.cpp

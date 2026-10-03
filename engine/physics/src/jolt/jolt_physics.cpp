@@ -61,6 +61,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -68,6 +69,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "engine/core/error.h"
@@ -1399,9 +1401,41 @@ public:
 
     // --- Bodies ---------------------------------------------------------------
 
+    // **A hull built once per cloud and scale** (H8). Every body of a mesh
+    // built its convex hull from the mesh's points again -- a quarter of a
+    // millisecond each -- so a game making a projectile a shot paid for the
+    // hull a shot. The key is the cloud's revision, which names one set of
+    // points for as long as it lives (`ShapeDesc::pointsRevision`), and the
+    // scale it is drawn at. A shape is immutable once built and Jolt counts
+    // its references, so sharing one between bodies is what it is for.
+    [[nodiscard]] core::u64 shapesBuilt() const noexcept { return m_shapesBuilt; }
+
+    [[nodiscard]] JPH::ShapeRefC shapeFor(const ShapeDesc& desc)
+    {
+        if (desc.type != ShapeType::ConvexHull || desc.pointsRevision == 0) {
+            ++m_shapesBuilt;
+            return buildShape(desc);
+        }
+        const HullKey key{desc.pointsRevision, std::bit_cast<u32>(desc.pointScale.x),
+                          std::bit_cast<u32>(desc.pointScale.y), std::bit_cast<u32>(desc.pointScale.z)};
+        if (const auto found = m_hulls.find(key); found != m_hulls.end())
+            return found->second;
+        ++m_shapesBuilt;
+        JPH::ShapeRefC shape = buildShape(desc);
+        if (shape == nullptr)
+            return shape;
+        // Bounded: a world that resizes one mesh to every size there is
+        // starts again rather than growing for ever.
+        constexpr core::usize MostHulls = 4096;
+        if (m_hulls.size() >= MostHulls)
+            m_hulls.clear();
+        m_hulls.emplace(key, shape);
+        return shape;
+    }
+
     [[nodiscard]] BodyHandle createBody(const BodyDesc& desc)
     {
-        const JPH::ShapeRefC shape = buildShape(desc.shape);
+        const JPH::ShapeRefC shape = shapeFor(desc.shape);
         if (shape == nullptr) {
             return {};
         }
@@ -1440,7 +1474,7 @@ public:
         if (record == nullptr) {
             return false;
         }
-        const JPH::ShapeRefC shape = buildShape(desc.shape);
+        const JPH::ShapeRefC shape = shapeFor(desc.shape);
         if (shape == nullptr) {
             // **The body stays what it was**, which is the useful answer:
             // replacing a working box with nothing would drop the part through
@@ -3818,6 +3852,27 @@ private:
     std::vector<ContactPair> m_carried;
     std::vector<ContactEvent> m_events;
     StepTimings m_timings;
+    // The hulls `shapeFor` built, by cloud and scale.
+    struct HullKey
+    {
+        core::u64 revision = 0;
+        u32 scaleX = 0;
+        u32 scaleY = 0;
+        u32 scaleZ = 0;
+        [[nodiscard]] bool operator==(const HullKey&) const noexcept = default;
+    };
+    struct HullHash
+    {
+        [[nodiscard]] core::usize operator()(const HullKey& key) const noexcept
+        {
+            core::u64 hash = key.revision * 0x9E3779B97F4A7C15ull;
+            hash ^= (static_cast<core::u64>(key.scaleX) << 32 | key.scaleY) + 0x9E3779B97F4A7C15ull + (hash << 6);
+            hash ^= static_cast<core::u64>(key.scaleZ) + 0x9E3779B97F4A7C15ull + (hash << 6) + (hash >> 2);
+            return static_cast<core::usize>(hash);
+        }
+    };
+    std::unordered_map<HullKey, JPH::ShapeRefC, HullHash> m_hulls;
+    core::u64 m_shapesBuilt = 0;
     core::Vec3 m_gravity{0.0f, -9.81f, 0.0f};
     // What `PhysicsSystem::Init` was told, so a report about a full buffer can
     // say how full is full.
@@ -3974,6 +4029,12 @@ public:
         if (JoltWorld* world = resolve(handle); world != nullptr) {
             world->destroyBody(body);
         }
+    }
+
+    [[nodiscard]] core::u64 shapesBuilt(WorldHandle handle) const override
+    {
+        const JoltWorld* world = resolve(handle);
+        return world != nullptr ? world->shapesBuilt() : 0u;
     }
 
     // --- Constraints ---------------------------------------------------------

@@ -2897,6 +2897,12 @@ local Excluded: { Schema.Excluded } = {
             .. "interpolated like any other part's. Sending the agent too would send a second account of "
             .. "one motion.",
     },
+    {
+        Name = "Swarm",
+        Reason = "It walks its agents' bodies where it runs (ADR 0156), and those bodies' `CFrame`s are "
+            .. "what arrives, as `NavigationAgent`'s part's do. Its agents are rows, not instances, and a "
+            .. "replica that wants a horde of its own runs one where it is seen.",
+    },
     { Name = "Frame", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "TextLabel", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "TextButton", Reason = "Screen-space UI. The same as `ScreenGui`." },

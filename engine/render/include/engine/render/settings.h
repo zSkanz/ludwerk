@@ -164,6 +164,10 @@ struct GraphicsSettings
     // holes view also turns off what would blend the sky into the ground --
     // anti-aliasing, bloom, occlusion, automatic exposure.
     DebugView debugView = DebugView::None;
+
+    // **A test instrument** (H2): `--no-instancing` draws every object alone,
+    // the picture instancing has to match pixel for pixel.
+    bool instancing = true;
 };
 
 // The named set every preset is. `High` is exactly what the engine shipped

@@ -122,6 +122,23 @@ test.suite("install", function(suite)
         assert.eq(candidates[#candidates], projectlib.joined("/install/" .. projectlib.executableName("assetc")))
     end)
 
+    suite:case("D517: an export's asset compiler is the one in the player's own build or installation", function()
+        -- The newest compiler of every build was taken, so a player from one
+        -- build shipped meshes written by another's -- in a newer format it
+        -- could not read.
+        local host = "/build/win-msvc-player/engine/app/" .. projectlib.executableName("engine-host")
+        assert.eq(
+            projectlib.toolBesideCandidate("assetc", host),
+            projectlib.joined("/build/win-msvc-player", "tools", "assetc", projectlib.executableName("assetc"))
+        )
+        local installed = "/install/player/windows-x64/" .. projectlib.executableName("engine-host")
+        assert.eq(
+            projectlib.toolBesideCandidate("assetc", installed),
+            projectlib.joined("/install", projectlib.executableName("assetc"))
+        )
+        assert.eq(projectlib.toolBesideCandidate("assetc", "/somewhere/else.exe"), nil)
+    end)
+
     suite:case("the engine search takes a player host last, and used to take it first", function()
         -- D087. A player build has no ImGui compiled into it at all, so
         -- `ludwerk edit` launching one is a window with the world rendered into

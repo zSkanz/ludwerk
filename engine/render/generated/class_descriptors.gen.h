@@ -115,6 +115,7 @@ inline constexpr scene::EnumId WindowModeEnumId = 72;
 inline constexpr scene::EnumId SettingSourceEnumId = 73;
 inline constexpr scene::EnumId ScrollingDirectionEnumId = 74;
 inline constexpr scene::EnumId ElasticBehaviorEnumId = 75;
+inline constexpr scene::EnumId AnimationCullingModeEnumId = 76;
 
 } // namespace generated
 
@@ -482,6 +483,12 @@ scene::Value getSkyCloudColor(const scene::World& world, core::InstanceId id);
 bool setSkyCloudColor(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachSkyComponents(scene::World& world, core::InstanceId id);
 void detachSkyComponents(scene::World& world, core::InstanceId id);
+
+// AnimationPlayer
+scene::Value getAnimationPlayerCullingMode(const scene::World& world, core::InstanceId id);
+bool setAnimationPlayerCullingMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachAnimationPlayerComponents(scene::World& world, core::InstanceId id);
+void detachAnimationPlayerComponents(scene::World& world, core::InstanceId id);
 
 // FoliageLayer
 scene::Value getFoliageLayerEnabled(const scene::World& world, core::InstanceId id);

@@ -136,6 +136,7 @@ guided tour.
 | [`SubWorld`](subworld.md) | [`Instance`](instance.md) | A scene running beside this one (ADR 0107): an arcade cabinet you can play, a game on a computer inside the game, a snow globe with its own weather. |
 | [`SunRaysEffect`](sunrayseffect.md) | [`PostEffect`](posteffect.md) | Shafts of light streaming from the sun past whatever stands in front of it. |
 | [`SurfaceGui`](surfacegui.md) | [`Instance`](instance.md) | A UI tree drawn onto one face of a part (F3): a screen on a wall, a sign, a scoreboard, a label on a crate. |
+| [`Swarm`](swarm.md) | [`Instance`](instance.md) | A crowd on open ground that the engine steers (ADR 0156): hundreds of agents walking at `Target`, pushing one another apart, climbing the one in front when the way is blocked and standing on whoever is under them, on the terrain's height and round the obstacles it was given -- a horde. |
 | [`Terrain`](terrain.md) | [`Instance`](instance.md) | A sculpted, collidable landscape: ground you dig into rather than a floor made of parts. |
 | [`TextButton`](textbutton.md) | [`TextLabel`](textlabel.md) | A `TextLabel` that is meant to be pressed. |
 | [`TextInput`](textinput.md) | [`TextLabel`](textlabel.md) | An editable field (ADR 0139), on one line or on several: a chat box, a name, a server's address. |

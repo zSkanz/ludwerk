@@ -6,6 +6,7 @@
 #include "engine/app/script_editor.h"
 #include "engine/core/brand.h"
 #include "engine/core/content_path.h"
+#include "engine/core/profile.h"
 #if ENG_DEBUG_UI
 #include "engine/app/surface_compiler.h"
 #else
@@ -1287,6 +1288,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         if (scheduledAhead(options.headless, options.editor, networked, measuring) && platform::raiseProcessPriority())
             core::log(LogLevel::Info, ENG_TR("engine.info.priority_raised"));
     }
+    // **Where each frame's time goes** (H0): the scoped timers record on this
+    // thread, the frame loop's, for `--frame-stats` to break down.
+    core::profile::setEnabled(options.frameStats);
 
     // Declaration order below IS the shutdown order, reversed, and it is not
     // arbitrary: SDL_GPU requires a window to be released from its device
@@ -2671,6 +2675,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     FrameClock frameClock;
 
     while (!quit) {
+        // The last frame's scopes become one sample each, before this one's
+        // begin: every scope of a frame is under `frame`, and what none of
+        // them covers is the frame's own.
+        core::profile::endFrame();
+        ENG_PROFILE_SCOPE("frame");
         if (options.frames != 0 && scheduler.totalFrames() >= options.frames)
             break;
 
@@ -4979,6 +4988,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // tick settled on, never one being written.
         const core::u64 simStartedNs = platform::nowNs();
         for (u32 step = 0; step < simTicks; ++step) {
+            ENG_PROFILE_SCOPE("simulation");
             // What arrived is input to the tick that follows it, and what is
             // sent is the tick's result -- reversed, both directions cost a
             // tick of latency and nothing in a loopback test would show it.
@@ -5593,7 +5603,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         }
 
         const core::u64 beginWaitNs = platform::nowNs();
-        rhi::ICmdList* cmd = device->beginFrame();
+        rhi::ICmdList* cmd = nullptr;
+        {
+            ENG_PROFILE_SCOPE("wait.frame");
+            cmd = device->beginFrame();
+        }
         phaseWaitMs += msSince(beginWaitNs);
         if (cmd == nullptr)
             continue;
@@ -5608,7 +5622,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
         if (!options.headless) {
             const core::u64 acquireNs = platform::nowNs();
-            const rhi::Swapchain swapchain = device->acquireSwapchain(*window);
+            const rhi::Swapchain swapchain = [&] {
+                ENG_PROFILE_SCOPE("wait.swapchain");
+                return device->acquireSwapchain(*window);
+            }();
             phaseWaitMs += msSince(acquireNs);
             framePresented = swapchain.texture.valid();
             target = swapchain.texture;
@@ -5658,6 +5675,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             const bool rendersFrames = options.network.topology != replication::Topology::Dedicated;
             if (rendersFrames && worldIsRunning) {
                 const core::u64 renderPhaseNs = platform::nowNs();
+                ENG_PROFILE_SCOPE("scripts.render");
                 host->preRender(frame.renderDt, &framePoses);
                 phaseRenderScriptsMs += msSince(renderPhaseNs);
             }
@@ -5685,7 +5703,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // made every newly created MeshPart invisible for exactly one frame
             // -- which a golden records faithfully and a person notices as a
             // flicker they cannot reproduce.
-            meshCache.beginFrame(*device);
+            {
+                ENG_PROFILE_SCOPE("content.meshes");
+                meshCache.beginFrame(*device);
+            }
             // Frees the viewport targets a resize replaced, once they are old
             // enough that no command list still in flight can name one. Beside
             // the mesh cache's own retirement because it is the same rule.
@@ -5907,10 +5928,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // called wrong, and it was.
             // The terrain nodes the loader chose for this camera (ADR 0082).
             const std::vector<render::TerrainNodeDraw> terrainNodes = terrainLoader.draws(authored());
-            render::extract(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
-                            stageOf() != nullptr ? stageOf()->lighting() : host->lighting(), meshLibrary, aspect,
-                            shadowRadius, host->animation(), framePoses, snapshot,
-                            useEditorView ? &editorView : nullptr, outlined, &textureLibrary, terrainNodes);
+            {
+                ENG_PROFILE_SCOPE("render.extract");
+                render::extract(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
+                                stageOf() != nullptr ? stageOf()->lighting() : host->lighting(), meshLibrary, aspect,
+                                shadowRadius, host->animation(), framePoses, snapshot,
+                                useEditorView ? &editorView : nullptr, outlined, &textureLibrary, terrainNodes);
+                // The rigs this frame reached, for how often each is posed (H3).
+                host->reportSeenSkins(snapshot.seenSkins, true);
+            }
             // The terrains' palettes, which their shader reads, for the same
             // world and the same root.
             terrainLoader.appendRenderTerrains(authored(),
@@ -5995,7 +6021,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 uiAdvancedNs = uiNowNs;
                 ui::advance(host->world(), static_cast<f32>(std::clamp(elapsed, 0.0, 0.1)));
             }
-            ui::layout(host->world(), host->uiService(), uiViewport);
+            {
+                ENG_PROFILE_SCOPE("ui.layout");
+                ui::layout(host->world(), host->uiService(), uiViewport);
+            }
 
             // Interaction reads the rectangles the layout just produced, and it
             // runs here rather than beside the event pump for that reason: a hit
@@ -6054,7 +6083,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                          snapshot.camera, interaction.pointer, solidAlong, &framePoses))
                     interaction.worldOver = picked->element;
             }
-            const ui::InteractionResult uiResult = ui::updateInteraction(host->world(), host->uiService(), interaction);
+            const ui::InteractionResult uiResult = [&] {
+                ENG_PROFILE_SCOPE("ui.interaction");
+                return ui::updateInteraction(host->world(), host->uiService(), interaction);
+            }();
             host->input().setPointerCapturedByUi(uiResult.pointerOverUi);
             // The keyboard half of the same claim (ADR 0041): a focused
             // `TextInput` eats the keys, so typing into a chat box does not also
@@ -6094,6 +6126,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // glyph store mid-frame cleared it, and every label built before
             // the clear drew garbage -- so a frame that cleared is built again.
             ui::buildWithSettledGlyphs([&] {
+                ENG_PROFILE_SCOPE("ui.drawlist");
                 ui::buildDrawList(host->world(), host->uiService(), uiDrawList);
                 // Index 0 is "no texture" and every entry after it is a texture the
                 // UI can name. The glyph atlas is index 1 when a face has been
@@ -6524,6 +6557,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                     static_cast<f32>(view->width) / static_cast<f32>(view->height), shadowRadius,
                                     host->animation(), framePoses, viewSnapshot, &lens, {}, &textureLibrary,
                                     terrainNodes);
+                    host->reportSeenSkins(viewSnapshot.seenSkins, false);
                     terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot, &textureLibrary);
                     particles.append(viewSnapshot);
                     // Built again for this view: a ribbon that faces the
@@ -6567,6 +6601,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 cmd->endRenderPass();
             }
             else if (useRenderer) {
+                ENG_PROFILE_SCOPE("render.world");
                 renderer->render(
                     *device, *cmd,
                     {.color = target, .colorFormat = targetFormat, .width = targetWidth, .height = targetHeight},
@@ -6713,7 +6748,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         host->setGizmoTarget(nullptr);
 
         const core::u64 presentNs = platform::nowNs();
-        device->submitAndPresent();
+        {
+            ENG_PROFILE_SCOPE("wait.present");
+            device->submitAndPresent();
+        }
         phaseWaitMs += msSince(presentNs);
 
         // **A picture every N frames** (`--screenshot-every`): this frame's,
@@ -6991,6 +7029,24 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             const std::array<I18nArg, 2> renderArgs{I18nArg{"median", at(renderPhase, 0.5)},
                                                     I18nArg{"p95", at(renderPhase, 0.95)}};
             core::log(LogLevel::Info, ENG_TR("engine.frame.info.render_phase"), renderArgs);
+        }
+
+        // **And inside each phase, system by system** (H0): the scoped
+        // timers' tree, a line a scope, indented by depth. `self` is what of a
+        // scope no scope under it accounts for -- an uninstrumented cost shows
+        // there rather than nowhere.
+        core::log(LogLevel::Info, ENG_TR("engine.frame.info.scopes_header"));
+        for (const core::profile::ScopeReport& row : core::profile::report(kWarmupFrames)) {
+            const std::array<I18nArg, 7> scopeArgs{
+                I18nArg{"indent", std::string(static_cast<core::usize>(row.depth) * 2, ' ')},
+                I18nArg{"scope", row.name},
+                I18nArg{"median", row.medianMs},
+                I18nArg{"p95", row.p95Ms},
+                I18nArg{"worst", row.worstMs},
+                I18nArg{"self", row.selfMedianMs},
+                I18nArg{"calls", row.calls},
+            };
+            core::log(LogLevel::Info, ENG_TR("engine.frame.info.scope"), scopeArgs);
         }
     }
 

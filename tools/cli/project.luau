@@ -366,6 +366,46 @@ local function findTool(base: string): string?
     return nil
 end
 
+--- **Where `base` is in the build or the installation `host` came from**, or
+--- nil when `host` is in neither layout (D517). Pure: the paths are matched,
+--- not looked at.
+---
+--- A build tree keeps the host at `<tree>/engine/app/` and its tools at
+--- `<tree>/tools/<tool>/`; an installation keeps a player at
+--- `player/<target>/` and its tools at its root.
+local function toolBesideCandidate(base: string, host: string): string?
+    local name = executableName(base)
+    local tree = string.match(host, "^(.*)[/\\]engine[/\\]app[/\\][^/\\]+$")
+    if tree ~= nil then
+        return joined(tree, "tools", base, name)
+    end
+    local install = string.match(host, "^(.*)[/\\]player[/\\][^/\\]+[/\\][^/\\]+$")
+    if install ~= nil then
+        return joined(install, name)
+    end
+    return nil
+end
+
+--- **`base` from the same build as the player it compiles for** (D517). The
+--- newest of every build was the answer, tool by tool -- so an export ran an
+--- asset compiler from the build somebody was working in, writing a mesh
+--- format the player from another build could not read, and every animated
+--- character shipped as a box. The variable, when set, still wins; a player in
+--- neither layout -- one named outright, or a cross-compiled one with no tools
+--- of its own -- falls back to the newest, and the format check after it is
+--- what stands between that and a broken game.
+local function findToolFor(base: string, host: string): string?
+    local explicit = process.env[`ENG_{string.upper(base)}`]
+    if explicit ~= nil and explicit ~= "" and fs.exists(explicit) then
+        return explicit
+    end
+    local beside = toolBesideCandidate(base, host)
+    if beside ~= nil and fs.exists(beside) then
+        return beside
+    end
+    return findTool(base)
+end
+
 --- Every directory under `root` that holds Luau the engine mounts or requires,
 --- deepest last. One watch per directory, because `fs.watch` reports the
 --- top-level entry rather than the changed file and inotify may not report a
@@ -487,6 +527,8 @@ return {
     findEngine = findEngine,
     findPlayerEngine = findPlayerEngine,
     findTool = findTool,
+    findToolFor = findToolFor,
+    toolBesideCandidate = toolBesideCandidate,
     installRoot = installRoot,
     hostProfile = hostProfile,
     hostHasDebugUi = hostHasDebugUi,

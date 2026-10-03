@@ -6435,6 +6435,7 @@ local Classes: { Schema.Class } = {
         Extends = "Instance",
         Module = "render",
         Parents = under("Model"),
+        Storage = "AnimationPlayer",
         Doc = "Plays a skinned mesh's animation clips (§2.2).\n\n**Parent it to the `Model` "
             .. "whose character it is, and it drives every skinned `MeshPart` under that model.** A "
             .. "character is a body, a shirt and a pair of trousers -- several meshes wearing the same "
@@ -6452,6 +6453,19 @@ local Classes: { Schema.Class } = {
             .. "happens at `PreAnimation` on the SimClock, so a clip's position at a given tick is the same "
             .. "in a replay as it was live.\n\nv1 is clip playback and linear blending -- no state machines, "
             .. "no IK, and no root motion.",
+        Properties = {
+            {
+                Name = "CullingMode",
+                Type = "Enum.AnimationCullingMode",
+                Default = "Enum.AnimationCullingMode.Automatic",
+                Doc = "How often its meshes are posed (H3). `Automatic`: as often as they are seen -- every "
+                    .. "tick up close, every second, fourth or eighth tick as they get smaller on the screen, "
+                    .. "and not at all where neither the camera nor a shadow reaches them; the clips keep time "
+                    .. "either way, and a joint a script or a `Bone` asks about is posed when asked. A world "
+                    .. "with nobody looking -- a server, a replay -- poses every tick. `AlwaysAnimate`: every "
+                    .. "tick, seen or not.",
+            },
+        } :: { Schema.Property },
         Methods = {
             {
                 Name = "LoadAnimation",
@@ -7054,6 +7068,161 @@ local Classes: { Schema.Class } = {
                 Doc = "What crossing it is, as the path reports it.",
             },
         } :: { Schema.Property },
+    },
+    {
+        Name = "Swarm",
+        Extends = "Instance",
+        Module = "scene",
+        Storage = "Swarm",
+        Parents = under("Workspace", "Model", "Folder"),
+        Doc = "A crowd on open ground that the engine steers (ADR 0156): hundreds of agents walking at "
+            .. "`Target`, pushing one another apart, climbing the one in front when the way is blocked and "
+            .. "standing on whoever is under them, on the terrain's height and round the obstacles it was "
+            .. "given -- a horde.\n\n**An agent is not an instance.** It is a row the swarm keeps, with a "
+            .. "radius, a height and a speed, and it moves one body: the `BasePart` given to `AddAgent`, "
+            .. "placed every tick facing `Target`. Scripts add, remove, push and ask in bulk; nothing runs per "
+            .. "agent in Luau.\n\nIt steps on the simulation tick after `PreSimulation`, every agent in "
+            .. "slot order, so a run is the same run every time. An agent far from `Target` thinks less often "
+            .. "-- every second tick past `NearDistance`, every fourth past `FarDistance` -- with the time it "
+            .. "skipped.\n\nFor agents that follow routes over a navigation mesh, see `NavigationAgent`.",
+        Properties = {
+            {
+                Name = "Target",
+                Type = "vector",
+                Doc = "Where every agent walks.",
+            },
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether it steps. Off, its agents stand where they are.",
+            },
+            {
+                Name = "CellSize",
+                Type = "number",
+                Default = "1.5",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "The side of the grid's cells, in metres, through which an agent finds its neighbours. "
+                    .. "About the widest agent's diameter.",
+            },
+            {
+                Name = "MaxNeighbours",
+                Type = "number",
+                Default = "14",
+                Doc = "The most neighbours an agent looks at a tick. In a tower of them the nearest few are "
+                    .. "what matter, and the cost of a crowd packed tight is capped.",
+            },
+            {
+                Name = "Gravity",
+                Type = "number",
+                Default = "30",
+                Doc = "How fast an agent falls, in metres per second per second.",
+            },
+            {
+                Name = "ClimbSpeed",
+                Type = "number",
+                Default = "6",
+                Doc = "How fast an agent climbs the one in its way, in metres per second.",
+            },
+            {
+                Name = "StopDistance",
+                Type = "number",
+                Default = "0.55",
+                Doc = "How far past its own radius from `Target` an agent stops walking at it.",
+            },
+            {
+                Name = "NearDistance",
+                Type = "number",
+                Default = "24",
+                Doc = "Past this far from `Target`, in metres, an agent thinks every second tick.",
+            },
+            {
+                Name = "FarDistance",
+                Type = "number",
+                Default = "48",
+                Doc = "Past this far, every fourth.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "AddAgent",
+                Parameters = {
+                    { Name = "body", Type = "BasePart" },
+                    {
+                        Name = "settings",
+                        Type = "{ Radius: number?, Height: number?, Speed: number?, Floats: boolean?, "
+                            .. "FloatHeight: number?, Climbs: boolean? }?",
+                    },
+                },
+                Returns = { "number" },
+                Doc = "Adds an agent standing where `body` is, and returns its number. `Radius` (0.5), "
+                    .. "`Height` (1) and `Speed` (4, metres a second) say what it is; `Floats` keeps it "
+                    .. "`FloatHeight` (1) over the ground and out of the crowd's pushing; `Climbs` (true) lets "
+                    .. "it climb the one in its way. The number is the agent's while it lives, and is given to "
+                    .. "the next agent after it is removed.",
+            },
+            {
+                Name = "RemoveAgent",
+                Parameters = { { Name = "agent", Type = "number" } },
+                Returns = {},
+                Doc = "Stops moving an agent and forgets it. Its body stays where it was.",
+            },
+            {
+                Name = "SetAgentSpeed",
+                Parameters = { { Name = "agent", Type = "number" }, { Name = "speed", Type = "number" } },
+                Returns = {},
+                Doc = "How fast it walks, in metres a second. Zero holds it where it stands, still pushed.",
+            },
+            {
+                Name = "SetAgentPosition",
+                Parameters = { { Name = "agent", Type = "number" }, { Name = "position", Type = "vector" } },
+                Returns = {},
+                Doc = "Puts it somewhere, falling from there.",
+            },
+            {
+                Name = "Push",
+                Parameters = { { Name = "agent", Type = "number" }, { Name = "velocity", Type = "vector" } },
+                Returns = {},
+                Doc = "A knock-back, in metres a second along the ground, that dies away in a moment.",
+            },
+            {
+                Name = "GetAgentPosition",
+                Parameters = { { Name = "agent", Type = "number" } },
+                Returns = { "vector?" },
+                Doc = "Where it stands, or nil when there is no such agent.",
+            },
+            {
+                Name = "GetAgents",
+                Parameters = {},
+                Returns = { "{ number }" },
+                Doc = "Every live agent's number, in slot order.",
+            },
+            {
+                Name = "GetPositions",
+                Parameters = {},
+                Returns = { "{ vector }" },
+                Doc = "Where each live agent stands, in the order `GetAgents` gives them.",
+            },
+            {
+                Name = "QueryRadius",
+                Parameters = { { Name = "centre", Type = "vector" }, { Name = "radius", Type = "number" } },
+                Returns = { "{ number }" },
+                Doc = "Every live agent whose feet are within `radius` of `centre`, in slot order: what a "
+                    .. "weapon aims at, and who has reached `Target`.",
+            },
+            {
+                Name = "AddObstacle",
+                Parameters = { { Name = "position", Type = "vector" }, { Name = "radius", Type = "number" } },
+                Returns = {},
+                Doc = "Something agents walk round -- a tree, a rock -- as a circle on the ground.",
+            },
+            {
+                Name = "ClearObstacles",
+                Parameters = {},
+                Returns = {},
+                Doc = "Forgets every obstacle.",
+            },
+        },
     },
     {
         Name = "NavigationAgent",

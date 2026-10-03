@@ -635,6 +635,9 @@ struct RenderWorld
     // draw because it is uploaded per draw anyway and a vector of vectors would
     // be a heap allocation per character per frame.
     std::vector<Mat4> bones;
+    // Every skinned mesh the camera or a shadow reached, and how big it is on
+    // the picture (H3): what the animation's update rate is decided from.
+    std::vector<SeenSkin> seenSkins;
     // Every terrain draw's geomorph (`DrawItem::terrainMorph`), for the same
     // reason.
     std::vector<TerrainMorph> terrainMorphs;
@@ -734,6 +737,7 @@ struct RenderWorld
         materialFamilies.clear();
         draws.clear();
         bones.clear();
+        seenSkins.clear();
         terrainMorphs.clear();
         terrains.clear();
         foliageRuns.clear();

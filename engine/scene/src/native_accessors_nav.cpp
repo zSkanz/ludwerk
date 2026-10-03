@@ -285,4 +285,143 @@ bool setNavigationAgentAgentType(World& world, core::InstanceId id, const Value&
     return true;
 }
 
+// --- Swarm (ADR 0156) -----------------------------------------------------------
+
+void attachSwarmComponents(World& world, core::InstanceId id)
+{
+    world.swarms().add(id, SwarmComponent{});
+}
+
+void detachSwarmComponents(World& world, core::InstanceId id)
+{
+    world.swarms().remove(id);
+}
+
+Value getSwarmTarget(const World& world, core::InstanceId id)
+{
+    const SwarmComponent* c = world.swarms().find(id);
+    return c == nullptr ? Value{} : vectorOf(c->target);
+}
+
+bool setSwarmTarget(World& world, core::InstanceId id, const Value& value)
+{
+    SwarmComponent* c = world.swarms().find(id);
+    return c != nullptr && takeVector(value, c->target);
+}
+
+Value getSwarmEnabled(const World& world, core::InstanceId id)
+{
+    const SwarmComponent* c = world.swarms().find(id);
+    return c == nullptr ? Value{} : Value{c->enabled};
+}
+
+bool setSwarmEnabled(World& world, core::InstanceId id, const Value& value)
+{
+    SwarmComponent* c = world.swarms().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (c == nullptr || flag == nullptr)
+        return false;
+    c->enabled = *flag;
+    return true;
+}
+
+namespace {
+
+// A number field of a swarm, and the rule its setter keeps.
+template <f32 SwarmComponent::*Field>
+[[nodiscard]] Value getSwarmNumber(const World& world, core::InstanceId id)
+{
+    const SwarmComponent* c = world.swarms().find(id);
+    return c == nullptr ? Value{} : Value{static_cast<f64>(c->*Field)};
+}
+
+template <f32 SwarmComponent::*Field>
+[[nodiscard]] bool setSwarmNumber(World& world, core::InstanceId id, const Value& value, bool aboveZero)
+{
+    SwarmComponent* c = world.swarms().find(id);
+    f32 next = 0.0f;
+    if (c == nullptr || !takeF32(value, next) || next < 0.0f || (aboveZero && next <= 0.0f))
+        return false;
+    c->*Field = next;
+    return true;
+}
+
+} // namespace
+
+Value getSwarmCellSize(const World& world, core::InstanceId id)
+{
+    return getSwarmNumber<&SwarmComponent::cellSize>(world, id);
+}
+
+bool setSwarmCellSize(World& world, core::InstanceId id, const Value& value)
+{
+    return setSwarmNumber<&SwarmComponent::cellSize>(world, id, value, true);
+}
+
+Value getSwarmMaxNeighbours(const World& world, core::InstanceId id)
+{
+    const SwarmComponent* c = world.swarms().find(id);
+    return c == nullptr ? Value{} : Value{static_cast<f64>(c->maxNeighbours)};
+}
+
+bool setSwarmMaxNeighbours(World& world, core::InstanceId id, const Value& value)
+{
+    SwarmComponent* c = world.swarms().find(id);
+    f32 next = 0.0f;
+    if (c == nullptr || !takeF32(value, next) || next < 0.0f || next > 1024.0f)
+        return false;
+    c->maxNeighbours = static_cast<u32>(next);
+    return true;
+}
+
+Value getSwarmGravity(const World& world, core::InstanceId id)
+{
+    return getSwarmNumber<&SwarmComponent::gravity>(world, id);
+}
+
+bool setSwarmGravity(World& world, core::InstanceId id, const Value& value)
+{
+    return setSwarmNumber<&SwarmComponent::gravity>(world, id, value, false);
+}
+
+Value getSwarmClimbSpeed(const World& world, core::InstanceId id)
+{
+    return getSwarmNumber<&SwarmComponent::climbSpeed>(world, id);
+}
+
+bool setSwarmClimbSpeed(World& world, core::InstanceId id, const Value& value)
+{
+    return setSwarmNumber<&SwarmComponent::climbSpeed>(world, id, value, false);
+}
+
+Value getSwarmStopDistance(const World& world, core::InstanceId id)
+{
+    return getSwarmNumber<&SwarmComponent::stopDistance>(world, id);
+}
+
+bool setSwarmStopDistance(World& world, core::InstanceId id, const Value& value)
+{
+    return setSwarmNumber<&SwarmComponent::stopDistance>(world, id, value, false);
+}
+
+Value getSwarmNearDistance(const World& world, core::InstanceId id)
+{
+    return getSwarmNumber<&SwarmComponent::nearDistance>(world, id);
+}
+
+bool setSwarmNearDistance(World& world, core::InstanceId id, const Value& value)
+{
+    return setSwarmNumber<&SwarmComponent::nearDistance>(world, id, value, false);
+}
+
+Value getSwarmFarDistance(const World& world, core::InstanceId id)
+{
+    return getSwarmNumber<&SwarmComponent::farDistance>(world, id);
+}
+
+bool setSwarmFarDistance(World& world, core::InstanceId id, const Value& value)
+{
+    return setSwarmNumber<&SwarmComponent::farDistance>(world, id, value, false);
+}
+
 } // namespace engine::scene::native

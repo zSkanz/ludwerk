@@ -1,0 +1,15 @@
+# A crowd of one skinned mesh (H2): nine bending bars drawn as a run, each
+# posed by its own palette, against the same nine drawn one at a time. A
+# project rather than a bare scene so the driver and a person run it the same
+# way; the world is built by its script.
+
+[project]
+name = "Ludwerk Skinned Crowd"
+id = "dev.ludwerk.skinnedcrowd"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Skinned Crowd"
+width = 960
+height = 540

@@ -100,6 +100,7 @@ public:
         calls.emplace_back("destroyBody", handle.index);
         live.erase(std::remove(live.begin(), live.end(), handle), live.end());
     }
+    [[nodiscard]] core::u64 shapesBuilt(physics::WorldHandle) const override { return 0; }
 
     // --- Constraints ----------------------------------------------------------
     //

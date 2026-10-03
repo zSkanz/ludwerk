@@ -565,6 +565,14 @@ public:
         return m_animation ? &*m_animation : nullptr;
     }
 
+    // What a frame's extraction reached of the world's rigs (H3): `fresh` for
+    // the main view, the views after it adding theirs.
+    void reportSeenSkins(std::span<const render::SeenSkin> seen, bool fresh)
+    {
+        if (m_animation)
+            m_animation->reportSeen(seen, fresh);
+    }
+
     // **The rigs every `MeshPart` names, loaded now** rather than at the top of
     // the next tick -- which, while the editor is editing, never comes. The
     // skeleton overlay reads through this; a tick still does it for itself.

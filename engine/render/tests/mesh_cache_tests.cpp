@@ -509,6 +509,46 @@ TEST_CASE("a mesh uploaded with a LOD chain draws fewer indices as it recedes")
     cache.destroy(*fixture.device);
 }
 
+TEST_CASE("H4: a skinned mesh keeps its LOD chain, and one skin stream serves every level")
+{
+    // It kept level zero only: five hundred characters across a field drew
+    // every triangle of each. A level is an index list over the same vertices,
+    // so the skin stream -- a vertex at a time -- is every level's.
+    DeviceFixture fixture;
+    MeshCache cache;
+    REQUIRE_FALSE(cache.create(*fixture.device).has_value());
+
+    Mesh mesh;
+    mesh.vertices.resize(6);
+    mesh.indices = {0, 1, 2, 0, 2, 3, 0, 1, 2};
+    mesh.submeshes.push_back(Submesh{.firstIndex = 0, .indexCount = 6, .material = 0, .bounds = {}});
+    mesh.submeshes.push_back(Submesh{.firstIndex = 6, .indexCount = 3, .material = 0, .bounds = {}});
+    const MeshLodRange ranges[] = {
+        {.firstSection = 0, .sectionCount = 1, .error = 0.0f},
+        {.firstSection = 1, .sectionCount = 1, .error = 0.05f},
+    };
+    std::vector<engine::asset::SkinVertex> skin(mesh.vertices.size());
+    for (engine::asset::SkinVertex& vertex : skin)
+        vertex.weights[0] = 1.0f;
+
+    auto* cmd = fixture.device->beginFrame();
+    REQUIRE(cmd != nullptr);
+    const MeshHandle handle = cache.createSkinned(*fixture.device, *cmd, mesh, skin, nullptr, ranges);
+    REQUIRE(handle.valid());
+    const MeshCache::Resolved* resolved = cache.resolve(handle);
+    REQUIRE(resolved != nullptr);
+    CHECK(resolved->skin.valid());
+    REQUIRE(resolved->lods.size() == 2);
+    const auto indicesAt = [&](f32 distance) {
+        const u32 level = selectMeshLod(*resolved, instanceAt(distance), PixelsPerUnit);
+        return resolved->sections[resolved->lods[level].firstSection].indexCount;
+    };
+    CHECK(indicesAt(1.0f) == 6);
+    CHECK(indicesAt(4000.0f) == 3);
+
+    cache.destroy(*fixture.device);
+}
+
 TEST_CASE("a distant instance draws a coarser level, placed by the renderer's own transform (audit R1)")
 {
     // The transform the extraction hands this, not one written for the test:

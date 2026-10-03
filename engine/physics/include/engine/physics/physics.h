@@ -63,6 +63,9 @@ public:
     // caller raises the key; this module has no catalog.
     [[nodiscard]] virtual BodyHandle createBody(WorldHandle world, const BodyDesc& desc) = 0;
     virtual void destroyBody(WorldHandle world, BodyHandle body) = 0;
+    // How many collision shapes a world has built: what a test counts to know
+    // that a hundred bodies of one mesh built its hull once (H8).
+    [[nodiscard]] virtual core::u64 shapesBuilt(WorldHandle world) const = 0;
 
     // Teleports. Velocity is preserved, which is what the floating-origin
     // rebase at M7 needs and what a script assigning `CFrame` expects.

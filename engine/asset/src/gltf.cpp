@@ -1265,6 +1265,21 @@ std::optional<core::EngineError> Importer::readAnimations()
             }
 
             const fg::AnimationSampler& sampler = animation.samplers[channel.samplerIndex];
+            // **How the keys are joined** (D515). Ignored, a `STEP` clip was
+            // blended between its keys, and a `CUBICSPLINE` one -- three
+            // values a key -- was read as three keys for every one it has,
+            // playing its tangents as poses.
+            switch (sampler.interpolation) {
+            case fg::AnimationInterpolation::Step:
+                out.interpolation = AnimationChannel::Interpolation::Step;
+                break;
+            case fg::AnimationInterpolation::CubicSpline:
+                out.interpolation = AnimationChannel::Interpolation::CubicSpline;
+                break;
+            default:
+                out.interpolation = AnimationChannel::Interpolation::Linear;
+                break;
+            }
             const fg::Accessor& times = asset_.accessors[sampler.inputAccessor];
             const fg::Accessor& values = asset_.accessors[sampler.outputAccessor];
             if (!accessorFits(asset_, times) || !accessorFits(asset_, values))
@@ -1298,7 +1313,7 @@ std::optional<core::EngineError> Importer::readAnimations()
             // A channel with fewer values than times would sample out of its own
             // array. Refused rather than clamped: a clip that silently played
             // the last key forever is a character that freezes mid-stride.
-            if (out.values.size() < out.times.size() * out.stride)
+            if (out.values.size() < out.times.size() * out.stride * out.valuesPerKey())
                 return core::makeError(ENG_TR("asset.gltf.err.attribute_count_mismatch"), {}, "animation");
 
             clip.channels.push_back(std::move(out));

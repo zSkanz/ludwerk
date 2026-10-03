@@ -204,15 +204,32 @@ struct AnimationChannel
         Scale,
     };
 
+    // glTF's three ways between keys (D515). `Step` holds a key until the
+    // next; `CubicSpline` is a Hermite curve, and carries THREE values a key
+    // -- the in-tangent, the value and the out-tangent, in that order.
+    enum class Interpolation : core::u8
+    {
+        Linear,
+        Step,
+        CubicSpline,
+    };
+
     u32 joint = 0;
     Target target = Target::Translation;
+    Interpolation interpolation = Interpolation::Linear;
     std::vector<f32> times;
     // Three floats per key for translation and scale, four (x, y, z, w) for
-    // rotation. Flat rather than typed, because the sampler is one function
-    // over a stride and three would be three places to get the interpolation
-    // wrong.
+    // rotation -- three times that for a cubic spline. Flat rather than typed,
+    // because the sampler is one function over a stride and three would be
+    // three places to get the interpolation wrong.
     std::vector<f32> values;
     u32 stride = 3;
+
+    // How many values a key has: one, or three for a cubic spline.
+    [[nodiscard]] core::usize valuesPerKey() const noexcept
+    {
+        return interpolation == Interpolation::CubicSpline ? 3u : 1u;
+    }
 };
 
 struct AnimationClip

@@ -796,21 +796,14 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
             triangles = static_cast<core::u32>(compiled.lods[0].indices.size() / 3);
 
             const bool skinned = !compiled.joints.empty() && !compiled.skin.empty();
-            // A SKINNED mesh takes level zero only, and that is a decision
-            // rather than an omission: the joint and weight streams are indexed
-            // by vertex and the simplifier is free to drop vertices, so a level
-            // above zero would need its own skin stream re-derived. Characters
-            // are also the last thing a game wants simplified, being the thing
-            // the camera is usually nearest to.
-            asset::Mesh skinnedGeometry;
-            if (skinned) {
-                skinnedGeometry.vertices = geometry.vertices;
-                skinnedGeometry.bounds = geometry.bounds;
-                skinnedGeometry.indices = compiled.lods[0].indices;
-                skinnedGeometry.submeshes = compiled.lods[0].submeshes;
-            }
+            // **A skinned mesh takes its whole chain too** (H4). It took level
+            // zero only, on the reasoning that a coarser level drops vertices
+            // and would need its own skin stream -- but a level is a new INDEX
+            // list over the same vertices, so the one skin stream, a vertex at
+            // a time, serves every level. Five hundred characters across a
+            // field drew every triangle of each.
             const MeshHandle handle =
-                skinned ? cache.createSkinned(device, cmd, skinnedGeometry, compiled.skin, &uploadError)
+                skinned ? cache.createSkinned(device, cmd, geometry, compiled.skin, &uploadError, lods)
                         : cache.create(device, cmd, geometry, MeshUsage::Static, &uploadError, lods);
             if (!handle.valid()) {
                 core::logText(core::LogLevel::Warn, uploadError.message);

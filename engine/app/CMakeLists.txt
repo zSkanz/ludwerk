@@ -1213,6 +1213,21 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 300)
 
+    # **A crowd of one skinned mesh is drawn as runs** (H2): nine bending bars,
+    # each posed by its own palette from the frame's palette buffer, against
+    # the same nine drawn a copy at a time -- the same picture, and fewer
+    # draws. See the driver.
+    add_test(NAME skinned_crowd_runs
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DCOMPARE=$<TARGET_FILE:imgcmp>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/skinnedcrowd
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/skinned-crowd
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_skinned_crowd.cmake)
+    set_tests_properties(skinned_crowd_runs PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
     # **A terrain layer's repeat is broken up** (ADR 0113's amendment): the
     # built-in grass photographed from above as it repeated, as it is by
     # default and on hexagonal cells, and its autocorrelation at the tile's
@@ -1382,6 +1397,13 @@ if(ENG_BUILD_TESTS)
     # `--rhi=null` because none of it needs a device: what is under test is the
     # script, the scene and the assets, and a CI runner with no Vulkan driver
     # must not turn "this machine has no graphics" into a red build.
+    # **What a player says it reads** (D517): `ludwerk build` asks the player it
+    # packages whether it reads the mesh format its asset compiler writes, by
+    # exit code. Its own format, yes; one past it, no.
+    add_test(NAME host_reads_its_mesh_format COMMAND engine_host --reads-mesh-format=3)
+    add_test(NAME host_refuses_a_newer_mesh_format COMMAND engine_host --reads-mesh-format=4)
+    set_tests_properties(host_refuses_a_newer_mesh_format PROPERTIES WILL_FAIL TRUE)
+
     foreach(example 01-instances 02-meshes 03-physics-playground 06-scene 11-ocean 12-ragdoll 20-platformer
                     21-navigation 22-atmosphere 23-surfaces 24-scenes 25-gradients-and-strokes
                     26-security-cameras 27-mirrors-and-portals 28-arcade 29-meadow
@@ -1712,7 +1734,7 @@ if(ENG_BUILD_TESTS)
         subworld_gate
         surface_contract_proof_meshes surface_contract_proof_specular user_surface_proof
         graphics_settings_differential graphics_runtime_differential options_screen_gate local_shadow_differential
-        terrain_gallery_holes terrain_shadow_acne mesh_shadow_acne
+        terrain_gallery_holes terrain_shadow_acne mesh_shadow_acne skinned_crowd_runs
         terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
         editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived)

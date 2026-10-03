@@ -5,6 +5,7 @@
 // what animation must NOT do: a joint no channel drives keeps its rest pose, and
 // two tracks blend in load order rather than in whatever order a container hands
 // them over (R10).
+#include <array>
 #include <cmath>
 #include <doctest/doctest.h>
 
@@ -277,6 +278,108 @@ TEST_CASE("a non-looping clip stops at its end and reports it once")
     CHECK(animation.pose(fixture.mesh) == nullptr);
 }
 
+TEST_CASE("D516: a mesh whose tracks are stopped is posed once, not every tick -- and moves again when one plays")
+{
+    // Three hundred bodies parked in a pool, tracks loaded and not playing,
+    // were three hundred poses rebuilt to the same answer every tick.
+    Fixture fixture;
+    render::SkeletonLibrary::Entry entry = twoJointSkeleton();
+    entry.clips.push_back(slideClip("Slide"));
+    const core::InstanceId player = fixture.rig(std::move(entry));
+
+    render::AnimationSystem animation{fixture.world, fixture.skeletons};
+    const scene::TrackId track = animation.createTrack(player, {}, "Slide");
+    animation.sample(1.0 / 60.0);
+    const core::u64 settled = animation.posesBuilt();
+    for (int tick = 0; tick < 10; ++tick)
+        animation.sample(1.0 / 60.0);
+    CHECK(animation.posesBuilt() == settled);
+
+    // Played, it is posed every tick it moves.
+    animation.play(track, 0.0f, 1.0f, 1.0f);
+    for (int tick = 0; tick < 30; ++tick)
+        animation.sample(1.0 / 60.0);
+    CHECK(animation.posesBuilt() == settled + 30);
+    const render::Pose* moving = animation.pose(fixture.mesh);
+    REQUIRE(moving != nullptr);
+    CHECK(close(moving->palette[1].m[3][1], 1.0f));
+
+    // Stopped, it goes back to rest on the next tick -- and then is left alone.
+    animation.stop(track, 0.0f);
+    animation.sample(1.0 / 60.0);
+    CHECK(animation.pose(fixture.mesh) == nullptr);
+    const core::u64 rested = animation.posesBuilt();
+    for (int tick = 0; tick < 10; ++tick)
+        animation.sample(1.0 / 60.0);
+    CHECK(animation.posesBuilt() == rested);
+}
+
+TEST_CASE("H3: a rig nobody sees is not posed, a small one is posed every few ticks, and its clock never stops")
+{
+    Fixture fixture;
+    render::SkeletonLibrary::Entry entry = twoJointSkeleton();
+    entry.clips.push_back(slideClip("Slide"));
+    const core::InstanceId player = fixture.rig(std::move(entry));
+    render::AnimationSystem animation{fixture.world, fixture.skeletons};
+    const scene::TrackId track = animation.createTrack(player, {}, "Slide");
+    animation.play(track, 0.0f, 1.0f, 1.0f);
+    animation.sample(1.0 / 60.0);
+
+    SUBCASE("with nobody reporting -- a server, a replay -- every tick")
+    {
+        const core::u64 before = animation.posesBuilt();
+        for (int tick = 0; tick < 8; ++tick)
+            animation.sample(1.0 / 60.0);
+        CHECK(animation.posesBuilt() == before + 8);
+    }
+    SUBCASE("reported, but not reached: not posed, and caught up when a joint is asked for")
+    {
+        animation.reportSeen({}, true);
+        const core::u64 before = animation.posesBuilt();
+        for (int tick = 0; tick < 29; ++tick)
+            animation.sample(1.0 / 60.0);
+        CHECK(animation.posesBuilt() == before);
+        // Half way, as an every-tick pose would say -- built now.
+        core::CFrameD child;
+        REQUIRE(animation.jointModel(fixture.mesh, 1, child));
+        CHECK(child.position.y == doctest::Approx(2.0).epsilon(0.02));
+        CHECK(animation.posesBuilt() == before + 1);
+    }
+    SUBCASE("seen small: every eighth tick; seen large: every tick")
+    {
+        const std::array<render::SeenSkin, 1> small{render::SeenSkin{fixture.mesh, 0.01f}};
+        animation.reportSeen(small, true);
+        const core::u64 before = animation.posesBuilt();
+        for (int tick = 0; tick < 32; ++tick)
+            animation.sample(1.0 / 60.0);
+        CHECK(animation.posesBuilt() == before + 4);
+
+        const std::array<render::SeenSkin, 1> large{render::SeenSkin{fixture.mesh, 0.5f}};
+        animation.reportSeen(large, true);
+        const core::u64 after = animation.posesBuilt();
+        for (int tick = 0; tick < 8; ++tick)
+            animation.sample(1.0 / 60.0);
+        CHECK(animation.posesBuilt() == after + 8);
+    }
+    SUBCASE("AlwaysAnimate: every tick, seen or not")
+    {
+        fixture.world.animationPlayers().add(player, scene::AnimationPlayerComponent{.cullingMode = 1});
+        animation.reportSeen({}, true);
+        const core::u64 before = animation.posesBuilt();
+        for (int tick = 0; tick < 8; ++tick)
+            animation.sample(1.0 / 60.0);
+        CHECK(animation.posesBuilt() == before + 8);
+    }
+}
+
+TEST_CASE("H3: the intervals shrink with the rig on the picture")
+{
+    CHECK(render::AnimationSystem::updateInterval(0.5f) == 1);
+    CHECK(render::AnimationSystem::updateInterval(0.08f) == 2);
+    CHECK(render::AnimationSystem::updateInterval(0.04f) == 4);
+    CHECK(render::AnimationSystem::updateInterval(0.01f) == 8);
+}
+
 TEST_CASE("a looping clip wraps rather than resetting, and never ends")
 {
     Fixture fixture;
@@ -526,6 +629,45 @@ TEST_CASE("retire forgets the tracks of an instance that is gone, and keeps answ
     // whatever took the slot.
     CHECK(close(animation.state(track).length, 1.0f));
     animation.sample(1.0 / 60.0);
+}
+
+TEST_CASE("D515: a step clip holds each key, and a cubic spline follows its tangents")
+{
+    // The slide's child, y from 1 to 3 over a second, read at a quarter of
+    // the way: a line is at 1.5, a step still at 1, and a spline that leaves
+    // its first key at four units a second is at 1.875.
+    const auto childYAt = [](asset::AnimationChannel channel) {
+        Fixture fixture;
+        render::SkeletonLibrary::Entry entry = twoJointSkeleton();
+        asset::AnimationClip clip;
+        clip.name = "Slide";
+        clip.duration = 1.0f;
+        clip.channels.push_back(std::move(channel));
+        entry.clips.push_back(clip);
+        const core::InstanceId player = fixture.rig(std::move(entry));
+        render::AnimationSystem animation{fixture.world, fixture.skeletons};
+        animation.play(animation.createTrack(player, {}, "Slide"), 0.0f, 1.0f, 1.0f);
+        for (int tick = 0; tick < 15; ++tick)
+            animation.sample(1.0 / 60.0);
+        const render::Pose* pose = animation.pose(fixture.mesh);
+        REQUIRE(pose != nullptr);
+        // The palette undoes the bind's one unit up.
+        return pose->palette[1].m[3][1] + 1.0f;
+    };
+
+    asset::AnimationChannel line = slideClip("Slide").channels.front();
+    CHECK(close(childYAt(line), 1.5f));
+
+    asset::AnimationChannel step = line;
+    step.interpolation = asset::AnimationChannel::Interpolation::Step;
+    CHECK(close(childYAt(step), 1.0f));
+
+    asset::AnimationChannel spline = line;
+    spline.interpolation = asset::AnimationChannel::Interpolation::CubicSpline;
+    // In-tangent, value, out-tangent, a key at a time.
+    spline.values = {0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 4.0f, 0.0f,
+                     0.0f, 0.0f, 0.0f, 0.0f, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    CHECK(close(childYAt(spline), 1.875f));
 }
 
 TEST_CASE("rotation is interpolated the short way round")

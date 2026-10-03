@@ -36,6 +36,15 @@ How a `Material` reads the alpha channel of its colour. glTF's three modes, kept
 | `Mask` | 1 | Alpha is a coverage TEST against `AlphaCutoff`, not a blend: a pixel is drawn or it is not. Leaves and chain-link fences want this -- it stays in the opaque pass, so it writes depth and needs no sorting. |
 | `Blend` | 2 | Alpha blends. Glass and smoke want this, and it costs what every transparent surface costs: a sorted pass and no depth writes. |
 
+## Enum.AnimationCullingMode
+
+How often an `AnimationPlayer`'s meshes are posed when nobody needs every tick of it (H3).
+
+| Item | Value | Description |
+|---|---|---|
+| `Automatic` | 0 | As often as it is seen: every tick up close, every second, fourth or eighth tick as it gets smaller on the screen, and not at all where neither the camera nor a shadow reaches it. Its clips keep time either way, so it is where it should be the moment it is seen. |
+| `AlwaysAnimate` | 1 | Every tick, seen or not: the hero, or a character whose pose a script reads. |
+
 ## Enum.AntiAliasingMode
 
 How edges are smoothed.

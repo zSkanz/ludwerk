@@ -274,7 +274,8 @@ void MeshCache::beginFrame(rhi::IDevice& device)
 }
 
 MeshHandle MeshCache::createSkinned(rhi::IDevice& device, rhi::ICmdList& cmd, const asset::Mesh& mesh,
-                                    std::span<const asset::SkinVertex> skin, core::EngineError* outError)
+                                    std::span<const asset::SkinVertex> skin, core::EngineError* outError,
+                                    std::span<const MeshLodRange> lods)
 {
     if (skin.size() != mesh.vertices.size()) {
         if (outError != nullptr)
@@ -282,7 +283,7 @@ MeshHandle MeshCache::createSkinned(rhi::IDevice& device, rhi::ICmdList& cmd, co
         return {};
     }
 
-    const MeshHandle handle = create(device, cmd, mesh, MeshUsage::Static, outError);
+    const MeshHandle handle = create(device, cmd, mesh, MeshUsage::Static, outError, lods);
     if (!handle.valid() || skin.empty())
         return handle;
 

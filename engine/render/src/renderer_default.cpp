@@ -16,6 +16,7 @@
 #include "engine/asset/surface_shader.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
+#include "engine/core/profile.h"
 #include "engine/core/text_key.h"
 #include "engine/render/clusters.h"
 #include "engine/render/environment.h"
@@ -171,6 +172,13 @@ constexpr u32 kMaxInstances = 65536;
 constexpr u32 kMinInstanceBatch = 3;
 
 constexpr u32 kNoBatch = 0xFFFFFFFFu;
+
+// A frame's skinned instances, and the joints of every palette they read (H2):
+// four thousand animated characters in runs, and a quarter of a million joint
+// matrices -- sixteen megabytes, made the first frame a skinned run is drawn.
+// A run past either is drawn a draw at a time, as before.
+constexpr u32 kMaxSkinnedInstances = 4096;
+constexpr u32 kMaxPaletteJoints = 262144;
 
 // The occlusion pass's sampling radius in world metres, its self-occlusion bias,
 // and how strongly it darkens.
@@ -378,6 +386,9 @@ struct InstanceBatch
     // the batch if this holds, because a batch is one call and cannot be drawn
     // in pieces.
     bool anyVisible = false;
+    // A run of skinned draws (H2): its instances are `GpuSkinnedInstance`s,
+    // each posed by its own palette.
+    bool skinned = false;
 };
 
 // The prefiltered environment's freshness, and the policy that keeps a
@@ -702,6 +713,10 @@ private:
     [[nodiscard]] bool ensureVoxel(rhi::IDevice& device);
     // The particle pipeline and its instance buffer, on the same lazy terms.
     [[nodiscard]] bool ensureParticles(rhi::IDevice& device);
+    // The skinned runs' pipelines and buffers (H2), made the first frame a
+    // skinned draw is in the world -- so a world without one builds nothing
+    // and moves no capture golden.
+    [[nodiscard]] bool ensureSkinnedInstancing(rhi::IDevice& device);
     // The decal pipeline, on the same lazy terms.
     [[nodiscard]] bool ensureDecals(rhi::IDevice& device);
     // The ribbon pipeline and its vertex buffer (ADR 0129), on the same terms.
@@ -870,6 +885,15 @@ private:
 
     rhi::BufferHandle instanceBuffer_{};
     std::vector<GpuInstance> instanceStaging_;
+    // Skinned runs (H2): their instance stream, the frame's palettes, and the
+    // three pipelines that read them.
+    bool skinnedInstancingTried_ = false;
+    rhi::BufferHandle skinnedInstanceBuffer_{};
+    rhi::BufferHandle paletteBuffer_{};
+    std::vector<GpuSkinnedInstance> skinnedInstanceStaging_;
+    rhi::PipelineHandle pbrSkinnedInstancedPipeline_{};
+    rhi::PipelineHandle shadowSkinnedInstancedPipeline_{};
+    rhi::PipelineHandle depthPrepassSkinnedInstancedPipeline_{};
     std::vector<InstanceBatch> batches_;
     // Per draw: which batch covers it, or `kNoBatch`.
     std::vector<u32> batchOf_;
@@ -2040,11 +2064,27 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     voxelBlockBuffer_ = {};
     voxelBlocksSent_ = false;
 
-    for (rhi::PipelineHandle* pipeline :
-         {&terrainPipeline_, &terrainShadowPipeline_, &terrainPrepassPipeline_, &terrainPackColorPipeline_,
-          &terrainPackLinearPipeline_, &voxelPipeline_, &particlePipeline_, &voxelTilePipeline_, &voxelBlendPipeline_,
-          &voxelShadowPipeline_, &decalPipeline_, &worldUiPipeline_, &worldUiOnTopPipeline_, &spritePipeline_,
-          &spriteExactPipeline_, &ribbonPipeline_, &highlightMaskPipeline_, &highlightMaskSkinnedPipeline_}) {
+    for (rhi::PipelineHandle* pipeline : {&terrainPipeline_,
+                                          &terrainShadowPipeline_,
+                                          &terrainPrepassPipeline_,
+                                          &terrainPackColorPipeline_,
+                                          &terrainPackLinearPipeline_,
+                                          &voxelPipeline_,
+                                          &particlePipeline_,
+                                          &voxelTilePipeline_,
+                                          &voxelBlendPipeline_,
+                                          &voxelShadowPipeline_,
+                                          &decalPipeline_,
+                                          &worldUiPipeline_,
+                                          &worldUiOnTopPipeline_,
+                                          &spritePipeline_,
+                                          &spriteExactPipeline_,
+                                          &ribbonPipeline_,
+                                          &highlightMaskPipeline_,
+                                          &highlightMaskSkinnedPipeline_,
+                                          &pbrSkinnedInstancedPipeline_,
+                                          &shadowSkinnedInstancedPipeline_,
+                                          &depthPrepassSkinnedInstancedPipeline_}) {
         if (pipeline->valid())
             device.destroy(*pipeline);
         *pipeline = {};
@@ -2067,6 +2107,12 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     if (particleBuffer_.valid())
         device.destroy(particleBuffer_);
     particleBuffer_ = {};
+    for (rhi::BufferHandle* buffer : {&skinnedInstanceBuffer_, &paletteBuffer_}) {
+        if (buffer->valid())
+            device.destroy(*buffer);
+        *buffer = {};
+    }
+    skinnedInstancingTried_ = false;
     if (ribbonBuffer_.valid())
         device.destroy(ribbonBuffer_);
     ribbonBuffer_ = {};
@@ -2567,9 +2613,18 @@ void DefaultRenderer::copySceneForSurfaces(rhi::IDevice& device, rhi::ICmdList& 
 
 void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshCache& meshes)
 {
+    ENG_PROFILE_SCOPE("render.batches");
     batches_.clear();
     instanceStaging_.clear();
+    skinnedInstanceStaging_.clear();
     batchOf_.assign(world.draws.size(), kNoBatch);
+    if (!settings_.instancing)
+        return;
+    // Skinned runs only once their pipelines exist (`ensureSkinnedInstancing`),
+    // and only while the palettes fit.
+    const bool skinnedRuns = pbrSkinnedInstancedPipeline_.valid() && shadowSkinnedInstancedPipeline_.valid() &&
+                             depthPrepassSkinnedInstancedPipeline_.valid() && skinnedInstanceBuffer_.valid() &&
+                             paletteBuffer_.valid() && world.bones.size() <= kMaxPaletteJoints;
     if (!world.camera.valid)
         return;
 
@@ -2593,7 +2648,10 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
         // depends on is not the place to solve a tool's problem: the outline
         // pass ignores batching instead, which is where the cost belongs and
         // where it is a handful of draws.
-        return !draw.transparent && draw.boneCount == 0;
+        //
+        // **A skinned draw is batched too** (H2), once the palettes can be
+        // read by instance: five hundred animated enemies were 1,800 draws.
+        return !draw.transparent && (draw.boneCount == 0 || skinnedRuns);
     };
 
     for (core::usize index = 0; index < world.draws.size();) {
@@ -2607,6 +2665,13 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             ++index;
             continue;
         }
+        // A palette with the skin stream to read it, as the single skinned
+        // draw requires; a draw with one and not the other is drawn alone.
+        const bool skinned = first.boneCount > 0;
+        if (skinned && !resolved->skin.valid()) {
+            ++index;
+            continue;
+        }
         const u32 lod = selectMeshLod(*resolved, first.transform, pixelsPerUnit);
 
         core::usize last = index + 1;
@@ -2615,7 +2680,7 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             // By FAMILY, not by material: a run of parts that differ only by
             // colour is one call, each colour in its instance (D184).
             if (!instanceable(next) || !(next.mesh == first.mesh) || next.section != first.section ||
-                world.familyOf(next.material) != world.familyOf(first.material))
+                world.familyOf(next.material) != world.familyOf(first.material) || (next.boneCount > 0) != skinned)
                 break;
             // A surface's colour is in its block, not in the instance's tint:
             // one material per run.
@@ -2628,16 +2693,19 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
         }
 
         const auto count = static_cast<u32>(last - index);
-        if (count < kMinInstanceBatch || instanceStaging_.size() + count > static_cast<core::usize>(kMaxInstances)) {
+        const core::usize staged = skinned ? skinnedInstanceStaging_.size() : instanceStaging_.size();
+        const core::usize room = skinned ? kMaxSkinnedInstances : kMaxInstances;
+        if (count < kMinInstanceBatch || staged + count > room) {
             index = last;
             continue;
         }
 
         InstanceBatch batch;
         batch.firstDraw = static_cast<u32>(index);
-        batch.firstInstance = static_cast<u32>(instanceStaging_.size());
+        batch.firstInstance = static_cast<u32>(staged);
         batch.count = count;
         batch.lod = lod;
+        batch.skinned = skinned;
 
         // The union sphere, grown one member at a time. Conservative in the
         // direction that never drops geometry, which is the only direction a
@@ -2656,7 +2724,16 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             instance.alphaTint[1] = own.baseColor[0];
             instance.alphaTint[2] = own.baseColor[1];
             instance.alphaTint[3] = own.baseColor[2];
-            instanceStaging_.push_back(instance);
+            if (skinned) {
+                GpuSkinnedInstance posed;
+                posed.model = instance.model;
+                std::copy_n(instance.alphaTint, 4, posed.alphaTint);
+                posed.palette[0] = static_cast<f32>(draw.firstBone);
+                skinnedInstanceStaging_.push_back(posed);
+            }
+            else {
+                instanceStaging_.push_back(instance);
+            }
 
             const Vec3 offset = draw.boundsCenter - batch.boundsCenter;
             const f32 distance = core::length(offset);
@@ -2781,6 +2858,7 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                                    const Mat4& viewProjection, rhi::PipelineHandle staticPipeline,
                                    rhi::PipelineHandle skinnedPipeline, Selection selection, const CullSphere* cull)
 {
+    ENG_PROFILE_SCOPE("render.draws");
     // The two masks -- a tool's selection and a game's highlight -- are one
     // kind of pass and differ only in which draws they take.
     const bool mask = selection == Selection::Outline || selection == Selection::Highlight;
@@ -2792,6 +2870,10 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
     const rhi::PipelineHandle instancedPipeline = selection == Selection::Shadow    ? shadowInstancedPipeline_
                                                   : selection == Selection::Prepass ? depthPrepassInstancedPipeline_
                                                                                     : pbrInstancedPipeline_;
+    const rhi::PipelineHandle skinnedInstancedPipeline =
+        selection == Selection::Shadow    ? shadowSkinnedInstancedPipeline_
+        : selection == Selection::Prepass ? depthPrepassSkinnedInstancedPipeline_
+                                          : pbrSkinnedInstancedPipeline_;
 
     // Pixels per world unit at one metre, from the projection itself rather
     // than from a field-of-view nobody stored: `projection[1][1]` IS
@@ -2876,6 +2958,8 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // unbound vertex buffer.
         const bool skinnedDraw =
             batch == nullptr && draw.boneCount > 0 && resolved->skin.valid() && skinnedPipeline.valid();
+        // A run of them (H2), posed from the frame's palette buffer.
+        const bool skinnedRun = batch != nullptr && batch->skinned;
         // A terrain mesh in the opaque pass is drawn with the terrain's look,
         // and in the shadow pass with no culling and a push from the light (see
         // the cascade loop); in the prepass it is an ordinary static mesh.
@@ -2895,10 +2979,10 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // A surface shader's own pipelines, for a plain or instanced mesh (ADR
         // 0091). Skinned, terrain and voxel geometry keep the built-in surface,
         // and so does the outline mask, which wants a position and nothing else.
-        const u32 surfaceId =
-            !mask && !skinnedDraw && !draw.terrain && !draw.voxelBlock && draw.material < materialSurface_.size()
-                ? materialSurface_[draw.material]
-                : 0u;
+        const u32 surfaceId = !mask && !skinnedDraw && !skinnedRun && !draw.terrain && !draw.voxelBlock &&
+                                      draw.material < materialSurface_.size()
+                                  ? materialSurface_[draw.material]
+                                  : 0u;
         const SurfaceSet* surface = surfaceId != 0 ? &surfaces_[surfaceId - 1] : nullptr;
         // A masked surface cuts itself in its fragment, which its depth pass
         // does not run: left in the prepass, its holes would show whatever the
@@ -2913,6 +2997,7 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                                                   : (batch != nullptr ? surface->instanced : surface->forward);
         const rhi::PipelineHandle wanted =
             surfacePipeline.valid() ? surfacePipeline
+            : skinnedRun            ? skinnedInstancedPipeline
             : batch != nullptr      ? instancedPipeline
             : skinnedDraw           ? skinnedPipeline
             : terrainDraw           ? terrainPipeline_
@@ -3106,7 +3191,14 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             }
         }
 
-        if (batch != nullptr) {
+        if (skinnedRun) {
+            const std::array<rhi::BufferHandle, 3> vertexBuffers{resolved->vertices, resolved->skin,
+                                                                 skinnedInstanceBuffer_};
+            cmd.bindVertexBuffers(0, vertexBuffers);
+            const std::array<rhi::BufferHandle, 1> palettes{paletteBuffer_};
+            cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0, palettes);
+        }
+        else if (batch != nullptr) {
             const std::array<rhi::BufferHandle, 2> vertexBuffers{resolved->vertices, instanceBuffer_};
             cmd.bindVertexBuffers(0, vertexBuffers);
         }
@@ -3592,6 +3684,113 @@ bool DefaultRenderer::ensureSkyLook(rhi::IDevice& device)
         .debugName = "sky_look",
     });
     return skyLook_.handle.valid();
+}
+
+bool DefaultRenderer::ensureSkinnedInstancing(rhi::IDevice& device)
+{
+    if (skinnedInstancingTried_)
+        return pbrSkinnedInstancedPipeline_.valid() && shadowSkinnedInstancedPipeline_.valid() &&
+               depthPrepassSkinnedInstancedPipeline_.valid() && skinnedInstanceBuffer_.valid() &&
+               paletteBuffer_.valid();
+    skinnedInstancingTried_ = true;
+    if (shaderLibrary_ == nullptr)
+        return false;
+
+    core::EngineError error;
+    const auto load = [&](std::string_view name, rhi::ShaderStage stage) -> rhi::ShaderHandle {
+        const rhi::ShaderHandle handle = shaderLibrary_->create(device, name, stage, &error);
+        if (handle.valid() && shaderCount_ < std::size(shaders_))
+            shaders_[shaderCount_++] = handle;
+        return handle;
+    };
+    const rhi::ShaderHandle forwardVertex = load("pbr_skinned_instanced", rhi::ShaderStage::Vertex);
+    const rhi::ShaderHandle forwardFragment = load("pbr_skinned_instanced", rhi::ShaderStage::Fragment);
+    const rhi::ShaderHandle depthVertex = load("shadow_skinned_instanced", rhi::ShaderStage::Vertex);
+    const rhi::ShaderHandle depthFragment = load("shadow_skinned_instanced", rhi::ShaderStage::Fragment);
+    if (!forwardVertex.valid() || !forwardFragment.valid() || !depthVertex.valid() || !depthFragment.valid()) {
+        core::logText(core::LogLevel::Warn, error.message);
+        return false;
+    }
+
+    // The mesh at slot 0, the skin stream at slot 1 and the instances at slot
+    // 2: `skinnedBuffers` and `instancedBuffers` (in `create`) side by side.
+    const std::array<rhi::VertexBufferLayout, 3> buffers{
+        rhi::VertexBufferLayout{.slot = 0, .strideBytes = 48},
+        rhi::VertexBufferLayout{.slot = 1, .strideBytes = 32},
+        rhi::VertexBufferLayout{.slot = 2, .strideBytes = sizeof(GpuSkinnedInstance), .perInstance = true},
+    };
+    const std::array<rhi::VertexAttribute, 12> forwardAttributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 12},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 24},
+        rhi::VertexAttribute{.location = 3, .bufferSlot = 0, .format = rhi::VertexFormat::Float2, .offsetBytes = 40},
+        rhi::VertexAttribute{.location = 4, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 5, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
+        rhi::VertexAttribute{.location = 6, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 7, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
+        rhi::VertexAttribute{.location = 8, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 32},
+        rhi::VertexAttribute{.location = 9, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 48},
+        rhi::VertexAttribute{.location = 10, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 64},
+        rhi::VertexAttribute{.location = 11, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 80},
+    };
+    // Depth only: position, the skin stream, the model and the palette start.
+    const std::array<rhi::VertexAttribute, 8> depthAttributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
+        rhi::VertexAttribute{.location = 3, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 4, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
+        rhi::VertexAttribute{.location = 5, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 32},
+        rhi::VertexAttribute{.location = 6, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 48},
+        rhi::VertexAttribute{.location = 7, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 80},
+    };
+    const std::array<rhi::ColorTargetDesc, 1> hdrTarget{rhi::ColorTargetDesc{.format = kHdrFormat}};
+
+    pbrSkinnedInstancedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = forwardVertex,
+        .fragmentShader = forwardFragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = forwardAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = hdrTarget,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "pbr_skinned_instanced",
+    });
+    shadowSkinnedInstancedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = depthVertex,
+        .fragmentShader = depthFragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = depthAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Front},
+        .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = {},
+        .depthStencilFormat = kShadowFormat,
+        .debugName = "shadow_skinned_instanced",
+    });
+    depthPrepassSkinnedInstancedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = depthVertex,
+        .fragmentShader = depthFragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = depthAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = {},
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "depth_prepass_skinned_instanced",
+    });
+    skinnedInstanceBuffer_ = device.createBuffer({
+        .usage = rhi::BufferUsage::Vertex,
+        .sizeBytes = kMaxSkinnedInstances * static_cast<u32>(sizeof(GpuSkinnedInstance)),
+        .debugName = "skinned-instances",
+    });
+    paletteBuffer_ = device.createBuffer({
+        .usage = rhi::BufferUsage::GraphicsStorageRead,
+        .sizeBytes = kMaxPaletteJoints * static_cast<u32>(sizeof(Mat4)),
+        .debugName = "skin-palettes",
+    });
+    return pbrSkinnedInstancedPipeline_.valid() && shadowSkinnedInstancedPipeline_.valid() &&
+           depthPrepassSkinnedInstancedPipeline_.valid() && skinnedInstanceBuffer_.valid() && paletteBuffer_.valid();
 }
 
 bool DefaultRenderer::ensureParticles(rhi::IDevice& device)
@@ -4690,6 +4889,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     if (!valid_ || !target.color.valid() || target.width == 0 || target.height == 0)
         return;
     useView(target.view);
+    // Each pass's time on the CPU, recording it (H0): what was submitted is
+    // the GPU's, which `wait.*` measures.
+    core::profile::Sections passes;
+    ENG_PROFILE_NEXT(passes, "render.prepare");
 
     // **The one place the render scale is applied.** Everything below draws the
     // WORLD at `renderWidth_` by `renderHeight_` and only the final resolve
@@ -4781,9 +4984,24 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     const bool skyGoverned = skyLook.present && world.camera.valid && settings_.debugView != DebugView::Holes &&
                              !blackSky(settings_.debugView) && ensureSkyLook(device);
     prepareSurfaces(device, world);
+    // The skinned runs' pipelines, the first frame there are skinned draws
+    // enough to make one: a world with a character or two builds nothing, and
+    // its capture goldens do not move.
+    if (!skinnedInstancingTried_ && settings_.instancing &&
+        std::count_if(world.draws.begin(), world.draws.end(), [](const DrawItem& draw) {
+            return draw.boneCount > 0 && !draw.transparent;
+        }) >= static_cast<std::ptrdiff_t>(kMinInstanceBatch))
+        (void)ensureSkinnedInstancing(device);
     buildInstanceBatches(world, meshes);
     if (!instanceStaging_.empty()) {
         cmd.upload(instanceBuffer_, asBytes(instanceStaging_.data(), instanceStaging_.size() * sizeof(GpuInstance)), 0);
+    }
+    // And every palette, once, for every skinned run of every pass to read.
+    if (!skinnedInstanceStaging_.empty()) {
+        cmd.upload(skinnedInstanceBuffer_,
+                   asBytes(skinnedInstanceStaging_.data(), skinnedInstanceStaging_.size() * sizeof(GpuSkinnedInstance)),
+                   0);
+        cmd.upload(paletteBuffer_, asBytes(world.bones.data(), world.bones.size() * sizeof(Mat4)), 0);
     }
 
     // This frame's particles, up before any pass for the reason the instances
@@ -5015,6 +5233,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     buildClusters(world.camera, budgetedLights, clusters_);
 
     // --- Local shadows: which lights get a tile ------------------------------
+    ENG_PROFILE_NEXT(passes, "render.lights");
     //
     // **This is `PointLight.Shadows` and `SpotLight.Shadows` finally meaning
     // something** (`shadow.h`, and decision 5 of the finish-line ledger). Done
@@ -5099,6 +5318,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cullFoliage(device, cmd, world, meshes);
 
     // --- Shadow pass --------------------------------------------------------
+    ENG_PROFILE_NEXT(passes, "render.shadows");
     //
     // One pass, four viewports into one 2x2 atlas -- `shadow.h` says why an
     // atlas rather than an array. Runs even with no draws, so the map is cleared
@@ -5171,6 +5391,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.popDebugGroup();
 
     // --- Local shadow pass ---------------------------------------------------
+    ENG_PROFILE_NEXT(passes, "render.local_shadows");
     //
     // The same shape as the pass above and a different fit: one target, one
     // viewport per tile. **It runs even with nothing to draw**, for the reason
@@ -5213,6 +5434,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.popDebugGroup();
 
     // --- Depth prepass -------------------------------------------------------
+    ENG_PROFILE_NEXT(passes, "render.prepass");
     //
     // **This is the roadmap's design constraint, answered.** The scene's depth
     // has to be samplable by a later pass, and a prepass is what makes that
@@ -5240,6 +5462,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.popDebugGroup();
 
     // --- Ambient occlusion ---------------------------------------------------
+    ENG_PROFILE_NEXT(passes, "render.ao");
     //
     // Half resolution, sixteen taps, then a depth-aware blur in two separable
     // passes. The result multiplies the environment and the ambient and nothing
@@ -5296,6 +5519,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.popDebugGroup();
 
     // --- Contact shadows -----------------------------------------------------
+    ENG_PROFILE_NEXT(passes, "render.contact_shadows");
     //
     // The sun's last few centimetres, from the prepass depth (contact_shadow.hlsl).
     // After the occlusion pass because it reads the same depth, and before the
@@ -5337,6 +5561,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.popDebugGroup();
 
     // --- Sky and forward PBR ------------------------------------------------
+    ENG_PROFILE_NEXT(passes, "render.forward");
 
     // Cleared to nothing -- zero coverage -- for a view with no sky behind it;
     // the sky covers every other view's background whatever this is.
@@ -5926,6 +6151,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.popDebugGroup();
 
     // --- The look's scene passes (ADR 0096) ------------------------------------
+    ENG_PROFILE_NEXT(passes, "render.look");
     //
     // What every pass below reads as "the frame". `hdr_` on every frame without
     // one of these effects, which is what keeps that frame's command stream the
@@ -5959,6 +6185,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         blurImage(device, cmd, sceneColor, look.blurSize);
 
     // --- Automatic exposure -------------------------------------------------
+    ENG_PROFILE_NEXT(passes, "render.exposure");
     //
     // Three passes down to one texel, and the last of them carries state: it
     // reads the exposure the LAST frame wrote and writes this frame's into the
@@ -6020,6 +6247,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.popDebugGroup();
 
     // --- Bloom ---------------------------------------------------------------
+    ENG_PROFILE_NEXT(passes, "render.bloom");
     //
     // Down with a thirteen-tap box, up with a tent, each level its own texture
     // because a `ColorAttachment` names a texture and not a mip level. The
@@ -6088,6 +6316,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.popDebugGroup();
 
     // --- Tonemap ------------------------------------------------------------
+    ENG_PROFILE_NEXT(passes, "render.tonemap");
     //
     // A separate pass rather than writing the swapchain directly from the
     // forward one: the HDR target has to be complete before it can be sampled,
@@ -6163,6 +6392,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.popDebugGroup();
 
     // --- Anti-aliasing -------------------------------------------------------
+    ENG_PROFILE_NEXT(passes, "render.aa");
     //
     // FXAA, on the tonemapped image, resolving to the swapchain. Spatial rather
     // than temporal on purpose (M7.5 brief, Decision 10), and nothing here
@@ -6191,6 +6421,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     drawHighlights(cmd, device, world, meshes, target);
 
     // --- The editor's selection silhouette -----------------------------------
+    ENG_PROFILE_NEXT(passes, "render.selection");
     //
     // **Last, over the finished image, and only when something is selected.**
     // A game's draw list never carries `outlined`, so a packaged build walks

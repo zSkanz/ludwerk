@@ -255,6 +255,9 @@ end
 declare extern type EnumElasticBehavior extends EnumItem with
 end
 
+declare extern type EnumAnimationCullingMode extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -3236,6 +3239,12 @@ declare extern type Sound extends Instance with
 end
 
 declare extern type AnimationPlayer extends Instance with
+    --- How often its meshes are posed (H3). `Automatic`: as often as they are seen -- every tick up
+    --- close, every second, fourth or eighth tick as they get smaller on the screen, and not at all
+    --- where neither the camera nor a shadow reaches them; the clips keep time either way, and a joint
+    --- a script or a `Bone` asks about is posed when asked. A world with nobody looking -- a server, a
+    --- replay -- poses every tick. `AlwaysAnimate`: every tick, seen or not.
+    CullingMode: EnumAnimationCullingMode
     --- A track for one clip. Everything after a `#` is the clip's NAME inside the file, and a string
     --- with no `#` is a clip name in this player's own mesh -- so the common case is
     --- `player:LoadAnimation("Walk")`. **A path before the `#` names the file the CLIP is in, and it
@@ -3440,6 +3449,55 @@ declare extern type NavigationLink extends Instance with
     Bidirectional: boolean
     --- What crossing it is, as the path reports it.
     Label: string
+end
+
+declare extern type Swarm extends Instance with
+    --- Where every agent walks.
+    Target: vector
+    --- Whether it steps. Off, its agents stand where they are.
+    Enabled: boolean
+    --- The side of the grid's cells, in metres, through which an agent finds its neighbours. About the
+    --- widest agent's diameter.
+    CellSize: number
+    --- The most neighbours an agent looks at a tick. In a tower of them the nearest few are what
+    --- matter, and the cost of a crowd packed tight is capped.
+    MaxNeighbours: number
+    --- How fast an agent falls, in metres per second per second.
+    Gravity: number
+    --- How fast an agent climbs the one in its way, in metres per second.
+    ClimbSpeed: number
+    --- How far past its own radius from `Target` an agent stops walking at it.
+    StopDistance: number
+    --- Past this far from `Target`, in metres, an agent thinks every second tick.
+    NearDistance: number
+    --- Past this far, every fourth.
+    FarDistance: number
+    --- Adds an agent standing where `body` is, and returns its number. `Radius` (0.5), `Height` (1) and
+    --- `Speed` (4, metres a second) say what it is; `Floats` keeps it `FloatHeight` (1) over the ground
+    --- and out of the crowd's pushing; `Climbs` (true) lets it climb the one in its way. The number is
+    --- the agent's while it lives, and is given to the next agent after it is removed.
+    function AddAgent(self, body: BasePart, settings: { Radius: number?, Height: number?, Speed: number?, Floats: boolean?, FloatHeight: number?, Climbs: boolean? }?): number
+    --- Stops moving an agent and forgets it. Its body stays where it was.
+    function RemoveAgent(self, agent: number): ()
+    --- How fast it walks, in metres a second. Zero holds it where it stands, still pushed.
+    function SetAgentSpeed(self, agent: number, speed: number): ()
+    --- Puts it somewhere, falling from there.
+    function SetAgentPosition(self, agent: number, position: vector): ()
+    --- A knock-back, in metres a second along the ground, that dies away in a moment.
+    function Push(self, agent: number, velocity: vector): ()
+    --- Where it stands, or nil when there is no such agent.
+    function GetAgentPosition(self, agent: number): vector?
+    --- Every live agent's number, in slot order.
+    function GetAgents(self): { number }
+    --- Where each live agent stands, in the order `GetAgents` gives them.
+    function GetPositions(self): { vector }
+    --- Every live agent whose feet are within `radius` of `centre`, in slot order: what a weapon aims
+    --- at, and who has reached `Target`.
+    function QueryRadius(self, centre: vector, radius: number): { number }
+    --- Something agents walk round -- a tree, a rock -- as a circle on the ground.
+    function AddObstacle(self, position: vector, radius: number): ()
+    --- Forgets every obstacle.
+    function ClearObstacles(self): ()
 end
 
 declare extern type NavigationAgent extends Instance with
@@ -5445,6 +5503,11 @@ declare Enum: {
         Never: EnumElasticBehavior,
         GetEnumItems: (self: any) -> { EnumElasticBehavior },
     },
+    AnimationCullingMode: {
+        Automatic: EnumAnimationCullingMode,
+        AlwaysAnimate: EnumAnimationCullingMode,
+        GetEnumItems: (self: any) -> { EnumAnimationCullingMode },
+    },
 }
 
 declare Vector3: {
@@ -5786,6 +5849,7 @@ declare Instance: {
         & (("SpriteAnimator") -> SpriteAnimator)
         & (("NavigationArea") -> NavigationArea)
         & (("NavigationLink") -> NavigationLink)
+        & (("Swarm") -> Swarm)
         & (("NavigationAgent") -> NavigationAgent)
         & (("FoliageLayer") -> FoliageLayer)
         & (("FoliageMesh") -> FoliageMesh)

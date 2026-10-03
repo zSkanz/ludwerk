@@ -3748,6 +3748,192 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     navigationLinkDesc.detachComponents = native::detachNavigationLinkComponents;
     classes.registerClass(navigationLinkDesc);
 
+    // --- Swarm ---
+    static std::array<PropertyDesc, 9> swarmProperties;
+    swarmProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Target"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where every agent walks.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getSwarmTarget,
+            .set = native::setSwarmTarget,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether it steps. Off, its agents stand where they are.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getSwarmEnabled,
+            .set = native::setSwarmEnabled,
+        },
+        PropertyDesc{
+            .name = atoms.intern("CellSize"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The side of the grid's cells, in metres, through which an agent finds its neighbours. About the widest agent's diameter.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getSwarmCellSize,
+            .set = native::setSwarmCellSize,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxNeighbours"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most neighbours an agent looks at a tick. In a tower of them the nearest few are what matter, and the cost of a crowd packed tight is capped.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getSwarmMaxNeighbours,
+            .set = native::setSwarmMaxNeighbours,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Gravity"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How fast an agent falls, in metres per second per second.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getSwarmGravity,
+            .set = native::setSwarmGravity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ClimbSpeed"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How fast an agent climbs the one in its way, in metres per second.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getSwarmClimbSpeed,
+            .set = native::setSwarmClimbSpeed,
+        },
+        PropertyDesc{
+            .name = atoms.intern("StopDistance"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far past its own radius from `Target` an agent stops walking at it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getSwarmStopDistance,
+            .set = native::setSwarmStopDistance,
+        },
+        PropertyDesc{
+            .name = atoms.intern("NearDistance"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Past this far from `Target`, in metres, an agent thinks every second tick.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getSwarmNearDistance,
+            .set = native::setSwarmNearDistance,
+        },
+        PropertyDesc{
+            .name = atoms.intern("FarDistance"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Past this far, every fourth.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getSwarmFarDistance,
+            .set = native::setSwarmFarDistance,
+        },
+    }};
+    static std::array<MethodDesc, 11> swarmMethods;
+    swarmMethods = {{
+        MethodDesc{
+            .name = atoms.intern("AddAgent"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Adds an agent standing where `body` is, and returns its number. `Radius` (0.5), `Height` (1) and `Speed` (4, metres a second) say what it is; `Floats` keeps it `FloatHeight` (1) over the ground and out of the crowd's pushing; `Climbs` (true) lets it climb the one in its way. The number is the agent's while it lives, and is given to the next agent after it is removed.",
+        },
+        MethodDesc{
+            .name = atoms.intern("RemoveAgent"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Stops moving an agent and forgets it. Its body stays where it was.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SetAgentSpeed"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "How fast it walks, in metres a second. Zero holds it where it stands, still pushed.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SetAgentPosition"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Puts it somewhere, falling from there.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Push"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "A knock-back, in metres a second along the ground, that dies away in a moment.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetAgentPosition"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Where it stands, or nil when there is no such agent.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetAgents"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Every live agent's number, in slot order.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetPositions"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Where each live agent stands, in the order `GetAgents` gives them.",
+        },
+        MethodDesc{
+            .name = atoms.intern("QueryRadius"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Every live agent whose feet are within `radius` of `centre`, in slot order: what a weapon aims at, and who has reached `Target`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("AddObstacle"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Something agents walk round -- a tree, a rock -- as a circle on the ground.",
+        },
+        MethodDesc{
+            .name = atoms.intern("ClearObstacles"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Forgets every obstacle.",
+        },
+    }};
+    ClassDescriptor swarmDesc;
+    swarmDesc.name = atoms.intern("Swarm");
+    swarmDesc.super = instanceClass;
+    swarmDesc.flags = ClassFlags::None;
+    swarmDesc.defaultName = atoms.intern("Swarm");
+    swarmDesc.doc = "A crowd on open ground that the engine steers (ADR 0156): hundreds of agents walking at `Target`, pushing one another apart, climbing the one in front when the way is blocked and standing on whoever is under them, on the terrain's height and round the obstacles it was given -- a horde.\012\012**An agent is not an instance.** It is a row the swarm keeps, with a radius, a height and a speed, and it moves one body: the `BasePart` given to `AddAgent`, placed every tick facing `Target`. Scripts add, remove, push and ask in bulk; nothing runs per agent in Luau.\012\012It steps on the simulation tick after `PreSimulation`, every agent in slot order, so a run is the same run every time. An agent far from `Target` thinks less often -- every second tick past `NearDistance`, every fourth past `FarDistance` -- with the time it skipped.\012\012For agents that follow routes over a navigation mesh, see `NavigationAgent`.";
+    static constexpr std::array<std::string_view, 5> swarmParents{{"Workspace", "Model", "Folder", "ReplicatedStorage", "ServerStorage"}};
+    swarmDesc.parents = swarmParents;
+    swarmDesc.properties = swarmProperties;
+    swarmDesc.methods = swarmMethods;
+    swarmDesc.attachComponents = native::attachSwarmComponents;
+    swarmDesc.detachComponents = native::detachSwarmComponents;
+    classes.registerClass(swarmDesc);
+
     // --- NavigationAgent ---
     static std::array<PropertyDesc, 4> navigationAgentProperties;
     navigationAgentProperties = {{
@@ -9298,6 +9484,26 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     elasticBehaviorDesc.docKey = {};
     elasticBehaviorDesc.items = elasticBehaviorItems;
     enums.registerEnum(elasticBehaviorDesc);
+
+    // --- AnimationCullingMode ---
+    static std::array<EnumItemDesc, 2> animationCullingModeItems;
+    animationCullingModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Automatic"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("AlwaysAnimate"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor animationCullingModeDesc;
+    animationCullingModeDesc.name = atoms.intern("AnimationCullingMode");
+    animationCullingModeDesc.docKey = {};
+    animationCullingModeDesc.items = animationCullingModeItems;
+    enums.registerEnum(animationCullingModeDesc);
 }
 
 } // namespace engine::scene::generated

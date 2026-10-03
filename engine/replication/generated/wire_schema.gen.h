@@ -589,6 +589,7 @@ inline constexpr std::string_view ExcludedClasses[] = {
     "NavigationArea",
     "NavigationLink",
     "NavigationAgent",
+    "Swarm",
     "Frame",
     "TextLabel",
     "TextButton",

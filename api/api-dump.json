@@ -147,7 +147,13 @@
       "Name": "AnimationPlayer",
       "Extends": "Instance",
       "Tags": [],
-      "Properties": [],
+      "Properties": [
+        {
+          "Name": "CullingMode",
+          "Type": "Enum.AnimationCullingMode",
+          "Default": "Enum.AnimationCullingMode.Automatic"
+        }
+      ],
       "Methods": [
         {
           "Name": "LoadAnimation",
@@ -5800,6 +5806,179 @@
       "Events": []
     },
     {
+      "Name": "Swarm",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "CellSize",
+          "Type": "number",
+          "Default": "1.5"
+        },
+        {
+          "Name": "ClimbSpeed",
+          "Type": "number",
+          "Default": "6"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "FarDistance",
+          "Type": "number",
+          "Default": "48"
+        },
+        {
+          "Name": "Gravity",
+          "Type": "number",
+          "Default": "30"
+        },
+        {
+          "Name": "MaxNeighbours",
+          "Type": "number",
+          "Default": "14"
+        },
+        {
+          "Name": "NearDistance",
+          "Type": "number",
+          "Default": "24"
+        },
+        {
+          "Name": "StopDistance",
+          "Type": "number",
+          "Default": "0.55"
+        },
+        {
+          "Name": "Target",
+          "Type": "vector"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "AddAgent",
+          "Parameters": [
+            {
+              "Name": "body",
+              "Type": "BasePart"
+            },
+            {
+              "Name": "settings",
+              "Type": "{ Radius: number?, Height: number?, Speed: number?, Floats: boolean?, FloatHeight: number?, Climbs: boolean? }?"
+            }
+          ],
+          "Returns": ["number"]
+        },
+        {
+          "Name": "AddObstacle",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            }
+          ],
+          "Returns": []
+        },
+        {
+          "Name": "ClearObstacles",
+          "Parameters": [],
+          "Returns": []
+        },
+        {
+          "Name": "GetAgentPosition",
+          "Parameters": [
+            {
+              "Name": "agent",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["vector?"]
+        },
+        {
+          "Name": "GetAgents",
+          "Parameters": [],
+          "Returns": ["{ number }"]
+        },
+        {
+          "Name": "GetPositions",
+          "Parameters": [],
+          "Returns": ["{ vector }"]
+        },
+        {
+          "Name": "Push",
+          "Parameters": [
+            {
+              "Name": "agent",
+              "Type": "number"
+            },
+            {
+              "Name": "velocity",
+              "Type": "vector"
+            }
+          ],
+          "Returns": []
+        },
+        {
+          "Name": "QueryRadius",
+          "Parameters": [
+            {
+              "Name": "centre",
+              "Type": "vector"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["{ number }"]
+        },
+        {
+          "Name": "RemoveAgent",
+          "Parameters": [
+            {
+              "Name": "agent",
+              "Type": "number"
+            }
+          ],
+          "Returns": []
+        },
+        {
+          "Name": "SetAgentPosition",
+          "Parameters": [
+            {
+              "Name": "agent",
+              "Type": "number"
+            },
+            {
+              "Name": "position",
+              "Type": "vector"
+            }
+          ],
+          "Returns": []
+        },
+        {
+          "Name": "SetAgentSpeed",
+          "Parameters": [
+            {
+              "Name": "agent",
+              "Type": "number"
+            },
+            {
+              "Name": "speed",
+              "Type": "number"
+            }
+          ],
+          "Returns": []
+        }
+      ],
+      "Events": []
+    },
+    {
       "Name": "TagService",
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
@@ -11108,6 +11287,19 @@
         },
         {
           "Name": "Opaque",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "AnimationCullingMode",
+      "Items": [
+        {
+          "Name": "AlwaysAnimate",
+          "Value": 1
+        },
+        {
+          "Name": "Automatic",
           "Value": 0
         }
       ]

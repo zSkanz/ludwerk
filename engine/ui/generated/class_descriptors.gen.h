@@ -115,6 +115,7 @@ inline constexpr scene::EnumId WindowModeEnumId = 72;
 inline constexpr scene::EnumId SettingSourceEnumId = 73;
 inline constexpr scene::EnumId ScrollingDirectionEnumId = 74;
 inline constexpr scene::EnumId ElasticBehaviorEnumId = 75;
+inline constexpr scene::EnumId AnimationCullingModeEnumId = 76;
 
 } // namespace generated
 

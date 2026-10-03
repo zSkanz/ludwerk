@@ -1,5 +1,7 @@
 #include "engine/app/world_host.h"
 
+#include "engine/core/profile.h"
+
 #if ENG_ENABLE_REPLICATION
 #include "engine/replication/extract.h"
 #include "engine/replication/script_templates.h"
@@ -27,6 +29,7 @@
 #include "engine/render/scene_types.h"
 #include "engine/scene/players.h"
 #include "engine/scene/sprite_animation.h"
+#include "engine/scene/swarm.h"
 #include "engine/scene/voxel_fluid.h"
 #include "engine/script/bytecode.h"
 #include "engine/script/instance_binding.h"
@@ -1081,13 +1084,19 @@ void WorldHost::tick()
     // Before anything else in the tick: a track loaded by a script this tick has
     // to find the skeleton its mesh names, and a headless replay has no render
     // loop to have loaded it.
-    syncSkeletons();
+    {
+        ENG_PROFILE_SCOPE("animation.skeletons");
+        syncSkeletons();
+    }
 
     state.tick += 1;
     state.simTime = static_cast<f64>(state.tick) * state.fixedTimestep;
     // What a copy placed since the last tick builds from its parameters (ADR
     // 0155 §8), before anything this tick sees it.
-    m_runtime->constructStamps(false);
+    {
+        ENG_PROFILE_SCOPE("stamps.construct");
+        m_runtime->constructStamps(false);
+    }
 
     // Whoever left during the last tick has been said goodbye to (D459).
     scene::finishLeavingPlayers(*m_world);
@@ -1111,37 +1120,52 @@ void WorldHost::tick()
     // the press in the tick it happened rather than in the next one.
     // A swipe's length in pixels, from the length the game asked for and how
     // dense this display is: 160 dots to the inch at a scale of one.
-    m_input.setSwipeThreshold(state.swipeThreshold * std::max(state.displayScale, 0.25f) * (160.0f / 25.4f));
-    m_input.dispatchSimTick(*m_world, state.tick);
+    {
+        ENG_PROFILE_SCOPE("input.dispatch");
+        m_input.setSwipeThreshold(state.swipeThreshold * std::max(state.displayScale, 0.25f) * (160.0f / 25.4f));
+        m_input.dispatchSimTick(*m_world, state.tick);
+    }
 
     // The raw events the same dispatch produced (ADR 0041), enqueued right
     // beside the action signals it raised. They are what a caller reaching for
     // the familiar surface gets, and they come out of THIS dispatch rather than
     // from the OS -- so they sink like an action, replay like an action, and a
     // handler that writes to the world is deterministic.
-    const std::span<const input::RawInputEvent> rawEvents = m_input.drainRawEvents();
-    // Clicks and prompts (ADR 0126) first: the same events, resolved against
-    // the world as this tick begins.
-    m_runtime->stepDetectors(state.fixedTimestep, rawEvents);
-    m_runtime->fireInputEvents(rawEvents);
-    m_runtime->fireGestureEvents(m_input.drainGestures());
+    {
+        ENG_PROFILE_SCOPE("input.events");
+        const std::span<const input::RawInputEvent> rawEvents = m_input.drainRawEvents();
+        // Clicks and prompts (ADR 0126) first: the same events, resolved against
+        // the world as this tick begins.
+        m_runtime->stepDetectors(state.fixedTimestep, rawEvents);
+        m_runtime->fireInputEvents(rawEvents);
+        m_runtime->fireGestureEvents(m_input.drainGestures());
+    }
 
     // `RemoteEvent` messages that arrived since the last tick (ADR 0077):
     // beside the input events, for the same reason -- arrival was a network
     // event at a wall-clock moment, and this is where it becomes a tick.
-    script::fireRemoteMessages(m_runtime->state());
-    // And what crossed from a sub-world, or into one (ADR 0107 §3), for the
-    // same reason: it arrived between ticks, and this is where it becomes one.
-    script::fireSubWorldMessages(m_runtime->state());
+    {
+        ENG_PROFILE_SCOPE("net.messages");
+        script::fireRemoteMessages(m_runtime->state());
+        // And what crossed from a sub-world, or into one (ADR 0107 §3), for the
+        // same reason: it arrived between ticks, and this is where it becomes one.
+        script::fireSubWorldMessages(m_runtime->state());
+    }
 
     // This tick's input, as the local player's intent (N1): after the dispatch
     // that resolved it, before any phase a script reads it in.
-    scene::captureLocalIntents(*m_world);
+    {
+        ENG_PROFILE_SCOPE("input.intents");
+        scene::captureLocalIntents(*m_world);
+    }
 
     // The sound timeline, beside the input dispatch and for the same reason:
     // both are simulation state advanced by the tick, and both raise their
     // events into the drain the phases below go through.
-    m_audio.tick(*m_world, state.fixedTimestep);
+    {
+        ENG_PROFILE_SCOPE("audio");
+        m_audio.tick(*m_world, state.fixedTimestep);
+    }
 
     // Each resumption point runs its engine phase, then drains (api-design.md
     // §3.1). `task` timers resume in their own phase between `PostSimulation`
@@ -1152,14 +1176,20 @@ void WorldHost::tick()
     // pushes a part in `PreSimulation` and reads where it ended up in
     // `PostSimulation`, and the contacts the step produced are drained by the
     // `PostSimulation` drain rather than a frame later.
-    m_runtime->firePhase(core::Phase::PreAnimation, state.fixedTimestep);
-    m_runtime->drain(core::Phase::PreAnimation);
+    {
+        ENG_PROFILE_SCOPE("scripts.PreAnimation");
+        m_runtime->firePhase(core::Phase::PreAnimation, state.fixedTimestep);
+        m_runtime->drain(core::Phase::PreAnimation);
+    }
 
     // Tweens step here, in `PreAnimation`'s half of the tick, because that is
     // what they are: a property animated on the SimClock. After the drain, so a
     // tween started by a handler in this phase begins on the next tick rather
     // than half-advancing on the tick it was created in.
-    m_runtime->stepTweens(state.fixedTimestep);
+    {
+        ENG_PROFILE_SCOPE("tweens");
+        m_runtime->stepTweens(state.fixedTimestep);
+    }
 
     // Skeletal animation, in the same half of the tick and after the drain for
     // the same reason a tween is: a track played by a `PreAnimation` handler
@@ -1167,19 +1197,28 @@ void WorldHost::tick()
     // created it. `Ended` is enqueued here and drains with `PreSimulation`,
     // which is the deferred-signal rule (ADR 0015) and not a delay -- it is the
     // next resumption point either way.
-    m_animation->sample(state.fixedTimestep);
-    m_runtime->fireAnimationEnded(m_animation->drainEnded());
-    m_animation->retire(*m_world);
+    {
+        ENG_PROFILE_SCOPE("animation.sample");
+        m_animation->sample(state.fixedTimestep);
+        m_runtime->fireAnimationEnded(m_animation->drainEnded());
+        m_animation->retire(*m_world);
+    }
     // Sprite sheets too (ADR 0102): the same clock, the same place, and the
     // same reason to be after the drain.
-    scene::stepSpriteAnimators(*m_world, state.fixedTimestep);
+    {
+        ENG_PROFILE_SCOPE("sprites");
+        scene::stepSpriteAnimators(*m_world, state.fixedTimestep);
+    }
 
     // What stands in the world is gathered at most once per tick, however
     // many paths the tick's scripts ask for.
     if (m_navigation != nullptr)
         m_navigation->setTick(state.tick);
-    m_runtime->firePhase(core::Phase::PreSimulation, state.fixedTimestep);
-    m_runtime->drain(core::Phase::PreSimulation);
+    {
+        ENG_PROFILE_SCOPE("scripts.PreSimulation");
+        m_runtime->firePhase(core::Phase::PreSimulation, state.fixedTimestep);
+        m_runtime->drain(core::Phase::PreSimulation);
+    }
 
     // **The crowd walks** (ADR 0098): after the scripts have given this tick's
     // orders and before physics sees where everything stands. Every
@@ -1187,6 +1226,7 @@ void WorldHost::tick()
     // own verb so the move is a write like a script's, and `Reached` fired on
     // the tick it arrives -- deferred like every other signal (ADR 0015).
     if (m_navigation != nullptr) {
+        ENG_PROFILE_SCOPE("navigation.crowd");
         std::vector<nav::CrowdAgentState> crowd;
         m_world->navigationAgents().forEach([&](core::InstanceId id, const scene::NavigationAgentComponent& agent) {
             const core::InstanceId body = m_world->parentOf(id);
@@ -1223,40 +1263,72 @@ void WorldHost::tick()
         }
     }
 
-    if (m_physics.has_value())
+    // **The swarms walk** (ADR 0156): beside the crowd above, for the same
+    // reason -- after this tick's orders, before physics sees the world.
+    {
+        ENG_PROFILE_SCOPE("swarms");
+        scene::stepSwarms(*m_world, m_physics.has_value() ? &*m_physics : nullptr, state.fixedTimestep);
+    }
+
+    if (m_physics.has_value()) {
+        ENG_PROFILE_SCOPE("physics");
         m_physics->step(state.fixedTimestep);
-    if (m_physics2d.has_value())
+    }
+    if (m_physics2d.has_value()) {
+        ENG_PROFILE_SCOPE("physics2d");
         m_physics2d->step(state.fixedTimestep);
+    }
     // Fluids are simulation too, and move in the same half of the tick: a
     // script that breaks a dam in `PreSimulation` sees the first block of
     // water move in `PostSimulation`.
-    m_world->voxels().forEach(
-        [&state](core::InstanceId, scene::VoxelComponent& voxels) { (void)scene::stepFluids(voxels, state.tick); });
+    {
+        ENG_PROFILE_SCOPE("fluids");
+        m_world->voxels().forEach(
+            [&state](core::InstanceId, scene::VoxelComponent& voxels) { (void)scene::stepFluids(voxels, state.tick); });
+    }
 
-    m_runtime->firePhase(core::Phase::PostSimulation, state.fixedTimestep);
-    m_runtime->drain(core::Phase::PostSimulation);
+    {
+        ENG_PROFILE_SCOPE("scripts.PostSimulation");
+        m_runtime->firePhase(core::Phase::PostSimulation, state.fixedTimestep);
+        m_runtime->drain(core::Phase::PostSimulation);
+    }
 
-    m_runtime->resumeTimers();
+    {
+        ENG_PROFILE_SCOPE("scripts.timers");
+        m_runtime->resumeTimers();
+    }
     // Preloads (ADR 0131 §3): what scripts asked for handed to the loader, and
     // every call whose content has arrived resumed -- beside the timers, so
     // what it defers drains at `Heartbeat`.
-    if (std::vector<std::string> wanted = script::takePreloadContent(m_runtime->state()); !wanted.empty()) {
-        if (m_warmContent)
-            m_warmContent(*m_world, wanted);
+    {
+        ENG_PROFILE_SCOPE("scripts.preloads");
+        if (std::vector<std::string> wanted = script::takePreloadContent(m_runtime->state()); !wanted.empty()) {
+            if (m_warmContent)
+                m_warmContent(*m_world, wanted);
+        }
+        script::resumePreloads(m_runtime->state(), [this](std::string_view content) { return contentState(content); });
     }
-    script::resumePreloads(m_runtime->state(), [this](std::string_view content) { return contentState(content); });
-    m_runtime->firePhase(core::Phase::Heartbeat, state.fixedTimestep);
-    m_runtime->drain(core::Phase::Heartbeat);
+    {
+        ENG_PROFILE_SCOPE("scripts.Heartbeat");
+        m_runtime->firePhase(core::Phase::Heartbeat, state.fixedTimestep);
+        m_runtime->drain(core::Phase::Heartbeat);
+    }
 
     // **The safe point for a scene change** (ADR 0106): every phase of this
     // tick has drained, `SceneLoading` handlers included, and nothing of the
     // next has started.
-    stepSceneLoad();
-    (void)applyPendingScene();
+    {
+        ENG_PROFILE_SCOPE("scene.load");
+        stepSceneLoad();
+        (void)applyPendingScene();
+    }
 
     // **Then the sub-worlds' tick** (ADR 0107 §3): one of theirs for one of
     // this world's, after it, so what this tick sent reaches them in theirs.
-    stepSubWorlds();
+    {
+        ENG_PROFILE_SCOPE("subworlds");
+        stepSubWorlds();
+    }
 }
 
 void WorldHost::cancelSceneChanges()
