@@ -128,6 +128,11 @@ void setNetId(FieldValue& out, NetId value) noexcept
     store(out, value.value);
 }
 
+void setInstance(FieldValue& out, core::InstanceId value) noexcept
+{
+    store(out, value);
+}
+
 bool asBool(const FieldValue& value) noexcept
 {
     return load<u8>(value) != 0;
@@ -166,6 +171,16 @@ core::CFrameD asCFrame(const FieldValue& value) noexcept
 NetId asNetId(const FieldValue& value) noexcept
 {
     return NetId{load<core::u32>(value)};
+}
+
+core::InstanceId asInstance(const FieldValue& value) noexcept
+{
+    return load<core::InstanceId>(value);
+}
+
+core::DVec3 asPosition(const FieldValue& value) noexcept
+{
+    return load<core::DVec3>(value);
 }
 
 usize wireBytes(generated::Encoding encoding) noexcept

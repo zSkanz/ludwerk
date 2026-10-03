@@ -473,7 +473,18 @@ who leaves gives back everything they owned.
 
 **What the owner sends is trusted.** Its machine could put the part anywhere,
 so hand over what a player may move -- their ball, their vehicle -- and check
-anything that matters in the authority's own scripts.
+anything that matters in the authority's own scripts. The authority does hold
+it to a reach: a part moves at most two metres a tick on the authority, so an
+owner that teleports one is followed there over a few ticks, not at once. Move
+a part a long way from the authority, or hand it back first.
+
+**A vehicle is its parts and what holds them.** Attachments, every joint, the
+welds and the movers travel with the parts, so the machine that owns a car's
+parts solves its hinges and drives its motors as the authority would; any other
+machine is sent where the parts ended up and solves nothing. Hand over every
+part of the assembly -- a joint is solved where one of its ends is simulated.
+A property the owner changes on its own joint, the motor's speed for instance,
+stays the owner's until the authority changes it.
 
 ## The protocol
 

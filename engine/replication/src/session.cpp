@@ -86,6 +86,27 @@ constexpr u8 FullRecord = 1;
     return (static_cast<u64>(id.generation) << 32) | id.index;
 }
 
+// The component fields of each class that name another instance (NA34): a
+// joint's ends, a weld's parts. Read as this machine's instance and sent as
+// the peer's network id.
+[[nodiscard]] const std::vector<usize>& referencesOf(u8 schema)
+{
+    static const std::vector<std::vector<usize>> table = [] {
+        std::vector<std::vector<usize>> out(std::size(generated::Classes));
+        for (usize index = 0; index < out.size(); ++index) {
+            const generated::ClassDesc& desc = generated::Classes[index];
+            const usize count = fieldCount(desc);
+            for (usize at = std::size(generated::CommonFields); at < count; ++at) {
+                const generated::FieldDesc* field = fieldAt(desc, at);
+                if (field != nullptr && field->encoding == generated::Encoding::InstanceRef)
+                    out[index].push_back(at);
+            }
+        }
+        return out;
+    }();
+    return table[schema];
+}
+
 // --- Little-endian bytes ----------------------------------------------------
 
 class Writer
@@ -1596,15 +1617,24 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     // **Within reach of where it is** (NA24): ownership was a
                     // licence to put the part anywhere in the world in one
                     // message, the authority taking it back a tick after.
+                    // **Followed at the reach, never refused** (D482): a refusal is
+                    // for good -- the owner never hears it, moves on from
+                    // where it is, and every place after is further still --
+                    // and one owner whose part began in the wrong place had
+                    // its kart held at the grid for the whole race.
                     const u64 elapsed = peer->ownedTick != 0 ? std::min<u64>(tick - peer->ownedTick, 30) : 1;
                     const core::DVec3 moved = frame.position - part->cframe.position;
                     const core::f64 reach =
                         MaxOwnedMetresPerTick * static_cast<core::f64>(std::max<u64>(elapsed, 1)) + 1.0;
-                    if (moved.x * moved.x + moved.y * moved.y + moved.z * moved.z > reach * reach) {
-                        m_stats.messagesDropped += 1;
-                        continue;
+                    const core::f64 distance = std::sqrt(moved.x * moved.x + moved.y * moved.y + moved.z * moved.z);
+                    core::CFrameD reached = frame;
+                    if (distance > reach) {
+                        const core::f64 scale = reach / distance;
+                        reached.position =
+                            part->cframe.position + core::DVec3{moved.x * scale, moved.y * scale, moved.z * scale};
+                        m_stats.ownedClamped += 1;
                     }
-                    records.push_back(OwnedRecord{part, body, frame, speed, spin});
+                    records.push_back(OwnedRecord{part, body, reached, speed, spin});
                 }
                 if (!reader.ok() || !reader.done()) {
                     m_stats.messagesDropped += 1;
@@ -2102,6 +2132,18 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
             if (desc.contents)
                 walk(child, netId, static_cast<i32>(m_order.size() - 1), true);
             break;
+        }
+    }
+
+    // **What a joint names, as a network id** (NA34) -- after the walk, since a
+    // joint may name what is captured after it. An instance that was not
+    // captured -- out of the world, or of a class off the wire -- is none at
+    // all to a replica.
+    for (EntityState& entity : state->entities) {
+        for (const usize at : referencesOf(entity.schema)) {
+            const InstanceId target = asInstance(entity.fields[at]);
+            const auto found = target.valid() ? seen.find(packed(target)) : seen.end();
+            setNetId(entity.fields[at], NetId{found != seen.end() ? found->second : 0u});
         }
     }
 
@@ -3653,6 +3695,33 @@ void ReplicaSession::onOwnership(scene::World& world, std::span<const u8> bytes)
                 part->cframe = asCFrame(held->fields[at]);
         }
     }
+    // **Taken from where the authority has it now** (D482), from the newest state
+    // this replica holds -- not from where it was last drawn, which is the
+    // interpolation delay behind and, for a part handed over in the snapshot
+    // that made it, nowhere at all: it was simulated from the origin, and the
+    // authority refused every place it was sent as out of reach (NA24).
+    for (const u32 netId : owned) {
+        if (m_ownedParts.contains(netId))
+            continue;
+        const auto local = m_locals.find(netId);
+        const EntityState* held = m_states.empty() ? nullptr : findEntity(*m_states.back(), netId);
+        if (local == m_locals.end() || !world.alive(local->second) || held == nullptr)
+            continue;
+        scene::PartComponent* part = world.parts().find(local->second);
+        scene::RigidBodyComponent* body = world.rigidBodies().find(local->second);
+        const generated::ClassDesc& desc = generated::Classes[held->schema];
+        for (usize at = 0; at < held->fields.size(); ++at) {
+            const generated::FieldDesc* field = fieldAt(desc, at);
+            if (field == nullptr)
+                continue;
+            if (part != nullptr && field->name == "CFrame" && field->pool == "parts")
+                part->cframe = asCFrame(held->fields[at]);
+            else if (body != nullptr && field->name == "LinearVelocity" && field->pool == "rigidBodies")
+                body->linearVelocity = asVec3(held->fields[at]);
+            else if (body != nullptr && field->name == "AngularVelocity" && field->pool == "rigidBodies")
+                body->angularVelocity = asVec3(held->fields[at]);
+        }
+    }
     for (const u32 netId : owned) {
         m_samples.erase(netId);
         m_samples2d.erase(netId);
@@ -4465,6 +4534,22 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
             const bool placed2d = field != nullptr && field->pool == "parts2d" &&
                                   (field->name == "Position" || field->name == "Rotation") &&
                                   !m_ownedParts.contains(entity.id.value);
+            // **An instance a joint names** (NA34): the authority's network id,
+            // this machine's own copy by the time it is written -- and, until
+            // that copy has arrived, nothing written and the next apply trying
+            // again, as a parent is.
+            if (field != nullptr && field->encoding == generated::Encoding::InstanceRef) {
+                const u32 named = asNetId(value).value;
+                const InstanceId target = named == 0 ? InstanceId{} : localOf(NetId{named});
+                if (named != 0 && !target.valid()) {
+                    next[at] = pendingValue();
+                    continue;
+                }
+                FieldValue translated;
+                setInstance(translated, target);
+                (void)applyField(world, local->second, desc, FieldDelta{wireIdAt(desc, at), translated});
+                continue;
+            }
             // A name-shaped component field arrives as the authority's atom,
             // and is this machine's own atom by the time it is written.
             if (field != nullptr && field->encoding == generated::Encoding::NameAtom) {
@@ -4522,9 +4607,13 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
                     (field->name == "Position" || field->name == "Rotation"))
                     continue;
             }
-            else if (cframe && m_ownedParts.contains(entity.id.value)) {
+            else if (cframe && m_ownedParts.contains(entity.id.value) && written != m_written.end()) {
                 // **Its own part is simulated here** (ADR 0099): the authority's
-                // copy is this machine's, a round trip old.
+                // copy is this machine's, a round trip old. **Once it has been
+                // placed**: handed over before its first state arrived -- a
+                // part a server made and gave away in the same tick, a first
+                // snapshot that came in parts -- it was never put anywhere,
+                // simulated from the origin and reported from there.
                 continue;
             }
             else if (m_predictedParts.contains(entity.id.value) &&

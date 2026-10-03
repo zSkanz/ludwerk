@@ -42,16 +42,18 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- The corrections taken in `seconds` of simulated time, counted -- and the
--- frames in that time that took longer than a tenth of a second, which drop
--- simulated time and may each cost a correction: the one this run hangs on
--- purpose, and any a busy machine makes of its own.
+-- frames in that time, on either machine, that took longer than three ticks,
+-- which drop simulated time and may each cost a correction: the one this run
+-- hangs on purpose, and any a busy machine makes of its own.
 local function corrections(seconds: number): (number, number)
+    local serverLong = Workspace:WaitForChild("LongFrames") :: RemoteFunction
+    local serverBefore = serverLong:InvokeServerAsync() :: number
     local before: number = NetworkService:GetStats().Corrections
     local long = 0
     local last = os.clock()
     local watch = RunService.Heartbeat:Connect(function()
         local now = os.clock()
-        if now - last > 0.1 then
+        if now - last > 0.05 then
             long += 1
         end
         last = now
@@ -59,7 +61,8 @@ local function corrections(seconds: number): (number, number)
     task.wait(seconds)
     watch:Disconnect()
     local after: number = NetworkService:GetStats().Corrections
-    return after - before, long
+    local serverAfter = serverLong:InvokeServerAsync() :: number
+    return after - before, long + (serverAfter - serverBefore)
 end
 
 task.spawn(function()

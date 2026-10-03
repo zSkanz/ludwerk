@@ -722,7 +722,9 @@ if(ENG_BUILD_TESTS)
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-acceptance
             -DPORT=47960
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_netcode_acceptance.cmake)
-    set_tests_properties(netcode_acceptance PROPERTIES TIMEOUT 600 LABELS "netcode")
+    # Alone: two real-time processes held to a tick are measured, and the rest
+    # of the suite beside them on a CI runner's cores is what they would measure.
+    set_tests_properties(netcode_acceptance PROPERTIES TIMEOUT 600 LABELS "netcode" RUN_SERIAL TRUE)
 
     add_test(NAME openworld_soak
         COMMAND ${CMAKE_COMMAND}

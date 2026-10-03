@@ -60,6 +60,11 @@ void setVec3(FieldValue& out, core::Vec3 value) noexcept;
 void setPosition(FieldValue& out, core::DVec3 value) noexcept;
 void setCFrame(FieldValue& out, const core::CFrameD& value) noexcept;
 void setNetId(FieldValue& out, NetId value) noexcept;
+// **An instance reference before it is a network id** (NA34): what a component
+// holds, read whole. Only the session sees one -- it turns it into the peer's
+// network id at capture, and a network id back into one at apply -- so it never
+// reaches the wire.
+void setInstance(FieldValue& out, core::InstanceId value) noexcept;
 
 [[nodiscard]] bool asBool(const FieldValue& value) noexcept;
 [[nodiscard]] core::u32 asU32(const FieldValue& value) noexcept;
@@ -68,6 +73,8 @@ void setNetId(FieldValue& out, NetId value) noexcept;
 [[nodiscard]] core::Vec3 asVec3(const FieldValue& value) noexcept;
 [[nodiscard]] core::CFrameD asCFrame(const FieldValue& value) noexcept;
 [[nodiscard]] NetId asNetId(const FieldValue& value) noexcept;
+[[nodiscard]] core::InstanceId asInstance(const FieldValue& value) noexcept;
+[[nodiscard]] core::DVec3 asPosition(const FieldValue& value) noexcept;
 
 // How many bytes an encoding occupies on the wire.
 //

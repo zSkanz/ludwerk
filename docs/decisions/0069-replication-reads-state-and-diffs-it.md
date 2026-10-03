@@ -178,3 +178,15 @@ direction nobody notices.
 - **The whole ground is encoded once** for every peer that needs it, not once
   a peer. Interest for the ground, and its own channel, wait for a design of
   their own: a chunk message ordered against the spawns it may name.
+
+## Amended, 2026-10-03 (protocol 34, NA34)
+
+- **A field may name another instance.** `InstanceRef` was `Parent`'s alone; a
+  joint's ends and a weld's parts are references too. The authority reads them
+  as its own instances and sends each as the peer's network id -- after the
+  walk, since a joint may name what is captured after it -- and an instance
+  that is not captured is none. A replica writes its own copy, and holds the
+  field back until that copy has arrived, as it does a parent.
+- **An exclusion holds below a replicated ancestor.** A `Bone` is an
+  `Attachment`; the lookup that walks up a class's ancestors for its schema
+  stops at an excluded name, which the generated header now lists.

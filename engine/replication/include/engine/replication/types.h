@@ -218,6 +218,9 @@ struct Stats
     // tick this peer was never sent.
     u64 snapshotsInParts = 0;
     u64 acksRefused = 0;
+    // An owner's place for its part further than it could have moved, taken
+    // only as far as it could (NA24).
+    u64 ownedClamped = 0;
 };
 
 // **Where the own character is drawn, against where it is** (the multiplayer

@@ -161,6 +161,106 @@ using generated::Source;
     return nullptr;
 }
 
+[[nodiscard]] bool excludedByName(std::string_view name)
+{
+    for (const std::string_view excluded : generated::ExcludedClasses) {
+        if (excluded == name)
+            return true;
+    }
+    return false;
+}
+
+// --- The joints' plain numbers and switches (NA34) ----------------------------------
+//
+// A table rather than a branch each: every one is a member read and written as
+// it is, and thirty branches of the same three lines hide the one that is not.
+
+template <class C, class T>
+struct Member
+{
+    std::string_view name;
+    T C::*at;
+};
+
+template <class C, class T, usize N>
+[[nodiscard]] T C::*memberNamed(const Member<C, T> (&table)[N], std::string_view name) noexcept
+{
+    for (const Member<C, T>& entry : table) {
+        if (entry.name == name)
+            return entry.at;
+    }
+    return nullptr;
+}
+
+using Joint = scene::ConstraintComponent;
+using Mover = scene::MoverComponent;
+
+constexpr Member<Joint, float> JointNumbers[] = {
+    {"LimitLow", &Joint::limitLow},
+    {"LimitHigh", &Joint::limitHigh},
+    {"SwingLimit", &Joint::swingLimit},
+    {"TwistLimit", &Joint::twistLimit},
+    {"MotorVelocity", &Joint::motorVelocity},
+    {"MotorMaxForce", &Joint::motorMaxForce},
+    {"MotorMaxAcceleration", &Joint::motorMaxAcceleration},
+    {"ServoTarget", &Joint::servoTarget},
+    {"ServoSpeed", &Joint::servoSpeed},
+    {"ServoMaxForce", &Joint::servoMaxForce},
+    {"Responsiveness", &Joint::responsiveness},
+    {"Stiffness", &Joint::stiffness},
+    {"Damping", &Joint::damping},
+    {"Length", &Joint::length},
+    {"MinLength", &Joint::minLength},
+    {"MaxLength", &Joint::maxLength},
+    {"WinchTarget", &Joint::winchTarget},
+    {"WinchSpeed", &Joint::winchSpeed},
+    {"WinchForce", &Joint::winchForce},
+    {"BreakForce", &Joint::breakForce},
+    {"BreakTorque", &Joint::breakTorque},
+    {"Thickness", &Joint::thickness},
+};
+
+constexpr Member<Joint, bool> JointSwitches[] = {
+    {"Enabled", &Joint::enabled},
+    {"LimitsEnabled", &Joint::limitsEnabled},
+    {"CollideConnected", &Joint::collideConnected},
+    {"WinchEnabled", &Joint::winchEnabled},
+    {"Visible", &Joint::visible},
+};
+
+constexpr Member<Mover, float> MoverNumbers[] = {
+    {"LineVelocity", &Mover::lineVelocity},
+    {"MaxForce", &Mover::maxForce},
+    {"MaxTorque", &Mover::maxTorque},
+    {"MaxVelocity", &Mover::maxVelocity},
+    {"MaxAngularVelocity", &Mover::maxAngularVelocity},
+    {"MoverResponsiveness", &Mover::responsiveness},
+    {"MoverStiffness", &Mover::stiffness},
+    {"MoverDamping", &Mover::damping},
+};
+
+constexpr Member<Mover, core::Vec3> MoverVectors[] = {
+    {"Vector", &Mover::vector},
+    {"LineDirection", &Mover::lineDirection},
+    {"PrimaryTangentAxis", &Mover::primaryTangentAxis},
+    {"SecondaryTangentAxis", &Mover::secondaryTangentAxis},
+};
+
+constexpr Member<Mover, bool> MoverSwitches[] = {
+    {"RigidityEnabled", &Mover::rigidityEnabled},
+    {"ApplyAtCenterOfMass", &Mover::applyAtCenterOfMass},
+    {"ReactionEnabled", &Mover::reactionEnabled},
+};
+
+// A rotation alone, as a `CFrameD` whose position is zero: the encoding the
+// wire has for nine floats.
+void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
+{
+    core::CFrameD frame;
+    frame.rotation = rotation;
+    setCFrame(out, frame);
+}
+
 // Reads one component-sourced field.
 //
 // **A switch on the POOL and then on the FIELD NAME, and that is deliberate.**
@@ -170,6 +270,112 @@ using generated::Source;
 // would make every storage change a generator change.
 [[nodiscard]] bool readComponent(const scene::World& world, InstanceId id, const FieldDesc& field, FieldValue& out)
 {
+    // **The joints** (NA34). A field that names another instance is read as
+    // this machine's instance; the session sends it as the peer's network id.
+    if (field.pool == "attachments") {
+        const scene::AttachmentComponent* attachment = world.attachments().find(id);
+        if (attachment == nullptr || field.name != "CFrame")
+            return false;
+        setCFrame(out, attachment->cframe);
+        return true;
+    }
+    if (field.pool == "constraints") {
+        const Joint* joint = world.constraints().find(id);
+        if (joint == nullptr)
+            return false;
+        if (float Joint::*number = memberNamed(JointNumbers, field.name); number != nullptr) {
+            setF32(out, joint->*number);
+            return true;
+        }
+        if (bool Joint::*flag = memberNamed(JointSwitches, field.name); flag != nullptr) {
+            setBool(out, joint->*flag);
+            return true;
+        }
+        if (field.name == "Attachment0" || field.name == "Attachment1") {
+            setInstance(out, field.name == "Attachment0" ? joint->attachment0 : joint->attachment1);
+            return true;
+        }
+        if (field.name == "ActuatorType") {
+            setI32(out, joint->actuatorType);
+            return true;
+        }
+        if (field.name == "TargetOrientation") {
+            setRotation(out, joint->targetOrientation);
+            return true;
+        }
+        if (field.name == "Color") {
+            setVec3(out, core::Vec3{joint->color.r, joint->color.g, joint->color.b});
+            return true;
+        }
+        return false;
+    }
+    if (field.pool == "movers") {
+        const Mover* mover = world.movers().find(id);
+        if (mover == nullptr)
+            return false;
+        if (float Mover::*number = memberNamed(MoverNumbers, field.name); number != nullptr) {
+            setF32(out, mover->*number);
+            return true;
+        }
+        if (core::Vec3 Mover::*vector = memberNamed(MoverVectors, field.name); vector != nullptr) {
+            setVec3(out, mover->*vector);
+            return true;
+        }
+        if (bool Mover::*flag = memberNamed(MoverSwitches, field.name); flag != nullptr) {
+            setBool(out, mover->*flag);
+            return true;
+        }
+        if (field.name == "Mode" || field.name == "RelativeTo") {
+            setI32(out, field.name == "Mode" ? mover->mode : mover->relativeTo);
+            return true;
+        }
+        if (field.name == "PlaneVelocity") {
+            setVec3(out, core::Vec3{mover->planeVelocity.x, mover->planeVelocity.y, 0.0f});
+            return true;
+        }
+        if (field.name == "Position") {
+            setPosition(out, mover->position);
+            return true;
+        }
+        if (field.name == "Orientation") {
+            setRotation(out, mover->orientation);
+            return true;
+        }
+        return false;
+    }
+    if (field.pool == "welds") {
+        const scene::WeldComponent* weld = world.welds().find(id);
+        if (weld == nullptr)
+            return false;
+        if (field.name == "Part0" || field.name == "Part1") {
+            setInstance(out, field.name == "Part0" ? weld->part0 : weld->part1);
+            return true;
+        }
+        if (field.name == "C0" || field.name == "C1") {
+            setCFrame(out, field.name == "C0" ? weld->c0 : weld->c1);
+            return true;
+        }
+        if (field.name == "Enabled") {
+            setBool(out, weld->enabled);
+            return true;
+        }
+        return false;
+    }
+    if (field.pool == "noCollisions") {
+        const scene::NoCollisionComponent* pair = world.noCollisions().find(id);
+        if (pair == nullptr)
+            return false;
+        if (field.name == "Part0" || field.name == "Part1") {
+            setInstance(out, field.name == "Part0" ? pair->part0 : pair->part1);
+            return true;
+        }
+        if (field.name == "Enabled") {
+            setBool(out, pair->enabled);
+            return true;
+        }
+        return false;
+    }
+
     if (field.pool == "parts") {
         const scene::PartComponent* part = world.parts().find(id);
         if (part == nullptr) {
@@ -350,6 +556,8 @@ using generated::Source;
             setF32(out, workspace->windGusts);
         else if (field.name == "WindTurbulence")
             setF32(out, workspace->windTurbulence);
+        else if (field.name == "Gravity")
+            setVec3(out, workspace->gravity);
         else
             return false;
         return true;
@@ -1051,6 +1259,113 @@ using generated::Source;
 {
     // ADR 0096's look: the effects, the air and the sky.
     const auto toColour = [](core::Vec3 v) { return core::Color3{v.x, v.y, v.z}; };
+
+    // **The joints** (NA34). A reference arrives as this machine's instance:
+    // the session resolved the network id before it called here.
+    if (field.pool == "attachments") {
+        scene::AttachmentComponent* attachment = world.attachments().find(id);
+        if (attachment == nullptr || field.name != "CFrame")
+            return false;
+        attachment->cframe = asCFrame(value);
+        return true;
+    }
+    if (field.pool == "constraints") {
+        Joint* joint = world.constraints().find(id);
+        if (joint == nullptr)
+            return false;
+        if (float Joint::*number = memberNamed(JointNumbers, field.name); number != nullptr) {
+            joint->*number = asF32(value);
+            return true;
+        }
+        if (bool Joint::*flag = memberNamed(JointSwitches, field.name); flag != nullptr) {
+            joint->*flag = asBool(value);
+            return true;
+        }
+        if (field.name == "Attachment0" || field.name == "Attachment1") {
+            (field.name == "Attachment0" ? joint->attachment0 : joint->attachment1) = asInstance(value);
+            return true;
+        }
+        if (field.name == "ActuatorType") {
+            joint->actuatorType = asI32(value);
+            return true;
+        }
+        if (field.name == "TargetOrientation") {
+            joint->targetOrientation = asCFrame(value).rotation;
+            return true;
+        }
+        if (field.name == "Color") {
+            joint->color = toColour(asVec3(value));
+            return true;
+        }
+        return false;
+    }
+    if (field.pool == "movers") {
+        Mover* mover = world.movers().find(id);
+        if (mover == nullptr)
+            return false;
+        if (float Mover::*number = memberNamed(MoverNumbers, field.name); number != nullptr) {
+            mover->*number = asF32(value);
+            return true;
+        }
+        if (core::Vec3 Mover::*vector = memberNamed(MoverVectors, field.name); vector != nullptr) {
+            mover->*vector = asVec3(value);
+            return true;
+        }
+        if (bool Mover::*flag = memberNamed(MoverSwitches, field.name); flag != nullptr) {
+            mover->*flag = asBool(value);
+            return true;
+        }
+        if (field.name == "Mode" || field.name == "RelativeTo") {
+            (field.name == "Mode" ? mover->mode : mover->relativeTo) = asI32(value);
+            return true;
+        }
+        if (field.name == "PlaneVelocity") {
+            const core::Vec3 plane = asVec3(value);
+            mover->planeVelocity = core::Vec2{plane.x, plane.y};
+            return true;
+        }
+        if (field.name == "Position") {
+            mover->position = asPosition(value);
+            return true;
+        }
+        if (field.name == "Orientation") {
+            mover->orientation = asCFrame(value).rotation;
+            return true;
+        }
+        return false;
+    }
+    if (field.pool == "welds") {
+        scene::WeldComponent* weld = world.welds().find(id);
+        if (weld == nullptr)
+            return false;
+        if (field.name == "Part0" || field.name == "Part1") {
+            (field.name == "Part0" ? weld->part0 : weld->part1) = asInstance(value);
+            return true;
+        }
+        if (field.name == "C0" || field.name == "C1") {
+            (field.name == "C0" ? weld->c0 : weld->c1) = asCFrame(value);
+            return true;
+        }
+        if (field.name == "Enabled") {
+            weld->enabled = asBool(value);
+            return true;
+        }
+        return false;
+    }
+    if (field.pool == "noCollisions") {
+        scene::NoCollisionComponent* pair = world.noCollisions().find(id);
+        if (pair == nullptr)
+            return false;
+        if (field.name == "Part0" || field.name == "Part1") {
+            (field.name == "Part0" ? pair->part0 : pair->part1) = asInstance(value);
+            return true;
+        }
+        if (field.name == "Enabled") {
+            pair->enabled = asBool(value);
+            return true;
+        }
+        return false;
+    }
     if (field.pool == "postEffects") {
         scene::PostEffectComponent* component = world.postEffects().find(id);
         if (component == nullptr) {
@@ -1670,6 +1985,8 @@ using generated::Source;
             workspace->windGusts = asF32(value);
         else if (field.name == "WindTurbulence")
             workspace->windTurbulence = asF32(value);
+        else if (field.name == "Gravity")
+            workspace->gravity = asVec3(value);
         else
             return false;
         return true;
@@ -1950,9 +2267,14 @@ const ClassDesc* schemaFor(const scene::World& world, InstanceId id)
         if (descriptor == nullptr) {
             return nullptr;
         }
-        if (const ClassDesc* desc = schemaNamed(world.atoms().text(descriptor->name)); desc != nullptr) {
+        const std::string_view name = world.atoms().text(descriptor->name);
+        if (const ClassDesc* desc = schemaNamed(name); desc != nullptr) {
             return desc;
         }
+        // **An exclusion holds below a replicated ancestor** (NA34): a `Bone`
+        // is an `Attachment`, and is not described by its schema.
+        if (excludedByName(name))
+            return nullptr;
         classId = descriptor->super;
     }
     return nullptr;

@@ -94,9 +94,11 @@ foreach(entry IN LISTS conditions)
     # What each condition is held to. **A long frame costs at most two
     # corrections** -- the time the client dropped, which the authority went on
     # simulating, and the one the stream anchored again on -- and the bot
-    # counts the frames over a tenth of a second it really had: the one a
+    # counts the frames over three ticks both machines really had: the one a
     # condition hangs on purpose, and any a machine busy with the rest of the
-    # gate makes of its own. Every other tick of the walk is uncorrected.
+    # gate makes of its own (a CI runner's server stalled and cost corrections
+    # the client's own count never saw). Every other tick of the walk is
+    # uncorrected.
     math(EXPR allowed "2 * ${hitches}")
     if(corrections GREATER allowed)
         string(APPEND failures

@@ -58,6 +58,10 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
   it; see Findings for the one measured.
 - [x] `GetStats()`: `Corrections` (counted), `InterpolationDelay`,
   `InputReanchors` beside what was there.
+- [x] Long frames counted on both machines (over three ticks), and the gate
+  run alone: CI's Windows runner, two cores shared with the suite, cost one or
+  two corrections a walk through server stalls the client's own count never
+  saw. The client draws nothing (`--rhi=null`), so a runner with no GPU runs it.
 - [ ] A `Character2D` and a script-moved character in the same gate, and the
   others' drawn positions held to a tick's travel between frames.
 
@@ -142,12 +146,13 @@ reproduced with real processes.
 - [x] **NA3** The input stream after long frames (D480, and the server's
   catch-up and intent budget in C).
 - [x] **NA4**, [x] **NA5** -- see C.
-- [ ] **NA34** (from the kart game) Joints, attachments and movers are not on
-  the wire: an owner of a jointed assembly receives its parts only, and a
-  vehicle falls apart on its owner's machine. The wire reads only a part's
-  components and `Name`/`Parent`; joints need component readers for each of
-  their fields and references between instances beyond `Parent`. **The next
-  slice.**
+- [x] **NA34** (from the kart game) Joints on the wire (protocol 34):
+  `Attachment`, `Constraint` and its seven kinds and six movers, each with what
+  its own properties hold, `Weld`, `WeldConstraint` and `NoCollisionConstraint`;
+  references between instances beyond `Parent`; `Workspace.Gravity`. A replica
+  solves a joint where it simulates one of its ends. Test: a hinge with a motor
+  handed to a replica holds together there, turns at the motor's speed, keeps
+  the owner's own change of speed, and the authority sees it turn.
 
 ### P1 -- visible, fragile or exploitable
 
@@ -166,7 +171,9 @@ reproduced with real processes.
   checksum is over (ADR 0069), a design of their own.
 - [x] **NA21** In order per remote. [x] **NA22**, **NA23** Budgets over time,
   and a flooding peer let go. [x] **NA24** An owner moves what it owns within
-  reach.
+  reach -- **followed at the reach, never refused** since D482: a refusal was
+  for good, and an owner whose kart began in the wrong place was held at the
+  grid for the whole race.
 
 ### P2 -- gaps against professional practice
 
@@ -188,6 +195,14 @@ reproduced with real processes.
 - [ ] **K3** Render-step callbacks in a headless run that draws for
   `--screenshot`. [ ] **K4** `HingeConstraint.CurrentAngle`,
   `PrismaticConstraint.CurrentPosition`.
+
+### From the FPS game (2026-10-03)
+
+- [ ] **K5** A part's `Material` written in a scene file is not there at run
+  time (P1: maps are authored in the editor).
+- [ ] **K6** Scene parts wearing one material are not drawn once another,
+  first worn by a part that neither collides nor is queried, is assigned at run
+  time.
 
 ## Findings
 
@@ -212,3 +227,9 @@ reproduced with real processes.
   themselves -- on both sides.
 - **The doubled position (N7) reproduced exactly as the owner measured it**:
   27.9 m put by the server read 55.8 on the replica.
+- **D482 was NA1 and NA24 meeting.** A first snapshot that comes reliably in
+  parts arrives after an ownership message sent the same tick, and the owner
+  never placed the part it was handed; before NA24 the authority took the
+  origin it was sent, and from NA24 it took nothing at all.
+- **D481 was found by NA34's test**, not by a game: the owner's script read the
+  gravity it booted with while the world beside it held the server's.

@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 33;
+inline constexpr u32 ProtocolVersion = 34;
 
 // How a field's bytes are laid down. Every one is fixed-width and
 // little-endian, with no variable-length forms and no nesting -- a wire format
@@ -369,6 +369,167 @@ inline constexpr FieldDesc WorkspaceFields[] = {
     {"GlobalWind", 1, Encoding::Vector3, Source::Component, "workspaces"},
     {"WindGusts", 2, Encoding::F32, Source::Component, "workspaces"},
     {"WindTurbulence", 3, Encoding::F32, Source::Component, "workspaces"},
+    {"Gravity", 4, Encoding::Vector3, Source::Component, "workspaces"},
+};
+
+inline constexpr FieldDesc AttachmentFields[] = {
+    {"CFrame", 1, Encoding::CFrameD, Source::Component, "attachments"},
+};
+
+inline constexpr FieldDesc ConstraintFields[] = {
+    {"Attachment0", 1, Encoding::InstanceRef, Source::Component, "constraints"},
+    {"Attachment1", 2, Encoding::InstanceRef, Source::Component, "constraints"},
+    {"Enabled", 3, Encoding::Bool, Source::Component, "constraints"},
+    {"CollideConnected", 4, Encoding::Bool, Source::Component, "constraints"},
+    {"Visible", 5, Encoding::Bool, Source::Component, "constraints"},
+    {"BreakForce", 6, Encoding::F32, Source::Component, "constraints"},
+    {"BreakTorque", 7, Encoding::F32, Source::Component, "constraints"},
+};
+
+inline constexpr FieldDesc BallSocketConstraintFields[] = {
+    {"LimitsEnabled", 1, Encoding::Bool, Source::Component, "constraints"},
+    {"SwingLimit", 2, Encoding::F32, Source::Component, "constraints"},
+    {"TwistLimit", 3, Encoding::F32, Source::Component, "constraints"},
+    {"ActuatorType", 4, Encoding::I32, Source::Component, "constraints"},
+    {"TargetOrientation", 5, Encoding::CFrameD, Source::Component, "constraints"},
+    {"ServoMaxForce", 6, Encoding::F32, Source::Component, "constraints"},
+    {"Responsiveness", 7, Encoding::F32, Source::Component, "constraints"},
+    {"Stiffness", 8, Encoding::F32, Source::Component, "constraints"},
+    {"Damping", 9, Encoding::F32, Source::Component, "constraints"},
+};
+
+inline constexpr FieldDesc HingeConstraintFields[] = {
+    {"LimitsEnabled", 1, Encoding::Bool, Source::Component, "constraints"},
+    {"LimitLow", 2, Encoding::F32, Source::Component, "constraints"},
+    {"LimitHigh", 3, Encoding::F32, Source::Component, "constraints"},
+    {"ActuatorType", 4, Encoding::I32, Source::Component, "constraints"},
+    {"MotorVelocity", 5, Encoding::F32, Source::Component, "constraints"},
+    {"MotorMaxForce", 6, Encoding::F32, Source::Component, "constraints"},
+    {"MotorMaxAcceleration", 7, Encoding::F32, Source::Component, "constraints"},
+    {"ServoTarget", 8, Encoding::F32, Source::Component, "constraints"},
+    {"ServoSpeed", 9, Encoding::F32, Source::Component, "constraints"},
+    {"ServoMaxForce", 10, Encoding::F32, Source::Component, "constraints"},
+    {"Responsiveness", 11, Encoding::F32, Source::Component, "constraints"},
+    {"Stiffness", 12, Encoding::F32, Source::Component, "constraints"},
+    {"Damping", 13, Encoding::F32, Source::Component, "constraints"},
+};
+
+inline constexpr FieldDesc PrismaticConstraintFields[] = {
+    {"LimitsEnabled", 1, Encoding::Bool, Source::Component, "constraints"},
+    {"LimitLow", 2, Encoding::F32, Source::Component, "constraints"},
+    {"LimitHigh", 3, Encoding::F32, Source::Component, "constraints"},
+    {"ActuatorType", 4, Encoding::I32, Source::Component, "constraints"},
+    {"MotorVelocity", 5, Encoding::F32, Source::Component, "constraints"},
+    {"MotorMaxForce", 6, Encoding::F32, Source::Component, "constraints"},
+    {"MotorMaxAcceleration", 7, Encoding::F32, Source::Component, "constraints"},
+    {"ServoTarget", 8, Encoding::F32, Source::Component, "constraints"},
+    {"ServoSpeed", 9, Encoding::F32, Source::Component, "constraints"},
+    {"ServoMaxForce", 10, Encoding::F32, Source::Component, "constraints"},
+    {"Responsiveness", 11, Encoding::F32, Source::Component, "constraints"},
+    {"Stiffness", 12, Encoding::F32, Source::Component, "constraints"},
+    {"Damping", 13, Encoding::F32, Source::Component, "constraints"},
+};
+
+inline constexpr FieldDesc RopeConstraintFields[] = {
+    {"Length", 1, Encoding::F32, Source::Component, "constraints"},
+    {"WinchEnabled", 2, Encoding::Bool, Source::Component, "constraints"},
+    {"WinchTarget", 3, Encoding::F32, Source::Component, "constraints"},
+    {"WinchSpeed", 4, Encoding::F32, Source::Component, "constraints"},
+    {"WinchForce", 5, Encoding::F32, Source::Component, "constraints"},
+    {"Color", 6, Encoding::Color3, Source::Component, "constraints"},
+    {"Thickness", 7, Encoding::F32, Source::Component, "constraints"},
+};
+
+inline constexpr FieldDesc RodConstraintFields[] = {
+    {"Length", 1, Encoding::F32, Source::Component, "constraints"},
+    {"Color", 2, Encoding::Color3, Source::Component, "constraints"},
+    {"Thickness", 3, Encoding::F32, Source::Component, "constraints"},
+};
+
+inline constexpr FieldDesc SpringConstraintFields[] = {
+    {"Length", 1, Encoding::F32, Source::Component, "constraints"},
+    {"Stiffness", 2, Encoding::F32, Source::Component, "constraints"},
+    {"Damping", 3, Encoding::F32, Source::Component, "constraints"},
+    {"LimitsEnabled", 4, Encoding::Bool, Source::Component, "constraints"},
+    {"MinLength", 5, Encoding::F32, Source::Component, "constraints"},
+    {"MaxLength", 6, Encoding::F32, Source::Component, "constraints"},
+    {"Color", 7, Encoding::Color3, Source::Component, "constraints"},
+    {"Thickness", 8, Encoding::F32, Source::Component, "constraints"},
+};
+
+inline constexpr FieldDesc LinearVelocityFields[] = {
+    {"Mode", 1, Encoding::I32, Source::Component, "movers"},
+    {"Vector", 2, Encoding::Vector3, Source::Component, "movers"},
+    {"LineDirection", 3, Encoding::Vector3, Source::Component, "movers"},
+    {"LineVelocity", 4, Encoding::F32, Source::Component, "movers"},
+    {"PrimaryTangentAxis", 5, Encoding::Vector3, Source::Component, "movers"},
+    {"SecondaryTangentAxis", 6, Encoding::Vector3, Source::Component, "movers"},
+    {"PlaneVelocity", 7, Encoding::Vector3, Source::Component, "movers"},
+    {"MaxForce", 8, Encoding::F32, Source::Component, "movers"},
+    {"RelativeTo", 9, Encoding::I32, Source::Component, "movers"},
+};
+
+inline constexpr FieldDesc AngularVelocityFields[] = {
+    {"Vector", 1, Encoding::Vector3, Source::Component, "movers"},
+    {"MaxTorque", 2, Encoding::F32, Source::Component, "movers"},
+    {"RelativeTo", 3, Encoding::I32, Source::Component, "movers"},
+    {"ReactionEnabled", 4, Encoding::Bool, Source::Component, "movers"},
+};
+
+inline constexpr FieldDesc AlignPositionFields[] = {
+    {"Mode", 1, Encoding::I32, Source::Component, "movers"},
+    {"Position", 2, Encoding::Position, Source::Component, "movers"},
+    {"MaxForce", 3, Encoding::F32, Source::Component, "movers"},
+    {"MaxVelocity", 4, Encoding::F32, Source::Component, "movers"},
+    {"MoverResponsiveness", 5, Encoding::F32, Source::Component, "movers"},
+    {"RigidityEnabled", 6, Encoding::Bool, Source::Component, "movers"},
+    {"ApplyAtCenterOfMass", 7, Encoding::Bool, Source::Component, "movers"},
+    {"ReactionEnabled", 8, Encoding::Bool, Source::Component, "movers"},
+    {"MoverStiffness", 9, Encoding::F32, Source::Component, "movers"},
+    {"MoverDamping", 10, Encoding::F32, Source::Component, "movers"},
+};
+
+inline constexpr FieldDesc AlignOrientationFields[] = {
+    {"Mode", 1, Encoding::I32, Source::Component, "movers"},
+    {"Orientation", 2, Encoding::CFrameD, Source::Component, "movers"},
+    {"MaxTorque", 3, Encoding::F32, Source::Component, "movers"},
+    {"MaxAngularVelocity", 4, Encoding::F32, Source::Component, "movers"},
+    {"MoverResponsiveness", 5, Encoding::F32, Source::Component, "movers"},
+    {"RigidityEnabled", 6, Encoding::Bool, Source::Component, "movers"},
+    {"ReactionEnabled", 7, Encoding::Bool, Source::Component, "movers"},
+    {"MoverStiffness", 8, Encoding::F32, Source::Component, "movers"},
+    {"MoverDamping", 9, Encoding::F32, Source::Component, "movers"},
+};
+
+inline constexpr FieldDesc VectorForceFields[] = {
+    {"Vector", 1, Encoding::Vector3, Source::Component, "movers"},
+    {"RelativeTo", 2, Encoding::I32, Source::Component, "movers"},
+    {"ApplyAtCenterOfMass", 3, Encoding::Bool, Source::Component, "movers"},
+};
+
+inline constexpr FieldDesc TorqueFields[] = {
+    {"Vector", 1, Encoding::Vector3, Source::Component, "movers"},
+    {"RelativeTo", 2, Encoding::I32, Source::Component, "movers"},
+};
+
+inline constexpr FieldDesc WeldFields[] = {
+    {"Part0", 1, Encoding::InstanceRef, Source::Component, "welds"},
+    {"Part1", 2, Encoding::InstanceRef, Source::Component, "welds"},
+    {"C0", 3, Encoding::CFrameD, Source::Component, "welds"},
+    {"C1", 4, Encoding::CFrameD, Source::Component, "welds"},
+    {"Enabled", 5, Encoding::Bool, Source::Component, "welds"},
+};
+
+inline constexpr FieldDesc WeldConstraintFields[] = {
+    {"Part0", 1, Encoding::InstanceRef, Source::Component, "welds"},
+    {"Part1", 2, Encoding::InstanceRef, Source::Component, "welds"},
+    {"Enabled", 3, Encoding::Bool, Source::Component, "welds"},
+};
+
+inline constexpr FieldDesc NoCollisionConstraintFields[] = {
+    {"Part0", 1, Encoding::InstanceRef, Source::Component, "noCollisions"},
+    {"Part1", 2, Encoding::InstanceRef, Source::Component, "noCollisions"},
+    {"Enabled", 3, Encoding::Bool, Source::Component, "noCollisions"},
 };
 
 // Every replicated class, in schema order.
@@ -403,6 +564,94 @@ inline constexpr ClassDesc Classes[] = {
     {"TeamService", {}, -1, true, true},
     {"Team", TeamFields, -1, false, false},
     {"Workspace", WorkspaceFields, -1, true, false},
+    {"Attachment", AttachmentFields, -1, false, false},
+    {"Constraint", ConstraintFields, -1, false, false},
+    {"BallSocketConstraint", BallSocketConstraintFields, 31, false, false},
+    {"HingeConstraint", HingeConstraintFields, 31, false, false},
+    {"FixedConstraint", {}, 31, false, false},
+    {"PrismaticConstraint", PrismaticConstraintFields, 31, false, false},
+    {"RopeConstraint", RopeConstraintFields, 31, false, false},
+    {"RodConstraint", RodConstraintFields, 31, false, false},
+    {"SpringConstraint", SpringConstraintFields, 31, false, false},
+    {"LinearVelocity", LinearVelocityFields, 31, false, false},
+    {"AngularVelocity", AngularVelocityFields, 31, false, false},
+    {"AlignPosition", AlignPositionFields, 31, false, false},
+    {"AlignOrientation", AlignOrientationFields, 31, false, false},
+    {"VectorForce", VectorForceFields, 31, false, false},
+    {"Torque", TorqueFields, 31, false, false},
+    {"Weld", WeldFields, -1, false, false},
+    {"WeldConstraint", WeldConstraintFields, -1, false, false},
+    {"NoCollisionConstraint", NoCollisionConstraintFields, -1, false, false},
+};
+
+// Every class kept off the wire by name. **An exclusion holds below a
+// replicated ancestor too**: a `Bone` is an `Attachment`, and a lookup that
+// walked up past its own name would describe it by its ancestor's schema.
+inline constexpr std::string_view ExcludedClasses[] = {
+    "FoliageLayer",
+    "FoliageMesh",
+    "Highlight",
+    "Beam",
+    "Trail",
+    "Terrain",
+    "Player",
+    "DataModel",
+    "Bone",
+    "Ragdoll",
+    "Constraint2D",
+    "SpriteAnimator",
+    "Camera",
+    "Script",
+    "ModuleScript",
+    "Sound",
+    "AudioGroup",
+    "ReverbSoundEffect",
+    "EchoSoundEffect",
+    "EqualizerSoundEffect",
+    "LowPassSoundEffect",
+    "HighPassSoundEffect",
+    "DistortionSoundEffect",
+    "CompressorSoundEffect",
+    "ChorusSoundEffect",
+    "PitchShiftSoundEffect",
+    "PointLight",
+    "SpotLight",
+    "PostEffect",
+    "Material",
+    "InputAction",
+    "InputBinding",
+    "InputContext",
+    "ScreenGui",
+    "BillboardGui",
+    "SurfaceGui",
+    "NavigationArea",
+    "NavigationLink",
+    "NavigationAgent",
+    "Frame",
+    "TextLabel",
+    "TextButton",
+    "TextInput",
+    "ImageLabel",
+    "ImageButton",
+    "ScrollFrame",
+    "UICorner",
+    "UIGradient",
+    "ViewportFrame",
+    "CameraTexture",
+    "SubWorld",
+    "UIStroke",
+    "UIListLayout",
+    "UIPadding",
+    "UIGridLayout",
+    "UIPageLayout",
+    "UIFlexItem",
+    "UIScale",
+    "UIAspectRatioConstraint",
+    "UISizeConstraint",
+    "UITextSizeConstraint",
+    "UIDragDetector",
+    "CanvasGroup",
+    "AnimationPlayer",
 };
 
 // ENet's delivery mode per channel, as `net::Delivery` spells it.

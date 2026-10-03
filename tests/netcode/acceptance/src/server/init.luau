@@ -21,6 +21,26 @@ local where = Instance.new("RemoteFunction")
 where.Name = "Where"
 where.Parent = Workspace
 
+-- **The authority's own long frames**, for the bot to count beside its own: a
+-- server that stalls catches up and answers late, and on a machine running
+-- the rest of the suite -- a CI runner's two cores -- that is a correction
+-- the client did nothing to cause.
+local longFrames = 0
+local lastFrame = os.clock()
+RunService.Heartbeat:Connect(function()
+    local now = os.clock()
+    if now - lastFrame > 0.05 then
+        longFrames += 1
+    end
+    lastFrame = now
+end)
+local longFramesAsked = Instance.new("RemoteFunction")
+longFramesAsked.Name = "LongFrames"
+longFramesAsked.Parent = Workspace
+longFramesAsked.OnServerInvoke = function(): number
+    return longFrames
+end
+
 local bodies: { [Player]: CharacterBody } = {}
 
 local function arrive(player: Player)

@@ -1897,6 +1897,21 @@ bool PhysicsSync::isDriven(core::InstanceId id) const
     return marked(m_drivenMarks, id);
 }
 
+// **A replica solves a joint only where it simulates one of its bodies**
+// (NA34). A body the authority simulates is driven here from the snapshots,
+// and a joint or a weld between two of those is the authority's to solve:
+// solved here too, it is a second answer to where the parts are. One end this
+// machine owns (ADR 0099), predicts (ADR 0133) or made itself, and the joint
+// holds here as it does there -- a vehicle's wheels stay on the machine that
+// drives it.
+bool PhysicsSync::solvedHere(core::InstanceId part) const
+{
+    if (m_scene.engineState().networkTopology != NetworkTopology::Replica)
+        return true;
+    const RigidBodyComponent* body = m_scene.rigidBodies().find(part);
+    return body != nullptr && !body->anchored && (!body->fromAuthority || body->networkOwner != 0 || body->predicted);
+}
+
 // Welds resolve AFTER the step and the writeback, which is the defined point in
 // the tick the roadmap asks for. Before it, a driven part would follow where its
 // anchor was last tick and lag by a frame; after it, it follows where the anchor
@@ -2091,6 +2106,10 @@ void PhysicsSync::resolveWeld(core::InstanceId weldId, WeldComponent& weld)
 
     if (!weld.enabled || !m_scene.alive(weld.part0) || !m_scene.alive(weld.part1))
         return;
+    // Neither end simulated here: the authority's, and the snapshots already
+    // say where the welded part is (NA34).
+    if (!solvedHere(ownerOf(weld.part0)) && !solvedHere(weld.part1))
+        return;
 
     // **The DRIVEN end must be a part.** A weld moves something, and an
     // attachment has nothing of its own to move -- it is a place on a part.
@@ -2258,7 +2277,10 @@ void PhysicsSync::applyConstraint(core::InstanceId id, ConstraintComponent& cons
                         // finding): `CharacterVirtual` is not a solver body, so
                         // there is nothing for a joint to hold.
                         m_scene.characterBodies().find(body0) == nullptr &&
-                        m_scene.characterBodies().find(body1) == nullptr;
+                        m_scene.characterBodies().find(body1) == nullptr &&
+                        // **Held here only where one end is simulated here**
+                        // (NA34): left unseen otherwise, so the solver drops it.
+                        (solvedHere(body0) || solvedHere(body1));
 
     if (id.index >= m_constraints.size())
         m_constraints.resize(id.index + 1);

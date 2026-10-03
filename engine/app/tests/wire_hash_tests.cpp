@@ -71,10 +71,21 @@ void candidates(core::AtomTable& atoms, wire::Encoding encoding, replication::Fi
         replication::setPosition(b, core::DVec3{6.0, 7.0, 8.0});
         return;
     case wire::Encoding::CFrameD: {
+        // Each turned as well, and not alike: a joint's pose is the rotation
+        // half alone (NA34), and its default is no turn at all.
         core::CFrameD frame;
         frame.position = core::DVec3{3.0, 4.0, 5.0};
+        frame.rotation.m[1][1] = 0.0f;
+        frame.rotation.m[1][2] = 1.0f;
+        frame.rotation.m[2][1] = -1.0f;
+        frame.rotation.m[2][2] = 0.0f;
         replication::setCFrame(a, frame);
+        frame = core::CFrameD{};
         frame.position = core::DVec3{6.0, 7.0, 8.0};
+        frame.rotation.m[0][0] = 0.0f;
+        frame.rotation.m[0][1] = 1.0f;
+        frame.rotation.m[1][0] = -1.0f;
+        frame.rotation.m[1][1] = 0.0f;
         replication::setCFrame(b, frame);
         return;
     }
@@ -83,8 +94,8 @@ void candidates(core::AtomTable& atoms, wire::Encoding encoding, replication::Fi
         replication::setU32(b, atoms.intern("wire-hash-b").id);
         return;
     case wire::Encoding::InstanceRef:
-        // A reference names another instance, which this sweep does not make;
-        // none of the state fields is one today, and `REQUIRE` below says so
+        // A reference names another instance, which the sweep makes and
+        // passes as this machine's own (NA34), never through here
         // if that changes.
         replication::setNetId(a, replication::NetId{});
         replication::setNetId(b, replication::NetId{});
@@ -128,6 +139,9 @@ TEST_CASE("every replicated field that is not a property is state the world hash
     scene::World world(classes, enums, atoms, 7u);
 
     std::size_t checked = 0;
+    // What a joint's ends name: any instance at all, for the hash to see change.
+    const core::InstanceId referent = world.create(classes.findId(atoms.intern("Folder")));
+    REQUIRE(referent.valid());
     for (const wire::ClassDesc& desc : wire::Classes) {
         const scene::ClassId declared = classes.findId(atoms.intern(desc.name));
         CAPTURE(std::string(desc.name));
@@ -192,8 +206,15 @@ TEST_CASE("every replicated field that is not a property is state the world hash
             CAPTURE(std::string(field->name));
             replication::FieldValue a;
             replication::FieldValue b;
-            REQUIRE(field->encoding != wire::Encoding::InstanceRef);
-            candidates(atoms, field->encoding, a, b);
+            // **A reference is this machine's instance** by the time it is
+            // written (NA34): none, or one that exists.
+            if (field->encoding == wire::Encoding::InstanceRef) {
+                replication::setInstance(a, core::InstanceId{});
+                replication::setInstance(b, referent);
+            }
+            else {
+                candidates(atoms, field->encoding, a, b);
+            }
             const replication::FieldValue changed = a == fields[index] ? b : a;
             if (changed == fields[index])
                 continue;

@@ -1089,6 +1089,16 @@ local WorkspaceFields: { Schema.Field } = {
         Component = "workspaces",
         Doc = "How turbulent.",
     },
+    {
+        Name = "Gravity",
+        Id = 4,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "workspaces",
+        Doc = "**What a replica simulates its own bodies under** (protocol 34): a part it owns or predicts, "
+            .. "a vehicle it drives. Left behind, a game that changed gravity on the authority had every "
+            .. "owner's parts fall at the old rate and corrected a round trip later.",
+    },
 }
 
 --- A sprite and a body on the 2D plane (the 2D layer, ADR 0088). Every field is
@@ -1679,6 +1689,951 @@ local ProximityPromptFields: { Schema.Field } = {
     },
 }
 
+--- **Joints on the wire** (protocol 34, NA34). They were excluded on the
+--- argument that a replica's bodies are kinematic and solve nothing -- true of
+--- what the authority simulates, and false of what a replica OWNS (ADR 0099) or
+--- predicts (ADR 0133): an owner received a vehicle's parts and none of what
+--- held them together, and the vehicle fell apart on the one machine that
+--- drove it. A replica solves a joint when it simulates one of the bodies; any
+--- other copy is held and ignored.
+local AttachmentFields: { Schema.Field } = {
+    {
+        Name = "CFrame",
+        Id = 1,
+        Encoding = "CFrameD",
+        Source = "Component",
+        Component = "attachments",
+        Doc = "Where on its part the frame is. A joint holds two of these together, so a replica "
+            .. "that solves the joint (NA34) needs them where the authority has them.",
+    },
+}
+
+local ConstraintFields: { Schema.Field } = {
+    {
+        Name = "Attachment0",
+        Id = 1,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The first end. A network id; resolved on the replica to its own copy, and written "
+            .. "once that copy exists.",
+    },
+    {
+        Name = "Attachment1",
+        Id = 2,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The second end. A network id; resolved on the replica to its own copy, and written "
+            .. "once that copy exists.",
+    },
+    {
+        Name = "Enabled",
+        Id = 3,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "A joint switched off holds nothing, on every machine that solves it.",
+    },
+    {
+        Name = "CollideConnected",
+        Id = 4,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Whether the two bodies it joins collide with each other.",
+    },
+    {
+        Name = "Visible",
+        Id = 5,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Whether the engine draws it.",
+    },
+    {
+        Name = "BreakForce",
+        Id = 6,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The force past which it breaks; zero never breaks.",
+    },
+    {
+        Name = "BreakTorque",
+        Id = 7,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The same, for a twist.",
+    },
+}
+
+local BallSocketFields: { Schema.Field } = {
+    {
+        Name = "LimitsEnabled",
+        Id = 1,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Whether its stops hold.",
+    },
+    {
+        Name = "SwingLimit",
+        Id = 2,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How far a ball joint swings from its axis.",
+    },
+    {
+        Name = "TwistLimit",
+        Id = 3,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How far a ball joint twists about its axis.",
+    },
+    {
+        Name = "ActuatorType",
+        Id = 4,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "None, a motor or a servo: what drives the joint.",
+    },
+    {
+        Name = "TargetOrientation",
+        Id = 5,
+        Encoding = "CFrameD",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The pose a ball joint holds; the position half is zero.",
+    },
+    {
+        Name = "ServoMaxForce",
+        Id = 6,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How hard the servo may push.",
+    },
+    {
+        Name = "Responsiveness",
+        Id = 7,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How quickly a servo closes on its target.",
+    },
+    {
+        Name = "Stiffness",
+        Id = 8,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The joint as a spring, in its own terms.",
+    },
+    {
+        Name = "Damping",
+        Id = 9,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The same, for damping.",
+    },
+}
+
+local HingeFields: { Schema.Field } = {
+    {
+        Name = "LimitsEnabled",
+        Id = 1,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Whether its stops hold.",
+    },
+    {
+        Name = "LimitLow",
+        Id = 2,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The lower stop: an angle or a distance, by the kind of joint.",
+    },
+    {
+        Name = "LimitHigh",
+        Id = 3,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The upper stop.",
+    },
+    {
+        Name = "ActuatorType",
+        Id = 4,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "None, a motor or a servo: what drives the joint.",
+    },
+    {
+        Name = "MotorVelocity",
+        Id = 5,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The speed a motor holds: what turns a vehicle's wheels on the machine that owns it.",
+    },
+    {
+        Name = "MotorMaxForce",
+        Id = 6,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How hard the motor may push to hold it.",
+    },
+    {
+        Name = "MotorMaxAcceleration",
+        Id = 7,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How fast the motor may reach it.",
+    },
+    {
+        Name = "ServoTarget",
+        Id = 8,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The angle or place a servo goes to: a steering rack.",
+    },
+    {
+        Name = "ServoSpeed",
+        Id = 9,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How fast the servo goes there.",
+    },
+    {
+        Name = "ServoMaxForce",
+        Id = 10,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How hard the servo may push.",
+    },
+    {
+        Name = "Responsiveness",
+        Id = 11,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How quickly a servo closes on its target.",
+    },
+    {
+        Name = "Stiffness",
+        Id = 12,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The joint as a spring, in its own terms.",
+    },
+    {
+        Name = "Damping",
+        Id = 13,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The same, for damping.",
+    },
+}
+
+local PrismaticFields: { Schema.Field } = {
+    {
+        Name = "LimitsEnabled",
+        Id = 1,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Whether its stops hold.",
+    },
+    {
+        Name = "LimitLow",
+        Id = 2,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The lower stop: an angle or a distance, by the kind of joint.",
+    },
+    {
+        Name = "LimitHigh",
+        Id = 3,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The upper stop.",
+    },
+    {
+        Name = "ActuatorType",
+        Id = 4,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "None, a motor or a servo: what drives the joint.",
+    },
+    {
+        Name = "MotorVelocity",
+        Id = 5,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The speed a motor holds: what turns a vehicle's wheels on the machine that owns it.",
+    },
+    {
+        Name = "MotorMaxForce",
+        Id = 6,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How hard the motor may push to hold it.",
+    },
+    {
+        Name = "MotorMaxAcceleration",
+        Id = 7,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How fast the motor may reach it.",
+    },
+    {
+        Name = "ServoTarget",
+        Id = 8,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The angle or place a servo goes to: a steering rack.",
+    },
+    {
+        Name = "ServoSpeed",
+        Id = 9,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How fast the servo goes there.",
+    },
+    {
+        Name = "ServoMaxForce",
+        Id = 10,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How hard the servo may push.",
+    },
+    {
+        Name = "Responsiveness",
+        Id = 11,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How quickly a servo closes on its target.",
+    },
+    {
+        Name = "Stiffness",
+        Id = 12,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The joint as a spring, in its own terms.",
+    },
+    {
+        Name = "Damping",
+        Id = 13,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The same, for damping.",
+    },
+}
+
+local RopeFields: { Schema.Field } = {
+    {
+        Name = "Length",
+        Id = 1,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Its free length. A winch moves a rope's on the authority every tick, and the replica "
+            .. "is sent where it got to.",
+    },
+    {
+        Name = "WinchEnabled",
+        Id = 2,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Whether a rope takes itself in or lets itself out.",
+    },
+    {
+        Name = "WinchTarget",
+        Id = 3,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The length a winch goes to.",
+    },
+    {
+        Name = "WinchSpeed",
+        Id = 4,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How fast.",
+    },
+    {
+        Name = "WinchForce",
+        Id = 5,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How hard it may pull.",
+    },
+    {
+        Name = "Color",
+        Id = 6,
+        Encoding = "Color3",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Its colour, where it is drawn.",
+    },
+    {
+        Name = "Thickness",
+        Id = 7,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How thick it is drawn.",
+    },
+}
+
+local RodFields: { Schema.Field } = {
+    {
+        Name = "Length",
+        Id = 1,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Its free length. A winch moves a rope's on the authority every tick, and the replica "
+            .. "is sent where it got to.",
+    },
+    {
+        Name = "Color",
+        Id = 2,
+        Encoding = "Color3",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Its colour, where it is drawn.",
+    },
+    {
+        Name = "Thickness",
+        Id = 3,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How thick it is drawn.",
+    },
+}
+
+local SpringFields: { Schema.Field } = {
+    {
+        Name = "Length",
+        Id = 1,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Its free length. A winch moves a rope's on the authority every tick, and the replica "
+            .. "is sent where it got to.",
+    },
+    {
+        Name = "Stiffness",
+        Id = 2,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The joint as a spring, in its own terms.",
+    },
+    {
+        Name = "Damping",
+        Id = 3,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "The same, for damping.",
+    },
+    {
+        Name = "LimitsEnabled",
+        Id = 4,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Whether its stops hold.",
+    },
+    {
+        Name = "MinLength",
+        Id = 5,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "A spring's shortest.",
+    },
+    {
+        Name = "MaxLength",
+        Id = 6,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "A spring's longest.",
+    },
+    {
+        Name = "Color",
+        Id = 7,
+        Encoding = "Color3",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "Its colour, where it is drawn.",
+    },
+    {
+        Name = "Thickness",
+        Id = 8,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "constraints",
+        Doc = "How thick it is drawn.",
+    },
+}
+
+local LinearVelocityFields: { Schema.Field } = {
+    {
+        Name = "Mode",
+        Id = 1,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "Which of its ways it works: a vector, a line or a plane; one end or two.",
+    },
+    {
+        Name = "Vector",
+        Id = 2,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The speed, the spin, the force or the torque it holds.",
+    },
+    {
+        Name = "LineDirection",
+        Id = 3,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The line a speed is held along.",
+    },
+    {
+        Name = "LineVelocity",
+        Id = 4,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The speed along it.",
+    },
+    {
+        Name = "PrimaryTangentAxis",
+        Id = 5,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The plane a speed is held in, by its first axis.",
+    },
+    {
+        Name = "SecondaryTangentAxis",
+        Id = 6,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "movers",
+        Doc = "And its second.",
+    },
+    {
+        Name = "PlaneVelocity",
+        Id = 7,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The speed in that plane; the third number is zero.",
+    },
+    {
+        Name = "MaxForce",
+        Id = 8,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "How hard it may push.",
+    },
+    {
+        Name = "RelativeTo",
+        Id = 9,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The frame its vector is written in.",
+    },
+}
+
+local AngularVelocityFields: { Schema.Field } = {
+    {
+        Name = "Vector",
+        Id = 1,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The speed, the spin, the force or the torque it holds.",
+    },
+    {
+        Name = "MaxTorque",
+        Id = 2,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "How hard it may turn.",
+    },
+    {
+        Name = "RelativeTo",
+        Id = 3,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The frame its vector is written in.",
+    },
+    {
+        Name = "ReactionEnabled",
+        Id = 4,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "movers",
+        Doc = "Whether what it does to one body it does, reversed, to the other.",
+    },
+}
+
+local AlignPositionFields: { Schema.Field } = {
+    {
+        Name = "Mode",
+        Id = 1,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "Which of its ways it works: a vector, a line or a plane; one end or two.",
+    },
+    {
+        Name = "Position",
+        Id = 2,
+        Encoding = "Position",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The place it pulls to: a world coordinate.",
+    },
+    {
+        Name = "MaxForce",
+        Id = 3,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "How hard it may push.",
+    },
+    {
+        Name = "MaxVelocity",
+        Id = 4,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "How fast it may travel.",
+    },
+    {
+        Name = "MoverResponsiveness",
+        Id = 5,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "How quickly it closes on its target.",
+    },
+    {
+        Name = "RigidityEnabled",
+        Id = 6,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "movers",
+        Doc = "As rigid as a tick can show.",
+    },
+    {
+        Name = "ApplyAtCenterOfMass",
+        Id = 7,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "movers",
+        Doc = "Whether it pushes at the body's centre rather than at its attachment.",
+    },
+    {
+        Name = "ReactionEnabled",
+        Id = 8,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "movers",
+        Doc = "Whether what it does to one body it does, reversed, to the other.",
+    },
+    {
+        Name = "MoverStiffness",
+        Id = 9,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "It as a spring, in its own terms.",
+    },
+    {
+        Name = "MoverDamping",
+        Id = 10,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The same, for damping.",
+    },
+}
+
+local AlignOrientationFields: { Schema.Field } = {
+    {
+        Name = "Mode",
+        Id = 1,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "Which of its ways it works: a vector, a line or a plane; one end or two.",
+    },
+    {
+        Name = "Orientation",
+        Id = 2,
+        Encoding = "CFrameD",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The facing it turns to; the position half is zero.",
+    },
+    {
+        Name = "MaxTorque",
+        Id = 3,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "How hard it may turn.",
+    },
+    {
+        Name = "MaxAngularVelocity",
+        Id = 4,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "How fast it may turn.",
+    },
+    {
+        Name = "MoverResponsiveness",
+        Id = 5,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "How quickly it closes on its target.",
+    },
+    {
+        Name = "RigidityEnabled",
+        Id = 6,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "movers",
+        Doc = "As rigid as a tick can show.",
+    },
+    {
+        Name = "ReactionEnabled",
+        Id = 7,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "movers",
+        Doc = "Whether what it does to one body it does, reversed, to the other.",
+    },
+    {
+        Name = "MoverStiffness",
+        Id = 8,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "It as a spring, in its own terms.",
+    },
+    {
+        Name = "MoverDamping",
+        Id = 9,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The same, for damping.",
+    },
+}
+
+local VectorForceFields: { Schema.Field } = {
+    {
+        Name = "Vector",
+        Id = 1,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The speed, the spin, the force or the torque it holds.",
+    },
+    {
+        Name = "RelativeTo",
+        Id = 2,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The frame its vector is written in.",
+    },
+    {
+        Name = "ApplyAtCenterOfMass",
+        Id = 3,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "movers",
+        Doc = "Whether it pushes at the body's centre rather than at its attachment.",
+    },
+}
+
+local TorqueFields: { Schema.Field } = {
+    {
+        Name = "Vector",
+        Id = 1,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The speed, the spin, the force or the torque it holds.",
+    },
+    {
+        Name = "RelativeTo",
+        Id = 2,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "movers",
+        Doc = "The frame its vector is written in.",
+    },
+}
+
+local WeldFields: { Schema.Field } = {
+    {
+        Name = "Part0",
+        Id = 1,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "welds",
+        Doc = "What the weld holds to. A network id; resolved on the replica to its own copy, and "
+            .. "written once that copy exists.",
+    },
+    {
+        Name = "Part1",
+        Id = 2,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "welds",
+        Doc = "What the weld moves. A network id; resolved on the replica to its own copy, and "
+            .. "written once that copy exists.",
+    },
+    {
+        Name = "C0",
+        Id = 3,
+        Encoding = "CFrameD",
+        Source = "Component",
+        Component = "welds",
+        Doc = "The joint's frame on the first.",
+    },
+    {
+        Name = "C1",
+        Id = 4,
+        Encoding = "CFrameD",
+        Source = "Component",
+        Component = "welds",
+        Doc = "The joint's frame on the second.",
+    },
+    {
+        Name = "Enabled",
+        Id = 5,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "welds",
+        Doc = "A weld switched off holds nothing.",
+    },
+}
+
+--- A weld constraint's offset is not sent: it reads it off the world where it
+--- is first solved, and a replica's two parts are drawn from the same snapshot,
+--- so the offset it reads is the authority's.
+local WeldConstraintFields: { Schema.Field } = {
+    {
+        Name = "Part0",
+        Id = 1,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "welds",
+        Doc = "What the weld holds to. A network id; resolved on the replica to its own copy, and "
+            .. "written once that copy exists.",
+    },
+    {
+        Name = "Part1",
+        Id = 2,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "welds",
+        Doc = "What the weld moves. A network id; resolved on the replica to its own copy, and written "
+            .. "once that copy exists.",
+    },
+    {
+        Name = "Enabled",
+        Id = 3,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "welds",
+        Doc = "A weld switched off holds nothing.",
+    },
+}
+
+local NoCollisionFields: { Schema.Field } = {
+    {
+        Name = "Part0",
+        Id = 1,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "noCollisions",
+        Doc = "One of the two. A network id; resolved on the replica to its own copy, and written "
+            .. "once that copy exists.",
+    },
+    {
+        Name = "Part1",
+        Id = 2,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "noCollisions",
+        Doc = "The other. A network id; resolved on the replica to its own copy, and written once "
+            .. "that copy exists.",
+    },
+    {
+        Name = "Enabled",
+        Id = 3,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "noCollisions",
+        Doc = "Switched off, the two collide again.",
+    },
+}
+
 local Classes: { Schema.Class } = {
     {
         Name = "BasePart",
@@ -1871,8 +2826,118 @@ local Classes: { Schema.Class } = {
         Service = true,
         Doc = "The wind (ADR 0115, protocol 19). **A service for its properties only**: its children "
             .. "already travel as the world, by where they are, so it does not carry its contents the way "
-            .. "`ReplicatedStorage` does. Last in this list, so every service before it keeps its id.",
+            .. "`ReplicatedStorage` does. After every other service in this list, so each of them keeps its "
+            .. "id; what follows it is instances.",
         Fields = WorkspaceFields,
+    },
+    {
+        Name = "Attachment",
+        Doc = "A frame on a part, which a joint holds to another (NA34). A `Bone` is one too, and stays "
+            .. "off the wire by its own exclusion: its pose is derived from state that travels.",
+        Fields = AttachmentFields,
+    },
+    {
+        Name = "Constraint",
+        Doc = "What every joint between two attachments has (NA34): its two ends, whether it holds, and "
+            .. "when it breaks. Each kind adds what it is, by `Extends`, and is spawned on the replica as "
+            .. "the class it is.",
+        Fields = ConstraintFields,
+    },
+    {
+        Name = "BallSocketConstraint",
+        Extends = "Constraint",
+        Doc = "A ball joint: its cone and twist, and the pose a servo holds it in.",
+        Fields = BallSocketFields,
+    },
+    {
+        Name = "HingeConstraint",
+        Extends = "Constraint",
+        Doc = "A hinge: its stops, and the motor or servo that turns it -- a vehicle's wheel.",
+        Fields = HingeFields,
+    },
+    {
+        Name = "FixedConstraint",
+        Extends = "Constraint",
+        Doc = "Two parts held as one by the solver. Nothing of its own beyond a joint's.",
+        Fields = NoFields,
+    },
+    {
+        Name = "PrismaticConstraint",
+        Extends = "Constraint",
+        Doc = "A slider: its stops, and the motor or servo that moves it -- a lift, a suspension.",
+        Fields = PrismaticFields,
+    },
+    {
+        Name = "RopeConstraint",
+        Extends = "Constraint",
+        Doc = "A rope: its length and its winch, and how it is drawn.",
+        Fields = RopeFields,
+    },
+    {
+        Name = "RodConstraint",
+        Extends = "Constraint",
+        Doc = "A rod: its length, and how it is drawn.",
+        Fields = RodFields,
+    },
+    {
+        Name = "SpringConstraint",
+        Extends = "Constraint",
+        Doc = "A spring: its free length, how stiff, its stops, and how it is drawn.",
+        Fields = SpringFields,
+    },
+    {
+        Name = "LinearVelocity",
+        Extends = "Constraint",
+        Doc = "A mover (ADR 0127, NA34): the speed it holds. Applied only where its body is simulated -- "
+            .. "on the authority, or on the replica that owns or predicts it.",
+        Fields = LinearVelocityFields,
+    },
+    {
+        Name = "AngularVelocity",
+        Extends = "Constraint",
+        Doc = "A mover: the spin it holds.",
+        Fields = AngularVelocityFields,
+    },
+    {
+        Name = "AlignPosition",
+        Extends = "Constraint",
+        Doc = "A mover: the place it pulls to.",
+        Fields = AlignPositionFields,
+    },
+    {
+        Name = "AlignOrientation",
+        Extends = "Constraint",
+        Doc = "A mover: the facing it turns to.",
+        Fields = AlignOrientationFields,
+    },
+    {
+        Name = "VectorForce",
+        Extends = "Constraint",
+        Doc = "A mover: the force it pushes with.",
+        Fields = VectorForceFields,
+    },
+    {
+        Name = "Torque",
+        Extends = "Constraint",
+        Doc = "A mover: the torque it turns with.",
+        Fields = TorqueFields,
+    },
+    {
+        Name = "Weld",
+        Doc = "Two parts held as one (NA34). A replica that simulates either end resolves it as the "
+            .. "authority does; any other is sent where the welded part ended up, and ignores it.",
+        Fields = WeldFields,
+    },
+    {
+        Name = "WeldConstraint",
+        Doc = "A weld that reads its offset off the world, on a replica too; as `Weld`.",
+        Fields = WeldConstraintFields,
+    },
+    {
+        Name = "NoCollisionConstraint",
+        Doc = "Two parts that pass through each other (NA34): a vehicle's wheel and its arch, on the "
+            .. "machine that drives it as on the authority.",
+        Fields = NoCollisionFields,
     },
 }
 
@@ -1892,14 +2957,14 @@ local Excluded: { Schema.Excluded } = {
     {
         Name = "Highlight",
         Reason = "A mark on the picture (ADR 0129). ADR 0129 has it travel as an instance and each machine "
-            .. "draw its own; it does not yet, because what it marks is named by reference and the wire's "
-            .. "fields carry no reference but a parent. A box in the network's ledger.",
+            .. "draw its own; it does not yet. What it marks is named by reference, which the wire carries "
+            .. "since protocol 34 (NA34); a box in the network's ledger.",
     },
     {
         Name = "Beam",
-        Reason = "Drawn between two attachments (ADR 0129), and `Attachment` is not on the wire, nor is a "
-            .. "sequence of colours a width the wire has. Excluded until both are; a box in the network's "
-            .. "ledger.",
+        Reason = "Drawn between two attachments (ADR 0129). `Attachment` is on the wire since protocol 34, "
+            .. "but a sequence of colours or of widths is not an encoding it has. Excluded until it is; a box "
+            .. "in the network's ledger.",
     },
     {
         Name = "Trail",
@@ -1926,99 +2991,9 @@ local Excluded: { Schema.Excluded } = {
     },
 
     {
-        Name = "Attachment",
-        Reason = "A joint frame. The replica's bodies are kinematic-driven from the authority's "
-            .. "transforms and solve nothing, so the frames that produced those transforms are work "
-            .. "it would do twice and disagree about.",
-    },
-    {
         Name = "Bone",
         Reason = "The same argument as `Attachment`, plus one: a bone's world transform is derived "
             .. "from an animated pose, and the pose is derived from state that does replicate.",
-    },
-    {
-        Name = "Weld",
-        Reason = "A welded part's transform is resolved from its anchor every tick. The authority "
-            .. "sends the resolved transform; sending the weld as well would give the replica two "
-            .. "answers.",
-    },
-    {
-        Name = "WeldConstraint",
-        Reason = "The same as `Weld`.",
-    },
-    {
-        Name = "BallSocketConstraint",
-        Reason = "The replica does not solve constraints -- its bodies are kinematic. What it needs "
-            .. "is where the limbs ended up, which is `BasePart.CFrame`.",
-    },
-    {
-        Name = "HingeConstraint",
-        Reason = "The same as `BallSocketConstraint`.",
-    },
-    {
-        Name = "FixedConstraint",
-        Reason = "The same as `BallSocketConstraint`.",
-    },
-    {
-        Name = "PrismaticConstraint",
-        Reason = "The same as `BallSocketConstraint` (ADR 0127): the authority solves it, and the "
-            .. "replica is sent where the parts ended up.",
-    },
-    {
-        Name = "RopeConstraint",
-        Reason = "The same as `BallSocketConstraint` (ADR 0127): the authority solves it, and the "
-            .. "replica is sent where the parts ended up.",
-    },
-    {
-        Name = "RodConstraint",
-        Reason = "The same as `BallSocketConstraint` (ADR 0127): the authority solves it, and the "
-            .. "replica is sent where the parts ended up.",
-    },
-    {
-        Name = "SpringConstraint",
-        Reason = "The same as `BallSocketConstraint` (ADR 0127): the authority solves it, and the "
-            .. "replica is sent where the parts ended up.",
-    },
-    {
-        Name = "NoCollisionConstraint",
-        Reason = "The same as `BallSocketConstraint` (ADR 0127): the authority solves it, and the "
-            .. "replica is sent where the parts ended up.",
-    },
-    {
-        Name = "LinearVelocity",
-        Reason = "A mover is forces on a body the authority simulates (ADR 0127), and the replica is "
-            .. "sent where that body went. On a body a replica predicts or owns it is not applied, which "
-            .. "the stage's ledger records as open: it needs `Attachment` on the wire first.",
-    },
-    {
-        Name = "AngularVelocity",
-        Reason = "A mover is forces on a body the authority simulates (ADR 0127), and the replica is "
-            .. "sent where that body went. On a body a replica predicts or owns it is not applied, which "
-            .. "the stage's ledger records as open: it needs `Attachment` on the wire first.",
-    },
-    {
-        Name = "AlignPosition",
-        Reason = "A mover is forces on a body the authority simulates (ADR 0127), and the replica is "
-            .. "sent where that body went. On a body a replica predicts or owns it is not applied, which "
-            .. "the stage's ledger records as open: it needs `Attachment` on the wire first.",
-    },
-    {
-        Name = "AlignOrientation",
-        Reason = "A mover is forces on a body the authority simulates (ADR 0127), and the replica is "
-            .. "sent where that body went. On a body a replica predicts or owns it is not applied, which "
-            .. "the stage's ledger records as open: it needs `Attachment` on the wire first.",
-    },
-    {
-        Name = "VectorForce",
-        Reason = "A mover is forces on a body the authority simulates (ADR 0127), and the replica is "
-            .. "sent where that body went. On a body a replica predicts or owns it is not applied, which "
-            .. "the stage's ledger records as open: it needs `Attachment` on the wire first.",
-    },
-    {
-        Name = "Torque",
-        Reason = "A mover is forces on a body the authority simulates (ADR 0127), and the replica is "
-            .. "sent where that body went. On a body a replica predicts or owns it is not applied, which "
-            .. "the stage's ledger records as open: it needs `Attachment` on the wire first.",
     },
     {
         Name = "Ragdoll",

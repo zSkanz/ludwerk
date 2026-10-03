@@ -222,6 +222,16 @@ end
 emit("};")
 emit("")
 
+emit("// Every class kept off the wire by name. **An exclusion holds below a")
+emit("// replicated ancestor too**: a `Bone` is an `Attachment`, and a lookup that")
+emit("// walked up past its own name would describe it by its ancestor's schema.")
+emit("inline constexpr std::string_view ExcludedClasses[] = {")
+for _, excluded in Wire.excluded() do
+    emit(`    {quote(excluded.Name)},`)
+end
+emit("};")
+emit("")
+
 -- Channels.
 emit("// ENet's delivery mode per channel, as `net::Delivery` spells it.")
 emit("enum class Delivery : u8")

@@ -19,8 +19,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
-- **The wire is protocol 33**: a client and a server of different builds refuse
+- **The wire is protocol 34**: a client and a server of different builds refuse
   each other -- and now say so (`JoinFailed`, "another version of the game").
+- **A property read through `game`, `workspace` or `script` is read when it
+  runs** (D481); it was the value the script started with.
 - **A join changes nothing until the server takes it** (ADR 0106, amended): a
   game's scene, its menu and its own server code run on while `State` is
   `Connecting`, and the world becomes the server's at the welcome. A game that
@@ -165,6 +167,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Joints travel** (NA34): attachments, every constraint, welds, movers and
+  `NoCollisionConstraint` reach the replicas, and the machine that owns a
+  vehicle's parts solves its hinges and drives its motors; `Workspace.Gravity`
+  travels too.
 - **A worse network, on purpose**: `engine-host --net-delay=MS --net-jitter=MS
   --net-loss=PCT` puts a link conditioner below the transport of a client's
   link; refused by a shipping build. And `netcode_acceptance`, a gate that
@@ -966,6 +972,9 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A part a player owned never moved on the server** (D482): handed over in
+  the tick it was made, it was simulated from the origin by its owner and every
+  place it was sent refused.
 - **Joining a large world** (the netcode audit, NA1): a world of a thousand
   parts took 29 s to join on a loopback, and five thousand never did -- the
   first snapshot went as one unreliable message resent until a whole copy got

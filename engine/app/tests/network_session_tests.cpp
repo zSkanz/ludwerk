@@ -1607,3 +1607,192 @@ TEST_CASE("a Join during a scene change cancels the change, and no scene of its 
     CHECK_FALSE(log.contains("b-server started"));
     CHECK(log.contains("cancelled"));
 }
+
+TEST_CASE("NA34: a jointed assembly handed to a replica holds together there, and its motor turns it")
+{
+    // A vehicle fell apart on the machine that drove it: the owner received
+    // the parts and none of what held them -- no attachment, no joint, no
+    // motor -- and simulated each part on its own. The world has no gravity
+    // here, so nothing but the joint keeps the two together.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/client/host.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService:Host(47134)
+        workspace.Gravity = vector.zero
+        local AlongZ = CFrame.fromEuler(0, -math.pi / 2, 0)
+        local function part(name: string, x: number): Part
+            local made = Instance.new("Part")
+            made.Name = name
+            made.Size = vector.create(2, 2, 2)
+            made.Position = vector.create(x, 20, 0)
+            made.Parent = workspace
+            return made
+        end
+        local post = part("Post", 0)
+        local arm = part("Arm", 3)
+        arm.Size = vector.create(1, 1, 1)
+        local pivot = Instance.new("Attachment")
+        pivot.CFrame = CFrame.new(1.5, 0, 0) * AlongZ
+        pivot.Parent = post
+        local elbow = Instance.new("Attachment")
+        elbow.CFrame = CFrame.new(-1.5, 0, 0) * AlongZ
+        elbow.Parent = arm
+        local hinge = Instance.new("HingeConstraint")
+        hinge.Name = "Hinge"
+        hinge.Attachment0 = pivot
+        hinge.Attachment1 = elbow
+        hinge.CollideConnected = false
+        hinge.ActuatorType = Enum.ActuatorType.Motor
+        hinge.AngularVelocity = 2
+        hinge.MotorMaxTorque = 100000
+        hinge.Parent = workspace
+        NetworkService.PlayerAdded:Connect(function(player)
+            if player == NetworkService.LocalPlayer then
+                return
+            end
+            post:SetNetworkOwner(player)
+            arm:SetNetworkOwner(player)
+            task.wait(2)
+            -- **What the owner simulates, the authority sees** (ADR 0099):
+            -- its own copies are kinematic and move only by what is sent.
+            local before = arm.CFrame.RightVector
+            task.wait(1)
+            local after = arm.CFrame.RightVector
+            local span = vector.magnitude(pivot.WorldCFrame.Position - elbow.WorldCFrame.Position)
+            print(`server-turned:{vector.dot(before, after) < 0.95}`)
+            print(`server-span:{span < 0.25}`)
+        end)
+    )");
+    server.boot(wire);
+
+    Machine client;
+    client.project.write("src/client/join.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.Connected:Connect(function()
+            task.wait(2)
+            local hinge = workspace:FindFirstChild("Hinge") :: any
+            local post = workspace:FindFirstChild("Post") :: any
+            local arm = workspace:FindFirstChild("Arm") :: any
+            print(`client-hinge:{hinge ~= nil and hinge.Attachment0 ~= nil and hinge.Attachment1 ~= nil}`)
+            print(`client-gravity:{vector.magnitude(workspace.Gravity) == 0}`)
+            if hinge == nil or hinge.Attachment0 == nil or hinge.Attachment1 == nil then
+                return
+            end
+            print(`client-owner:{arm:GetNetworkOwner() == NetworkService.LocalPlayer}`)
+            local function span(): number
+                return vector.magnitude(hinge.Attachment0.WorldCFrame.Position - hinge.Attachment1.WorldCFrame.Position)
+            end
+            local function spin(): number
+                return arm.AngularVelocity.z - post.AngularVelocity.z
+            end
+            print(`client-span:{span() < 0.25}`)
+            print(`client-motor:{math.abs(spin() - 2) < 0.3}`)
+            -- **The owner's own change stays its own**: the authority changed
+            -- nothing, so no snapshot puts the old speed back.
+            hinge.AngularVelocity = -2
+            task.wait(1)
+            print(`client-local-change:{math.abs(spin() + 2) < 0.3}`)
+            print(`client-span-after:{span() < 0.25}`)
+        end)
+        NetworkService:Join("memory:47134")
+    )");
+    client.boot(wire);
+    run(server, client, 360);
+    REQUIRE(client.state() == Connected);
+    CHECK(log.contains("client-hinge:true"));
+    CHECK(log.contains("client-gravity:true"));
+    CHECK(log.contains("client-owner:true"));
+    CHECK(log.contains("client-span:true"));
+    CHECK(log.contains("client-motor:true"));
+    CHECK(log.contains("client-local-change:true"));
+    CHECK(log.contains("client-span-after:true"));
+    CHECK(log.contains("server-turned:true"));
+    CHECK(log.contains("server-span:true"));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
+TEST_CASE("D482: an assembly handed over the moment it is made is where the authority made it, and the authority "
+          "follows it 20 m")
+{
+    // The kart game, measured on 43a63075: a server that builds a player's
+    // kart and hands it over at once had the owner simulate it from the
+    // origin -- the part was given away before its first state arrived, and
+    // was never put anywhere -- and the authority refused every place it was
+    // sent as out of reach, for the whole race.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/client/host.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService:Host(47135)
+        workspace.Gravity = vector.zero
+        NetworkService.PlayerAdded:Connect(function(player)
+            if player == NetworkService.LocalPlayer then
+                return
+            end
+            local AlongZ = CFrame.fromEuler(0, -math.pi / 2, 0)
+            local chassis = Instance.new("Part")
+            chassis.Name = "Chassis"
+            chassis.Size = vector.create(2, 2, 2)
+            chassis.Position = vector.create(0, 20, 0)
+            chassis.Parent = workspace
+            local wheel = Instance.new("Part")
+            wheel.Name = "Wheel"
+            wheel.Size = vector.create(1, 1, 1)
+            wheel.Position = vector.create(3, 20, 0)
+            wheel.Parent = workspace
+            local axle = Instance.new("Attachment")
+            axle.CFrame = CFrame.new(1.5, 0, 0) * AlongZ
+            axle.Parent = chassis
+            local hub = Instance.new("Attachment")
+            hub.CFrame = CFrame.new(-1.5, 0, 0) * AlongZ
+            hub.Parent = wheel
+            local hinge = Instance.new("HingeConstraint")
+            hinge.Attachment0 = axle
+            hinge.Attachment1 = hub
+            hinge.CollideConnected = false
+            hinge.Parent = workspace
+            chassis:SetNetworkOwner(player)
+            wheel:SetNetworkOwner(player)
+            task.wait(3.5)
+            print(`server-followed:{wheel.Position.x > 21 and wheel.Position.x < 25}`)
+            print(`server-chassis:{chassis.Position.x > 18 and chassis.Position.x < 22}`)
+        end)
+    )");
+    server.boot(wire);
+
+    Machine client;
+    client.project.write("src/client/join.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.Connected:Connect(function()
+            task.wait(0.5)
+            local chassis = workspace:FindFirstChild("Chassis") :: any
+            local wheel = workspace:FindFirstChild("Wheel") :: any
+            if chassis == nil or wheel == nil then
+                print("client-missing")
+                return
+            end
+            print(`client-placed:{math.abs(chassis.Position.y - 20) < 0.5 and math.abs(wheel.Position.x - 3) < 0.5}`)
+            -- Twenty metres in two seconds, on this machine alone.
+            for _ = 1, 120 do
+                chassis.LinearVelocity = vector.create(10, 0, 0)
+                wheel.LinearVelocity = vector.create(10, 0, 0)
+                task.wait()
+            end
+            chassis.LinearVelocity = vector.zero
+            wheel.LinearVelocity = vector.zero
+            print(`client-moved:{chassis.Position.x > 18}`)
+        end)
+        NetworkService:Join("memory:47135")
+    )");
+    client.boot(wire);
+    run(server, client, 300);
+    REQUIRE(client.state() == Connected);
+    CHECK(log.contains("client-placed:true"));
+    CHECK(log.contains("client-moved:true"));
+    CHECK(log.contains("server-followed:true"));
+    CHECK(log.contains("server-chassis:true"));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}

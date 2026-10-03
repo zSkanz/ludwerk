@@ -504,6 +504,9 @@ private:
     // it kinematic rather than dynamic: it is moved by the weld and by nothing
     // else, so the solver may not integrate it.
     [[nodiscard]] bool isDriven(core::InstanceId id) const;
+    // Whether this machine solves what holds `part` (NA34): everywhere but a
+    // replica, and there only a body it simulates itself.
+    [[nodiscard]] bool solvedHere(core::InstanceId part) const;
     [[nodiscard]] physics::ShapeDesc shapeOf(core::InstanceId id, const PartComponent& part) const;
     [[nodiscard]] physics::BodyDesc descOf(core::InstanceId id, const PartComponent& part,
                                            const RigidBodyComponent& body, bool movingAnchored) const;

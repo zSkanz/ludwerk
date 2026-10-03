@@ -92,3 +92,20 @@ owner within whatever checks the game adds.
 - **Joints are not yet on the wire** (NA34): an owner of a jointed assembly
   receives its parts only, and a vehicle falls apart on its owner's machine.
   The next slice of the netcode ledger.
+
+## Amended, 2026-10-03 (NA34, D482)
+
+- **Joints travel** (protocol 34): `Attachment`, every constraint, the welds,
+  `NoCollisionConstraint` and the movers are on the wire, each with what its
+  own properties hold. A replica solves a joint when it simulates one of its
+  bodies -- owns it, predicts it (ADR 0133), or made it itself -- and leaves
+  any other to the authority, whose snapshots say where the parts went. An
+  owner's own change to a joint stays its own until the authority changes the
+  same field. `Workspace.Gravity` travels too: an owner simulated under the
+  gravity it booted with.
+- **A part handed over starts from the authority's newest place** for it, not
+  from where the owner last drew it: handed over in the tick it was made, it
+  had been drawn nowhere, and the owner simulated it from the origin (D482).
+- **An owner is followed at its reach, never refused.** A place further than
+  two metres a tick is taken as far as two metres a tick go; a refusal was for
+  good, since the owner never hears it and moves on from where it is.
