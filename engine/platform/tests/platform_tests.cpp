@@ -907,16 +907,24 @@ TEST_CASE("a thread's CPU clock runs while it works and stops while it waits")
         return;
     }
 
-    // Working: most of the wall time is CPU time.
-    const engine::core::u64 wallStart = engine::platform::nowNs();
-    const engine::core::i64 cpuStart = engine::platform::threadCpuNs();
-    volatile engine::core::u64 sink = 0;
-    while (engine::platform::nowNs() - wallStart < 40'000'000)
-        sink = sink + 1;
-    const double wall = static_cast<double>(engine::platform::nowNs() - wallStart);
-    const double cpu = static_cast<double>(engine::platform::threadCpuNs() - cpuStart);
-    CHECK(cpu > 0.25 * wall);
-    CHECK(cpu < 1.25 * wall + 2.0e6);
+    // Working: most of the wall time is CPU time. **Up to three tries** (D522):
+    // on a shared runner the thread can be taken off its core for most of a
+    // 40 ms burst, and one try failed a build that changed nothing here. A
+    // clock that does not run fails all three.
+    bool ran = false;
+    for (int attempt = 0; attempt < 3 && !ran; ++attempt) {
+        const engine::core::u64 wallStart = engine::platform::nowNs();
+        const engine::core::i64 cpuStart = engine::platform::threadCpuNs();
+        volatile engine::core::u64 sink = 0;
+        while (engine::platform::nowNs() - wallStart < 40'000'000)
+            sink = sink + 1;
+        const double wall = static_cast<double>(engine::platform::nowNs() - wallStart);
+        const double cpu = static_cast<double>(engine::platform::threadCpuNs() - cpuStart);
+        // Never more than the wall clock allows, on any try.
+        CHECK(cpu < 1.25 * wall + 2.0e6);
+        ran = cpu > 0.25 * wall;
+    }
+    CHECK(ran);
 
     // Waiting: next to none.
     const engine::core::i64 idleStart = engine::platform::threadCpuNs();
