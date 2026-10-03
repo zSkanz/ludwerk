@@ -1,0 +1,14 @@
+# A run of parts drawn instanced after draws that are not (D484): every part of
+# the red row drawn where it is, on every backend. A project rather than a bare
+# script, because the four materials that order the draws are files.
+
+[project]
+name = "Ludwerk Instance Stride"
+id = "dev.ludwerk.instancestride"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Instance Stride"
+width = 960
+height = 540

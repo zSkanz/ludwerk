@@ -1,0 +1,37 @@
+Ludwerk D484: the D3D12 backend keeps a pipeline's vertex strides after the
+pipeline changes.
+
+D3D12_INTERNAL_BindGraphicsResources builds the vertex buffer views with the
+CURRENT pipeline's strides, but only when needVertexBufferBind is set, and only
+D3D12_BindVertexBuffers sets it -- and only when a buffer or an offset changed.
+So: a pipeline with one vertex stream draws (its stride for slot 1 is zero, and
+the instance buffer still bound in slot 1 is set with stride zero); an
+instanced pipeline is bound and the same two buffers are bound again, which
+changes nothing; and the instanced draw reads every instance from the first
+element of the instance stream. Every instance of the run is drawn where its
+first is, and the rest of the run vanishes -- shadows included.
+
+Seen as scene parts vanishing once a mesh with its own materials (drawn without
+instancing) was sorted in front of their instanced run. Vulkan and Metal carry
+the strides in the pipeline and are unaffected. Upstream SDL main (checked
+2026-10-03) still sets needVertexBufferBind only in BindVertexBuffers.
+
+The fix marks the views to be set again whenever a graphics pipeline is bound,
+as every other binding already is there.
+
+diff --git a/src/gpu/d3d12/SDL_gpu_d3d12.c b/src/gpu/d3d12/SDL_gpu_d3d12.c
+index d4364e7..a200559 100644
+--- a/src/gpu/d3d12/SDL_gpu_d3d12.c
++++ b/src/gpu/d3d12/SDL_gpu_d3d12.c
+@@ -4761,6 +4761,11 @@ static void D3D12_BindGraphicsPipeline(
+     ID3D12GraphicsCommandList_IASetPrimitiveTopology(d3d12CommandBuffer->graphicsCommandList, SDLToD3D12_PrimitiveType[pipeline->primitiveType]);
+ 
+     // Mark that bindings are needed
++    // The vertex buffer views carry this pipeline's strides, so they are set
++    // again even when the buffers bound have not changed: otherwise a buffer
++    // bound under a pipeline that did not use its slot keeps that pipeline's
++    // stride of zero, and every instance reads the first element.
++    d3d12CommandBuffer->needVertexBufferBind = true;
+     d3d12CommandBuffer->needVertexSamplerBind = true;
+     d3d12CommandBuffer->needVertexStorageTextureBind = true;
+     d3d12CommandBuffer->needVertexStorageBufferBind = true;

@@ -203,10 +203,10 @@ of their own.
 
 - [x] **K5** A part's `Material` written in a scene file is not there at run
   time: D483, the partitioned scene headed as version 1.
-- [ ] **K6** Scene parts wearing one material are not drawn once another,
-  first worn by a part that neither collides nor is queried, is assigned at run
-  time. **K7**, likely the same root: one `MeshPart` with glTF materials makes
-  every part wearing two of a scene's materials vanish, shadows included.
+- [x] **K6**, **K7** Scene parts wearing some materials vanish once another
+  material, or a mesh with its own, is in the world: D484, SDL's D3D12 backend
+  keeping a single draw's vertex stride of zero for the instanced run after it
+  (patch 0003).
 - [ ] **G1** A placed stamp stores a world-space transform on every part, so a
   part moved inside the stamp file never moves in a copy placed away from the
   origin: the instance should store its root's transform, its children
@@ -221,6 +221,12 @@ of their own.
 - [ ] **G6** A billboard label draws a box for a glyph, and fills the glyph
   cache; labels made before the cache clears draw garbage after it.
 - [ ] **G7** No `ViewportFrame` draws when the workspace has no camera.
+- [ ] **G8** `Enum.ScaleType` has `Stretch` and `Slice`; `Fit` and `Crop` are
+  what an icon in a box wants.
+- [ ] **G9** `Bone.Transform` moves nothing: a chest bone turned eighty degrees
+  leaves the figure, and the hand bone after it, as they were.
+- [ ] **G10** `HostFailed`'s reason carries its catalog key in front of the
+  words; `JoinFailed`'s does not.
 - [ ] The scene format's rotation is column by column, `m[column][row]`: say
   so in the format's documentation.
 

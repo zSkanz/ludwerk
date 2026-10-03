@@ -1301,6 +1301,21 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # **Every part of an instanced run drawn where it is** (D484): on D3D12 a
+    # run drawn after single draws on other meshes read every instance from
+    # the first, the vertex buffer views keeping the single draws' stride of
+    # zero -- SDL's patch 0003. See the driver.
+    add_test(NAME instanced_run_after_single_draws
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/instancestride
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/instance-stride.png
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_instance_stride.cmake)
+    set_tests_properties(instanced_run_after_single_draws PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # E5's screenshot row, which sat PENDING because the overlay it named was an
     # ImGui panel and a panel cannot render headlessly. The grid is drawn through
     # `DebugDraw` now -- in the world, where a question about space belongs --

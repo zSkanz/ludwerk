@@ -4761,6 +4761,11 @@ static void D3D12_BindGraphicsPipeline(
     ID3D12GraphicsCommandList_IASetPrimitiveTopology(d3d12CommandBuffer->graphicsCommandList, SDLToD3D12_PrimitiveType[pipeline->primitiveType]);
 
     // Mark that bindings are needed
+    // The vertex buffer views carry this pipeline's strides, so they are set
+    // again even when the buffers bound have not changed: otherwise a buffer
+    // bound under a pipeline that did not use its slot keeps that pipeline's
+    // stride of zero, and every instance reads the first element.
+    d3d12CommandBuffer->needVertexBufferBind = true;
     d3d12CommandBuffer->needVertexSamplerBind = true;
     d3d12CommandBuffer->needVertexStorageTextureBind = true;
     d3d12CommandBuffer->needVertexStorageBufferBind = true;
