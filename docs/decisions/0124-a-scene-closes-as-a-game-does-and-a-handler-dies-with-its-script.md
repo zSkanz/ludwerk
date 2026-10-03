@@ -173,3 +173,10 @@ VMs cannot share a function or a table:
   registration with `Disconnect()`, as it undoes a signal's. The engine needs
   per-handler removal internally for §3 either way; exposing it is the owner's
   call.
+
+## Amended, 2026-10-03 (D481)
+
+- **`game`, `workspace` and `script` are mutable globals too.** The compiler
+  turned `workspace.Gravity` into an import resolved once at load, exactly as
+  it had `scene.Name`: every property read through the three instance globals
+  was the value the chunk loaded with.

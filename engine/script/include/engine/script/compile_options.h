@@ -25,8 +25,11 @@ inline constexpr const char* DeterministicBuiltins[] = {
 // The compiler turns `scene.Name` into an import, and a safe environment
 // resolves an import when the chunk loads and keeps the answer -- right for
 // `math.pi`, wrong for `scene`, which is whichever scene is open when it is
-// read (ADR 0124). Null-terminated.
-inline constexpr const char* MutableGlobals[] = {"scene", nullptr};
+// read (ADR 0124). **And wrong for the three instances** (D481): `game`,
+// `workspace` and `script` are objects whose properties change, and every
+// `workspace.Gravity` a script read was the gravity when it started -- a
+// replica's long after the server's had arrived. Null-terminated.
+inline constexpr const char* MutableGlobals[] = {"scene", "game", "workspace", "script", nullptr};
 
 inline void configureCompileOptions(lua_CompileOptions& options) noexcept
 {

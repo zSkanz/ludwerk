@@ -72,6 +72,37 @@ describe("the script global", function()
     end)
 end)
 
+--- **What `game`, `workspace` and `script` say is read when it is asked**
+--- (D481). The compiler turns `workspace.Gravity` into an import, and a safe
+--- environment resolves an import once, when the chunk loads, and keeps the
+--- answer: every read of a property through one of the three globals was the
+--- value it had when the script started. A replica read the gravity it booted
+--- with long after the server's had arrived.
+describe("the globals' properties", function()
+    it("read what workspace holds now, not what it held when the script loaded", function()
+        local before = workspace.Gravity
+        workspace.Gravity = vector.create(0, -5, 0)
+        expect(workspace.Gravity.y):ToBe(-5)
+        workspace.Gravity = before
+        expect(workspace.Gravity.y):ToBe(before.y)
+    end)
+
+    it("read what script holds now", function()
+        local name = script.Name
+        script.Name = "RenamedForTheProbe"
+        expect(script.Name):ToBe("RenamedForTheProbe")
+        script.Name = name
+        expect(script.Name):ToBe(name)
+    end)
+
+    it("read what game holds now", function()
+        local name = game.Name
+        game.Name = "RenamedForTheProbe"
+        expect(game.Name):ToBe("RenamedForTheProbe")
+        game.Name = name
+    end)
+end)
+
 describe("GlobalScriptService", function()
     local global: GlobalScriptService
     local client: Instance
