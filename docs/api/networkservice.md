@@ -21,6 +21,7 @@ offers is on the base's page, which is what keeps one added member on
 | `Authority` | `boolean` | — | read-only | Whether this process decides the world: true solo, hosting or serving; false on a replica, which shows what it is sent. |
 | `LocalPlayer` | `Player?` | — | read-only | The player at this machine: there from boot solo, hosting or joining, and nil on a dedicated server, which has nobody at it. |
 | `PeerCount` | `number` | — | read-only | Connected peers, not counting this process: the replicas an authority is serving, or 1 on a replica that is connected to its authority. |
+| `Port` | `number` | — | read-only | The port this machine's match is on: the one it hosts or serves on, or the one it joined. Zero with no match. With `GetLocalAddresses`, what a host shows the friends who will join it. |
 | `ServerTick` | `number` | — | read-only | The authority's tick: its own on an authority, the newest one applied on a replica. Zero solo. **A count of ticks and never a time**, because two machines agree on the first and never on the second. |
 | `State` | `Enum.NetworkState` | — | read-only | Where this machine stands: `Offline`, `Connecting`, `Connected`, `Hosting` or `Serving`. |
 | `Topology` | `Enum.NetworkTopology` | — | read-only | Which posture this process runs in. Branch on `Authority` for gameplay; this is for a menu that wants to say which one it is. |
@@ -30,6 +31,10 @@ offers is on the base's page, which is what keeps one added member on
 ### `Disconnect()`
 
 Leaves the match, or stops hosting, and goes back to solo in the scene it is in; the game's code decides what next. Server code starts again, fresh, since this machine decides the world again. `Disconnected` fires. A dedicated server may not call it.
+
+### `GetLocalAddresses(): {string}`
+
+**This machine's addresses on its networks**, best first: what a host shows the friends on its Wi-Fi to type. IPv4, from interfaces that are up -- never loopback, never link-local (169.254), never a virtual adapter that can be told apart (a hypervisor's or a container's) -- the private ranges first, the interface the default route leaves by first among them. A fact about this machine: it needs no match, is never replicated, and is empty offline.
 
 ### `GetPlayers(): {Player}`
 

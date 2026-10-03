@@ -76,6 +76,39 @@ public:
 // three constraints, deliberately -- they differ only in what their own hook
 // stamps. That is exactly the shape `RagdollClasses` takes, so the test says so
 // rather than working around it.
+// The same rig with its chest joint turned a quarter about X, as a modelling
+// tool's bones are turned to run along their limbs.
+class TurnedRig final : public SkeletonHost
+{
+public:
+    [[nodiscard]] u32 jointCount(core::InstanceId part) const override { return arm.jointCount(part); }
+    [[nodiscard]] i32 findJoint(core::InstanceId part, std::string_view name) const override
+    {
+        return arm.findJoint(part, name);
+    }
+    [[nodiscard]] i32 jointParent(core::InstanceId part, u32 joint) const override
+    {
+        return arm.jointParent(part, joint);
+    }
+    [[nodiscard]] std::string_view jointName(core::InstanceId part, u32 joint) const override
+    {
+        return arm.jointName(part, joint);
+    }
+    [[nodiscard]] bool jointModel(core::InstanceId part, u32 joint, core::CFrameD& out) const override
+    {
+        if (!arm.jointModel(part, joint, out))
+            return false;
+        if (joint == 1)
+            out.rotation = core::rotationX(1.5707963267948966f);
+        return true;
+    }
+    void setJointOverride(core::InstanceId, u32, const core::CFrameD&) override {}
+    void clearJointOverrides(core::InstanceId) override {}
+    void commitOverrides() override {}
+
+    ArmRig arm;
+};
+
 [[nodiscard]] RagdollClasses fixtureClasses(const testing::Hierarchy& schema)
 {
     RagdollClasses classes;
@@ -158,6 +191,54 @@ TEST_CASE("a limb is as long as the bone it stands for, and points down it")
     // Its own +Y runs from the hips towards the chest, which is world +Y here.
     const core::Vec3 along = part->cframe.rotation * core::Vec3{0.0f, 1.0f, 0.0f};
     CHECK(static_cast<core::f64>(along.y) == doctest::Approx(1.0).epsilon(0.001));
+}
+
+TEST_CASE("D510: a limb with no child continues past its joint along the bone, not back into its parent")
+{
+    // A foot's capsule pointed back up into the shin: the leaf ran down the
+    // joint's -Y where a bone runs along +Y, the ankle's limit was measured
+    // about the wrong axis, and the foot swung a hundred degrees -- the shin
+    // drew as a ribbon. Here the head joint sits at 1.5 m facing up the rig.
+    Character character;
+    REQUIRE_FALSE(buildRagdoll(character.fixture.world, character.rig, character.ragdoll, humanoid(),
+                               fixtureClasses(character.fixture.schema))
+                      .error.has_value());
+
+    const core::InstanceId head = childNamed(character.fixture.world, character.ragdoll, "Head");
+    REQUIRE(head.valid());
+    const PartComponent* part = character.fixture.world.parts().find(head);
+    REQUIRE(part != nullptr);
+    // Above the joint by half its length (0.2 m), where it was below it -- in
+    // the chest.
+    CHECK(part->cframe.position.y == doctest::Approx(1.6).epsilon(0.001));
+}
+
+TEST_CASE("D511: a limb's bone faces the way its joint does, not the world's axes")
+{
+    // What the ragdoll writes for a joint is its bone's frame. The bone was
+    // turned to the world's axes, so every joint lost its own turn and a rig's
+    // limbs drew folded -- a shin as a ribbon from the knee to the boot.
+    Character character;
+    TurnedRig turned;
+    turned.arm.rig = character.meshPart;
+    REQUIRE_FALSE(buildRagdoll(character.fixture.world, turned, character.ragdoll, humanoid(),
+                               fixtureClasses(character.fixture.schema))
+                      .error.has_value());
+
+    const core::InstanceId chest = childNamed(character.fixture.world, character.ragdoll, "Chest");
+    const core::InstanceId bone = childNamed(character.fixture.world, chest, "Bone");
+    REQUIRE(bone.valid());
+    const PartComponent* part = character.fixture.world.parts().find(chest);
+    const AttachmentComponent* attachment = character.fixture.world.attachments().find(bone);
+    REQUIRE(part != nullptr);
+    REQUIRE(attachment != nullptr);
+
+    // In the world, the bone's +Y is the joint's: turned a quarter about X, it
+    // runs along world +Z.
+    const core::CFrameD world0 = part->cframe * attachment->cframe;
+    const core::Vec3 up = world0.rotation * core::Vec3{0.0f, 1.0f, 0.0f};
+    CHECK(static_cast<core::f64>(up.z) == doctest::Approx(1.0).epsilon(0.001));
+    CHECK(world0.position.y == doctest::Approx(1.0).epsilon(0.001));
 }
 
 TEST_CASE("the bone sits at the limb's joint, not at its centre")

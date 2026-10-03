@@ -340,6 +340,22 @@ TEST_CASE("the launcher and the template it copies agree, file for file")
     }
 }
 
+// D500: a game in a window was left at the desktop's priority, on the belief
+// that being in front was favour enough; on a busy machine its join froze for 4
+// to 40 s inside the graphics driver's calls, and at ABOVE_NORMAL it held 60.
+TEST_CASE("D500: every game run is scheduled ahead, the editor and a plain test run are not")
+{
+    using engine::app::scheduledAhead;
+    // headless, editor, networked, measuring
+    CHECK(scheduledAhead(false, false, false, false));      // a game in a window, alone
+    CHECK(scheduledAhead(false, false, true, false));       // a game in a window, in a match
+    CHECK(scheduledAhead(true, false, true, false));        // a server, or a client with no window
+    CHECK(scheduledAhead(true, false, false, true));        // a measured run
+    CHECK_FALSE(scheduledAhead(true, false, false, false)); // a test, a capture
+    CHECK_FALSE(scheduledAhead(false, true, false, false)); // the editor
+    CHECK_FALSE(scheduledAhead(false, true, true, false));  // the editor, playing a match
+}
+
 // D183: a game somebody downloads never runs with the GPU debug layer unless it
 // was asked for, and the profiles engine work happens in always do.
 TEST_CASE("the GPU debug layer is the debug and dev profiles' and an opt-in's")

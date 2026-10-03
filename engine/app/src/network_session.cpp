@@ -145,6 +145,7 @@ std::optional<core::EngineError> NetworkSession::begin(replication::Topology top
                                                        core::u16 port, bool redial)
 {
     m_redial = redial;
+    m_port = port;
 #if ENG_ENABLE_REPLICATION
     replication::Config config = m_base;
     config.topology = topology;
@@ -291,6 +292,12 @@ void NetworkSession::send()
 #endif
 }
 
+void NetworkSession::noteTimeDropped()
+{
+    if (m_replication != nullptr)
+        m_replication->noteTimeDropped();
+}
+
 void NetworkSession::sendMessages()
 {
 #if ENG_ENABLE_REPLICATION
@@ -317,6 +324,7 @@ void NetworkSession::goSolo(std::string_view event, std::string_view reason, boo
     scene::World& world = host->world();
     world.engineState().networkTopology = scene::NetworkTopology::Solo;
     world.engineState().networkPeerCount = 0;
+    world.engineState().networkPort = 0;
     // The world is this machine's own again: its scene's client code runs.
     world.engineState().sceneClientHeld = false;
     setState(StateOffline);
@@ -424,12 +432,14 @@ void NetworkSession::update()
 #if ENG_ENABLE_REPLICATION
     if (m_replication == nullptr) {
         state.networkStats = {};
+        state.networkPort = 0;
         m_rateStartedNs = 0;
         return;
     }
     const replication::Status status = m_replication->status();
     state.networkServerTick = status.serverTick;
     state.networkPeerCount = status.peerCount;
+    state.networkPort = m_port;
 
     // --- How the connection is doing (the multiplayer smoothness brief).
     {

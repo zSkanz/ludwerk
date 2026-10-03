@@ -359,6 +359,12 @@ float shadowTapPcf(Texture2D<float> atlas, SamplerState pointSampler, float2 uv,
     return lerp(bottom, top, 1.0f - fraction.y);
 }
 
+// The receiver-slope part of the cascade bias, in texels of the cascade, and
+// the steepest slope it follows: past about eighty degrees the bias would grow
+// without bound, and a surface lit that edge-on is barely lit at all.
+static const float EngineShadowSlopeTexels = 2.0f;
+static const float EngineShadowMostSlope = 4.0f;
+
 // One cascade. Returns 1 where the sun reaches.
 //
 // **Rewritten after the Godot study (2026-09-22), for three defects a person
@@ -416,12 +422,22 @@ float sampleCascade(Texture2D<float> atlas, SamplerState pointSampler, uint casc
     // The residual depth bias is stated in METRES and converted here, because a
     // constant in depth units means a different distance in every cascade.
     //
-    // **No slope term, and that was measured.** A receiver-side slope bias
-    // cures acne on a surface that has no far side to store -- terrain -- and
-    // lifts every mesh's shadow off its base, because meshes need none: the
-    // shadow pass culls their front faces (D051). The terrain carries its own
-    // push, on the caster side, where only it pays for it.
-    const float reference = ndc.z - ShadowParams.w / depthRange;
+    // **A slope term in TEXELS of the cascade, and not in metres** (D506). A
+    // slope bias in metres cures acne on a surface that has no far side to
+    // store -- terrain -- and lifts every mesh's shadow off its base, because a
+    // closed mesh needs little: the shadow pass culls its front faces (D051),
+    // so what is stored is its far side. But a THIN mesh's far side is a hand
+    // away -- a slab, the cap along a wall -- and a lit top the sun meets at a
+    // low angle rises past it across one texel of a far cascade. The constant
+    // was a cascade-0 number: the coarse cascades darkened such a top and the
+    // near one did not, a patch of different shading that slid with the camera
+    // as the splits did. Two texels of the receiver's slope, in the cascade's
+    // own texels, is a centimetre or two near the eye -- the contact the
+    // measurement above protected, unchanged in the pictures that showed it --
+    // and enough where the texels are wide. The terrain still carries its own
+    // push, on the caster side.
+    const float slope = min(sqrt(saturate(1.0f - nol * nol)) / max(nol, 0.05f), EngineShadowMostSlope);
+    const float reference = ndc.z - (ShadowParams.w + texelWorld * slope * EngineShadowSlopeTexels) / depthRange;
 
     // One texel of this cascade, in atlas uv: the tile is half the atlas.
     const float2 texelUv = 1.0f / atlasSize;

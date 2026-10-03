@@ -16,6 +16,7 @@ engine_add_module(net_api
         src/digest.cpp
         src/enet_transport.cpp
         src/http.cpp
+        src/local_address.cpp
         src/memory_transport.cpp
         src/tcp.cpp
         src/websocket.cpp
@@ -28,7 +29,8 @@ engine_add_module(net_api
 # sockets live in libc. Linked PUBLIC because a static library carries no
 # transitive link edges of its own -- whoever links net_api needs it too.
 if(WIN32)
-    target_link_libraries(engine_net_api PUBLIC ws2_32)
+    # iphlpapi: the adapters and their gateways, for `localAddresses` (G41).
+    target_link_libraries(engine_net_api PUBLIC ws2_32 iphlpapi)
 endif()
 
 # **`https://` is the platform's** (ADR 0063): one backend per target, each the
@@ -41,7 +43,8 @@ if(WIN32)
 elseif(ANDROID)
     # The Java stack, through the platform's JNI environment.
     target_sources(engine_net_api PRIVATE src/https_android.cpp)
-    target_link_libraries(engine_net_api PRIVATE engine::platform)
+    # dl: `localAddresses` looks `getifaddrs` up where it runs (G41).
+    target_link_libraries(engine_net_api PRIVATE engine::platform PUBLIC ${CMAKE_DL_LIBS})
 elseif(APPLE)
     # OBJCXX is enabled by the root CMakeLists.
     target_sources(engine_net_api PRIVATE src/https_apple.mm)
@@ -70,6 +73,7 @@ engine_add_module_tests(net
         tests/digest_tests.cpp
         tests/http_tests.cpp
         tests/https_tests.cpp
+        tests/local_address_tests.cpp
         tests/memory_transport_tests.cpp
         tests/transport_tests.cpp
         tests/websocket_client_tests.cpp

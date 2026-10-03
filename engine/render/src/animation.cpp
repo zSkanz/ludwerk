@@ -178,26 +178,42 @@ scene::TrackId AnimationSystem::createTrack(core::InstanceId player, core::NameA
         track.driveRoot = track.meshPart;
         track.meshPart = clipSourceUnder(track.driveRoot);
     }
-    if (const scene::MeshPartComponent* mesh = world_->meshParts().find(track.meshPart); mesh != nullptr) {
-        // **The clip's own file when one was named, and the mesh's otherwise**
-        // (S6.8). `track.content` is what the sampler reads the clip out of, and
-        // `jointMapFor` already maps that rig's joints onto whichever mesh it is
-        // driving -- so a clip from elsewhere is retargeted by the same code that
-        // drives a shirt from a body's skeleton.
-        track.content = content.valid() ? content : mesh->meshContent;
-        if (const SkeletonLibrary::Entry* entry = skeletons_->find(track.content); entry != nullptr) {
-            for (u32 index = 0; index < entry->clips.size(); ++index) {
-                if (clip.empty() || entry->clips[index].name == clip) {
-                    track.clip = index;
-                    track.length = entry->clips[index].duration;
-                    break;
-                }
-            }
-        }
-    }
+    track.clipFrom = content;
+    track.clipName = std::string(clip);
+    (void)bindTrack(track);
 
     tracks_.push_back(track);
     return static_cast<scene::TrackId>(tracks_.size() - 1);
+}
+
+bool AnimationSystem::bindTrack(Track& track) const
+{
+    if (track.clip != NoClip)
+        return true;
+    // Under a drive root the clip's mesh is the first skinned one that carries
+    // clips -- none, before any of them has loaded.
+    if (track.driveRoot.valid() && world_->meshParts().find(track.meshPart) == nullptr)
+        track.meshPart = clipSourceUnder(track.driveRoot);
+    const scene::MeshPartComponent* mesh = world_->meshParts().find(track.meshPart);
+    if (mesh == nullptr)
+        return false;
+    // **The clip's own file when one was named, and the mesh's otherwise**
+    // (S6.8). `track.content` is what the sampler reads the clip out of, and
+    // `jointMapFor` already maps that rig's joints onto whichever mesh it is
+    // driving -- so a clip from elsewhere is retargeted by the same code that
+    // drives a shirt from a body's skeleton.
+    track.content = track.clipFrom.valid() ? track.clipFrom : mesh->meshContent;
+    const SkeletonLibrary::Entry* entry = skeletons_->find(track.content);
+    if (entry == nullptr)
+        return false;
+    for (u32 index = 0; index < entry->clips.size(); ++index) {
+        if (track.clipName.empty() || entry->clips[index].name == track.clipName) {
+            track.clip = index;
+            track.length = entry->clips[index].duration;
+            return true;
+        }
+    }
+    return false;
 }
 
 void AnimationSystem::play(scene::TrackId id, f32 fadeTime, f32 weight, f32 speed)
@@ -310,10 +326,12 @@ void AnimationSystem::sample(f64 fixedDt)
 
     for (usize index = 1; index < tracks_.size(); ++index) {
         Track& track = tracks_[index];
-        // A track with no clip drives nothing and is not a reason to build a
-        // pose; it still keeps its clock so a script reading it sees a track
-        // rather than a hole.
-        if (!track.alive || track.clip == NoClip)
+        // **A track made before its file arrived binds when it does** (D509):
+        // its length becomes the clip's, and what it was told -- Play, a speed,
+        // a weight -- takes effect from the clip's beginning. Until then it
+        // drives nothing and is not a reason to build a pose; a script reading
+        // it sees a track rather than a hole.
+        if (!track.alive || !bindTrack(track))
             continue;
         if (!track.playing) {
             note(track.meshPart);

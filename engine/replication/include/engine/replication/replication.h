@@ -82,6 +82,13 @@ public:
     [[nodiscard]] virtual Status status() const = 0;
     [[nodiscard]] virtual Stats stats() const = 0;
 
+    // **This machine dropped simulated time** -- a frame owed more ticks than
+    // it may catch up, and the rest were not stepped (D498). A replica tells
+    // its authority with the intents it sends after, so the authority knows
+    // its tick numbers fell behind because its clock moved, not because its
+    // packets were slow. An authority has nothing to tell.
+    virtual void noteTimeDropped() {}
+
     // **Losing interest is streaming out** (ADR 0069 decision 6). On a replica,
     // an instance the authority stopped sending is kept as a husk, reparented to
     // nil, when `probe` says a script holds it, and destroyed when not. The

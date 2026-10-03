@@ -654,6 +654,7 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
     u32 loaded = 0;
 
     core::u32 meshesThisCall = 0;
+    meshesWaiting_ = 0;
     // One mesh content, loaded once whatever names it.
     const auto load = [&](const core::NameAtom content) {
         if (content.id == 0 || library.find(content) != nullptr)
@@ -736,8 +737,10 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
         // one frame. Raising it is a measurement, not a deletion, and there is
         // no measurement here yet.
         if (deferredMeshes_) {
-            if (meshesThisCall > 0)
+            if (meshesThisCall > 0) {
+                ++meshesWaiting_;
                 return;
+            }
             ++meshesThisCall;
         }
 

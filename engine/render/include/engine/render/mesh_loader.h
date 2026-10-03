@@ -189,6 +189,11 @@ public:
     // synchronous mode, always.
     [[nodiscard]] core::usize texturesInFlight() const noexcept { return pendingTextures_.size(); }
 
+    // How many meshes the last `sync` found missing and left for a later call,
+    // the deferred budget being spent. Zero in the synchronous mode, always.
+    // With `texturesInFlight` it says when a world has arrived (D507).
+    [[nodiscard]] core::usize meshesWaiting() const noexcept { return meshesWaiting_; }
+
     // How many maps may be on their way in at once. Bounded because a world
     // whose materials name four hundred textures must not open four hundred
     // files and hold four hundred decoded images at the same time -- and because
@@ -286,6 +291,7 @@ private:
     // same reason `MeshLibrary` is: R10 forbids an unordered container's order
     // reaching observable output, and a log is observable.
     std::vector<core::NameAtom> failed_;
+    core::usize meshesWaiting_ = 0;
     std::vector<core::NameAtom> warmMeshes_;
     std::vector<core::NameAtom> warmTextures_;
     std::vector<rhi::TextureHandle> textures_;

@@ -473,3 +473,48 @@ TEST_CASE("S8: what a stamp's Construct built is never saved, and never taken fo
     CHECK(text.find("\"added\"") == std::string::npos);
     CHECK(wrote.overrides == 0);
 }
+
+// --- G31: an attribute override is that attribute ------------------------------------
+
+TEST_CASE("G31: a copy that sets one attribute keeps its stamp's others, and the stamp's changes to them")
+{
+    Stamps stamps;
+    Fixture author;
+    const core::InstanceId authorRoot = workspaceOf(author);
+    const core::InstanceId spawn = partAt(author, authorRoot, "Spawn", {});
+    REQUIRE(author.world.setAttribute(spawn, author.atom("Team"), scene::Value{std::string()}));
+    REQUIRE(author.world.setAttribute(spawn, author.atom("Marker"), scene::Value{std::string("Spawn")}));
+    REQUIRE(author.world.setAttribute(spawn, author.atom("Weight"), scene::Value{1.0}));
+    REQUIRE(author.world.addTag(spawn, author.atom("Pad")));
+    stamps.texts["spawn"] = scene::writeStamp(author.world, spawn);
+
+    Fixture game;
+    const core::InstanceId workspace = workspaceOf(game);
+    const core::InstanceId copy = scene::readStamp(game.world, stamps.texts["spawn"], workspace, "spawn");
+    REQUIRE(game.world.setAttribute(copy, game.atom("Team"), scene::Value{std::string("Red")}));
+    REQUIRE(game.world.setAttribute(copy, game.atom("Weight"), scene::Value{}));
+    REQUIRE(game.world.addTag(copy, game.atom("Red")));
+    scene::StampLibrary library(game.world, stamps.source());
+    const std::string text = scene::writeScene(game.world, nullptr, &library);
+    // Only what it changed.
+    CHECK(text.find("Marker") == std::string::npos);
+
+    // The stamp's marker changes, and it gains a tag.
+    Fixture edit;
+    const core::InstanceId editing = scene::readStamp(edit.world, stamps.texts["spawn"], {}, "spawn");
+    REQUIRE(edit.world.setAttribute(editing, edit.atom("Marker"), scene::Value{std::string("Start")}));
+    REQUIRE(edit.world.addTag(editing, edit.atom("Glow")));
+    stamps.texts["spawn"] = scene::writeStamp(edit.world, editing);
+
+    Fixture next;
+    const core::InstanceId nextRoot = workspaceOf(next);
+    REQUIRE_FALSE(scene::readScene(next.world, text, nullptr, stamps.source()).has_value());
+    const core::InstanceId placed = next.world.firstChild(nextRoot);
+    REQUIRE(placed.valid());
+    CHECK(std::get<std::string>(next.world.getAttribute(placed, next.atom("Team"))) == "Red");
+    CHECK(std::get<std::string>(next.world.getAttribute(placed, next.atom("Marker"))) == "Start");
+    CHECK(scene::valueType(next.world.getAttribute(placed, next.atom("Weight"))) == scene::ValueType::Nil);
+    CHECK(next.world.hasTag(placed, next.atom("Pad")));
+    CHECK(next.world.hasTag(placed, next.atom("Red")));
+    CHECK(next.world.hasTag(placed, next.atom("Glow")));
+}

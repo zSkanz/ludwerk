@@ -19,6 +19,7 @@
 #include "engine/asset/voxel_mesher.h"
 #include "engine/core/content_path.h"
 #include "engine/input/input.h"
+#include "engine/net/local_address.h"
 #include "engine/platform/event.h"
 #include "engine/platform/window.h"
 #include "engine/scene/players.h"
@@ -1345,6 +1346,21 @@ int networkServiceGetPlayers(lua_State* L)
     return 1;
 }
 
+// **This machine's addresses on its networks** (G41), best first. Asked of
+// the system each call: an interface comes and goes, and a host shows this
+// once, on a menu.
+int networkServiceGetLocalAddresses(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const std::vector<std::string> addresses = net::localAddresses();
+    lua_createtable(L, static_cast<int>(addresses.size()), 0);
+    for (usize index = 0; index < addresses.size(); ++index) {
+        lua_pushlstring(L, addresses[index].data(), addresses[index].size());
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
 // **How the connection is doing** (the multiplayer smoothness brief), as the
 // host wrote it this frame.
 int networkServiceGetStats(lua_State* L)
@@ -2576,6 +2592,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"InputAction", "GetState", inputActionGetState},
     {"NetworkService", "GetPlayers", networkServiceGetPlayers},
     {"NetworkService", "GetStats", networkServiceGetStats},
+    {"NetworkService", "GetLocalAddresses", networkServiceGetLocalAddresses},
     {"SaveService", "GetSlotAsync", saveServiceGetSlotAsync},
     {"SaveService", "ListSlots", saveServiceListSlots},
     {"SaveService", "DeleteSlot", saveServiceDeleteSlot},

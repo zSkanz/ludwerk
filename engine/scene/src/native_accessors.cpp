@@ -1858,6 +1858,11 @@ Value getNetworkServiceServerTick(const World& world, core::InstanceId)
     return Value{static_cast<f64>(world.engineState().networkServerTick)};
 }
 
+Value getNetworkServicePort(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().networkPort)};
+}
+
 Value getNetworkServicePeerCount(const World& world, core::InstanceId)
 {
     return Value{static_cast<f64>(world.engineState().networkPeerCount)};

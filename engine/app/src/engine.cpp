@@ -1109,6 +1109,13 @@ void submitWorld(const render::RenderWorld& snapshot, render::DebugDraw& draw)
 
 } // namespace
 
+bool scheduledAhead(bool headless, bool editor, bool networked, bool measuring) noexcept
+{
+    if (editor)
+        return false;
+    return !headless || networked || measuring;
+}
+
 bool gpuValidationWanted(std::string_view profile, bool optIn) noexcept
 {
     return optIn || profile == "debug" || profile == "dev";
@@ -1273,15 +1280,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     core::u64 appliedGraphicsRevision = graphicsHost.revision();
     core::u64 appliedQualityRevision = qualityRevisionOf(graphicsHost);
 
-    // **A windowless run that serves or measures asks to be scheduled ahead**
-    // (D193). A windowed game already is, by owning the foreground window; a
-    // headless one that nobody is waiting on -- a test, a capture -- has no frame
-    // time worth protecting at the desktop's expense.
+    // **A game asks to be scheduled ahead** (D193, D500): see `scheduledAhead`.
     {
-        const bool serving = options.network.topology == replication::Topology::Host ||
-                             options.network.topology == replication::Topology::Dedicated;
+        const bool networked = options.network.topology != replication::Topology::Solo;
         const bool measuring = options.frameStats || !options.soakReportPath.empty();
-        if (options.headless && (serving || measuring) && platform::raiseProcessPriority())
+        if (scheduledAhead(options.headless, options.editor, networked, measuring) && platform::raiseProcessPriority())
             core::log(LogLevel::Info, ENG_TR("engine.info.priority_raised"));
     }
 
@@ -1629,6 +1632,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // instance from the history and the frame's alpha, and asked by all of
     // the frame -- the world, its UI, particles, views, prompts, the pointer.
     render::DrawPoses framePoses;
+    // A stamp's stage, drawn still: nothing on it ticks (G33).
+    render::DrawPoses stagePoses;
 
     render::MeshLibrary meshLibrary;
     // The textures the scene's `Material` instances name. Beside the mesh
@@ -1841,7 +1846,55 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // built -- and a conformance run, a replay and a capture gate all open
     // projects exactly this way.
     if (isProject) {
-        const ContentImportReport compiled = openProjectContent(options.scriptPath, contentRoot, contentMounts);
+        // **The window stays alive while a project's content compiles** (D507).
+        // A project opened for the first time compiles every mesh and picture
+        // before anything can be drawn -- 92 s for one of two hundred sources
+        // -- and a window that pumps no events for that long is the white
+        // window, and then the second white one Windows puts over it when it
+        // decides the first has stopped answering. So between sources it
+        // answers, clears to the backdrop and says in its title what it is on.
+        const std::string restfulTitle = window != nullptr ? platform::windowTitle(*window) : std::string();
+        bool closeAsked = false;
+        u64 shownAtNs = 0;
+        const ImportProgress importProgress = [&](usize done, usize total, std::string_view name) {
+            if (window == nullptr || device == nullptr)
+                return;
+            for (const platform::Event& event : platform::pumpEvents()) {
+                if (event.type == platform::EventType::Quit || event.type == platform::EventType::WindowCloseRequested)
+                    closeAsked = true;
+            }
+            const u64 now = platform::nowNs();
+            if (done != 0 && done < total && now - shownAtNs < 100'000'000ull)
+                return;
+            shownAtNs = now;
+            if (done >= total) {
+                platform::setWindowTitle(*window, restfulTitle);
+                return;
+            }
+            const std::array<core::I18nArg, 3> args{core::I18nArg{"done", static_cast<core::i64>(done + 1)},
+                                                    core::I18nArg{"total", static_cast<core::i64>(total)},
+                                                    core::I18nArg{"name", std::string(name)}};
+            platform::setWindowTitle(*window, restfulTitle + " -- " +
+                                                  core::engineCatalog().format(ENG_TR("app.info.importing"), args));
+            if (rhi::ICmdList* cmd = device->beginFrame(); cmd != nullptr) {
+                const rhi::Swapchain swapchain = device->acquireSwapchain(*window);
+                if (swapchain.texture.valid()) {
+                    const std::array<rhi::ColorAttachment, 1> clear{rhi::ColorAttachment{
+                        .texture = swapchain.texture,
+                        .loadOp = rhi::LoadOp::Clear,
+                        .storeOp = rhi::StoreOp::Store,
+                        .clearColor = {0.06f, 0.06f, 0.07f, 1.0f},
+                    }};
+                    cmd->beginRenderPass({.colorAttachments = clear, .debugName = "import-backdrop"});
+                    cmd->endRenderPass();
+                }
+                device->submitAndPresent();
+            }
+        };
+        const ContentImportReport compiled =
+            openProjectContent(options.scriptPath, contentRoot, contentMounts, importProgress);
+        if (closeAsked)
+            return std::nullopt;
         // **Only when it did something.** Every re-open of a project would
         // otherwise announce the same totals, because the counts are reported
         // identically on a cache hit -- so the line would be there every time
@@ -2061,6 +2114,17 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     };
     FramePhases lastPhases;
     core::u64 lastLongFrameWarnNs = 0;
+    // **A game's world is shown once it has arrived** (D507): the meshes and
+    // pictures of its first scene come in a few a frame, and until they had a
+    // game started on an empty sky, its ground and buildings appearing over it.
+    // The curtain is the backdrop -- the game's own interface still draws over
+    // it, so its loading screen is what a player sees -- and it lifts when the
+    // loaders have had nothing left to do for three frames, or after ten
+    // seconds whatever they say. Not the editor's: a person editing a world
+    // wants to see it arrive.
+    bool curtainUp = !options.headless && !options.editor;
+    core::u64 curtainSinceNs = 0;
+    core::u32 curtainSettled = 0;
     // **A server catches up rather than dropping time** (NA3): a frame of its
     // over four ticks long -- a garbage collection, a large join -- dropped the
     // rest, and every client's input queue was left that much deeper, silently,
@@ -2651,6 +2715,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             scheduler.rebase(nowNs);
 
         const Frame frame = scheduler.beginFrame(nowNs);
+        // Simulated time dropped is a clock that moved, and a replica's
+        // authority has to know it from a packet that was late (D498).
+        if (frame.clamped)
+            network.noteTimeDropped();
         if (frame.clamped && (lastLongFrameWarnNs == 0 || nowNs - lastLongFrameWarnNs >= 5'000'000'000ull)) {
             lastLongFrameWarnNs = nowNs != 0 ? nowNs : 1;
             const f64 totalMs = frame.renderDt * 1000.0;
@@ -2971,12 +3039,20 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // at the point of use, both answers are always the current ones.
         const auto stageOf = [&]() -> Editor::Stage* { return options.editor ? editor.stage() : nullptr; };
         const auto authored = [&]() -> scene::World& {
+            return options.editor ? editor.authoredWorld(host->world()) : host->world();
+        };
+        // Where the marks over what is authored are drawn: the frame's poses,
+        // or the stage's own (G33) -- the frame's are of the scene's world, and
+        // a stage's ids are not its.
+        const auto authoredPoses = [&]() -> const render::DrawPoses& {
             Editor::Stage* const open = stageOf();
-            return open != nullptr ? open->world() : host->world();
+            if (open == nullptr)
+                return framePoses;
+            stagePoses.begin(open->world(), nullptr, 1.0f);
+            return stagePoses;
         };
         const auto authoredRoot = [&]() -> core::InstanceId {
-            Editor::Stage* const open = stageOf();
-            return open != nullptr ? open->workspace() : host->runtime().dataModel();
+            return options.editor ? editor.authoredRoot(host->runtime().dataModel()) : host->runtime().dataModel();
         };
         // Where something goes when nothing is selected to put it in: the
         // Workspace, or while a stamp is open the stamp itself -- its stage's
@@ -4201,10 +4277,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // drained here beside play and stop rather than acted on where
                 // they were clicked -- a panel behind this one is still drawing
                 // from what they would replace.
-                if (!editorCommands.openStamp.empty()) {
-                    (void)editor.openStamp(editorCommands.openStamp, host->classes(), host->enums(), host->atoms(),
-                                           inspector);
-                }
+                //
+                // Save, close, then open (G36): switching to another stamp
+                // saves or discards the one open first, in the same frame.
+                //
                 // **The GAME's world, asked for by name rather than through
                 // `authored()`**, which is the stage while a stamp is open. A
                 // save moves every linked instance to match the file it just
@@ -4215,6 +4291,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 if (editorCommands.closeStamp) {
                     (void)editor.closeStamp(host->world(), host->runtime().dataModel(), inspector,
                                             editorCommands.closeStampSaving);
+                }
+                if (!editorCommands.openStamp.empty()) {
+                    (void)editor.openStamp(editorCommands.openStamp, host->classes(), host->enums(), host->atoms(),
+                                           inspector);
                 }
 
                 // One question about every verb rather than a flag on each:
@@ -5213,7 +5293,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // over the game's own view either (`Editor::viewportIsGames`).
         if (options.editor && !editor.viewportIsGames()) {
             static std::vector<PickMarker> markers;
-            collectPickMarkers(host->world(), authoredRoot(), markers, &framePoses);
+            collectPickMarkers(authored(), authoredRoot(), markers, &authoredPoses());
             for (const PickMarker& marker : markers) {
                 // Not the one the eye is inside (`eyeInsideMarker`): from in
                 // there it is two lines across the whole picture.
@@ -6115,7 +6195,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // path, which draws the world as wire boxes and has no outline.
                 const bool outlinedByRenderer = renderer != nullptr && renderer->valid() && snapshot.camera.valid;
                 if (!outlinedByRenderer)
-                    submitSelection(host->world(), framePoses, inspector.selectionSet(), snapshot.camera.origin,
+                    submitSelection(authored(), authoredPoses(), inspector.selectionSet(), snapshot.camera.origin,
                                     debugDraw);
                 if (editing(editor.runState())) {
                     submitCameraVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, aspect,
@@ -6123,12 +6203,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     submitLightVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, debugDraw);
                     submitDetectorVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, debugDraw);
                 }
-                submitConstraints(host->world(), framePoses, inspector.selectionSet(), snapshot.camera.origin,
+                submitConstraints(authored(), authoredPoses(), inspector.selectionSet(), snapshot.camera.origin,
                                   debugDraw);
                 // The manipulator over the outline, because the outline says
                 // WHAT is selected and the manipulator is the thing being
                 // aimed at.
-                if (const std::optional<GizmoFrame> gizmo = editor.gizmoFrame(host->world(), inspector);
+                if (const std::optional<GizmoFrame> gizmo = editor.gizmoFrame(authored(), inspector);
                     gizmo.has_value()) {
                     submitGizmo(*gizmo, editor.gizmoMode(), editor.gizmoHandle(), snapshot.camera.origin, debugDraw);
                 }
@@ -6252,6 +6332,14 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // camera nobody assigned -- the M1 debug path still draws, which is
             // what keeps every earlier example and the capture golden working.
             const bool useRenderer = renderer != nullptr && renderer->valid() && snapshot.camera.valid;
+            if (curtainUp) {
+                if (curtainSinceNs == 0)
+                    curtainSinceNs = nowNs;
+                curtainSettled =
+                    meshLoader.meshesWaiting() == 0 && meshLoader.texturesInFlight() == 0 ? curtainSettled + 1 : 0;
+                if (curtainSettled >= 3 || nowNs - curtainSinceNs > 10'000'000'000ull)
+                    curtainUp = false;
+            }
 #if ENG_DEBUG_UI
             // **A screenshot is of the world as it will look** (ADR 0091): the
             // frame it is taken from waits for surface shaders still compiling,
@@ -6468,7 +6556,17 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 }
             }
 
-            if (useRenderer) {
+            if (useRenderer && curtainUp) {
+                const std::array<rhi::ColorAttachment, 1> curtain{rhi::ColorAttachment{
+                    .texture = target,
+                    .loadOp = rhi::LoadOp::Clear,
+                    .storeOp = rhi::StoreOp::Store,
+                    .clearColor = {0.0f, 0.0f, 0.0f, 1.0f},
+                }};
+                cmd->beginRenderPass({.colorAttachments = curtain, .debugName = "curtain"});
+                cmd->endRenderPass();
+            }
+            else if (useRenderer) {
                 renderer->render(
                     *device, *cmd,
                     {.color = target, .colorFormat = targetFormat, .width = targetWidth, .height = targetHeight},

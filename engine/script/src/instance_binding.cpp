@@ -828,42 +828,11 @@ int methodPivotTo(lua_State* L)
     const core::InstanceId id = liveInstance(L, 1);
     World& w = world(L);
     const core::CFrameD target = checkCFrame(L, 2);
-    const core::NameAtom cframeProperty = context(L).wellKnown.cframe;
-
-    // `delta` moves the pivot onto the target, and everything the object owns
-    // moves by the same transform -- which is what preserves relative layout.
-    const core::CFrameD delta = target * core::inverse(pivotOf(w, id));
-
-    if (w.models().find(id) != nullptr) {
-        std::vector<core::InstanceId> descendants;
-        w.collectDescendants(id, descendants);
-        for (const core::InstanceId descendant : descendants) {
-            const scene::PartComponent* part = w.parts().find(descendant);
-            if (part == nullptr)
-                continue;
-            // Through `setProperty` rather than by writing the component, so the
-            // change is enqueued for anything watching `CFrame`.
-            w.setProperty(descendant, cframeProperty, scene::Value{delta * part->cframe});
-        }
-        flushSceneChanges(L);
-        return 0;
-    }
-
-    if (const scene::PartComponent* part = w.parts().find(id); part != nullptr) {
-        // Only itself. Parts welded or attached to it are M5's business, and
-        // moving descendants of a part would make `PivotTo` mean two different
-        // things depending on what happened to be parented under it.
-        w.setProperty(id, cframeProperty, scene::Value{delta * part->cframe});
-        flushSceneChanges(L);
-        return 0;
-    }
-
-    if (const scene::CameraComponent* camera = w.cameras().find(id); camera != nullptr) {
-        w.setProperty(id, cframeProperty, scene::Value{delta * camera->cframe});
-        flushSceneChanges(L);
-        return 0;
-    }
-
+    // One answer below the VM, which the editor's placement uses too: exact
+    // enough to call every frame, and a no-op onto the pivot it already has
+    // (`scene::pivotTo`, D512).
+    scene::pivotTo(w, id, target);
+    flushSceneChanges(L);
     return 0;
 }
 

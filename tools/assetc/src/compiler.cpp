@@ -142,21 +142,10 @@ struct CachedSource
     return root / hex.substr(0, 2) / (hex + ".cache");
 }
 
-// The key for one source. Everything that could change the answer goes in, and
-// nothing that could not.
-[[nodiscard]] ContentHash cacheKey(std::span<const std::byte> sourceBytes, std::string_view urn,
-                                   const CompileOptions& options, SourceKind kind, bool colourData)
+// The pinned options and the compiler's own rules, into `hasher`: what decides
+// how a source compiles, apart from the source.
+void hashPinned(core::ContentHasher& hasher, const CompileOptions& options)
 {
-    core::ContentHasher hasher;
-    hasher.update(sourceBytes);
-
-    // **The URN, because the cached VALUE names the source.** An entry carries
-    // the manifest rows this file produced and a row IS a name, so two
-    // byte-identical files under two names are not the same answer. Keying on
-    // content alone made the second of them inherit the first one's row and
-    // lose its own -- within a single build, not only across two.
-    hasher.update(std::as_bytes(std::span<const char>(urn.data(), urn.size())));
-
     // The pinned options: an upstream default change is a diff in this tool
     // (Decision 1), so hashing them is hashing the decision.
     //
@@ -185,6 +174,24 @@ struct CachedSource
 
     const core::u32 rules = kCompilerRules;
     hasher.update(std::as_bytes(std::span<const core::u32, 1>{&rules, 1}));
+}
+
+// The key for one source. Everything that could change the answer goes in, and
+// nothing that could not.
+[[nodiscard]] ContentHash cacheKey(std::span<const std::byte> sourceBytes, std::string_view urn,
+                                   const CompileOptions& options, SourceKind kind, bool colourData)
+{
+    core::ContentHasher hasher;
+    hasher.update(sourceBytes);
+
+    // **The URN, because the cached VALUE names the source.** An entry carries
+    // the manifest rows this file produced and a row IS a name, so two
+    // byte-identical files under two names are not the same answer. Keying on
+    // content alone made the second of them inherit the first one's row and
+    // lose its own -- within a single build, not only across two.
+    hasher.update(std::as_bytes(std::span<const char>(urn.data(), urn.size())));
+
+    hashPinned(hasher, options);
     const auto kindValue = static_cast<core::u32>(kind);
     hasher.update(std::as_bytes(std::span<const core::u32, 1>{&kindValue, 1}));
     // **What the project's materials say a loose image is for**, because it
@@ -1226,6 +1233,13 @@ bool writeFile(const std::filesystem::path& path, std::span<const std::byte> byt
         return false;
     }
     return true;
+}
+
+ContentHash importerFingerprint(const CompileOptions& options)
+{
+    core::ContentHasher hasher;
+    hashPinned(hasher, options);
+    return hasher.finish();
 }
 
 CompileResult importOne(const CompileOptions& options, const std::filesystem::path& sourcePath)

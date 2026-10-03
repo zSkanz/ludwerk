@@ -28,6 +28,9 @@ struct Built
     // Where the limb's own joint is, in world space -- the point a constraint
     // between this limb and its parent sits on.
     DVec3 origin;
+    // And which way it faces there: the joint's whole frame, which its bone
+    // has to carry (D511).
+    core::Mat3 facing;
     u32 joint = 0;
     bool made = false;
 };
@@ -142,7 +145,9 @@ RagdollBuildResult buildRagdoll(World& world, const SkeletonHost& skeleton, core
             continue;
         }
         built[index].joint = static_cast<u32>(joint);
-        built[index].origin = (rigFrame * model).position;
+        const CFrameD jointWorld = rigFrame * model;
+        built[index].origin = jointWorld.position;
+        built[index].facing = jointWorld.rotation;
         built[index].made = true;
         matched += 1;
     }
@@ -180,14 +185,20 @@ RagdollBuildResult buildRagdoll(World& world, const SkeletonHost& skeleton, core
             break;
         }
         if (leaf) {
-            // Down the joint's own -Y, which is where a hand continues past the
-            // wrist in every rig that has a convention at all. Guessing a
-            // direction beats guessing a length of zero: a zero-length capsule
-            // is a sphere at the wrist, and a hand is not one.
+            // **Along the joint's own +Y** (D510): a bone runs from its head
+            // to its tail along +Y in a modelling tool's armature, and in the
+            // glTF it exports -- a child joint sits at +Y of its parent, a foot
+            // or a hand continues the same way past its joint. It was -Y, so a
+            // foot's capsule pointed back up into the shin, the ankle's cone
+            // was measured about the wrong axis, and the foot swung a hundred
+            // degrees from its bind -- the shin's vertices, weighted to it near
+            // the ankle, collapsed into a ribbon. Guessing a direction beats
+            // guessing a length of zero: a zero-length capsule is a sphere at
+            // the wrist, and a hand is not one.
             CFrameD model;
             (void)skeleton.jointModel(rig, built[index].joint, model);
             const CFrameD world0 = rigFrame * model;
-            const Vec3 down = world0.rotation * Vec3{0.0f, -1.0f, 0.0f};
+            const Vec3 down = world0.rotation * Vec3{0.0f, 1.0f, 0.0f};
             tip = DVec3{built[index].origin.x + static_cast<f64>(down.x * limb.leafLength),
                         built[index].origin.y + static_cast<f64>(down.y * limb.leafLength),
                         built[index].origin.z + static_cast<f64>(down.z * limb.leafLength)};
@@ -242,9 +253,17 @@ RagdollBuildResult buildRagdoll(World& world, const SkeletonHost& skeleton, core
         // a capsule centred halfway down the bone; the joint is at its top. A
         // bone left at the part's origin would write the pose half a limb-length
         // out, which is a character whose every joint has slid down its own bone.
-        (void)world.setProperty(
-            bone, cframeName,
-            Value{core::inverse(limbFrame(built[index].origin, tip)) * CFrameD{built[index].origin, core::Mat3{}}});
+        //
+        // **And it faces the way the joint does** (D511). It was put there
+        // turned to the world's axes, so what the ragdoll wrote for every joint
+        // was its place with none of its own turn -- and a rig whose bones are
+        // not aligned to the world, which is every rig a modelling tool makes
+        // (a thigh is turned half a revolution to run down the leg), drew each
+        // limb's mesh turned by that much about its joint: a shin folded into a
+        // ribbon between the knee and the boot, its physics perfectly right.
+        (void)world.setProperty(bone, cframeName,
+                                Value{core::inverse(limbFrame(built[index].origin, tip)) *
+                                      CFrameD{built[index].origin, built[index].facing}});
     }
 
     // --- Pass three: the joints ---------------------------------------------

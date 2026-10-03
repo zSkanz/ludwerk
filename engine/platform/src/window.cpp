@@ -215,6 +215,17 @@ void setWindowFullscreen(Window& window, bool fullscreen)
     (void)SDL_SetWindowFullscreen(window.handle(), fullscreen);
 }
 
+std::string windowTitle(const Window& window)
+{
+    const char* title = SDL_GetWindowTitle(window.handle());
+    return title != nullptr ? std::string(title) : std::string();
+}
+
+void setWindowTitle(Window& window, std::string_view title)
+{
+    (void)SDL_SetWindowTitle(window.handle(), std::string(title).c_str());
+}
+
 std::vector<DisplayInfo> displays()
 {
     std::vector<DisplayInfo> found;

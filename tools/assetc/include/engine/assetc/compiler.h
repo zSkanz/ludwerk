@@ -210,6 +210,13 @@ struct CompileResult
 // is known would leave a half-built content directory behind on failure.
 [[nodiscard]] CompileResult compile(const CompileOptions& options);
 
+// **What decides how any source compiles, apart from the source**: the pinned
+// options and the compiler's rules, hashed exactly as every cache key hashes
+// them. Equal fingerprints mean a source whose bytes did not change compiles
+// to what it compiled to before -- which is what lets the editor skip one it
+// has seen without reading it (D507).
+[[nodiscard]] core::ContentHash importerFingerprint(const CompileOptions& options);
+
 // One source, compiled exactly as a full build would compile it.
 //
 // **The editor's import and `assetc` produce the same blobs because they are the

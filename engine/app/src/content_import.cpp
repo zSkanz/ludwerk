@@ -2,13 +2,20 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
+#include <future>
+#include <map>
+#include <optional>
+#include <string>
 
 #include "engine/app/content_tree.h"
 #include "engine/asset/gltf.h"
 #include "engine/asset/material.h"
 #include "engine/asset/model.h"
+#include "engine/core/content_hash.h"
 #include "engine/core/json.h"
+#include "engine/core/json_writer.h"
 #include "engine/core/log.h"
 #include "engine/platform/file.h"
 
@@ -28,10 +35,110 @@ std::filesystem::path importIndexPath(const std::filesystem::path& projectRoot)
     return projectRoot / ".engine" / "import" / "index.json";
 }
 
+std::filesystem::path importSourcesPath(const std::filesystem::path& projectRoot)
+{
+    return projectRoot / ".engine" / "import" / "sources.json";
+}
+
 #if ENG_DEBUG_UI
 
+namespace {
+
+// **What a source was when it last compiled** (D507): its size and its time,
+// as text -- a time is a count of ticks past a double's exact integers.
+struct SourceStamp
+{
+    std::string size;
+    std::string written;
+    bool operator==(const SourceStamp&) const = default;
+};
+
+[[nodiscard]] std::optional<SourceStamp> stampOf(const std::filesystem::path& file)
+{
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(file, ec);
+    if (ec)
+        return std::nullopt;
+    const auto written = std::filesystem::last_write_time(file, ec);
+    if (ec)
+        return std::nullopt;
+    return SourceStamp{std::to_string(size), std::to_string(written.time_since_epoch().count())};
+}
+
+// The stamps remembered under `fingerprint`, or none: a different importer, or
+// a store that is not there to have been compiled into, remembers nothing.
+[[nodiscard]] std::map<std::string, SourceStamp> readStamps(const std::filesystem::path& projectRoot,
+                                                            std::string_view fingerprint)
+{
+    std::map<std::string, SourceStamp> stamps;
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(importIndexPath(projectRoot), ec))
+        return stamps;
+    std::string text;
+    if (!platform::readTextFile(importSourcesPath(projectRoot), text))
+        return stamps;
+    core::JsonDocument document;
+    if (!document.parse(text, importSourcesPath(projectRoot).string()).ok)
+        return stamps;
+    const core::JsonValue root = document.root();
+    if (root["fingerprint"].asString() != fingerprint)
+        return stamps;
+    const core::JsonValue sources = root["sources"];
+    for (core::usize at = 0; at < sources.size(); ++at) {
+        const core::JsonValue entry = sources.at(at);
+        stamps.emplace(std::string(entry["path"].asString()),
+                       SourceStamp{std::string(entry["size"].asString()), std::string(entry["written"].asString())});
+    }
+    return stamps;
+}
+
+void writeStamps(const std::filesystem::path& projectRoot, std::string_view fingerprint,
+                 const std::map<std::string, SourceStamp>& stamps)
+{
+    core::JsonWriter out(core::JsonLayout::Indented);
+    out.beginObject();
+    out.field("fingerprint", fingerprint);
+    out.key("sources");
+    out.beginArray();
+    for (const auto& [path, stamp] : stamps) {
+        out.beginObject();
+        out.field("path", path);
+        out.field("size", stamp.size);
+        out.field("written", stamp.written);
+        out.endObject();
+    }
+    out.endArray();
+    out.endObject();
+    // A cache: a write that fails costs the next open its speed, never its
+    // content.
+    (void)platform::writeTextFile(importSourcesPath(projectRoot), out.text());
+}
+
+// **What decides how a source compiles, apart from its own bytes**: the
+// importer's pinned options and rules, and the project's materials -- a
+// material decides whether a loose image is colour, and so its bytes.
+[[nodiscard]] std::string importFingerprint(const assetc::CompileOptions& options,
+                                            const std::filesystem::path& contentRoot)
+{
+    core::ContentHasher hasher;
+    const core::ContentHash importer = assetc::importerFingerprint(options);
+    const std::string importerText = importer.toHex();
+    hasher.update(std::as_bytes(std::span<const char>(importerText.data(), importerText.size())));
+    ContentTree tree;
+    (void)tree.open(contentRoot);
+    for (const std::string& material : tree.filesOfKind(ContentKind::Material)) {
+        const std::optional<SourceStamp> stamp = stampOf(contentRoot / std::filesystem::path(material));
+        const std::string line = material + "|" + (stamp ? stamp->size + "|" + stamp->written : std::string());
+        hasher.update(std::as_bytes(std::span<const char>(line.data(), line.size())));
+    }
+    return hasher.finish().toHex();
+}
+
+} // namespace
+
 ContentImportReport compileImported(const std::filesystem::path& projectRoot, const std::filesystem::path& contentRoot,
-                                    std::span<const std::string> names)
+                                    std::span<const std::string> names, const ImportProgress& progress,
+                                    bool skipUnchanged)
 {
     ContentImportReport report;
     if (projectRoot.empty() || contentRoot.empty() || names.empty())
@@ -45,6 +152,18 @@ ContentImportReport compileImported(const std::filesystem::path& projectRoot, co
     // already exists to prevent on the command-line side.
     options.cacheRoot = projectRoot / ".engine" / "import" / "cache";
 
+    // **Only what changed since it last compiled** (D507). Opening a project
+    // asked the compiler about every source, every time: it read each one,
+    // hashed it, found it in the cache and wrote the store's index again --
+    // 3.8 s before the first frame of a project of two hundred sources, with
+    // nothing to do. A source the same size and time as when it compiled, under
+    // the same importer and materials, is skipped without being opened.
+    const std::string fingerprint = skipUnchanged ? importFingerprint(options, contentRoot) : std::string();
+    const std::map<std::string, SourceStamp> known =
+        skipUnchanged ? readStamps(projectRoot, fingerprint) : std::map<std::string, SourceStamp>{};
+    std::map<std::string, SourceStamp> stamps;
+
+    std::vector<std::string_view> todo;
     for (const std::string& name : names) {
         // Only what the compiler has something to do with. A script or a scene
         // is content the project reads directly, and skipping it is not a
@@ -52,9 +171,40 @@ ContentImportReport compileImported(const std::filesystem::path& projectRoot, co
         const ContentKind kind = contentKindOf(name);
         if (kind != ContentKind::Mesh && kind != ContentKind::Texture)
             continue;
+        if (skipUnchanged) {
+            const std::optional<SourceStamp> stamp = stampOf(contentRoot / std::filesystem::path(name));
+            const auto found = known.find(name);
+            if (stamp.has_value() && found != known.end() && found->second == *stamp) {
+                stamps.emplace(name, *stamp);
+                continue;
+            }
+        }
+        todo.push_back(name);
+    }
+
+    for (core::usize at = 0; at < todo.size(); ++at) {
+        const std::string name(todo[at]);
+        if (progress)
+            progress(at, todo.size(), name);
 
         const std::filesystem::path source = contentRoot / std::filesystem::path(name);
-        const assetc::CompileResult result = assetc::importOne(options, source);
+        const std::optional<SourceStamp> before = skipUnchanged ? stampOf(source) : std::nullopt;
+        // **On a thread of its own, one source at a time, while the caller's
+        // window keeps answering** (D507): one model took nine seconds, and a
+        // window silent for five is one Windows covers with a white copy of it.
+        // One at a time because the encoder's format setters are process-wide
+        // (`compiler.h`, rule 4).
+        assetc::CompileResult result;
+        if (progress) {
+            std::future<assetc::CompileResult> pending =
+                std::async(std::launch::async, [&options, &source] { return assetc::importOne(options, source); });
+            while (pending.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
+                progress(at, todo.size(), name);
+            result = pending.get();
+        }
+        else {
+            result = assetc::importOne(options, source);
+        }
         if (!result.ok) {
             report.failed.push_back(name);
             if (report.diagnostic.empty())
@@ -74,6 +224,8 @@ ContentImportReport compileImported(const std::filesystem::path& projectRoot, co
         }
 
         report.compiled.push_back(name);
+        if (before.has_value())
+            stamps.emplace(name, *before);
         report.meshes += result.meshCount;
         report.textures += result.textureCount;
         report.cacheHits += result.stats.cacheHits;
@@ -93,6 +245,13 @@ ContentImportReport compileImported(const std::filesystem::path& projectRoot, co
         if (!fragments.empty())
             report.pieces.emplace_back(name, std::move(fragments));
     }
+    if (progress && !todo.empty())
+        progress(todo.size(), todo.size(), {});
+
+    // Only what compiled, or was already compiled and has not moved: a source
+    // that failed is asked about again next time.
+    if (skipUnchanged && (!todo.empty() || stamps.size() != known.size()))
+        writeStamps(projectRoot, fingerprint, stamps);
 
     return report;
 }
@@ -100,7 +259,7 @@ ContentImportReport compileImported(const std::filesystem::path& projectRoot, co
 #else
 
 ContentImportReport compileImported(const std::filesystem::path&, const std::filesystem::path&,
-                                    std::span<const std::string>)
+                                    std::span<const std::string>, const ImportProgress&, bool)
 {
     // A build with no editor imports nothing, because it has no browser to
     // import from. The symbol exists so the call site needs no `#ifdef` of its
@@ -112,7 +271,8 @@ ContentImportReport compileImported(const std::filesystem::path&, const std::fil
 #endif
 
 ContentImportReport openProjectContent(const std::filesystem::path& projectRoot,
-                                       const std::filesystem::path& contentRoot, asset::ContentMounts& mounts)
+                                       const std::filesystem::path& contentRoot, asset::ContentMounts& mounts,
+                                       const ImportProgress& progress)
 {
     ContentImportReport report;
     std::error_code ec;
@@ -136,7 +296,7 @@ ContentImportReport openProjectContent(const std::filesystem::path& projectRoot,
         for (std::string& texture : tree.filesOfKind(ContentKind::Texture))
             pending.push_back(std::move(texture));
         if (!pending.empty())
-            report = compileImported(projectRoot, contentRoot, pending);
+            report = compileImported(projectRoot, contentRoot, pending, progress, true);
     }
 
     // **Above the source directory**, which is the point: `resolve` walks mounts

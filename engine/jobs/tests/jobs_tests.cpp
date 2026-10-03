@@ -1,9 +1,21 @@
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <doctest/doctest.h>
 #include <vector>
 
 #include "engine/jobs/jobs.h"
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <thread>
+#include <windows.h>
+#endif
 
 using namespace engine::jobs;
 using engine::core::u32;
@@ -364,3 +376,40 @@ TEST_CASE("shutting a pool down never leaves a worker asleep")
         shutdown();
     }
 }
+
+#ifdef _WIN32
+TEST_CASE("D500: a worker holding the job a thread blocks on runs at that thread's priority")
+{
+    // Workers run below normal so a frame's own thread keeps its core (T5). A
+    // worker holding the very job the main thread had blocked on stayed below
+    // it, too -- and with every core busy with anything at normal priority, it
+    // ran only when the system's starvation boost came round, about every four
+    // seconds. The job here reads its own priority once the waiter has had time
+    // to block; the waiter must not run it itself, so it waits only once the job
+    // has started on a worker.
+    ScopedPool pool(1);
+    std::atomic<bool> started{false};
+    std::atomic<int> seen{THREAD_PRIORITY_ERROR_RETURN};
+    const JobHandle job = schedule("held", Domain::Tooling, [&started, &seen]() noexcept {
+        started.store(true, std::memory_order_release);
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        seen.store(GetThreadPriority(GetCurrentThread()), std::memory_order_release);
+    });
+    while (!started.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    wait(job);
+    CHECK(seen.load() == THREAD_PRIORITY_NORMAL);
+
+    // And back below normal once nobody waits.
+    std::atomic<int> after{THREAD_PRIORITY_ERROR_RETURN};
+    std::atomic<bool> startedAgain{false};
+    const JobHandle idle = schedule("idle", Domain::Tooling, [&startedAgain, &after]() noexcept {
+        startedAgain.store(true, std::memory_order_release);
+        after.store(GetThreadPriority(GetCurrentThread()), std::memory_order_release);
+    });
+    while (!startedAgain.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    wait(idle);
+    CHECK(after.load() == THREAD_PRIORITY_BELOW_NORMAL);
+}
+#endif

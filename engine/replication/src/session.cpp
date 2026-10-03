@@ -429,6 +429,9 @@ void writeF64(Writer& out, f64 value)
 
 // The count and the entries of one owner's attributes, in the order the world
 // keeps them (insertion order: the same on every run, R10).
+// The most tags one instance carries across the wire.
+constexpr usize MaxReplicaTags = 1024;
+
 [[nodiscard]] std::vector<u8> encodeAttributes(const scene::World& world, InstanceId id,
                                                const std::function<u32(InstanceId)>& netOf)
 {
@@ -447,7 +450,27 @@ void writeF64(Writer& out, f64 value)
     Writer out;
     out.u16v(count);
     out.bytes.insert(out.bytes.end(), entries.bytes.begin(), entries.bytes.end());
+    // **And its tags** (G30), in name order so the same set is the same bytes:
+    // a part tagged on the authority is tagged on every machine, and a script
+    // that finds things by tag finds them there too.
+    scene::TagSet tags;
+    world.collectTags(id, tags);
+    std::vector<std::string_view> names;
+    names.reserve(tags.size());
+    for (const core::NameAtom tag : tags)
+        names.push_back(world.atoms().text(tag));
+    std::sort(names.begin(), names.end());
+    out.u16v(static_cast<u16>(std::min<usize>(names.size(), MaxReplicaTags)));
+    for (usize at = 0; at < names.size() && at < MaxReplicaTags; ++at)
+        out.text(names[at]);
     return out.bytes;
+}
+
+// Whether an owner's attributes-and-tags body holds anything: two counts of
+// none is an owner with nothing to send.
+[[nodiscard]] bool carriesAny(const std::vector<u8>& body) noexcept
+{
+    return body.size() > 4;
 }
 
 // `GlobalScriptService`, and its fixed `Shared` folder, under a data model.
@@ -777,7 +800,7 @@ void AuthoritySession::diffAttributes(const scene::World& world, InstanceId root
     for (const auto& [owner, body] : now) {
         const auto found = m_attributeShadows.find(owner);
         if (found == m_attributeShadows.end()) {
-            if (owner.first != 0 && body.size() > 2)
+            if (owner.first != 0 && carriesAny(body))
                 m_attributeEdits.emplace_back(owner, body);
             continue;
         }
@@ -1192,13 +1215,13 @@ void AuthoritySession::sendAttributes(Peer& peer, const std::vector<u32>& enteri
     // nothing to send.
     for (const u32 id : entering) {
         if (const auto found = m_attributeShadows.find(AttributeOwner{u8{0}, id});
-            found != m_attributeShadows.end() && found->second.size() > 2)
+            found != m_attributeShadows.end() && carriesAny(found->second))
             send(found->first, found->second);
     }
     if (!peer.attributesSeeded) {
         peer.attributesSeeded = true;
         for (const auto& [owner, body] : m_attributeShadows) {
-            if (body.size() <= 2)
+            if (!carriesAny(body))
                 continue;
             // **And the owners nothing ever spawns** (D457): the workspace
             // and the services are on both ends from boot, so they never
@@ -1390,6 +1413,9 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 }
                 peer->intentBudget -= 1;
                 peer->intentsThisTick += 1;
+                // **Whether its clock moved** (D498): how many times it has
+                // dropped simulated time, which changes only when it did.
+                const u32 epoch = reader.u32v();
                 // **Up to four ticks, oldest first** (protocol 22): read whole,
                 // then queued -- a tick already applied or already queued is a
                 // redundant copy, and nothing.
@@ -1460,11 +1486,15 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 // What that newest intent holds stands in until then -- it is
                 // the newest thing the player is known to be doing.
                 //
-                // **Two ways to tell.** The newest tick of a message late by
-                // more than the redundancy window is past what uneven arrival
-                // explains -- a packet that slow would have been overtaken by
-                // the three sent after it -- and the stream is anchored again
-                // at once. A window in the background runs ten frames a
+                // **Two ways to tell.** A replica that dropped simulated time
+                // says so (D498): its count of drops has moved, and a message
+                // late after that is its clock, and the stream is anchored
+                // again at once. **Lateness alone never was** -- a burst held
+                // up by a busy machine is late by as many ticks, and anchored
+                // on it the authority stepped again ticks it had already stood
+                // in for, and the replica was corrected for each. That rule
+                // is gone: a late burst of the same clock is dropped, its
+                // ticks already stood in for with what they hold. A window in the background runs ten frames a
                 // second and sends six ticks together, so waiting for late
                 // ticks in a row there was waiting four frames: measured on a
                 // real window, 18 to 47 ticks without one real intent after
@@ -1477,6 +1507,9 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 for (const auto& [tick, intents] : carried)
                     newestCarried = std::max(newestCarried, tick);
                 peer->silentTicks = 0;
+                const bool clockMoved = peer->timeEpochKnown && epoch != peer->timeEpoch;
+                peer->timeEpoch = epoch;
+                peer->timeEpochKnown = true;
                 const bool late = peer->intentStarted && newestCarried <= peer->appliedTick;
                 if (!late) {
                     peer->lateIntentTicks = 0;
@@ -1485,8 +1518,7 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     peer->lateIntentCounted = true;
                     peer->lateIntentTicks += 1;
                 }
-                if (late && (peer->lateIntentTicks >= IntentRedundancy ||
-                             peer->appliedTick - newestCarried >= IntentRedundancy)) {
+                if (late && (peer->lateIntentTicks >= IntentRedundancy || clockMoved)) {
                     peer->lateIntentTicks = 0;
                     peer->intentQueue.clear();
                     peer->standIns.clear();
@@ -3108,6 +3140,14 @@ void ReplicaSession::onAttributes(scene::World& world, InstanceId root, std::spa
             return;
         incoming.emplace_back(std::move(name), std::move(*value));
     }
+    // Its tags (G30), exactly these as its attributes are.
+    const u16 tagCount = reader.u16v();
+    if (!reader.ok() || tagCount > MaxReplicaTags)
+        return;
+    std::vector<std::string> tags;
+    tags.reserve(tagCount);
+    for (u16 at = 0; at < tagCount && reader.ok(); ++at)
+        tags.emplace_back(reader.text());
     if (!reader.ok() || !reader.done())
         return;
 
@@ -3165,6 +3205,17 @@ void ReplicaSession::onAttributes(scene::World& world, InstanceId root, std::spa
     }
     for (const auto& [name, value] : incoming)
         (void)world.setAttribute(target, world.atoms().intern(name), value);
+
+    // **Exactly these tags**, too: what the authority took off is gone here.
+    scene::TagSet had;
+    world.collectTags(target, had);
+    std::set<std::string_view> wanted(tags.begin(), tags.end());
+    for (const core::NameAtom tag : had) {
+        if (!wanted.contains(world.atoms().text(tag)))
+            (void)world.removeTag(target, tag);
+    }
+    for (const std::string& tag : tags)
+        (void)world.addTag(target, world.atoms().intern(tag));
 }
 
 void ReplicaSession::onSceneChange(scene::World& world, std::span<const u8> bytes)
@@ -3763,6 +3814,7 @@ void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
     // a tick of input the next one still carries.
     Writer intent;
     intent.u8v(static_cast<u8>(MessageType::Intent));
+    intent.u32v(m_timeEpoch);
     intent.u8v(static_cast<u8>(m_sentIntents.size()));
     for (const auto& [sentTick, bytes] : m_sentIntents)
         intent.bytes.insert(intent.bytes.end(), bytes.begin(), bytes.end());

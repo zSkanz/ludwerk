@@ -292,6 +292,9 @@ struct EditorDialogs
         OpenScene,
         NewProject,
         OpenProject,
+        // Another stamp, over one with unsaved edits (G36): only that stamp's
+        // edits are at stake, and `pendingScene` carries the one to open.
+        OpenStamp,
     };
     Pending pending = Pending::None;
     // The scene `Pending::OpenScene` was going to open. Carried because the
@@ -1359,6 +1362,21 @@ public:
     [[nodiscard]] Stage* stage() noexcept { return m_stage.get(); }
     [[nodiscard]] const Stage* stage() const noexcept { return m_stage.get(); }
 
+    // **The world the author is looking at** (G33): the stage while a stamp is
+    // open and `scene` otherwise, and where in it what they made stands. Every
+    // mark the viewport draws over what is edited -- the markers of lights,
+    // cameras and decals, the selection, the joints, the manipulator -- asks
+    // these. They read the scene's world by name, and a stamp opened over a
+    // scene showed the scene's decals and none of its own lights.
+    [[nodiscard]] scene::World& authoredWorld(scene::World& scene) noexcept
+    {
+        return m_stage != nullptr ? m_stage->world() : scene;
+    }
+    [[nodiscard]] core::InstanceId authoredRoot(core::InstanceId sceneRoot) const noexcept
+    {
+        return m_stage != nullptr ? m_stage->workspace() : sceneRoot;
+    }
+
     // --- Editing a stamp (ADR 0049) ------------------------------------------
     //
     // **Opening a stamp replaces the world with it**, and that is the whole
@@ -1492,6 +1510,13 @@ public:
     // Opens a stamp onto a stage of its own. Refused while playing: a stamp is
     // authored, and a world that is ticking is not one somebody is authoring.
     //
+    // **Opening one while another is open switches to it** (G36) when the open
+    // one has nothing unsaved, and is refused when it has: the panel asks
+    // first -- save, discard, or stay -- and only then asks for the switch.
+    // **The scene's undo history waits for it** while stamps are open, and
+    // closing the last one gives it back: an edit made to the scene before
+    // looking at a stamp is still one ctrl-Z away after.
+    //
     // The registries are the game world's, shared rather than copied -- see
     // `Stage` for why that is not optional.
     bool openStamp(std::string_view path, scene::ClassRegistry& classes, scene::EnumRegistry& enums,
@@ -1569,8 +1594,12 @@ public:
                                 std::optional<core::f64> minimum, std::optional<core::f64> maximum);
     // **What it drives**: `property` of `node`, inside the stamp at `root` --
     // or that drive taken away again when it is there.
+    //
+    // `component` is one component of the property: `X`, `Y` or `Z` of a
+    // vector, or the field of `MaterialParameters` -- `Color` -- a part's
+    // colour being its material's (G28).
     bool toggleStampDrive(scene::World& world, core::InstanceId root, std::string_view name, core::InstanceId node,
-                          core::NameAtom property);
+                          core::NameAtom property, std::string_view component = {});
 
     // **The files an override can go to** (ADR 0155 §11): the stamp `id`'s
     // copy was placed from, then the stamp that one is a variant of, and on to
@@ -3498,6 +3527,8 @@ private:
     MatchSettings m_match;
     bool m_matchRunning = false;
     UndoStack m_history;
+    // The scene's, while a stamp's stage holds `m_history` (G36).
+    UndoStack m_sceneHistory;
     asset::PaintMask m_paintMask;
     bool m_brushPicking = false;
 

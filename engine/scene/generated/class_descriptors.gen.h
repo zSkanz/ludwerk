@@ -895,6 +895,7 @@ Value getNetworkServiceTopology(const World& world, core::InstanceId id);
 Value getNetworkServiceServerTick(const World& world, core::InstanceId id);
 Value getNetworkServicePeerCount(const World& world, core::InstanceId id);
 Value getNetworkServiceState(const World& world, core::InstanceId id);
+Value getNetworkServicePort(const World& world, core::InstanceId id);
 Value getNetworkServiceLocalPlayer(const World& world, core::InstanceId id);
 
 // Player

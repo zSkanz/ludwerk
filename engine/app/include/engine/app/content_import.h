@@ -19,6 +19,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -76,9 +77,21 @@ struct ContentImportReport
 // the project reads directly and there is nothing to compile.
 //
 // Returns an empty report and no error in a build with no editor.
+//
+// `progress`, when given, is told each source before it compiles -- how many
+// are done, of how many, and which -- so a caller holding a window can keep it
+// alive and say what it is doing (D507).
+//
+// `skipUnchanged` is what opening a project asks for (D507): a source whose
+// size and time are what they were when it last compiled, with the importer
+// and the project's materials unchanged as well, is not read again. An import a
+// person asked for never skips -- it has to report the pieces it made.
+using ImportProgress = std::function<void(core::usize done, core::usize total, std::string_view name)>;
+
 [[nodiscard]] ContentImportReport compileImported(const std::filesystem::path& projectRoot,
                                                   const std::filesystem::path& contentRoot,
-                                                  std::span<const std::string> names);
+                                                  std::span<const std::string> names,
+                                                  const ImportProgress& progress = {}, bool skipUnchanged = false);
 
 // **Opens a project's content for reading: mounts it, compiles what has no
 // compiled form, and mounts that** (E9 step 14).
@@ -102,7 +115,12 @@ struct ContentImportReport
 // the compile is a no-op and only the mounts happen -- which is correct, because
 // such a build reads a pack.
 ContentImportReport openProjectContent(const std::filesystem::path& projectRoot,
-                                       const std::filesystem::path& contentRoot, asset::ContentMounts& mounts);
+                                       const std::filesystem::path& contentRoot, asset::ContentMounts& mounts,
+                                       const ImportProgress& progress = {});
+
+// Where opening a project remembers what each source was when it compiled
+// (D507): `<project>/.engine/import/sources.json`.
+[[nodiscard]] std::filesystem::path importSourcesPath(const std::filesystem::path& projectRoot);
 
 // Where the store lives, so the mount at boot and the writer at import cannot
 // disagree about it. `<project>/.engine/import/objects` and `.../index.json`.

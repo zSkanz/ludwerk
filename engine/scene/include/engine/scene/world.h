@@ -356,6 +356,8 @@ struct EngineState
     NetworkTopology networkTopology = NetworkTopology::Solo;
     u64 networkServerTick = 0;
     u32 networkPeerCount = 0;
+    // The port of this machine's match, hosted or joined; zero with none.
+    u16 networkPort = 0;
 
     // **How the connection is doing** (the multiplayer smoothness brief), for
     // `NetworkService:GetStats` and the overlay's Network panel. Facts about

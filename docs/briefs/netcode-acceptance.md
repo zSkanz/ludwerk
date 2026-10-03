@@ -245,6 +245,13 @@ of their own.
 
 ## Findings
 
+- **The gate was flaky under load because the engine was** (D498, 2026-10-03):
+  a late burst of intents re-anchored the stream and stepped stood-in ticks
+  twice. Measured with a CPU hog beside the run and a log of every tick each
+  end applied; the replica now sends a time-dropped epoch with its intents
+  (protocol 36), and under the same hog no correction came without a long
+  frame.
+
 - **The acceptance table, measured on the development machine** (2026-10-02,
   `netcode_acceptance`, a quiet run):
 

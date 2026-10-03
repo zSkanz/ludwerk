@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -87,6 +88,9 @@ struct Pool
     std::atomic<u64> executed{0};
     std::atomic<u64> stolen{0};
     std::array<std::atomic<u64>, 4> executedByDomain{};
+    // Threads blocked in `wait` past its short spell, under `mutex`: while any
+    // is, the workers run at the waiter's priority (D500).
+    u32 blockedWaiters = 0;
 };
 
 Pool& pool()
@@ -292,6 +296,25 @@ void execute(u32 slot)
     }
     execute(slot);
     return true;
+}
+
+// **The workers at the priority of whoever waits on them** (D500). Below
+// normal they leave the frame's own thread its core (T5) -- and with every core
+// taken by ordinary work at normal priority, a worker holding the very job the
+// main thread waits for ran only when the system's anti-starvation boost came
+// round, about every four seconds. A game is raised above that work now; the
+// editor and the tools are not, so a waiter that blocks lifts the workers for as
+// long as it waits. The short waits a frame makes never get that far. Windows
+// only, as the lowering is.
+void setWorkerPriority([[maybe_unused]] Pool& p, [[maybe_unused]] bool raised)
+{
+#ifdef _WIN32
+    for (const std::unique_ptr<Worker>& worker : p.workers) {
+        if (worker->thread.joinable())
+            (void)SetThreadPriority(static_cast<HANDLE>(worker->thread.native_handle()),
+                                    raised ? THREAD_PRIORITY_NORMAL : THREAD_PRIORITY_BELOW_NORMAL);
+    }
+#endif
 }
 
 void workerLoop(u32 index)
@@ -614,8 +637,18 @@ void wait(JobHandle handle)
         }
 
         std::unique_lock<std::mutex> lock(p.mutex);
-        p.wake.wait(
-            lock, [&p, handle] { return handleFinished(handle) || p.readyCount.load(std::memory_order_acquire) > 0; });
+        const auto ready = [&p, handle] {
+            return handleFinished(handle) || p.readyCount.load(std::memory_order_acquire) > 0;
+        };
+        // A short spell first: most waits end in it, and lifting the workers
+        // costs a call per worker each way.
+        if (p.wake.wait_for(lock, std::chrono::milliseconds(2), ready))
+            continue;
+        if (p.blockedWaiters++ == 0)
+            setWorkerPriority(p, true);
+        p.wake.wait(lock, ready);
+        if (--p.blockedWaiters == 0)
+            setWorkerPriority(p, false);
     }
 }
 

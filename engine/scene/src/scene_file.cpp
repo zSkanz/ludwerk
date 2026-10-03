@@ -768,6 +768,33 @@ void collectPaths(const World& world, core::InstanceId id, const std::string& pr
 // and a part's own surface shader parameters (ADR 0091). One writer for a whole
 // instance and for an override of a stamped one (B3: a linked instance's lost
 // them on every save, because only its properties were compared).
+// One attribute's value. **An attribute has no declared type, so the file says
+// it** for every kind whose numbers alone are ambiguous: a `Color3` and a
+// `Vector3` are both three numbers, and a `CFrame`, a `UDim2` and a `Rect` were
+// not read back at all. A number, a string, a boolean, a vector and a sequence
+// keep the spelling they always had.
+void writeAttributeValue(JsonWriter& out, const World& world, const Value& value,
+                         const std::unordered_map<core::u32, std::string>& paths, SceneIoReport& report)
+{
+    switch (valueType(value)) {
+    case ValueType::CFrame:
+    case ValueType::Color3:
+    case ValueType::Vector2:
+    case ValueType::UDim:
+    case ValueType::UDim2:
+    case ValueType::Rect:
+        out.beginObject();
+        out.field("$", std::string_view(valueTypeName(valueType(value))));
+        out.key("v");
+        writeValue(out, world, value, paths, report);
+        out.endObject();
+        break;
+    default:
+        writeValue(out, world, value, paths, report);
+        break;
+    }
+}
+
 void writeAttributes(JsonWriter& out, const World& world, core::InstanceId id,
                      const std::unordered_map<core::u32, std::string>& paths, SceneIoReport& report)
 {
@@ -779,28 +806,72 @@ void writeAttributes(JsonWriter& out, const World& world, core::InstanceId id,
     // -- the same property the world hash relies on.
     for (const auto& entry : attributes) {
         out.key(world.atoms().text(entry.first));
-        // **An attribute has no declared type, so the file says it** for every
-        // kind whose numbers alone are ambiguous: a `Color3` and a `Vector3` are
-        // both three numbers, and a `CFrame`, a `UDim2` and a `Rect` were not
-        // read back at all. A number, a string, a boolean, a vector and a
-        // sequence keep the spelling they always had.
-        switch (valueType(entry.second)) {
-        case ValueType::CFrame:
-        case ValueType::Color3:
-        case ValueType::Vector2:
-        case ValueType::UDim:
-        case ValueType::UDim2:
-        case ValueType::Rect:
-            out.beginObject();
-            out.field("$", std::string_view(valueTypeName(valueType(entry.second))));
-            out.key("v");
-            writeValue(out, world, entry.second, paths, report);
-            out.endObject();
-            break;
-        default:
-            writeValue(out, world, entry.second, paths, report);
-            break;
+        writeAttributeValue(out, world, entry.second, paths, report);
+    }
+    out.endObject();
+}
+
+// **What a copy changed of its stamp's attributes, and only that** (G31):
+// each attribute it set differently or added, and each it removed as `null`.
+// The whole set used to be written, and read back in place of the stamp's --
+// so a variant that set one attribute lost every other its base had, and a
+// change to the base never reached it again.
+void writeAttributeDelta(JsonWriter& out, const World& live, core::InstanceId liveId, const World& reference,
+                         core::InstanceId refId, const std::unordered_map<core::u32, std::string>& paths,
+                         SceneIoReport& report)
+{
+    AttributeMap mine;
+    AttributeMap theirs;
+    live.collectAttributes(liveId, mine);
+    reference.collectAttributes(refId, theirs);
+    const auto valueIn = [](const AttributeMap& map, std::string_view name, const World& world) -> const Value* {
+        for (const auto& entry : map) {
+            if (world.atoms().text(entry.first) == name)
+                return &entry.second;
         }
+        return nullptr;
+    };
+    out.key("attributes");
+    out.beginObject();
+    for (const auto& [name, value] : mine) {
+        const std::string_view text = live.atoms().text(name);
+        const Value* was = valueIn(theirs, text, reference);
+        if (was != nullptr && *was == value)
+            continue;
+        out.key(text);
+        writeAttributeValue(out, live, value, paths, report);
+    }
+    for (const auto& [name, value] : theirs) {
+        const std::string_view text = reference.atoms().text(name);
+        if (valueIn(mine, text, live) == nullptr) {
+            out.key(text);
+            out.nullValue();
+        }
+    }
+    out.endObject();
+}
+
+// The same for tags: each one this copy added as `true`, each it removed as
+// `false`.
+void writeTagDelta(JsonWriter& out, const World& live, core::InstanceId liveId, const World& reference,
+                   core::InstanceId refId)
+{
+    TagSet mine;
+    TagSet theirs;
+    live.collectTags(liveId, mine);
+    reference.collectTags(refId, theirs);
+    const auto has = [](const TagSet& set, std::string_view name, const World& world) {
+        return std::any_of(set.begin(), set.end(), [&](core::NameAtom tag) { return world.atoms().text(tag) == name; });
+    };
+    out.key("tags");
+    out.beginObject();
+    for (const core::NameAtom tag : mine) {
+        if (!has(theirs, live.atoms().text(tag), reference))
+            out.field(live.atoms().text(tag), true);
+    }
+    for (const core::NameAtom tag : theirs) {
+        if (!has(mine, reference.atoms().text(tag), live))
+            out.field(reference.atoms().text(tag), false);
     }
     out.endObject();
 }
@@ -1363,12 +1434,12 @@ void writeCopyBody(JsonWriter& out, const World& live, core::InstanceId id, cons
         // ones cannot say.
         if (!sameAttributes(live, liveId, reference, refId)) {
             open();
-            writeAttributes(out, live, liveId, paths, report);
+            writeAttributeDelta(out, live, liveId, reference, refId, paths, report);
             ++report.overrides;
         }
         if (!sameTags(live, liveId, reference, refId)) {
             open();
-            writeTags(out, live, liveId);
+            writeTagDelta(out, live, liveId, reference, refId);
             ++report.overrides;
         }
         if (!sameShaderParameters(live, liveId, reference, refId)) {
@@ -2119,12 +2190,10 @@ void applyProperties(World& world, core::InstanceId id, const JsonValue& propert
 // override of a stamped instance means (`writeCarried`).
 void applyCarried(World& world, core::InstanceId id, const JsonValue& json, SceneIoReport& report, bool replace)
 {
-    if (replace && json["attributes"].type() == core::JsonType::Object) {
-        AttributeMap had;
-        world.collectAttributes(id, had);
-        for (const auto& entry : had)
-            (void)world.setAttribute(id, entry.first, Value{});
-    }
+    // **An override names each attribute it changed** (G31), `null` for one it
+    // removed, and leaves the rest as its stamp has them; so `replace` no
+    // longer clears the set. Tags likewise, as an object of `true` and `false`
+    // -- a list is the whole set, as a file before this wrote it.
     if (replace && json["tags"].type() == core::JsonType::Array) {
         TagSet had;
         world.collectTags(id, had);
@@ -2150,6 +2219,10 @@ void applyCarried(World& world, core::InstanceId id, const JsonValue& json, Scen
             // has to stay unambiguous for the shapes an attribute can hold.
             std::optional<Value> value;
             switch (entry.type()) {
+            case core::JsonType::Null:
+                // Removed: what this copy took away of its stamp's.
+                value = Value{};
+                break;
             case core::JsonType::Boolean:
                 value = Value{entry.asBool()};
                 break;
@@ -2194,6 +2267,16 @@ void applyCarried(World& world, core::InstanceId id, const JsonValue& json, Scen
     if (const JsonValue tags = json["tags"]; tags.type() == core::JsonType::Array) {
         for (core::usize index = 0; index < tags.size(); ++index)
             (void)world.addTag(id, world.atoms().intern(tags.at(index).asString()));
+    }
+    // A copy's tags (G31): each it added, `true`, and each it removed, `false`.
+    else if (tags.type() == core::JsonType::Object) {
+        for (core::usize index = 0; index < tags.size(); ++index) {
+            const core::NameAtom tag = world.atoms().intern(tags.keyAt(index));
+            if (tags[tags.keyAt(index)].asBool())
+                (void)world.addTag(id, tag);
+            else
+                (void)world.removeTag(id, tag);
+        }
     }
 
     if (const JsonValue own = json["shaderParameters"]; own.type() == core::JsonType::Object) {
@@ -4269,6 +4352,60 @@ void applyStampDrives(World& world, core::InstanceId copyRoot, core::NameAtom pa
             const core::InstanceId target = index.find(drive.node);
             if (!target.valid())
                 continue;
+            // **A part's colour is its material's** (G28): a drive of
+            // `MaterialParameters` names the field in `component` -- `Color`,
+            // `Transparency` -- and sets it as `SetMaterialParameter` would,
+            // where the part's material lets a part change it.
+            if (drive.property == "MaterialParameters") {
+                const std::optional<asset::MaterialField> field = asset::materialFieldNamed(drive.component);
+                const PartComponent* part = world.parts().find(target);
+                if (!field.has_value() || part == nullptr)
+                    continue;
+                const asset::ResolvedMaterial material = world.resolveMaterial(part->material, part->materialClone);
+                if ((material.instanceParameters & asset::fieldBit(*field)) == 0)
+                    continue;
+                asset::MaterialProperties values;
+                const core::Color3* colour = std::get_if<core::Color3>(&value);
+                const core::f64* number = std::get_if<core::f64>(&value);
+                switch (*field) {
+                case asset::MaterialField::Color:
+                    if (colour == nullptr)
+                        continue;
+                    values.color = *colour;
+                    break;
+                case asset::MaterialField::Emissive:
+                    if (colour == nullptr)
+                        continue;
+                    values.emissive = *colour;
+                    break;
+                case asset::MaterialField::Transparency:
+                case asset::MaterialField::Metalness:
+                case asset::MaterialField::Roughness:
+                case asset::MaterialField::NormalScale:
+                case asset::MaterialField::AlphaCutoff: {
+                    if (number == nullptr)
+                        continue;
+                    const auto amount = static_cast<core::f32>(*number);
+                    if (*field == asset::MaterialField::Transparency)
+                        values.transparency = amount;
+                    else if (*field == asset::MaterialField::Metalness)
+                        values.metalness = amount;
+                    else if (*field == asset::MaterialField::Roughness)
+                        values.roughness = amount;
+                    else if (*field == asset::MaterialField::NormalScale)
+                        values.normalScale = amount;
+                    else
+                        values.alphaCutoff = amount;
+                    break;
+                }
+                default:
+                    continue;
+                }
+                asset::MaterialOverrides overrides = part->materialParameters;
+                (void)asset::setOverride(overrides, *field, values);
+                (void)world.setProperty(target, world.atoms().intern("MaterialParameters"), Value{overrides});
+                continue;
+            }
             const core::NameAtom property = world.atoms().intern(drive.property);
             Value driven = value;
             // One component of a vector, from a number: a fence's length is its

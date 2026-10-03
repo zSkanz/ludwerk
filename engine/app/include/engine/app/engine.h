@@ -373,6 +373,15 @@ struct EngineOptions
 // explicit `--gpu-debug` asks for it in any profile.
 [[nodiscard]] bool gpuValidationWanted(std::string_view profile, bool optIn) noexcept;
 
+// **Whether this run asks to be scheduled ahead of ordinary work** (D193,
+// D500): every run that is a game somebody plays or waits on -- a window that is
+// not the editor, and a windowless one that serves, joins or measures. A game's
+// window was thought favoured enough by being in front; under a busy machine it
+// was not, and a join took frames of 4 to 40 s, all of them inside the graphics
+// driver's own calls, until the process was raised. The editor and a plain
+// headless run (a test, a capture) stay at the desktop's level.
+[[nodiscard]] bool scheduledAhead(bool headless, bool editor, bool networked, bool measuring) noexcept;
+
 // Runs to completion. Returns the first error that stopped it, or nothing on a
 // clean exit.
 [[nodiscard]] std::optional<core::EngineError> run(const EngineOptions& options);

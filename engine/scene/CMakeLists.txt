@@ -87,6 +87,7 @@ engine_add_module_tests(scene
         tests/world_snapshot_tests.cpp
         tests/material_world_tests.cpp
         tests/scene_file_tests.cpp
+        tests/pivot_tests.cpp
         tests/stamp_tests.cpp
         tests/wind_tests.cpp
         tests/partition_tests.cpp

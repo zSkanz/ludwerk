@@ -102,6 +102,12 @@ public:
         m_transport->flush();
     }
 
+    void noteTimeDropped() override
+    {
+        if (m_replica.has_value())
+            m_replica->noteTimeDropped();
+    }
+
     [[nodiscard]] Status status() const override
     {
         Status status;

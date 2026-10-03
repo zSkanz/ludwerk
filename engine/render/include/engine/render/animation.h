@@ -164,6 +164,11 @@ private:
         // Invalid for a player parented straight to a mesh, which is the older
         // and still-supported shape: that track drives that mesh and no other.
         core::InstanceId driveRoot;
+        // What was asked for: the file the clip is in (none for the mesh's
+        // own) and its name (empty for the file's first). Kept so a track made
+        // before its file arrived binds when it does (D509).
+        core::NameAtom clipFrom;
+        std::string clipName;
         // Index into the entry's `clips`, or `NoClip`.
         u32 clip = NoClip;
         f64 time = 0.0;
@@ -199,6 +204,9 @@ private:
     };
 
     static constexpr u32 NoClip = 0xFFFFFFFFu;
+
+    // Finds the track's mesh and clip, if they are there yet. True once bound.
+    bool bindTrack(Track& track) const;
 
     void rebuildPose(core::InstanceId meshPart, const SkeletonLibrary::Entry& skeleton);
     // `Bone.Transform` (G9): the rig a bone is on, and every turn its bones ask

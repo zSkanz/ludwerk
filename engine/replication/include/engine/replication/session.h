@@ -364,6 +364,11 @@ private:
         // The newest tick this peer has sent: a late tick past it is one the
         // authority has never seen, and a press in it has never been applied.
         u64 newestIntentSeen = 0;
+        // **How many times this peer has dropped simulated time** (D498), as
+        // its newest intent says, and whether one has said it yet. A change is
+        // its clock having moved; anything else late is a packet that was.
+        u32 timeEpoch = 0;
+        bool timeEpochKnown = false;
         u32 standInRun = 0;
         u32 delayBeforeRun = InitialIntentDelay;
         // The roster this peer was last sent, so it is sent again only when it
@@ -560,6 +565,8 @@ public:
     // because a late intent is worse than a missing one -- the next tick's
     // says what the player is doing now.
     void sendIntent(const scene::World& world, u64 tick);
+    // This machine dropped simulated time (D498): the intents sent after say so.
+    void noteTimeDropped() noexcept { m_timeEpoch += 1; }
 
     // The world's outbox of `FireServer` messages, to the authority.
     void sendMessages(scene::World& world);
@@ -772,6 +779,9 @@ private:
     // The last `IntentRedundancy` intents sent, encoded, oldest first: each
     // message carries them all (protocol 22).
     std::deque<std::pair<u64, std::vector<u8>>> m_sentIntents;
+    // How many times this machine has dropped simulated time (D498), sent
+    // with every intent.
+    u32 m_timeEpoch = 0;
     // The answer the own character was last compared against.
     u64 m_reconciledAck = 0;
     // Interpolation: every remote part's last few snapshot transforms, by

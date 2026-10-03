@@ -47,4 +47,23 @@ namespace engine::scene {
 // the same sentence as for a part.
 [[nodiscard]] core::CFrameD pivotOf(const World& world, core::InstanceId id);
 
+// **`PivotTo`, below the VM** (D512): puts `id`'s pivot on `target` and moves
+// what it owns by the same transform -- every part under a model, a part
+// alone, a camera. Writes go through `setProperty` so anything watching
+// `CFrame` sees them.
+//
+// **Exact enough to call every frame.** Each part's new place is
+// target * pivot^-1 * part, composed in f64 from bases made orthonormal first,
+// and written orthonormal: a rotation stored in f32 drifts off orthonormal,
+// and inverting it by transpose -- what a rigid inverse is -- turned that drift
+// into a scale applied on every call. A model turned by `PivotTo` each frame
+// left for kilometres within a second. And **a target that is the pivot already
+// writes nothing**, so moving to the same place twice changes no bit.
+void pivotTo(World& world, core::InstanceId id, const core::CFrameD& target);
+
+// The composition `pivotTo` writes, exposed so a caller with its own write
+// path moves things the same way: where `of` goes when `from` goes to `to`.
+[[nodiscard]] core::CFrameD movedWith(const core::CFrameD& to, const core::CFrameD& from,
+                                      const core::CFrameD& of) noexcept;
+
 } // namespace engine::scene

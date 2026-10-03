@@ -4071,6 +4071,9 @@ declare extern type NetworkService extends Instance with
     read PeerCount: number
     --- Where this machine stands: `Offline`, `Connecting`, `Connected`, `Hosting` or `Serving`.
     read State: EnumNetworkState
+    --- The port this machine's match is on: the one it hosts or serves on, or the one it joined. Zero
+    --- with no match. With `GetLocalAddresses`, what a host shows the friends who will join it.
+    read Port: number
     --- The player at this machine: there from boot solo, hosting or joining, and nil on a dedicated
     --- server, which has nobody at it.
     read LocalPlayer: Player?
@@ -4096,6 +4099,12 @@ declare extern type NetworkService extends Instance with
     --- Everybody taking part, in the order they joined. **The same call solo** -- one player -- so a
     --- game that loops over its players is already a multiplayer game.
     function GetPlayers(self): {Player}
+    --- **This machine's addresses on its networks**, best first: what a host shows the friends on its
+    --- Wi-Fi to type. IPv4, from interfaces that are up -- never loopback, never link-local (169.254),
+    --- never a virtual adapter that can be told apart (a hypervisor's or a container's) -- the private
+    --- ranges first, the interface the default route leaves by first among them. A fact about this
+    --- machine: it needs no match, is never replicated, and is empty offline.
+    function GetLocalAddresses(self): {string}
     --- **How the connection is doing**, for a game that shows a connection-quality mark: the round trip
     --- in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets lost in percent
     --- (`Loss`), snapshots a second, corrections of this machine's own character a second, and in all

@@ -111,9 +111,10 @@ void sleepNs(u64 ns) noexcept;
 // boosts the process that owns the foreground window; a headless host has no
 // window at all. On a hybrid CPU under a parallel build, the same binary at plain
 // priority was descheduled into 45-212 ms frames, and at ABOVE_NORMAL held
-// 7-9.5 ms. So the host asks for this when it is headless AND serving or
-// measuring. Never for a windowed game, which is already favoured, and never for
-// a test run, which has nobody waiting on its frames.
+// 7-9.5 ms. **And the boost is not enough for a windowed game either** (D500):
+// its join froze for seconds inside the graphics driver's calls under the same
+// load. So every game run asks (`app::scheduledAhead`); the editor and a test
+// run, which has nobody waiting on its frames, do not.
 //
 // Windows only. Elsewhere there is no foreground boost for this to stand in for,
 // and lowering a Unix nice value needs a privilege a game does not have: it

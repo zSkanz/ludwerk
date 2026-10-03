@@ -3215,6 +3215,14 @@ local Messages: { Schema.Message } = {
         Direction = "ToAuthority",
         Layout = {
             {
+                Name = "timeEpoch",
+                Type = "u32",
+                Doc = "How many times the replica has dropped simulated time (protocol 36, D498): it moves "
+                    .. "when a frame owed more ticks than it may catch up. An authority anchors a late "
+                    .. "stream again only when this moved, or when the stream stays late; a burst held up "
+                    .. "in transit is not the replica's clock.",
+            },
+            {
                 Name = "tickCount",
                 Type = "u8",
                 Doc = "How many ticks this message carries, 1 to 4: the newest and the ones before it "
@@ -3491,8 +3499,14 @@ local Messages: { Schema.Message } = {
                     { Name = "value", Type = "attribute", Doc = 'See "Attribute values".' },
                 },
             },
+            {
+                Name = "tagCount",
+                Type = "u16",
+                Doc = "Its tags (protocol 36, G30), in name order, at most 1024.",
+            },
+            { Name = "tags", Type = "repeat", Count = "tagCount", Each = { { Name = "tag", Type = "text" } } },
         },
-        Doc = "Every attribute one owner has now (ADR 0106, protocol 17), sent when any of them changed and "
+        Doc = "Every attribute and every tag one owner has now (ADR 0106, protocol 17; tags since 36), sent when any of them changed and "
             .. "once to a replica that is sent the owner. **Whole, not a diff**: the replica makes the owner's "
             .. "attributes exactly these, so a message received twice is simply the truth, and an attribute "
             .. "missing from it is gone. Reliable and after the spawns, so it never names an instance the "

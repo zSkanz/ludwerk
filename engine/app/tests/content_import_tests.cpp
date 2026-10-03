@@ -29,6 +29,7 @@
 #endif
 
 #include <algorithm>
+#include <chrono>
 #include <doctest/doctest.h>
 #include <filesystem>
 #include <optional>
@@ -163,6 +164,59 @@ TEST_CASE("a project compiles when it is opened, and then needs none of its sour
     CHECK(afterwards.mountCount() == 1);
     CHECK(afterwards.resolve("asset://models/quad.gltf").found());
     CHECK(afterwards.resolve("asset://textures/base.png").found());
+}
+
+TEST_CASE("D507: opening a project again reads none of its unchanged sources, and says what it compiles")
+{
+    // Every open asked the compiler about every source -- read it, hash it,
+    // find it cached, write the store's index again -- and a project of two
+    // hundred sources spent 3.8 s on that before its first frame, with nothing
+    // to compile. And a first open said nothing while it compiled for minutes.
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+    const Project project;
+
+    std::vector<std::string> told;
+    const app::ImportProgress progress = [&told](core::usize done, core::usize total, std::string_view name) {
+        if (done < total && (told.empty() || told.back() != name))
+            told.emplace_back(name);
+    };
+
+    asset::ContentMounts first;
+    const app::ContentImportReport compiled = app::openProjectContent(project.root, project.content(), first, progress);
+    CHECK(compiled.failed.empty());
+    CHECK(compiled.compiled.size() == 2);
+    // Each source named before it compiled.
+    CHECK(told == std::vector<std::string>{"models/quad.gltf", "textures/base.png"});
+    CHECK(std::filesystem::is_regular_file(app::importSourcesPath(project.root)));
+
+    // **Again, nothing changed: nothing compiled, nothing asked about**, and
+    // the store still answers.
+    told.clear();
+    asset::ContentMounts second;
+    const app::ContentImportReport again = app::openProjectContent(project.root, project.content(), second, progress);
+    CHECK(again.compiled.empty());
+    CHECK(again.cacheHits == 0);
+    CHECK(again.cacheMisses == 0);
+    CHECK(told.empty());
+    CHECK(second.resolve("asset://models/quad.gltf").found());
+    CHECK(second.resolve("asset://textures/base.png").found());
+
+    // **A source that changed is compiled again**, and only it.
+    {
+        std::error_code ec;
+        const auto when = std::filesystem::last_write_time(project.image(), ec);
+        REQUIRE_FALSE(ec);
+        std::filesystem::last_write_time(project.image(), when + std::chrono::seconds(5), ec);
+        REQUIRE_FALSE(ec);
+    }
+    asset::ContentMounts third;
+    const app::ContentImportReport changed = app::openProjectContent(project.root, project.content(), third);
+    CHECK(changed.compiled == std::vector<std::string>{"textures/base.png"});
 }
 
 TEST_CASE("the loader draws a compiled mesh and a compiled map, with no source file left")

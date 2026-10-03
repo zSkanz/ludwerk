@@ -1467,6 +1467,16 @@ local Classes: { Schema.Class } = {
                 Doc = "Where this machine stands: `Offline`, `Connecting`, `Connected`, `Hosting` or `Serving`.",
             },
             {
+                Name = "Port",
+                Type = "number",
+                ReadOnly = true,
+                Transient = true,
+                ThreadSafety = "Safe",
+                HostFact = true,
+                Doc = "The port this machine's match is on: the one it hosts or serves on, or the one it joined. "
+                    .. "Zero with no match. With `GetLocalAddresses`, what a host shows the friends who will join it.",
+            },
+            {
                 Name = "LocalPlayer",
                 Type = "Player?",
                 ReadOnly = true,
@@ -1484,6 +1494,17 @@ local Classes: { Schema.Class } = {
                 ThreadSafety = "Unsafe",
                 Doc = "Everybody taking part, in the order they joined. **The same call solo** -- one player "
                     .. "-- so a game that loops over its players is already a multiplayer game.",
+            },
+            {
+                Name = "GetLocalAddresses",
+                Parameters = {},
+                Returns = { "{string}" },
+                ThreadSafety = "Unsafe",
+                Doc = "**This machine's addresses on its networks**, best first: what a host shows the friends on "
+                    .. "its Wi-Fi to type. IPv4, from interfaces that are up -- never loopback, never link-local "
+                    .. "(169.254), never a virtual adapter that can be told apart (a hypervisor's or a container's) "
+                    .. "-- the private ranges first, the interface the default route leaves by first among them. "
+                    .. "A fact about this machine: it needs no match, is never replicated, and is empty offline.",
             },
             {
                 Name = "GetStats",

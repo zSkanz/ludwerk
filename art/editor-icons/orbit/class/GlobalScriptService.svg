@@ -1,11 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 <defs><mask id="ink" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
-<circle cx="12" cy="9" r="7.9" fill="white"/>
-<circle cx="12" cy="9" r="6.1" fill="black"/>
-<polyline points="5,9 19,9" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="12,2 9,5 9,13" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="12,2 15,5 15,13" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="7,17 3,20 7,23" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="17,17 21,20 17,23" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="10,18 9.21586,17.9615 8.43928,17.8463 7.67772,17.6555 6.93853,17.391 6.22883,17.0554 5.55544,16.6518 4.92485,16.1841 4.34315,15.6569 3.81592,15.0751 3.34824,14.4446 2.94463,13.7712 2.60896,13.0615 2.34448,12.3223 2.15372,11.5607 2.03852,10.7841 2,10 2.03852,9.21586 2.15372,8.43928 2.34448,7.67772 2.60896,6.93853 2.94463,6.22883 3.34824,5.55544 3.81592,4.92485 4.34315,4.34315 4.92485,3.81592 5.55544,3.34824 6.22883,2.94463 6.93853,2.60896 7.67772,2.34448 8.43928,2.15372 9.21586,2.03852 10,2 10.7841,2.03852 11.5607,2.15372 12.3223,2.34448 13.0615,2.60896 13.7712,2.94463 14.4446,3.34824 15.0751,3.81592 15.6569,4.34315 16.1841,4.92485 16.6518,5.55544 17.0554,6.22883 17.391,6.93853 17.6555,7.67772 17.8463,8.43928 17.9615,9.21586 18,10" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="2,10 18,10" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="10,18 9.73853,17.9696 9.47906,17.8785 9.22354,17.7274 8.97394,17.5175 8.73215,17.2505 8.5,16.9282 8.27927,16.5532 8.07164,16.1284 7.87868,15.6569 7.70187,15.1423 7.54254,14.5886 7.40192,14 7.28108,13.3809 7.18092,12.7362 7.10222,12.0706 7.04558,11.3892 7.01142,10.6972 7,10 7.01142,9.30275 7.04558,8.61081 7.10222,7.92945 7.18092,7.26384 7.28108,6.61905 7.40192,6 7.54254,5.41139 7.70187,4.8577 7.87868,4.34315 8.07164,3.87164 8.27927,3.44678 8.5,3.0718 8.73215,2.74954 8.97394,2.48246 9.22354,2.27259 9.47906,2.12154 9.73853,2.03044 10,2" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="10,2 10.2615,2.03044 10.5209,2.12154 10.7765,2.27259 11.0261,2.48246 11.2679,2.74954 11.5,3.0718 11.7207,3.44678 11.9284,3.87164 12.1213,4.34315 12.2981,4.8577 12.4575,5.41139 12.5981,6 12.7189,6.61905 12.8191,7.26384 12.8978,7.92945 12.9544,8.61081 12.9886,9.30275 13,10" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="16,14 13,17 16,20" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="20,14 23,17 20,20" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 </mask></defs><rect width="24" height="24" fill="white" mask="url(#ink)"/>
 </svg>

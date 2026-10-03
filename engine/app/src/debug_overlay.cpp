@@ -143,6 +143,9 @@ void issueOrAsk(EditorDialogs::Pending what, bool unsavedWork, std::string_view 
     case EditorDialogs::Pending::OpenProject:
         commands.openProject = true;
         break;
+    case EditorDialogs::Pending::OpenStamp:
+        commands.openStamp = std::string(scene);
+        break;
     case EditorDialogs::Pending::None:
         break;
     }
@@ -299,19 +302,6 @@ struct UiDragResult
 }
 
 namespace {
-
-// **The Water tool's icons, by name and not from the generated list** (D418).
-// `icons::` holds an id for every picture the icon set HAS, and the set had no
-// picture of water when the tool was written: the two constants compiled on
-// the machine that was drawing them and nowhere else. An id is only a name --
-// a theme that draws these is used, and the atlas falls back where none does.
-constexpr std::string_view WaterIcon = "class.Water";
-// What each of the tool's four draws, on the same terms: pictures the icon set
-// is still being given.
-constexpr std::string_view WaterRiverIcon = "action.WaterRiver";
-constexpr std::string_view WaterLakeIcon = "action.WaterLake";
-constexpr std::string_view WaterPoolIcon = "action.WaterPool";
-constexpr std::string_view WaterOceanIcon = "action.WaterOcean";
 
 // **A translated label with an id of its own** (ADR 0145): the words are the
 // catalog's, and the `##id` after them -- never shown -- keeps the widget the
@@ -2344,7 +2334,7 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                 // Offered only on something that HAS children, because
                 // ungrouping a part is not a thing and a greyed row says that
                 // better than a refusal after the click does.
-                if (iconMenuItem(icons, icons::ActionExpand, core::tr(ENG_TR("engine.editor.explorer.ungroup")),
+                if (iconMenuItem(icons, icons::ActionUngroup, core::tr(ENG_TR("engine.editor.explorer.ungroup")),
                                  "Ctrl+Shift+G", false, !engineOwned && world.firstChild(row.id).valid()))
                     commands->ungroupSelection = true;
 
@@ -2385,24 +2375,29 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                     };
                     if (ImGui::BeginMenu(
                             core::tr(ENG_TR("engine.editor.explorer.stamp_menu"), {{"name", stampName}}).c_str())) {
-                        if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.open_stamp"))))
+                        if (iconMenuItem(icons, icons::ActionOpen,
+                                         core::tr(ENG_TR("engine.editor.explorer.open_stamp"))))
                             commands->openStamp = stampName;
                         if (const std::string base = editor != nullptr ? editor->baseOf(stampName) : std::string{};
                             !base.empty() &&
                             ImGui::MenuItem(
                                 core::tr(ENG_TR("engine.editor.explorer.open_base"), {{"base", base}}).c_str()))
                             commands->openStamp = base;
-                        if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.select_copies"))))
+                        if (iconMenuItem(icons, icons::ActionSelectCopies,
+                                         core::tr(ENG_TR("engine.editor.explorer.select_copies"))))
                             verb(EditorCommands::StampVerb::SelectCopies, stampRoot, stampName);
                         ImGui::Separator();
-                        if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.revert_node")), nullptr, false,
-                                            !engineOwned))
+                        if (iconMenuItem(icons, icons::ActionRevert,
+                                         core::tr(ENG_TR("engine.editor.explorer.revert_node")), nullptr, false,
+                                         !engineOwned))
                             verb(EditorCommands::StampVerb::RevertNode, row.id, {});
-                        if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.revert_copy")), nullptr, false,
-                                            !engineOwned))
+                        if (iconMenuItem(icons, icons::ActionRevert,
+                                         core::tr(ENG_TR("engine.editor.explorer.revert_copy")), nullptr, false,
+                                         !engineOwned))
                             verb(EditorCommands::StampVerb::RevertCopy, stampRoot, {});
-                        if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.apply_copy")), nullptr, false,
-                                            !engineOwned))
+                        if (iconMenuItem(icons, icons::ActionApplyOverrides,
+                                         core::tr(ENG_TR("engine.editor.explorer.apply_copy")), nullptr, false,
+                                         !engineOwned))
                             verb(EditorCommands::StampVerb::ApplyCopy, stampRoot, {});
                         if (row.id != stampRoot &&
                             ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.disable_child")), nullptr, false,
@@ -2439,12 +2434,14 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                         }
                         ImGui::Separator();
                         if (dialogs != nullptr) {
-                            if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.make_variant")))) {
+                            if (iconMenuItem(icons, icons::ActionStampVariant,
+                                             core::tr(ENG_TR("engine.editor.explorer.make_variant")))) {
                                 dialogs->stampSubject = stampRoot;
                                 dialogs->stampDialog = EditorDialogs::StampDialog::Variant;
                                 dialogs->newStamp = true;
                             }
-                            if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.replace_with")))) {
+                            if (iconMenuItem(icons, icons::ActionReplace,
+                                             core::tr(ENG_TR("engine.editor.explorer.replace_with")))) {
                                 dialogs->stampSubject = stampRoot;
                                 dialogs->stampDialog = EditorDialogs::StampDialog::Replace;
                                 dialogs->newStamp = true;
@@ -2457,7 +2454,7 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                         ImGui::EndMenu();
                     }
                 }
-                else if (iconMenuItem(icons, icons::ClassModel,
+                else if (iconMenuItem(icons, icons::ActionNewStamp,
                                       core::tr(ENG_TR("engine.editor.explorer.convert_to_stamp")), nullptr, false,
                                       !engineOwned)) {
                     dialogs->stampSubject = row.id;
@@ -3358,7 +3355,7 @@ void strikeText(const char* text)
 // below them any override the part keeps that this material does not declare.
 void drawMaterialParameters(scene::World& world, Inspector& inspector, std::span<const core::InstanceId> targets,
                             const scene::PropertyDesc& descriptor, bool mixed, const IconAtlas* icons,
-                            const ContentTree* tree)
+                            const ContentTree* tree, Editor* editor = nullptr)
 {
     if (mixed || targets.size() != 1) {
         ImGui::TextDisabled("%s", core::tr(mixed ? ENG_TR("engine.editor.material_parameters.mixed")
@@ -3403,6 +3400,32 @@ void drawMaterialParameters(scene::World& world, Inspector& inspector, std::span
         }
         else {
             ImGui::TextUnformatted(name.c_str());
+            // **A stamp's parameter may drive it** (G28): a part's colour is
+            // its material's, offered on the stage as a property is.
+            if (editor != nullptr && editor->stage() != nullptr && &editor->stage()->world() == &world &&
+                ImGui::BeginPopupContextItem("drive")) {
+                const core::InstanceId stampRoot = editor->stampSession().root;
+                const std::vector<scene::StampParameter> declaredParameters =
+                    scene::stampParametersOf(world, stampRoot);
+                if (declaredParameters.empty())
+                    ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.parameters.none")));
+                else if (ImGui::BeginMenu(core::tr(ENG_TR("engine.editor.parameters.drive_from")))) {
+                    const std::optional<std::string> key = scene::stampKeyOf(world, stampRoot, targets.front());
+                    for (const scene::StampParameter& parameter : declaredParameters) {
+                        const bool driving =
+                            key.has_value() &&
+                            std::any_of(parameter.drives.begin(), parameter.drives.end(), [&](const auto& drive) {
+                                return drive.node == *key && drive.property == "MaterialParameters" &&
+                                       drive.component == name;
+                            });
+                        if (ImGui::MenuItem(parameter.name.c_str(), nullptr, driving))
+                            (void)editor->toggleStampDrive(world, stampRoot, parameter.name, targets.front(),
+                                                           descriptor.name, name);
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::EndPopup();
+            }
             if (overridden) {
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "*");
@@ -4674,7 +4697,7 @@ std::string sideDecidedBy(const scene::World& world, core::InstanceId id)
 void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector,
                 std::span<const core::InstanceId> targets, const scene::PropertyDesc& descriptor,
                 const SharedValue& shared, ContentTree* tree, const IconAtlas* icons, audio::AudioSystem* audio,
-                EditorCommands* commands)
+                EditorCommands* commands, Editor* editor = nullptr)
 {
     if (shared.state == SharedState::Unreadable) {
         // The class declares the property and the world cannot read it: a null
@@ -4729,7 +4752,7 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
     }
     if (editorFor(descriptor) == EditorKind::MaterialParameters) {
         ImGui::PushID(static_cast<int>(descriptor.name.id));
-        drawMaterialParameters(world, inspector, targets, descriptor, mixed, icons, tree);
+        drawMaterialParameters(world, inspector, targets, descriptor, mixed, icons, tree, editor);
         ImGui::PopID();
         return;
     }
@@ -6093,7 +6116,7 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
 
             ImGui::Unindent(ImGui::GetStyle().IndentSpacing * 0.5f);
             ImGui::TableSetColumnIndex(1);
-            drawEditor(world, root, inspector, targets, *descriptor, shared, tree, icons, audio, commands);
+            drawEditor(world, root, inspector, targets, *descriptor, shared, tree, icons, audio, commands, editor);
 
             // The rows a composite is actually edited in. Disabled with the
             // same rule the widget above uses, because they are the same
@@ -7071,7 +7094,7 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
         if (inPlay) {
             ImGui::SameLine();
             ImGui::BeginDisabled(run != RunState::Paused);
-            if (toolButton(icons::ActionForward, core::tr(ENG_TR("engine.editor.transport.step")),
+            if (toolButton(icons::ActionSimulationStep, core::tr(ENG_TR("engine.editor.transport.step")),
                            core::tr(ENG_TR("engine.editor.transport.advance_exactly_one_simulation_tick_tip"))))
                 editor.requestStep();
             ImGui::EndDisabled();
@@ -7139,7 +7162,7 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
     fitControl(std::max(ImGui::CalcTextSize((tabIconPad() + worldWord).c_str()).x,
                         ImGui::CalcTextSize((tabIconPad() + localWord).c_str()).x) +
                ImGui::GetStyle().FramePadding.x * 2.0f);
-    if (labeledIconButton(icons, localAxes ? icons::ClassPart : icons::ClassWorkspace,
+    if (labeledIconButton(icons, localAxes ? icons::ActionLocalAxes : icons::ActionWorldAxes,
                           localAxes ? localWord : worldWord))
         editor.setGizmoLocal(!editor.gizmoLocal());
     ImGui::EndDisabled();
@@ -7159,7 +7182,7 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
                             ImGui::CalcTextSize((tabIconPad() + pivotWord).c_str()).x) +
                    ImGui::GetStyle().FramePadding.x * 2.0f);
         // The point a thing turns about, or the middle of what is selected.
-        if (labeledIconButton(icons, centred ? icons::ClassModel : icons::ClassAttachment,
+        if (labeledIconButton(icons, centred ? icons::ActionSelectionCenter : icons::ActionPivot,
                               centred ? centreWord : pivotWord))
             editor.setGizmoOrigin(centred ? Editor::GizmoOrigin::Pivot : Editor::GizmoOrigin::Centre);
         ImGui::SetItemTooltip("%s", core::tr(centred ? ENG_TR("engine.editor.transport.the_middle_tip")
@@ -7170,7 +7193,7 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
     const bool snapping = editor.snapping();
     {
         beginOn(snapping);
-        if (toolButton(icons::ActionGrid, core::tr(ENG_TR("engine.editor.transport.snap")),
+        if (toolButton(icons::ActionSnap, core::tr(ENG_TR("engine.editor.transport.snap")),
                        core::tr(ENG_TR("engine.editor.transport.snap_to_the_grid_hold_tip")))) {
             editor.setSnap(!editor.snapping());
         }
@@ -7351,7 +7374,7 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
             panels.tiles = true;
             ImGui::SetWindowFocus("Tiles###Tiles");
         }
-        if (iconMenuItem(icons, WaterIcon, core::tr(ENG_TR("engine.editor.transport.water")))) {
+        if (iconMenuItem(icons, icons::ActionWaterTools, core::tr(ENG_TR("engine.editor.transport.water")))) {
             panels.water = true;
             editor.setTool(Editor::Tool::Water);
             ImGui::SetWindowFocus("###Water");
@@ -7360,7 +7383,7 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
     }
 
     ImGui::SameLine();
-    if (toolButton(icons::ActionSettings, core::tr(ENG_TR("engine.editor.transport.viewport_settings")),
+    if (toolButton(icons::ActionViewportSettings, core::tr(ENG_TR("engine.editor.transport.viewport_settings")),
                    core::tr(ENG_TR("engine.editor.transport.camera_snapping_and_visualization_overlays_tip"))))
         panels.viewportSettings = !panels.viewportSettings;
     measured();
@@ -8650,6 +8673,17 @@ void openSceneOrAsk(Editor& editor, EditorCommands& commands, EditorDialogs& dia
     issueOrAsk(EditorDialogs::Pending::OpenScene, editor.hasUnsavedWork(), path, dialogs, commands);
 }
 
+// **Another stamp switches to it** (G36), as a second document does in any
+// editor: at once over a stamp with nothing unsaved, and over one with edits
+// only once somebody said what becomes of them. Opening one from the scene
+// loses nothing -- the scene waits, its history with it -- so it never asks.
+void openStampOrAsk(Editor& editor, EditorCommands& commands, EditorDialogs& dialogs, std::string_view path)
+{
+    const Editor::StampSession& open = editor.stampSession();
+    const bool losing = open.open() && open.dirty && open.path != Editor::normalizeStampPath(path);
+    issueOrAsk(EditorDialogs::Pending::OpenStamp, losing, path, dialogs, commands);
+}
+
 // **The folder tree beside the grid** (the owner, 2026-09-27: a game engine's
 // browser). Along the bottom the browser is wide, and every engine that puts it
 // there gives it the project's folders down the left -- a click on any of them
@@ -9114,7 +9148,7 @@ void drawContent(Editor& editor, EditorCommands& commands, EditorPanels& panels,
                         // one in the world is the right-click, because it is
                         // the thing you do to a world rather than to a file.
                         else if (entry.kind == ContentKind::Stamp)
-                            commands.openStamp = entry.path;
+                            openStampOrAsk(editor, commands, dialogs, entry.path);
                         // A material opens in the material panel: a file
                         // somebody edits, with its own undo (ADR 0090).
                         else if (entry.kind == ContentKind::Material)
@@ -9204,13 +9238,13 @@ void drawContent(Editor& editor, EditorCommands& commands, EditorPanels& panels,
                             commands.openFile = entry.path;
                         if (entry.kind == ContentKind::Stamp) {
                             if (iconMenuItem(icons, icons::ActionOpen, core::tr(ENG_TR("engine.editor.content.open"))))
-                                commands.openStamp = entry.path;
+                                openStampOrAsk(editor, commands, dialogs, entry.path);
                             // **Two ways to place one, and both are real.** A
                             // linked instance follows the file; a copy is its
                             // own from the first frame. A lamp post you will
                             // place forty of wants the first; a starting point
                             // you are about to rebuild wants the second.
-                            if (iconMenuItem(icons, icons::OverlayStamp,
+                            if (iconMenuItem(icons, icons::ActionPlaceLinked,
                                              core::tr(ENG_TR("engine.editor.content.place_linked")))) {
                                 commands.placeStamp = entry.path;
                                 commands.placeStampLinked = true;
@@ -9381,7 +9415,7 @@ void drawContent(Editor& editor, EditorCommands& commands, EditorPanels& panels,
             ImGui::Separator();
             if (iconMenuItem(icons, icons::ActionNewFolder, core::tr(ENG_TR("engine.editor.content.new_folder_2"))))
                 dialogs.newFolder = true;
-            if (iconMenuItem(icons, icons::ClassModel, core::tr(ENG_TR("engine.editor.content.new_stamp_2"))))
+            if (iconMenuItem(icons, icons::ActionNewStamp, core::tr(ENG_TR("engine.editor.content.new_stamp_2"))))
                 dialogs.pickStampClass = true;
             if (iconMenuItem(icons, icons::ActionNewMaterial, core::tr(ENG_TR("engine.editor.content.new_material")))) {
                 dialogs.newMaterial = true;
@@ -9392,7 +9426,7 @@ void drawContent(Editor& editor, EditorCommands& commands, EditorPanels& panels,
                 dialogs.newShader = true;
             // The engine's eight terrain materials as the project's own files,
             // to give a terrain like any other material (D330).
-            if (iconMenuItem(icons, icons::ActionNewMaterial,
+            if (iconMenuItem(icons, icons::ActionTerrainMaterials,
                              core::tr(ENG_TR("engine.editor.content.new_terrain_starter_materials"))))
                 (void)editor.writeStarterTerrainMaterials();
             if (iconMenuItem(icons, icons::ActionRefresh, core::tr(ENG_TR("engine.editor.content.refresh_2"))))
@@ -9531,7 +9565,8 @@ void drawMenuBar(Editor& editor, EditorPanels& panels, EditorCommands& commands,
         if (iconMenuItem(icons, icons::ClassTilemap2D, core::tr(ENG_TR("engine.editor.menu_bar.tiles")), nullptr,
                          panels.tiles))
             panels.tiles = !panels.tiles;
-        if (iconMenuItem(icons, WaterIcon, core::tr(ENG_TR("engine.editor.menu_bar.water")), nullptr, panels.water))
+        if (iconMenuItem(icons, icons::ActionWaterTools, core::tr(ENG_TR("engine.editor.menu_bar.water")), nullptr,
+                         panels.water))
             panels.water = !panels.water;
         ImGui::Separator();
         panelItem(core::tr(ENG_TR("engine.editor.menu_bar.grid")), panels.showGrid);
@@ -11756,20 +11791,23 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
                               editor.clearCloseRequest();
                           })) {
         const bool stampOpen = editor.stampSession().open();
+        // Switching stamps puts only the open stamp's edits at stake (G36):
+        // the scene, a material and a shader all stay open.
+        const bool switchingStamp = dialogs.pending == EditorDialogs::Pending::OpenStamp;
         // **Everything that would be lost, named** -- the stamp, the scene, the
         // material, a shader -- and Save saves every one of them. It used to
         // save the stamp OR the scene, and a material's edits went unasked.
         const bool sceneUntitled = editor.openScenePath().empty();
-        const bool sceneChanged = editor.sceneDirty();
+        const bool sceneChanged = editor.sceneDirty() && !switchingStamp;
         const bool haveSomewhereToSave = !(sceneUntitled && sceneChanged && !stampOpen);
         std::vector<std::string> unsaved;
         if (stampOpen && editor.stampSession().dirty)
             unsaved.push_back(editor.stampSession().path);
         if (sceneChanged && !sceneUntitled)
             unsaved.push_back(editor.openScenePath());
-        if (editor.materialSession().dirty())
+        if (editor.materialSession().dirty() && !switchingStamp)
             unsaved.push_back(editor.materialSession().path);
-        if (editor.fileTabsUnsaved())
+        if (editor.fileTabsUnsaved() && !switchingStamp)
             unsaved.emplace_back(core::tr(ENG_TR("engine.editor.editor_dialogs.an_open_shader")));
 
         if (!haveSomewhereToSave) {
@@ -11815,7 +11853,13 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
         if (dialogButton(core::tr(haveSomewhereToSave ? ENG_TR("engine.editor.editor_dialogs.save")
                                                       : ENG_TR("engine.editor.editor_dialogs.save_as")),
                          ImVec2(130.0f, 0.0f))) {
-            if (haveSomewhereToSave) {
+            if (switchingStamp) {
+                // Saved, it is clean, and the switch goes ahead; a save that
+                // fails leaves it dirty and open, and the switch is refused.
+                commands.saveStamp = true;
+                proceed();
+            }
+            else if (haveSomewhereToSave) {
                 commands.saveAll = true;
                 proceed();
             }
@@ -11833,8 +11877,13 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
             }
         }
         ImGui::SameLine();
-        if (dialogButton(core::tr(ENG_TR("engine.editor.editor_dialogs.don_t_save")), ImVec2(130.0f, 0.0f)))
+        if (dialogButton(core::tr(ENG_TR("engine.editor.editor_dialogs.don_t_save")), ImVec2(130.0f, 0.0f))) {
+            if (switchingStamp) {
+                commands.closeStamp = true;
+                commands.closeStampSaving = false;
+            }
             proceed();
+        }
         ImGui::SameLine();
         if (dialogButton(core::tr(ENG_TR("engine.editor.editor_dialogs.cancel")), ImVec2(130.0f, 0.0f))) {
             dialogs.pending = EditorDialogs::Pending::None;
@@ -11905,19 +11954,19 @@ void drawTabIcons(ImGuiID dockspace, const IconAtlas* icons, const scene::World*
         else if (name.ends_with("###Content"))
             id = std::string(icons::ContentFolder);
         else if (name.ends_with("###Console"))
-            id = std::string(icons::ClassScriptService);
+            id = std::string(icons::ActionConsole);
         else if (name.ends_with("###Streaming"))
             id = std::string(icons::ClassStreamingService);
         else if (name.ends_with("###Viewport Settings"))
-            id = std::string(icons::ClassCamera);
+            id = std::string(icons::ActionViewportSettings);
         else if (name.ends_with("###Stats"))
-            id = std::string(icons::ClassDebugService);
+            id = std::string(icons::ActionStats);
         else if (name.ends_with("###Terrain"))
             id = std::string(icons::ClassTerrain);
         else if (name.ends_with("###Tiles"))
             id = std::string(icons::ClassTilemap2D);
         else if (name.ends_with("###Water"))
-            id = std::string(WaterIcon);
+            id = std::string(icons::ActionWaterTools);
         else if (name.ends_with("###Blocks"))
             id = std::string(icons::ClassVoxelService);
         else if (name.ends_with("###Debug"))
@@ -13291,7 +13340,7 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
                 hills.seed = static_cast<core::u32>(std::max(seed, 0));
             bool layHills = false;
             const char* replaceHills = core::tr(ENG_TR("engine.editor.terrain.create.replace_hills"));
-            if (labeledIconButton(icons, icons::ActionAdd,
+            if (labeledIconButton(icons, icons::ActionGenerateTerrain,
                                   terrain == nullptr ? core::tr(ENG_TR("engine.editor.terrain.create.create_hills"))
                                                      : replaceHills,
                                   ImVec2(-FLT_MIN, 0.0f))) {
@@ -13730,16 +13779,16 @@ void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, c
             ImGui::PopStyleColor();
         ImGui::SetItemTooltip("%s", tip);
     };
-    opButton(Editor::WaterOp::River, WaterRiverIcon, core::tr(ENG_TR("engine.editor.water_panel.river")),
+    opButton(Editor::WaterOp::River, icons::ActionWaterRiver, core::tr(ENG_TR("engine.editor.water_panel.river")),
              core::tr(ENG_TR("engine.editor.water_panel.river_tip")));
     ImGui::SameLine();
-    opButton(Editor::WaterOp::Lake, WaterLakeIcon, core::tr(ENG_TR("engine.editor.water_panel.lake")),
+    opButton(Editor::WaterOp::Lake, icons::ActionWaterLake, core::tr(ENG_TR("engine.editor.water_panel.lake")),
              core::tr(ENG_TR("engine.editor.water_panel.lake_tip")));
     ImGui::SameLine();
-    opButton(Editor::WaterOp::Pool, WaterPoolIcon, core::tr(ENG_TR("engine.editor.water_panel.pool")),
+    opButton(Editor::WaterOp::Pool, icons::ActionWaterPool, core::tr(ENG_TR("engine.editor.water_panel.pool")),
              core::tr(ENG_TR("engine.editor.water_panel.pool_tip")));
     ImGui::SameLine();
-    opButton(Editor::WaterOp::Ocean, WaterOceanIcon, core::tr(ENG_TR("engine.editor.water_panel.ocean")),
+    opButton(Editor::WaterOp::Ocean, icons::ActionWaterOcean, core::tr(ENG_TR("engine.editor.water_panel.ocean")),
              core::tr(ENG_TR("engine.editor.water_panel.ocean_tip")));
     ImGui::Separator();
 
@@ -14015,7 +14064,7 @@ void buildPaletteCommands(Editor& editor, EditorCommands& commands, EditorPanels
         core::tr(ENG_TR("engine.editor.command.edit_group_as_folder")), "Ctrl+Alt+G", icons::ClassFolder, editable,
         [&commands] { commands.groupAsFolder = true; }, "Edit: Group as Folder");
     add(
-        core::tr(ENG_TR("engine.editor.command.edit_ungroup")), "Ctrl+Shift+G", icons::ActionExpand, editable,
+        core::tr(ENG_TR("engine.editor.command.edit_ungroup")), "Ctrl+Shift+G", icons::ActionUngroup, editable,
         [&commands] { commands.ungroupSelection = true; }, "Edit: Ungroup");
     add(
         core::tr(ENG_TR("engine.editor.command.selection_clear")), "Esc", icons::ActionSelect, hasSelection,
@@ -14046,7 +14095,7 @@ void buildPaletteCommands(Editor& editor, EditorCommands& commands, EditorPanels
     add(
         editor.snapping() ? std::string(core::tr(ENG_TR("engine.editor.command.tool_turn_snapping_off")))
                           : std::string(core::tr(ENG_TR("engine.editor.command.tool_turn_snapping_on"))),
-        "", icons::ActionGrid, true, [&editor] { editor.setSnap(!editor.snapping()); }, "tool.snap");
+        "", icons::ActionSnap, true, [&editor] { editor.setSnap(!editor.snapping()); }, "tool.snap");
     add(
         core::tr(ENG_TR("engine.editor.command.tool_terrain")), "", icons::ClassTerrain, true,
         [&panels] {
@@ -14069,7 +14118,7 @@ void buildPaletteCommands(Editor& editor, EditorCommands& commands, EditorPanels
         },
         "Tool: Tiles");
     add(
-        core::tr(ENG_TR("engine.editor.command.tool_water")), "", WaterIcon, true,
+        core::tr(ENG_TR("engine.editor.command.tool_water")), "", icons::ActionWaterTools, true,
         [&panels, &editor] {
             panels.water = true;
             editor.setTool(Editor::Tool::Water);
@@ -14137,10 +14186,10 @@ void buildPaletteCommands(Editor& editor, EditorCommands& commands, EditorPanels
     panel("Explorer", ENG_TR("engine.editor.panel.explorer"), "Ctrl+Shift+E", icons::ClassModel, panels.explorer);
     panel("Properties", ENG_TR("engine.editor.panel.properties"), "Ctrl+Alt+B", icons::ActionSettings,
           panels.properties);
-    panel("Console", ENG_TR("engine.editor.panel.console"), "Ctrl+J", icons::ClassScriptService, panels.console);
+    panel("Console", ENG_TR("engine.editor.panel.console"), "Ctrl+J", icons::ActionConsole, panels.console);
     panel("Content", ENG_TR("engine.editor.panel.content"), "", icons::ContentFolder, panels.content);
     panel("Viewport", ENG_TR("engine.editor.panel.viewport"), "", icons::ClassCamera, panels.viewport);
-    panel("Stats", ENG_TR("engine.editor.panel.stats"), "", icons::ClassDebugService, panels.stats);
+    panel("Stats", ENG_TR("engine.editor.panel.stats"), "", icons::ActionStats, panels.stats);
     panel("Streaming", ENG_TR("engine.editor.panel.streaming"), "", icons::ClassStreamingService, panels.streaming);
     panel("Saves", ENG_TR("engine.editor.panel.saves"), "", icons::ActionSave, panels.saves);
     panel("Viewport Settings", ENG_TR("engine.editor.panel.viewport_settings"), "", icons::ClassCamera,
@@ -14160,7 +14209,7 @@ void buildPaletteCommands(Editor& editor, EditorCommands& commands, EditorPanels
         core::tr(ENG_TR("engine.editor.command.preferences_open_settings")), "Ctrl+,", icons::ActionSettings, true,
         [&dialogs] { dialogs.preferences = true; }, "Preferences: Open Settings");
     add(
-        core::tr(ENG_TR("engine.editor.command.preferences_keyboard_shortcuts")), "", icons::ActionSettings, true,
+        core::tr(ENG_TR("engine.editor.command.preferences_keyboard_shortcuts")), "", icons::ActionKeyboard, true,
         [&dialogs] {
             dialogs.preferences = true;
             g_preferencesToShortcuts = true;
@@ -14173,7 +14222,7 @@ void buildPaletteCommands(Editor& editor, EditorCommands& commands, EditorPanels
         const std::string id(theme.id);
         add(
             core::tr(ENG_TR("engine.editor.command.preferences_color_theme"), {{"theme", shownName(theme)}}), "",
-            icons::ClassLighting, g_appearance.themeId != id,
+            theme.dark ? icons::ActionThemeDark : icons::ActionThemeLight, g_appearance.themeId != id,
             [id] {
                 g_appearance.themeId = id;
                 applyAppearance();
@@ -14307,7 +14356,7 @@ void buildPaletteFiles(Editor& editor, EditorCommands& commands, EditorDialogs& 
                 item.run = [&editor, &commands, &dialogs, path] { openSceneOrAsk(editor, commands, dialogs, path); };
                 break;
             case ContentKind::Stamp:
-                item.run = [&commands, path] { commands.openStamp = path; };
+                item.run = [&editor, &commands, &dialogs, path] { openStampOrAsk(editor, commands, dialogs, path); };
                 break;
             case ContentKind::Material:
                 item.run = [&commands, path] { commands.openMaterial = path; };
@@ -14777,7 +14826,7 @@ constexpr ActivityView ActivityViews[] = {
     {"###Terrain", ENG_TR("engine.editor.panel.terrain"), icons::ClassTerrain, &EditorPanels::terrain, ""},
     {"###Blocks", ENG_TR("engine.editor.panel.blocks"), icons::ClassVoxelService, &EditorPanels::blocks, ""},
     {"###Tiles", ENG_TR("engine.editor.panel.tiles"), icons::ClassTilemap2D, &EditorPanels::tiles, ""},
-    {"###Water", ENG_TR("engine.editor.panel.water"), WaterIcon, &EditorPanels::water, ""},
+    {"###Water", ENG_TR("engine.editor.panel.water"), icons::ActionWaterTools, &EditorPanels::water, ""},
 };
 
 // Shows a panel, brings it to the front of its node and gives it the keyboard.
@@ -16607,7 +16656,8 @@ void drawLauncherHeader(const IconAtlas* icons)
     const float themeWidth = ImGui::CalcTextSize(themeLabel).x + ImGui::GetFrameHeight() + style.FramePadding.x * 2.0f;
     if (max.x - themeWidth - pad > titleX + titleWidth + 80.0f * style.FontScaleMain) {
         ImGui::SetCursorScreenPos(ImVec2(max.x - themeWidth - pad, min.y + (height - ImGui::GetFrameHeight()) * 0.5f));
-        if (labeledIconButton(icons, icons::ClassLighting, themeLabel, ImVec2(themeWidth, 0.0f))) {
+        if (labeledIconButton(icons, currentTheme().dark ? icons::ActionThemeLight : icons::ActionThemeDark, themeLabel,
+                              ImVec2(themeWidth, 0.0f))) {
             g_appearance.themeId = currentTheme().dark ? "light" : "dark";
             applyAppearance();
         }

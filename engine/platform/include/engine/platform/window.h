@@ -169,6 +169,11 @@ void setWindowPlacement(Window& window, const WindowPlacement& placement);
 // Fills the display with the window, or gives it back its frame.
 void setWindowFullscreen(Window& window, bool fullscreen);
 
+// What the window's title bar says, and a new one: text the caller already
+// translated (R3), as `WindowDesc::title` is.
+[[nodiscard]] std::string windowTitle(const Window& window);
+void setWindowTitle(Window& window, std::string_view title);
+
 // --- Displays, and how a window sits on one (ADR 0147) ------------------------
 
 // One display, as the system describes it: its name, its desktop size in

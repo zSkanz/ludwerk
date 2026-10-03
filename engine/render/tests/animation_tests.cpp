@@ -142,6 +142,40 @@ TEST_CASE("a track that names a clip the file does not have still answers reads"
     CHECK(animation.pose(fixture.mesh) == nullptr);
 }
 
+TEST_CASE("D509: a track loaded before its mesh's file arrived binds when it does, and plays as it was told")
+{
+    // A figure made the moment a body appears asked for its run before the
+    // mesh had loaded: the track found no clip, kept a length of zero, and
+    // never played -- the others were seen sliding about.
+    Fixture fixture;
+    const core::InstanceId mesh = fixture.world.create(fixture.meshPartClass);
+    fixture.world.meshParts().find(mesh)->meshContent = fixture.content;
+    const core::InstanceId player = fixture.world.create(fixture.instanceClass);
+    (void)fixture.world.setParent(player, mesh);
+
+    render::AnimationSystem animation{fixture.world, fixture.skeletons};
+    const scene::TrackId run = animation.createTrack(player, {}, "Run");
+    REQUIRE(run != 0);
+    CHECK(close(animation.state(run).length, 0.0f));
+    // Told to play, at half speed, before there is anything to play.
+    animation.play(run, 0.0f, 1.0f, 0.5f);
+    animation.sample(1.0 / 60.0);
+    CHECK(animation.pose(mesh) == nullptr);
+
+    // The file arrives.
+    render::SkeletonLibrary::Entry entry = twoJointSkeleton();
+    entry.clips.push_back(slideClip("Walk"));
+    entry.clips.push_back(slideClip("Run"));
+    fixture.skeletons.set(fixture.content, std::move(entry));
+
+    animation.sample(1.0 / 60.0);
+    CHECK(close(animation.state(run).length, 1.0f));
+    CHECK(animation.state(run).playing);
+    REQUIRE(animation.pose(mesh) != nullptr);
+    // From its beginning, at the speed it was given: half a tick's worth in.
+    CHECK(animation.state(run).timePosition == doctest::Approx(0.5 / 60.0));
+}
+
 TEST_CASE("an empty clip name takes the file's first clip")
 {
     Fixture fixture;

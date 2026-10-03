@@ -202,7 +202,11 @@ else()
     # player receives are Windows-subsystem programs, entered through the same
     # `main`; one started from a terminal attaches to it so what it logs is
     # still seen, and every run writes its log file either way.
-    if(WIN32 AND ENG_PROFILE MATCHES "^(player|shipping)$")
+    #
+    # **Nor does the editor** (D507): opened from the folder, or started by the
+    # launcher, it was a console program, and a console window opened behind it
+    # -- the second, empty window the owner saw while a project loaded.
+    if(WIN32 AND ENG_PROFILE MATCHES "^(player|shipping|editor)$")
         target_link_options(engine_host PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
         target_compile_definitions(engine_host PRIVATE ENG_GUI_SUBSYSTEM=1)
     endif()
@@ -1194,6 +1198,21 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 600)
 
+    # **A slab's shadow on itself** (D506): a thin slab the sun meets at a low
+    # angle, photographed at every cascade's distance with the sun's shadows
+    # and without, and the two pictures the same -- a cascade's texel wider
+    # than the slab is thick darkened its top. See the driver.
+    add_test(NAME mesh_shadow_acne
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DCOMPARE=$<TARGET_FILE:imgcmp>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/meshshadow
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/mesh-shadow
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_mesh_shadow.cmake)
+    set_tests_properties(mesh_shadow_acne PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
     # **A terrain layer's repeat is broken up** (ADR 0113's amendment): the
     # built-in grass photographed from above as it repeated, as it is by
     # default and on hexagonal cells, and its autocorrelation at the tile's
@@ -1693,7 +1712,7 @@ if(ENG_BUILD_TESTS)
         subworld_gate
         surface_contract_proof_meshes surface_contract_proof_specular user_surface_proof
         graphics_settings_differential graphics_runtime_differential options_screen_gate local_shadow_differential
-        terrain_gallery_holes terrain_shadow_acne
+        terrain_gallery_holes terrain_shadow_acne mesh_shadow_acne
         terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
         editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived)

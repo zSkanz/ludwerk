@@ -128,6 +128,25 @@ debug_keystore = "keys/team-debug.keystore"   # relative to the project
 debug_key_alias = "androiddebugkey"           # the default; passwords are "android"
 ```
 
+**A game installed by a build from before 2026-10-02** was signed with a key
+the engine then kept in its own folder, not Android's, and every build since
+is signed with Android's -- so the phone refuses the update once. Uninstalling
+the game once ends it for good. To update without uninstalling -- to keep what
+the game saved on the phone -- point that game at the key it was installed
+with, which is one of these on the machine that built it:
+
+```toml
+[export.android]
+# Windows: %LOCALAPPDATA%\Ludwerk\android\debug.keystore, or the same under
+# %LOCALAPPDATA%\engine\ for a build from a package with no brand file.
+debug_keystore = "C:/Users/you/AppData/Local/Ludwerk/android/debug.keystore"
+debug_key_alias = "enginedebugkey"
+```
+
+Which one a phone holds, its SHA-256 beside each key's: `adb shell pm path
+<package>`, `adb pull` that file, then `apksigner verify --print-certs` on it
+and `keytool -list -v -storepass android -keystore <key>` on each.
+
 **Which way up the phone is held** is not a setting here: it is the start
 scene's `UIService.ScreenOrientation`, which the APK is held at from its first
 frame and which a script may change later. One answer, so the screen does not

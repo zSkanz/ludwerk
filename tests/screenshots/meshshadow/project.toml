@@ -1,0 +1,15 @@
+# A slab's shadow on itself (D506): one thin slab, floating over nothing,
+# photographed at every cascade's distance at a low sun. A project
+# rather than a bare scene so the driver and a person run it the same way; the
+# world is built by its script.
+
+[project]
+name = "Ludwerk Mesh Shadow"
+id = "dev.ludwerk.meshshadow"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Mesh Shadow"
+width = 960
+height = 540

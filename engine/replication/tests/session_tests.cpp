@@ -562,6 +562,64 @@ TEST_CASE("a character's transform replicates, because a CharacterBody carries B
 
 namespace {
 
+// **The replica's intents held up on the way** (D498): sent while `holding`,
+// kept, and put on the wire together by `release` -- a burst a busy machine
+// delivers late, the replica's own clock untouched.
+class HeldTransport final : public net::ITransport
+{
+public:
+    explicit HeldTransport(std::unique_ptr<net::ITransport> inner) : m_inner(std::move(inner)) {}
+
+    bool holding = false;
+
+    void release()
+    {
+        holding = false;
+        for (Held& each : m_held)
+            (void)m_inner->send(each.peer, each.bytes, each.delivery, each.channel);
+        m_held.clear();
+    }
+
+    [[nodiscard]] std::optional<core::EngineError> open(const net::TransportConfig& config) override
+    {
+        return m_inner->open(config);
+    }
+    void close() override { m_inner->close(); }
+    [[nodiscard]] std::optional<core::EngineError> connect(std::string_view host, core::u16 port,
+                                                           net::PeerId& outPeer) override
+    {
+        return m_inner->connect(host, port, outPeer);
+    }
+    void disconnect(net::PeerId peer) override { m_inner->disconnect(peer); }
+    [[nodiscard]] std::optional<core::EngineError> send(net::PeerId peer, std::span<const core::u8> payload,
+                                                        net::Delivery delivery, core::u8 channel) override
+    {
+        if (holding && channel == 2) { // the Intent channel (`api/wire/state.wire.luau`)
+            m_held.push_back(Held{peer, std::vector<core::u8>(payload.begin(), payload.end()), delivery, channel});
+            return std::nullopt;
+        }
+        return m_inner->send(peer, payload, delivery, channel);
+    }
+    void flush() override { m_inner->flush(); }
+    [[nodiscard]] std::optional<core::EngineError> poll(std::vector<net::TransportEvent>& out,
+                                                        core::u32 timeoutMs) override
+    {
+        return m_inner->poll(out, timeoutMs);
+    }
+    [[nodiscard]] core::usize peerCount() const noexcept override { return m_inner->peerCount(); }
+
+private:
+    struct Held
+    {
+        net::PeerId peer;
+        std::vector<core::u8> bytes;
+        net::Delivery delivery;
+        core::u8 channel = 0;
+    };
+    std::unique_ptr<net::ITransport> m_inner;
+    std::vector<Held> m_held;
+};
+
 // Two real worlds over the memory transport, each with the players a host and
 // a replica have at boot, stepped in the frame's order on both ends.
 struct PlayedMatch
@@ -578,13 +636,22 @@ struct PlayedMatch
     net::PeerId toServer;
     core::u64 tick = 0;
 
-    explicit PlayedMatch(const net::LossConfig* loss = nullptr, const net::LossConfig* clientLoss = nullptr)
+    // The client's transport, when a test wraps it.
+    HeldTransport* held = nullptr;
+
+    explicit PlayedMatch(const net::LossConfig* loss = nullptr, const net::LossConfig* clientLoss = nullptr,
+                         bool holdable = false)
     {
         seedCatalog();
         serverTransport = loss != nullptr ? net::createLossyTransport(net::createMemoryTransport(network), *loss)
                                           : net::createMemoryTransport(network);
         if (clientLoss != nullptr)
             clientTransport = net::createLossyTransport(net::createMemoryTransport(network), *clientLoss);
+        if (holdable) {
+            auto wrapped = std::make_unique<HeldTransport>(std::move(clientTransport));
+            held = wrapped.get();
+            clientTransport = std::move(wrapped);
+        }
         REQUIRE_FALSE(
             serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 4}).has_value());
         REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
@@ -1994,6 +2061,32 @@ TEST_CASE("attributes replicate: set, changed and removed on the authority, seen
     CHECK(match.replica->checksumFailures() == 0);
 }
 
+TEST_CASE("G30: tags replicate -- there when a part is sent, added and taken off after")
+{
+    // A game that finds pickups by tag on the client found none on any machine
+    // that had joined: nothing carried a tag across.
+    PlayedMatch match;
+    const core::InstanceId crate = match.part("Crate", core::DVec3{0.0, 1.0, 0.0});
+    scene::World& server = match.server.world;
+    REQUIRE(server.addTag(crate, server.atoms().intern("Pickup")));
+    match.run(4);
+
+    const core::InstanceId seen = match.copyOf(crate);
+    REQUIRE(seen.valid());
+    scene::World& client = match.client.world;
+    CHECK(client.hasTag(seen, client.atoms().intern("Pickup")));
+    std::vector<core::InstanceId> tagged;
+    client.collectTagged(client.atoms().intern("Pickup"), tagged);
+    CHECK(tagged.size() == 1);
+
+    REQUIRE(server.addTag(crate, server.atoms().intern("Glowing")));
+    REQUIRE(server.removeTag(crate, server.atoms().intern("Pickup")));
+    match.run(3);
+    CHECK(client.hasTag(seen, client.atoms().intern("Glowing")));
+    CHECK_FALSE(client.hasTag(seen, client.atoms().intern("Pickup")));
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
 TEST_CASE("D457: a client that joins late has the attributes as they stand, of the workspace and the services too")
 {
     // A round's server set `Workspace:SetAttribute("Round", 1)` when the round
@@ -2373,6 +2466,7 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
     for (core::u32 at = 1; at <= 40; ++at) {
         Bytes intent;
         intent.u8v(7)
+            .u32v(0)
             .u8v(1)
             .u64v(100000 + at)
             .u16v(1)
@@ -2391,11 +2485,11 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
     // More ticks than a message carries, or more entries than an input map
     // has, is refused whole.
     Bytes five;
-    five.u8v(7).u8v(5);
+    five.u8v(7).u32v(0).u8v(5);
     for (core::u64 at = 0; at < 5; ++at)
         five.u64v(200000 + at).u16v(0);
     Bytes many;
-    many.u8v(7).u8v(1).u64v(300000).u16v(300);
+    many.u8v(7).u32v(0).u8v(1).u64v(300000).u16v(300);
     for (int at = 0; at < 300; ++at)
         many.text("Move").u8v(2).f32v(9.0f).f32v(0.0f).f32v(0.0f).u8v(1);
     REQUIRE_FALSE(match.clientTransport->send(match.toServer, five.data, net::Delivery::Unreliable, 2).has_value());
@@ -2475,9 +2569,11 @@ TEST_CASE("a press whose intent came after its tick was stood in for is applied 
     (void)match.server.atoms.intern("Jump");
     const scene::PlayerComponent* player = match.server.world.players().find(match.remote());
     REQUIRE(player != nullptr);
+    // How many times this replica has dropped simulated time (D498).
+    core::u32 epoch = 0;
     const auto send = [&](core::u64 tick, bool jump) {
         Bytes intent;
-        intent.u8v(7).u8v(1).u64v(tick);
+        intent.u8v(7).u32v(epoch).u8v(1).u64v(tick);
         if (jump)
             intent.u16v(1).text("Jump").u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(1);
         else
@@ -2529,10 +2625,14 @@ struct MoveStream
         REQUIRE(player != nullptr);
     }
 
+    // How many times this replica has dropped simulated time (D498): a test
+    // that has it drop time says so, as the replica's host does.
+    core::u32 epoch = 0;
+
     void send(core::u64 tick, float x)
     {
         Bytes intent;
-        intent.u8v(7).u8v(1).u64v(tick);
+        intent.u8v(7).u32v(epoch).u8v(1).u64v(tick);
         intent.u16v(1).text("Move").u8v(2).f32v(x).f32v(0.0f).f32v(0.0f).u8v(0);
         REQUIRE_FALSE(
             match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
@@ -2641,9 +2741,11 @@ TEST_CASE("D480: a press made in the ticks before the stream is anchored again i
     (void)match.server.atoms.intern("Jump");
     const scene::PlayerComponent* player = match.server.world.players().find(match.remote());
     REQUIRE(player != nullptr);
+    // How many times this replica has dropped simulated time (D498).
+    core::u32 epoch = 0;
     const auto send = [&](core::u64 tick, bool jump) {
         Bytes intent;
-        intent.u8v(7).u8v(1).u64v(tick);
+        intent.u8v(7).u32v(epoch).u8v(1).u64v(tick);
         if (jump)
             intent.u16v(1).text("Jump").u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(1);
         else
@@ -2699,6 +2801,8 @@ struct FramedReplica
         bool jump = false;
     };
     std::deque<Sent> sent;
+    // How many times this replica has dropped simulated time (D498).
+    core::u32 epoch = 0;
 
     explicit FramedReplica(PlayedMatch& played) : match(played), tick(played.tick)
     {
@@ -2716,7 +2820,7 @@ struct FramedReplica
         while (sent.size() > IntentRedundancy)
             sent.pop_front();
         Bytes intent;
-        intent.u8v(7).u8v(static_cast<core::u8>(sent.size()));
+        intent.u8v(7).u32v(epoch).u8v(static_cast<core::u8>(sent.size()));
         for (const Sent& each : sent) {
             intent.u64v(each.tick);
             intent.u16v(2).text("Move").u8v(2).f32v(each.x).f32v(0.0f).f32v(0.0f).u8v(0);
@@ -3059,6 +3163,84 @@ TEST_CASE("D480: a replica that had a long frame while walking is corrected for 
     CHECK(match.server.world.parts().find(racer)->cframe.position.x == stoppedAt);
     CHECK(std::abs(match.client.world.parts().find(mine)->cframe.position.x - stoppedAt) < 1e-6);
     CHECK(match.replica->stats().corrections == settled);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("D498: a burst of intents held up in transit, the replica's clock unmoved, steps no tick twice")
+{
+    // The netcode gate under a busy machine: the replica steps and numbers
+    // every tick, its packets for eight of them are held up on the way and
+    // arrive at once. The authority stood in for those ticks with what they
+    // hold -- and then, the burst being late by more than the redundancy
+    // window, it anchored the stream again behind them and stepped them a
+    // second time, and the replica was corrected for each.
+    PlayedMatch match(nullptr, nullptr, true);
+    const core::InstanceId racer =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("CharacterBody")));
+    REQUIRE(racer.valid());
+    match.server.world.setName(racer, match.server.atoms.intern("Racer"));
+    match.server.world.parts().find(racer)->cframe.position = core::DVec3{0.0, 1.0, 0.0};
+    REQUIRE_FALSE(match.server.world.setParent(racer, match.server.workspace).has_value());
+    match.server.world.characterBodies().find(racer)->walkSpeed = 8.0f;
+    match.server.world.players().find(match.remote())->character = racer;
+    match.run(10);
+    core::InstanceId mine = match.copyOf(racer);
+    REQUIRE(mine.valid());
+    FlatReplay replay(match.client.world, mine);
+    match.replica->setCharacterReplay(&replay);
+
+    const core::NameAtom move = match.client.atoms.intern("Move");
+    match.client.world.players().find(match.me)->intents = {scene::PlayerIntent{move, 0, core::Vec3{}, true}};
+    core::u64 replicaTick = match.tick;
+    int uneven = 0;
+    double last = 0.0;
+    const auto authorityTick = [&](bool measure) {
+        match.tick += 1;
+        match.authority->receive(match.server.world, match.server.workspace);
+        for (const scene::PlayerIntent& intent : match.server.world.players().find(match.remote())->intents) {
+            if (intent.pressed)
+                walk(match.server.world, racer);
+        }
+        const double x = match.server.world.parts().find(racer)->cframe.position.x;
+        if (measure && std::abs((x - last) - 8.0 / 60.0) > 1e-6)
+            ++uneven;
+        last = x;
+        match.authority->send(match.server.world, match.server.workspace, match.tick);
+    };
+    const auto replicaStep = [&]() {
+        match.replica->receive(match.client.world, match.client.workspace);
+        walk(match.client.world, mine);
+        replicaTick += 1;
+        match.replica->sendIntent(match.client.world, replicaTick);
+    };
+
+    for (int frame = 0; frame < 120; ++frame) {
+        authorityTick(false);
+        replicaStep();
+    }
+    REQUIRE(match.replica->stats().corrections == 0);
+    // Measured from a tick the authority has walked.
+    authorityTick(false);
+    replicaStep();
+
+    // Eight ticks the replica steps, numbers and sends, its intents held up
+    // on the way...
+    match.held->holding = true;
+    for (int frame = 0; frame < 8; ++frame) {
+        authorityTick(true);
+        replicaStep();
+    }
+    // ...and arriving together.
+    match.held->release();
+    for (int frame = 0; frame < 240; ++frame) {
+        authorityTick(true);
+        replicaStep();
+    }
+    // The authority walked one tick a tick, the burst was dropped, and the
+    // replica was never corrected.
+    CHECK(match.authority->stats().intentReanchors == 0);
+    CHECK(uneven == 0);
+    CHECK(match.replica->stats().corrections == 0);
     CHECK(match.replica->checksumFailures() == 0);
 }
 

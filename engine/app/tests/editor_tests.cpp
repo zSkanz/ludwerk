@@ -1999,7 +1999,7 @@ TEST_CASE("closing a stamp without saving drops the stage and what was done on i
     REQUIRE(editor.closeStamp(world, root, inspector, false));
 }
 
-TEST_CASE("a stamp cannot be opened while the world is playing, or twice")
+TEST_CASE("a stamp cannot be opened while the world is playing, and opening the open one again changes nothing")
 {
     StampProject project("refuse");
     app::testing::Fixture fixture;
@@ -2020,8 +2020,11 @@ TEST_CASE("a stamp cannot be opened while the world is playing, or twice")
     editor.stop(world, inspector);
 
     REQUIRE(editor.openStamp("post", fixture.classes, fixture.enums, fixture.atoms, inspector));
-    // A second one would need a second stage, and the editor shows one thing.
-    CHECK_FALSE(editor.openStamp("post", fixture.classes, fixture.enums, fixture.atoms, inspector));
+    // The one already open is already open (D505): the same stage, the same
+    // session, nothing rebuilt.
+    const Editor::Stage* const stage = editor.stage();
+    CHECK(editor.openStamp("post", fixture.classes, fixture.enums, fixture.atoms, inspector));
+    CHECK(editor.stage() == stage);
     REQUIRE(editor.closeStamp(world, root, inspector, false));
 
     // A stamp that is not there builds no stage and leaves nothing behind.
@@ -4743,6 +4746,133 @@ namespace {
 }
 } // namespace
 
+namespace {
+
+// The names of what the viewport marks in the world the editor is authoring.
+[[nodiscard]] std::vector<std::string> markedNames(StampRig& rig)
+{
+    scene::World& world = rig.editor.authoredWorld(rig.world);
+    std::vector<app::PickMarker> markers;
+    app::collectPickMarkers(world, rig.editor.authoredRoot(rig.root), markers);
+    std::vector<std::string> names;
+    for (const app::PickMarker& marker : markers)
+        names.emplace_back(rig.atoms.text(world.name(marker.instance)));
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+// A stamp called `name` holding a part, made and then taken out of the scene
+// it was made in, so the scene holds none of it.
+void stampAlone(StampRig& rig, std::string_view name, std::string_view light, std::string_view decal)
+{
+    const core::InstanceId holder = rig.part("Holder", rig.root, {20.0, 0.0, 0.0});
+    if (!light.empty())
+        (void)rig.make("PointLight", light, holder);
+    if (!decal.empty())
+        (void)rig.make("Decal", decal, holder);
+    REQUIRE(rig.editor.createStamp(rig.world, holder, rig.root, name));
+    REQUIRE(rig.world.destroy(holder));
+}
+
+} // namespace
+
+TEST_CASE("G33: what the viewport marks is the open stamp's, and the scene's again once it closes")
+{
+    // A stamp opened over a scene with decals showed the scene's decals, and
+    // not the light the stamp holds: the marks read the scene's world by name.
+    StampProject project("marks");
+    StampRig rig(project);
+    engine::render::generated::registerClasses(rig.classes, rig.atoms);
+    stampAlone(rig, "lamp", "Glow", "Mark");
+    const core::InstanceId wall = rig.part("Wall", rig.root, {0.0, 0.0, 0.0});
+    (void)rig.make("Decal", "Splat", wall);
+    CHECK(markedNames(rig) == std::vector<std::string>{"Splat"});
+
+    REQUIRE(rig.editor.openStamp("lamp", rig.classes, rig.enums, rig.atoms, rig.inspector));
+    CHECK(markedNames(rig) == std::vector<std::string>{"Glow", "Mark"});
+
+    REQUIRE(rig.editor.closeStamp(rig.world, rig.root, rig.inspector, false));
+    CHECK(markedNames(rig) == std::vector<std::string>{"Splat"});
+}
+
+TEST_CASE("G36: opening a stamp over a clean one switches to it")
+{
+    StampProject project("switch-clean");
+    StampRig rig(project);
+    engine::render::generated::registerClasses(rig.classes, rig.atoms);
+    stampAlone(rig, "lamp", "Glow", "");
+    stampAlone(rig, "post", "", "Mark");
+
+    REQUIRE(rig.editor.openStamp("lamp", rig.classes, rig.enums, rig.atoms, rig.inspector));
+    CHECK(rig.editor.openStamp("post", rig.classes, rig.enums, rig.atoms, rig.inspector));
+    CHECK(rig.editor.stampSession().path == Editor::normalizeStampPath("post"));
+    CHECK(markedNames(rig) == std::vector<std::string>{"Mark"});
+    // The one already open is already open.
+    CHECK(rig.editor.openStamp("post", rig.classes, rig.enums, rig.atoms, rig.inspector));
+}
+
+TEST_CASE("G36: over a stamp with unsaved edits the switch waits for them to be saved or discarded")
+{
+    StampProject project("switch-dirty");
+    StampRig rig(project);
+    engine::render::generated::registerClasses(rig.classes, rig.atoms);
+    stampAlone(rig, "lamp", "Glow", "");
+    stampAlone(rig, "post", "", "Mark");
+
+    REQUIRE(rig.editor.openStamp("lamp", rig.classes, rig.enums, rig.atoms, rig.inspector));
+    scene::World& stage = rig.editor.stage()->world();
+    const core::InstanceId lampRoot = rig.editor.stampSession().root;
+    stage.setName(lampRoot, rig.atoms.intern("Lantern"));
+    rig.editor.touch();
+    REQUIRE(rig.editor.stampSession().dirty);
+
+    // Refused: its edits are nowhere else.
+    CHECK_FALSE(rig.editor.openStamp("post", rig.classes, rig.enums, rig.atoms, rig.inspector));
+    CHECK(rig.editor.stampSession().path == Editor::normalizeStampPath("lamp"));
+
+    // Saved, it switches -- what the dialog's Save does.
+    REQUIRE(rig.editor.saveStamp(rig.world, rig.root));
+    CHECK(rig.editor.openStamp("post", rig.classes, rig.enums, rig.atoms, rig.inspector));
+    CHECK(rig.editor.stampSession().path == Editor::normalizeStampPath("post"));
+
+    // Discarded, it switches too -- what Don't Save does -- and the edit is gone.
+    rig.editor.stage()->world().setName(rig.editor.stampSession().root, rig.atoms.intern("Pole"));
+    rig.editor.touch();
+    REQUIRE(rig.editor.closeStamp(rig.world, rig.root, rig.inspector, false));
+    CHECK(rig.editor.openStamp("lamp", rig.classes, rig.enums, rig.atoms, rig.inspector));
+    std::string text;
+    REQUIRE(engine::platform::readTextFile(project.root / "content" / Editor::normalizeStampPath("post"), text));
+    CHECK(text.find("Pole") == std::string::npos);
+    CHECK(rig.atoms.text(rig.editor.stage()->world().name(rig.editor.stampSession().root)) == "Lantern");
+}
+
+TEST_CASE("G36: the scene's edits and its undo history are there after a stamp was open over it")
+{
+    StampProject project("scene-history");
+    StampRig rig(project);
+    engine::render::generated::registerClasses(rig.classes, rig.atoms);
+    stampAlone(rig, "lamp", "Glow", "");
+    const core::InstanceId wall = rig.part("Wall", rig.root, {0.0, 0.0, 0.0});
+    // One step to count: making the stamp left its own.
+    rig.editor.history().clear();
+    rig.editor.history().record(rig.world, "rename");
+    rig.world.setName(wall, rig.atoms.intern("Fence"));
+    rig.editor.touch();
+    REQUIRE(rig.editor.history().depth() == 1);
+
+    REQUIRE(rig.editor.openStamp("lamp", rig.classes, rig.enums, rig.atoms, rig.inspector));
+    // The stamp's own history, empty, and a step in it.
+    CHECK(rig.editor.history().depth() == 0);
+    rig.editor.history().record(rig.editor.stage()->world(), "stamp step");
+    REQUIRE(rig.editor.closeStamp(rig.world, rig.root, rig.inspector, false));
+
+    CHECK(rig.atoms.text(rig.world.name(wall)) == "Fence");
+    CHECK(rig.editor.sceneDirty());
+    REQUIRE(rig.editor.history().depth() == 1);
+    REQUIRE(rig.editor.history().undo(rig.world));
+    CHECK(rig.atoms.text(rig.world.name(wall)) == "Wall");
+}
+
 TEST_CASE("S11: reverting a whole copy puts every override back, as one step")
 {
     StampProject project("revert-copy");
@@ -4921,6 +5051,35 @@ TEST_CASE("S6: a parameter declared on the stage drives what it is given, on eve
     CHECK(fixture.frictionOf(childNamed(world, fixture.first, "Lantern")) == doctest::Approx(0.5));
     // The driven property is the parameter's, not an override of the copy's.
     CHECK(fixture.rig.editor.overridesOf(world, childNamed(world, fixture.first, "Lantern")).empty());
+}
+
+TEST_CASE("G28: a stamp's colour parameter drives a part's material colour")
+{
+    // The manual's own example: a fighter's TeamColor colours its hat. A part's
+    // colour is its material's, and a drive used to reach properties only.
+    StampProject project("drive-colour");
+    OverrideRig fixture(project);
+    scene::World& world = fixture.rig.world;
+
+    REQUIRE(fixture.rig.editor.openStamp("post", fixture.rig.classes, fixture.rig.enums, fixture.rig.atoms,
+                                         fixture.rig.inspector));
+    scene::World& stage = fixture.rig.editor.stage()->world();
+    const core::InstanceId root = fixture.rig.editor.stampSession().root;
+    REQUIRE(fixture.rig.editor.declareStampParameter(stage, root, "TeamColor", scene::ValueType::Color3));
+    const core::InstanceId lantern = stage.findFirstChild(root, fixture.rig.atoms.intern("Lantern"));
+    REQUIRE(fixture.rig.editor.toggleStampDrive(stage, root, "TeamColor", lantern,
+                                                fixture.rig.atoms.intern("MaterialParameters"), "Color"));
+    REQUIRE(fixture.rig.editor.saveStamp(world, fixture.rig.root));
+    REQUIRE(fixture.rig.editor.closeStamp(world, fixture.rig.root, fixture.rig.inspector, false));
+
+    const core::Color3 red{0.9f, 0.1f, 0.1f};
+    REQUIRE(world.setAttribute(fixture.first, fixture.rig.atoms.intern("TeamColor"), scene::Value{red}));
+    const scene::PartComponent* lit = world.parts().find(childNamed(world, fixture.first, "Lantern"));
+    REQUIRE(lit != nullptr);
+    asset::MaterialProperties shown;
+    asset::applyOverrides(lit->materialParameters, ~asset::MaterialFieldMask{0}, shown);
+    CHECK(static_cast<double>(shown.color.r) == doctest::Approx(0.9));
+    CHECK(static_cast<double>(shown.color.g) == doctest::Approx(0.1));
 }
 
 TEST_CASE("S14: an override for a node the stamp no longer has is kept, listed, and cleaned up")

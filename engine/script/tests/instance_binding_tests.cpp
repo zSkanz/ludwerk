@@ -573,7 +573,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // `RunService`'s `BindToRenderStep` and `UnbindFromRenderStep` (ADR 0136);
     // and 174 with `TextInput`'s `CaptureFocus`, `ReleaseFocus` and `IsFocused`
     // and `UIService:GetFocusedTextInput` (ADR 0139); 212 when teams left
-    // the engine (protocol 35); and 213 with `Instance:GetStamp` (ADR 0155).
+    // the engine (protocol 35); 213 with `Instance:GetStamp` (ADR 0155); and 214
+    // with `NetworkService:GetLocalAddresses` (G41).
     // This number is what makes a
     // DECLARED-but-unbound method impossible to ship: the IDL would count it and the binding table would not, which is
     // `Inert` for a method.
@@ -581,8 +582,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // **It earned its keep at F1.** Five methods were declared in the IDL in one
     // commit and this failed on the next build, before anything could reach a
     // script and find a name that answered nothing.
-    CHECK(coverage.declared == 213);
-    CHECK(coverage.bound == 213);
+    CHECK(coverage.declared == 214);
+    CHECK(coverage.bound == 214);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

@@ -3792,6 +3792,13 @@
           "Transient": true
         },
         {
+          "Name": "Port",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        },
+        {
           "Name": "ServerTick",
           "Type": "number",
           "ReadOnly": true,
@@ -3818,6 +3825,12 @@
           "Name": "Disconnect",
           "Parameters": [],
           "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetLocalAddresses",
+          "Parameters": [],
+          "Returns": ["{string}"],
           "ThreadSafety": "Unsafe"
         },
         {

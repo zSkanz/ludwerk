@@ -25,6 +25,8 @@
 #include "engine/rhi/backends.h"
 #include "engine/rhi/device.h"
 #include "engine/scene/enum_registry.h"
+#include "engine/scene/scene_file.h"
+#include "engine/scene/world.h"
 
 namespace app = engine::app;
 namespace core = engine::core;
@@ -622,6 +624,105 @@ TEST_CASE("a mesh is drawn into a preview, on a real device")
 
     if (result.texture.valid())
         device->destroy(result.texture);
+    previews.destroy(*device);
+    renderer->destroy(*device);
+}
+
+TEST_CASE("D503: a stamp's thumbnail shows its part, not the empty background")
+{
+    // Every stamp in the browser was a grey square, a plain barrel included:
+    // the picture was the background alone.
+    if (const auto initError = engine::platform::init({.headless = true}); initError.has_value()) {
+        MESSAGE("ENG_TEST_SKIP: no platform on this machine: " << initError->detail);
+        return;
+    }
+    struct PlatformScope
+    {
+        ~PlatformScope() { engine::platform::shutdown(); }
+    } platformScope;
+
+    engine::core::EngineError error;
+    const engine::rhi::DeviceResult device =
+        engine::app::createDevice({.backend = engine::rhi::BackendId::SdlGpu, .debug = true}, &error);
+    if (device == nullptr) {
+        MESSAGE("ENG_TEST_SKIP: no GPU device on this machine: " << error.detail);
+        return;
+    }
+    const std::filesystem::path contentRoot = engine::platform::paths().contentDir;
+    std::unique_ptr<engine::render::IRenderer> renderer = engine::render::createDefaultRenderer();
+    REQUIRE(renderer != nullptr);
+    engine::render::ShaderLibrary shaders;
+    if (shaders.load(contentRoot, device->caps().shaderFormat).has_value()) {
+        MESSAGE("ENG_TEST_SKIP: this build stages no shaders for this device");
+        return;
+    }
+    if (renderer->create(*device, shaders, engine::rhi::TextureFormat::Rgba8UnormSrgb).has_value()) {
+        MESSAGE("ENG_TEST_SKIP: the renderer would not create on this device");
+        return;
+    }
+
+    engine::core::AtomTable atoms;
+    engine::scene::ClassRegistry classes;
+    engine::scene::EnumRegistry enums;
+    engine::scene::generated::registerClasses(classes, atoms);
+    engine::scene::generated::registerEnums(enums, atoms);
+    engine::render::generated::registerClasses(classes, atoms);
+
+    // The stamp: one part, as a barrel is.
+    std::string text;
+    {
+        engine::scene::World author(classes, enums, atoms, 7u);
+        const engine::core::InstanceId part = author.create(classes.findId(atoms.intern("Part")));
+        REQUIRE(part.valid());
+        author.setName(part, atoms.intern("Barrel"));
+        REQUIRE(author.setProperty(part, atoms.intern("Size"),
+                                   engine::scene::Value{engine::core::Vec3{2.0f, 3.0f, 2.0f}}) ==
+                engine::scene::World::SetResult::Changed);
+        text = engine::scene::writeStamp(author, part);
+        REQUIRE_FALSE(text.empty());
+    }
+
+    engine::asset::ContentMounts mounts;
+    mounts.mountDirectory(contentRoot);
+    engine::app::HostPreviewRenderer previews(classes, enums, atoms, contentRoot, mounts, *renderer);
+
+    engine::app::PreviewJob job;
+    job.kind = engine::app::PreviewKind::Subtree;
+    job.path = contentRoot / "stamps" / "barrel.stamp.json";
+    job.text = text;
+    job.edge = ThumbnailCache::Edge;
+
+    engine::rhi::ICmdList* cmd = device->beginFrame();
+    REQUIRE(cmd != nullptr);
+    engine::app::PreviewResult result;
+    const bool drew = previews.drawPreview(*device, *cmd, job, result);
+    device->submitAndPresent();
+    device->waitIdle();
+    REQUIRE(drew);
+    REQUIRE(result.texture.valid());
+
+    std::vector<std::byte> pixels(static_cast<usize>(result.width) * result.height * 4);
+    REQUIRE(device->readTexture(result.texture, pixels));
+    const auto at = [&](u32 x, u32 y) {
+        const usize i = (static_cast<usize>(y) * result.width + x) * 4;
+        return std::array<int, 3>{static_cast<int>(pixels[i]), static_cast<int>(pixels[i + 1]),
+                                  static_cast<int>(pixels[i + 2])};
+    };
+    // The background is a gradient from top to bottom, so each pixel is
+    // compared with the edge of its own row: the same sky, or the part. The
+    // part fills about a third of the tile; the broken preview, none of it.
+    usize covered = 0;
+    for (u32 y = 0; y < result.height; ++y) {
+        const std::array<int, 3> edge = at(1, y);
+        for (u32 x = 0; x < result.width; ++x) {
+            const std::array<int, 3> here = at(x, y);
+            if (std::abs(edge[0] - here[0]) + std::abs(edge[1] - here[1]) + std::abs(edge[2] - here[2]) > 30)
+                ++covered;
+        }
+    }
+    CHECK(covered > static_cast<usize>(result.width) * result.height / 10);
+
+    device->destroy(result.texture);
     previews.destroy(*device);
     renderer->destroy(*device);
 }

@@ -27,7 +27,7 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   its stamp's is removed: the child is the copy's own, or the stamp's child is
   disabled in it, and the copy keeps following its stamp. A stamp may hold
   copies of other stamps; one that holds a copy of itself is refused.
-- **The wire is protocol 35**: a client and a server of different builds refuse
+- **The wire is protocol 36**: a client and a server of different builds refuse
   each other -- and now say so (`JoinFailed`, "another version of the game").
 - **Teams are withdrawn** (ADR 0099, amended by the owner): `TeamService`,
   `Team`, `Player.Team` and `AutoAssign` are gone. A side is the game's own
@@ -191,6 +191,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`NetworkService:GetLocalAddresses()` and `NetworkService.Port`** (G41):
+  this machine's addresses on its networks, best first -- the private ones,
+  the default route's first, never loopback, link-local or a virtual adapter
+  -- and the port of the match it hosts or joined: what a host shows the
+  friends on its Wi-Fi to type.
 - **Stamps 2.0** (ADR 0155), the prefab model at the level of the other
   engines':
   - a copy has **one pivot**: move it anywhere and its parts stay where the
@@ -1020,6 +1025,43 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A player is no longer corrected for a busy machine** (D498): a burst of
+  input held up on the way made the server step some ticks twice; the client
+  now says when its own clock dropped time, and only that re-anchors at once.
+- **A game on a busy machine no longer freezes** (D500): its join took frames
+  of seconds inside the graphics driver until the server dropped the player.
+  Every game run is now scheduled ahead of ordinary work, as a server already
+  was; the editor and a test run are not.
+- **Tags replicate** (D501), added and taken off, as attributes do.
+- **A copy of a stamp that changes one attribute keeps following the stamp's
+  others** (D502), and its tags the same: a copy saves what it changed, not
+  the whole set.
+- **A stamp's parameter drives a material field** (D499) -- a `TeamColor`
+  colours a hat -- and the Properties panel offers it on a material's fields.
+- **Stamps' thumbnails show the stamp** (D503), where every one of plain parts
+  was a grey square.
+- **An open stamp shows its own markers and gizmos** (D504), not the scene's
+  behind it.
+- **Opening another stamp switches to it** (D505), asking first when the open
+  one has unsaved edits; and the scene's undo history is still there after a
+  stamp was open over it.
+- **No patch of different shading follows the camera at a low sun** (D506):
+  the far shadow cascades no longer darken a thin lit top -- a wall's cap.
+- **A project opens fast, and never as a white window** (D507): a second open
+  skips every source that has not changed (0.5 s where it was 3.8 s); a first
+  open compiles while the window answers and says in its title what it is on.
+  The editor opens no console window, and a game holds a dark frame until its
+  first scene's meshes and pictures are in.
+- **An animation loaded before its mesh's file arrived plays when it does**
+  (D509): its `Length` was zero for good, and the figure slid about unanimated.
+- **A ragdoll's feet and hands continue past their joints along the bone**
+  (D510), where they were built pointing back into the shin and the forearm.
+- **A ragdoll draws as a body** (D511): each limb's bone faces the way its
+  joint does, where it faced the world's axes and a fallen figure's shin drew as
+  a flat ribbon from the knee to the boot.
+- **`PivotTo` every frame keeps a model where it is put** (D512): it drifted
+  away exponentially, kilometres within a second. Moving a model onto the
+  pivot it already has changes nothing.
 - **A server that loads its own scene again restarts every client's scene
   code** (D489), and `SceneLoading` fires on a client before its scene changes;
   a round restarted by `LoadScene` used to restart on the server alone.

@@ -1,8 +1,11 @@
 # icons/ — the editor's icon themes
 
-> **Current artwork: Orbit (2026-09-23).** All 167 IDs resolve to 152 geometric
-> drawings, including the lighting IDs from ADR 0096, the three navigation IDs from ADR 0098 Team/TeamService from ADR 0099 and the three script services from ADR 0105. SceneService and the planned views/AI icons from ADRs 0106?0108 are also registered. See [the style and exact prompt](../art/editor-icons/orbit/STYLE.md)
-> and [the visual gallery](../art/editor-icons/orbit/index.html). The loader,
+> **Current artwork: Orbit (updated 2026-10-03).** All 272 IDs resolve to
+> 251 geometric drawings. Includes the new UIGradient/UIStroke designs and
+> reserved artwork for saves, foliage, water, editable media, video, actors,
+> and the planned Toolkit (ADRs 0126?0132).
+> See [the style and exact prompt](../art/editor-icons/orbit/STYLE.md) and
+> [the visual gallery](../art/editor-icons/orbit/index.html). The loader,
 > palette and alias contracts below still apply; historical counts and
 > silhouette-review measurements describe the previous artwork.
 

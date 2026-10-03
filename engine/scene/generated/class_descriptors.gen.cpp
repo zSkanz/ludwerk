@@ -5262,7 +5262,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(serverStorageDesc);
 
     // --- NetworkService ---
-    static std::array<PropertyDesc, 6> networkServiceProperties;
+    static std::array<PropertyDesc, 7> networkServiceProperties;
     networkServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Authority"),
@@ -5332,6 +5332,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
         PropertyDesc{
+            .name = atoms.intern("Port"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Safe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The port this machine's match is on: the one it hosts or serves on, or the one it joined. Zero with no match. With `GetLocalAddresses`, what a host shows the friends who will join it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getNetworkServicePort,
+            .set = nullptr,
+        },
+        PropertyDesc{
             .name = atoms.intern("LocalPlayer"),
             .type = ValueType::Instance,
             .instanceClass = atoms.intern("Player"),
@@ -5345,13 +5358,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 5> networkServiceMethods;
+    static std::array<MethodDesc, 6> networkServiceMethods;
     networkServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetPlayers"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Everybody taking part, in the order they joined. **The same call solo** -- one player -- so a game that loops over its players is already a multiplayer game.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetLocalAddresses"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "**This machine's addresses on its networks**, best first: what a host shows the friends on its Wi-Fi to type. IPv4, from interfaces that are up -- never loopback, never link-local (169.254), never a virtual adapter that can be told apart (a hypervisor's or a container's) -- the private ranges first, the interface the default route leaves by first among them. A fact about this machine: it needs no match, is never replicated, and is empty offline.",
         },
         MethodDesc{
             .name = atoms.intern("GetStats"),

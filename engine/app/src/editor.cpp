@@ -1934,6 +1934,7 @@ std::optional<std::size_t> Editor::followContent(scene::World& world, std::strin
     // says so.
     if (files + instances > 0 && m_history.canUndo()) {
         m_history.clear();
+        m_sceneHistory.clear();
         m_undoClearedByMove = true;
     }
     return files + instances;
@@ -2038,12 +2039,16 @@ bool Editor::openStamp(std::string_view path, scene::ClassRegistry& classes, sce
         m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.stop_the_world_before_opening")), true};
         return false;
     }
-    if (m_stamp.open()) {
-        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.a_stamp_is_already_open")), true};
-        return false;
-    }
-
     const std::string relative = normalizeStampPath(path);
+    if (m_stamp.open()) {
+        if (m_stamp.path == relative)
+            return true;
+        // Its edits exist nowhere else: the panel asks before it asks this.
+        if (m_stamp.dirty) {
+            m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.a_stamp_is_already_open")), true};
+            return false;
+        }
+    }
     std::string text;
     if (!platform::readTextFile(m_content.root() / std::filesystem::path(relative), text)) {
         m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_is_not_there")), true};
@@ -2076,6 +2081,10 @@ bool Editor::openStamp(std::string_view path, scene::ClassRegistry& classes, sce
     if (const std::string base = scene::stampBaseOf(text); !base.empty())
         stage->world().setStamp(root, atoms.intern(base));
 
+    // From the scene, its history waits; from another stamp, that stamp's goes
+    // with its stage.
+    if (!m_stamp.open())
+        m_sceneHistory = std::move(m_history);
     m_stage = std::move(stage);
     m_stamp = StampSession{relative, root, false, text};
 
@@ -2830,7 +2839,7 @@ bool Editor::setStampParameterRange(scene::World& world, core::InstanceId root, 
 }
 
 bool Editor::toggleStampDrive(scene::World& world, core::InstanceId root, std::string_view name, core::InstanceId node,
-                              core::NameAtom property)
+                              core::NameAtom property, std::string_view component)
 {
     const std::optional<std::string> key = scene::stampKeyOf(world, root, node);
     if (!key.has_value() || !property.valid())
@@ -2839,20 +2848,21 @@ bool Editor::toggleStampDrive(scene::World& world, core::InstanceId root, std::s
     // The node's sid, the one the file will hold.
     scene::assignStampSids(world, root);
     const std::optional<std::string> stable = scene::stampKeyOf(world, root, node);
-    const bool set = changeDeclaration(world, root, m_history, core::tr(ENG_TR("engine.editor.history.parameter")),
-                                       [&](std::vector<scene::StampParameter>& parameters) {
-                                           for (scene::StampParameter& each : parameters) {
-                                               if (each.name != name)
-                                                   continue;
-                                               const auto same = [&](const scene::StampDrive& drive) {
-                                                   return drive.node == *stable && drive.property == propertyName;
-                                               };
-                                               if (std::erase_if(each.drives, same) == 0)
-                                                   each.drives.push_back(scene::StampDrive{*stable, propertyName, {}});
-                                               return true;
-                                           }
-                                           return false;
-                                       });
+    const bool set = changeDeclaration(
+        world, root, m_history, core::tr(ENG_TR("engine.editor.history.parameter")),
+        [&](std::vector<scene::StampParameter>& parameters) {
+            for (scene::StampParameter& each : parameters) {
+                if (each.name != name)
+                    continue;
+                const auto same = [&](const scene::StampDrive& drive) {
+                    return drive.node == *stable && drive.property == propertyName && drive.component == component;
+                };
+                if (std::erase_if(each.drives, same) == 0)
+                    each.drives.push_back(scene::StampDrive{*stable, propertyName, std::string(component)});
+                return true;
+            }
+            return false;
+        });
     if (set) {
         scene::applyStampDrives(world, root, world.atoms().intern(name));
         touch();
@@ -3288,7 +3298,9 @@ bool Editor::closeStamp(scene::World& game, core::InstanceId gameRoot, Inspector
     m_stage.reset();
     m_stamp = StampSession{};
 
-    m_history.clear();
+    // The scene's own history, as it was when the first stamp opened (G36).
+    m_history = std::move(m_sceneHistory);
+    m_sceneHistory.clear();
     inspector.onWorldChanged();
 
     m_status = EditorStatus{
@@ -3438,54 +3450,6 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
     return true;
 }
 
-namespace {
-// **A `Model` is moved by its PIVOT, because a pivot is the only handle it
-// has.** `Model` declares no `CFrame` property at all, so a placement that
-// wrote one wrote nothing: the class refused it, the refusal was a return value
-// nobody read, and the subtree stayed at the coordinates its file records --
-// which for anything authored near where it was built is the world origin.
-// `Part` does have a `CFrame`, and a `Part` root is the case that got tried.
-//
-// This is `PivotTo` (`instance_binding.cpp`) reached without a VM, off the same
-// `scene::pivotOf`. `pivot.h` was lifted out of the binding precisely so that
-// "where is the middle of this model" has one answer below `script`, and it
-// names an editor gizmo as a caller; nothing in `engine/app` had asked it yet.
-// The rule about what travels comes with it: a model moves every part under it,
-// which is what keeps the layout somebody built, and a part moves alone,
-// because what hangs off a part is welds and constraints rather than geometry.
-void pivotTo(scene::World& world, core::InstanceId id, const core::CFrameD& target)
-{
-    // `delta` puts the pivot on the target, and everything the object owns moves
-    // by that same transform -- which is what preserves relative layout.
-    const core::CFrameD delta = target * core::inverse(scene::pivotOf(world, id));
-    const core::NameAtom cframeProperty = world.atoms().intern("CFrame");
-
-    if (world.models().find(id) != nullptr) {
-        std::vector<core::InstanceId> descendants;
-        world.collectDescendants(id, descendants);
-        for (const core::InstanceId descendant : descendants) {
-            const scene::PartComponent* part = world.parts().find(descendant);
-            if (part == nullptr)
-                continue;
-            // Through `setProperty` rather than into the component, so the
-            // renderer and anything watching `CFrame` see it by the path they
-            // already have. The component is what says the write can land, so
-            // the result answers nothing this has not already asked.
-            world.setProperty(descendant, cframeProperty, scene::Value{delta * part->cframe});
-        }
-        return;
-    }
-
-    if (const scene::PartComponent* part = world.parts().find(id); part != nullptr) {
-        world.setProperty(id, cframeProperty, scene::Value{delta * part->cframe});
-        return;
-    }
-
-    if (const scene::CameraComponent* camera = world.cameras().find(id); camera != nullptr)
-        world.setProperty(id, cframeProperty, scene::Value{delta * camera->cframe});
-}
-} // namespace
-
 bool Editor::instantiateStamp(scene::World& world, std::string_view name, core::InstanceId parent,
                               core::InstanceId root, Inspector& inspector, bool linked)
 {
@@ -3540,7 +3504,11 @@ bool Editor::instantiateStamp(scene::World& world, std::string_view name, core::
         constexpr f32 kSpawnDistance = 8.0f;
         core::CFrameD spawn;
         spawn.position = m_cameraCFrame.position + core::toDVec3(forward * kSpawnDistance);
-        pivotTo(world, placed, spawn);
+        // **A `Model` is moved by its PIVOT**, because a pivot is the only
+        // handle it has: `Model` declares no `CFrame`, so a placement that wrote
+        // one wrote nothing. `scene::pivotTo` is `PivotTo` below the VM -- a
+        // model moves every part under it, a part moves alone.
+        scene::pivotTo(world, placed, spawn);
     }
 
     // **A copy is a placement that forgets where it came from.** Same subtree,
@@ -4064,6 +4032,7 @@ void Editor::newScene(scene::World& world, Inspector& inspector)
 
     // Undoing into a world that no longer exists is not undoing.
     m_history.clear();
+    m_sceneHistory.clear();
     m_openScene.clear();
     // A scene nobody has touched yet. Whoever asked for this was asked about the
     // old one first, if there was anything to ask about.
@@ -4175,6 +4144,7 @@ bool Editor::openScene(scene::World& world, std::string_view relativePath, Inspe
 
     m_openScene = std::string(relativePath);
     m_history.clear();
+    m_sceneHistory.clear();
     m_sceneDirty = false;
     // The status `load` set names the file; naming the scene is more useful,
     // because the browser is already showing the file.
@@ -6915,6 +6885,7 @@ void Editor::endTerrainImport(scene::World& world, Inspector& inspector, bool ke
         // **Not a step, and nothing before it is one any more**: every
         // snapshot the history holds is of a world this ground is not in.
         m_history.clear();
+        m_sceneHistory.clear();
         m_sceneDirty = true;
         m_importOutcome = ImportOutcome::Kept;
         return;

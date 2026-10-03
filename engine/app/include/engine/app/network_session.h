@@ -83,6 +83,9 @@ public:
     void update();
 
     [[nodiscard]] bool active() const noexcept { return m_replication != nullptr; }
+    // This machine dropped simulated time this frame (D498): a replica tells
+    // its authority.
+    void noteTimeDropped();
     // The own character's drawn offset after a correction (a replica's), for
     // the renderer's transform history.
     [[nodiscard]] replication::VisualCorrection visualCorrection() const;
@@ -146,6 +149,8 @@ private:
     // Whether this connection dials again when it drops: a command-line join
     // does, a script's does not.
     bool m_redial = true;
+    // The port `begin` was given: the match this machine hosts or joined (G41).
+    core::u16 m_port = 0;
     // `Enum.NetworkState`'s value, kept here and written into the world every
     // update: a hot reload replaces the world, and the connection outlives it.
     core::i32 m_state = 0;

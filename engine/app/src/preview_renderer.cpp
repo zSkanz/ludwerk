@@ -126,6 +126,11 @@ bool HostPreviewRenderer::drawPreview(rhi::IDevice& device, rhi::ICmdList& cmd, 
     resetScratch();
     if (!workspace_.valid())
         return false;
+    // **The five solids, for every kind** (D503): a stamp of plain parts draws
+    // them, and only the material swatch asked for them -- so a browser that
+    // had not drawn a material yet showed every stamp as the background alone.
+    // Idempotent, so it costs a check after the first.
+    loader_.syncPrimitives(device, cmd, *scratch_, meshes_, library_);
 
     // --- Build the thing to look at ------------------------------------------
     if (job.kind == PreviewKind::Mesh) {
@@ -167,7 +172,6 @@ bool HostPreviewRenderer::drawPreview(rhi::IDevice& device, rhi::ICmdList& cmd, 
             return false;
         if (!swatchOf(std::string(asset::AssetScheme) + relative.generic_string(), job.swatchShape))
             return false;
-        (void)loader_.syncPrimitives(device, cmd, *scratch_, meshes_, library_);
         (void)loader_.syncTextures(device, cmd, *scratch_, textures_);
     }
     else if (job.kind == PreviewKind::Subtree) {
