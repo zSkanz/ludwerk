@@ -7,6 +7,7 @@
 // them over (R10).
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <doctest/doctest.h>
 
 #include "engine/render/animation.h"
@@ -349,10 +350,12 @@ TEST_CASE("H3: a rig nobody sees is not posed, a small one is posed every few ti
     {
         const std::array<render::SeenSkin, 1> small{render::SeenSkin{fixture.mesh, 0.01f}};
         animation.reportSeen(small, true);
-        const core::u64 before = animation.posesBuilt();
+        // Posed -- built, or copied from a pose with the same inputs (H10).
+        const auto posed = [&animation] { return animation.posesBuilt() + animation.posesShared(); };
+        const core::u64 before = posed();
         for (int tick = 0; tick < 32; ++tick)
             animation.sample(1.0 / 60.0);
-        CHECK(animation.posesBuilt() == before + 4);
+        CHECK(posed() == before + 4);
 
         const std::array<render::SeenSkin, 1> large{render::SeenSkin{fixture.mesh, 0.5f}};
         animation.reportSeen(large, true);
@@ -369,6 +372,58 @@ TEST_CASE("H3: a rig nobody sees is not posed, a small one is posed every few ti
         for (int tick = 0; tick < 8; ++tick)
             animation.sample(1.0 / 60.0);
         CHECK(animation.posesBuilt() == before + 8);
+    }
+}
+
+TEST_CASE("H10: two meshes of one rig at one moment of one clip share a pose, bit for bit; another moment does not")
+{
+    Fixture fixture;
+    render::SkeletonLibrary::Entry entry = twoJointSkeleton();
+    entry.clips.push_back(slideClip("Slide"));
+    const core::InstanceId first = fixture.rig(entry);
+    const core::InstanceId firstMesh = fixture.mesh;
+    const core::InstanceId second = fixture.rig(entry);
+    const core::InstanceId secondMesh = fixture.mesh;
+    const core::InstanceId third = fixture.rig(std::move(entry));
+    const core::InstanceId thirdMesh = fixture.mesh;
+
+    render::AnimationSystem animation{fixture.world, fixture.skeletons};
+    const scene::TrackId a = animation.createTrack(first, {}, "Slide");
+    const scene::TrackId b = animation.createTrack(second, {}, "Slide");
+    const scene::TrackId c = animation.createTrack(third, {}, "Slide");
+    animation.play(a, 0.0f, 1.0f, 1.0f);
+    animation.play(b, 0.0f, 1.0f, 1.0f);
+    // The third a little faster: another moment of the clip.
+    animation.play(c, 0.0f, 1.0f, 1.5f);
+    for (int tick = 0; tick < 12; ++tick)
+        animation.sample(1.0 / 60.0);
+
+    // Three posed a tick: the second always a copy of the first, and the
+    // third a copy too whenever it reaches a moment of the clip the others
+    // have already been at -- the cache keeps poses across ticks.
+    CHECK(animation.posesBuilt() + animation.posesShared() == 36);
+    CHECK(animation.posesShared() >= 12);
+    const render::Pose* one = animation.pose(firstMesh);
+    const render::Pose* two = animation.pose(secondMesh);
+    const render::Pose* three = animation.pose(thirdMesh);
+    REQUIRE(one != nullptr);
+    REQUIRE(two != nullptr);
+    REQUIRE(three != nullptr);
+    CHECK(std::memcmp(one->palette.data(), two->palette.data(), one->palette.size() * sizeof(core::Mat4)) == 0);
+    CHECK_FALSE(close(one->palette[1].m[3][1], three->palette[1].m[3][1]));
+
+    SUBCASE("posed at a reduced rate, the third samples its clip's keys and shares with whoever is at the same key")
+    {
+        // Small on the picture: every eighth tick, and at the clip's own keys
+        // (one second apart in this clip), so all three sit on key zero.
+        const std::array<render::SeenSkin, 3> small{render::SeenSkin{firstMesh, 0.01f},
+                                                    render::SeenSkin{secondMesh, 0.01f},
+                                                    render::SeenSkin{thirdMesh, 0.01f}};
+        animation.reportSeen(small, true);
+        const core::u64 shared = animation.posesShared();
+        for (int tick = 0; tick < 64; ++tick)
+            animation.sample(1.0 / 60.0);
+        CHECK(animation.posesShared() > shared);
     }
 }
 

@@ -89,27 +89,40 @@ constexpr f64 GroundReach = 64.0;
     return 0.0;
 }
 
+// **The grid**: the first agent in a cell, and the next in the same one --
+// prepended, as the horde's own grid was, so a cell is walked newest slot
+// first.
+void buildGrid(SwarmComponent& swarm)
+{
+    const f64 cell = std::max(static_cast<f64>(swarm.cellSize), 0.01);
+    const usize count = swarm.agents.size();
+    swarm.grid.clear();
+    swarm.grid.reserve(count);
+    swarm.gridNext.assign(count, 0);
+    for (usize slot = 0; slot < count; ++slot) {
+        const SwarmAgent& agent = swarm.agents[slot];
+        if (!agent.alive)
+            continue;
+        const i64 key = cellKey(cellOf(agent.position.x, cell), cellOf(agent.position.z, cell));
+        auto [at, inserted] = swarm.grid.try_emplace(key, 0u);
+        swarm.gridNext[slot] = at->second;
+        at->second = static_cast<u32>(slot) + 1;
+    }
+    swarm.gridCell = swarm.cellSize;
+    swarm.gridValid = true;
+}
+
 void stepSwarm(World& world, const PhysicsSync* physics, SwarmComponent& swarm, f64 dt, u64 tick,
                core::NameAtom cframeName)
 {
     const f64 cell = std::max(static_cast<f64>(swarm.cellSize), 0.01);
     const usize count = swarm.agents.size();
 
-    // **The grid, built again each tick**: the first agent in a cell, and the
-    // next in the same one -- prepended, as the horde's own grid was, so a
-    // cell is walked newest slot first.
-    std::unordered_map<i64, u32> head;
-    head.reserve(count);
-    std::vector<u32> next(count, 0);
-    for (usize slot = 0; slot < count; ++slot) {
-        const SwarmAgent& agent = swarm.agents[slot];
-        if (!agent.alive)
-            continue;
-        const i64 key = cellKey(cellOf(agent.position.x, cell), cellOf(agent.position.z, cell));
-        auto [at, inserted] = head.try_emplace(key, 0u);
-        next[slot] = at->second;
-        at->second = static_cast<u32>(slot) + 1;
-    }
+    // Where the last step left everyone, unless something moved an agent since.
+    if (!swarm.gridValid || swarm.gridCell != swarm.cellSize)
+        buildGrid(swarm);
+    const std::unordered_map<i64, u32>& head = swarm.grid;
+    const std::vector<u32>& next = swarm.gridNext;
 
     // The obstacles, by cell -- each in every cell its circle touches, with a
     // metre to spare for the widest agent.
@@ -267,6 +280,8 @@ void stepSwarm(World& world, const PhysicsSync* physics, SwarmComponent& swarm, 
             (void)world.setProperty(agent.body, cframeName, Value{core::CFrameD{agent.position, core::rotationY(yaw)}});
         }
     }
+    // Where everyone is now: what a script asks about until the next step.
+    buildGrid(swarm);
 }
 
 } // namespace
@@ -284,6 +299,7 @@ u32 addSwarmAgent(SwarmComponent& swarm, core::InstanceId body, core::DVec3 posi
     agent.floatHeight = settings.floatHeight;
     agent.climbs = settings.climbs;
     agent.alive = true;
+    swarm.gridValid = false;
     if (!swarm.free.empty()) {
         // The lowest free slot, so the slots a crowd uses stay packed.
         const auto lowest = std::min_element(swarm.free.begin(), swarm.free.end());
@@ -303,6 +319,7 @@ bool removeSwarmAgent(SwarmComponent& swarm, u32 agent)
         return false;
     *row = SwarmAgent{};
     swarm.free.push_back(agent - 1);
+    swarm.gridValid = false;
     return true;
 }
 
@@ -320,19 +337,44 @@ const SwarmAgent* swarmAgent(const SwarmComponent& swarm, u32 agent) noexcept
     return &swarm.agents[agent - 1];
 }
 
-void querySwarmRadius(const SwarmComponent& swarm, core::DVec3 centre, f64 radius, std::vector<u32>& out)
+void querySwarmRadius(SwarmComponent& swarm, core::DVec3 centre, f64 radius, bool flat, std::vector<u32>& out)
 {
+    const usize first = out.size();
     const f64 reach = radius * radius;
-    for (usize slot = 0; slot < swarm.agents.size(); ++slot) {
-        const SwarmAgent& agent = swarm.agents[slot];
-        if (!agent.alive)
-            continue;
+    const auto within = [&](const SwarmAgent& agent) {
         const f64 dx = agent.position.x - centre.x;
-        const f64 dy = agent.position.y - centre.y;
+        const f64 dy = flat ? 0.0 : agent.position.y - centre.y;
         const f64 dz = agent.position.z - centre.z;
-        if (dx * dx + dy * dy + dz * dz <= reach)
-            out.push_back(static_cast<u32>(slot) + 1);
+        return dx * dx + dy * dy + dz * dz <= reach;
+    };
+    if (!swarm.gridValid || swarm.gridCell != swarm.cellSize)
+        buildGrid(swarm);
+    const f64 cell = std::max(static_cast<f64>(swarm.gridCell), 0.01);
+    const i64 low[2] = {cellOf(centre.x - radius, cell), cellOf(centre.z - radius, cell)};
+    const i64 high[2] = {cellOf(centre.x + radius, cell), cellOf(centre.z + radius, cell)};
+    // **Through the grid** (H10), cell by cell round the centre -- unless the
+    // circle covers more cells than there are agents, where the rows
+    // themselves are the shorter walk.
+    const f64 cells = static_cast<f64>(high[0] - low[0] + 1) * static_cast<f64>(high[1] - low[1] + 1);
+    if (cells > static_cast<f64>(swarm.agents.size())) {
+        for (usize slot = 0; slot < swarm.agents.size(); ++slot) {
+            if (swarm.agents[slot].alive && within(swarm.agents[slot]))
+                out.push_back(static_cast<u32>(slot) + 1);
+        }
+        return;
     }
+    for (i64 x = low[0]; x <= high[0]; ++x) {
+        for (i64 z = low[1]; z <= high[1]; ++z) {
+            const auto found = swarm.grid.find(cellKey(x, z));
+            for (u32 at = found == swarm.grid.end() ? 0u : found->second; at != 0; at = swarm.gridNext[at - 1]) {
+                const SwarmAgent& agent = swarm.agents[at - 1];
+                if (agent.alive && within(agent))
+                    out.push_back(at);
+            }
+        }
+    }
+    // In slot order, as the rows are.
+    std::sort(out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
 }
 
 void stepSwarms(World& world, const PhysicsSync* physics, f64 dt)

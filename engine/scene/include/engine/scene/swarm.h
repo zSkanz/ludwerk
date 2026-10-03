@@ -34,8 +34,10 @@ bool removeSwarmAgent(SwarmComponent& swarm, u32 agent);
 // The live agent `agent` names, or null.
 [[nodiscard]] SwarmAgent* swarmAgent(SwarmComponent& swarm, u32 agent) noexcept;
 [[nodiscard]] const SwarmAgent* swarmAgent(const SwarmComponent& swarm, u32 agent) noexcept;
-// Every live agent whose feet are within `radius` of `centre`, in slot order.
-void querySwarmRadius(const SwarmComponent& swarm, core::DVec3 centre, f64 radius, std::vector<u32>& out);
+// Every live agent whose feet are within `radius` of `centre` -- along the
+// ground alone when `flat` -- appended to `out` in slot order. Through the
+// swarm's grid, built again first when an agent moved since the last step.
+void querySwarmRadius(SwarmComponent& swarm, core::DVec3 centre, f64 radius, bool flat, std::vector<u32>& out);
 
 // One simulation tick of every enabled swarm in `world`, in pool order and
 // each one's agents in slot order (R10). `physics` answers the ground where no

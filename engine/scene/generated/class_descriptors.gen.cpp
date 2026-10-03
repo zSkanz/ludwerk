@@ -3905,7 +3905,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("QueryRadius"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Every live agent whose feet are within `radius` of `centre`, in slot order: what a weapon aims at, and who has reached `Target`.",
+            .doc = "Every live agent whose feet are within `radius` of `centre`, in slot order: what a weapon aims at, and who has reached `Target`. Answered from the swarm's grid, so its cost is the agents near `centre`, not all of them.\012\012`into`, when given, is emptied and filled and returned -- a weapon asking every tick makes no table. `flat` measures along the ground alone, so every agent of a tower over the circle is in it.",
         },
         MethodDesc{
             .name = atoms.intern("AddObstacle"),

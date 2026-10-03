@@ -208,10 +208,27 @@ local function main(): number
                 table.insert(definitions, entry)
             end
         else
+            -- **The project's types are this engine's**: refreshed when they
+            -- are not, as other engines regenerate a project's on open. A copy
+            -- left from an older engine reported a class the engine has as
+            -- unknown until `setup` was run by hand.
+            local project = firstPositional(parsed, ".")
+            local root = projectlib.installRoot()
+            if root ~= nil and fs.exists(projectlib.joined(project, "project.toml")) then
+                local fresh = projectlib.joined(root, "runtime", "types", "engine.d.luau")
+                local held = projectlib.joined(project, ".engine", "types", "engine.d.luau")
+                if
+                    fs.exists(fresh)
+                    and (not fs.exists(held) or fs.readFileToString(fresh) ~= fs.readFileToString(held))
+                then
+                    setup.writeTypes({ target = project, root = root })
+                    print(tr("cli.check.types_refreshed"))
+                end
+            end
             -- A project's own: the engine's classes, then its scene's tree,
             -- in that order, because the tree's `declare workspace` replaces
             -- the plain one (ADR 0078).
-            local types = projectlib.joined(firstPositional(parsed, "."), ".engine", "types")
+            local types = projectlib.joined(project, ".engine", "types")
             for _, name in { "engine.d.luau", "scene.d.luau" } do
                 local file = projectlib.joined(types, name)
                 if fs.exists(file) then

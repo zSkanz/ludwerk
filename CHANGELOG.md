@@ -216,6 +216,8 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   on one another, on the terrain's height and round obstacles, thinking less
   often far away; scripts add, remove, push and query in bulk. Five hundred
   and fifty agents cost about a third of a millisecond a tick.
+  `QueryRadius(centre, radius, into?, flat?)` answers from the swarm's grid,
+  fills a table given to it, and measures along the ground when `flat`.
 - **`ScrollFrame` scrolls as a phone's list does** (G40), with no code:
   - **a fling**: let go while moving and it glides on and slows; a press
     catches it and presses nothing;
@@ -1123,6 +1125,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 - **Bodies of one mesh share its collision hull** (D518): a part made a shot
   built the mesh's hull again, a quarter of a millisecond each; and the click
   detectors' pick no longer runs in a world with no detector.
+- **Posing a skeleton costs a tenth of a microsecond a joint** (D520): a pose
+  asked every track in the world whether it drove its mesh. And **poses are
+  shared**: meshes of one rig at one moment of one clip copy one pose, bit for
+  bit, and a crowd posed at a reduced rate shares at its clips' keys.
+- **`ludwerk check` keeps the project's types this engine's** (D521): a copy
+  left from an older engine is written again rather than reporting new classes
+  as unknown.
 - **Text is broken into lines once** (D519): a screen laid out again because a
   label moved no longer re-measures every label on it, and wrapping a long text
   is no longer quadratic in its length.

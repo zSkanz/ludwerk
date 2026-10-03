@@ -167,13 +167,55 @@ TEST_CASE("ADR 0156: agents are numbered by slot, found by radius, and a removed
     CHECK(b == 2);
     CHECK(c == 3);
     std::vector<u32> found;
-    querySwarmRadius(rig.swarm(), core::DVec3{0.0, 0.0, 0.0}, 2.0, found);
+    querySwarmRadius(rig.swarm(), core::DVec3{0.0, 0.0, 0.0}, 2.0, false, found);
     CHECK(found == std::vector<u32>{1, 3});
 
     CHECK(removeSwarmAgent(rig.swarm(), b));
     CHECK(swarmAgent(rig.swarm(), b) == nullptr);
     CHECK_FALSE(removeSwarmAgent(rig.swarm(), b));
     CHECK(rig.agent(core::DVec3{9.0, 0.0, 0.0}) == 2);
+}
+
+TEST_CASE("H10: a radius query through the grid finds what a walk of every agent finds, flat or not")
+{
+    Rig rig;
+    rig.swarm().target = core::DVec3{0.0, 0.0, 0.0};
+    for (int index = 0; index < 200; ++index)
+        (void)rig.agent(core::DVec3{static_cast<f64>(index % 20) * 0.9 - 9.0, static_cast<f64>(index % 3) * 1.5,
+                                    static_cast<f64>(index / 20) * 0.9 - 4.5});
+    rig.ticks(30);
+
+    const auto every = [&](core::DVec3 centre, f64 radius, bool flat) {
+        std::vector<u32> out;
+        for (usize slot = 0; slot < rig.swarm().agents.size(); ++slot) {
+            const SwarmAgent& agent = rig.swarm().agents[slot];
+            const f64 dx = agent.position.x - centre.x;
+            const f64 dy = flat ? 0.0 : agent.position.y - centre.y;
+            const f64 dz = agent.position.z - centre.z;
+            if (agent.alive && dx * dx + dy * dy + dz * dz <= radius * radius)
+                out.push_back(static_cast<u32>(slot) + 1);
+        }
+        return out;
+    };
+    for (const f64 radius : {0.5, 2.0, 3.7, 40.0}) {
+        for (const bool flat : {false, true}) {
+            std::vector<u32> found;
+            querySwarmRadius(rig.swarm(), core::DVec3{1.3, 0.0, -0.4}, radius, flat, found);
+            CHECK(found == every(core::DVec3{1.3, 0.0, -0.4}, radius, flat));
+        }
+    }
+    // A tower over the circle: flat finds the agents high up it, round does not.
+    std::vector<u32> flat;
+    std::vector<u32> round;
+    querySwarmRadius(rig.swarm(), core::DVec3{0.0, 0.0, 0.0}, 1.0, true, flat);
+    querySwarmRadius(rig.swarm(), core::DVec3{0.0, 0.0, 0.0}, 1.0, false, round);
+    CHECK(flat.size() >= round.size());
+
+    // An agent placed elsewhere since the step is found where it is now.
+    const u32 moved = rig.agent(core::DVec3{50.0, 0.0, 50.0});
+    std::vector<u32> there;
+    querySwarmRadius(rig.swarm(), core::DVec3{50.0, 0.0, 50.0}, 0.5, false, there);
+    CHECK(there == std::vector<u32>{moved});
 }
 
 TEST_CASE("ADR 0156: two runs of one crowd end in the same place")

@@ -1156,6 +1156,7 @@ int methodSwarmSetAgentPosition(lua_State* L)
             core::DVec3{static_cast<f64>(position.x), static_cast<f64>(position.y), static_cast<f64>(position.z)};
         agent->verticalSpeed = 0.0f;
         agent->groundX = 1.0e30;
+        swarm.gridValid = false;
     }
     return 0;
 }
@@ -1214,20 +1215,40 @@ int methodSwarmGetPositions(lua_State* L)
     return 1;
 }
 
+// `QueryRadius(centre, radius, into?, flat?)`: into `into` when given --
+// emptied first, so a weapon asking every tick allocates nothing -- or a new
+// table.
 int methodSwarmQueryRadius(lua_State* L)
 {
-    const scene::SwarmComponent& swarm = swarmOf(L);
+    scene::SwarmComponent& swarm = swarmOf(L);
     const core::Vec3 centre = checkFiniteVector(L, 2);
     const double radius = checkFinite(L, 3);
-    std::vector<core::u32> found;
+    const bool reuse = lua_istable(L, 4);
+    const bool flat = lua_toboolean(L, 5) != 0;
+    static thread_local std::vector<core::u32> found;
+    found.clear();
     scene::querySwarmRadius(
         swarm, core::DVec3{static_cast<f64>(centre.x), static_cast<f64>(centre.y), static_cast<f64>(centre.z)},
-        std::max(radius, 0.0), found);
-    lua_createtable(L, static_cast<int>(found.size()), 0);
+        std::max(radius, 0.0), flat, found);
+    int table = 0;
+    int previous = 0;
+    if (reuse) {
+        table = 4;
+        previous = static_cast<int>(lua_objlen(L, 4));
+    }
+    else {
+        lua_createtable(L, static_cast<int>(found.size()), 0);
+        table = lua_gettop(L);
+    }
     for (usize index = 0; index < found.size(); ++index) {
         lua_pushnumber(L, static_cast<double>(found[index]));
-        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+        lua_rawseti(L, table, static_cast<int>(index) + 1);
     }
+    for (int index = static_cast<int>(found.size()) + 1; index <= previous; ++index) {
+        lua_pushnil(L);
+        lua_rawseti(L, table, index);
+    }
+    lua_pushvalue(L, table);
     return 1;
 }
 

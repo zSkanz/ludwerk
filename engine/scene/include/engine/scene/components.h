@@ -37,6 +37,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -1375,6 +1376,15 @@ struct SwarmComponent
     // Slots of removed agents, the next agent's first.
     std::vector<u32> free;
     std::vector<SwarmObstacle> obstacles;
+
+    // **The agents by cell**, as the last step left them: the first agent in a
+    // cell and the next in the same one. What the step's neighbours and a
+    // script's `QueryRadius` both read; built again when an agent was added,
+    // removed or placed since.
+    std::unordered_map<i64, u32> grid;
+    std::vector<u32> gridNext;
+    f32 gridCell = 0.0f;
+    bool gridValid = false;
 };
 
 struct NavigationAgentComponent

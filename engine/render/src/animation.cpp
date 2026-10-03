@@ -1,6 +1,7 @@
 #include "engine/render/animation.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 
 #include "engine/core/profile.h"
@@ -178,13 +179,16 @@ void SkeletonLibrary::set(core::NameAtom content, Entry entry)
                                        [](const Slot& lhs, core::NameAtom rhs) { return lhs.content.id < rhs.id; });
     if (slot != entries_.end() && slot->content == content) {
         slot->entry = std::move(entry);
+        ++revision_;
         return;
     }
     entries_.insert(slot, Slot{content, std::move(entry)});
+    ++revision_;
 }
 
 void SkeletonLibrary::clear() noexcept
 {
+    ++revision_;
     entries_.clear();
 }
 
@@ -449,11 +453,22 @@ void AnimationSystem::sample(f64 fixedDt)
     // which for a player parented to a `Model` is whichever piece carried the
     // animation. The shirt is driven by the same track and would otherwise never
     // have its pose rebuilt -- a body that walks and a shirt that stands still.
+    // And which tracks drive each mesh (H10): a track's own mesh, and every
+    // skinned mesh under its drive root -- found here, once a tick, rather than
+    // asked of every track by every pose.
+    drivers_.clear();
+    std::vector<core::InstanceId> descendants;
     for (usize index = 1; index < tracks_.size(); ++index) {
         const Track& track = tracks_[index];
-        if (!track.alive || !track.driveRoot.valid() || track.clip == NoClip || quiet(track))
+        if (!track.alive || track.clip == NoClip)
             continue;
-        std::vector<core::InstanceId> descendants;
+        const bool contributes = (track.playing || track.holding) && track.weight > 0.0f;
+        if (contributes && track.meshPart.valid())
+            drivers_.emplace_back(keyOf(track.meshPart), static_cast<u32>(index));
+        const bool noting = !quiet(track);
+        if (!track.driveRoot.valid() || (!noting && !contributes))
+            continue;
+        descendants.clear();
         world_->collectDescendants(track.driveRoot, descendants);
         const bool always = alwaysFor(track);
         for (const core::InstanceId id : descendants) {
@@ -462,12 +477,17 @@ void AnimationSystem::sample(f64 fixedDt)
                 continue;
             if (const SkeletonLibrary::Entry* entry = skeletons_->find(mesh->meshContent);
                 entry != nullptr && !entry->joints.empty()) {
-                note(id);
+                if (noting)
+                    note(id);
                 if (always)
                     always_.push_back(id);
+                if (contributes)
+                    drivers_.emplace_back(keyOf(id), static_cast<u32>(index));
             }
         }
     }
+    std::sort(drivers_.begin(), drivers_.end());
+    drivers_.erase(std::unique(drivers_.begin(), drivers_.end()), drivers_.end());
 
     // **And every mesh a `Bone` turns** (G9): `Transform` is an offset on the
     // pose, and a mesh nothing plays has a pose to turn as much as one that
@@ -512,6 +532,14 @@ void AnimationSystem::sample(f64 fixedDt)
     };
     std::sort(always_.begin(), always_.end(), byId);
     ++sampled_;
+    // The shared poses: all of them when a rig or a clip changed, and every
+    // so often the ones nothing has copied for half a second.
+    if (skeletons_->revision() != sharedRevision_) {
+        shared_.clear();
+        sharedRevision_ = skeletons_->revision();
+    }
+    if (sampled_ % 64 == 0)
+        std::erase_if(shared_, [this](const auto& entry) { return sampled_ - entry.second.used > 32; });
     for (const core::InstanceId meshPart : meshes_) {
         const scene::MeshPartComponent* mesh = world_->meshParts().find(meshPart);
         if (mesh == nullptr)
@@ -525,6 +553,7 @@ void AnimationSystem::sample(f64 fixedDt)
         // poses are spread over the ticks. Its clips keep time regardless, and
         // what skipped is carried to the next tick, so the pose it gets is the
         // one it would have had.
+        bool reduced = false;
         if (seeing_ && !std::binary_search(always_.begin(), always_.end(), meshPart, byId)) {
             const auto seen = seen_.find(keyOf(meshPart));
             const core::u32 interval = seen == seen_.end() ? 0u : updateInterval(seen->second);
@@ -533,9 +562,19 @@ void AnimationSystem::sample(f64 fixedDt)
                 stale_[keyOf(meshPart)] = true;
                 continue;
             }
+            reduced = interval > 1;
         }
-        rebuildPose(meshPart, *entry);
-        stale_.erase(keyOf(meshPart));
+        // This mesh's drivers, in track order: the sorted index's run of it.
+        const core::u64 key = keyOf(meshPart);
+        const auto first = std::lower_bound(drivers_.begin(), drivers_.end(), std::pair<core::u64, u32>{key, 0u});
+        auto last = first;
+        driving_.clear();
+        while (last != drivers_.end() && last->first == key) {
+            driving_.push_back(last->second);
+            ++last;
+        }
+        rebuildPose(meshPart, *entry, driving_, true, reduced);
+        stale_.erase(key);
     }
 
     // Every track is now as the poses took it in.
@@ -549,10 +588,36 @@ void AnimationSystem::sample(f64 fixedDt)
     }
 }
 
-void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibrary::Entry& skeleton)
+f32 AnimationSystem::sampleTime(const Track& track, bool quantise)
+{
+    const auto exact = static_cast<f32>(track.time);
+    if (!quantise)
+        return exact;
+    // The clip's key period: the shortest gap between two keys of its first
+    // channel -- the rate it was baked at.
+    const core::u64 key = (static_cast<core::u64>(track.content.id) << 32) | track.clip;
+    auto found = keyPeriods_.find(key);
+    if (found == keyPeriods_.end()) {
+        f32 period = 0.0f;
+        if (const SkeletonLibrary::Entry* source = skeletons_->find(track.content);
+            source != nullptr && track.clip < source->clips.size() && !source->clips[track.clip].channels.empty()) {
+            const std::vector<f32>& times = source->clips[track.clip].channels.front().times;
+            for (usize index = 1; index < times.size(); ++index) {
+                const f32 gap = times[index] - times[index - 1];
+                if (gap > 0.0f && (period == 0.0f || gap < period))
+                    period = gap;
+            }
+        }
+        found = keyPeriods_.emplace(key, period).first;
+    }
+    const f32 period = found->second;
+    return period > 0.0f ? std::floor(exact / period) * period : exact;
+}
+
+void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibrary::Entry& skeleton,
+                                  std::span<const u32> drivers, bool indexed, bool quantise)
 {
     ENG_PROFILE_SCOPE("animation.pose");
-    ++posesBuilt_;
     const usize jointCount = skeleton.joints.size();
     if (jointCount == 0)
         return;
@@ -561,6 +626,38 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
     // onto it by joint name.
     const scene::MeshPartComponent* meshComponent = world_->meshParts().find(meshPart);
     const core::NameAtom content = meshComponent != nullptr ? meshComponent->meshContent : core::NameAtom{};
+
+    // What the mesh's bones turn (G9), by joint: `Bone.Transform` in the
+    // joint's own space, after whatever the clips did.
+    const std::vector<std::pair<u32, Mat4>> offsets = boneOffsets(meshPart, jointCount);
+
+    // **The same inputs, the same pose** (H10): the rig, and each driving
+    // track's clip, time and weight. A crowd of one rig walking one clip from
+    // one moment is one pose built and the rest copied -- exactly what each
+    // would have computed. Not with a bone turning it or a ragdoll holding
+    // it: those are this mesh's own.
+    signature_.clear();
+    const bool shareable = indexed && offsets.empty() && overridesFor(meshPart) == nullptr;
+    if (shareable) {
+        signature_.push_back(content.id);
+        for (const u32 index : drivers) {
+            const Track& track = tracks_[index];
+            if (!track.alive || !(track.playing || track.holding) || track.clip == NoClip || track.weight <= 0.0f)
+                continue;
+            signature_.push_back((static_cast<core::u64>(track.content.id) << 32) | track.clip);
+            signature_.push_back((static_cast<core::u64>(std::bit_cast<u32>(sampleTime(track, quantise))) << 32) |
+                                 std::bit_cast<u32>(track.weight));
+        }
+        if (signature_.size() > 1) {
+            if (const auto same = shared_.find(signature_); same != shared_.end()) {
+                same->second.used = sampled_;
+                poses_[keyOf(meshPart)] = same->second.pose;
+                ++posesShared_;
+                return;
+            }
+        }
+    }
+    ++posesBuilt_;
 
     // Accumulators, one currency per component. A weighted average per joint
     // rather than per track, because a joint no clip drives has to keep its rest
@@ -578,8 +675,11 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
 
     // **Track index order, which is load order.** R10 forbids the order coming
     // out of a container that does not promise one, and two tracks at weight
-    // 0.5 have to blend the same way on every run.
-    for (usize index = 1; index < tracks_.size(); ++index) {
+    // 0.5 have to blend the same way on every run. The tick's index of them
+    // is in that order; asked outside a tick, every track is.
+    const usize considered = indexed ? drivers.size() : tracks_.size() - 1;
+    for (usize position = 0; position < considered; ++position) {
+        const usize index = indexed ? drivers[position] : position + 1;
         const Track& track = tracks_[index];
         if (!track.alive || !(track.playing || track.holding) || track.clip == NoClip)
             continue;
@@ -587,7 +687,7 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
         // this mesh is under. Two players under one mesh are two sources
         // blending into one pose, which is what they look like on screen; one
         // player over a body and a shirt is one source moving both.
-        if (!drives(track, meshPart))
+        if (!indexed && !drives(track, meshPart))
             continue;
         if (track.weight <= 0.0f)
             continue;
@@ -607,37 +707,36 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
         const JointMap* const map = jointMapFor(track.content, content);
 
         const asset::AnimationClip& clip = source->clips[track.clip];
-        const auto time = static_cast<f32>(track.time);
+        const f32 time = sampleTime(track, quantise);
 
-        for (const asset::AnimationChannel& sourceChannel : clip.channels) {
-            asset::AnimationChannel channelStorage;
-            const asset::AnimationChannel* resolved = &sourceChannel;
+        for (const asset::AnimationChannel& channel : clip.channels) {
+            // The joint on THIS rig: the channel's own, or remapped by name.
+            // Remapped as a number -- the channel was copied, keys and all,
+            // for every pose that remapped it (H10).
+            u32 joint = channel.joint;
             if (map != nullptr) {
-                if (sourceChannel.joint >= map->slots.size() || map->slots[sourceChannel.joint] < 0) {
+                if (joint >= map->slots.size() || map->slots[joint] < 0) {
                     // A joint this rig does not have. Skipped rather than
                     // guessed: a shirt with no fingers should keep its own
                     // sleeve, not inherit a finger's rotation.
                     continue;
                 }
-                channelStorage = sourceChannel;
-                channelStorage.joint = static_cast<u32>(map->slots[sourceChannel.joint]);
-                resolved = &channelStorage;
+                joint = static_cast<u32>(map->slots[joint]);
             }
-            const asset::AnimationChannel& channel = *resolved;
-            if (channel.joint >= jointCount || channel.times.empty())
+            if (joint >= jointCount || channel.times.empty())
                 continue;
             if (!sampleChannel(channel, time, sample))
                 continue;
 
             switch (channel.target) {
             case asset::AnimationChannel::Target::Translation:
-                translation_[channel.joint].x += static_cast<f64>(sample[0] * track.weight);
-                translation_[channel.joint].y += static_cast<f64>(sample[1] * track.weight);
-                translation_[channel.joint].z += static_cast<f64>(sample[2] * track.weight);
-                weightT_[channel.joint] += track.weight;
+                translation_[joint].x += static_cast<f64>(sample[0] * track.weight);
+                translation_[joint].y += static_cast<f64>(sample[1] * track.weight);
+                translation_[joint].z += static_cast<f64>(sample[2] * track.weight);
+                weightT_[joint] += track.weight;
                 break;
             case asset::AnimationChannel::Target::Rotation: {
-                f32* accumulator = &rotation_[channel.joint * 4];
+                f32* accumulator = &rotation_[joint * 4];
                 // Sign-aligned against whatever is already there, for the same
                 // reason `sampleChannel` aligns two keys: blending q against -q
                 // is the long way round, and here it would show as a joint
@@ -645,25 +744,21 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
                 f32 dot = 0.0f;
                 for (usize lane = 0; lane < 4; ++lane)
                     dot += accumulator[lane] * sample[lane];
-                const f32 sign = (weightR_[channel.joint] > 0.0f && dot < 0.0f) ? -1.0f : 1.0f;
+                const f32 sign = (weightR_[joint] > 0.0f && dot < 0.0f) ? -1.0f : 1.0f;
                 for (usize lane = 0; lane < 4; ++lane)
                     accumulator[lane] += sample[lane] * sign * track.weight;
-                weightR_[channel.joint] += track.weight;
+                weightR_[joint] += track.weight;
                 break;
             }
             case asset::AnimationChannel::Target::Scale:
-                scale_[channel.joint].x += sample[0] * track.weight;
-                scale_[channel.joint].y += sample[1] * track.weight;
-                scale_[channel.joint].z += sample[2] * track.weight;
-                weightS_[channel.joint] += track.weight;
+                scale_[joint].x += sample[0] * track.weight;
+                scale_[joint].y += sample[1] * track.weight;
+                scale_[joint].z += sample[2] * track.weight;
+                weightS_[joint] += track.weight;
                 break;
             }
         }
     }
-
-    // What the mesh's bones turn (G9), by joint: `Bone.Transform` in the
-    // joint's own space, after whatever the clips did.
-    const std::vector<std::pair<u32, Mat4>> offsets = boneOffsets(meshPart, jointCount);
 
     if (!contributed && offsets.empty()) {
         // Nothing drives this player any more. Its pose is taken away rather
@@ -741,6 +836,13 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
         // the alternative, and this is the whole reason it is not needed.
         pose.model[joint] = bone.parent == asset::Joint::NoParent ? local : pose.model[bone.parent] * local;
         pose.palette[joint] = pose.model[joint] * bone.inverseBind;
+    }
+    if (shareable && signature_.size() > 1) {
+        // Bounded: a crowd at a thousand moments of its clips starts again.
+        constexpr usize MostShared = 1024;
+        if (shared_.size() >= MostShared)
+            shared_.clear();
+        shared_.insert_or_assign(signature_, SharedPose{pose, sampled_});
     }
 }
 

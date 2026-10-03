@@ -54,6 +54,9 @@ public:
 
     void set(core::NameAtom content, Entry entry);
     void clear() noexcept;
+    // Counted up on every change: what a pose remembered from an earlier
+    // skeleton or clip is checked against (H10).
+    [[nodiscard]] core::u64 revision() const noexcept { return revision_; }
 
     // Null for a URN nothing has loaded, or one whose file had no skeleton --
     // which is most of them.
@@ -68,6 +71,7 @@ private:
         Entry entry;
     };
     std::vector<Slot> entries_;
+    core::u64 revision_ = 0;
 };
 
 // The pose one skinned mesh is in, ready for a draw. Model space, one matrix per
@@ -257,7 +261,14 @@ private:
     // Finds the track's mesh and clip, if they are there yet. True once bound.
     bool bindTrack(Track& track) const;
 
-    void rebuildPose(core::InstanceId meshPart, const SkeletonLibrary::Entry& skeleton);
+    // `drivers`: the tracks that drive this mesh, in track order, when the
+    // tick has them indexed (H10); null asks every track.
+    // `quantise`: a mesh posed at a reduced rate samples its clips at their
+    // own key times, so the crowd at that rate shares poses (H10).
+    void rebuildPose(core::InstanceId meshPart, const SkeletonLibrary::Entry& skeleton,
+                     std::span<const u32> drivers = {}, bool indexed = false, bool quantise = false);
+    // The time a track's clip is sampled at: its own, or its key's.
+    [[nodiscard]] f32 sampleTime(const Track& track, bool quantise);
     // `Bone.Transform` (G9): the rig a bone is on, and every turn its bones ask
     // of it.
     [[nodiscard]] core::InstanceId rigOf(core::InstanceId bone) const;
@@ -344,7 +355,45 @@ private:
     // so it is one pass per mesh rather than one per track.
     std::vector<core::InstanceId> meshes_;
     core::u64 posesBuilt_ = 0;
+    // **Which tracks drive which mesh this tick** (H10), as (mesh key, track)
+    // sorted: a pose asked every track in the world whether it drove its mesh
+    // -- a thousand tracks for each of hundreds of meshes, each walking the
+    // mesh's ancestors.
+    std::vector<std::pair<core::u64, u32>> drivers_;
+    std::vector<u32> driving_;
+    // **Poses shared** (H10): what a pose was built from -- the rig, and each
+    // track's clip, time and weight -- to the pose. A mesh with the same
+    // inputs copies the answer: bit for bit what it would have computed, on
+    // whatever tick it is asked, for as long as the rigs and clips are the
+    // ones it was built from. Kept while used; a crowd at a reduced rate,
+    // posed on staggered ticks, shares across them.
+    struct SignatureHash
+    {
+        [[nodiscard]] core::usize operator()(const std::vector<core::u64>& signature) const noexcept
+        {
+            core::u64 hash = 1469598103934665603ull;
+            for (const core::u64 word : signature)
+                hash = (hash ^ word) * 1099511628211ull;
+            return static_cast<core::usize>(hash);
+        }
+    };
+    struct SharedPose
+    {
+        Pose pose;
+        core::u64 used = 0;
+    };
+    std::unordered_map<std::vector<core::u64>, SharedPose, SignatureHash> shared_;
+    core::u64 sharedRevision_ = 0;
+    std::vector<core::u64> signature_;
+    // A clip's key period, by (content, clip): what a quantised time rounds to.
+    std::unordered_map<core::u64, f32> keyPeriods_;
+    core::u64 posesShared_ = 0;
 
+public:
+    // How many poses were copied from another mesh's this run (H10).
+    [[nodiscard]] core::u64 posesShared() const noexcept { return posesShared_; }
+
+private:
     // **The update rate** (H3). What the renderer last reported, by mesh: how
     // much of the picture's height it covered. Looked up, never iterated (R10).
     std::unordered_map<core::u64, f32> seen_;

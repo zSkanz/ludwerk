@@ -61,9 +61,11 @@ Where each live agent stands, in the order `GetAgents` gives them.
 
 A knock-back, in metres a second along the ground, that dies away in a moment.
 
-### `QueryRadius(centre: vector, radius: number): { number }`
+### `QueryRadius(centre: vector, radius: number, into: { number }?, flat: boolean?): { number }`
 
-Every live agent whose feet are within `radius` of `centre`, in slot order: what a weapon aims at, and who has reached `Target`.
+Every live agent whose feet are within `radius` of `centre`, in slot order: what a weapon aims at, and who has reached `Target`. Answered from the swarm's grid, so its cost is the agents near `centre`, not all of them.
+
+`into`, when given, is emptied and filled and returned -- a weapon asking every tick makes no table. `flat` measures along the ground alone, so every agent of a tower over the circle is in it.
 
 ### `RemoveAgent(agent: number)`
 

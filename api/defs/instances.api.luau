@@ -7205,10 +7205,18 @@ local Classes: { Schema.Class } = {
             },
             {
                 Name = "QueryRadius",
-                Parameters = { { Name = "centre", Type = "vector" }, { Name = "radius", Type = "number" } },
+                Parameters = {
+                    { Name = "centre", Type = "vector" },
+                    { Name = "radius", Type = "number" },
+                    { Name = "into", Type = "{ number }?" },
+                    { Name = "flat", Type = "boolean?" },
+                },
                 Returns = { "{ number }" },
                 Doc = "Every live agent whose feet are within `radius` of `centre`, in slot order: what a "
-                    .. "weapon aims at, and who has reached `Target`.",
+                    .. "weapon aims at, and who has reached `Target`. Answered from the swarm's grid, so its "
+                    .. "cost is the agents near `centre`, not all of them.\n\n`into`, when given, is emptied "
+                    .. "and filled and returned -- a weapon asking every tick makes no table. `flat` measures "
+                    .. "along the ground alone, so every agent of a tower over the circle is in it.",
             },
             {
                 Name = "AddObstacle",

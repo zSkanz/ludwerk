@@ -82,6 +82,7 @@
   "cli.build.step.assemble": "Assembling the APK",
   "cli.build.step.sign": "Checking the signature",
   "cli.build.err.progress_format": "--progress={format} is not a format; the one there is is --progress=json.",
+  "cli.check.types_refreshed": "This project's engine types were from another engine; written again from this one.",
   "cli.build.err.mesh_format": "The asset compiler at {compiler} writes mesh format {format}, and the player at {player} cannot read it: they come from different builds. Build the player and the tools together, or point ENG_ASSETC at the compiler of the player's build.",
   "cli.build.err.no_player": "There is no player for {target}. An installation keeps one under player/; a build of this repository makes it with the {preset} preset; or point {variable} at one. Pass --dev-host to package this machine's development host instead, which carries the debug overlay, the inspector and a Luau REPL.",
   "cli.build.err.no_script_compiler": "There is no engine on this machine to compile the scripts with. Build the player or the dev host, or set [export] ship_source = true to ship the source.",

@@ -193,8 +193,11 @@ end)
   `Climbs` (true), and `Floats` with `FloatHeight` (1) for a flier that keeps
   over the ground and out of the pushing.
 - **Asked in bulk**: `GetAgents()` and `GetPositions()` in one call each,
-  `GetAgentPosition(agent)`, and `QueryRadius(centre, radius)` for what a weapon
-  aims at.
+  `GetAgentPosition(agent)`, and `QueryRadius(centre, radius, into, flat)` for
+  what a weapon aims at -- answered from the swarm's grid, so its cost is the
+  agents near the centre. Pass a table as `into` and it is emptied and filled
+  rather than a new one made; `flat` measures along the ground, so a whole
+  tower over the circle is in it.
 - **Told in bulk**: `SetAgentSpeed` (zero holds one where it stands, still
   pushed), `SetAgentPosition`, and `Push(agent, velocity)`, a knock-back that
   dies away.

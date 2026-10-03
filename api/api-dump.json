@@ -5933,6 +5933,14 @@
             {
               "Name": "radius",
               "Type": "number"
+            },
+            {
+              "Name": "into",
+              "Type": "{ number }?"
+            },
+            {
+              "Name": "flat",
+              "Type": "boolean?"
             }
           ],
           "Returns": ["{ number }"]
