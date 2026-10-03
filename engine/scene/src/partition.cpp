@@ -1070,7 +1070,16 @@ std::optional<core::EngineError> Partitioner::run(std::string_view sceneJson)
     residual.reserve(sceneJson.size());
     residual.append("{\"format\":\"");
     residual.append(kFormat);
-    residual.append("\",\"version\":1,\"root\":");
+    residual.append("\"");
+    // **The scene's own version** (D483): the nodes that stay are its own
+    // text, read by the rules of the version that wrote them. A residual
+    // headed as version 1 read every material a version 2 scene named as the
+    // old kind, and every part that stayed in the scene lost its material.
+    if (const std::optional<std::string_view> version = jsonslice::member(sceneJson, "version"); version.has_value()) {
+        residual.append(",\"version\":");
+        residual.append(*version);
+    }
+    residual.append(",\"root\":");
     (void)visitChildren(*root, textOf(*root, "name"), residual);
     // **Every other top-level member, verbatim.** The residual scene is the
     // whole scene minus what went into cells, and the tree is not the whole

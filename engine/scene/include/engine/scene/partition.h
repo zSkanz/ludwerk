@@ -68,8 +68,10 @@ inline constexpr core::f32 TerrainExtent = 24.0f;
 // text, and a partitioner that cuts the same text differently -- as D422's
 // does: the residual marks its anchors and the cells name them -- must not be
 // handed one an earlier build wrote. Raised whenever what a partition writes
-// changes meaning.
-inline constexpr core::u32 PartitionRevision = 2;
+// changes meaning. Three since the residual keeps the scene's own version
+// (D483): one written before it says version 1 over a version 2 scene's
+// nodes, and reads every material in it as none.
+inline constexpr core::u32 PartitionRevision = 3;
 
 // The size class an object of this extent belongs to, as a `ChunkId::layer`.
 [[nodiscard]] core::i32 layerForExtent(core::f32 extent) noexcept;

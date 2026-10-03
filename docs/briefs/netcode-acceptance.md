@@ -198,11 +198,31 @@ reproduced with real processes.
 
 ### From the FPS game (2026-10-03)
 
-- [ ] **K5** A part's `Material` written in a scene file is not there at run
-  time (P1: maps are authored in the editor).
+ludwerk-08's findings from `GuerraDeTinta`, kept here until they have a ledger
+of their own.
+
+- [x] **K5** A part's `Material` written in a scene file is not there at run
+  time: D483, the partitioned scene headed as version 1.
 - [ ] **K6** Scene parts wearing one material are not drawn once another,
   first worn by a part that neither collides nor is queried, is assigned at run
-  time.
+  time. **K7**, likely the same root: one `MeshPart` with glTF materials makes
+  every part wearing two of a scene's materials vanish, shadows included.
+- [ ] **G1** A placed stamp stores a world-space transform on every part, so a
+  part moved inside the stamp file never moves in a copy placed away from the
+  origin: the instance should store its root's transform, its children
+  relative (a design change to ADR 0049).
+- [ ] **G2** `"stamp": "barril"` in a scene is not found, where
+  `Instance.stamp("barril")` is: the reader does not normalise the name.
+- [ ] **G3** A connection made by a global module's function, called from a
+  scene script, outlives the scene, where a thread it spawned does not.
+- [ ] **G4** `Anchored` does not hold a `CharacterBody`.
+- [ ] **G5** A first-person layer drawn over the world with its own field of
+  view, lit by the world (a feature).
+- [ ] **G6** A billboard label draws a box for a glyph, and fills the glyph
+  cache; labels made before the cache clears draw garbage after it.
+- [ ] **G7** No `ViewportFrame` draws when the workspace has no camera.
+- [ ] The scene format's rotation is column by column, `m[column][row]`: say
+  so in the format's documentation.
 
 ## Findings
 

@@ -254,6 +254,38 @@ TEST_CASE("the block world and every other top-level member survive a partition"
     CHECK(partitioned.result.scene.find("\"Near\"") == std::string::npos);
 }
 
+TEST_CASE("D483: a part that stays in a partitioned scene keeps the material the scene gave it")
+{
+    // The residual scene was headed `"version":1` whatever the scene said, over
+    // nodes copied verbatim from a version 2 file -- and version 1 is the one
+    // where `Material` was not an asset, so every part that stayed in the scene
+    // wearing a material was read as wearing none. A scene too small to
+    // partition kept its materials, which is why a level lost them only once
+    // it grew.
+    seedRealCatalog();
+    Sandbox sandbox;
+    const std::string children =
+        partNodeWith("Floor", 0.0, 0.0, 0.0, 2.0, R"("Material":"materials/concrete.material.json",)", "") + "," +
+        partNode("Line", 10.0, 0.0, 10.0);
+    std::string text = sceneText(children);
+    text.replace(text.find(R"("version":1)"), 11, R"("version":2)");
+
+    const Partition partitioned = partition(sandbox, text);
+    REQUIRE(partitioned.result.report.records == 1);
+
+    Sandbox streamed;
+    REQUIRE(!scene::readScene(streamed.world, partitioned.result.scene).has_value());
+    std::vector<core::InstanceId> descendants;
+    streamed.world.collectDescendants(streamed.workspace, descendants);
+    const scene::PartComponent* worn = nullptr;
+    for (const core::InstanceId id : descendants) {
+        if (streamed.world.atoms().text(streamed.world.name(id)) == "Floor")
+            worn = streamed.world.parts().find(id);
+    }
+    REQUIRE(worn != nullptr);
+    CHECK(streamed.world.atoms().text(worn->material) == "materials/concrete.material.json");
+}
+
 TEST_CASE("a loose part goes into the cell its position falls in")
 {
     seedRealCatalog();
