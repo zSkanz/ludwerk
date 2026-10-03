@@ -19,6 +19,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **The wire is protocol 33**: a client and a server of different builds refuse
+  each other -- and now say so (`JoinFailed`, "another version of the game").
+- **A join changes nothing until the server takes it** (ADR 0106, amended): a
+  game's scene, its menu and its own server code run on while `State` is
+  `Connecting`, and the world becomes the server's at the welcome. A game that
+  counted on the scene being cleared at `Join` sees it cleared a moment later.
+- **Leaving a match returns to the scene the join was made from**, and the
+  local player is `UserId` 1 again; it used to stay in the server's scene, as
+  its authority.
+- **A dropped connection being dialled again is `Reconnecting`**, a new
+  `Enum.NetworkState` item, where it was `Connecting`.
+
 - **`BasePart.LinearVelocity` and `AngularVelocity` can be written** (ADR
   0127): an assignment used to raise, and now sets the speed the next tick
   starts from. A script that relied on the error to mean "read-only" no longer
@@ -152,6 +164,17 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
     instance, and the data model's services changed. The simulation did not.
 
 ### Added
+
+- **A worse network, on purpose**: `engine-host --net-delay=MS --net-jitter=MS
+  --net-loss=PCT` puts a link conditioner below the transport of a client's
+  link; refused by a shipping build. And `netcode_acceptance`, a gate that
+  walks a predicted character between a real server and a real client at 0 to
+  300 ms round trip with loss, jitter and long frames, and prints the table.
+- **`NetworkService.HostFailed`**, and `GetStats()`'s `Corrections`,
+  `InterpolationDelay` and `InputReanchors`.
+- **`--saves=DIR`**; a dedicated server keeps `saves-server` beside the
+  player's saves.
+- `examples/33-options`: the engine's options screen and a language button.
 
 - **`@engine/settings`** (ADR 0147): an options screen in one call.
   `settings.open()` puts a Graphics page and a Display page over the game, a
@@ -943,6 +966,30 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **Joining a large world** (the netcode audit, NA1): a world of a thousand
+  parts took 29 s to join on a loopback, and five thousand never did -- the
+  first snapshot went as one unreliable message resent until a whole copy got
+  through, and past a megabyte not at all. It goes reliably, in parts.
+- **A client's own body at twice the place the server put it** on joining
+  (N7, NA6).
+- **The connection's clock is not the frame's**: the transport is serviced by
+  a thread of its own, so a window in the background no longer reads a ping of
+  100 ms nor sends its input six ticks at a time; a networked session in the
+  background runs at sixty frames; ENet's throttle no longer drops snapshots
+  and input for seconds after a spike.
+- **A failed join kept nothing of the game** (N1); a full server answered
+  nothing (NA8); `Host` on a busy port was silent (NA7); `Disconnect` lost
+  what was sent just before it (NA9); `BindToClose` handlers could not reach
+  the network (NA10); a client whose game froze stayed connected for ever.
+- **A quick tap between two frames is a press** (NA25); a remote to an event a
+  player does not hold no longer holds every other remote for five seconds
+  (NA21); a server hitch no longer drops a client's remotes and newest input
+  (NA22, NA3); a part a client's own script makes falls on that client (NA17);
+  a teleport is drawn as one (NA15); a correction no longer pops (NA16);
+  others are drawn as far in the past as the link needs (NA14).
+- **A wheel spins past 47 rad/s** (K1): a ball, and a cylinder no longer than
+  it is wide, up to 500.
+- **A long frame's warning says where the time went** (N11).
 - **A client is heard again after a long frame** (D480): a client that dropped
   simulated time once -- a hitch of a tenth of a second is enough -- was
   ignored by the server for the rest of the session: its character never

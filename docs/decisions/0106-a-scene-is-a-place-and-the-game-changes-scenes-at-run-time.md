@@ -216,3 +216,14 @@ here asks it to change.
   the connection, the window and everything in memory.
 - **A client that changes its own scene in a match.** Two machines in two
   scenes cannot share one world.
+
+## Amended, 2026-10-02 (the netcode audit)
+
+- **A join changes nothing until the server takes it.** The world becomes the
+  server's at the welcome; until then the scene and its menu run on, and a join
+  that fails -- nobody answered, the server is full, another version -- leaves
+  them as they were and says why in `JoinFailed`. `Host` that cannot open its
+  port says so in `HostFailed`.
+- **Leaving returns to the scene the join was made from**, solo, the player at
+  this machine player 1 again; a client never runs the server's scene alone.
+- **`Reconnecting`** is the state while a dropped connection is dialled again.

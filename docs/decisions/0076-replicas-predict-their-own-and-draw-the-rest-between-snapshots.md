@@ -146,3 +146,24 @@ own brief. Each is a thing a person playing notices:
 
 The determinism traces moved at tick 0, and only because `Player` gained a
 property the world hash reads.
+
+## Amended, 2026-10-02 (the netcode audit)
+
+- **The input stream survives a client's long frame** (D480): intents late by
+  more than the redundancy window, or late four ticks running, anchor the
+  stream again on the newest tick; late and skipped presses are carried; a
+  stand-in lives half a second of silence.
+- **A take keeps no stale prediction** (NA6): when the authority's place is
+  taken with no comparison, the predictions made after it are the authority's
+  place too. Left as they were, the next answer read the whole move as an
+  error and added it again -- the doubled position measured on joining.
+- **Others are drawn as far in the past as the link needs**: two snapshot
+  intervals and twice the spread of their lateness, never less than set, a
+  tick at a time; the clock is nudged back when snapshots come later than the
+  link explains. **A move of more than two metres a tick is a teleport** and
+  is drawn as a step. A correction is drawn whole on its first frame and then
+  slides. A part a client's own scripts made is simulated by that client.
+- **The acceptance gate** (`netcode_acceptance`) holds it: a predicted
+  character walked straight for ten seconds at 0, 50, 150 and 300 ms round trip
+  with 2% loss and 20 ms of jitter is not corrected once, a long frame costs at
+  most two, and stopped it is where the authority stopped.

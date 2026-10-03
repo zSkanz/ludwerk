@@ -23,18 +23,25 @@ NetworkService:Join("play.example.com:7777") -- or Join() for [network] server
 | Call | What it does |
 |---|---|
 | `Join(address?)` | Connects to a server. With no address, `[network] server` from `project.toml`. |
-| `Host(port?)` | Makes this machine the authority others join, on port 7777 by default. |
-| `Disconnect()` | Leaves the match, or stops hosting, and goes back to solo. |
-| `State` | `Offline`, `Connecting`, `Connected`, `Hosting` or `Serving`. |
+| `Host(port?)` | Makes this machine the authority others join, on port 7777 by default. `HostFailed` says why when the port cannot be opened. |
+| `Disconnect()` | Leaves the match, or stops hosting, and goes back to solo. What was sent before it still arrives. |
+| `State` | `Offline`, `Connecting`, `Connected`, `Reconnecting`, `Hosting` or `Serving`. |
 
-- **Joining replaces this machine's scene with the server's.** What the server
-  replicates arrives, and this machine's server code stops: it no longer
+- **A join changes nothing until the server takes it.** While `State` is
+  `Connecting` the machine is what it was: its scene, its menu and its own
+  server code go on. If the server never answers, is full, or runs another
+  version of the game, `JoinFailed` says which -- to the very code that called
+  `Join`, which is still there to hear it.
+- **Taken, this machine's scene is replaced with the server's.** What the
+  server replicates arrives, and this machine's server code stops: it no longer
   decides the world. The scene's client code -- `ClientScriptService` -- starts
-  fresh in the world that arrived, once the join has succeeded; until then
-  `State` is `Connecting` and it is not running.
-- **Leaving goes back to solo** in the scene it is in, and the game's code
-  decides what next, usually `SceneService:LoadScene` of its menu. The other
-  players go, and server code starts again, fresh.
+  fresh in the world that arrived. **So `Connected` is heard by code that lives
+  across worlds** -- `GlobalScriptService` -- and by the new scene's client
+  code from its first line on; the scene that called `Join` has gone by then.
+- **Leaving goes back to solo in the scene the join was made from**, not the
+  server's: a client never runs the server's scene alone, with its server code,
+  as if it were the authority. The other players go, server code starts again,
+  fresh, and the player at this machine is player 1 again.
 - **`Authority` can change during a run**: false from a join, true again from a
   leave. A scene's scripts start after the change, so code there can read it
   once; code in `GlobalScriptService` that lives across it listens to `State`.
@@ -61,7 +68,8 @@ the `UserId` it had, so a score or an inventory keyed on it is still theirs. A
 game that wants to come back on its own calls `Join` from `Disconnected`.
 
 **A connection that drops is dialled again, for as long as the timeout.** While
-it is, `State` is `Connecting`. What happens next depends on who answers:
+it is, `State` is `Reconnecting`: the world stands as it was, and a game shows
+it and stops predicting. What happens next depends on who answers:
 
 | Who answers | What this machine gets |
 |---|---|
@@ -70,19 +78,48 @@ it is, `State` is `Connecting`. What happens next depends on who answers:
 | nobody, for `[network] timeout` | `Disconnected`, and the machine is solo |
 
 So a game needs one rule for all three: draw "reconnecting" while `State` is
-`Connecting`, and treat `Connected` as "the world is here" every time it fires
+`Reconnecting`, and treat `Connected` as "the world is here" every time it fires
 -- it fires on every return, not only the first. The first dial of a client
 started with `--join=` has no timeout: it waits for a server that is not up
 yet.
 
-**A server that goes silent is gone after ten seconds**, whether it closed or
-a cable was pulled, and the same holds for a player a server stops hearing.
+**A server that goes silent is gone after ten seconds**, whether it closed,
+a cable was pulled or its game froze, and the same holds for a player a server
+stops hearing. A full server says so at once, and so does one of another
+version.
 `[network] timeout` in `project.toml` sets it, from 1 to 120 seconds:
 
 ```toml
 [network]
 timeout = 5
 ```
+
+## How the connection is doing
+
+`NetworkService:GetStats()` is what a connection-quality mark is built from:
+`Ping`, `Jitter` and `Loss` as the transport measures them -- on a thread of
+its own, so a window in the background reads the same ping as one in front --
+how many times this machine's own character was corrected (`Corrections`, and
+`CorrectionsPerSecond`), how far in the past the others are drawn
+(`InterpolationDelay`, in milliseconds: it grows with a jittery link and comes
+back when the link does), and the authority's queue of this player's input.
+
+**A worse network, on purpose.** To see a game the way a player far away does:
+
+```
+run.bat --join=127.0.0.1 --net-delay=75 --net-jitter=20 --net-loss=2
+```
+
+holds each packet 75 ms each way, give or take 20, and loses 2% of them --
+below the transport, so its own round trip, resends and timeouts see it as they
+would see the real thing. For measuring; a shipping build refuses it. The
+engine's own acceptance gate walks a predicted character this way at 0, 50, 150
+and 300 ms round trip and with frames of 150 and 400 ms, and holds every
+condition to no correction on a straight walk.
+
+**A server and a player of one game on one machine** keep separate saves: a
+dedicated server keeps `saves-server` beside the player's `saves`, and
+`--saves=DIR` names any folder.
 
 ## Playing a match from the editor
 

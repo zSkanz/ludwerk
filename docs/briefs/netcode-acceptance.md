@@ -8,8 +8,8 @@ is proved and what stands in the way of it.
 
 **What we already have is the standard model**: client-side prediction and
 reconciliation by replay (ADR 0076), interpolation between snapshots, predicted
-physics (ADR 0133), an input buffer with redundancy, interest. What is missing
-is the ability to prove it under a bad connection, and the defects an audit of
+physics (ADR 0133), an input buffer with redundancy, interest. What was missing
+was the ability to prove it under a bad connection, and the defects an audit of
 it found.
 
 **Place in the queue:** ahead of the rest of batch 3c and of
@@ -17,74 +17,89 @@ it found.
 after (`settings-kickoff.md` G4's rest, mobile M2-M3, the pt-BR catalog, the
 manipulator pictures).
 
+**The owner's ruling of the same night:** the audit fixed in one batch, grouped
+by root, the full gate once at the end, one package and one report -- not a
+cycle a finding. What blocks (a decision of the owner's, an amendment) is
+listed and passed over.
+
 Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## What must hold at every stage
 
-- A failing test or a failing measurement first -- and for anything the memory
+- A failing test or a failing measurement, and for anything the memory
   transport does not model (its size cap, fragments, the throttle), over the
   ENet loopback: the memory transport enforces none of them, which is why the
   suite was green on all of what follows.
 - Defaults where a script says nothing are the industry's: snapshots at 20 to
   30 a second, an interpolation delay of two snapshot intervals that adapts to
   the jitter, input redundancy of three or four ticks, reconciliation by replay
-  smoothing a VISUAL offset and never moving the simulated body smoothly. Where
-  the code already does this, the gate only has to show it.
+  smoothing a VISUAL offset and never moving the simulated body smoothly.
 - Never port 7777 (the owner's live server) nor 7778 (a game's real server).
-- One push per lettered item; "package whole" after A+B, after C-E, after F-H.
 
-## A -- a network-condition simulator for real processes (first)
+## A -- a network-condition simulator for real processes
 
-- [ ] `engine-host --net-delay=MS --net-jitter=MS --net-loss=PCT`, each way,
-  in dev and test hosts and refused by a shipping build. Below ENet, so ENet
-  itself sees the conditions -- its round trip, its retransmits, its throttle --
-  as a UDP link conditioner between the transport's socket and the network.
-- [ ] The same reachable from a spec and from the C++ tests over the loopback.
+- [x] `engine-host --net-delay=MS --net-jitter=MS --net-loss=PCT`: a link
+  conditioner, a relay in the process below ENet, holding, jittering and losing
+  each datagram both ways on the link a client joins over; ENet's own round
+  trip, resends and timeouts see it (a 50 ms delay reads a 100 ms ping). Dev
+  and test hosts; a shipping build refuses it.
+- [x] Reachable from the C++ tests through `TransportConfig::simulated*`.
+- [ ] Conditions on a server's side, for every peer it holds.
 
 ## B -- the acceptance gate
 
-At 0, 50, 150 and 300 ms round trip, 2% loss, +-20 ms jitter, and with a
-150 ms and a 400 ms frame on the client:
+- [x] `netcode_acceptance` (`tests/netcode/run_netcode_acceptance.cmake`): a
+  real server and a real client, a `CharacterBody` predicted with the code the
+  server drives it with, walked straight for ten seconds by a bot, at 0, 50,
+  150 and 300 ms round trip with 2% loss and 20 ms of jitter, and with frames
+  of 150 and 400 ms. Held to: no correction on the walk (two at most for a long
+  frame), stopped within a millimetre of the authority, a remote's median
+  round trip within the ping, a tick and a frame. The table is written beside
+  it; see Findings for the one measured.
+- [x] `GetStats()`: `Corrections` (counted), `InterpolationDelay`,
+  `InputReanchors` beside what was there.
+- [ ] A `Character2D` and a script-moved character in the same gate, and the
+  others' drawn positions held to a tick's travel between frames.
 
-- [ ] Own character -- a `CharacterBody` in 3D, a `Character2D`, and one a
-  script predicts: input shows on the frame it is pressed; a straight walk of
-  10 s is zero corrections; stopping, the authority stops within 1e-3 of the
-  replica.
-- [ ] Other players: no jump in a drawn position larger than one tick's travel
-  between two frames; the interpolation delay adapts to the jitter and
-  `GetStats()` says what it is.
-- [ ] A reliable remote arrives once and in order at every condition; a
-  remote's round trip is at most the ping, a tick and a frame.
-- [ ] `GetStats().Ping` and a remote's round trip do not change when the
-  window loses the front or is minimised.
-- [ ] The numbers per condition in one table, kept as a golden the way the
-  frame budgets are.
+## C -- the transport serviced on its own clock
 
-## C -- the transport serviced on its own clock (N9)
-
-- [ ] The headless server waits inside the transport for the time left to the
-  tick (acks leave at once; the simulation still consumes at the tick); a
-  client services it every frame and flushes after a tick's sends; then on a
-  clock of its own, so a window at ten frames a second still answers in
-  milliseconds. `Ping` is the transport's round trip. Say what slows a window
-  in the background (our `backgroundFrameRate`) and that its ticks keep sixty
-  a second.
+- [x] N9: ENet is serviced by a thread of its own; a tick's sends are flushed
+  together. A window in the background reads the ping a window in front does.
+- [x] NA4: a networked session in the background runs at the simulation's
+  sixty frames, the listen host included.
+- [x] NA5: the packet throttle pinned, a 1200-byte datagram, Windows'
+  connection-reset reports off; a disconnect after the queue.
+- [x] A headless server catches up thirty ticks rather than four; intents are
+  budgeted over time rather than eight a tick (the newest were dropped after a
+  server hitch).
+- [ ] NA12: a capped retransmit timeout -- inside ENet's protocol, so a patch
+  under `third_party/patches`.
 
 ## D -- the input stream
 
-- [x] D480: a client heard again after a long frame -- anchored again when its
-  ticks fall behind (at once past the redundancy window, else after four late
-  ticks in a row), on the newest tick that came; late and skipped presses
-  carried; a stand-in that lives half a second of silence.
-- [ ] N13: `NetworkService.State` during a redial, and a `Reconnecting` state
-  or signal so a game can show it and stop predicting.
+- [x] D480: a client heard again after a long frame, to the last part (see the
+  defect).
+- [x] N13: `Enum.NetworkState.Reconnecting` while a dropped connection is
+  dialled again.
+- [x] NA25: a key pressed and let go between two ticks is down for one of them.
+  The frame's events are still read after its ticks, a frame late.
 
 ## E -- the lifecycle
 
-- [ ] N1: a `Join` nobody answers leaves the machine as it was and fires
-  `JoinFailed`; N2: after `Disconnected` a client goes back to the scene it
-  joined from, never runs the server's scene alone, and `UserId` is 1 again.
-- [ ] NA7-NA13 (below).
+- [x] N1: a `Join` changes nothing until the server takes it; one that fails
+  leaves the game as it was and fires `JoinFailed` with the reason.
+- [x] N2: leaving returns to the scene the join was made from, solo, player 1.
+- [x] NA7 `HostFailed`; NA8 a full server and one of another protocol answer
+  `Refused` with the reason; NA9 sends before `Disconnect` arrive; NA10 the
+  network is served while `BindToClose` runs; NA11 an address is read, not
+  looked up, and `host:77x` is refused rather than dialled at 7777; NA28
+  `[network] timeout` is the join's too; NA29 a connection that never says who
+  it is goes in three seconds and frees its slot at once.
+- [ ] NA11's IPv6 (ENet is IPv4-only); NA13 a phone in the background past ten
+  seconds (the transport's thread keeps the link, the session's silence rule
+  ends it: a "paused" notice with a longer grace).
+- [x] N5: `--saves=DIR`, and a dedicated server keeps `saves-server` beside the
+  player's `saves`.
 
 ## F -- unreliable remote events (N10, an amendment to ADR 0077)
 
@@ -100,69 +115,100 @@ At 0, 50, 150 and 300 ms round trip, 2% loss, +-20 ms jitter, and with a
 
 ## H -- the rest of the network findings
 
-- [ ] N11 (where a long frame's time went), N12 (the world replaced on join
-  costs a frame of 80-180 ms), N3-N6, N8 (`lote 6`'s list in
-  `network-kickoff.md`).
+- [x] N11: a long frame's warning says where its time went -- simulation and
+  its scripts, render-step scripts, waiting for the GPU and the display, and
+  the rest.
+- [x] N3: what hears `Connected`, `Disconnected` and `JoinFailed`, in the
+  multiplayer guide.
+- [ ] N12 (the world replaced on join costs a frame of 80-180 ms, "the rest"
+  in N11's split), N4 (`Enum.NetworkEndReason` beside the text), N6 (a "Start
+  server" launcher in a `host` or `none` export).
 
-## The audit's findings (NA1-NA33)
+## The audit's findings (NA1-NA34)
 
 ludwerk-08's audit of 2026-10-02 against what professional engines do, with
 the file and line of each and a failing test for each. **Measured** ones were
-reproduced with real processes. Order: after A and B, the P0s; the P1s where
-they belong in C-H; the P2s as they fit.
+reproduced with real processes.
 
 ### P0 -- breaks play
 
-- [ ] **NA1** Joining a world of more than a few hundred parts takes tens of
-  seconds or never ends (measured: 1 000 parts 29 s, 5 000 never, on
-  localhost): the first snapshot whole, unreliable and fragmented, resent
-  every two ticks; a silent 1 MiB send cap; acks not checked; the atom count a
-  u16 (NA33). Initial state reliable and in chunks, or under a send budget.
-- [ ] **NA2** Block and terrain ground ignores interest and goes whole to every
-  joiner on the reliable control channel, encoded again per peer.
-- [x] **NA3** The input stream after long frames (D480's follow-up).
-  Left for C: `MaxIntentsPerTick` drops the newest messages after a server
-  hitch, and a headless server drops simulated time past four catch-up ticks.
-- [ ] **NA4** A window that is not in front runs ten frames a second in a
-  networked session too, the listen host included -- every client sees the
-  others freeze and jump, and the ping reads 100 ms.
-- [ ] **NA5** ENet at its defaults: the throttle drops snapshots and intents
-  after a spike for up to five seconds; an MTU too large for a VPN; Windows'
-  connection-reset reports cut a frame's receive short.
+- [x] **NA1** Joining a world of more than a few hundred parts: a snapshot
+  over 16 KiB goes reliable in parts, held until acknowledged; acknowledgements
+  checked; a refused send counted, not passed over. Ten thousand parts join in
+  under three seconds over the loopback (was: 1 000 in 29 s, 5 000 never).
+- [~] **NA2** The whole ground is encoded once for every peer. Its own channel
+  and interest for the ground wait for a design: a chunk message ordered
+  against the spawns it may name, and the chunks each peer holds.
+- [x] **NA3** The input stream after long frames (D480, and the server's
+  catch-up and intent budget in C).
+- [x] **NA4**, [x] **NA5** -- see C.
+- [ ] **NA34** (from the kart game) Joints, attachments and movers are not on
+  the wire: an owner of a jointed assembly receives its parts only, and a
+  vehicle falls apart on its owner's machine. The wire reads only a part's
+  components and `Name`/`Parent`; joints need component readers for each of
+  their fields and references between instances beyond `Parent`. **The next
+  slice.**
 
 ### P1 -- visible, fragile or exploitable
 
-- [ ] **NA6** N7's cause: the reconcile that takes the authority's place keeps
-  samples newer than the acknowledged tick, and the next answer adds the error
-  twice (measured: the own body at twice its position after a server teleport).
-- [ ] **NA7** `Host` failing is silent (measured). **NA8** A full server
-  answers nothing (measured); no max-players key, no kick, no approval hook.
-  **NA9** `Disconnect` throws away the same tick's sends. **NA10** The network
-  is not serviced during a server's `BindToClose`. **NA11** Name resolution
-  blocks the frame and is IPv4 only. **NA12** Seconds frozen after a short VPN
-  drop. **NA13** Android in the background ends the match.
-- [ ] **NA14** The interpolation clock moves only forward, its delay is fixed,
-  and nothing extrapolates. **NA15** Teleports are interpolated. **NA16**
-  Correction smoothing pops on its first frame; no rotation smoothing; 2D has
-  neither replay nor smoothing. **NA17** A part a client creates cannot move on
-  that client. **NA18** The own character collides with others where they were
-  drawn. **NA25** Input read once a frame, after the ticks: taps lost at 30 fps.
-- [ ] **NA19** Send cost grows as players times instances, with 64 world copies
-  each side. **NA20** No bandwidth budget, priority or quantisation. **NA21**
-  One remote the peer does not hold blocks all remotes for five seconds.
-  **NA22** Reliable remotes dropped after a hitch. **NA23** Flood limits far
-  above any game, with no consequence. **NA24** A drag detector's ownership
-  lets a client teleport a body.
+- [x] **NA6** N7's doubled position: a take keeps no stale prediction.
+- [x] **NA7**-**NA11** -- see E. [ ] **NA12**, [ ] **NA13** -- see C and E.
+- [x] **NA14** The interpolation delay adapts to the link and is reported;
+  the clock is nudged back. [ ] Bounded extrapolation past the newest sample.
+- [x] **NA15** A move of over two metres a tick is drawn as a step.
+- [~] **NA16** A correction is drawn whole on its first frame, then slides.
+  [ ] Rotation smoothing; 2D smoothing and replay.
+- [x] **NA17** A part a client's own scripts made is simulated by that client.
+- [ ] **NA18** The own character collides with others where they were drawn.
+- [x] **NA25** -- see D.
+- [ ] **NA19** Send cost grows as players times instances; [ ] **NA20** no
+  bandwidth budget, priority or quantisation -- both change what the snapshot
+  checksum is over (ADR 0069), a design of their own.
+- [x] **NA21** In order per remote. [x] **NA22**, **NA23** Budgets over time,
+  and a flooding peer let go. [x] **NA24** An owner moves what it owns within
+  reach.
 
 ### P2 -- gaps against professional practice
 
-- [ ] **NA26** No clock synchronisation; the delay rises fast and falls only
-  while idle. **NA27** `GetStats()` counters that do not mean what they say.
-  **NA28** Timeouts promised and not wired. **NA29** Half-open connections and
-  connect floods. **NA30** The token in clear (goes with ADR 0120's build), any
-  captured network id nameable, a player with no character sent the whole
-  world. **NA31** Attributes re-encoded every snapshot; long strings cut
-  silently. **NA32** The replica's despawn, release and ack details. **NA33**
-  The atom count's overflow (with NA1).
+- [ ] **NA26** Clock synchronisation by time scaling. [ ] **NA27** `Loss` from
+  sequence gaps, per direction. [x] **NA28** see E. [~] **NA29** see E; a
+  stateless cookie against spoofed connects is not done. [ ] **NA30** the token
+  in clear (with ADR 0120's build), any captured network id nameable, a player
+  with no character sent the whole world. [ ] **NA31** attributes re-encoded
+  every snapshot. [ ] **NA32** the replica's despawn, release and ack details.
+  [x] **NA33** the name count is 32 bits.
+
+### From the kart game (for after this ledger, unless they fit)
+
+- [x] **K1** A ball, and a cylinder no longer than it is wide, spin up to
+  500 rad/s; anything else keeps Jolt's 47 (a tumbling log at 500 tunnelled).
+- [ ] **K2** A scene's scripts start before its streamed parts exist: an
+  authority that serves others holding the whole world, or a "loaded around"
+  signal -- an amendment to ADR 0053.
+- [ ] **K3** Render-step callbacks in a headless run that draws for
+  `--screenshot`. [ ] **K4** `HingeConstraint.CurrentAngle`,
+  `PrismaticConstraint.CurrentPosition`.
 
 ## Findings
+
+- **The acceptance table, measured on the development machine** (2026-10-02,
+  `netcode_acceptance`, a quiet run):
+
+  | condition | corrections | stop (m) | ping (ms) | remote (ms) | interpolation (ms) |
+  |---|---|---|---|---|---|
+  | clean | 0 | 0.0000 | 1.0 | 16.5 | 66.7 |
+  | 50ms | 0 | 0.0000 | 46.0 | 83.3 | 116.7 |
+  | 150ms | 0 | 0.0000 | 150.0 | 166.7 | 116.7 |
+  | 300ms | 0 | 0.0000 | 299.0 | 333.2 | 116.7 |
+  | hang150 | 0 | 0.0000 | 48.0 | 66.6 | 166.7 |
+  | hang400 | 1 | 0.0000 | 51.0 | 83.2 | 150.0 |
+
+  Under the whole suite running beside it, `hang150` once took two: the bound
+  for a long frame is two.
+- **A remote's round trip is measured as a median.** With 2% loss one call in
+  ten waits for a resend, and the mean of ten at 300 ms read 408 ms.
+- **The transport's thread changed what silence means**: a frozen game still
+  answers the transport, so the sessions count ten seconds without a message
+  themselves -- on both sides.
+- **The doubled position (N7) reproduced exactly as the owner measured it**:
+  27.9 m put by the server read 55.8 on the replica.

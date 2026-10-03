@@ -109,3 +109,13 @@ when the first of `RemoteEvent`, `NetworkOwnership` or `Team` arrives".
   - a message naming a part is dropped;
   - a flood is cut at 256 a tick;
   - an event created and fired in the same tick arrives after its own spawn.
+
+## Amended, 2026-10-02 (the netcode audit)
+
+- **In order per remote, not across them.** A message to an event a peer does
+  not hold held every message to every event behind it for five seconds; it
+  now holds back only what follows it to the same event.
+- **A client's messages are budgeted over time**: a burst of 1 024, and 64 a
+  tick after it, with the bytes the same way. A server's long frame no longer
+  drops what a game sent legitimately, and a peer that floods past its budget
+  for five seconds is let go.

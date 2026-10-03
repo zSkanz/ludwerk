@@ -83,3 +83,12 @@ owner within whatever checks the game adds.
 - **The authority keeps simulating an owned part and blends toward the owner.**
   Rejected: two solvers over one body is the fight ADR 0076 ended for
   characters.
+
+## Amended, 2026-10-02 (the netcode audit)
+
+- **An owner moves what it owns within reach**: two metres a tick, 120 m/s,
+  from where it is. Ownership was a licence to put a part anywhere in one
+  message, the authority taking it back a tick later.
+- **Joints are not yet on the wire** (NA34): an owner of a jointed assembly
+  receives its parts only, and a vehicle falls apart on its owner's machine.
+  The next slice of the netcode ledger.

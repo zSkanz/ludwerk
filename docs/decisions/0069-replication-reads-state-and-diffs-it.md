@@ -161,3 +161,20 @@ affordable.
 **A hand-written serialiser per class.** Rejected for the reason `api/defs/`
 exists: it is a second list of the same facts, and the two drift in the
 direction nobody notices.
+
+## Amended, 2026-10-02 (protocol 33, the netcode audit)
+
+- **A snapshot over 16 KiB goes reliable, in 32 KiB parts** (`SnapshotPart`),
+  and nothing more goes to that peer until it is acknowledged; the state it
+  was is kept until then, since the history may move past it. Before, a
+  world's first snapshot -- every record whole -- was one unreliable message
+  ENet fragments, lost whole when a fragment was and resent every other tick:
+  29 seconds to join 1 000 parts on a loopback, never 5 000, and anything over
+  a megabyte was refused by the transport and counted as sent.
+- **An acknowledgement names a tick this peer was sent**, or it is refused.
+- **The snapshot's name count is 32 bits**; sixteen wrapped past 65 535.
+- **`Refused`**: an authority that will not take a replica -- full, or of
+  another protocol -- says so before it lets the connection go.
+- **The whole ground is encoded once** for every peer that needs it, not once
+  a peer. Interest for the ground, and its own channel, wait for a design of
+  their own: a chunk message ordered against the spawns it may name.
