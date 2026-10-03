@@ -211,11 +211,11 @@ of their own.
   part moved inside the stamp file never moves in a copy placed away from the
   origin: the instance should store its root's transform, its children
   relative (a design change to ADR 0049).
-- [ ] **G2** `"stamp": "barril"` in a scene is not found, where
-  `Instance.stamp("barril")` is: the reader does not normalise the name.
-- [ ] **G3** A connection made by a global module's function, called from a
-  scene script, outlives the scene, where a thread it spawned does not.
-- [ ] **G4** `Anchored` does not hold a `CharacterBody`.
+- [x] **G2** `"stamp": "barril"` in a scene is found as `Instance.stamp`
+  finds it: D488.
+- [x] **G3** A connection a scene script makes through a global module ends
+  with the scene: D487.
+- [x] **G4** `Anchored` holds a `CharacterBody`: D486.
 - [ ] **G5** A first-person layer drawn over the world with its own field of
   view, lit by the world (a feature).
 - [ ] **G6** A billboard label draws a box for a glyph, and fills the glyph
@@ -225,8 +225,7 @@ of their own.
   what an icon in a box wants.
 - [ ] **G9** `Bone.Transform` moves nothing: a chest bone turned eighty degrees
   leaves the figure, and the hand bone after it, as they were.
-- [ ] **G10** `HostFailed`'s reason carries its catalog key in front of the
-  words; `JoinFailed`'s does not.
+- [x] **G10** `HostFailed`'s reason is the words alone: D485.
 - [ ] The scene format's rotation is column by column, `m[column][row]`: say
   so in the format's documentation.
 

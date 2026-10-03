@@ -72,6 +72,19 @@ constexpr core::u16 DefaultPort = 7777;
     return true;
 }
 
+// **What a player is told**, from an engine error (D485): its words without
+// the `[key]` in front, which is for a log. `HostFailed` and a join that could
+// not start handed a game the key with the sentence.
+[[nodiscard]] std::string reasonOf(const core::EngineError& error)
+{
+    const std::string& message = error.message;
+    if (message.starts_with('[')) {
+        if (const std::size_t end = message.find("] "); end != std::string::npos)
+            return message.substr(end + 2);
+    }
+    return message;
+}
+
 // The words for why an authority refused this machine (NA8).
 [[maybe_unused]] [[nodiscard]] std::string refusalText(core::u8 reason)
 {
@@ -363,7 +376,7 @@ void NetworkSession::update()
             }
             if (std::optional<core::EngineError> error = begin(replication::Topology::Replica, address, port, false);
                 error.has_value()) {
-                script::fireNetworkEvent(host->runtime().state(), "JoinFailed", error->message);
+                script::fireNetworkEvent(host->runtime().state(), "JoinFailed", reasonOf(*error));
                 break;
             }
             // The world stays this machine's until the server takes it: the
@@ -388,7 +401,7 @@ void NetworkSession::update()
                 // **Said to the game, not only to the log** (NA7): a port in
                 // use left `State` at Offline and the script waiting.
                 core::logText(core::LogLevel::Error, error->message);
-                script::fireNetworkEvent(host->runtime().state(), "HostFailed", error->message);
+                script::fireNetworkEvent(host->runtime().state(), "HostFailed", reasonOf(*error));
                 break;
             }
             state.networkTopology = scene::NetworkTopology::Host;

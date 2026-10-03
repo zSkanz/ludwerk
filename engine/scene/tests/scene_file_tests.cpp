@@ -515,6 +515,39 @@ TEST_CASE("changing a stamp changes every unbroken instance of it")
     CHECK(other.world.childCount(placed) == 2);
 }
 
+TEST_CASE("D488: a scene names a stamp by the name Instance.stamp takes")
+{
+    // `"stamp": "barril"` in a hand-written scene was a missing stamp, where
+    // `Instance.stamp("barril")` finds `stamps/barril.stamp.json`: the code
+    // normalised the name and the reader did not.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId barrel = partUnder(fixture, workspace, "Barrel", core::DVec3{});
+    (void)partUnder(fixture, barrel, "Lid", core::DVec3{});
+    const std::string stampText = scene::writeStamp(fixture.world, barrel);
+    const auto source = [&stampText](std::string_view wanted) -> std::optional<std::string> {
+        return wanted == "stamps/barril.stamp.json" ? std::optional<std::string>(stampText) : std::nullopt;
+    };
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    SceneIoReport read;
+    const std::string sceneText =
+        R"({"format":"scene","version":2,"root":{"class":"Workspace","name":"Workspace","children":[)"
+        R"({"stamp":"barril","name":"Barril1"}]}})";
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, &read, source).has_value());
+    CHECK(read.missingStamps == 0);
+    CHECK(read.stamped == 1);
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Barril1")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    // Marked with the file's own name, so the next save writes that.
+    CHECK(other.world.atoms().text(other.world.stampOf(placed)) == "stamps/barril.stamp.json");
+}
+
 TEST_CASE("a scene naming a stamp nobody can supply still opens, and says how many")
 {
     Fixture fixture;

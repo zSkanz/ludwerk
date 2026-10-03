@@ -2017,8 +2017,15 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
         // K^3 instances at depth four.
         const bool placeable = stamps != nullptr && stamps->source != nullptr && *stamps->source &&
                                depth < kMaxStampDepth && report.instances < report.instanceLimit;
-        const core::InstanceId placed =
+        core::InstanceId placed =
             placeable ? placeStamp(world, parent, stampName, report, stamps, depth) : core::InstanceId{};
+        // **And by the name `Instance.stamp` takes** (D488): "barril" is
+        // `stamps/barril.stamp.json`. As written first, so a file at the
+        // name a scene gives is the one it means.
+        if (!placed.valid() && placeable) {
+            if (const std::string named = normalizeStampPath(stampName); named != stampName)
+                placed = placeStamp(world, parent, named, report, stamps, depth);
+        }
         if (!placed.valid()) {
             // Counted rather than fatal, for the same reason an unknown class
             // is: a scene that names a stamp somebody deleted should still

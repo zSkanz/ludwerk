@@ -2541,6 +2541,62 @@ void writeTwoScenes(Project& project)
 
 } // namespace
 
+TEST_CASE("D487: a connection a scene's script makes through a global module ends with the scene")
+{
+    // The FPS game, measured: a global module's function, called from a scene
+    // script, connected to Heartbeat and spawned a loop. After the scene
+    // changed the loop had stopped -- a thread is the calling script's -- and
+    // the handler went on firing in the next scene: a connection was the
+    // handler's script's, and the module's lives for the whole game.
+    Captured log;
+    Project project;
+    project.write("src/shared/Ticker.luau", R"(
+        local RunService = game:GetService("RunService")
+        local Global = game:GetService("GlobalScriptService")
+        return function(label: string)
+            RunService.Heartbeat:Connect(function()
+                Global:SetAttribute("Beats", ((Global:GetAttribute("Beats") :: number?) or 0) + 1)
+            end)
+            task.spawn(function()
+                while true do
+                    Global:SetAttribute("Loops", ((Global:GetAttribute("Loops") :: number?) or 0) + 1)
+                    task.wait()
+                end
+            end)
+        end
+    )");
+    project.write(
+        "content/scenes/a.scene.json",
+        R"json({"format":"scene","version":2,"root":{},"storage":{)json"
+        R"json("ClientScriptService":{"class":"ClientScriptService","name":"ClientScriptService","children":[)json"
+        R"json({"class":"Script","name":"Start","properties":{"Source":)json"
+        R"json("require(game:GetService('GlobalScriptService').Shared:WaitForChild('Ticker'))('a')"}}]}}})json");
+    project.write("content/scenes/b.scene.json", R"json({"format":"scene","version":2,"root":{}})json");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(sceneOptions(project)).has_value());
+    for (int tick = 0; tick < 5; ++tick)
+        host.tick();
+    scene::World& world = host.world();
+    const core::InstanceId global = serviceOf(host, "GlobalScriptService");
+    const auto count = [&world, global](std::string_view name) {
+        const scene::Value value = world.getAttribute(global, world.atoms().intern(name));
+        const auto* number = std::get_if<core::f64>(&value);
+        return number != nullptr ? *number : 0.0;
+    };
+    REQUIRE(count("Beats") > 0.0);
+    REQUIRE(count("Loops") > 0.0);
+    REQUIRE_FALSE(host.loadScene("scenes/b.scene.json").has_value());
+    host.tick();
+    host.tick();
+    const double beats = count("Beats");
+    const double loops = count("Loops");
+    for (int tick = 0; tick < 10; ++tick)
+        host.tick();
+    CHECK(count("Loops") == doctest::Approx(loops));
+    CHECK(count("Beats") == doctest::Approx(beats));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
 TEST_CASE("a script that survives a scene change keeps its one run, and is never started again (S0.5)")
 {
     // A kept screen's script was started again by every scene change while its

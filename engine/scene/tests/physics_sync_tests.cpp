@@ -2299,7 +2299,7 @@ TEST_CASE("a character ground is raised round ends standing on it (D417)")
     const core::InstanceId terrain = terrainWith(mirror, 10.0f);
     const core::InstanceId walker = mirror.part("Walker", {16.0, 12.5, 16.0});
     mirror.fixture.world.parts().find(walker)->size = core::Vec3{2.0f, 5.0f, 2.0f};
-    mirror.body(walker).anchored = true;
+    // Not anchored: an anchored character is not stepped (D486).
     mirror.fixture.world.characterBodies().add(walker, CharacterBodyComponent{});
     // The controller says it stands where it was put: on the ground at ten.
     mirror.backend.characterAnswer.transform.position = core::DVec3{16.0, 12.5, 16.0};
@@ -2330,7 +2330,7 @@ TEST_CASE("D439, D440: a walk is WalkSpeed across the ground, up a slope and dow
     Mirror mirror;
     const core::InstanceId walker = mirror.part("Walker", {0.0, 3.0, 0.0});
     mirror.fixture.world.parts().find(walker)->size = core::Vec3{1.0f, 2.0f, 1.0f};
-    mirror.body(walker).anchored = true;
+    // Not anchored: an anchored character is not stepped (D486).
     mirror.fixture.world.characterBodies().add(walker, CharacterBodyComponent{});
     mirror.backend.characterAnswer.transform.position = core::DVec3{0.0, 3.0, 0.0};
     mirror.backend.characterAnswer.ground = physics::CharacterGround::Grounded;

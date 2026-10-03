@@ -105,6 +105,11 @@ struct ConnectionRecord
     // made (an engine function, a module's). What a stopped script's
     // connections are found by (the script-sides close, S4).
     const void* run = nullptr;
+    // **And the run whose thread called `Connect`**, where that is another
+    // (D487): a scene script that connects through a global module's function
+    // owns the connection as it owns the threads the call spawns, so it ends
+    // with the scene. Null when it is `run`.
+    const void* madeBy = nullptr;
 };
 
 struct SignalRecord

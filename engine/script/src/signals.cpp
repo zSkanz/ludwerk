@@ -100,9 +100,11 @@ void disconnectRecord(lua_State* L, ConnectionId id)
     connection->connected = false;
     if (connection->ref > 0)
         connection->ref = lua_unref(L, connection->ref);
-    // Out of its run's list, newest first for the reason the signal's is.
-    if (connection->run != nullptr) {
-        if (const auto found = sys.byRun.find(connection->run); found != sys.byRun.end()) {
+    // Out of its runs' lists, newest first for the reason the signal's is.
+    const auto leave = [&sys, id](const void* run) {
+        if (run == nullptr)
+            return;
+        if (const auto found = sys.byRun.find(run); found != sys.byRun.end()) {
             std::vector<ConnectionId>& mine = found->second;
             for (usize index = mine.size(); index-- > 0;) {
                 if (mine[index] == id) {
@@ -113,7 +115,9 @@ void disconnectRecord(lua_State* L, ConnectionId id)
             if (mine.empty())
                 sys.byRun.erase(found);
         }
-    }
+    };
+    leave(connection->run);
+    leave(connection->madeBy);
 
     const SignalId signal = connection->signal;
     if (SignalRecord* record = sys.signals.find(signal)) {
@@ -317,10 +321,16 @@ void enqueueFire(lua_State* L, SignalId id, int first, int count)
         connection.run = runEnvOfThread(thread);
     lua_pop(L, 1);
 
+    // And the run of the thread connecting, where it is another (D487).
+    if (const void* caller = runEnvOfThread(L); caller != nullptr && caller != connection.run)
+        connection.madeBy = caller;
+
     const ConnectionId handle = sys.connections.insert(connection);
     record.connections.push_back(handle);
     if (connection.run != nullptr)
         sys.byRun[connection.run].push_back(handle);
+    if (connection.madeBy != nullptr)
+        sys.byRun[connection.madeBy].push_back(handle);
     syncPropertySubscription(L, record);
     return handle;
 }

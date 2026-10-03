@@ -649,6 +649,22 @@ void PhysicsSync::applyCharacter(core::InstanceId id, PartComponent& part, Rigid
         record.written = part.cframe;
     }
 
+    // **An anchored character stays where it is put** (D486), as an anchored
+    // part does: not stepped, so neither gravity nor `Move` moves it, and a
+    // script's `CFrame` is where it is. What it was carrying is dropped, so it
+    // does not leave at speed when it is let go.
+    if (body.anchored) {
+        record.follower = true;
+        character.moveDirection = core::Vec3{};
+        character.jumpRequested = false;
+        character.verticalVelocity = 0.0f;
+        character.push = core::Vec3{};
+        body.pendingImpulse = core::Vec3{};
+        body.pendingAngularImpulse = core::Vec3{};
+        body.velocityWritten = false;
+        return;
+    }
+
     // **On a replica, only its own player's character is simulated** (ADR
     // 0076). Every other one is where the authority's snapshots put it: moving
     // it here as well was two answers to one question, and the snapshot and

@@ -139,6 +139,55 @@ describe("A character made where another was just destroyed", function()
     end)
 end)
 
+--- **An anchored character stays where it is put** (D486): `Anchored` is a
+--- part's, and a character is a part. A block world anchors its players while
+--- the ground under them loads; they fell through it.
+describe("An anchored CharacterBody", function()
+    afterEach(cleanUp)
+
+    it("does not fall, anchored before it is parented", function()
+        local body = Instance.new("CharacterBody")
+        body.Size = vector.create(2, 5, 2)
+        body.Anchored = true
+        body.Position = vector.create(0, 40, 0)
+        body.Parent = workspace
+        table.insert(spawned, body)
+        task.wait(0.5)
+        expect(body.Position.y):ToBeCloseTo(40, 0.01)
+    end)
+
+    it("stops where it is when it is anchored in the air", function()
+        local body = character(vector.create(0, 60, 0))
+        task.wait(0.3)
+        body.Anchored = true
+        task.wait()
+        local held = body.Position.y
+        task.wait(0.5)
+        expect(body.Position.y):ToBeCloseTo(held, 0.01)
+    end)
+
+    it("is where a script puts it, and does not walk", function()
+        local body = character(vector.create(0, 30, 0))
+        body.Anchored = true
+        body.CFrame = CFrame.new(5, 25, 5)
+        for _ = 1, ticks(0.5) do
+            body:Move(vector.create(1, 0, 0))
+            task.wait()
+        end
+        expect(body.Position.x):ToBeCloseTo(5, 0.01)
+        expect(body.Position.y):ToBeCloseTo(25, 0.01)
+    end)
+
+    it("falls again when it is let go", function()
+        local body = character(vector.create(0, 50, 0))
+        body.Anchored = true
+        task.wait(0.2)
+        body.Anchored = false
+        task.wait(0.5)
+        expect(body.Position.y < 49):ToBe(true)
+    end)
+end)
+
 describe("CharacterBody.GravityScale and JumpSpeed", function()
     afterEach(cleanUp)
 

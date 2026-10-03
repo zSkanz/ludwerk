@@ -715,7 +715,9 @@ TEST_CASE("NA7: a host that cannot open its port says so to the game")
     second.project.write("src/client/host.luau", R"(
         local NetworkService = game:GetService("NetworkService")
         NetworkService.HostFailed:Connect(function(reason: string)
-            print(`host-failed:{reason ~= ""} state:{NetworkService.State.Name}`)
+            -- The words a game shows its player, with no catalog key in front
+            -- of them (D485), as `JoinFailed`'s are.
+            print(`host-failed:{reason ~= ""} state:{NetworkService.State.Name} keyed:{string.sub(reason, 1, 1) == "["}`)
         end)
         task.wait(0.2)
         NetworkService:Host(47103)
@@ -726,7 +728,7 @@ TEST_CASE("NA7: a host that cannot open its port says so to the game")
         second.frame();
     }
     CHECK(first.state() == Hosting);
-    CHECK(log.contains("host-failed:true state:Offline"));
+    CHECK(log.contains("host-failed:true state:Offline keyed:false"));
 }
 
 TEST_CASE("N2: a client whose server goes is player 1 again, in its own world")

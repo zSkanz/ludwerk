@@ -972,6 +972,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **Parts that vanished on Windows** (D484): an instanced run drawn after single
+  draws on other meshes read every instance from the first under D3D12 -- an
+  SDL backend defect, patched. A `MeshPart` with its own materials, or a new
+  material, could take a wall or a crate stack out of the frame.
+- **A part's `Material` in a scene once the scene partitions** (D483), a
+  `CharacterBody` that is `Anchored` (D486), a connection a scene's script made
+  through a global module after the scene ended (D487), a scene's stamp named
+  as `Instance.stamp` names it (D488), and `HostFailed`'s reason without its
+  catalog key (D485).
 - **A part a player owned never moved on the server** (D482): handed over in
   the tick it was made, it was simulated from the origin by its owner and every
   place it was sent refused.
