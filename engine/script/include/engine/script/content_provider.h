@@ -31,6 +31,8 @@ struct PreloadItem
     int itemRef = -1;
     std::vector<std::string> contents;
     bool reported = false;
+    // A stamp that could not be read (ADR 0155 §10): reported as a failure.
+    bool failed = false;
 };
 
 struct PreloadRequest

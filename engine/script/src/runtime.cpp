@@ -263,6 +263,16 @@ ScriptRuntime::ScriptRuntime(scene::World& world) : m_world(world), m_impl(std::
     world.setTracksScripts(true);
 }
 
+void ScriptRuntime::constructStamps(bool editing)
+{
+    if (m_world.engineState().pendingConstructs.empty() &&
+        (!editing || m_world.engineState().changedParameters.empty())) {
+        m_world.engineState().changedParameters.clear();
+        return;
+    }
+    constructPendingStamps(state(), editing);
+}
+
 void ScriptRuntime::setStampSource(std::function<std::optional<std::string>(std::string_view)> source)
 {
     m_impl->context.stamps = std::move(source);

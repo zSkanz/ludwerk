@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdio>
 #include <engine/asset/terrain.h>
 #include <engine/asset/terrain_cell.h>
 #include <engine/asset/voxel.h>
@@ -18,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -39,7 +42,11 @@ constexpr std::string_view kFormat = "scene";
 // **2 since ADR 0090**: a part's `Material` is an asset URN and its surface
 // overrides are `MaterialParameters`, where version 1 wrote a `Color`, a
 // `Transparency` and an instance path to a `Material`.
-constexpr core::i64 kVersion = 2;
+//
+// **3 since ADR 0155**: a stamp's nodes carry sids and a copy's overrides are
+// keyed by them; a copy writes where it stands, and its parts' places are in
+// its stamp's frame. A version 2 copy converts as it is read.
+constexpr core::i64 kVersion = 3;
 // The oldest version this reader converts. What changed is narrow enough that
 // converting it costs a few lines, and a project written last week must open.
 constexpr core::i64 kOldestVersion = 1;
@@ -667,37 +674,6 @@ void collectPaths(const World& world, core::InstanceId id, const std::string& pr
     return path;
 }
 
-// Whether two subtrees have the same SHAPE: the same classes, in the same
-// order, all the way down.
-//
-// **A structural change is not an override.** Adding a child to one lamp post,
-// or deleting one, is not "a parameter of this instance" -- it is a different
-// thing -- and a format that tried to record it would be inventing Unity's
-// added-and-removed-component machinery in a corner nobody designed. When the
-// shapes disagree the instance is written IN FULL and its mark dropped, which
-// loses nothing and says what it did.
-[[nodiscard]] bool sameShape(const World& live, core::InstanceId a, const World& reference, core::InstanceId b)
-{
-    const ClassDescriptor* liveClass = live.classes().find(live.classOf(a));
-    const ClassDescriptor* referenceClass = reference.classes().find(reference.classOf(b));
-    if (liveClass == nullptr || referenceClass == nullptr)
-        return false;
-    if (live.atoms().text(liveClass->name) != reference.atoms().text(referenceClass->name))
-        return false;
-    if (live.childCount(a) != reference.childCount(b))
-        return false;
-
-    core::InstanceId liveChild = live.firstChild(a);
-    core::InstanceId referenceChild = reference.firstChild(b);
-    while (liveChild.valid() && referenceChild.valid()) {
-        if (!sameShape(live, liveChild, reference, referenceChild))
-            return false;
-        liveChild = live.nextSibling(liveChild);
-        referenceChild = reference.nextSibling(referenceChild);
-    }
-    return !liveChild.valid() && !referenceChild.valid();
-}
-
 // The path of `id` under `root`, or nothing at all when `id` is not under it.
 // The root itself is the EMPTY path, which is why this answers with an optional
 // rather than a string a caller has to test for emptiness -- "not in this
@@ -922,83 +898,533 @@ void writeCarried(JsonWriter& out, const World& world, core::InstanceId id,
     return *mine == *theirs;
 }
 
-void collectOverrides(JsonWriter& out, bool& anyOverride, const World& live, core::InstanceId liveId,
-                      const World& reference, core::InstanceId refId, core::InstanceId stampRoot,
-                      core::InstanceId referenceRoot, const std::unordered_map<core::u32, std::string>& paths,
-                      SceneIoReport& report)
-{
-    const ClassDescriptor* descriptor = live.classes().find(live.classOf(liveId));
-    bool anyHere = false;
-    const auto open = [&]() {
-        if (anyHere)
-            return;
-        if (!anyOverride) {
-            out.key("overrides");
-            out.beginObject();
-            anyOverride = true;
-        }
-        out.key(overridePath(reference, referenceRoot, refId));
-        out.beginObject();
-        anyHere = true;
-    };
+// --- A copy's identities, keys and pivot (ADR 0155) ---------------------------
+//
+// **A node of a stamp is named by its sid, not by where it is** (§2). Every
+// node of a stamp file carries eight hex digits, given once; a copy's overrides,
+// added children and disabled ones name the node by them, and a node inside a
+// nested copy by the path of sids down to it -- `a1b2c3d4/0f0e0d0c`. The copy's
+// own root is `""`.
+//
+// A node with no sid of its own -- one in a stamp written before sids, or one a
+// person added since the last save -- has a PLANNED one: a hash of its path of
+// names inside its stamp, so the same tree plans the same sids on every
+// machine and every run, and a file read back gives each node the sid it was
+// written with.
 
-    // A child renamed in this instance (B2). The root's own name is the
-    // instance's and is written beside its mark.
-    if (liveId != stampRoot && live.atoms().text(live.name(liveId)) != reference.atoms().text(reference.name(refId))) {
-        open();
-        out.key("Name");
-        out.value(live.atoms().text(live.name(liveId)));
-        ++report.overrides;
+[[nodiscard]] std::string sidText(u32 sid)
+{
+    constexpr std::string_view Digits = "0123456789abcdef";
+    std::string text(8, '0');
+    for (int at = 7; at >= 0; --at) {
+        text[static_cast<core::usize>(at)] = Digits[sid & 0xFu];
+        sid >>= 4u;
+    }
+    return text;
+}
+
+[[nodiscard]] u32 parseSid(std::string_view text) noexcept
+{
+    if (text.size() != 8)
+        return 0;
+    u32 value = 0;
+    for (const char c : text) {
+        u32 digit = 0;
+        if (c >= '0' && c <= '9')
+            digit = static_cast<u32>(c - '0');
+        else if (c >= 'a' && c <= 'f')
+            digit = static_cast<u32>(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F')
+            digit = static_cast<u32>(c - 'A' + 10);
+        else
+            return 0;
+        value = value * 16u + digit;
+    }
+    return value;
+}
+
+[[nodiscard]] u32 plannedSid(std::string_view path) noexcept
+{
+    u32 hash = 2166136261u;
+    for (const char c : path) {
+        hash ^= static_cast<u8>(c);
+        hash *= 16777619u;
+    }
+    return hash == 0 ? 1u : hash;
+}
+
+// Whether a copy's tree leaves this node out of every comparison: what a
+// system made, and what the stamp's `Construct` built (§8), which is built
+// again rather than remembered.
+[[nodiscard]] bool outsideCopy(const World& world, core::InstanceId id) noexcept
+{
+    return engineMade(world, id) || world.constructed(id);
+}
+
+// The nodes of one stamp's own tree under `context`: its descendants, but not
+// the insides of a nested copy, which belong to that copy's stamp. A nested
+// copy's root is the context's.
+void collectContext(const World& world, core::InstanceId node, std::vector<core::InstanceId>& out)
+{
+    for (core::InstanceId child = world.firstChild(node); child.valid(); child = world.nextSibling(child)) {
+        if (outsideCopy(world, child))
+            continue;
+        out.push_back(child);
+        if (!world.stampOf(child).valid())
+            collectContext(world, child, out);
+    }
+}
+
+using SidPlan = std::unordered_map<u32, u32>;
+
+// Every node of `context`'s tree and its sid: its own where it has one, and
+// the first of two that share one keeps it -- a part duplicated inside a copy is
+// a new part, not the stamp's twice. The rest are planned, in preorder, past
+// every sid already taken.
+[[nodiscard]] SidPlan planSids(const World& world, core::InstanceId context)
+{
+    std::vector<core::InstanceId> nodes;
+    collectContext(world, context, nodes);
+    SidPlan plan;
+    std::unordered_set<u32> taken;
+    std::vector<core::InstanceId> unplanned;
+    for (const core::InstanceId id : nodes) {
+        const u32 sid = world.stampSid(id);
+        if (sid != 0 && taken.insert(sid).second)
+            plan[id.index] = sid;
+        else
+            unplanned.push_back(id);
+    }
+    for (const core::InstanceId id : unplanned) {
+        u32 sid = plannedSid(overridePath(world, context, id));
+        while (!taken.insert(sid).second) {
+            sid = sid * 1664525u + 1013904223u;
+            if (sid == 0)
+                sid = 1;
+        }
+        plan[id.index] = sid;
+    }
+    return plan;
+}
+
+// Plans, each made once per context for as long as one write or one read
+// needs them.
+class SidPlans
+{
+public:
+    explicit SidPlans(const World& world) noexcept : m_world(world) {}
+
+    [[nodiscard]] u32 sidOf(core::InstanceId context, core::InstanceId id)
+    {
+        auto found = m_plans.find(context.index);
+        if (found == m_plans.end())
+            found = m_plans.emplace(context.index, planSids(m_world, context)).first;
+        const auto sid = found->second.find(id.index);
+        return sid != found->second.end() ? sid->second : 0;
     }
 
-    for (const ClassDescriptor* current = descriptor; current != nullptr;
-         current = live.classes().find(current->super)) {
-        for (const PropertyDesc& property : current->properties) {
-            if (!savedProperty(live, property))
-                continue;
-            const std::string_view name = live.atoms().text(property.name);
+private:
+    const World& m_world;
+    std::unordered_map<u32, SidPlan> m_plans;
+};
 
-            const std::optional<Value> mine = property.get(live, liveId);
-            if (!mine.has_value())
-                continue;
+// The stamp-file write in progress, when there is one: a stamp file writes
+// every node's sid, and a scene does not -- a scene's copies are keyed by the
+// stamp's sids, and a node a scene holds in full is nobody's.
+thread_local SidPlans* t_sids = nullptr;
 
-            if (!differsFromReference(live, property, name, reference, refId, stampRoot, referenceRoot, *mine))
-                continue;
+// Every node of a copy by its key, and every key by its node.
+struct CopyIndex
+{
+    std::unordered_map<std::string, core::InstanceId> byKey;
+    std::unordered_map<u32, std::string> keyOf;
+
+    [[nodiscard]] core::InstanceId find(std::string_view key) const
+    {
+        const auto found = byKey.find(std::string(key));
+        return found != byKey.end() ? found->second : core::InstanceId{};
+    }
+    [[nodiscard]] const std::string* key(core::InstanceId id) const
+    {
+        const auto found = keyOf.find(id.index);
+        return found != keyOf.end() ? &found->second : nullptr;
+    }
+};
+
+void indexCopy(const World& world, core::InstanceId node, const std::string& key, core::InstanceId context,
+               const std::string& prefix, SidPlans& plans, CopyIndex& out)
+{
+    out.byKey.emplace(key, node);
+    out.keyOf.emplace(node.index, key);
+    for (core::InstanceId child = world.firstChild(node); child.valid(); child = world.nextSibling(child)) {
+        if (outsideCopy(world, child))
+            continue;
+        const std::string childKey = prefix + sidText(plans.sidOf(context, child));
+        if (world.stampOf(child).valid())
+            indexCopy(world, child, childKey, child, childKey + "/", plans, out);
+        else
+            indexCopy(world, child, childKey, context, prefix, plans, out);
+    }
+}
+
+[[nodiscard]] CopyIndex indexOf(const World& world, core::InstanceId root)
+{
+    SidPlans plans(world);
+    CopyIndex index;
+    indexCopy(world, root, std::string{}, root, std::string{}, plans, index);
+    return index;
+}
+
+// **Where a copy stands is where its ANCHOR stands** (§1): its root, when the
+// root is a part or a camera, and otherwise the first part of its stamp it
+// still holds -- a `Model` or a `Folder` has no place of its own. The file
+// writes the anchor's place exactly, so a copy read and written again is the
+// same bytes, and names the anchor by its key, so a change to the stamp that
+// moves its parts around does not change which part the copy stands on.
+[[nodiscard]] bool framed(const World& world, core::InstanceId id) noexcept
+{
+    return world.parts().find(id) != nullptr || world.cameras().find(id) != nullptr;
+}
+
+[[nodiscard]] core::CFrameD frameOf(const World& world, core::InstanceId id) noexcept
+{
+    if (const PartComponent* part = world.parts().find(id); part != nullptr)
+        return part->cframe;
+    if (const CameraComponent* camera = world.cameras().find(id); camera != nullptr)
+        return camera->cframe;
+    return {};
+}
+
+// The first framed node under `root`, in preorder, that `keep` keeps.
+template <typename Keep>
+[[nodiscard]] core::InstanceId firstFramed(const World& world, core::InstanceId root, const Keep& keep)
+{
+    for (core::InstanceId child = world.firstChild(root); child.valid(); child = world.nextSibling(child)) {
+        if (outsideCopy(world, child))
+            continue;
+        if (world.parts().find(child) != nullptr && keep(child))
+            return child;
+        if (const core::InstanceId inside = firstFramed(world, child, keep); inside.valid())
+            return inside;
+    }
+    return {};
+}
+
+// Whether a property is a place in the WORLD, which a copy's pivot moves: a
+// part's and a camera's `CFrame`. Everything else -- an attachment's, a
+// joint's -- is already relative to what holds it.
+[[nodiscard]] bool worldFrame(const World& world, core::InstanceId id, const PropertyDesc& property) noexcept
+{
+    if (property.type != ValueType::CFrame || world.atoms().text(property.name) != "CFrame")
+        return false;
+    return world.parts().find(id) != nullptr || world.cameras().find(id) != nullptr;
+}
+
+// **A part's `Position` and `Orientation` are its `CFrame` again**, read back
+// from it: never an override of their own in a copy -- the `CFrame` carries
+// any change to them -- and never written in a frame other than the world's,
+// where reading them back would undo the frame the `CFrame` was written in.
+[[nodiscard]] bool frameDerived(const World& world, core::InstanceId id, const PropertyDesc& property) noexcept
+{
+    if (world.parts().find(id) == nullptr)
+        return false;
+    const std::string_view name = world.atoms().text(property.name);
+    return name == "Position" || name == "Orientation";
+}
+
+// Two places that are the same for a person, past the rounding a pivot's
+// product leaves: a tenth of a millimetre, and a rotation within 1e-5.
+[[nodiscard]] bool nearFrame(const core::CFrameD& a, const core::CFrameD& b) noexcept
+{
+    const auto close = [](core::f64 x, core::f64 y) {
+        const core::f64 scale = std::max(1.0, std::max(std::abs(x), std::abs(y)));
+        return std::abs(x - y) <= 1e-4 + 1e-9 * scale;
+    };
+    if (!close(a.position.x, b.position.x) || !close(a.position.y, b.position.y) || !close(a.position.z, b.position.z))
+        return false;
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column) {
+            if (std::abs(a.rotation.m[row][column] - b.rotation.m[row][column]) > 1e-5f)
+                return false;
+        }
+    }
+    return true;
+}
+
+// Every place in the WORLD under `root` moved by `by`: each part's and
+// camera's `CFrame`.
+void moveSubtree(World& world, core::InstanceId root, const core::CFrameD& by)
+{
+    std::vector<core::InstanceId> subtree{root};
+    world.collectDescendants(root, subtree);
+    const core::NameAtom cframe = world.atoms().intern("CFrame");
+    for (const core::InstanceId id : subtree) {
+        if (const PartComponent* part = world.parts().find(id); part != nullptr)
+            (void)world.setProperty(id, cframe, Value{by * part->cframe});
+        else if (const CameraComponent* camera = world.cameras().find(id); camera != nullptr)
+            (void)world.setProperty(id, cframe, Value{by * camera->cframe});
+    }
+}
+
+// **What a copy and its stamp have in common, and what they do not** (§5).
+// Paired from the roots down: a node of the copy is the stamp's node of the
+// same key when that node has its class and sits under the node its parent is
+// paired with. A node of the copy with no pair is ADDED; a node of the stamp
+// with no pair is DISABLED. A child moved under another parent, or replaced
+// by one of another class, is both -- which is what it is.
+struct CopyDiff
+{
+    std::vector<std::pair<core::InstanceId, core::InstanceId>> paired;
+    std::vector<core::InstanceId> added;
+    std::vector<std::string> disabled;
+};
+
+void pairChildren(const World& live, core::InstanceId liveNode, const CopyIndex& liveIndex, const World& reference,
+                  core::InstanceId refNode, const CopyIndex& refIndex, CopyDiff& out)
+{
+    std::unordered_set<u32> taken;
+    for (core::InstanceId child = live.firstChild(liveNode); child.valid(); child = live.nextSibling(child)) {
+        if (outsideCopy(live, child))
+            continue;
+        const std::string* key = liveIndex.key(child);
+        const core::InstanceId pair = key != nullptr ? refIndex.find(*key) : core::InstanceId{};
+        if (pair.valid() && reference.parentOf(pair) == refNode && reference.classOf(pair) == live.classOf(child) &&
+            taken.insert(pair.index).second) {
+            out.paired.emplace_back(child, pair);
+            pairChildren(live, child, liveIndex, reference, pair, refIndex, out);
+        }
+        else {
+            out.added.push_back(child);
+        }
+    }
+    for (core::InstanceId child = reference.firstChild(refNode); child.valid(); child = reference.nextSibling(child)) {
+        if (outsideCopy(reference, child) || taken.contains(child.index))
+            continue;
+        if (const std::string* key = refIndex.key(child); key != nullptr)
+            out.disabled.push_back(*key);
+    }
+}
+
+[[nodiscard]] CopyDiff diffCopy(const World& live, core::InstanceId liveRoot, const CopyIndex& liveIndex,
+                                const World& reference, core::InstanceId refRoot, const CopyIndex& refIndex)
+{
+    CopyDiff diff;
+    diff.paired.emplace_back(liveRoot, refRoot);
+    pairChildren(live, liveRoot, liveIndex, reference, refRoot, refIndex, diff);
+    return diff;
+}
+
+// **What a stamp's parameters drive** (§6), as `key|Property`: a driven
+// property follows its parameter, so it is never an override of its own.
+[[nodiscard]] std::unordered_set<std::string> drivenBy(const World& world, core::InstanceId root)
+{
+    std::unordered_set<std::string> driven;
+    const core::NameAtom declared = world.stampParameters(root);
+    if (!declared.valid())
+        return driven;
+    core::JsonDocument document;
+    if (!document.parse(world.atoms().text(declared)).ok)
+        return driven;
+    const JsonValue parameters = document.root();
+    for (core::usize index = 0; index < parameters.size(); ++index) {
+        const JsonValue drives = parameters.at(index)["drives"];
+        for (core::usize drive = 0; drive < drives.size(); ++drive) {
+            driven.insert(std::string(drives.at(drive)["node"].asString()) + "|" +
+                          std::string(drives.at(drive)["property"].asString()));
+        }
+    }
+    return driven;
+}
+
+void writeJsonValue(JsonWriter& out, const JsonValue& value);
+void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
+                   const std::unordered_map<core::u32, std::string>& paths, SceneIoReport& report,
+                   core::InstanceId expandStamped, StampLibrary* stamps, const core::CFrameD* toLocal,
+                   core::InstanceId context);
+
+// The copy's nearest enclosing stamp tree at `id`: `id` itself when it is a
+// copy, else the nearest copy above it, else `top`.
+[[nodiscard]] core::InstanceId contextAt(const World& world, core::InstanceId id, core::InstanceId top) noexcept
+{
+    for (core::InstanceId walk = id; walk.valid() && walk != top; walk = world.parentOf(walk)) {
+        if (world.stampOf(walk).valid())
+            return walk;
+    }
+    return top;
+}
+
+// **What a copy has that its stamp does not**, as fields of the copy's node
+// (ADR 0155): where it stands, its overrides, the children it added and the
+// stamp's it disabled. Everything inside is written in the STAMP's frame, so a
+// part moved in the stamp file moves in every copy, wherever it stands (G1).
+//
+// `toLocal` is the frame the copy's own node is written in: the world's for a
+// scene, and an enclosing copy's for a node added inside one.
+void writeCopyBody(JsonWriter& out, const World& live, core::InstanceId id, const World& reference,
+                   core::InstanceId refRoot, const std::unordered_map<core::u32, std::string>& paths,
+                   SceneIoReport& report, const core::CFrameD* toLocal, StampLibrary* stamps, bool standing = true)
+{
+    const CopyIndex liveIndex = indexOf(live, id);
+    const CopyIndex refIndex = indexOf(reference, refRoot);
+    const CopyDiff diff = diffCopy(live, id, liveIndex, reference, refRoot, refIndex);
+    const std::unordered_set<std::string> driven = drivenBy(reference, refRoot);
+
+    // Where it stands: the anchor's place, exactly, and nothing when it stands
+    // where its stamp does.
+    std::unordered_map<u32, core::InstanceId> partnerOf;
+    for (const auto& [mine, theirs] : diff.paired)
+        partnerOf.emplace(theirs.index, mine);
+    core::InstanceId refAnchor = framed(reference, refRoot) && framed(live, id) ? refRoot : core::InstanceId{};
+    if (!refAnchor.valid() && !framed(reference, refRoot)) {
+        refAnchor = firstFramed(reference, refRoot,
+                                [&](core::InstanceId candidate) { return partnerOf.contains(candidate.index); });
+    }
+    core::CFrameD local;
+    if (refAnchor.valid()) {
+        const core::InstanceId liveAnchor = partnerOf.at(refAnchor.index);
+        const core::CFrameD liveFrame = frameOf(live, liveAnchor);
+        const core::CFrameD refFrame = frameOf(reference, refAnchor);
+        local = refFrame * core::inverse(liveFrame);
+        if (standing && !(liveFrame == refFrame)) {
+            out.key("pivot");
+            writeValue(out, live, Value{toLocal != nullptr ? *toLocal * liveFrame : liveFrame}, paths, report);
+            if (refAnchor != refRoot)
+                out.field("anchor", *liveIndex.key(liveAnchor));
+        }
+    }
+
+    bool anyOverride = false;
+    for (const auto& [liveId, refId] : diff.paired) {
+        const std::string& key = *liveIndex.key(liveId);
+        bool anyHere = false;
+        const auto open = [&]() {
+            if (anyHere)
+                return;
+            if (!anyOverride) {
+                out.key("overrides");
+                out.beginObject();
+                anyOverride = true;
+            }
+            out.key(key);
+            out.beginObject();
+            anyHere = true;
+        };
+
+        // A child renamed in this copy. The root's own name is the copy's and
+        // is written beside its mark.
+        if (liveId != id && live.atoms().text(live.name(liveId)) != reference.atoms().text(reference.name(refId))) {
             open();
-            out.key(name);
-            writeValue(out, live, *mine, paths, report, property.code);
+            out.key("Name");
+            out.value(live.atoms().text(live.name(liveId)));
             ++report.overrides;
         }
+
+        const ClassDescriptor* descriptor = live.classes().find(live.classOf(liveId));
+        for (const ClassDescriptor* current = descriptor; current != nullptr;
+             current = live.classes().find(current->super)) {
+            for (const PropertyDesc& property : current->properties) {
+                if (!savedProperty(live, property))
+                    continue;
+                const std::string_view name = live.atoms().text(property.name);
+                const std::optional<Value> mine = property.get(live, liveId);
+                if (!mine.has_value())
+                    continue;
+                // A parameter's to set, not this copy's (§6); its `CFrame`'s.
+                if ((!driven.empty() && driven.contains(key + "|" + std::string(name))) ||
+                    frameDerived(live, liveId, property))
+                    continue;
+                // **A place, in the stamp's frame**, and the same place for a
+                // person past the rounding the pivot's product leaves.
+                if (worldFrame(live, liveId, property)) {
+                    const core::CFrameD* held = std::get_if<core::CFrameD>(&*mine);
+                    if (held == nullptr)
+                        continue;
+                    const core::CFrameD inStamp = local * *held;
+                    const std::optional<Value> theirs = property.get(reference, refId);
+                    const core::CFrameD* was = theirs.has_value() ? std::get_if<core::CFrameD>(&*theirs) : nullptr;
+                    if (was != nullptr && nearFrame(inStamp, *was))
+                        continue;
+                    open();
+                    out.key(name);
+                    writeValue(out, live, Value{inStamp}, paths, report);
+                    ++report.overrides;
+                    continue;
+                }
+                if (!differsFromReference(live, property, name, reference, refId, id, refRoot, *mine))
+                    continue;
+                open();
+                out.key(name);
+                writeValue(out, live, *mine, paths, report, property.code);
+                ++report.overrides;
+            }
+        }
+        // The carried sets, each whole when it differs: an attribute removed in
+        // this copy is one the stamp's must lose, which a list of the changed
+        // ones cannot say.
+        if (!sameAttributes(live, liveId, reference, refId)) {
+            open();
+            writeAttributes(out, live, liveId, paths, report);
+            ++report.overrides;
+        }
+        if (!sameTags(live, liveId, reference, refId)) {
+            open();
+            writeTags(out, live, liveId);
+            ++report.overrides;
+        }
+        if (!sameShaderParameters(live, liveId, reference, refId)) {
+            open();
+            const std::vector<asset::ShaderParameter>* own = live.partShaderParameters(liveId);
+            writeShaderParameters(out, own != nullptr ? *own : std::vector<asset::ShaderParameter>{});
+            ++report.overrides;
+        }
+        if (anyHere)
+            out.endObject();
     }
-    // The carried sets, each whole when it differs: an attribute removed in
-    // this instance is one the stamp's copy must lose, which a list of the
-    // changed ones cannot say.
-    if (!sameAttributes(live, liveId, reference, refId)) {
-        open();
-        writeAttributes(out, live, liveId, paths, report);
-        ++report.overrides;
+    // **What it holds for nodes its stamp no longer has** (§14), written back
+    // as it was read: a save does not lose them.
+    if (const core::NameAtom orphans = live.stampOrphans(id); orphans.valid()) {
+        core::JsonDocument kept;
+        if (kept.parse(live.atoms().text(orphans)).ok && kept.root().type() == core::JsonType::Object) {
+            const JsonValue entries = kept.root();
+            for (core::usize at = 0; at < entries.size(); ++at) {
+                const std::string_view key = entries.keyAt(at);
+                if (liveIndex.find(key).valid())
+                    continue;
+                if (!anyOverride) {
+                    out.key("overrides");
+                    out.beginObject();
+                    anyOverride = true;
+                }
+                out.key(key);
+                writeJsonValue(out, entries[key]);
+            }
+        }
     }
-    if (!sameTags(live, liveId, reference, refId)) {
-        open();
-        writeTags(out, live, liveId);
-        ++report.overrides;
-    }
-    if (!sameShaderParameters(live, liveId, reference, refId)) {
-        open();
-        const std::vector<asset::ShaderParameter>* own = live.partShaderParameters(liveId);
-        writeShaderParameters(out, own != nullptr ? *own : std::vector<asset::ShaderParameter>{});
-        ++report.overrides;
-    }
-    if (anyHere)
+    if (anyOverride)
         out.endObject();
 
-    core::InstanceId liveChild = live.firstChild(liveId);
-    core::InstanceId referenceChild = reference.firstChild(refId);
-    while (liveChild.valid() && referenceChild.valid()) {
-        collectOverrides(out, anyOverride, live, liveChild, reference, referenceChild, stampRoot, referenceRoot, paths,
-                         report);
-        liveChild = live.nextSibling(liveChild);
-        referenceChild = reference.nextSibling(referenceChild);
+    // **Added, and the link stays** (§5): each under the node it was added to,
+    // in the stamp's frame, and in full.
+    if (!diff.added.empty()) {
+        out.key("added");
+        out.beginArray();
+        for (const core::InstanceId added : diff.added) {
+            const core::InstanceId parent = live.parentOf(added);
+            out.beginObject();
+            out.field("under", *liveIndex.key(parent));
+            out.key("node");
+            writeInstance(out, live, added, paths, report, core::InstanceId{}, stamps, &local,
+                          contextAt(live, parent, id));
+            out.endObject();
+        }
+        out.endArray();
+    }
+    if (!diff.disabled.empty()) {
+        out.key("disabled");
+        out.beginInlineArray();
+        for (const std::string& key : diff.disabled)
+            out.value(key);
+        out.endArray();
     }
 }
 
@@ -1010,7 +1436,8 @@ void writeUnread(JsonWriter& out, const World& world, core::InstanceId parent);
 
 void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
                    const std::unordered_map<core::u32, std::string>& paths, SceneIoReport& report,
-                   core::InstanceId expandStamped = core::InstanceId{}, StampLibrary* stamps = nullptr)
+                   core::InstanceId expandStamped, StampLibrary* stamps, const core::CFrameD* toLocal,
+                   core::InstanceId context)
 {
     out.beginObject();
 
@@ -1018,6 +1445,12 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
     out.field("class", descriptor != nullptr ? world.atoms().text(descriptor->name) : std::string_view{});
     out.field("name", world.atoms().text(world.name(id)));
     ++report.instances;
+    // **Which node of its stamp this is** (ADR 0155 §2), in a stamp file.
+    if (t_sids != nullptr && context.valid() && id != context)
+        out.field("sid", sidText(t_sids->sidOf(context, id)));
+    // What this node's children are keyed in: a stamp file's root holds its
+    // own tree; anything else, the tree it is in.
+    const core::InstanceId childContext = id == expandStamped ? id : context;
 
     // **A node the mount made, holding something authored, is written as its
     // MARK** (ADR 0092): its class and name say which one, the file is its
@@ -1039,8 +1472,8 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
         out.key("children");
         out.beginArray();
         for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
-            if (!engineMade(world, child))
-                writeInstance(out, world, child, paths, report, expandStamped, stamps);
+            if (!engineMade(world, child) && !world.constructed(child))
+                writeInstance(out, world, child, paths, report, expandStamped, stamps, toLocal, childContext);
         }
         writeUnread(out, world, id);
         out.endArray();
@@ -1048,32 +1481,21 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
         return;
     }
 
-    // **A stamped instance is written as its MARK, its name and where it is, and
-    // nothing else** (ADR 0049). Its children belong to the stamp file; writing
-    // them again would be the full copy that makes the whole idea worthless, and
-    // it would go stale the moment the stamp changed.
+    // **A copy of a stamp is written as its MARK and what it has of its own**
+    // (ADRs 0049, 0051, 0155): where it stands, its overrides, what it added
+    // and what it disabled. Its stamp's children belong to the stamp file;
+    // writing them again would be the full copy that makes the whole idea
+    // worthless, and it would go stale the moment the stamp changed.
     //
-    // There is nothing else to write, and that falls out of the break rule
-    // rather than being a second decision: if every other edit breaks the mark,
-    // a marked instance cannot have any other override.
+    // **Only a root that is no longer its stamp's class unlinks it**: every
+    // other change inside a copy is one of the four.
     const core::NameAtom stamp = world.stampOf(id);
     if (stamp.valid() && id != expandStamped) {
         const std::string stampName(world.atoms().text(stamp));
         const StampLibrary::Entry* reference = stamps != nullptr ? stamps->reference(stampName) : nullptr;
-
-        // **The shape has to match, or this is not an instance of that stamp
-        // any more.** Somebody added a child, or deleted one, or the file moved
-        // on structurally -- and a format that tried to record THAT would be
-        // inventing an added-and-removed-object machinery nobody designed. The
-        // instance is written in full instead, which loses nothing, and the
-        // count says it happened.
-        if (reference != nullptr && sameShape(world, id, *reference->world, reference->root)) {
+        if (reference != nullptr && world.classOf(id) == reference->world->classOf(reference->root)) {
             out.field("stamp", stampName);
-            bool anyOverride = false;
-            collectOverrides(out, anyOverride, world, id, *reference->world, reference->root, id, reference->root,
-                             paths, report);
-            if (anyOverride)
-                out.endObject();
+            writeCopyBody(out, world, id, *reference->world, reference->root, paths, report, toLocal, stamps);
             out.endObject();
             ++report.stamped;
             return;
@@ -1091,9 +1513,17 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
                 continue;
             const std::string_view name = world.atoms().text(property.name);
 
-            const std::optional<Value> value = property.get(world, id);
+            std::optional<Value> value = property.get(world, id);
             if (!value.has_value() || quietAtDefault(world, id, property, *value))
                 continue;
+            // A place inside a copy, in its stamp's frame (ADR 0155 §1) -- its
+            // `CFrame`, which says the rest.
+            if (toLocal != nullptr && frameDerived(world, id, property))
+                continue;
+            if (toLocal != nullptr && worldFrame(world, id, property)) {
+                if (const core::CFrameD* held = std::get_if<core::CFrameD>(&*value); held != nullptr)
+                    value = Value{*toLocal * *held};
+            }
 
             if (!anyProperty) {
                 out.key("properties");
@@ -1109,6 +1539,18 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
         out.endObject();
 
     writeCarried(out, world, id, paths, report);
+
+    // **What a stamp offers a designer** (ADR 0155 §6), on the stamp file's
+    // root: the declaration as it was given.
+    if (id == expandStamped) {
+        if (const core::NameAtom declared = world.stampParameters(id); declared.valid()) {
+            core::JsonDocument parameters;
+            if (parameters.parse(world.atoms().text(declared)).ok) {
+                out.key("parameters");
+                writeJsonValue(out, parameters.root());
+            }
+        }
+    }
 
     // **The ground, because a sculpted world is somebody's afternoon.**
     //
@@ -1254,10 +1696,11 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
         for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
             // A system made it, so nobody wrote it down and a scene does not
             // record it -- and the whole subtree goes with it, because the parts
-            // inside a streamed chunk were not separately authored either.
-            if (engineMade(world, child))
+            // inside a streamed chunk were not separately authored either. A
+            // stamp's `Construct` built it, so it is built again (ADR 0155 §8).
+            if (engineMade(world, child) || world.constructed(child))
                 continue;
-            writeInstance(out, world, child, paths, report, expandStamped, stamps);
+            writeInstance(out, world, child, paths, report, expandStamped, stamps, toLocal, childContext);
         }
         writeUnread(out, world, id);
         out.endArray();
@@ -1478,20 +1921,22 @@ struct StampLoad
     const StampSource* source = nullptr;
     // By name; a null document is a stamp that could not be read or parsed.
     std::map<std::string, std::shared_ptr<const core::JsonDocument>, std::less<>> parsed;
+    // **The stamps being built, outermost first** (ADR 0155 §3): a stamp that
+    // reaches one of them again is a cycle, refused with this chain named.
+    std::vector<std::string> chain;
 };
 
 core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonValue& json,
                               std::vector<PendingReference>& pending, SceneIoReport& report,
                               StampLoad* stamps = nullptr, int depth = 0);
 
-// How deep a stamp may name another stamp before this stops asking.
+// How deep a stamp may hold another stamp before this stops asking.
 //
-// A stamp of a stamp is refused at authoring time (ADR 0049), so the only way
-// to reach this is a hand-edited file -- including one that names ITSELF, which
-// without a limit is an infinite tree and a dead process. Four rather than one,
-// because refusing a legal-looking file outright is a worse answer than
-// refusing an absurd one.
-constexpr int kMaxStampDepth = 4;
+// **A stamp holds stamps** (ADR 0155 §3), and a variant is one level of it, so
+// eight leaves room for a variant of a variant of a fighter in a squad in a
+// level; a cycle is caught by name before it gets here, and this is what
+// stops a tree that is merely absurd.
+constexpr int kMaxStampDepth = 8;
 
 // The seed a reference world is built with. A constant: nothing in one is
 // simulated and nothing reads the generator, and a seed from anywhere else
@@ -1959,34 +2404,162 @@ void applyNode(World& world, core::InstanceId id, const JsonValue& json, std::ve
     }
 }
 
-// **What an instance has of its own** (ADR 0051), keyed by the path inside the
-// stamp: `""` is the instance itself and `Lantern.Bulb` is something under it.
-//
-// Applied AFTER the stamp has been built, which is what makes an override an
-// override -- the stamp says what a thing is and these say what this one of them
-// is like. One function rather than two, because a load and a live refresh
-// (`restamp`) put the same overrides back on top of the same file and two
-// spellings of that would disagree the first time either moved.
-void applyOverrides(World& world, core::InstanceId placed, const JsonValue& overrides,
-                    std::vector<PendingReference>& pending, SceneIoReport& report)
+// Gives every node of `context`'s tree the sid its plan has for it (ADR 0155
+// §2): a node a file named keeps its own, and one it did not -- a stamp
+// written before sids -- gets the one a save of the same tree would write.
+void assignPlannedSids(World& world, core::InstanceId context)
 {
-    if (overrides.type() != core::JsonType::Object)
-        return;
-
-    for (core::usize index = 0; index < overrides.size(); ++index) {
-        const std::string_view path = overrides.keyAt(index);
-        const core::InstanceId target = path.empty() ? placed : resolveInside(world, placed, path);
-        if (!target.valid()) {
-            // The stamp moved on and no longer has what this override names.
-            // Counted rather than fatal, exactly as an unknown class is: a scene
-            // should still open, minus what is gone.
-            ++report.refusedProperties;
-            continue;
-        }
-        applyProperties(world, target, overrides[path], pending, report);
-        applyCarried(world, target, overrides[path], report, true);
-        ++report.overrides;
+    const SidPlan plan = planSids(world, context);
+    std::vector<core::InstanceId> nodes;
+    collectContext(world, context, nodes);
+    for (const core::InstanceId id : nodes) {
+        if (const auto found = plan.find(id.index); found != plan.end() && world.stampSid(id) != found->second)
+            world.setStampSid(id, found->second);
     }
+}
+
+core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonValue& json,
+                              std::vector<PendingReference>& pending, SceneIoReport& report, StampLoad* stamps,
+                              int depth);
+[[nodiscard]] core::InstanceId resolveInside(const World& world, core::InstanceId root, std::string_view path);
+[[nodiscard]] std::optional<Value> readValue(ValueType expected, const JsonValue& json,
+                                             std::vector<PendingReference>& pending, core::InstanceId owner,
+                                             core::NameAtom property, bool isAttribute);
+
+[[nodiscard]] std::optional<core::CFrameD> readFrame(const JsonValue& json, std::vector<PendingReference>& pending,
+                                                     core::InstanceId owner)
+{
+    if (json.type() != core::JsonType::Array)
+        return std::nullopt;
+    const std::optional<Value> value = readValue(ValueType::CFrame, json, pending, owner, core::NameAtom{}, false);
+    const core::CFrameD* frame = value.has_value() ? std::get_if<core::CFrameD>(&*value) : nullptr;
+    return frame != nullptr ? std::optional<core::CFrameD>(*frame) : std::nullopt;
+}
+
+// **A copy's node, read back onto a stamp just built from its file** (ADRs
+// 0051, 0155): its name, the children it disabled, the ones it added, its
+// overrides and where it stands -- in that order, because an override may name
+// an added node, and every place inside is in the stamp's frame until the
+// pivot moves the lot.
+//
+// One function rather than two, because a load and a live refresh (`restamp`)
+// put the same copy back on top of the same file, and two spellings of that
+// would disagree the first time either moved.
+// **A copy whose stamp builds parts from its parameters** (ADR 0155 §8) is
+// queued for its `Construct` to run, once the copy is whole.
+void queueConstruct(World& world, core::InstanceId placed)
+{
+    const core::NameAtom construct = world.atoms().lookup("Construct");
+    if (!construct.valid())
+        return;
+    const core::InstanceId module = world.findFirstChild(placed, construct);
+    const ClassDescriptor* descriptor = module.valid() ? world.classes().find(world.classOf(module)) : nullptr;
+    if (descriptor != nullptr && world.atoms().text(descriptor->name) == "ModuleScript")
+        world.engineState().pendingConstructs.push_back(placed);
+}
+
+void applyCopy(World& world, core::InstanceId placed, const JsonValue& json, std::vector<PendingReference>& pending,
+               SceneIoReport& report, StampLoad* stamps, int depth)
+{
+    world.setName(placed, world.atoms().intern(json["name"].asString()));
+    // A version 2 file keys overrides by names and holds places in the world.
+    const bool bySid = t_readVersion >= 3;
+
+    CopyIndex index = indexOf(world, placed);
+    bool changed = false;
+    if (const JsonValue disabled = json["disabled"]; disabled.type() == core::JsonType::Array) {
+        for (core::usize at = 0; at < disabled.size(); ++at) {
+            const core::InstanceId target = index.find(disabled.at(at).asString());
+            // The stamp moved on and no longer has it: nothing to leave out.
+            if (!target.valid() || target == placed || !world.alive(target))
+                continue;
+            (void)world.destroy(target);
+            changed = true;
+        }
+    }
+    if (const JsonValue added = json["added"]; added.type() == core::JsonType::Array) {
+        for (core::usize at = 0; at < added.size(); ++at) {
+            const JsonValue entry = added.at(at);
+            const std::string_view under = entry["under"].asString();
+            const core::InstanceId parent = under.empty() ? placed : index.find(under);
+            if (!parent.valid() || !world.alive(parent)) {
+                // What it was added to is gone from the stamp; kept, so the next
+                // save writes it back and a stamp restored brings it back.
+                world.keepUnread(placed, jsonText(entry["node"]));
+                ++report.refusedProperties;
+                continue;
+            }
+            (void)readInstance(world, parent, entry["node"], pending, report, stamps, depth);
+            changed = true;
+        }
+    }
+    if (changed)
+        index = indexOf(world, placed);
+
+    // What it stands on: its root, or the part the file names -- found before
+    // anything is added, so an added part is never taken for the stamp's.
+    core::InstanceId anchor = framed(world, placed) ? placed : core::InstanceId{};
+    if (!anchor.valid()) {
+        if (const std::string_view named = json["anchor"].asString(); !named.empty())
+            anchor = index.find(named);
+        if (!anchor.valid())
+            anchor = firstFramed(world, placed, [](core::InstanceId) { return true; });
+    }
+
+    JsonWriter orphans;
+    bool anyOrphan = false;
+    if (const JsonValue overrides = json["overrides"]; overrides.type() == core::JsonType::Object) {
+        for (core::usize at = 0; at < overrides.size(); ++at) {
+            const std::string_view key = overrides.keyAt(at);
+            const core::InstanceId target = key.empty() ? placed
+                                            : bySid     ? index.find(key)
+                                                        : resolveInside(world, placed, key);
+            if (!target.valid()) {
+                // **The stamp moved on and no longer has what this override
+                // names** (§14). Counted, and KEPT on the copy: the next save
+                // writes it back, a stamp that brings the node back finds it,
+                // and a person can see it and clean it up.
+                ++report.refusedProperties;
+                if (bySid) {
+                    if (!anyOrphan) {
+                        orphans.beginObject();
+                        anyOrphan = true;
+                    }
+                    orphans.key(key);
+                    writeJsonValue(orphans, overrides[key]);
+                }
+                continue;
+            }
+            const JsonValue body = overrides[key];
+            applyProperties(world, target, body, pending, report);
+            applyCarried(world, target, body, report, true);
+            ++report.overrides;
+        }
+    }
+
+    if (anyOrphan) {
+        orphans.endObject();
+        world.setStampOrphans(placed, world.atoms().intern(orphans.text()));
+    }
+    else {
+        world.setStampOrphans(placed, core::NameAtom{});
+    }
+
+    // Where it stands: everything inside moved from the stamp's frame to there,
+    // and the anchor put EXACTLY where the file says, not where a product of
+    // two transforms rounded it to. A version 2 copy has no pivot and its
+    // places are the world's already; its next save finds the move they share.
+    if (const std::optional<core::CFrameD> at = readFrame(json["pivot"], pending, placed); at && anchor.valid()) {
+        moveSubtree(world, placed, *at * core::inverse(frameOf(world, anchor)));
+        (void)world.setProperty(anchor, world.atoms().intern("CFrame"), Value{*at});
+    }
+
+    // A variant's own declaration, in place of its base's (§4, §6).
+    if (const JsonValue parameters = json["parameters"]; parameters.type() == core::JsonType::Array)
+        world.setStampParameters(placed, world.atoms().intern(jsonText(parameters)));
+    // What its parameters drive, from the values it has now (§6).
+    applyStampDrives(world, placed);
+    queueConstruct(world, placed);
 }
 
 // **The mark a partition leaves on an instance whose children stream** (D422):
@@ -2017,12 +2590,14 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
         // K^3 instances at depth four.
         const bool placeable = stamps != nullptr && stamps->source != nullptr && *stamps->source &&
                                depth < kMaxStampDepth && report.instances < report.instanceLimit;
+        const core::u32 cyclesBefore = report.stampCycles;
         core::InstanceId placed =
             placeable ? placeStamp(world, parent, stampName, report, stamps, depth) : core::InstanceId{};
         // **And by the name `Instance.stamp` takes** (D488): "barril" is
         // `stamps/barril.stamp.json`. As written first, so a file at the
-        // name a scene gives is the one it means.
-        if (!placed.valid() && placeable) {
+        // name a scene gives is the one it means -- and not for a stamp just
+        // refused for reaching itself, which another spelling would reach again.
+        if (!placed.valid() && placeable && report.stampCycles == cyclesBefore) {
             if (const std::string named = normalizeStampPath(stampName); named != stampName)
                 placed = placeStamp(world, parent, named, report, stamps, depth);
         }
@@ -2035,9 +2610,10 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
             world.keepUnread(parent, jsonText(json));
             return {};
         }
-        world.setName(placed, world.atoms().intern(json["name"].asString()));
-
-        applyOverrides(world, placed, json["overrides"], pending, report);
+        // The node of the enclosing stamp this copy is, inside a stamp file.
+        if (const u32 sid = parseSid(json["sid"].asString()); sid != 0)
+            world.setStampSid(placed, sid);
+        applyCopy(world, placed, json, pending, report, stamps, depth);
         ++report.stamped;
         return placed;
     }
@@ -2105,6 +2681,9 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
     world.setName(id, world.atoms().intern(json["name"].asString()));
     (void)world.setParent(id, parent);
     ++report.instances;
+    // Which node of its stamp it is, when a stamp file says (ADR 0155 §2).
+    if (const u32 sid = parseSid(json["sid"].asString()); sid != 0)
+        world.setStampSid(id, sid);
 
     applyNode(world, id, json, pending, report);
     noteStreamAnchor(world, id, json);
@@ -2191,6 +2770,17 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
 core::InstanceId placeStamp(World& world, core::InstanceId parent, std::string_view name, SceneIoReport& report,
                             StampLoad* stamps, int depth)
 {
+    // **A stamp that reaches itself is refused, by name** (ADR 0155 §3), with
+    // the chain that reached it -- never a tree that grows until a limit.
+    if (std::find(stamps->chain.begin(), stamps->chain.end(), name) != stamps->chain.end()) {
+        ++report.stampCycles;
+        std::string chain;
+        for (const std::string& link : stamps->chain)
+            chain += link + " -> ";
+        report.stampCycle = chain + std::string(name);
+        return {};
+    }
+
     std::shared_ptr<const core::JsonDocument> document;
     if (const auto known = stamps->parsed.find(name); known != stamps->parsed.end()) {
         document = known->second;
@@ -2216,9 +2806,28 @@ core::InstanceId placeStamp(World& world, core::InstanceId parent, std::string_v
         return {};
 
     std::vector<PendingReference> pending;
+    stamps->chain.emplace_back(name);
     const core::InstanceId placed = readInstance(world, parent, rootNode, pending, report, stamps, depth + 1);
+    stamps->chain.pop_back();
     if (!placed.valid())
         return {};
+    // Every node of this stamp's own tree with its sid: the file's, or the
+    // one a save would plan for a stamp written before sids (ADR 0155 §2).
+    assignPlannedSids(world, placed);
+    // What the stamp offers a designer (§6). A variant's root is a copy, and
+    // carries its base's unless it declares its own.
+    if (const JsonValue parameters = rootNode["parameters"];
+        parameters.type() == core::JsonType::Array && rootNode["stamp"].asString().empty()) {
+        world.setStampParameters(placed, world.atoms().intern(jsonText(parameters)));
+        // A parameter the stamp's root holds no value for starts at its default.
+        for (const StampParameter& parameter : stampParametersOf(world, placed)) {
+            const core::NameAtom attribute = world.atoms().intern(parameter.name);
+            if (valueType(world.getAttribute(placed, attribute)) == ValueType::Nil)
+                (void)world.setAttribute(placed, attribute, parameter.defaultValue);
+        }
+        applyStampDrives(world, placed);
+    }
+    queueConstruct(world, placed);
 
     for (const PendingReference& reference : pending) {
         const core::InstanceId target = resolvePath(world, placed, reference.path);
@@ -2543,8 +3152,9 @@ const StampLibrary::Entry* StampLibrary::reference(const std::string& stamp)
         std::make_unique<World>(m_registries.classes(), m_registries.enums(), m_registries.atoms(), kReferenceSeed);
     SceneIoReport ignored;
     // Unparented, because a reference tree is never looked at through a
-    // hierarchy -- only walked from its root.
-    entry->root = readStamp(*entry->world, *text, core::InstanceId{}, stamp, &ignored);
+    // hierarchy -- only walked from its root. Through the library's own source,
+    // so a stamp's nested stamps and a variant's base are built too (ADR 0155).
+    entry->root = readStamp(*entry->world, *text, core::InstanceId{}, stamp, &ignored, &m_source);
     if (!entry->root.valid()) {
         m_built.emplace(stamp, nullptr);
         return nullptr;
@@ -2580,7 +3190,7 @@ std::string writeScene(const World& world, SceneIoReport* report, StampLibrary* 
             }
         }
         writer.key("root");
-        writeInstance(writer, world, workspace, paths, out, core::InstanceId{}, stamps);
+        writeInstance(writer, world, workspace, paths, out, core::InstanceId{}, stamps, nullptr, core::InstanceId{});
         // **Only when something is kept there, or set**, so a scene with empty
         // storages at the engine's settings is the byte-for-byte file it was
         // before they existed.
@@ -2589,7 +3199,8 @@ std::string writeScene(const World& world, SceneIoReport* report, StampLibrary* 
             writer.beginObject();
             for (const auto& [name, service] : storages) {
                 writer.key(name);
-                writeInstance(writer, world, service, paths, out, core::InstanceId{}, stamps);
+                writeInstance(writer, world, service, paths, out, core::InstanceId{}, stamps, nullptr,
+                              core::InstanceId{});
             }
             writer.endObject();
         }
@@ -2632,7 +3243,7 @@ std::string writeGlobal(const World& world, SceneIoReport* report, StampLibrary*
     writer.field("format", kGlobalFormat);
     writer.field("version", kGlobalVersion);
     writer.key("root");
-    writeInstance(writer, world, service, paths, out, core::InstanceId{}, stamps);
+    writeInstance(writer, world, service, paths, out, core::InstanceId{}, stamps, nullptr, core::InstanceId{});
     writer.endObject();
     return writer.text();
 }
@@ -2901,7 +3512,8 @@ core::InstanceId readSceneNode(World& world, std::string_view nodeJson, core::In
     return built;
 }
 
-std::string writeStamp(const World& world, core::InstanceId root, SceneIoReport* report, StampLibrary* stamps)
+std::string writeStamp(const World& world, core::InstanceId root, SceneIoReport* report, StampLibrary* stamps,
+                       std::string_view base)
 {
     SceneIoReport local;
     SceneIoReport& out = report != nullptr ? *report : local;
@@ -2914,15 +3526,62 @@ std::string writeStamp(const World& world, core::InstanceId root, SceneIoReport*
     if (world.alive(root)) {
         std::unordered_map<core::u32, std::string> paths;
         collectPaths(world, root, {}, paths);
+        // **Every node with its sid** (ADR 0155 §2): the one it has, or the one
+        // planned for it, which `assignStampSids` gives the live tree too.
+        SidPlans sids(world);
+        SidPlans* const outer = t_sids;
+        t_sids = &sids;
         writer.key("root");
-        // `root`'s own mark is IGNORED, because this is the file that mark
-        // points at: a stamp made from an instance of itself would otherwise
-        // write a one-line file referring to the file being written.
-        writeInstance(writer, world, root, paths, out, root, stamps);
+        const StampLibrary::Entry* baseEntry =
+            !base.empty() && stamps != nullptr ? stamps->reference(std::string(base)) : nullptr;
+        if (baseEntry != nullptr && world.classOf(root) == baseEntry->world->classOf(baseEntry->root)) {
+            // **A variant is a copy of its base** (§4): what it has of its own
+            // and nothing else, so a change to the base reaches it.
+            writer.beginObject();
+            const ClassDescriptor* descriptor = world.classes().find(world.classOf(root));
+            writer.field("class", descriptor != nullptr ? world.atoms().text(descriptor->name) : std::string_view{});
+            writer.field("name", world.atoms().text(world.name(root)));
+            writer.field("stamp", base);
+            // A variant's root stands where its base's does: it is a stamp,
+            // not a placement.
+            writeCopyBody(writer, world, root, *baseEntry->world, baseEntry->root, paths, out, nullptr, stamps, false);
+            // Its own declaration, when it is not its base's.
+            if (const core::NameAtom declared = world.stampParameters(root);
+                declared.valid() && declared != baseEntry->world->stampParameters(baseEntry->root)) {
+                core::JsonDocument parameters;
+                if (parameters.parse(world.atoms().text(declared)).ok) {
+                    writer.key("parameters");
+                    writeJsonValue(writer, parameters.root());
+                }
+            }
+            writer.endObject();
+            ++out.instances;
+        }
+        else {
+            // `root`'s own mark is IGNORED, because this is the file that mark
+            // points at: a stamp made from an instance of itself would otherwise
+            // write a one-line file referring to the file being written.
+            writeInstance(writer, world, root, paths, out, root, stamps, nullptr, core::InstanceId{});
+        }
+        t_sids = outer;
     }
 
     writer.endObject();
     return writer.text();
+}
+
+void assignStampSids(World& world, core::InstanceId root)
+{
+    if (world.alive(root))
+        assignPlannedSids(world, root);
+}
+
+std::string stampBaseOf(std::string_view stampText)
+{
+    core::JsonDocument document;
+    if (!document.parse(stampText).ok)
+        return {};
+    return std::string(document.root()["root"]["stamp"].asString());
 }
 
 std::string writeCopy(const World& world, core::InstanceId root, SceneIoReport* report)
@@ -2934,7 +3593,7 @@ std::string writeCopy(const World& world, core::InstanceId root, SceneIoReport* 
         Full(const Full&) = delete;
         Full& operator=(const Full&) = delete;
     } full;
-    return writeStamp(world, root, report, nullptr);
+    return writeStamp(world, root, report, nullptr, {});
 }
 
 std::string normalizeStampPath(std::string_view typed)
@@ -2978,16 +3637,17 @@ std::string normalizeStampPath(std::string_view typed)
 }
 
 core::InstanceId readStamp(World& world, std::string_view json, core::InstanceId parent, std::string_view stamp,
-                           SceneIoReport* report)
+                           SceneIoReport* report, const StampSource* others)
 {
     SceneIoReport local;
     SceneIoReport& out = report != nullptr ? *report : local;
 
-    // The one-file case: the text is in hand, so the source it is read through
-    // answers for this stamp and nothing else. A stamp naming another stamp is
-    // refused at authoring time and would be a hand-edited file here.
-    const StampSource source = [json, stamp](std::string_view wanted) -> std::optional<std::string> {
-        return wanted == stamp ? std::optional<std::string>(std::string(json)) : std::nullopt;
+    // The text is in hand for this stamp; the stamps it holds and its base
+    // come from `others` (ADR 0155 §3, §4).
+    const StampSource source = [json, stamp, others](std::string_view wanted) -> std::optional<std::string> {
+        if (wanted == stamp)
+            return std::string(json);
+        return others != nullptr && *others ? (*others)(wanted) : std::nullopt;
     };
     StampLoad load{&source};
     return placeStamp(world, parent, stamp, out, &load, 0);
@@ -2995,58 +3655,27 @@ core::InstanceId readStamp(World& world, std::string_view json, core::InstanceId
 
 namespace {
 
-// The position of `id` under `root`, child index by child index; empty for the
-// root. A restamp rebuilds a subtree of the same SHAPE, so a position names the
-// same instance before and after, where an id does not.
-[[nodiscard]] std::vector<core::usize> positionUnder(const World& world, core::InstanceId root, core::InstanceId id)
-{
-    std::vector<core::usize> path;
-    for (core::InstanceId walk = id; walk.valid() && walk != root; walk = world.parentOf(walk)) {
-        core::usize index = 0;
-        for (core::InstanceId sibling = world.firstChild(world.parentOf(walk)); sibling.valid() && sibling != walk;
-             sibling = world.nextSibling(sibling))
-            ++index;
-        path.insert(path.begin(), index);
-    }
-    return path;
-}
-
-[[nodiscard]] core::InstanceId atPosition(const World& world, core::InstanceId root,
-                                          const std::vector<core::usize>& path)
-{
-    core::InstanceId at = root;
-    for (const core::usize index : path) {
-        core::InstanceId child = world.firstChild(at);
-        for (core::usize step = 0; step < index && child.valid(); ++step)
-            child = world.nextSibling(child);
-        if (!child.valid())
-            return {};
-        at = child;
-    }
-    return at;
-}
-
 // **A reference a restamp has to put back** (B5): one held BY an instance the
-// rebuild replaces, or held TO one. Each end is a position under the stamped
-// instance when it is inside it, and an id when it is not -- an id outside
-// survives the rebuild and a position inside names the new instance there.
+// rebuild replaces, or held TO one. Each end is a key in the copy when it is
+// inside it, and an id when it is not -- an id outside survives the rebuild,
+// and a key inside names the new instance there.
 struct Repoint
 {
     bool ownerInside = false;
     core::InstanceId owner;
-    std::vector<core::usize> ownerAt;
+    std::string ownerKey;
     core::NameAtom property;
     bool valueInside = false;
     core::InstanceId value;
-    std::vector<core::usize> valueAt;
+    std::string valueKey;
 };
 
 // Every instance-valued property in `world` that crosses into the part of
 // `target` a rebuild replaces -- its descendants, not itself. From inside, only
-// what this instance changed from `reference`: what it did not change takes the
+// what this copy changed from `reference`: what it did not change takes the
 // file's new value, which is the point of a restamp.
-void collectRepoints(const World& world, core::InstanceId target, const World& reference,
-                     core::InstanceId referenceRoot, std::vector<Repoint>& out)
+void collectRepoints(const World& world, core::InstanceId target, const CopyIndex& index, const World& reference,
+                     core::InstanceId referenceRoot, const CopyIndex& refIndex, std::vector<Repoint>& out)
 {
     const auto inside = [&](core::InstanceId id) { return id != target && world.isAncestorOf(target, id); };
     std::vector<core::InstanceId> everyone;
@@ -3056,6 +3685,9 @@ void collectRepoints(const World& world, core::InstanceId target, const World& r
     }
     for (const core::InstanceId owner : everyone) {
         const bool ownerInside = inside(owner);
+        const std::string* ownerKey = ownerInside ? index.key(owner) : nullptr;
+        if (ownerInside && ownerKey == nullptr)
+            continue;
         for (ClassId cls = world.classOf(owner); cls != InvalidClass;) {
             const ClassDescriptor* descriptor = world.classes().find(cls);
             if (descriptor == nullptr)
@@ -3070,9 +3702,11 @@ void collectRepoints(const World& world, core::InstanceId target, const World& r
                 const bool valueInside = inside(*value);
                 if (!ownerInside && !valueInside)
                     continue;
+                const std::string* valueKey = valueInside ? index.key(*value) : nullptr;
+                if (valueInside && valueKey == nullptr)
+                    continue;
                 if (ownerInside) {
-                    const core::InstanceId refOwner =
-                        atPosition(reference, referenceRoot, positionUnder(world, target, owner));
+                    const core::InstanceId refOwner = refIndex.find(*ownerKey);
                     if (refOwner.valid() && !differsFromReference(world, property, world.atoms().text(property.name),
                                                                   reference, refOwner, target, referenceRoot, *held))
                         continue;
@@ -3080,13 +3714,13 @@ void collectRepoints(const World& world, core::InstanceId target, const World& r
                 Repoint entry;
                 entry.ownerInside = ownerInside;
                 entry.owner = owner;
-                if (ownerInside)
-                    entry.ownerAt = positionUnder(world, target, owner);
+                if (ownerKey != nullptr)
+                    entry.ownerKey = *ownerKey;
                 entry.property = property.name;
                 entry.valueInside = valueInside;
                 entry.value = *value;
-                if (valueInside)
-                    entry.valueAt = positionUnder(world, target, *value);
+                if (valueKey != nullptr)
+                    entry.valueKey = *valueKey;
                 out.push_back(std::move(entry));
             }
             cls = descriptor->super;
@@ -3094,10 +3728,57 @@ void collectRepoints(const World& world, core::InstanceId target, const World& r
     }
 }
 
+// `target` made what `built` is: its children moved over, its saved
+// properties, attributes and tags copied, and its pivot and parameters. The
+// target keeps its id, its parent and its place among its siblings.
+void transplant(World& world, core::InstanceId target, core::InstanceId built)
+{
+    std::vector<core::InstanceId> children;
+    world.collectChildren(target, children);
+    for (const core::InstanceId child : children)
+        (void)world.destroy(child);
+    children.clear();
+    world.collectChildren(built, children);
+    for (const core::InstanceId child : children)
+        (void)world.setParent(child, target);
+
+    for (ClassId cls = world.classOf(built); cls != InvalidClass;) {
+        const ClassDescriptor* descriptor = world.classes().find(cls);
+        if (descriptor == nullptr)
+            break;
+        for (const PropertyDesc& property : descriptor->properties) {
+            if (!savedProperty(world, property))
+                continue;
+            if (const std::optional<Value> value = property.get(world, built); value.has_value())
+                (void)world.setProperty(target, property.name, *value);
+        }
+        cls = descriptor->super;
+    }
+    AttributeMap had;
+    world.collectAttributes(target, had);
+    for (const auto& entry : had)
+        (void)world.setAttribute(target, entry.first, Value{});
+    AttributeMap attributes;
+    world.collectAttributes(built, attributes);
+    for (const auto& entry : attributes)
+        (void)world.setAttribute(target, entry.first, entry.second);
+    TagSet tags;
+    world.collectTags(target, tags);
+    for (const core::NameAtom tag : tags)
+        world.removeTag(target, tag);
+    tags.clear();
+    world.collectTags(built, tags);
+    for (const core::NameAtom tag : tags)
+        world.addTag(target, tag);
+    world.setStampParameters(target, world.stampParameters(built));
+    (void)world.destroy(built);
+}
+
 } // namespace
 
 core::u32 restamp(World& world, core::InstanceId root, std::string_view stamp, std::string_view before,
-                  std::string_view after, SceneIoReport* report)
+                  std::string_view after, SceneIoReport* report, const StampSource* others,
+                  const StampSource* othersBefore)
 {
     SceneIoReport local;
     SceneIoReport& out = report != nullptr ? *report : local;
@@ -3106,29 +3787,17 @@ core::u32 restamp(World& world, core::InstanceId root, std::string_view stamp, s
     if (!mark.valid() || !world.alive(root))
         return 0;
 
-    core::JsonDocument document;
-    if (const core::JsonDocument::ParseResult parsed = document.parse(after); !parsed.ok)
-        return 0;
-    const JsonValue file = document.root();
-    const JsonValue rootNode = file["root"];
-    if (file["format"].asString() != kFormat || !readableVersion(file["version"].asInteger()) ||
-        rootNode.type() != core::JsonType::Object)
-        return 0;
-    const ReadingVersion reading(file["version"].asInteger());
-
-    // **The file as the live instances were built from it**, in a world of its
-    // own. "What has this one got of its own" is a question about two trees and
-    // there is no cheaper honest way to ask it -- the same argument the writer
-    // makes, one save earlier.
+    // **The file as the live copies were built from it**, in a world of its
+    // own. "What has this one got of its own" is a question about two trees
+    // and there is no cheaper honest way to ask it -- the same argument the
+    // writer makes, one save earlier.
     World reference(world.classes(), world.enums(), world.atoms(), kReferenceSeed);
     SceneIoReport ignored;
-    const core::InstanceId referenceRoot = readStamp(reference, before, {}, stamp, &ignored);
+    const core::InstanceId referenceRoot =
+        readStamp(reference, before, {}, stamp, &ignored, othersBefore != nullptr ? othersBefore : others);
     if (!referenceRoot.valid())
         return 0;
-
-    const ClassId rootClass = world.classes().findId(world.atoms().intern(rootNode["class"].asString()));
-    if (rootClass == InvalidClass)
-        return 0;
+    const CopyIndex refIndex = indexOf(reference, referenceRoot);
 
     // Collected before anything is touched: the walk and the rebuild cannot be
     // one pass, because the rebuild replaces the children the walk is standing
@@ -3137,8 +3806,10 @@ core::u32 restamp(World& world, core::InstanceId root, std::string_view stamp, s
     subtree.push_back(root);
     world.collectDescendants(root, subtree);
 
-    const StampSource source = [after, stamp](std::string_view wanted) -> std::optional<std::string> {
-        return wanted == stamp ? std::optional<std::string>(std::string(after)) : std::nullopt;
+    const StampSource fresh = [after, stamp, others](std::string_view wanted) -> std::optional<std::string> {
+        if (wanted == stamp)
+            return std::string(after);
+        return others != nullptr && *others ? (*others)(wanted) : std::nullopt;
     };
 
     core::u32 refreshed = 0;
@@ -3146,54 +3817,49 @@ core::u32 restamp(World& world, core::InstanceId root, std::string_view stamp, s
         if (!world.alive(target) || world.stampOf(target) != mark)
             continue;
 
-        // **Not an instance of that stamp any more**, so it is left exactly as
-        // it is and counted. Somebody added a child to this one, or deleted
-        // one, and rebuilding it from the file would throw that away -- which is
-        // the same rule the writer applies for the same reason.
-        if (world.classOf(target) != rootClass || !sameShape(world, target, reference, referenceRoot)) {
+        // **Not a copy of that stamp any more** -- its root is another class --
+        // so it is left exactly as it is and counted, the rule the writer
+        // applies for the same reason.
+        if (world.classOf(target) != reference.classOf(referenceRoot)) {
             ++out.unlinkedStamps;
             continue;
         }
 
         // What it has of its own, measured against the file it came from and
         // kept as text: the tree it was measured on is about to stop existing.
+        // Its places in the stamp's frame, so a part moved in the file moves in
+        // every copy.
         std::unordered_map<core::u32, std::string> paths;
         JsonWriter kept;
         kept.beginObject();
-        bool anyOverride = false;
+        kept.field("name", world.atoms().text(world.name(target)));
         SceneIoReport measured;
-        collectOverrides(kept, anyOverride, world, target, reference, referenceRoot, target, referenceRoot, paths,
-                         measured);
-        if (anyOverride)
-            kept.endObject();
+        writeCopyBody(kept, world, target, reference, referenceRoot, paths, measured, nullptr, nullptr);
         kept.endObject();
+        core::JsonDocument copy;
+        if (!copy.parse(kept.text()).ok)
+            continue;
 
-        core::JsonDocument overrides;
-        const bool hasOverrides = anyOverride && overrides.parse(kept.text()).ok;
         // And the references the text above cannot carry: they name instances
         // by id, and the ids inside are about to be new ones.
+        const CopyIndex liveIndex = indexOf(world, target);
         std::vector<Repoint> repoints;
-        collectRepoints(world, target, reference, referenceRoot, repoints);
+        collectRepoints(world, target, liveIndex, reference, referenceRoot, refIndex, repoints);
 
-        // **The instance itself survives**: its id, its parent, its place among
-        // its siblings and every reference anything else holds to it. Destroying
+        // **The copy itself survives**: its id, its parent, its place among its
+        // siblings and every reference anything else holds to it. Destroying
         // and rebuilding it would move it to the end of its parent, and an
         // Explorer whose rows jump every time somebody saves is one nobody
         // trusts.
-        std::vector<core::InstanceId> children;
-        world.collectChildren(target, children);
-        for (const core::InstanceId child : children)
-            (void)world.destroy(child);
+        StampLoad load{&fresh};
+        const core::InstanceId built = placeStamp(world, core::InstanceId{}, stamp, out, &load, 1);
+        if (!built.valid())
+            continue;
+        transplant(world, target, built);
 
         std::vector<PendingReference> pending;
-        applyNode(world, target, rootNode, pending, out);
-        StampLoad load{&source};
-        if (const JsonValue nodes = rootNode["children"]; nodes.type() == core::JsonType::Array) {
-            for (core::usize index = 0; index < nodes.size(); ++index)
-                (void)readInstance(world, target, nodes.at(index), pending, out, &load, 1);
-        }
-        if (hasOverrides)
-            applyOverrides(world, target, overrides.root()["overrides"], pending, out);
+        const ReadingVersion reading(kVersion);
+        applyCopy(world, target, copy.root(), pending, out, &load, 1);
 
         // Inside the stamp, against the stamp's own root -- the rule
         // `placeStamp` states and for the same reason: a path inside a stamp
@@ -3209,9 +3875,10 @@ core::u32 restamp(World& world, core::InstanceId root, std::string_view stamp, s
             else
                 (void)world.setProperty(entry.owner, entry.property, Value{found});
         }
+        const CopyIndex rebuilt = indexOf(world, target);
         for (const Repoint& entry : repoints) {
-            const core::InstanceId owner = entry.ownerInside ? atPosition(world, target, entry.ownerAt) : entry.owner;
-            const core::InstanceId value = entry.valueInside ? atPosition(world, target, entry.valueAt) : entry.value;
+            const core::InstanceId owner = entry.ownerInside ? rebuilt.find(entry.ownerKey) : entry.owner;
+            const core::InstanceId value = entry.valueInside ? rebuilt.find(entry.valueKey) : entry.value;
             if (!owner.valid() || !world.alive(owner) || !value.valid()) {
                 ++out.droppedReferences;
                 continue;
@@ -3234,12 +3901,33 @@ namespace {
 // Shared by the two questions a panel asks -- which properties are overridden,
 // and what the stamp says one of them should be -- because a second copy of this
 // walk is a second chance to pair the wrong instances.
+// **A copy's pivot**: from its stamp's frame to where it stands, found from
+// its anchor as the save finds it (ADR 0155 §1). Identity for a copy with
+// nothing to stand on.
+[[nodiscard]] core::CFrameD pivotOfCopy(const World& world, core::InstanceId copyRoot, const CopyIndex& liveIndex,
+                                        const World& reference, core::InstanceId refRoot, const CopyIndex& refIndex)
+{
+    const CopyDiff diff = diffCopy(world, copyRoot, liveIndex, reference, refRoot, refIndex);
+    std::unordered_map<u32, core::InstanceId> partnerOf;
+    for (const auto& [mine, theirs] : diff.paired)
+        partnerOf.emplace(theirs.index, mine);
+    const core::InstanceId refAnchor =
+        framed(reference, refRoot) ? refRoot : firstFramed(reference, refRoot, [&](core::InstanceId candidate) {
+            return partnerOf.contains(candidate.index);
+        });
+    if (!refAnchor.valid() || !partnerOf.contains(refAnchor.index))
+        return {};
+    return frameOf(world, partnerOf.at(refAnchor.index)) * core::inverse(frameOf(reference, refAnchor));
+}
+
 struct ReferenceSite
 {
     const World* world = nullptr;
     core::InstanceId id;
     core::InstanceId referenceRoot;
     core::InstanceId stampRoot;
+    // The copy's pivot: from its stamp's frame to where it stands (ADR 0155).
+    core::CFrameD pivot;
 
     [[nodiscard]] bool found() const noexcept { return world != nullptr && id.valid(); }
 };
@@ -3249,60 +3937,32 @@ struct ReferenceSite
     if (!world.alive(id))
         return {};
 
-    // **Up to the nearest stamped ancestor, including `id` itself.** A person
-    // selects the part inside the lamp post as readily as the lamp post, and
-    // both questions are the same one measured from the same root.
-    core::InstanceId stampRoot = id;
-    core::NameAtom mark{};
-    while (stampRoot.valid()) {
-        mark = world.stampOf(stampRoot);
-        if (mark.valid())
-            break;
-        stampRoot = world.parentOf(stampRoot);
-    }
-    if (!stampRoot.valid() || !mark.valid())
+    // **Up to the nearest copy, including `id` itself.** A person selects the
+    // part inside the lamp post as readily as the lamp post, and both
+    // questions are the same one measured from the same root.
+    const core::InstanceId stampRoot = world.stampRootOf(id);
+    if (!stampRoot.valid())
         return {};
-
-    const StampLibrary::Entry* entry = stamps.reference(std::string(world.atoms().text(mark)));
+    const StampLibrary::Entry* entry = stamps.reference(std::string(world.atoms().text(world.stampOf(stampRoot))));
     if (entry == nullptr || entry->world == nullptr || !entry->root.valid())
         return {};
 
-    // The child indices from the stamp root down to `id`, then the same walk
-    // from the reference's root. Indices rather than names, because two siblings
-    // may share a name and the save pairs them positionally too.
-    std::vector<core::u32> descent;
-    for (core::InstanceId step = id; step != stampRoot; step = world.parentOf(step)) {
-        const core::InstanceId parent = world.parentOf(step);
-        if (!parent.valid())
-            return {};
-        core::u32 index = 0;
-        core::InstanceId child = world.firstChild(parent);
-        while (child.valid() && child != step) {
-            child = world.nextSibling(child);
-            ++index;
-        }
-        if (!child.valid())
-            return {};
-        descent.push_back(index);
-    }
-
+    // Paired as the save pairs them, by key (ADR 0155 §2): a node renamed or
+    // moved among its siblings is still the stamp's node.
     const World& reference = *entry->world;
-    core::InstanceId refId = entry->root;
-    for (auto step = descent.rbegin(); step != descent.rend(); ++step) {
-        core::InstanceId child = reference.firstChild(refId);
-        for (core::u32 skipped = 0; skipped < *step && child.valid(); ++skipped)
-            child = reference.nextSibling(child);
-        if (!child.valid())
-            return {};
-        refId = child;
-    }
-
+    const CopyIndex liveIndex = indexOf(world, stampRoot);
+    const std::string* key = liveIndex.key(id);
+    if (key == nullptr)
+        return {};
+    const CopyIndex refIndex = indexOf(reference, entry->root);
+    const core::InstanceId refId = refIndex.find(*key);
     // A different class is a different instance, not an instance with every
-    // property overridden.
-    if (world.classOf(id) != reference.classOf(refId))
+    // property overridden; a node with no pair is one this copy added.
+    if (!refId.valid() || world.classOf(id) != reference.classOf(refId))
         return {};
 
-    return ReferenceSite{&reference, refId, entry->root, stampRoot};
+    return ReferenceSite{&reference, refId, entry->root, stampRoot,
+                         pivotOfCopy(world, stampRoot, liveIndex, reference, entry->root, refIndex)};
 }
 
 } // namespace
@@ -3322,7 +3982,13 @@ std::optional<Value> stampReferenceValue(const World& world, core::InstanceId id
         site.world->classes().findProperty(site.world->classOf(site.id), referenceAtom);
     if (referenceProperty == nullptr || referenceProperty->get == nullptr)
         return std::nullopt;
-    return referenceProperty->get(*site.world, site.id);
+    std::optional<Value> value = referenceProperty->get(*site.world, site.id);
+    // A place is the stamp's, where this copy stands (ADR 0155 §1).
+    if (value.has_value() && worldFrame(*site.world, site.id, *referenceProperty)) {
+        if (const core::CFrameD* frame = std::get_if<core::CFrameD>(&*value); frame != nullptr)
+            value = Value{site.pivot * *frame};
+    }
+    return value;
 }
 
 std::vector<core::NameAtom> stampOverrides(const World& world, core::InstanceId id, StampLibrary& stamps)
@@ -3337,6 +4003,9 @@ std::vector<core::NameAtom> stampOverrides(const World& world, core::InstanceId 
     const World& reference = *site.world;
     const core::InstanceId refId = site.id;
     const core::InstanceId stampRoot = site.stampRoot;
+    // What a parameter drives is the parameter's, as the save says (§6).
+    const std::unordered_set<std::string> driven = drivenBy(reference, site.referenceRoot);
+    const std::optional<std::string> key = driven.empty() ? std::nullopt : stampKeyOf(world, stampRoot, id);
 
     std::vector<core::NameAtom> overridden;
     const ClassDescriptor* descriptor = world.classes().find(world.classOf(id));
@@ -3350,13 +4019,384 @@ std::vector<core::NameAtom> stampOverrides(const World& world, core::InstanceId 
                 continue;
             const std::string_view name = world.atoms().text(property.name);
             const std::optional<Value> mine = property.get(world, id);
-            if (!mine.has_value())
+            if (!mine.has_value() || frameDerived(world, id, property))
                 continue;
+            if (key.has_value() && driven.contains(*key + "|" + std::string(name)))
+                continue;
+            // A place, in the stamp's frame, as the save measures it.
+            if (worldFrame(world, id, property)) {
+                const core::CFrameD* held = std::get_if<core::CFrameD>(&*mine);
+                const std::optional<Value> theirs = property.get(reference, refId);
+                const core::CFrameD* was = theirs.has_value() ? std::get_if<core::CFrameD>(&*theirs) : nullptr;
+                if (held != nullptr && (was == nullptr || !nearFrame(core::inverse(site.pivot) * *held, *was)))
+                    overridden.push_back(property.name);
+                continue;
+            }
             if (differsFromReference(world, property, name, reference, refId, stampRoot, site.referenceRoot, *mine))
                 overridden.push_back(property.name);
         }
     }
     return overridden;
+}
+
+std::optional<std::string> stampKeyOf(const World& world, core::InstanceId copyRoot, core::InstanceId id)
+{
+    if (!world.alive(copyRoot) || !world.alive(id))
+        return std::nullopt;
+    const CopyIndex index = indexOf(world, copyRoot);
+    const std::string* key = index.key(id);
+    return key != nullptr ? std::optional<std::string>(*key) : std::nullopt;
+}
+
+core::InstanceId stampNodeAt(const World& world, core::InstanceId copyRoot, std::string_view key)
+{
+    if (!world.alive(copyRoot))
+        return {};
+    return indexOf(world, copyRoot).find(key);
+}
+
+Value stampLocalValue(const World& world, core::InstanceId id, core::NameAtom property, const Value& value,
+                      StampLibrary& stamps)
+{
+    const core::CFrameD* frame = std::get_if<core::CFrameD>(&value);
+    if (frame == nullptr)
+        return value;
+    const PropertyDesc* descriptor = world.classes().findProperty(world.classOf(id), property);
+    if (descriptor == nullptr || !worldFrame(world, id, *descriptor))
+        return value;
+    const ReferenceSite site = locateInStamp(world, id, stamps);
+    if (!site.found())
+        return value;
+    return Value{core::inverse(site.pivot) * *frame};
+}
+
+std::vector<DisabledStampNode> stampDisabled(const World& world, core::InstanceId copyRoot, StampLibrary& stamps)
+{
+    std::vector<DisabledStampNode> out;
+    if (!world.alive(copyRoot) || !world.stampOf(copyRoot).valid())
+        return out;
+    const StampLibrary::Entry* entry = stamps.reference(std::string(world.atoms().text(world.stampOf(copyRoot))));
+    if (entry == nullptr || entry->world == nullptr || !entry->root.valid())
+        return out;
+    const World& reference = *entry->world;
+    const CopyIndex liveIndex = indexOf(world, copyRoot);
+    const CopyIndex refIndex = indexOf(reference, entry->root);
+    const CopyDiff diff = diffCopy(world, copyRoot, liveIndex, reference, entry->root, refIndex);
+    for (const std::string& key : diff.disabled) {
+        const core::InstanceId node = refIndex.find(key);
+        if (!node.valid())
+            continue;
+        const ClassDescriptor* descriptor = reference.classes().find(reference.classOf(node));
+        const std::string* under = refIndex.key(reference.parentOf(node));
+        out.push_back(DisabledStampNode{key, std::string(reference.atoms().text(reference.name(node))),
+                                        descriptor != nullptr ? std::string(reference.atoms().text(descriptor->name))
+                                                              : std::string{},
+                                        under != nullptr ? *under : std::string{}});
+    }
+    return out;
+}
+
+bool enableStampNode(World& world, core::InstanceId copyRoot, std::string_view key, StampLibrary& stamps)
+{
+    if (!world.alive(copyRoot) || !world.stampOf(copyRoot).valid() || key.empty())
+        return false;
+    const StampLibrary::Entry* entry = stamps.reference(std::string(world.atoms().text(world.stampOf(copyRoot))));
+    if (entry == nullptr || entry->world == nullptr || !entry->root.valid())
+        return false;
+    const World& reference = *entry->world;
+    const CopyIndex liveIndex = indexOf(world, copyRoot);
+    if (liveIndex.find(key).valid())
+        return false;
+    const CopyIndex refIndex = indexOf(reference, entry->root);
+    const core::InstanceId node = refIndex.find(key);
+    const std::string* under = node.valid() ? refIndex.key(reference.parentOf(node)) : nullptr;
+    const core::InstanceId parent = under != nullptr ? liveIndex.find(*under) : core::InstanceId{};
+    if (!parent.valid())
+        return false;
+
+    // The stamp's node, as the stamp has it: written out of the reference and
+    // read into the copy, so its nested copies stay linked and its nodes keep
+    // their sids -- then moved to where the copy stands.
+    const core::CFrameD pivot = pivotOfCopy(world, copyRoot, liveIndex, reference, entry->root, refIndex);
+    std::string text = writeStamp(reference, node, nullptr, &stamps);
+    SceneIoReport ignored;
+    const core::InstanceId placed = readStamp(world, text, parent, "<enable>", &ignored, &stamps.source());
+    if (!placed.valid())
+        return false;
+    world.setStamp(placed, reference.stampOf(node));
+    world.setStampSid(placed, reference.stampSid(node));
+    moveSubtree(world, placed, pivot);
+    return true;
+}
+
+std::optional<std::vector<StampParameter>> parseStampParameters(std::string_view json)
+{
+    core::JsonDocument document;
+    if (!document.parse(json).ok || document.root().type() != core::JsonType::Array)
+        return std::nullopt;
+    const JsonValue list = document.root();
+    std::vector<StampParameter> out;
+    std::vector<PendingReference> unused;
+    for (core::usize at = 0; at < list.size(); ++at) {
+        const JsonValue entry = list.at(at);
+        StampParameter parameter;
+        parameter.name = std::string(entry["name"].asString());
+        if (parameter.name.empty())
+            continue;
+        const std::string_view type = entry["type"].asString();
+        if (type == "number")
+            parameter.type = ValueType::Number;
+        else if (type == "boolean")
+            parameter.type = ValueType::Bool;
+        else if (type == "string")
+            parameter.type = ValueType::String;
+        else if (type == "Color3")
+            parameter.type = ValueType::Color3;
+        else if (type == "Vector3")
+            parameter.type = ValueType::Vector3;
+        else
+            continue;
+        if (std::optional<Value> value =
+                readValue(parameter.type, entry["default"], unused, core::InstanceId{}, core::NameAtom{}, false))
+            parameter.defaultValue = std::move(*value);
+        if (entry["min"].type() == core::JsonType::Number)
+            parameter.minimum = entry["min"].asNumber();
+        if (entry["max"].type() == core::JsonType::Number)
+            parameter.maximum = entry["max"].asNumber();
+        const JsonValue choices = entry["choices"];
+        for (core::usize choice = 0; choice < choices.size(); ++choice) {
+            if (std::optional<Value> value =
+                    readValue(parameter.type, choices.at(choice), unused, core::InstanceId{}, core::NameAtom{}, false))
+                parameter.choices.push_back(std::move(*value));
+        }
+        const JsonValue drives = entry["drives"];
+        for (core::usize drive = 0; drive < drives.size(); ++drive) {
+            parameter.drives.push_back(StampDrive{std::string(drives.at(drive)["node"].asString()),
+                                                  std::string(drives.at(drive)["property"].asString()),
+                                                  std::string(drives.at(drive)["component"].asString())});
+        }
+        out.push_back(std::move(parameter));
+    }
+    return out;
+}
+
+std::string writeStampParameters(const World& world, const std::vector<StampParameter>& parameters)
+{
+    const std::unordered_map<core::u32, std::string> noPaths;
+    SceneIoReport report;
+    JsonWriter out;
+    out.beginArray();
+    for (const StampParameter& parameter : parameters) {
+        out.beginObject();
+        out.field("name", std::string_view{parameter.name});
+        const std::string_view type = parameter.type == ValueType::Bool      ? "boolean"
+                                      : parameter.type == ValueType::String  ? "string"
+                                      : parameter.type == ValueType::Color3  ? "Color3"
+                                      : parameter.type == ValueType::Vector3 ? "Vector3"
+                                                                             : "number";
+        out.field("type", type);
+        if (valueType(parameter.defaultValue) != ValueType::Nil) {
+            out.key("default");
+            writeValue(out, world, parameter.defaultValue, noPaths, report);
+        }
+        if (parameter.minimum.has_value())
+            out.field("min", *parameter.minimum);
+        if (parameter.maximum.has_value())
+            out.field("max", *parameter.maximum);
+        if (!parameter.choices.empty()) {
+            out.key("choices");
+            out.beginInlineArray();
+            for (const Value& choice : parameter.choices)
+                writeValue(out, world, choice, noPaths, report);
+            out.endArray();
+        }
+        if (!parameter.drives.empty()) {
+            out.key("drives");
+            out.beginArray();
+            for (const StampDrive& drive : parameter.drives) {
+                out.beginObject();
+                out.field("node", std::string_view{drive.node});
+                out.field("property", std::string_view{drive.property});
+                if (!drive.component.empty())
+                    out.field("component", std::string_view{drive.component});
+                out.endObject();
+            }
+            out.endArray();
+        }
+        out.endObject();
+    }
+    out.endArray();
+    return out.text();
+}
+
+std::vector<StampParameter> stampParametersOf(const World& world, core::InstanceId copyRoot)
+{
+    const core::NameAtom declared = world.stampParameters(copyRoot);
+    if (!declared.valid())
+        return {};
+    std::optional<std::vector<StampParameter>> parsed = parseStampParameters(world.atoms().text(declared));
+    return parsed.has_value() ? std::move(*parsed) : std::vector<StampParameter>{};
+}
+
+std::string_view stampParameterRefusal(const StampParameter& parameter, const Value& value)
+{
+    if (valueType(value) != parameter.type)
+        return "type";
+    if (const core::f64* number = std::get_if<core::f64>(&value); number != nullptr) {
+        if ((parameter.minimum.has_value() && *number < *parameter.minimum) ||
+            (parameter.maximum.has_value() && *number > *parameter.maximum) || !std::isfinite(*number))
+            return "range";
+    }
+    if (!parameter.choices.empty() &&
+        std::find(parameter.choices.begin(), parameter.choices.end(), value) == parameter.choices.end())
+        return "choice";
+    return {};
+}
+
+void applyStampDrives(World& world, core::InstanceId copyRoot, core::NameAtom parameter)
+{
+    const std::vector<StampParameter> declared = stampParametersOf(world, copyRoot);
+    if (declared.empty())
+        return;
+    const CopyIndex index = indexOf(world, copyRoot);
+    for (const StampParameter& each : declared) {
+        if (parameter.valid() && world.atoms().text(parameter) != each.name)
+            continue;
+        const Value value = world.getAttribute(copyRoot, world.atoms().intern(each.name));
+        if (!stampParameterRefusal(each, value).empty())
+            continue;
+        for (const StampDrive& drive : each.drives) {
+            const core::InstanceId target = index.find(drive.node);
+            if (!target.valid())
+                continue;
+            const core::NameAtom property = world.atoms().intern(drive.property);
+            Value driven = value;
+            // One component of a vector, from a number: a fence's length is its
+            // rail's `Size.X`.
+            if (!drive.component.empty() && std::holds_alternative<core::f64>(value)) {
+                const std::optional<Value> held = world.getProperty(target, property);
+                const core::Vec3* vector = held.has_value() ? std::get_if<core::Vec3>(&*held) : nullptr;
+                if (vector == nullptr)
+                    continue;
+                core::Vec3 changed = *vector;
+                const auto component = static_cast<core::f32>(std::get<core::f64>(value));
+                if (drive.component == "X")
+                    changed.x = component;
+                else if (drive.component == "Y")
+                    changed.y = component;
+                else if (drive.component == "Z")
+                    changed.z = component;
+                else
+                    continue;
+                driven = Value{changed};
+            }
+            (void)world.setProperty(target, property, driven);
+        }
+    }
+}
+
+std::string writeCopyAsStamp(const World& world, core::InstanceId copy, StampLibrary& stamps)
+{
+    if (!world.alive(copy) || !world.stampOf(copy).valid())
+        return {};
+    const std::string stamp(world.atoms().text(world.stampOf(copy)));
+    const std::optional<std::string> text = stamps.source() ? stamps.source()(stamp) : std::nullopt;
+    // A variant stays a variant: what this copy has of its own, relative to
+    // the base, measured where it stands.
+    if (const std::string base = text.has_value() ? stampBaseOf(*text) : std::string{}; !base.empty())
+        return writeStamp(world, copy, nullptr, &stamps, base);
+
+    const StampLibrary::Entry* entry = stamps.reference(stamp);
+    if (entry == nullptr || entry->world == nullptr)
+        return {};
+    // Everything in the stamp's frame: the copy as it stands, moved back to
+    // where its stamp stands.
+    const CopyIndex liveIndex = indexOf(world, copy);
+    const CopyIndex refIndex = indexOf(*entry->world, entry->root);
+    const core::CFrameD local =
+        core::inverse(pivotOfCopy(world, copy, liveIndex, *entry->world, entry->root, refIndex));
+
+    SceneIoReport report;
+    JsonWriter writer;
+    writer.beginObject();
+    writer.field("format", kFormat);
+    writer.field("version", kVersion);
+    std::unordered_map<core::u32, std::string> paths;
+    collectPaths(world, copy, {}, paths);
+    SidPlans sids(world);
+    SidPlans* const outer = t_sids;
+    t_sids = &sids;
+    writer.key("root");
+    writeInstance(writer, world, copy, paths, report, copy, &stamps, &local, core::InstanceId{});
+    t_sids = outer;
+    writer.endObject();
+    return writer.text();
+}
+
+std::vector<std::string> stampOrphanKeys(const World& world, core::InstanceId copyRoot)
+{
+    std::vector<std::string> keys;
+    const core::NameAtom orphans = world.stampOrphans(copyRoot);
+    core::JsonDocument kept;
+    if (!orphans.valid() || !kept.parse(world.atoms().text(orphans)).ok)
+        return keys;
+    for (core::usize at = 0; at < kept.root().size(); ++at)
+        keys.emplace_back(kept.root().keyAt(at));
+    return keys;
+}
+
+core::InstanceId replaceStampCopy(World& world, core::InstanceId copy, std::string_view stamp, StampLibrary& stamps,
+                                  SceneIoReport* report)
+{
+    SceneIoReport local;
+    SceneIoReport& out = report != nullptr ? *report : local;
+    if (!world.alive(copy) || !world.stampOf(copy).valid())
+        return {};
+    const StampLibrary::Entry* was = stamps.reference(std::string(world.atoms().text(world.stampOf(copy))));
+    const std::optional<std::string> text = stamps.source() ? stamps.source()(stamp) : std::nullopt;
+    if (was == nullptr || was->world == nullptr || !text.has_value())
+        return {};
+
+    // What the old copy has of its own, in its stamp's frame, and where it
+    // stands: the overrides go onto the new one where its sids name a node of
+    // the same class, and the rest is kept as orphans (§14).
+    const CopyIndex oldIndex = indexOf(world, copy);
+    const CopyIndex refIndex = indexOf(*was->world, was->root);
+    const core::CFrameD pivot = pivotOfCopy(world, copy, oldIndex, *was->world, was->root, refIndex);
+    std::unordered_map<core::u32, std::string> paths;
+    JsonWriter kept;
+    kept.beginObject();
+    kept.field("name", world.atoms().text(world.name(copy)));
+    SceneIoReport measured;
+    writeCopyBody(kept, world, copy, *was->world, was->root, paths, measured, nullptr, &stamps, false);
+    kept.endObject();
+    core::JsonDocument body;
+    if (!body.parse(kept.text()).ok)
+        return {};
+
+    const core::InstanceId parent = world.parentOf(copy);
+    const core::InstanceId placed = readStamp(world, *text, parent, stamp, &out, &stamps.source());
+    if (!placed.valid())
+        return {};
+    // Overrides only: what the old one added or disabled was about its stamp.
+    JsonWriter onlyOverrides;
+    onlyOverrides.beginObject();
+    onlyOverrides.field("name", world.atoms().text(world.name(copy)));
+    if (const JsonValue overrides = body.root()["overrides"]; overrides.type() == core::JsonType::Object) {
+        onlyOverrides.key("overrides");
+        writeJsonValue(onlyOverrides, overrides);
+    }
+    onlyOverrides.endObject();
+    core::JsonDocument apply;
+    if (apply.parse(onlyOverrides.text()).ok) {
+        std::vector<PendingReference> pending;
+        StampLoad load{&stamps.source()};
+        const ReadingVersion reading(kVersion);
+        applyCopy(world, placed, apply.root(), pending, out, &load, 1);
+    }
+    moveSubtree(world, placed, pivot);
+    (void)world.destroy(copy);
+    return placed;
 }
 
 void renumberOrigins(World& world)

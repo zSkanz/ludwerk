@@ -101,7 +101,7 @@ void ScriptTemplates::readStamp(scene::World& world, core::NameAtom asset)
     // **Built as `Instance.stamp` builds it, and numbered the same way**, so a
     // place in this copy is the same place in the authority's.
     scene::SceneIoReport report;
-    const core::InstanceId placed = scene::readStamp(world, *source, core::InstanceId{}, name, &report);
+    const core::InstanceId placed = scene::readStamp(world, *source, core::InstanceId{}, name, &report, &m_stamps);
     if (!placed.valid())
         return;
     (void)world.numberOrigins(placed, asset, 0);

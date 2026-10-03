@@ -1530,7 +1530,7 @@ TEST_CASE("making a stamp writes a file and turns the subject into an instance o
     CHECK(std::filesystem::exists(project.root / "content" / "stamps" / "lantern-post.stamp.json"));
 }
 
-TEST_CASE("a stamp of a subtree that already contains one is refused rather than half-answered")
+TEST_CASE("S3: a stamp of a subtree that holds a copy keeps the copy linked to its own stamp")
 {
     StampProject project("nested");
     app::testing::Fixture fixture;
@@ -1547,10 +1547,13 @@ TEST_CASE("a stamp of a subtree that already contains one is refused rather than
     REQUIRE_FALSE(world.setParent(lantern, post).has_value());
 
     REQUIRE(editor.createStamp(world, post, root, "lantern-post"));
-    // Does the outer file record the inner link? Does breaking the outer break
-    // the inner? ADR 0049 declines to answer, so this declines to write one.
-    CHECK_FALSE(editor.createStamp(world, group, root, "street"));
-    CHECK_FALSE(std::filesystem::exists(project.root / "content" / "stamps" / "street.stamp.json"));
+    // It used to be refused: ADR 0049 had no answer for a stamp of a stamp,
+    // and ADR 0155 gives one -- the outer file holds the inner as a copy.
+    REQUIRE(editor.createStamp(world, group, root, "street"));
+    std::string street;
+    REQUIRE(engine::platform::readTextFile(project.root / "content" / "stamps" / "street.stamp.json", street));
+    CHECK(street.find("\"stamp\":\"stamps/lantern-post.stamp.json\"") != std::string::npos);
+    CHECK(street.find("\"Lantern\"") == std::string::npos);
 }
 
 TEST_CASE("placing a stamp builds its subtree, selects it, and one undo takes all of it back")
@@ -1933,12 +1936,11 @@ TEST_CASE("saving a stamp moves every linked instance of it in the world")
     REQUIRE(editor.closeStamp(world, root, inspector, false));
 }
 
-TEST_CASE("an instance that was changed structurally stops following its stamp")
+TEST_CASE("S5: a copy with a child of its own follows its stamp, and keeps the child")
 {
-    // The other half of the rule the writer already applies: somebody who added
-    // a child to ONE lamp post is not asking for it to be thrown away the next
-    // time the file is saved. It is not an instance of that stamp any more, and
-    // the count is what says so out loud.
+    // Somebody who added a child to ONE lamp post is not asking for it to be
+    // thrown away the next time the file is saved -- nor for that lamp post to
+    // stop following the file, which is what it used to do (ADR 0155 §5).
     StampProject project("diverged");
     app::testing::Fixture fixture;
     scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
@@ -1962,10 +1964,11 @@ TEST_CASE("an instance that was changed structurally stops following its stamp")
     REQUIRE_FALSE(stage.setParent(glow, editor.stampSession().root).has_value());
     REQUIRE(editor.saveStamp(world, root));
 
-    // Left exactly as it was, and the status says it was left.
-    CHECK(world.childCount(post) == 1);
+    // The stamp's new child, and its own -- and nothing was left behind.
+    CHECK(world.childCount(post) == 2);
+    CHECK(world.findFirstChild(post, fixture.atom("Glow")).valid());
     CHECK(world.findFirstChild(post, fixture.atom("Mine")).valid());
-    CHECK(editor.status().message.find("left alone") != std::string::npos);
+    CHECK(editor.status().message.find("left alone") == std::string::npos);
 
     REQUIRE(editor.closeStamp(world, root, inspector, false));
 }
@@ -2859,17 +2862,12 @@ TEST_CASE("placing a second instance of a stamp does not unlink the first")
     std::filesystem::remove_all(scratch, ec);
 }
 
-TEST_CASE("adding a child to a stamped instance unlinks it, and the save says so")
+TEST_CASE("S5: adding a child to a stamped instance keeps it linked, and the save keeps the child")
 {
     // **The reported sequence, exactly.** Convert an instance into a stamp, add
-    // a script under it, save -- and the instance stops being an instance of the
-    // file. That is the format's own rule (`scene_file.cpp` says so at the
-    // branch): the shape has to match, and recording "this one has an extra
-    // child" would be an added-and-removed-object machinery nobody designed.
-    //
-    // What was wrong was not the rule but the SILENCE. The scene kept
-    // everything and the person found out days later, on reopening, that a
-    // stamp they were editing no longer reached anything.
+    // a script under it, save. It used to unlink the instance -- the shape had
+    // to match -- and say so; now the child is the copy's own and the link
+    // stays (ADR 0155 §5).
     app::testing::Fixture fixture;
     scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
     const core::InstanceId workspace = world.create(fixture.workspaceClass);
@@ -2900,14 +2898,10 @@ TEST_CASE("adding a child to a stamped instance unlinks it, and the save says so
     REQUIRE(world.setParent(script, subject) == std::nullopt);
 
     REQUIRE(editor.save(world, scratch / "a.scene.json"));
-    // **The person is told, at the moment it happens.** Reported as a failure
-    // so the status line stands out: the save succeeded and something they
-    // will care about changed.
-    CHECK(editor.status().failed);
-    CHECK(editor.status().message.find("unlinked") != std::string::npos);
+    CHECK_FALSE(editor.status().failed);
+    CHECK(editor.status().message.find("unlinked") == std::string::npos);
 
-    // And reopening confirms what the message said: no mark, and the child is
-    // still there -- the save lost nothing.
+    // And reopening confirms it: still marked, and the child is there.
     scene::World reopened(fixture.classes, fixture.enums, fixture.atoms, 1234u);
     const core::InstanceId reopenedWorkspace = reopened.create(fixture.workspaceClass);
     reopened.setName(reopenedWorkspace, fixture.atoms.intern("Workspace"));
@@ -2916,7 +2910,7 @@ TEST_CASE("adding a child to a stamped instance unlinks it, and the save says so
 
     const core::InstanceId back = reopened.findFirstChild(reopenedWorkspace, fixture.atoms.intern("Spinner"));
     REQUIRE(back.valid());
-    CHECK_FALSE(reopened.stampOf(back).valid());
+    CHECK(reopened.stampOf(back).valid());
     CHECK(reopened.findFirstChild(back, fixture.atoms.intern("Spin")).valid());
 
     std::filesystem::remove_all(scratch, ec);
@@ -4738,6 +4732,219 @@ TEST_CASE("applying is refused on an instance that is not part of a stamp")
     const core::InstanceId loose = fixture.rig.part("Loose", fixture.rig.root, {0.0, 0.0, 0.0});
     CHECK_FALSE(fixture.rig.editor.applyOverride(fixture.rig.world, fixture.rig.root, loose, fixture.friction));
     CHECK(fixture.rig.editor.status().failed);
+}
+
+// --- Stamps 2.0 in the editor (ADR 0155 §11-§15) -------------------------------
+
+namespace {
+[[nodiscard]] core::InstanceId childNamed(scene::World& world, core::InstanceId parent, std::string_view name)
+{
+    return world.findFirstChild(parent, world.atoms().intern(name));
+}
+} // namespace
+
+TEST_CASE("S11: reverting a whole copy puts every override back, as one step")
+{
+    StampProject project("revert-copy");
+    OverrideRig fixture(project);
+    const core::f64 original = fixture.frictionOf(fixture.first);
+    const core::InstanceId lantern = childNamed(fixture.rig.world, fixture.first, "Lantern");
+    fixture.setFriction(fixture.first, 0.75);
+    fixture.setFriction(lantern, 0.5);
+
+    const core::usize before = fixture.rig.editor.history().depth();
+    CHECK(fixture.rig.editor.revertNode(fixture.rig.world, lantern, true));
+    CHECK(fixture.rig.editor.history().depth() == before + 1);
+    CHECK(fixture.frictionOf(fixture.first) == doctest::Approx(original));
+    CHECK(fixture.frictionOf(lantern) == doctest::Approx(original));
+    REQUIRE(fixture.rig.editor.undo(fixture.rig.world, fixture.rig.inspector));
+    CHECK(fixture.frictionOf(fixture.first) == doctest::Approx(0.75));
+}
+
+TEST_CASE("S11, S13: a variant made from a copy, and an override applied to its base reaches every copy")
+{
+    StampProject project("variant-apply");
+    OverrideRig fixture(project);
+    scene::World& world = fixture.rig.world;
+
+    // The first copy becomes a copy of a new variant of `post`.
+    const std::string variant = fixture.rig.editor.createVariantFromCopy(world, fixture.first, "post-tall");
+    REQUIRE(variant == "stamps/post-tall.stamp.json");
+    CHECK(world.atoms().text(world.stampOf(fixture.first)) == variant);
+    CHECK(fixture.rig.editor.baseOf(variant) == "stamps/post.stamp.json");
+    const std::vector<std::string> levels = fixture.rig.editor.stampLevels(world, fixture.first);
+    REQUIRE(levels.size() == 2);
+    CHECK(levels[1] == "stamps/post.stamp.json");
+
+    // The lantern's friction, from the variant's copy, pushed to the BASE.
+    const core::InstanceId lantern = childNamed(world, fixture.first, "Lantern");
+    fixture.setFriction(lantern, 0.75);
+    REQUIRE(fixture.rig.editor.applyOverride(world, fixture.rig.root, lantern, fixture.friction, 1));
+    std::string base;
+    REQUIRE(engine::platform::readTextFile(project.root / "content" / "stamps" / "post.stamp.json", base));
+    CHECK(base.find("0.75") != std::string::npos);
+    // The base's other copy follows, and the variant's copy holds nothing of
+    // its own for it any more.
+    CHECK(fixture.frictionOf(childNamed(world, fixture.second, "Lantern")) == doctest::Approx(0.75));
+    CHECK(fixture.rig.editor.overridesOf(world, lantern).empty());
+}
+
+TEST_CASE("S13: every copy of a stamp selected at once")
+{
+    StampProject project("select-copies");
+    OverrideRig fixture(project);
+    // The two placed, and the one it was made from.
+    CHECK(fixture.rig.editor.selectCopies(fixture.rig.world, fixture.rig.root, "post", fixture.rig.inspector) == 3);
+}
+
+TEST_CASE("S13: a copy replaced by another stamp stands where it stood, with the overrides it still has nodes for")
+{
+    StampProject project("replace-copy");
+    OverrideRig fixture(project);
+    scene::World& world = fixture.rig.world;
+    // A pole: another stamp with a lantern of its own.
+    const core::InstanceId pole = fixture.rig.part("Pole", fixture.rig.root, {0.0, 0.0, 0.0});
+    (void)fixture.rig.part("Lantern", pole, {0.0, 6.0, 0.0});
+    REQUIRE(fixture.rig.editor.createStamp(world, pole, fixture.rig.root, "pole"));
+
+    // The first post moved and its lantern changed.
+    for (const core::InstanceId each : {fixture.first, childNamed(world, fixture.first, "Lantern")})
+        world.parts().find(each)->cframe.position.x += 10.0;
+    fixture.setFriction(childNamed(world, fixture.first, "Lantern"), 0.75);
+
+    REQUIRE(fixture.rig.editor.replaceCopy(world, fixture.first, "pole", fixture.rig.inspector));
+    const core::InstanceId placed = fixture.rig.inspector.selection();
+    REQUIRE(placed.valid());
+    CHECK(world.atoms().text(world.stampOf(placed)) == "stamps/pole.stamp.json");
+    CHECK(world.parts().find(placed)->cframe.position.x == doctest::Approx(10.0));
+    const core::InstanceId lantern = childNamed(world, placed, "Lantern");
+    REQUIRE(lantern.valid());
+    CHECK(world.parts().find(lantern)->cframe.position.y == doctest::Approx(6.0));
+    CHECK(fixture.frictionOf(lantern) == doctest::Approx(0.75));
+}
+
+TEST_CASE("S5, S15: a stamp's child deleted from a copy is listed as disabled, and enabled back")
+{
+    StampProject project("enable-child");
+    OverrideRig fixture(project);
+    scene::World& world = fixture.rig.world;
+    (void)world.destroy(childNamed(world, fixture.first, "Lantern"));
+    world.retireDestroyed();
+
+    const std::vector<scene::DisabledStampNode> disabled = fixture.rig.editor.disabledOf(world, fixture.first);
+    REQUIRE(disabled.size() == 1);
+    CHECK(disabled.front().name == "Lantern");
+    REQUIRE(fixture.rig.editor.enableStampChild(world, fixture.first, disabled.front().key));
+    const core::InstanceId back = childNamed(world, fixture.first, "Lantern");
+    REQUIRE(back.valid());
+    CHECK(world.parts().find(back)->cframe.position.y == doctest::Approx(4.0));
+    CHECK(fixture.rig.editor.disabledOf(world, fixture.first).empty());
+}
+
+TEST_CASE("S12: a copy edited where it stands becomes its stamp, and every copy follows")
+{
+    StampProject project("apply-whole");
+    OverrideRig fixture(project);
+    scene::World& world = fixture.rig.world;
+    // The first copy, moved away, given a banner and a slipperier lantern.
+    for (const core::InstanceId each : {fixture.first, childNamed(world, fixture.first, "Lantern")})
+        world.parts().find(each)->cframe.position.x += 10.0;
+    (void)fixture.rig.part("Banner", fixture.first, {10.0, 2.0, 0.0});
+    fixture.setFriction(childNamed(world, fixture.first, "Lantern"), 0.75);
+
+    REQUIRE(fixture.rig.editor.applyWholeCopy(world, fixture.rig.root, fixture.first));
+    std::string text;
+    REQUIRE(engine::platform::readTextFile(project.root / "content" / "stamps" / "post.stamp.json", text));
+    CHECK(text.find("Banner") != std::string::npos);
+
+    // The other copy, where it stood, has the banner where the stamp puts it,
+    // and the lantern's friction.
+    const core::InstanceId banner = childNamed(world, fixture.second, "Banner");
+    REQUIRE(banner.valid());
+    CHECK(world.parts().find(banner)->cframe.position.x == doctest::Approx(0.0));
+    CHECK(world.parts().find(banner)->cframe.position.y == doctest::Approx(2.0));
+    CHECK(fixture.frictionOf(childNamed(world, fixture.second, "Lantern")) == doctest::Approx(0.75));
+    // And the copy that was edited stands where it stood, with nothing of its
+    // own left.
+    CHECK(world.parts().find(fixture.first)->cframe.position.x == doctest::Approx(10.0));
+    CHECK(fixture.rig.editor.overridesOf(world, childNamed(world, fixture.first, "Lantern")).empty());
+}
+
+TEST_CASE("S15: a stamp made from a selection keeps the references inside it")
+{
+    StampProject project("internal-refs");
+    StampRig rig(project);
+    const core::InstanceId cart = rig.make("Model", "Cart", rig.root);
+    const core::InstanceId body = rig.part("Body", cart, {0.0, 0.0, 0.0});
+    const core::InstanceId wheel = rig.part("Wheel", cart, {1.0, 0.0, 0.0});
+    const core::InstanceId weld = rig.make("WeldConstraint", "Weld", cart);
+    REQUIRE(rig.world.setProperty(weld, rig.atoms.intern("Part0"), scene::Value{body}) ==
+            scene::World::SetResult::Changed);
+    REQUIRE(rig.world.setProperty(weld, rig.atoms.intern("Part1"), scene::Value{wheel}) ==
+            scene::World::SetResult::Changed);
+    REQUIRE(rig.editor.createStamp(rig.world, cart, rig.root, "cart"));
+
+    REQUIRE(rig.editor.instantiateStamp(rig.world, "cart", rig.root, rig.root, rig.inspector));
+    const core::InstanceId placed = rig.inspector.selection();
+    const core::InstanceId placedWeld = rig.world.findFirstChild(placed, rig.atoms.intern("Weld"));
+    REQUIRE(placedWeld.valid());
+    const std::optional<scene::Value> part1 = rig.world.getProperty(placedWeld, rig.atoms.intern("Part1"));
+    REQUIRE(part1.has_value());
+    // Its own wheel, not the one it was made from.
+    CHECK(std::get<core::InstanceId>(*part1) == rig.world.findFirstChild(placed, rig.atoms.intern("Wheel")));
+    CHECK(std::get<core::InstanceId>(*part1) != wheel);
+}
+
+TEST_CASE("S6: a parameter declared on the stage drives what it is given, on every copy")
+{
+    StampProject project("declare-parameter");
+    OverrideRig fixture(project);
+    scene::World& world = fixture.rig.world;
+
+    REQUIRE(fixture.rig.editor.openStamp("post", fixture.rig.classes, fixture.rig.enums, fixture.rig.atoms,
+                                         fixture.rig.inspector));
+    scene::World& stage = fixture.rig.editor.stage()->world();
+    const core::InstanceId root = fixture.rig.editor.stampSession().root;
+    REQUIRE(fixture.rig.editor.declareStampParameter(stage, root, "Grip", scene::ValueType::Number));
+    REQUIRE(fixture.rig.editor.setStampParameterRange(stage, root, "Grip", 0.0, 2.0));
+    const core::InstanceId lantern = stage.findFirstChild(root, fixture.rig.atoms.intern("Lantern"));
+    REQUIRE(fixture.rig.editor.toggleStampDrive(stage, root, "Grip", lantern, fixture.friction));
+    REQUIRE(fixture.rig.editor.saveStamp(world, fixture.rig.root));
+    REQUIRE(fixture.rig.editor.closeStamp(world, fixture.rig.root, fixture.rig.inspector, false));
+
+    // Every copy offers it, at its default, and drives the lantern by it.
+    const std::vector<scene::StampParameter> declared = scene::stampParametersOf(world, fixture.second);
+    REQUIRE(declared.size() == 1);
+    CHECK(declared.front().name == "Grip");
+    CHECK(declared.front().maximum == doctest::Approx(2.0));
+    REQUIRE(world.setAttribute(fixture.first, fixture.rig.atoms.intern("Grip"), scene::Value{0.5}));
+    CHECK(fixture.frictionOf(childNamed(world, fixture.first, "Lantern")) == doctest::Approx(0.5));
+    // The driven property is the parameter's, not an override of the copy's.
+    CHECK(fixture.rig.editor.overridesOf(world, childNamed(world, fixture.first, "Lantern")).empty());
+}
+
+TEST_CASE("S14: an override for a node the stamp no longer has is kept, listed, and cleaned up")
+{
+    StampProject project("orphans");
+    OverrideRig fixture(project);
+    scene::World& world = fixture.rig.world;
+    fixture.setFriction(childNamed(world, fixture.first, "Lantern"), 0.75);
+
+    // The stamp loses its lantern.
+    REQUIRE(fixture.rig.editor.openStamp("post", fixture.rig.classes, fixture.rig.enums, fixture.rig.atoms,
+                                         fixture.rig.inspector));
+    scene::World& stage = fixture.rig.editor.stage()->world();
+    (void)stage.destroy(
+        stage.findFirstChild(fixture.rig.editor.stampSession().root, fixture.rig.atoms.intern("Lantern")));
+    stage.retireDestroyed();
+    REQUIRE(fixture.rig.editor.saveStamp(world, fixture.rig.root));
+    REQUIRE(fixture.rig.editor.closeStamp(world, fixture.rig.root, fixture.rig.inspector, false));
+
+    CHECK_FALSE(childNamed(world, fixture.first, "Lantern").valid());
+    CHECK(fixture.rig.editor.orphansOf(world, fixture.first).size() == 1);
+    CHECK(fixture.rig.editor.orphansOf(world, fixture.second).empty());
+    REQUIRE(fixture.rig.editor.cleanOrphans(world, fixture.first));
+    CHECK(fixture.rig.editor.orphansOf(world, fixture.first).empty());
 }
 
 TEST_CASE("reordering moves a row among its siblings, and refuses to record a step that does nothing")

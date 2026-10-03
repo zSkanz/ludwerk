@@ -1078,6 +1078,10 @@ bool EditorCommands::refuseAuthoring() noexcept
     drop(overrideSubject, none.overrideSubject);
     drop(overrideProperty, none.overrideProperty);
     drop(overrideApply, none.overrideApply);
+    drop(overrideLevel, none.overrideLevel);
+    drop(stampVerb, none.stampVerb);
+    drop(stampVerbSubject, none.stampVerbSubject);
+    drop(stampVerbText, none.stampVerbText);
     drop(openStamp, none.openStamp);
     drop(newStampClass, none.newStampClass);
     drop(newStampName, none.newStampName);
@@ -1977,7 +1981,8 @@ core::u32 Editor::stampChangedOnDisk(scene::World& world, core::InstanceId gameR
     const std::string before = found->second;
     found->second = now;
     scene::SceneIoReport moved;
-    const core::u32 followed = scene::restamp(world, gameRoot, path, before, now, &moved);
+    const scene::StampSource others = stampSource();
+    const core::u32 followed = scene::restamp(world, gameRoot, path, before, now, &moved, &others);
     if (followed > 0) {
         world.retireDestroyed();
         m_sceneDirty = true;
@@ -2058,11 +2063,18 @@ bool Editor::openStamp(std::string_view path, scene::ClassRegistry& classes, sce
     }
 
     scene::SceneIoReport report;
-    const core::InstanceId root = scene::readStamp(stage->world(), text, stage->workspace(), relative, &report);
+    const scene::StampSource others = stampSource();
+    const core::InstanceId root =
+        scene::readStamp(stage->world(), text, stage->workspace(), relative, &report, &others);
     if (!root.valid()) {
         m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_could_not_be")), true};
         return false;
     }
+    // **A variant is edited as a copy of its base** (ADR 0155 §4): its root
+    // carries the base's mark, so what it has of its own is marked as an
+    // override and a save writes only that.
+    if (const std::string base = scene::stampBaseOf(text); !base.empty())
+        stage->world().setStamp(root, atoms.intern(base));
 
     m_stage = std::move(stage);
     m_stamp = StampSession{relative, root, false, text};
@@ -2554,7 +2566,8 @@ bool Editor::revertOverride(scene::World& world, core::InstanceId id, core::Name
     return true;
 }
 
-bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core::InstanceId id, core::NameAtom property)
+bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core::InstanceId id, core::NameAtom property,
+                           core::u32 level)
 {
     if (!id.valid() || !world.alive(id) || !property.valid()) {
         m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.there_is_nothing_selected_to_2")), true};
@@ -2574,7 +2587,14 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
         m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_part_of_2")), true};
         return false;
     }
-    const std::string path(world.atoms().text(mark));
+    // **Which file** (ADR 0155 §11): the copy's own stamp, or one it is a
+    // variant of.
+    const std::vector<std::string> levels = stampLevels(world, id);
+    if (level >= levels.size()) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.no_such_stamp_level")), true};
+        return false;
+    }
+    const std::string path = levels[level];
 
     // **Refused while that stamp is open on the stage**, because then there are
     // two writers of one file and the one a person can see would lose. Said
@@ -2615,51 +2635,35 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
     // The alternative -- editing the JSON text -- would be a second reader of
     // the stamp format, and `readSceneNode`'s own comment gives the reason that
     // is not worth having: one definition of what a stamp means.
+    const scene::StampSource others = stampSource();
     scene::World scratch(world.classes(), world.enums(), world.atoms(), 1u);
-    const core::InstanceId scratchRoot = scene::readStamp(scratch, *before, core::InstanceId{}, path);
+    const core::InstanceId scratchRoot = scene::readStamp(scratch, *before, core::InstanceId{}, path, nullptr, &others);
     if (!scratchRoot.valid()) {
         m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_read"), {{"path", path}}), true};
         return false;
     }
+    const std::string base = scene::stampBaseOf(*before);
+    if (!base.empty())
+        scratch.setStamp(scratchRoot, world.atoms().intern(base));
 
-    // The same walk down from each root, which is what pairs the live instance
-    // with the one in the file.
-    std::vector<core::u32> descent;
-    for (core::InstanceId step = id; step != stampRoot; step = world.parentOf(step)) {
-        const core::InstanceId parent = world.parentOf(step);
-        if (!parent.valid())
-            break;
-        core::u32 index = 0;
-        core::InstanceId child = world.firstChild(parent);
-        while (child.valid() && child != step) {
-            child = world.nextSibling(child);
-            ++index;
-        }
-        descent.push_back(index);
-    }
-    core::InstanceId target = scratchRoot;
-    for (auto step = descent.rbegin(); step != descent.rend(); ++step) {
-        core::InstanceId child = scratch.firstChild(target);
-        for (core::u32 skipped = 0; skipped < *step && child.valid(); ++skipped)
-            child = scratch.nextSibling(child);
-        if (!child.valid()) {
-            m_status =
-                EditorStatus{core::tr(ENG_TR("engine.editor.status.that_instance_is_not_in"), {{"path", path}}), true};
-            return false;
-        }
-        target = child;
-    }
-    // The same position is the same instance only when it is the same class:
-    // one whose stamp moved on structurally could otherwise write into a
-    // different thing in the file (B14).
-    // One registry for both worlds, so the class ids compare.
-    if (scratch.classOf(target) != world.classOf(id)) {
+    // **The same node by its key** (ADR 0155 §2) -- a sid, which a rename or a
+    // move among siblings does not change -- and of the same class, or it is
+    // another thing (B14). One registry for both worlds, so the class ids
+    // compare. A variant's nodes have its base's keys, so the key names the
+    // node in a base too -- unless the variant added it.
+    const std::optional<std::string> key = scene::stampKeyOf(world, stampRoot, id);
+    const core::InstanceId target =
+        key.has_value() ? scene::stampNodeAt(scratch, scratchRoot, *key) : core::InstanceId{};
+    if (!target.valid() || scratch.classOf(target) != world.classOf(id)) {
         m_status =
             EditorStatus{core::tr(ENG_TR("engine.editor.status.that_instance_is_not_in"), {{"path", path}}), true};
         return false;
     }
 
-    const scene::World::SetResult intoStamp = scratch.setProperty(target, property, *mine);
+    // A place goes into the stamp in the stamp's own frame (§1).
+    scene::StampLibrary library(world, others);
+    const scene::Value inStamp = scene::stampLocalValue(world, id, property, *mine, library);
+    const scene::World::SetResult intoStamp = scratch.setProperty(target, property, inStamp);
     if (intoStamp != scene::World::SetResult::Changed && intoStamp != scene::World::SetResult::Unchanged) {
         m_status = EditorStatus{
             core::tr(ENG_TR("engine.editor.status.could_not_write_into"), {{"name", name}, {"path", path}}), true};
@@ -2667,7 +2671,8 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
     }
 
     scene::SceneIoReport wrote;
-    const std::string after = scene::writeStamp(scratch, scratchRoot, &wrote);
+    scene::StampLibrary scratchStamps(scratch, others);
+    const std::string after = scene::writeStamp(scratch, scratchRoot, &wrote, &scratchStamps, base);
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(path);
     if (!platform::createDirectories(absolute.parent_path()) || !platform::writeTextFileDurable(absolute, after)) {
         m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", path}}), true};
@@ -2679,8 +2684,39 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
     // reason: an instance that overrode this property with some other value
     // differs from `before` and keeps what it has.
     scene::SceneIoReport moved;
-    const core::u32 followed =
-        gameRoot.valid() && world.alive(gameRoot) ? scene::restamp(world, gameRoot, path, *before, after, &moved) : 0u;
+    core::u32 followed = gameRoot.valid() && world.alive(gameRoot)
+                             ? scene::restamp(world, gameRoot, path, *before, after, &moved, &others)
+                             : 0u;
+    // **And the copies of its variants** (ADR 0155 §4): built from a variant
+    // whose base changed, each measured against the base it came from.
+    if (gameRoot.valid() && world.alive(gameRoot) && level > 0) {
+        const std::string changed = path;
+        const std::string was = *before;
+        const scene::StampSource beforeSource = [changed, was, others](std::string_view wanted) {
+            return wanted == changed ? std::optional<std::string>(was) : others(wanted);
+        };
+        std::vector<core::InstanceId> everyone{gameRoot};
+        world.collectDescendants(gameRoot, everyone);
+        std::vector<std::string> variants;
+        for (const core::InstanceId each : everyone) {
+            const core::NameAtom placed = world.stampOf(each);
+            if (!placed.valid())
+                continue;
+            const std::string stampName(world.atoms().text(placed));
+            if (stampName == changed || std::find(variants.begin(), variants.end(), stampName) != variants.end())
+                continue;
+            for (std::string walk = baseOf(stampName); !walk.empty(); walk = baseOf(walk)) {
+                if (walk == changed) {
+                    variants.push_back(stampName);
+                    break;
+                }
+            }
+        }
+        for (const std::string& variant : variants) {
+            if (const std::optional<std::string> text = others(variant); text.has_value())
+                followed += scene::restamp(world, gameRoot, variant, *text, *text, &moved, &others, &beforeSource);
+        }
+    }
     // The children it replaced leave the pools now: a paused world runs no
     // drain to retire them, as `load` says (B5).
     if (followed > 0)
@@ -2709,6 +2745,437 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
     return true;
 }
 
+namespace {
+// The declaration on `root` with `change` made to it, as ONE undo step.
+template <typename Change>
+bool changeDeclaration(scene::World& world, core::InstanceId root, UndoStack& history, const std::string& label,
+                       const Change& change)
+{
+    if (!world.alive(root))
+        return false;
+    std::vector<scene::StampParameter> parameters = scene::stampParametersOf(world, root);
+    if (!change(parameters))
+        return false;
+    history.record(world, label);
+    world.setStampParameters(root, parameters.empty()
+                                       ? core::NameAtom{}
+                                       : world.atoms().intern(scene::writeStampParameters(world, parameters)));
+    return true;
+}
+} // namespace
+
+bool Editor::declareStampParameter(scene::World& world, core::InstanceId root, std::string_view name,
+                                   scene::ValueType type)
+{
+    scene::Value zero{core::f64{0.0}};
+    if (type == scene::ValueType::Bool)
+        zero = scene::Value{false};
+    else if (type == scene::ValueType::String)
+        zero = scene::Value{std::string()};
+    else if (type == scene::ValueType::Color3)
+        zero = scene::Value{core::Color3{1.0f, 1.0f, 1.0f}};
+    else if (type == scene::ValueType::Vector3)
+        zero = scene::Value{core::Vec3{}};
+    const bool made =
+        changeDeclaration(world, root, m_history, core::tr(ENG_TR("engine.editor.history.parameter")),
+                          [&](std::vector<scene::StampParameter>& parameters) {
+                              if (name.empty() || std::any_of(parameters.begin(), parameters.end(),
+                                                              [&](const auto& each) { return each.name == name; }))
+                                  return false;
+                              scene::StampParameter parameter;
+                              parameter.name = std::string(name);
+                              parameter.type = type;
+                              parameter.defaultValue = zero;
+                              parameters.push_back(std::move(parameter));
+                              return true;
+                          });
+    if (made) {
+        (void)world.setAttribute(root, world.atoms().intern(name), zero);
+        touch();
+    }
+    return made;
+}
+
+bool Editor::removeStampParameter(scene::World& world, core::InstanceId root, std::string_view name)
+{
+    const bool removed =
+        changeDeclaration(world, root, m_history, core::tr(ENG_TR("engine.editor.history.parameter")),
+                          [&](std::vector<scene::StampParameter>& parameters) {
+                              return std::erase_if(parameters, [&](const auto& each) { return each.name == name; }) > 0;
+                          });
+    if (removed) {
+        (void)world.setAttribute(root, world.atoms().intern(name), scene::Value{});
+        touch();
+    }
+    return removed;
+}
+
+bool Editor::setStampParameterRange(scene::World& world, core::InstanceId root, std::string_view name,
+                                    std::optional<core::f64> minimum, std::optional<core::f64> maximum)
+{
+    const bool set = changeDeclaration(world, root, m_history, core::tr(ENG_TR("engine.editor.history.parameter")),
+                                       [&](std::vector<scene::StampParameter>& parameters) {
+                                           for (scene::StampParameter& each : parameters) {
+                                               if (each.name != name || each.type != scene::ValueType::Number)
+                                                   continue;
+                                               each.minimum = minimum;
+                                               each.maximum = maximum;
+                                               return true;
+                                           }
+                                           return false;
+                                       });
+    if (set)
+        touch();
+    return set;
+}
+
+bool Editor::toggleStampDrive(scene::World& world, core::InstanceId root, std::string_view name, core::InstanceId node,
+                              core::NameAtom property)
+{
+    const std::optional<std::string> key = scene::stampKeyOf(world, root, node);
+    if (!key.has_value() || !property.valid())
+        return false;
+    const std::string propertyName(world.atoms().text(property));
+    // The node's sid, the one the file will hold.
+    scene::assignStampSids(world, root);
+    const std::optional<std::string> stable = scene::stampKeyOf(world, root, node);
+    const bool set = changeDeclaration(world, root, m_history, core::tr(ENG_TR("engine.editor.history.parameter")),
+                                       [&](std::vector<scene::StampParameter>& parameters) {
+                                           for (scene::StampParameter& each : parameters) {
+                                               if (each.name != name)
+                                                   continue;
+                                               const auto same = [&](const scene::StampDrive& drive) {
+                                                   return drive.node == *stable && drive.property == propertyName;
+                                               };
+                                               if (std::erase_if(each.drives, same) == 0)
+                                                   each.drives.push_back(scene::StampDrive{*stable, propertyName, {}});
+                                               return true;
+                                           }
+                                           return false;
+                                       });
+    if (set) {
+        scene::applyStampDrives(world, root, world.atoms().intern(name));
+        touch();
+    }
+    return set;
+}
+
+bool Editor::applyWholeCopy(scene::World& world, core::InstanceId gameRoot, core::InstanceId id)
+{
+    const core::InstanceId root = world.alive(id) ? world.stampRootOf(id) : core::InstanceId{};
+    if (!root.valid()) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_part_of_2")), true};
+        return false;
+    }
+    const std::string path(world.atoms().text(world.stampOf(root)));
+    if (m_stamp.open() && m_stamp.path == path) {
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.is_open_for_editing_apply"), {{"path", path}}), true};
+        return false;
+    }
+    const scene::StampSource others = stampSource();
+    const std::optional<std::string> before = others(path);
+    if (!before.has_value()) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_read"), {{"path", path}}), true};
+        return false;
+    }
+    // The subject's sids first, so the file and the copy agree on its nodes.
+    scene::assignStampSids(world, root);
+    scene::StampLibrary library(world, others);
+    const std::string after = scene::writeCopyAsStamp(world, root, library);
+    const std::filesystem::path absolute = m_content.root() / std::filesystem::path(path);
+    if (after.empty() || !platform::createDirectories(absolute.parent_path()) ||
+        !platform::writeTextFileDurable(absolute, after)) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", path}}), true};
+        return false;
+    }
+    scene::SceneIoReport moved;
+    core::u32 followed = gameRoot.valid() && world.alive(gameRoot)
+                             ? scene::restamp(world, gameRoot, path, *before, after, &moved, &others)
+                             : 0u;
+    if (gameRoot.valid() && world.alive(gameRoot)) {
+        const std::string was = *before;
+        const scene::StampSource beforeSource = [path, was, others](std::string_view wanted) {
+            return wanted == path ? std::optional<std::string>(was) : others(wanted);
+        };
+        std::vector<core::InstanceId> everyone{gameRoot};
+        world.collectDescendants(gameRoot, everyone);
+        std::vector<std::string> variants;
+        for (const core::InstanceId each : everyone) {
+            const core::NameAtom placed = world.stampOf(each);
+            if (!placed.valid())
+                continue;
+            const std::string stampName(world.atoms().text(placed));
+            if (stampName == path || std::find(variants.begin(), variants.end(), stampName) != variants.end())
+                continue;
+            for (std::string walk = baseOf(stampName); !walk.empty(); walk = baseOf(walk)) {
+                if (walk == path) {
+                    variants.push_back(stampName);
+                    break;
+                }
+            }
+        }
+        for (const std::string& variant : variants) {
+            if (const std::optional<std::string> text = others(variant); text.has_value())
+                followed += scene::restamp(world, gameRoot, variant, *text, *text, &moved, &others, &beforeSource);
+        }
+    }
+    if (followed > 0)
+        world.retireDestroyed();
+    (*m_stampTexts)[path] = after;
+    m_sceneDirty = true;
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.applied_whole_copy"),
+                                     {{"path", path}, {"count", static_cast<core::i64>(followed)}})};
+    return true;
+}
+
+std::vector<std::string> Editor::stampLevels(const scene::World& world, core::InstanceId id)
+{
+    std::vector<std::string> levels;
+    const core::InstanceId root = world.alive(id) ? world.stampRootOf(id) : core::InstanceId{};
+    if (!root.valid())
+        return levels;
+    for (std::string walk(world.atoms().text(world.stampOf(root))); !walk.empty() && levels.size() < 8;
+         walk = baseOf(walk)) {
+        if (std::find(levels.begin(), levels.end(), walk) != levels.end())
+            break;
+        levels.push_back(walk);
+    }
+    return levels;
+}
+
+std::string Editor::baseOf(std::string_view path) const
+{
+    const std::optional<std::string> text = stampSource()(path);
+    return text.has_value() ? scene::stampBaseOf(*text) : std::string{};
+}
+
+bool Editor::revertNode(scene::World& world, core::InstanceId id, bool wholeCopy)
+{
+    const core::InstanceId root = world.alive(id) ? world.stampRootOf(id) : core::InstanceId{};
+    if (!root.valid()) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_part_of")), true};
+        return false;
+    }
+    std::vector<core::InstanceId> nodes{wholeCopy ? root : id};
+    if (wholeCopy)
+        world.collectDescendants(root, nodes);
+
+    // Measured before anything is recorded, for D134's reason.
+    scene::StampLibrary stamps(world, stampSource());
+    std::vector<std::tuple<core::InstanceId, core::NameAtom, scene::Value>> back;
+    for (const core::InstanceId node : nodes) {
+        for (const core::NameAtom property : scene::stampOverrides(world, node, stamps)) {
+            if (std::optional<scene::Value> theirs = scene::stampReferenceValue(world, node, property, stamps))
+                back.emplace_back(node, property, std::move(*theirs));
+        }
+    }
+    if (back.empty()) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_to_revert"))};
+        return true;
+    }
+    m_history.record(world, core::tr(wholeCopy ? ENG_TR("engine.editor.history.revert_copy")
+                                               : ENG_TR("engine.editor.history.revert_node")));
+    for (const auto& [node, property, value] : back)
+        (void)world.setProperty(node, property, value);
+    touch();
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.status.reverted_overrides"), {{"count", static_cast<core::i64>(back.size())}})};
+    return true;
+}
+
+std::string Editor::createVariantOf(std::string_view stamp, std::string_view name)
+{
+    const std::string base = normalizeStampPath(stamp);
+    const std::string relative = normalizeStampPath(name);
+    const std::filesystem::path absolute = m_content.root() / std::filesystem::path(relative);
+    std::error_code taken;
+    if (!stampNameIsUsable(name) || std::filesystem::exists(absolute, taken)) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.a_stamp_is_already_called")), true};
+        return {};
+    }
+    const std::optional<std::string> text = stampSource()(base);
+    if (!text.has_value()) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_is_not_there")), true};
+        return {};
+    }
+    // Its base built once, for its root's class and name: a variant with
+    // nothing of its own is that and its mark.
+    core::JsonDocument document;
+    if (!document.parse(*text).ok) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_could_not_be")), true};
+        return {};
+    }
+    const core::JsonValue root = document.root()["root"];
+    core::JsonWriter out;
+    out.beginObject();
+    out.field("format", std::string_view{"scene"});
+    out.field("version", static_cast<core::i64>(3));
+    out.key("root");
+    out.beginObject();
+    out.field("class", root["class"].asString());
+    out.field("name", root["name"].asString());
+    out.field("stamp", std::string_view{base});
+    out.endObject();
+    out.endObject();
+    if (!platform::createDirectories(absolute.parent_path()) || !platform::writeTextFileDurable(absolute, out.text())) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write_that_stamp")), true};
+        return {};
+    }
+    (void)m_content.refresh();
+    m_status =
+        EditorStatus{core::tr(ENG_TR("engine.editor.status.variant_created"), {{"path", relative}, {"base", base}})};
+    return relative;
+}
+
+std::string Editor::createVariantFromCopy(scene::World& world, core::InstanceId id, std::string_view name)
+{
+    const core::InstanceId root = world.alive(id) ? world.stampRootOf(id) : core::InstanceId{};
+    if (!root.valid()) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_part_of")), true};
+        return {};
+    }
+    const std::string base(world.atoms().text(world.stampOf(root)));
+    const std::string relative = normalizeStampPath(name);
+    const std::filesystem::path absolute = m_content.root() / std::filesystem::path(relative);
+    std::error_code taken;
+    if (!stampNameIsUsable(name) || std::filesystem::exists(absolute, taken)) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.a_stamp_is_already_called")), true};
+        return {};
+    }
+    // What the copy has of its own, relative to its stamp: the variant.
+    scene::StampLibrary stamps(world, stampSource());
+    scene::SceneIoReport report;
+    const std::string text = scene::writeStamp(world, root, &report, &stamps, base);
+    if (!platform::createDirectories(absolute.parent_path()) || !platform::writeTextFileDurable(absolute, text)) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write_that_stamp")), true};
+        return {};
+    }
+    // **And the copy becomes a copy of it**, standing where it stands: what it
+    // had of its own is the variant's now.
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.variant")));
+    world.setStamp(root, world.atoms().intern(relative));
+    (*m_stampTexts)[relative] = text;
+    touch();
+    (void)m_content.refresh();
+    m_status =
+        EditorStatus{core::tr(ENG_TR("engine.editor.status.variant_created"), {{"path", relative}, {"base", base}})};
+    return relative;
+}
+
+core::usize Editor::selectCopies(scene::World& world, core::InstanceId root, std::string_view path,
+                                 Inspector& inspector)
+{
+    const core::NameAtom mark = world.atoms().lookup(normalizeStampPath(path));
+    std::vector<core::InstanceId> copies;
+    if (mark.valid() && world.alive(root)) {
+        static thread_local std::vector<TreeRow> rows;
+        collectTree(world, root, rows);
+        for (const TreeRow& row : rows) {
+            if (world.stampOf(row.id) == mark && !world.destroyed(row.id))
+                copies.push_back(row.id);
+        }
+    }
+    inspector.select(copies);
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.status.copies_selected"), {{"count", static_cast<core::i64>(copies.size())}})};
+    return copies.size();
+}
+
+bool Editor::replaceCopy(scene::World& world, core::InstanceId id, std::string_view stamp, Inspector& inspector)
+{
+    const core::InstanceId root = world.alive(id) ? world.stampRootOf(id) : core::InstanceId{};
+    if (!root.valid()) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_part_of")), true};
+        return false;
+    }
+    const std::string relative = normalizeStampPath(stamp);
+    if (!stampSource()(relative).has_value()) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_is_not_there")), true};
+        return false;
+    }
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.replace_stamp")));
+    scene::StampLibrary stamps(world, stampSource());
+    scene::SceneIoReport report;
+    const core::InstanceId placed = scene::replaceStampCopy(world, root, relative, stamps, &report);
+    if (!placed.valid()) {
+        (void)m_history.undo(world);
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_could_not_be")), true};
+        return false;
+    }
+    world.retireDestroyed();
+    touch();
+    inspector.select(placed);
+    inspector.reveal(placed);
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.replaced_with"), {{"path", relative}})};
+    return true;
+}
+
+std::vector<scene::DisabledStampNode> Editor::disabledOf(const scene::World& world, core::InstanceId id)
+{
+    const core::InstanceId root = world.alive(id) ? world.stampRootOf(id) : core::InstanceId{};
+    if (!root.valid())
+        return {};
+    scene::StampLibrary stamps(const_cast<scene::World&>(world), stampSource());
+    return scene::stampDisabled(world, root, stamps);
+}
+
+bool Editor::enableStampChild(scene::World& world, core::InstanceId id, std::string_view key)
+{
+    const core::InstanceId root = world.alive(id) ? world.stampRootOf(id) : core::InstanceId{};
+    if (!root.valid())
+        return false;
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.enable_child")));
+    scene::StampLibrary stamps(world, stampSource());
+    if (!scene::enableStampNode(world, root, key, stamps)) {
+        (void)m_history.undo(world);
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_enable")), true};
+        return false;
+    }
+    touch();
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.enabled_child"))};
+    return true;
+}
+
+bool Editor::disableStampChild(scene::World& world, core::InstanceId id, Inspector& inspector)
+{
+    const core::InstanceId root = world.alive(id) ? world.stampRootOf(id) : core::InstanceId{};
+    if (!root.valid() || root == id) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_part_of")), true};
+        return false;
+    }
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.disable_child")));
+    (void)world.destroy(id);
+    world.retireDestroyed();
+    inspector.onWorldChanged();
+    touch();
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.disabled_child"))};
+    return true;
+}
+
+std::vector<std::string> Editor::orphansOf(const scene::World& world, core::InstanceId id)
+{
+    const core::InstanceId root = world.alive(id) ? world.stampRootOf(id) : core::InstanceId{};
+    return root.valid() ? scene::stampOrphanKeys(world, root) : std::vector<std::string>{};
+}
+
+bool Editor::cleanOrphans(scene::World& world, core::InstanceId id)
+{
+    const core::InstanceId root = world.alive(id) ? world.stampRootOf(id) : core::InstanceId{};
+    const std::vector<std::string> keys =
+        root.valid() ? scene::stampOrphanKeys(world, root) : std::vector<std::string>{};
+    if (keys.empty()) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.no_unused_overrides"))};
+        return true;
+    }
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.clean_overrides")));
+    world.setStampOrphans(root, core::NameAtom{});
+    touch();
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.unused_overrides_removed"),
+                                     {{"count", static_cast<core::i64>(keys.size())}})};
+    return true;
+}
+
 bool Editor::saveStamp(scene::World& game, core::InstanceId gameRoot)
 {
     if (!m_stamp.open() || m_stage == nullptr || !m_stage->world().alive(m_stamp.root)) {
@@ -2722,8 +3189,14 @@ bool Editor::saveStamp(scene::World& game, core::InstanceId gameRoot)
     // street -- and without the library every one of them is written in full and
     // unlinked, so editing the lamp post stops reaching the street. `save` has
     // done this since ADR 0051 landed and this path never learned it.
-    scene::StampLibrary stamps(m_stage->world(), stampSource());
-    const std::string text = scene::writeStamp(m_stage->world(), m_stamp.root, &report, &stamps);
+    const scene::StampSource others = stampSource();
+    scene::StampLibrary stamps(m_stage->world(), others);
+    // Every node with the sid it is written with, so the stage and the file
+    // agree on which node is which at the next save too (ADR 0155 §2) -- and a
+    // variant written as a copy of its base (§4).
+    scene::assignStampSids(m_stage->world(), m_stamp.root);
+    const std::string text =
+        scene::writeStamp(m_stage->world(), m_stamp.root, &report, &stamps, scene::stampBaseOf(m_stamp.baseline));
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(m_stamp.path);
     if (!platform::createDirectories(absolute.parent_path()) || !platform::writeTextFileDurable(absolute, text)) {
         m_status =
@@ -2742,7 +3215,8 @@ bool Editor::saveStamp(scene::World& game, core::InstanceId gameRoot)
     // put back.
     scene::SceneIoReport moved;
     const core::u32 followed =
-        game.alive(gameRoot) ? scene::restamp(game, gameRoot, m_stamp.path, m_stamp.baseline, text, &moved) : 0u;
+        game.alive(gameRoot) ? scene::restamp(game, gameRoot, m_stamp.path, m_stamp.baseline, text, &moved, &others)
+                             : 0u;
     if (followed > 0)
         game.retireDestroyed();
     m_stamp.baseline = text;
@@ -2896,24 +3370,8 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
         return false;
     }
 
-    // **A stamp of a stamp is refused rather than half-answered** (ADR 0049).
-    // Does the outer file record the inner link? Does breaking the outer break
-    // the inner? Those are real questions with no answer yet, and a format that
-    // silently picked one would be a format somebody depends on before anybody
-    // decides.
-    for (core::InstanceId child = world.firstChild(id); child.valid();) {
-        if (world.stampOf(child).valid()) {
-            m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_already_contains_a_stamped")), true};
-            return false;
-        }
-        if (const core::InstanceId inner = world.firstChild(child); inner.valid()) {
-            child = inner;
-            continue;
-        }
-        while (child.valid() && child != id && !world.nextSibling(child).valid())
-            child = world.parentOf(child);
-        child = child == id ? core::InstanceId{} : world.nextSibling(child);
-    }
+    // **A stamp holds stamps** (ADR 0155 §3): a copy inside the selection stays
+    // a copy, linked to its own file, in the new one.
 
     // **Nor from code that is files** (the audit of 2026-09-28): the stamp
     // would carry the scripts and `src/` would mount them again beside it --
@@ -2953,9 +3411,12 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
     }
 
     scene::SceneIoReport report;
-    // In full: a stamp is a file of its own, and a script from `src/` in it is
-    // code the stamp has to carry.
-    const std::string text = scene::writeCopy(world, id, &report);
+    // Through the library, so a copy inside stays linked to its stamp; and with
+    // the sids the subject keeps, so it is a copy of the file from the start
+    // (ADR 0155 §2, §3). Nothing from `src/` is in it: that was refused above.
+    scene::assignStampSids(world, id);
+    scene::StampLibrary library(world, stampSource());
+    const std::string text = scene::writeStamp(world, id, &report, &library);
     if (!platform::writeTextFileDurable(absolute, text)) {
         m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write_that_stamp")), true};
         return false;
@@ -3032,10 +3493,10 @@ bool Editor::instantiateStamp(scene::World& world, std::string_view name, core::
         m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_authored_can_live_in")), true};
         return false;
     }
-    // **Not into a stamp being edited** (B6): a stamp inside a stamp is a
-    // question the format has not answered, and the inner one was lost on the
-    // next save of the outer.
-    if (linked && m_stage != nullptr && &world == &m_stage->world()) {
+    // **Into a stamp being edited, too** (ADR 0155 §3): the copy stays linked
+    // to its own file in the stamp's, and a stamp that would hold itself is
+    // refused when it is read.
+    if (linked && m_stage != nullptr && &world == &m_stage->world() && m_stamp.path == normalizeStampPath(name)) {
         m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.a_stamp_cannot_hold_another")), true};
         return false;
     }
@@ -3053,7 +3514,8 @@ bool Editor::instantiateStamp(scene::World& world, std::string_view name, core::
     m_history.record(world, core::tr(ENG_TR("engine.editor.history.stamp")));
 
     scene::SceneIoReport report;
-    const core::InstanceId placed = scene::readStamp(world, text, parent, relative, &report);
+    const scene::StampSource others = stampSource();
+    const core::InstanceId placed = scene::readStamp(world, text, parent, relative, &report, &others);
     if (!placed.valid()) {
         // Nothing usable was built, so the step is taken back rather than
         // left: a step that undoes nothing eats a press of ctrl-Z, and undoing
@@ -3160,7 +3622,8 @@ bool Editor::assignStampTo(scene::World& world, core::InstanceId root, core::Ins
         }
 
         scene::SceneIoReport report;
-        subject = scene::readStamp(world, text, parent, relative, &report);
+        const scene::StampSource others = stampSource();
+        subject = scene::readStamp(world, text, parent, relative, &report, &others);
         if (!subject.valid()) {
             (void)m_history.undo(world);
             m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_could_not_be")), true};

@@ -155,6 +155,12 @@ local Classes: { Schema.Class } = {
                 Doc = "Whether this instance sits anywhere below ancestor; read strictly, so an instance is not its own descendant. False when either is destroyed, so a check needs no pcall.",
             },
             {
+                Name = "GetStamp",
+                Parameters = {},
+                Returns = { "string?" },
+                Doc = "The stamp a linked copy was placed from, as its content path (`stamps/fighter.stamp.json`), or nil for anything else, a copy placed unlinked included (ADR 0155). A copy's parameters are its attributes.",
+            },
+            {
                 Name = "Clone",
                 Parameters = {},
                 Returns = { "Instance" },

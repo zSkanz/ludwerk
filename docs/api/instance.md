@@ -81,6 +81,10 @@ The path to the instance, as the names of its ancestors and its own joined by do
 
 The signal fired when that property changes -- the same object on every call, carrying no value so its type stays independent of the property's; a name the class does not have raises.
 
+### `GetStamp(): string?`
+
+The stamp a linked copy was placed from, as its content path (`stamps/fighter.stamp.json`), or nil for anything else, a copy placed unlinked included (ADR 0155). A copy's parameters are its attributes.
+
 ### `GetTags(): {string}`
 
 A fresh array of this instance's tags, which the caller owns.

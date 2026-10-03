@@ -239,7 +239,7 @@ TEST_CASE("a scene writes a material as its URN and the overrides in name order,
             scene::World::SetResult::Changed);
 
     const std::string text = scene::writeScene(stage.world);
-    CHECK(text.find("\"version\":2") != std::string::npos);
+    CHECK(text.find("\"version\":3") != std::string::npos);
     CHECK(text.find("\"Material\":\"asset://materials/brick.material.json\"") != std::string::npos);
     CHECK(text.find("\"MaterialParameters\":{\"Color\":[0.5,0.5,0.5],\"Transparency\":0.25}") != std::string::npos);
 

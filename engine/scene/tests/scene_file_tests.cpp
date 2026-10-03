@@ -607,7 +607,9 @@ TEST_CASE("an instance keeps its stamp through an edit, and the edit is an overr
     CHECK(wrote.unlinkedStamps == 0);
     CHECK(wrote.overrides >= 1);
     CHECK(sceneText.find("overrides") != std::string::npos);
-    CHECK(sceneText.find("Lantern") != std::string::npos); // as a PATH, not as an instance
+    // Keyed by the lantern's sid (ADR 0155 §2), not by its name: a rename in
+    // the stamp keeps the override.
+    CHECK(sceneText.find("Lantern") == std::string::npos);
 
     Fixture other;
     (void)makeWorkspace(other);
@@ -701,7 +703,8 @@ TEST_CASE("two children of one name keep their own overrides")
     const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
     scene::StampLibrary library(fixture.world, source);
     const std::string sceneText = scene::writeScene(fixture.world, nullptr, &library);
-    CHECK(sceneText.find("Part#2") != std::string::npos);
+    // Each keyed by its own sid (ADR 0155 §2), which two names alike cannot share.
+    CHECK(sceneText.find("Part#2") == std::string::npos);
 
     Fixture other;
     (void)makeWorkspace(other);
@@ -795,12 +798,11 @@ TEST_CASE("a linked instance keeps the attributes and tags given to it")
     CHECK(other.world.atoms().text(tags.front()) == "Light");
 }
 
-TEST_CASE("a structural change is not an override, so the instance is written in full")
+TEST_CASE("S5: a child added to a copy keeps it linked, and comes back after a save")
 {
-    // Adding a child to one instance is not "a parameter of this one" -- it is
-    // a different thing. A format that recorded it would be inventing an
-    // added-and-removed-object machinery nobody designed, so the instance is
-    // written whole and its mark dropped: nothing is lost and the count says so.
+    // It used to write the copy whole and drop its mark: adding a banner to
+    // one lamp post made it a lamp post no change to the stamp would reach
+    // (ADR 0155 §5).
     Fixture fixture;
     const core::InstanceId workspace = makeWorkspace(fixture);
     const core::InstanceId post = partUnder(fixture, workspace, "Post", core::DVec3{});
@@ -815,11 +817,12 @@ TEST_CASE("a structural change is not an override, so the instance is written in
 
     SceneIoReport wrote;
     const std::string sceneText = scene::writeScene(fixture.world, &wrote, &library);
-    CHECK(wrote.stamped == 0);
-    CHECK(wrote.unlinkedStamps == 1);
-    // Written whole: both children are in the file by name.
-    CHECK(sceneText.find("Lantern") != std::string::npos);
+    CHECK(wrote.stamped == 1);
+    CHECK(wrote.unlinkedStamps == 0);
+    // The banner in full, as an added child; the lantern is the stamp's.
+    CHECK(sceneText.find("\"added\"") != std::string::npos);
     CHECK(sceneText.find("Banner") != std::string::npos);
+    CHECK(sceneText.find("Lantern") == std::string::npos);
 
     Fixture other;
     (void)makeWorkspace(other);
@@ -830,8 +833,8 @@ TEST_CASE("a structural change is not an override, so the instance is written in
             placed = id;
     });
     REQUIRE(placed.valid());
-    CHECK(other.world.childCount(placed) == 2);
-    CHECK_FALSE(other.world.stampOf(placed).valid());
+    CHECK(other.childNames(placed) == std::vector<std::string>{"Lantern", "Banner"});
+    CHECK(other.world.atoms().text(other.world.stampOf(placed)) == "lantern-post");
 }
 
 TEST_CASE("restamp moves every live instance of a stamp, in place, keeping its overrides")
@@ -916,11 +919,11 @@ TEST_CASE("restamp moves every live instance of a stamp, in place, keeping its o
     CHECK(static_cast<double>(scene::testing::transparencyOf(*replaced)) == doctest::Approx(0.0));
 }
 
-TEST_CASE("restamp leaves an instance whose shape has moved on, and counts it")
+TEST_CASE("S5: restamp refreshes a copy with a child of its own, and keeps the child")
 {
-    // The rule the writer already applies, from the other side: somebody who
-    // added a child to ONE lamp post is not asking for it to be thrown away the
-    // next time the file is saved. It is not an instance of that stamp any more.
+    // Somebody who added a child to ONE lamp post is not asking for it to be
+    // thrown away the next time the file is saved -- nor for that lamp post to
+    // stop following the file (ADR 0155 §5). It used to be left as it was.
     Fixture fixture;
     const core::InstanceId workspace = makeWorkspace(fixture);
     const core::InstanceId original = partUnder(fixture, workspace, "Post", core::DVec3{});
@@ -942,9 +945,10 @@ TEST_CASE("restamp leaves an instance whose shape has moved on, and counts it")
     const std::string after = scene::writeStamp(edited.world, editing);
 
     SceneIoReport moved;
-    CHECK(scene::restamp(fixture.world, workspace, "post", before, after, &moved) == 0);
-    CHECK(moved.unlinkedStamps == 1);
-    CHECK(fixture.childNames(mine) == std::vector<std::string>{"Lantern", "Banner"});
+    CHECK(scene::restamp(fixture.world, workspace, "post", before, after, &moved) == 1);
+    CHECK(moved.unlinkedStamps == 0);
+    // The stamp's two, then the one this copy added.
+    CHECK(fixture.childNames(mine) == std::vector<std::string>{"Lantern", "Glow", "Banner"});
 
     // And a stamp nobody in the world is an instance of moves nothing.
     CHECK(scene::restamp(fixture.world, workspace, "some-other-stamp", before, after, &moved) == 0);
@@ -1593,8 +1597,11 @@ TEST_CASE("a stamp that names itself many times is read once, and stops at the l
     SceneIoReport read;
     read.instanceLimit = 5000;
     REQUIRE_FALSE(scene::readScene(fixture.world, sceneText, &read, source).has_value());
-    // Read and parsed once, however many times it was placed.
+    // Read and parsed once -- and a stamp that holds itself is a cycle, refused
+    // by name at the first copy of itself inside itself (ADR 0155 §3).
     CHECK(reads == 1);
+    CHECK(read.stampCycles > 0);
+    CHECK(read.stampCycle == "self -> self");
     // Wide stops where the load says: past its limit by at most one stamp's
     // worth, and not the 168,421 the depth alone allowed.
     CHECK(read.instances <= 5000 + 21);

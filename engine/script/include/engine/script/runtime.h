@@ -64,6 +64,10 @@ public:
     // the binding asks upward, and a VM nobody gave one raises rather than
     // handing back an empty prefab.
     void setStampSource(std::function<std::optional<std::string>(std::string_view)> source);
+    // Runs every queued stamp copy's `Construct` (ADR 0155 §8): after a scene
+    // is read, at a tick's start, and -- with `editing` -- in the editor's
+    // frame, where a parameter written builds its copy again.
+    void constructStamps(bool editing);
 
     // Where `SaveService` keeps its slots (ADR 0111). The host's, and it
     // outlives this VM; null answers every save call with an error.

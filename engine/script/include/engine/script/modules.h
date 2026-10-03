@@ -431,6 +431,17 @@ void reconcileAllScripts(lua_State* L);
 // engine's own, and a rule about scripts must not reach one.
 [[nodiscard]] bool resumptionSuppressed(lua_State* L, core::InstanceId script);
 
+// **Runs a stamp copy's `Construct`** (ADR 0155 §8): what it built before is
+// destroyed, its module is required and called with the copy's root, its
+// parameters and a `Random` seeded from the stamp and those values, and
+// everything it adds under the root is marked constructed -- never saved, and
+// built again next time. A failure is logged and leaves what it built so far.
+// Takes the copy off the world's queue.
+void constructStamp(lua_State* L, core::InstanceId root);
+// Every queued copy's, in the order they were queued, each once; with
+// `editing`, the copies whose parameters were written too.
+void constructPendingStamps(lua_State* L, bool editing);
+
 // How many entry scripts were mounted. The conformance runner reports it, and a
 // project that mounted nothing is worth saying so about.
 [[nodiscard]] usize mountedScriptCount(lua_State* L);

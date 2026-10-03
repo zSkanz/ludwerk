@@ -245,6 +245,16 @@ struct EditorDialogs
     // finish typing.
     bool newStamp = false;
     core::InstanceId stampSubject;
+    // **What the box makes** (ADR 0155 §13): a stamp of the subject, a
+    // variant of the stamp the subject's copy came from, or the stamp the
+    // subject's copy is replaced with -- the same shape of question, a name.
+    enum class StampDialog : core::u8
+    {
+        Stamp,
+        Variant,
+        Replace,
+    };
+    StampDialog stampDialog = StampDialog::Stamp;
 
     // A rename in flight. The seed is what the box opens with -- the current
     // name, because renaming is usually editing a name rather than replacing
@@ -620,6 +630,29 @@ struct EditorCommands
     core::NameAtom overrideProperty;
     // Which of the two. Absent means neither was asked for this frame.
     std::optional<bool> overrideApply;
+    // Which file an apply goes to: 0 the copy's own stamp, 1 its base, ...
+    // (ADR 0155 §11).
+    core::u32 overrideLevel = 0;
+
+    // **A Stamps 2.0 verb** (ADR 0155 §11-§15): which, on what, and the one
+    // string it may need -- a name, a stamp, a key. One field set, as the
+    // override's is one: a menu is open on one row at a time.
+    enum class StampVerb : core::u8
+    {
+        None,
+        RevertNode,
+        RevertCopy,
+        Variant,
+        SelectCopies,
+        Replace,
+        Disable,
+        Enable,
+        CleanOrphans,
+        ApplyCopy,
+    };
+    StampVerb stampVerb = StampVerb::None;
+    core::InstanceId stampVerbSubject;
+    std::string stampVerbText;
 
     // **Copy, cut and the two pastes.** `pasteInto` is the difference between
     // "another one beside this" and "one inside this", which is the distinction
@@ -741,8 +774,9 @@ struct EditorCommands
         return createClass != scene::InvalidClass || !insertClassName.empty() || deleteSelection ||
                duplicateSelection || groupSelection || groupAsFolder || ungroupSelection || reparentTo.valid() ||
                reorderChild.valid() || renameInstance.valid() || paste || pasteInto || cutSelection ||
-               !placeStamp.empty() || breakStamp.valid() || stampSubject.valid() || undo || redo || newScene ||
-               !assignMaterialPath.empty() || !assignSkyboxPath.empty() || !placeMesh.empty();
+               !placeStamp.empty() || breakStamp.valid() || stampSubject.valid() || stampVerb != StampVerb::None ||
+               undo || redo || newScene || !assignMaterialPath.empty() || !assignSkyboxPath.empty() ||
+               !placeMesh.empty();
     }
 
     [[nodiscard]] bool any() const noexcept
@@ -750,15 +784,16 @@ struct EditorCommands
         return play.has_value() || pause.has_value() || match.has_value() || save || newScene || quit || resetLayout ||
                clearSelection || undo || redo || colorAsked || copySelection || cutSelection || paste || pasteInto ||
                stampSubject.valid() || !stampFolder.empty() || !placeStamp.empty() || breakStamp.valid() ||
-               !openStamp.empty() || saveStamp || closeStamp || createClass != scene::InvalidClass ||
-               !insertClassName.empty() || deleteSelection || duplicateSelection || groupSelection || groupAsFolder ||
-               ungroupSelection || reparentTo.valid() || reorderChild.valid() || renameInstance.valid() ||
-               !saveAs.empty() || !openScene.empty() || !createFolder.empty() || !deleteContent.empty() ||
-               !duplicateContent.empty() || newStampClass != scene::InvalidClass || !renameContent.empty() ||
-               !assignStampPath.empty() || importAssets || importParent.valid() || openScript.valid() ||
-               !assignMaterialPath.empty() || !openMaterial.empty() || !newMaterial.empty() ||
-               !newMaterialVariantOf.empty() || !assignSkyboxPath.empty() || !newShader.empty() || !openFile.empty() ||
-               !moveContent.empty() || !placeMesh.empty();
+               stampVerb != StampVerb::None || !openStamp.empty() || saveStamp || closeStamp ||
+               createClass != scene::InvalidClass || !insertClassName.empty() || deleteSelection ||
+               duplicateSelection || groupSelection || groupAsFolder || ungroupSelection || reparentTo.valid() ||
+               reorderChild.valid() || renameInstance.valid() || !saveAs.empty() || !openScene.empty() ||
+               !createFolder.empty() || !deleteContent.empty() || !duplicateContent.empty() ||
+               newStampClass != scene::InvalidClass || !renameContent.empty() || !assignStampPath.empty() ||
+               importAssets || importParent.valid() || openScript.valid() || !assignMaterialPath.empty() ||
+               !openMaterial.empty() || !newMaterial.empty() || !newMaterialVariantOf.empty() ||
+               !assignSkyboxPath.empty() || !newShader.empty() || !openFile.empty() || !moveContent.empty() ||
+               !placeMesh.empty();
     }
 };
 
@@ -1508,7 +1543,74 @@ public:
     // OTHER value keep theirs, because `restamp` measures them against the
     // file's previous text -- applying is not a way to overwrite other people's
     // edits.
-    bool applyOverride(scene::World& world, core::InstanceId gameRoot, core::InstanceId id, core::NameAtom property);
+    //
+    // **`level` says which file** (ADR 0155 §11): 0 the stamp the copy was
+    // placed from, 1 the stamp that one is a variant of, and on down
+    // `stampLevels`. Every copy built from the file that changed follows,
+    // copies of its variants included.
+    bool applyOverride(scene::World& world, core::InstanceId gameRoot, core::InstanceId id, core::NameAtom property,
+                       core::u32 level = 0);
+
+    // **The whole copy pushed up into its stamp** (ADR 0155 §12): edited where
+    // it stands, in the world, and then made the stamp -- its overrides, what
+    // it added and what it left out -- with every copy following, its variants'
+    // included. The isolated way is `openStamp`.
+    bool applyWholeCopy(scene::World& world, core::InstanceId gameRoot, core::InstanceId id);
+
+    // **A stamp's parameters, declared where the stamp is edited** (ADR 0155
+    // §6): on the root of the stamp open on the stage. Each change is ONE undo
+    // step. A parameter starts at its type's zero, which is its default and
+    // the root's attribute until somebody sets it.
+    bool declareStampParameter(scene::World& world, core::InstanceId root, std::string_view name,
+                               scene::ValueType type);
+    bool removeStampParameter(scene::World& world, core::InstanceId root, std::string_view name);
+    // A number's range; `nullopt` clears an end.
+    bool setStampParameterRange(scene::World& world, core::InstanceId root, std::string_view name,
+                                std::optional<core::f64> minimum, std::optional<core::f64> maximum);
+    // **What it drives**: `property` of `node`, inside the stamp at `root` --
+    // or that drive taken away again when it is there.
+    bool toggleStampDrive(scene::World& world, core::InstanceId root, std::string_view name, core::InstanceId node,
+                          core::NameAtom property);
+
+    // **The files an override can go to** (ADR 0155 §11): the stamp `id`'s
+    // copy was placed from, then the stamp that one is a variant of, and on to
+    // the first that is not one. Empty for anything not inside a copy.
+    [[nodiscard]] std::vector<std::string> stampLevels(const scene::World& world, core::InstanceId id);
+
+    // Every override of `id` put back -- or of every node of its copy, with
+    // `wholeCopy` -- as ONE undo step, and refused when there is nothing to put
+    // back (ADR 0155 §11).
+    bool revertNode(scene::World& world, core::InstanceId id, bool wholeCopy);
+
+    // **A variant** (ADR 0155 §4, §13): of the stamp `id`'s copy was placed
+    // from, holding what that copy has of its own -- and the copy becomes a
+    // copy of the variant. The content path written, or empty.
+    std::string createVariantFromCopy(scene::World& world, core::InstanceId id, std::string_view name);
+    // A variant of the stamp file `stamp`, with nothing of its own yet.
+    std::string createVariantOf(std::string_view stamp, std::string_view name);
+    // The stamp the stamp at `path` is a variant of, or empty (open the base).
+    [[nodiscard]] std::string baseOf(std::string_view path) const;
+
+    // Selects every copy of the stamp at `path` under `root`; how many.
+    core::usize selectCopies(scene::World& world, core::InstanceId root, std::string_view path, Inspector& inspector);
+
+    // **A copy replaced by a copy of another stamp** (ADR 0155 §13), standing
+    // where it stood, with the overrides the new stamp has nodes for. ONE undo
+    // step; the new copy is selected.
+    bool replaceCopy(scene::World& world, core::InstanceId id, std::string_view stamp, Inspector& inspector);
+
+    // The stamp's children `id`'s copy does not build (ADR 0155 §5), and one of
+    // them built back.
+    [[nodiscard]] std::vector<scene::DisabledStampNode> disabledOf(const scene::World& world, core::InstanceId id);
+    bool enableStampChild(scene::World& world, core::InstanceId id, std::string_view key);
+    // A stamp's child left out of this copy: gone from it, and listed as
+    // disabled, as a delete of it already does -- the verb a menu offers.
+    bool disableStampChild(scene::World& world, core::InstanceId id, Inspector& inspector);
+
+    // The overrides `id`'s copy holds for nodes its stamp no longer has (ADR
+    // 0155 §14), and all of them forgotten, as ONE undo step.
+    [[nodiscard]] std::vector<std::string> orphansOf(const scene::World& world, core::InstanceId id);
+    bool cleanOrphans(scene::World& world, core::InstanceId id);
 
     // Drops the stage. `save` writes it out first; without it the edits go with
     // it, which is what "close without saving" means.

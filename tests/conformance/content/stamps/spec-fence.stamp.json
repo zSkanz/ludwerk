@@ -1,0 +1,27 @@
+{
+ "format": "scene",
+ "version": 3,
+ "root": {
+  "class": "Model",
+  "name": "Fence",
+  "parameters": [
+   {
+    "name": "Posts",
+    "type": "number",
+    "default": 3,
+    "min": 1,
+    "max": 10
+   }
+  ],
+  "children": [
+   {
+    "class": "ModuleScript",
+    "name": "Construct",
+    "sid": "00000001",
+    "properties": {
+     "Source": "--!strict\n-- The fence's posts, from its length: one every two metres, each leaning a\n-- little, by the copy's own random generator.\nreturn function(root: Instance, parameters: { [string]: any }, random: Random)\n    for at = 1, parameters.Posts :: number do\n        local post = Instance.new(\"Part\")\n        post.Name = `Post{at}`\n        post.Anchored = true\n        post.Position = vector.create(at * 2, 0, 0)\n        post:SetAttribute(\"Lean\", random:NextNumber())\n        post.Parent = root\n    end\nend\n"
+    }
+   }
+  ]
+ }
+}

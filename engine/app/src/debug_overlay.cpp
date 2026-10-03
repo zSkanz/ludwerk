@@ -1707,7 +1707,7 @@ void drawStar(ImDrawList* draw, ImVec2 centre, float radius, bool filled, ImU32 
 // nothing saying what they are children OF.
 void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspector, EditorCommands* commands,
                   EditorDialogs* dialogs, const IconAtlas* icons, bool showGenerated, bool drawRoot = false,
-                  bool hasClipboard = false)
+                  bool hasClipboard = false, Editor* editor = nullptr)
 {
     // How much of the depth is above the first row that gets drawn. One when
     // the root is hidden, zero when it is not -- and every position on a row is
@@ -2374,16 +2374,94 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                 ImGui::Separator();
                 const core::InstanceId stampRoot = world.stampRootOf(row.id);
                 if (stampRoot.valid()) {
-                    const std::string_view stampName = world.atoms().text(world.stampOf(stampRoot));
-                    const std::string stampLabel =
-                        core::tr(ENG_TR("engine.editor.explorer.break_stamp"), {{"name", stampName}});
-                    if (ImGui::MenuItem(stampLabel.c_str()))
-                        commands->breakStamp = stampRoot;
+                    // **Everything a copy offers, in one submenu** (ADR 0155
+                    // §11-§15): its stamp, the copies of it, what it has of its
+                    // own, and what it left out.
+                    const std::string stampName(world.atoms().text(world.stampOf(stampRoot)));
+                    const auto verb = [&](EditorCommands::StampVerb which, core::InstanceId subject, std::string text) {
+                        commands->stampVerb = which;
+                        commands->stampVerbSubject = subject;
+                        commands->stampVerbText = std::move(text);
+                    };
+                    if (ImGui::BeginMenu(
+                            core::tr(ENG_TR("engine.editor.explorer.stamp_menu"), {{"name", stampName}}).c_str())) {
+                        if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.open_stamp"))))
+                            commands->openStamp = stampName;
+                        if (const std::string base = editor != nullptr ? editor->baseOf(stampName) : std::string{};
+                            !base.empty() &&
+                            ImGui::MenuItem(
+                                core::tr(ENG_TR("engine.editor.explorer.open_base"), {{"base", base}}).c_str()))
+                            commands->openStamp = base;
+                        if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.select_copies"))))
+                            verb(EditorCommands::StampVerb::SelectCopies, stampRoot, stampName);
+                        ImGui::Separator();
+                        if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.revert_node")), nullptr, false,
+                                            !engineOwned))
+                            verb(EditorCommands::StampVerb::RevertNode, row.id, {});
+                        if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.revert_copy")), nullptr, false,
+                                            !engineOwned))
+                            verb(EditorCommands::StampVerb::RevertCopy, stampRoot, {});
+                        if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.apply_copy")), nullptr, false,
+                                            !engineOwned))
+                            verb(EditorCommands::StampVerb::ApplyCopy, stampRoot, {});
+                        if (row.id != stampRoot &&
+                            ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.disable_child")), nullptr, false,
+                                            !engineOwned))
+                            verb(EditorCommands::StampVerb::Disable, row.id, {});
+                        // What the copy leaves out, built back one by one.
+                        if (editor != nullptr) {
+                            const std::vector<scene::DisabledStampNode> disabled = editor->disabledOf(world, stampRoot);
+                            if (!disabled.empty() &&
+                                ImGui::BeginMenu(core::tr(ENG_TR("engine.editor.explorer.disabled_children"),
+                                                          {{"count", static_cast<core::i64>(disabled.size())}})
+                                                     .c_str())) {
+                                for (const scene::DisabledStampNode& node : disabled) {
+                                    ImGui::PushID(node.key.c_str());
+                                    ImGui::PushStyleColor(ImGuiCol_Text,
+                                                          ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                                    const bool enable =
+                                        ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.enable_child"),
+                                                                 {{"name", node.name}, {"class", node.className}})
+                                                            .c_str());
+                                    ImGui::PopStyleColor();
+                                    if (enable)
+                                        verb(EditorCommands::StampVerb::Enable, stampRoot, node.key);
+                                    ImGui::PopID();
+                                }
+                                ImGui::EndMenu();
+                            }
+                            if (const std::vector<std::string> orphans = editor->orphansOf(world, stampRoot);
+                                !orphans.empty() &&
+                                ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.clean_unused"),
+                                                         {{"count", static_cast<core::i64>(orphans.size())}})
+                                                    .c_str()))
+                                verb(EditorCommands::StampVerb::CleanOrphans, stampRoot, {});
+                        }
+                        ImGui::Separator();
+                        if (dialogs != nullptr) {
+                            if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.make_variant")))) {
+                                dialogs->stampSubject = stampRoot;
+                                dialogs->stampDialog = EditorDialogs::StampDialog::Variant;
+                                dialogs->newStamp = true;
+                            }
+                            if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.explorer.replace_with")))) {
+                                dialogs->stampSubject = stampRoot;
+                                dialogs->stampDialog = EditorDialogs::StampDialog::Replace;
+                                dialogs->newStamp = true;
+                            }
+                        }
+                        const std::string stampLabel =
+                            core::tr(ENG_TR("engine.editor.explorer.break_stamp"), {{"name", stampName}});
+                        if (ImGui::MenuItem(stampLabel.c_str()))
+                            commands->breakStamp = stampRoot;
+                        ImGui::EndMenu();
+                    }
                 }
                 else if (iconMenuItem(icons, icons::ClassModel,
                                       core::tr(ENG_TR("engine.editor.explorer.convert_to_stamp")), nullptr, false,
                                       !engineOwned)) {
                     dialogs->stampSubject = row.id;
+                    dialogs->stampDialog = EditorDialogs::StampDialog::Stamp;
                     dialogs->newStamp = true;
                 }
                 ImGui::Separator();
@@ -5499,6 +5577,155 @@ void drawTags(scene::World& world, Inspector& inspector, core::InstanceId primar
     endSectionGrid();
 }
 
+// --- A stamp's parameters (ADR 0155 §6) -------------------------------------------
+//
+// **First, on a copy**: the handful of values its stamp offers a designer, each
+// with the widget its declaration asks for -- a slider where it has a range, a
+// list where it has choices. A value written here is the copy's attribute, and
+// drives what it drives at once.
+//
+// **And where they are declared, on the stamp's own root on the stage**: each
+// one's type and range, removed with its `x`, a new one added below. What a
+// parameter drives is chosen on the property itself, from its menu.
+void drawStampParameters(scene::World& world, Inspector& inspector, core::InstanceId primary, Editor& editor)
+{
+    const bool declaring =
+        editor.stage() != nullptr && &editor.stage()->world() == &world && editor.stampSession().root == primary;
+    const std::vector<scene::StampParameter> parameters = scene::stampParametersOf(world, primary);
+    if (parameters.empty() && !declaring)
+        return;
+    if (!propertiesSection(core::tr(ENG_TR("engine.editor.parameters.parameters"))))
+        return;
+    if (!beginSectionGrid("parameters"))
+        return;
+    if (parameters.empty())
+        sectionName(core::tr(ENG_TR("engine.editor.parameters.none")), true);
+
+    const float trash = ImGui::GetFrameHeight();
+    const float inner = ImGui::GetStyle().ItemInnerSpacing.x;
+    for (const scene::StampParameter& parameter : parameters) {
+        ImGui::PushID(parameter.name.c_str());
+        sectionName(parameter.name);
+        ImGui::SetNextItemWidth(declaring ? -(trash + inner) : -FLT_MIN);
+        const core::NameAtom attribute = world.atoms().intern(parameter.name);
+        const scene::Value value = world.getAttribute(primary, attribute);
+        scene::Value edited = value;
+        bool changed = false;
+        if (const auto* flag = std::get_if<bool>(&value)) {
+            bool held = *flag;
+            changed = ImGui::Checkbox("##value", &held);
+            edited = scene::Value{held};
+        }
+        else if (const auto* number = std::get_if<f64>(&value)) {
+            f64 held = *number;
+            if (parameter.minimum.has_value() && parameter.maximum.has_value()) {
+                const f64 low = *parameter.minimum;
+                const f64 high = *parameter.maximum;
+                changed = ImGui::SliderScalar("##value", ImGuiDataType_Double, &held, &low, &high, "%.3f");
+            }
+            else {
+                changed = dragNumber("##value", ImGuiDataType_Double, &held, 1, 0.01f, "%.3f");
+            }
+            edited = scene::Value{held};
+        }
+        else if (const auto* text = std::get_if<std::string>(&value)) {
+            if (!parameter.choices.empty()) {
+                if (ImGui::BeginCombo("##value", text->c_str())) {
+                    for (const scene::Value& choice : parameter.choices) {
+                        const auto* option = std::get_if<std::string>(&choice);
+                        if (option != nullptr && ImGui::Selectable(option->c_str(), *option == *text)) {
+                            edited = choice;
+                            changed = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+            else {
+                std::array<char, 192> buffer{};
+                if (text->size() + 1 <= buffer.size())
+                    std::snprintf(buffer.data(), buffer.size(), "%s", text->c_str());
+                changed =
+                    ImGui::InputText("##value", buffer.data(), buffer.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+                edited = scene::Value{std::string(buffer.data())};
+            }
+        }
+        else if (const auto* tint = std::get_if<core::Color3>(&value)) {
+            std::array<f32, 3> held{tint->r, tint->g, tint->b};
+            changed = ImGui::ColorEdit3("##value", held.data(), ImGuiColorEditFlags_NoInputs);
+            edited = scene::Value{core::Color3{held[0], held[1], held[2]}};
+        }
+        else if (const auto* offset = std::get_if<core::Vec3>(&value)) {
+            std::array<f32, 3> held{offset->x, offset->y, offset->z};
+            changed = dragNumber("##value", ImGuiDataType_Float, held.data(), 3, 0.01f, "%.3f");
+            edited = scene::Value{core::Vec3{held[0], held[1], held[2]}};
+        }
+        else {
+            ImGui::TextDisabled("<%s>", scene::valueTypeName(parameter.type));
+        }
+        // **Refused, never clamped**, here as in `Instance.stamp`.
+        if (changed && scene::stampParameterRefusal(parameter, edited).empty())
+            inspector.enqueueAttribute(primary, attribute, edited);
+
+        if (declaring) {
+            ImGui::SameLine(0.0f, inner);
+            if (ImGui::Button("x", ImVec2(trash, 0.0f)))
+                (void)editor.removeStampParameter(world, primary, parameter.name);
+            ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.parameters.remove_tip")));
+            // A number's range, and what it drives.
+            if (parameter.type == scene::ValueType::Number) {
+                sectionName(core::tr(ENG_TR("engine.editor.parameters.range")), true);
+                std::array<f64, 2> range{parameter.minimum.value_or(0.0), parameter.maximum.value_or(0.0)};
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                if (ImGui::InputScalarN("##range", ImGuiDataType_Double, range.data(), 2, nullptr, nullptr, "%.3f",
+                                        ImGuiInputTextFlags_EnterReturnsTrue)) {
+                    const bool open = range[0] == 0.0 && range[1] == 0.0;
+                    (void)editor.setStampParameterRange(world, primary, parameter.name,
+                                                        open ? std::nullopt : std::optional<f64>(range[0]),
+                                                        open ? std::nullopt : std::optional<f64>(range[1]));
+                }
+            }
+            sectionName(core::tr(ENG_TR("engine.editor.parameters.drives"),
+                                 {{"count", static_cast<core::i64>(parameter.drives.size())}}),
+                        true);
+        }
+        ImGui::PopID();
+    }
+
+    if (declaring) {
+        static std::array<char, 96> newName{};
+        static int newType = 0;
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputTextWithHint("##parameter-name", core::tr(ENG_TR("engine.editor.parameters.new_parameter")),
+                                 newName.data(), newName.size());
+        ImGui::TableSetColumnIndex(1);
+        const float addWidth = ImGui::CalcTextSize(core::tr(ENG_TR("engine.editor.attributes.add"))).x +
+                               ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SetNextItemWidth(-(addWidth + inner));
+        ImGui::Combo(
+            "##parameter-type", &newType,
+            choices({ENG_TR("engine.editor.parameters.kind.number"), ENG_TR("engine.editor.parameters.kind.boolean"),
+                     ENG_TR("engine.editor.parameters.kind.text"), ENG_TR("engine.editor.parameters.kind.colour"),
+                     ENG_TR("engine.editor.parameters.kind.vector")})
+                .c_str());
+        ImGui::SameLine(0.0f, inner);
+        ImGui::BeginDisabled(newName[0] == '\0');
+        if (ImGui::Button(labelled(ENG_TR("engine.editor.attributes.add"), "##parameter").c_str(),
+                          ImVec2(addWidth, 0.0f))) {
+            constexpr std::array<scene::ValueType, 5> Types{scene::ValueType::Number, scene::ValueType::Bool,
+                                                            scene::ValueType::String, scene::ValueType::Color3,
+                                                            scene::ValueType::Vector3};
+            if (editor.declareStampParameter(world, primary, std::string_view(newName.data()),
+                                             Types[static_cast<core::usize>(std::clamp(newType, 0, 4))]))
+                newName.fill(0);
+        }
+        ImGui::EndDisabled();
+    }
+    endSectionGrid();
+}
+
 void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspector, ContentTree* tree = nullptr,
                     const IconAtlas* icons = nullptr, audio::AudioSystem* audio = nullptr,
                     EditorCommands* commands = nullptr, Editor* editor = nullptr)
@@ -5554,6 +5781,16 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
         }
     }
 
+    // A stamp's parameters, before anything else (ADR 0155 §6).
+    if (live == 1 && editor != nullptr) {
+        for (const core::InstanceId id : targets) {
+            if (world.alive(id)) {
+                drawStampParameters(world, inspector, id, *editor);
+                break;
+            }
+        }
+    }
+
     // **Which of these properties are this instance's own** (S5.6). Asked once
     // for the whole grid rather than once per row, and answered from a cache the
     // editor drops whenever anything changes -- the question reads the stamp
@@ -5570,6 +5807,7 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
     // anybody clicking away and back.
     static core::InstanceId s_overridesFor;
     static std::vector<core::NameAtom> s_overrides;
+    static std::vector<std::string> s_levels;
     static int s_overridesAge = 0;
 
     std::span<const core::NameAtom> overridden;
@@ -5577,6 +5815,7 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
         constexpr int kRefreshFrames = 15;
         if (targets.front() != s_overridesFor || s_overridesAge >= kRefreshFrames) {
             s_overrides = editor->overridesOf(world, targets.front());
+            s_levels = editor->stampLevels(world, targets.front());
             s_overridesFor = targets.front();
             s_overridesAge = 0;
         }
@@ -5753,17 +5992,55 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
             // in one place; the items themselves are disabled when there is
             // nothing to do, which says WHY rather than hiding the answer.
             if (commands != nullptr && targets.size() == 1 && ImGui::BeginPopupContextItem("override")) {
+                // **What a parameter drives is chosen here** (ADR 0155 §6): a
+                // property of anything in the stamp open on the stage.
+                if (editor != nullptr && editor->stage() != nullptr && &editor->stage()->world() == &world) {
+                    const core::InstanceId stampRoot = editor->stampSession().root;
+                    const std::vector<scene::StampParameter> declared = scene::stampParametersOf(world, stampRoot);
+                    if (!declared.empty() &&
+                        ImGui::BeginMenu(core::tr(ENG_TR("engine.editor.parameters.drive_from")))) {
+                        const std::optional<std::string> key = scene::stampKeyOf(world, stampRoot, targets.front());
+                        const std::string drivenProperty(world.atoms().text(descriptor->name));
+                        for (const scene::StampParameter& parameter : declared) {
+                            const bool driving =
+                                key.has_value() &&
+                                std::any_of(parameter.drives.begin(), parameter.drives.end(), [&](const auto& drive) {
+                                    return drive.node == *key && drive.property == drivenProperty;
+                                });
+                            if (ImGui::MenuItem(parameter.name.c_str(), nullptr, driving))
+                                (void)editor->toggleStampDrive(world, stampRoot, parameter.name, targets.front(),
+                                                               descriptor->name);
+                        }
+                        ImGui::EndMenu();
+                    }
+                }
                 if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.properties.revert_to_stamp")), nullptr, false,
                                     isOverride)) {
                     commands->overrideSubject = targets.front();
                     commands->overrideProperty = descriptor->name;
                     commands->overrideApply = false;
                 }
-                if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.properties.apply_to_stamp")), nullptr, false,
-                                    isOverride)) {
-                    commands->overrideSubject = targets.front();
-                    commands->overrideProperty = descriptor->name;
-                    commands->overrideApply = true;
+                // **To which file** (ADR 0155 §11): the copy's own stamp, or
+                // a stamp that one is a variant of.
+                if (s_levels.size() <= 1) {
+                    if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.properties.apply_to_stamp")), nullptr, false,
+                                        isOverride)) {
+                        commands->overrideSubject = targets.front();
+                        commands->overrideProperty = descriptor->name;
+                        commands->overrideApply = true;
+                        commands->overrideLevel = 0;
+                    }
+                }
+                else if (ImGui::BeginMenu(core::tr(ENG_TR("engine.editor.properties.apply_to")), isOverride)) {
+                    for (core::usize level = 0; level < s_levels.size(); ++level) {
+                        if (ImGui::MenuItem(s_levels[level].c_str())) {
+                            commands->overrideSubject = targets.front();
+                            commands->overrideProperty = descriptor->name;
+                            commands->overrideApply = true;
+                            commands->overrideLevel = static_cast<core::u32>(level);
+                        }
+                    }
+                    ImGui::EndMenu();
                 }
                 ImGui::EndPopup();
             }
@@ -11372,8 +11649,15 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
         // **What this does, in one sentence, because the second half surprises
         // people**: it writes a file AND turns the thing you made it from into
         // an instance of that file. A source plus a copy of it that nothing
-        // connects is two things that drift apart by tomorrow.
-        ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.editor_dialogs.writes_the_selected_subtree_to")));
+        // connects is two things that drift apart by tomorrow. A variant and a
+        // replacement say what they do the same way (ADR 0155 §13).
+        const EditorDialogs::StampDialog mode = dialogs.stampDialog;
+        ImGui::TextDisabled("%s",
+                            core::tr(mode == EditorDialogs::StampDialog::Variant
+                                         ? ENG_TR("engine.editor.editor_dialogs.makes_a_variant")
+                                     : mode == EditorDialogs::StampDialog::Replace
+                                         ? ENG_TR("engine.editor.editor_dialogs.replaces_the_copy")
+                                         : ENG_TR("engine.editor.editor_dialogs.writes_the_selected_subtree_to")));
         ImGui::Spacing();
         ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.editor_dialogs.content")));
         ImGui::SameLine(0.0f, 0.0f);
@@ -11414,10 +11698,19 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
         }
 
         if ((submitted || accepted) && usable && dialogs.stampSubject.valid()) {
-            commands.stampSubject = dialogs.stampSubject;
-            commands.stampName = typed;
+            if (mode == EditorDialogs::StampDialog::Stamp) {
+                commands.stampSubject = dialogs.stampSubject;
+                commands.stampName = typed;
+            }
+            else {
+                commands.stampVerb = mode == EditorDialogs::StampDialog::Variant ? EditorCommands::StampVerb::Variant
+                                                                                 : EditorCommands::StampVerb::Replace;
+                commands.stampVerbSubject = dialogs.stampSubject;
+                commands.stampVerbText = typed;
+            }
             stamp.fill(0);
             dialogs.stampSubject = {};
+            dialogs.stampDialog = EditorDialogs::StampDialog::Stamp;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -15166,7 +15459,7 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
                 // nothing in `Content` runs, which is the one sentence that
                 // explains the difference.
                 drawExplorer(*world, treeRoot, *inspector, &commands, &dialogs, icons, panels.showGenerated,
-                             editingStamp, editor != nullptr && editor->hasClipboard());
+                             editingStamp, editor != nullptr && editor->hasClipboard(), editor);
             }
         }
         ImGui::End();

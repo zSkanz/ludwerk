@@ -24,4 +24,4 @@ offers is on the base's page, which is what keeps one added member on
 
 **Yields.** The calling thread parks until it completes.
 
-Loads every item and yields until each has arrived or failed. An item is a content name, such as `asset://models/tree.gltf`, or an instance -- every asset it and its descendants name. `callback` runs once per item as it finishes, with `Enum.AssetFetchStatus.Success` or `Failure`. Meshes and pictures are loaded onto the GPU; a sound is opened and its length read; anything else is found or not.
+Loads every item and yields until each has arrived or failed. An item is a content name, such as `asset://models/tree.gltf`, or an instance -- every asset it and its descendants name. `callback` runs once per item as it finishes, with `Enum.AssetFetchStatus.Success` or `Failure`. Meshes and pictures are loaded onto the GPU; a sound is opened and its length read; anything else is found or not. A name with no `://` is a STAMP, named as `Instance.stamp` names it: its file is read and kept, so its first copy reads nothing, and every asset it names is loaded with it (ADR 0155).

@@ -96,6 +96,28 @@ struct InstanceRecord
     // instance of one stamp: forty lamp posts intern one name.
     core::NameAtom stamp;
 
+    // **Which node of its stamp this is** (ADR 0155 §2): eight hex digits in
+    // the file, given once and never changed, so a copy's overrides name the
+    // node whatever it is called and wherever it sits. Zero for a node no stamp
+    // made. Not in the world hash, for the reason the mark is not.
+    u32 stampSid = 0;
+
+    // **A stamp's declared parameters** (ADR 0155 §6), on a copy's root: the
+    // file's `parameters` array, as its text. An atom for the economy the mark
+    // has -- forty copies of one stamp intern one declaration.
+    core::NameAtom stampParameters;
+
+    // **Overrides a copy holds for nodes its stamp no longer has** (ADR 0155
+    // §14), as the file's JSON object, key by key: kept, so a save does not
+    // lose them and a stamp that brings the node back finds them, and listed,
+    // so a person can clean them up.
+    core::NameAtom stampOrphans;
+
+    // **Built by its stamp's `Construct`** (ADR 0155 §8): never saved, never an
+    // override, and built again from the parameters each time. Kept through a
+    // clone, so a copy of a copy is constructed as the first was.
+    bool constructed = false;
+
     // **Where this instance was authored** (ADR 0138 §6): the tree a scene read
     // made it in (`scene:Workspace`, `scene:ReplicatedStorage`, ...) or the stamp
     // `Instance.stamp` placed it from (`stamp:doors/front`), and its place in
@@ -383,6 +405,16 @@ struct EngineState
     // the same scene again included, so a replica can tell the next match in
     // the same scene from the scene it joined.
     u32 sceneLoads = 0;
+
+    // **Stamp copies whose `Construct` is to run** (ADR 0155 §8): queued as a
+    // copy is built, and run by the script runtime before any script sees it
+    // -- after a scene is read, at the start of a tick, and in the editor's
+    // frame. `Instance.stamp` runs its copy's at once and takes it off.
+    std::vector<core::InstanceId> pendingConstructs;
+    // Copies with a `Construct` whose parameters were written: built again in
+    // the editor, and NOT in play, where a construction script runs at
+    // construction only.
+    std::vector<core::InstanceId> changedParameters;
 
     // **`SaveService.Version`** (ADR 0111): the game's save layout, set by a
     // script before its first slot. A fact about the game's files, not about
@@ -729,6 +761,17 @@ public:
     // inside one", because that is the question the break rule actually needs.
     void setStamp(core::InstanceId id, core::NameAtom stamp) noexcept;
     [[nodiscard]] core::NameAtom stampOf(core::InstanceId id) const noexcept;
+
+    // The node of its stamp an instance is, its stamp's parameters and whether
+    // its stamp's `Construct` built it (ADR 0155; see `InstanceRecord`).
+    void setStampSid(core::InstanceId id, u32 sid) noexcept;
+    [[nodiscard]] u32 stampSid(core::InstanceId id) const noexcept;
+    void setStampParameters(core::InstanceId id, core::NameAtom parameters) noexcept;
+    [[nodiscard]] core::NameAtom stampParameters(core::InstanceId id) const noexcept;
+    void setStampOrphans(core::InstanceId id, core::NameAtom orphans) noexcept;
+    [[nodiscard]] core::NameAtom stampOrphans(core::InstanceId id) const noexcept;
+    void setConstructed(core::InstanceId id, bool constructed) noexcept;
+    [[nodiscard]] bool constructed(core::InstanceId id) const noexcept;
 
     // Where an instance was authored, and its place there (ADR 0138 §6; see
     // `InstanceRecord::origin`). An empty atom for one made at run time.

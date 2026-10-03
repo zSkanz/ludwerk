@@ -807,6 +807,22 @@ int methodGetPivot(lua_State* L)
     return 1;
 }
 
+// `GetStamp()` -- the stamp a linked copy was placed from, as its content path,
+// or nil (ADR 0155 §7). Its parameters are its attributes.
+int methodGetStamp(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    World& w = world(L);
+    const core::NameAtom mark = w.stampOf(id);
+    if (!mark.valid()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const std::string_view text = w.atoms().text(mark);
+    lua_pushlstring(L, text.data(), text.size());
+    return 1;
+}
+
 int methodPivotTo(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
@@ -929,6 +945,8 @@ int instanceStamp(lua_State* L)
     // it and as the error text says (B12).
     const std::string name = scene::normalizeStampPath(std::string_view(text, length));
     const bool linked = lua_isnoneornil(L, 2) || lua_toboolean(L, 2) != 0;
+    if (!lua_isnoneornil(L, 3))
+        luaL_checktype(L, 3, LUA_TTABLE);
 
     VmContext& ctx = context(L);
     if (!ctx.stamps) {
@@ -936,7 +954,10 @@ int instanceStamp(lua_State* L)
         raise(L, ENG_TR("script.err.no_stamp_source"), args);
     }
 
-    const std::optional<std::string> source = ctx.stamps(name);
+    // Preloaded, or read now (ADR 0155 §10).
+    const auto preloaded = ctx.preloadedStamps.find(name);
+    const std::optional<std::string> source =
+        preloaded != ctx.preloadedStamps.end() ? std::optional<std::string>(preloaded->second) : ctx.stamps(name);
     if (!source.has_value()) {
         const core::I18nArg args[] = {{"name", std::string_view{name}}};
         raise(L, ENG_TR("script.err.stamp_not_found"), args);
@@ -946,11 +967,59 @@ int instanceStamp(lua_State* L)
     scene::SceneIoReport report;
     // Unparented, like `Instance.new`. A stamp's own internal references still
     // resolve, because `readStamp` resolves them against the placed root.
-    const core::InstanceId placed = scene::readStamp(w, *source, core::InstanceId{}, name, &report);
+    // Through the host's source for every other stamp it names: the stamps it
+    // holds, and a variant's base (ADR 0155).
+    const core::InstanceId placed = scene::readStamp(w, *source, core::InstanceId{}, name, &report, &ctx.stamps);
     if (!placed.valid()) {
         const core::I18nArg args[] = {{"name", std::string_view{name}}};
         raise(L, ENG_TR("script.err.stamp_not_found"), args);
     }
+    // **A stamp that reaches itself is refused, by name** (ADR 0155 §3).
+    if (report.stampCycles > 0) {
+        (void)w.destroy(placed);
+        const core::I18nArg args[] = {{"chain", std::string_view{report.stampCycle}}};
+        raise(L, ENG_TR("script.err.stamp_cycle"), args);
+    }
+
+    // **Its parameters, before anything else runs on it** (ADR 0155 §7):
+    // each one the stamp declares, checked against its declaration and refused
+    // -- never clamped -- with the copy left unbuilt.
+    if (lua_istable(L, 3)) {
+        const std::vector<scene::StampParameter> declared = scene::stampParametersOf(w, placed);
+        lua_pushnil(L);
+        while (lua_next(L, 3) != 0) {
+            size_t keyLength = 0;
+            const char* key = lua_type(L, -2) == LUA_TSTRING ? lua_tolstring(L, -2, &keyLength) : nullptr;
+            const std::string_view parameterName =
+                key != nullptr ? std::string_view(key, keyLength) : std::string_view{};
+            const auto found = std::find_if(declared.begin(), declared.end(), [&](const scene::StampParameter& each) {
+                return each.name == parameterName;
+            });
+            if (found == declared.end()) {
+                (void)w.destroy(placed);
+                const core::I18nArg args[] = {{"stamp", std::string_view{name}}, {"parameter", parameterName}};
+                raise(L, ENG_TR("script.err.stamp_parameter_unknown"), args);
+            }
+            const std::optional<scene::Value> value = toAttributeValue(L, -1);
+            const std::string_view refusal =
+                value.has_value() ? scene::stampParameterRefusal(*found, *value) : std::string_view{"type"};
+            if (!refusal.empty()) {
+                (void)w.destroy(placed);
+                const core::I18nArg args[] = {{"stamp", std::string_view{name}}, {"parameter", parameterName}};
+                if (refusal == "range")
+                    raise(L, ENG_TR("script.err.stamp_parameter_range"), args);
+                if (refusal == "choice")
+                    raise(L, ENG_TR("script.err.stamp_parameter_choice"), args);
+                raise(L, ENG_TR("script.err.stamp_parameter_type"), args);
+            }
+            (void)w.setAttribute(placed, w.atoms().intern(parameterName), *value);
+            lua_pop(L, 1);
+        }
+    }
+
+    // **Its parts built from its parameters, before the caller has it** (ADR
+    // 0155 §8).
+    constructStamp(L, placed);
 
     if (!linked)
         w.setStamp(placed, core::NameAtom{});
@@ -2626,6 +2695,7 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"Instance", "IsA", methodIsA},
     {"Instance", "IsAncestorOf", methodIsAncestorOf},
     {"Instance", "IsDescendantOf", methodIsDescendantOf},
+    {"Instance", "GetStamp", methodGetStamp},
     {"Instance", "Clone", methodClone},
     {"Instance", "Destroy", methodDestroy},
     {"Instance", "GetAttribute", methodGetAttribute},

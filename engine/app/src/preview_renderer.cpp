@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <string>
 
+#include "engine/core/content_path.h"
 #include "engine/core/log.h"
+#include "engine/platform/file.h"
 #include "engine/scene/components.h"
 #include "engine/scene/pivot.h"
 #include "engine/scene/scene_file.h"
@@ -177,7 +179,18 @@ bool HostPreviewRenderer::drawPreview(rhi::IDevice& device, rhi::ICmdList& cmd, 
         // browser and this cache already share `contentKindOf`, and a third
         // opinion is a third thing to keep in step.
         scene::SceneIoReport report;
-        const core::InstanceId root = scene::readStamp(*scratch_, job.text, workspace_, "preview", &report);
+        // **The stamps it holds, and a variant's base**, from the same content
+        // (ADR 0155 §15): a variant is a copy of its base, and without it there
+        // is nothing to draw.
+        const std::filesystem::path root_ = contentRoot_;
+        const scene::StampSource others = [root_](std::string_view stamp) -> std::optional<std::string> {
+            const std::optional<std::filesystem::path> file = core::resolveUnder(root_, stamp);
+            std::string text;
+            if (!file.has_value() || !platform::readTextFile(*file, text))
+                return std::nullopt;
+            return text;
+        };
+        const core::InstanceId root = scene::readStamp(*scratch_, job.text, workspace_, "preview", &report, &others);
         if (!root.valid()) {
             if (scene::readScene(*scratch_, job.text, &report).has_value())
                 return false;

@@ -256,6 +256,10 @@ struct VmContext
     // `Instance.stamp` raises there rather than pretending: a prefab that
     // silently arrived empty would be a bug shaped like content.
     std::function<std::optional<std::string>(std::string_view)> stamps;
+    // **Stamps `ContentProvider:PreloadAsync` was asked for** (ADR 0155 §10),
+    // by content path: their text, read once, so `Instance.stamp` of one does
+    // not go to the disk at the moment a game spawns it.
+    std::unordered_map<std::string, std::string> preloadedStamps;
 
     // Indexed by Luau atom; holds the engine `NameAtom` id for the same text.
     // Grown by `useratom` the first time a string names a member, and never

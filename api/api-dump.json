@@ -3118,6 +3118,11 @@
           "Returns": ["Signal<()>"]
         },
         {
+          "Name": "GetStamp",
+          "Parameters": [],
+          "Returns": ["string?"]
+        },
+        {
           "Name": "GetTags",
           "Parameters": [],
           "Returns": ["{string}"]

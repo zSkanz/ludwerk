@@ -916,6 +916,10 @@ declare extern type Instance with
     --- Whether this instance sits anywhere below ancestor; read strictly, so an instance is not its own
     --- descendant. False when either is destroyed, so a check needs no pcall.
     function IsDescendantOf(self, ancestor: Instance): boolean
+    --- The stamp a linked copy was placed from, as its content path (`stamps/fighter.stamp.json`), or
+    --- nil for anything else, a copy placed unlinked included (ADR 0155). A copy's parameters are its
+    --- attributes.
+    function GetStamp(self): string?
     --- Deep-copies this subtree unparented -- children, properties, attributes and tags at every depth
     --- -- rewiring object references that point inside the copy and leaving those that point outside it
     --- on the originals.
@@ -3998,7 +4002,9 @@ declare extern type ContentProvider extends Instance with
     --- `asset://models/tree.gltf`, or an instance -- every asset it and its descendants name.
     --- `callback` runs once per item as it finishes, with `Enum.AssetFetchStatus.Success` or `Failure`.
     --- Meshes and pictures are loaded onto the GPU; a sound is opened and its length read; anything
-    --- else is found or not.
+    --- else is found or not. A name with no `://` is a STAMP, named as `Instance.stamp` names it: its
+    --- file is read and kept, so its first copy reads nothing, and every asset it names is loaded with
+    --- it (ADR 0155).
     function PreloadAsync(self, items: { string | Instance }, callback: ((item: string | Instance, status: EnumAssetFetchStatus) -> ())?): ()
 end
 
@@ -5733,7 +5739,7 @@ declare Instance: {
         & (("WaterPoint") -> WaterPoint)
         & (("RemoteEvent") -> RemoteEvent)
         & (("RemoteFunction") -> RemoteFunction),
-    stamp: (name: string, linked: boolean?) -> Instance,
+    stamp: (name: string, linked: boolean?, parameters: { [string]: string | number | boolean | vector | Color3 }?) -> Instance,
 }
 
 declare game: DataModel

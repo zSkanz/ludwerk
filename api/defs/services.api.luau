@@ -1270,7 +1270,9 @@ local Classes: { Schema.Class } = {
                     .. "name, such as `asset://models/tree.gltf`, or an instance -- every asset it and its "
                     .. "descendants name. `callback` runs once per item as it finishes, with "
                     .. "`Enum.AssetFetchStatus.Success` or `Failure`. Meshes and pictures are loaded onto the "
-                    .. "GPU; a sound is opened and its length read; anything else is found or not.",
+                    .. "GPU; a sound is opened and its length read; anything else is found or not. A name with no "
+                    .. "`://` is a STAMP, named as `Instance.stamp` names it: its file is read and kept, so its "
+                    .. "first copy reads nothing, and every asset it names is loaded with it (ADR 0155).",
             },
         } :: { Schema.Method },
     },

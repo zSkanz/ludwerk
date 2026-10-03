@@ -505,7 +505,11 @@ if #Creatable > 0 then
     -- than from a class list, because what it returns depends on the FILE and
     -- not on anything the schema knows -- so `Instance` is the honest answer,
     -- and a caller narrows it with `:IsA` the way it narrows `FindFirstChild`.
-    table.insert(Lines, "    stamp: (name: string, linked: boolean?) -> Instance,")
+    -- The parameters a stamp declares, by name (ADR 0155 §7): attribute values.
+    table.insert(
+        Lines,
+        "    stamp: (name: string, linked: boolean?, parameters: { [string]: string | number | boolean | vector | Color3 }?) -> Instance,"
+    )
     table.insert(Lines, "}")
     table.insert(Lines, "")
 end

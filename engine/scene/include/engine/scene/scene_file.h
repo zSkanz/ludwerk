@@ -103,10 +103,16 @@ struct SceneIoReport
     // Property overrides written or applied: what an instance has of its own
     // (ADR 0051).
     core::u32 overrides = 0;
-    // Stamped instances written IN FULL because they no longer have the shape
-    // of their stamp -- somebody added or removed something inside one. Counted
-    // rather than refused: a save must never lose what is in the world.
+    // Copies written IN FULL because their root is no longer their stamp's
+    // class, or their stamp could not be read. Everything else a person does
+    // inside a copy -- an added child, a disabled one -- keeps it linked (ADR
+    // 0155). Counted rather than refused: a save must never lose what is in
+    // the world.
     core::u32 unlinkedStamps = 0;
+    // **Stamps that reached themselves** (ADR 0155 §3), refused, and the last
+    // chain that did, `a -> b -> a`, for the message a person is shown.
+    core::u32 stampCycles = 0;
+    std::string stampCycle;
     // Marks of a node the `src/` mount made whose file has gone: what
     // was authored inside it is kept, in a `Folder` of its name (ADR 0092).
     core::u32 orphanedMounts = 0;
@@ -143,6 +149,8 @@ public:
     // Opaque to callers: what a save needs from this is that it exists.
     struct Entry;
     [[nodiscard]] const Entry* reference(const std::string& stamp);
+    // Where it reads stamps from, for a caller building one more.
+    [[nodiscard]] const StampSource& source() const noexcept { return m_source; }
 
 private:
     World& m_registries;
@@ -251,8 +259,22 @@ readScene(World& world, const ParsedScene& parsed, SceneIoReport* report = nullp
 // `root`'s own stamp mark is ignored, because this is the file that mark points
 // at: a stamp made from an instance of itself would otherwise write a one-line
 // file that refers to the file being written.
+//
+// **Every node is written with its sid** (ADR 0155 §2) -- the one it has, or
+// the one planned for it; call `assignStampSids` first when the live tree
+// should keep them. With `base`, `root` is a VARIANT (§4) and is written as a
+// copy of that stamp: what it has of its own, and nothing else.
 [[nodiscard]] std::string writeStamp(const World& world, core::InstanceId root, SceneIoReport* report = nullptr,
-                                     StampLibrary* stamps = nullptr);
+                                     StampLibrary* stamps = nullptr, std::string_view base = {});
+
+// Gives every node of `root`'s stamp tree the sid a write would give it, so a
+// stamp written from a live tree and the tree itself agree on which node is
+// which (ADR 0155 §2). A node that has one keeps it.
+void assignStampSids(World& world, core::InstanceId root);
+
+// The base a variant stamp file names, or empty for a stamp that is not one
+// (ADR 0155 §4).
+[[nodiscard]] std::string stampBaseOf(std::string_view stampText);
 
 // **The same, for a copy that leaves the tree**: the clipboard, a stamp made
 // from a selection. What the `src/` mount made is written in full -- class,
@@ -272,8 +294,12 @@ readScene(World& world, const ParsedScene& parsed, SceneIoReport* report = nullp
 // Returns the new instance, or an invalid id when the text is not a stamp this
 // build can read. Nothing is left half-built on failure: a subtree that could
 // not be completed is destroyed rather than parented.
+//
+// `others` answers for every other stamp the text names -- the stamps it
+// holds and, for a variant, its base (ADR 0155). Without it, those are missing.
 [[nodiscard]] core::InstanceId readStamp(World& world, std::string_view json, core::InstanceId parent,
-                                         std::string_view stamp, SceneIoReport* report = nullptr);
+                                         std::string_view stamp, SceneIoReport* report = nullptr,
+                                         const StampSource* others = nullptr);
 
 // Re-applies a stamp file to every live instance of it, in the subtree at
 // `root`. Returns how many were refreshed.
@@ -295,8 +321,13 @@ readScene(World& world, const ParsedScene& parsed, SceneIoReport* report = nullp
 // that costs and why the alternative costs more. **A subtree whose shape has
 // moved on is left alone** and counted in `unlinkedStamps`: it is not an
 // instance of that stamp any more, which is the rule the writer already applies.
+//
+// `others` answers for the other stamps the copies are built from now, and
+// `othersBefore`, when given, for what they were when the copies were built --
+// a variant whose BASE changed is measured against the base it came from.
 [[nodiscard]] core::u32 restamp(World& world, core::InstanceId root, std::string_view stamp, std::string_view before,
-                                std::string_view after, SceneIoReport* report = nullptr);
+                                std::string_view after, SceneIoReport* report = nullptr,
+                                const StampSource* others = nullptr, const StampSource* othersBefore = nullptr);
 
 // One instance's overrides: the properties of `id` that differ from the stamp it
 // was placed from, in declaration order.
@@ -332,5 +363,105 @@ readScene(World& world, const ParsedScene& parsed, SceneIoReport* report = nullp
 // be read, and for a property the stamp's own class does not have.
 [[nodiscard]] std::optional<Value> stampReferenceValue(const World& world, core::InstanceId id, core::NameAtom property,
                                                        StampLibrary& stamps);
+
+// **Which node of its copy `id` is** (ADR 0155 §2): its key under `copyRoot`
+// -- `""` for the root, a sid, or a path of sids through nested copies -- or
+// nothing when it is not inside it.
+[[nodiscard]] std::optional<std::string> stampKeyOf(const World& world, core::InstanceId copyRoot, core::InstanceId id);
+
+// The node of `copyRoot` that `key` names, or an invalid id.
+[[nodiscard]] core::InstanceId stampNodeAt(const World& world, core::InstanceId copyRoot, std::string_view key);
+
+// `value`, a value of `property` on `id` in the world, as the stamp `id`'s copy
+// was placed from would hold it: a place in the stamp's frame (ADR 0155 §1),
+// anything else as it is. What applying an override to the stamp writes.
+[[nodiscard]] Value stampLocalValue(const World& world, core::InstanceId id, core::NameAtom property,
+                                    const Value& value, StampLibrary& stamps);
+
+// The keys of a copy's stamp nodes it does not build -- what it disabled
+// (ADR 0155 §5) -- each with the name the stamp gives it, for a panel to show
+// greyed and offer to enable.
+struct DisabledStampNode
+{
+    std::string key;
+    std::string name;
+    std::string className;
+    // The key of the node it sits under in the stamp.
+    std::string under;
+};
+[[nodiscard]] std::vector<DisabledStampNode> stampDisabled(const World& world, core::InstanceId copyRoot,
+                                                           StampLibrary& stamps);
+
+// Builds the stamp's node `key` back into the copy at `copyRoot` -- the stamp's
+// version of it, under the node it sits under, after its siblings (ADR 0155
+// §5). False when the copy already has it, or its parent is not there.
+bool enableStampNode(World& world, core::InstanceId copyRoot, std::string_view key, StampLibrary& stamps);
+
+// **The copy as its stamp's new text** (ADR 0155 §12, "apply all"): the whole
+// copy, as it stands, written back in its stamp's frame -- its overrides, the
+// children it added and the ones it left out become the stamp's. A variant is
+// written as one, relative to its base. Empty when the stamp cannot be read.
+[[nodiscard]] std::string writeCopyAsStamp(const World& world, core::InstanceId copy, StampLibrary& stamps);
+
+// The keys of the overrides a copy holds for nodes its stamp no longer has
+// (ADR 0155 §14). `World::setStampOrphans(copy, {})` forgets them.
+[[nodiscard]] std::vector<std::string> stampOrphanKeys(const World& world, core::InstanceId copyRoot);
+
+// **A copy replaced by a copy of another stamp** (ADR 0155 §13), standing
+// where it stood, under the same parent, with the overrides whose sids name a
+// node of the same class in the new stamp -- the rest kept as orphans. The old
+// copy is destroyed; the new one is returned, or an invalid id when either
+// stamp cannot be read.
+[[nodiscard]] core::InstanceId replaceStampCopy(World& world, core::InstanceId copy, std::string_view stamp,
+                                                StampLibrary& stamps, SceneIoReport* report = nullptr);
+
+// --- A stamp's parameters (ADR 0155 §6) ---------------------------------------
+//
+// **What a stamp offers a designer**: a handful of named values -- a fence's
+// length, a door's colour -- each an ATTRIBUTE of a copy's root, so a script
+// reads and writes it as any attribute and it replicates as one (ADR 0106).
+// The declaration says its type, its default, an optional range or list of
+// choices, and the properties it DRIVES: writing the attribute sets them, at
+// once, in the editor and in play.
+
+struct StampDrive
+{
+    // The driven node's key in the copy (`""` the root) and its property; a
+    // number may drive one component of a `Vector3`, `X`, `Y` or `Z`.
+    std::string node;
+    std::string property;
+    std::string component;
+};
+
+struct StampParameter
+{
+    std::string name;
+    // `Number`, `Bool`, `String`, `Color3` or `Vector3`.
+    ValueType type = ValueType::Number;
+    Value defaultValue;
+    std::optional<core::f64> minimum;
+    std::optional<core::f64> maximum;
+    std::vector<Value> choices;
+    std::vector<StampDrive> drives;
+};
+
+// The parameters the copy at `copyRoot` declares, in the order its stamp gives
+// them; empty for anything that declares none.
+[[nodiscard]] std::vector<StampParameter> stampParametersOf(const World& world, core::InstanceId copyRoot);
+
+// Parses a declaration, as a stamp file holds it, or nothing when it is not one.
+[[nodiscard]] std::optional<std::vector<StampParameter>> parseStampParameters(std::string_view json);
+
+// A declaration as a stamp file holds it -- what `parseStampParameters` reads.
+[[nodiscard]] std::string writeStampParameters(const World& world, const std::vector<StampParameter>& parameters);
+
+// Why `value` cannot be `parameter`, as a reason a message names -- `type`,
+// `range` or `choice` -- or empty when it can. **Refused, never clamped**: a
+// value out of range is a mistake to be told about, not one to correct.
+[[nodiscard]] std::string_view stampParameterRefusal(const StampParameter& parameter, const Value& value);
+
+// Sets every property `parameter` drives on the copy at `copyRoot` from the
+// root's attribute of that name; every parameter's when `parameter` is empty.
+void applyStampDrives(World& world, core::InstanceId copyRoot, core::NameAtom parameter = {});
 
 } // namespace engine::scene

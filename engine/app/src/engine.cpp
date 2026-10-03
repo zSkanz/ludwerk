@@ -4085,6 +4085,48 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 }
                 if (editorCommands.breakStamp.valid())
                     (void)editor.breakStamp(authored(), editorCommands.breakStamp);
+                // **What a copy offers** (ADR 0155 §11-§15), on the world
+                // being edited.
+                if (editorCommands.stampVerb != EditorCommands::StampVerb::None &&
+                    editorCommands.stampVerbSubject.valid() && authored().alive(editorCommands.stampVerbSubject)) {
+                    scene::World& edited = authored();
+                    const core::InstanceId subject = editorCommands.stampVerbSubject;
+                    const std::string& text = editorCommands.stampVerbText;
+                    switch (editorCommands.stampVerb) {
+                    case EditorCommands::StampVerb::RevertNode:
+                        (void)editor.revertNode(edited, subject, false);
+                        break;
+                    case EditorCommands::StampVerb::RevertCopy:
+                        (void)editor.revertNode(edited, subject, true);
+                        break;
+                    case EditorCommands::StampVerb::Variant:
+                        (void)editor.createVariantFromCopy(edited, subject, text);
+                        break;
+                    case EditorCommands::StampVerb::SelectCopies:
+                        (void)editor.selectCopies(edited, authoredRoot(), text, inspector);
+                        break;
+                    case EditorCommands::StampVerb::Replace:
+                        (void)editor.replaceCopy(edited, subject, text, inspector);
+                        break;
+                    case EditorCommands::StampVerb::Disable:
+                        (void)editor.disableStampChild(edited, subject, inspector);
+                        break;
+                    case EditorCommands::StampVerb::Enable:
+                        (void)editor.enableStampChild(edited, subject, text);
+                        break;
+                    case EditorCommands::StampVerb::CleanOrphans:
+                        (void)editor.cleanOrphans(edited, subject);
+                        break;
+                    case EditorCommands::StampVerb::ApplyCopy:
+                        if (stageOf() != nullptr)
+                            editor.report(core::tr(ENG_TR("engine.editor.status.close_the_stamp_first")), true);
+                        else
+                            (void)editor.applyWholeCopy(host->world(), host->runtime().dataModel(), subject);
+                        break;
+                    case EditorCommands::StampVerb::None:
+                        break;
+                    }
+                }
                 // **A material is worn by URN** (ADR 0090): nothing is placed in
                 // the world, so there is no parent to choose and no stamp
                 // boundary for it to fall outside of.
@@ -4344,7 +4386,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     }
                     else if (*editorCommands.overrideApply) {
                         (void)editor.applyOverride(host->world(), host->runtime().dataModel(),
-                                                   editorCommands.overrideSubject, editorCommands.overrideProperty);
+                                                   editorCommands.overrideSubject, editorCommands.overrideProperty,
+                                                   editorCommands.overrideLevel);
                     }
                     else {
                         (void)editor.revertOverride(host->world(), editorCommands.overrideSubject,
@@ -5073,6 +5116,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // play mode. A paused game that kept humming would be the same
         // half-stopped state the three-state model exists to remove.
         host->audio().setSuspended(options.editor && !advancing(editor.runState()));
+        // **A stamp's parts built from its parameters** while editing (ADR 0155
+        // §8): a copy placed, or a parameter written, is built again.
+        if (options.editor && editing(editor.runState()))
+            host->runtime().constructStamps(true);
         // **Pressing play ends the preview.** An audition is a thing the tool is
         // doing while the world is stopped, and a file still playing over the
         // top of a running game is the same wrong-owner mistake the suspension

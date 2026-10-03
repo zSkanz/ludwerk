@@ -45,7 +45,7 @@ using core::LogLevel;
 // a directory walk, because the set is the engine's own surface (ADR 0030) and
 // discovering it from a directory would make an accidentally-shipped file part
 // of the API.
-constexpr std::string_view RuntimeModules[] = {"camera", "ragdoll", "settings", "testing", "views"};
+constexpr std::string_view RuntimeModules[] = {"camera", "ragdoll", "settings", "stamppool", "testing", "views"};
 
 // The conformance runner, as an ordinary entry script.
 //
@@ -578,8 +578,17 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
                     I18nArg{"count", static_cast<core::i64>(m_bootSceneReport.missingStamps)}};
                 core::log(LogLevel::Warn, ENG_TR("scene.warn.missing_stamps"), missing);
             }
+            // **A stamp that reaches itself, named** (ADR 0155 §3).
+            if (m_bootSceneReport.stampCycles > 0) {
+                const std::array<I18nArg, 1> chain{I18nArg{"chain", std::string_view{m_bootSceneReport.stampCycle}}};
+                core::log(LogLevel::Warn, ENG_TR("scene.warn.stamp_cycle"), chain);
+            }
         }
     }
+
+    // A copy's parts built from its parameters (ADR 0155 §8), before a line of
+    // script sees the scene.
+    m_runtime->constructStamps(false);
 
     // What the scene put under `Workspace`, counted before a line of script has
     // run -- see the warning after the drain.
@@ -1076,6 +1085,9 @@ void WorldHost::tick()
 
     state.tick += 1;
     state.simTime = static_cast<f64>(state.tick) * state.fixedTimestep;
+    // What a copy placed since the last tick builds from its parameters (ADR
+    // 0155 §8), before anything this tick sees it.
+    m_runtime->constructStamps(false);
 
     // Whoever left during the last tick has been said goodbye to (D459).
     scene::finishLeavingPlayers(*m_world);
@@ -1608,10 +1620,17 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
     }
     m_bootSceneReport = report;
     m_bootSceneApplied = true;
+    if (report.stampCycles > 0) {
+        const std::array<I18nArg, 1> chain{I18nArg{"chain", std::string_view{report.stampCycle}}};
+        core::log(LogLevel::Warn, ENG_TR("scene.warn.stamp_cycle"), chain);
+    }
 
     w.engineState().currentScene = path;
     w.engineState().sceneLoadData = std::move(data);
     w.engineState().sceneLoads += 1;
+    // A copy's parts built from its parameters, before its scene's scripts
+    // start (ADR 0155 §8).
+    m_runtime->constructStamps(false);
     remountSceneScripts(path);
 
     // **The new scene's scripts start**, and only those: `GlobalScriptService`'s

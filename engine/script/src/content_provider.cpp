@@ -10,6 +10,7 @@
 #include "class_descriptors.gen.h"
 #include "engine/core/i18n.h"
 #include "engine/core/text_key.h"
+#include "engine/scene/scene_file.h"
 #include "engine/scene/world.h"
 #include "engine/script/binding.h"
 #include "engine/script/datatypes.h"
@@ -61,7 +62,7 @@ void collectContent(scene::World& w, core::InstanceId root, std::vector<std::str
 [[nodiscard]] ContentState itemState(const PreloadItem& item,
                                      const std::function<ContentState(std::string_view)>& stateOf)
 {
-    bool failed = false;
+    bool failed = item.failed;
     for (const std::string& content : item.contents) {
         switch (stateOf(content)) {
         case ContentState::Pending:
@@ -97,7 +98,30 @@ int contentProviderPreloadAsync(lua_State* L)
             const char* text = lua_tolstring(L, -1, &length);
             if (length == 0)
                 raise(L, ENG_TR("script.err.preload_item"));
-            item.contents.emplace_back(text, length);
+            const std::string_view named(text, length);
+            if (named.find("://") != std::string_view::npos) {
+                item.contents.emplace_back(named);
+            }
+            else {
+                // **A stamp, named as `Instance.stamp` names it** (ADR 0155
+                // §10): read now and kept, and every asset it names asked for
+                // with it, so its first copy neither reads a file nor waits.
+                VmContext& ctx = context(L);
+                const std::string path = scene::normalizeStampPath(named);
+                const std::optional<std::string> source = ctx.stamps ? ctx.stamps(path) : std::optional<std::string>{};
+                if (source.has_value()) {
+                    for (core::usize at = source->find("asset://"); at != std::string::npos;
+                         at = source->find("asset://", at + 1)) {
+                        const core::usize end = source->find('"', at);
+                        if (end != std::string::npos)
+                            addUnique(item.contents, std::string_view(*source).substr(at, end - at));
+                    }
+                    ctx.preloadedStamps[path] = *source;
+                }
+                else {
+                    item.failed = true;
+                }
+            }
         }
         else if (const core::InstanceId* instance = toInstance(L, -1); instance != nullptr && w.alive(*instance)) {
             collectContent(w, *instance, item.contents);

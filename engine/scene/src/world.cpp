@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "engine/scene/scene_file.h"
+
 namespace engine::scene {
 
 namespace {
@@ -332,6 +334,54 @@ core::NameAtom World::stampOf(core::InstanceId id) const noexcept
 {
     const InstanceRecord* record = m_instances.find(id);
     return record != nullptr ? record->stamp : core::NameAtom{};
+}
+
+void World::setStampSid(core::InstanceId id, u32 sid) noexcept
+{
+    if (InstanceRecord* record = m_instances.find(id); record != nullptr)
+        record->stampSid = sid;
+}
+
+u32 World::stampSid(core::InstanceId id) const noexcept
+{
+    const InstanceRecord* record = m_instances.find(id);
+    return record != nullptr ? record->stampSid : 0;
+}
+
+void World::setStampParameters(core::InstanceId id, core::NameAtom parameters) noexcept
+{
+    if (InstanceRecord* record = m_instances.find(id); record != nullptr)
+        record->stampParameters = parameters;
+}
+
+core::NameAtom World::stampParameters(core::InstanceId id) const noexcept
+{
+    const InstanceRecord* record = m_instances.find(id);
+    return record != nullptr ? record->stampParameters : core::NameAtom{};
+}
+
+void World::setStampOrphans(core::InstanceId id, core::NameAtom orphans) noexcept
+{
+    if (InstanceRecord* record = m_instances.find(id); record != nullptr)
+        record->stampOrphans = orphans;
+}
+
+core::NameAtom World::stampOrphans(core::InstanceId id) const noexcept
+{
+    const InstanceRecord* record = m_instances.find(id);
+    return record != nullptr ? record->stampOrphans : core::NameAtom{};
+}
+
+void World::setConstructed(core::InstanceId id, bool constructed) noexcept
+{
+    if (InstanceRecord* record = m_instances.find(id); record != nullptr)
+        record->constructed = constructed;
+}
+
+bool World::constructed(core::InstanceId id) const noexcept
+{
+    const InstanceRecord* record = m_instances.find(id);
+    return record != nullptr && record->constructed;
 }
 
 core::InstanceId World::stampRootOf(core::InstanceId id) const noexcept
@@ -696,6 +746,10 @@ core::InstanceId World::clone(core::InstanceId id)
         const core::NameAtom sourceName = record->name;
         const core::NameAtom sourceStamp = record->stamp;
         const Origin sourceOrigin{record->origin, record->originIndex};
+        const u32 sourceSid = record->stampSid;
+        const core::NameAtom sourceParameters = record->stampParameters;
+        const core::NameAtom sourceOrphans = record->stampOrphans;
+        const bool sourceConstructed = record->constructed;
 
         const core::InstanceId copy = create(sourceClass);
         if (!copy.valid())
@@ -706,6 +760,12 @@ core::InstanceId World::clone(core::InstanceId id)
         // next change to the stamp then left behind.
         if (sourceStamp.valid())
             setStamp(copy, sourceStamp);
+        // And the node of it each copy is and its parameters (ADR 0155): a
+        // copy of a copy is another copy, not parts that were one.
+        setStampSid(copy, sourceSid);
+        setStampParameters(copy, sourceParameters);
+        setStampOrphans(copy, sourceOrphans);
+        setConstructed(copy, sourceConstructed);
         // A copy of an authored door is that door again, to a replica too.
         setOrigin(copy, sourceOrigin);
         mapping[key(original)] = copy;
@@ -906,6 +966,14 @@ bool World::setAttribute(core::InstanceId id, core::NameAtom attribute, const Va
     }
 
     m_changes.push({ChangeKind::AttributeChanged, id, core::InstanceId{}, attribute});
+    // **A stamp's parameter drives what it drives, at once** (ADR 0155 §6), in
+    // the editor and in play, whoever wrote it.
+    if (const InstanceRecord* record = m_instances.find(id); record != nullptr && record->stampParameters.valid()) {
+        applyStampDrives(*this, id, attribute);
+        if (const core::NameAtom construct = m_atoms.lookup("Construct");
+            construct.valid() && findFirstChild(id, construct).valid())
+            engineState().changedParameters.push_back(id);
+    }
     return true;
 }
 

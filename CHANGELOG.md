@@ -19,6 +19,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **Scene files are version 3** (ADR 0155): a stamp's nodes carry sids, a
+  copy's overrides are keyed by them, and a copy writes where it stands with
+  its parts in its stamp's frame. A version 2 scene opens and converts; a build
+  before this one cannot open a version 3 file.
+- **A copy of a stamp no longer unlinks** when a child is added to it or one of
+  its stamp's is removed: the child is the copy's own, or the stamp's child is
+  disabled in it, and the copy keeps following its stamp. A stamp may hold
+  copies of other stamps; one that holds a copy of itself is refused.
 - **The wire is protocol 35**: a client and a server of different builds refuse
   each other -- and now say so (`JoinFailed`, "another version of the game").
 - **Teams are withdrawn** (ADR 0099, amended by the owner): `TeamService`,
@@ -183,6 +191,26 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Stamps 2.0** (ADR 0155), the prefab model at the level of the other
+  engines':
+  - a copy has **one pivot**: move it anywhere and its parts stay where the
+    stamp puts them, so a part moved in the stamp moves in every copy (G1);
+  - **stable ids** for a stamp's nodes: renaming a part keeps every copy's
+    overrides of it;
+  - **nested stamps** and **variants** (a stamp that is a copy of another, as
+    deep as wanted), with **Apply to** the variant or its base;
+  - a copy **adds** children and **disables** its stamp's, and enables them
+    back;
+  - **parameters**: a stamp declares values a copy shows first in Properties,
+    each an attribute of the copy's root that drives the properties it is
+    given; `Instance.stamp(name, linked, parameters)` sets them, refused and
+    never clamped out of range; `Instance:GetStamp()`;
+  - a **`Construct`** module that builds a stamp's parts from its parameters;
+  - stamps in **`ContentProvider:PreloadAsync`**, and **`@engine/stamppool`**;
+  - in the editor: revert a part or a whole copy, apply the whole copy to its
+    stamp, make a variant, open the base, select every copy, replace a copy
+    with another stamp, unused overrides kept and cleaned up, and thumbnails
+    for variants and stamps that hold stamps.
 - **A remote carries `Color3`, `CFrame`, `Vector2`, `UDim`, `UDim2` and
   `EnumItem`** (D495), each arriving equal to what was sent.
 - **`Enum.ScaleType.Fit` and `Crop`**: an image shown whole in its box's

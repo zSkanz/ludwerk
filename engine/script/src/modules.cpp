@@ -6,8 +6,11 @@
 #include <algorithm>
 #include <cstdlib>
 
+#include "engine/core/log.h"
+#include "engine/scene/scene_file.h"
 #include "engine/scene/world.h"
 #include "engine/script/bytecode.h"
+#include "engine/script/datatypes.h"
 #include "engine/script/debugger.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/sandbox.h"
@@ -292,6 +295,51 @@ int requireInstance(lua_State* L, core::InstanceId id, std::string_view from)
     return 1;
 }
 
+// The body of a `Construct` call, under `lua_pcall`: arguments are the copy's
+// root and its `Construct` module.
+int runConstruct(lua_State* L)
+{
+    scene::World& w = world(L);
+    const core::InstanceId root = *toInstance(L, 1);
+    const core::InstanceId module = *toInstance(L, 2);
+    (void)requireInstance(L, module, "Construct");
+    if (!lua_isfunction(L, -1)) {
+        const core::I18nArg args[] = {{"stamp", w.atoms().text(w.stampOf(root))}};
+        raise(L, ENG_TR("script.err.construct_not_function"), args);
+    }
+    pushInstance(L, root);
+    // The parameters by name, and a seed made of them and the stamp: the same
+    // parameters build the same parts, on every machine.
+    lua_newtable(L);
+    u64 seed = 1469598103934665603ull;
+    const auto mix = [&seed](std::string_view text) {
+        for (const char c : text) {
+            seed ^= static_cast<u8>(c);
+            seed *= 1099511628211ull;
+        }
+    };
+    mix(w.atoms().text(w.stampOf(root)));
+    for (const scene::StampParameter& parameter : scene::stampParametersOf(w, root)) {
+        const scene::Value value = w.getAttribute(root, w.atoms().intern(parameter.name));
+        pushValue(L, value);
+        lua_setfield(L, -2, parameter.name.c_str());
+        mix(parameter.name);
+        lua_pushvalue(L, -1);
+        lua_getfield(L, -1, parameter.name.c_str());
+        size_t length = 0;
+        const char* text = luaL_tolstring(L, -1, &length);
+        mix(std::string_view(text, length));
+        lua_pop(L, 3);
+    }
+    lua_getglobal(L, "Random");
+    lua_getfield(L, -1, "new");
+    lua_remove(L, -2);
+    lua_pushnumber(L, static_cast<double>(seed % 9007199254740991ull));
+    lua_call(L, 1, 1);
+    lua_call(L, 3, 0);
+    return 0;
+}
+
 int scriptRequire(lua_State* L)
 {
     // **An instance is a module now** (ADR 0050). Checked before the string,
@@ -423,6 +471,76 @@ int fireLoadedTrampoline(lua_State* L)
 }
 
 } // namespace
+
+void constructStamp(lua_State* L, core::InstanceId root)
+{
+    scene::World& w = world(L);
+    std::vector<core::InstanceId>& queue = w.engineState().pendingConstructs;
+    queue.erase(std::remove(queue.begin(), queue.end(), root), queue.end());
+    if (!w.alive(root))
+        return;
+    const core::NameAtom name = w.atoms().lookup("Construct");
+    const core::InstanceId module = name.valid() ? w.findFirstChild(root, name) : core::InstanceId{};
+    if (!module.valid() || w.classOf(module) != moduleClassOf(w))
+        return;
+
+    // **What it built before goes**: it is built again from the values now.
+    std::vector<core::InstanceId> inside;
+    w.collectDescendants(root, inside);
+    for (const core::InstanceId id : inside) {
+        if (w.alive(id) && w.constructed(id) && !w.constructed(w.parentOf(id)))
+            (void)w.destroy(id);
+    }
+    inside.clear();
+    w.collectDescendants(root, inside);
+    // By slot AND generation: a slot freed above may be handed out again.
+    const auto earlier = [](core::InstanceId a, core::InstanceId b) {
+        return a.index != b.index ? a.index < b.index : a.generation < b.generation;
+    };
+    std::vector<core::InstanceId> before = inside;
+    std::sort(before.begin(), before.end(), earlier);
+
+    // Its own thread, sandboxed as any script's (R4), and protected: a
+    // `Construct` that fails is told about, and leaves the copy as it was.
+    lua_State* thread = lua_newthread(L);
+    luaL_sandboxthread(thread);
+    lua_pushcfunction(thread, runConstruct, "Construct");
+    pushInstance(thread, root);
+    pushInstance(thread, module);
+    if (lua_pcall(thread, 2, 0, 0) != LUA_OK) {
+        size_t length = 0;
+        const char* message = lua_tolstring(thread, -1, &length);
+        const core::I18nArg args[] = {{"stamp", w.atoms().text(w.stampOf(root))},
+                                      {"message", std::string_view(message != nullptr ? message : "", length)}};
+        core::log(core::LogLevel::Warn, ENG_TR("script.warn.construct_failed"), args);
+    }
+    lua_pop(L, 1);
+
+    // What it added is the stamp's to build again, not anybody's to save.
+    inside.clear();
+    w.collectDescendants(root, inside);
+    for (const core::InstanceId id : inside) {
+        if (!std::binary_search(before.begin(), before.end(), id, earlier))
+            w.setConstructed(id, true);
+    }
+}
+
+void constructPendingStamps(lua_State* L, bool editing)
+{
+    scene::EngineState& state = world(L).engineState();
+    std::vector<core::InstanceId> pending;
+    pending.swap(state.pendingConstructs);
+    if (editing)
+        pending.insert(pending.end(), state.changedParameters.begin(), state.changedParameters.end());
+    state.changedParameters.clear();
+    std::vector<core::InstanceId> done;
+    for (const core::InstanceId root : pending) {
+        if (std::find(done.begin(), done.end(), root) != done.end())
+            continue;
+        done.push_back(root);
+        constructStamp(L, root);
+    }
+}
 
 void registerRequire(lua_State* L)
 {
