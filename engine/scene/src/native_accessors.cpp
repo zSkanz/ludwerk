@@ -2165,6 +2165,27 @@ bool setGraphicsServiceAntiAliasing(World& world, core::InstanceId, const Value&
     return writeGraphicsChoice(world, GraphicsSetting::AntiAliasing, generated::AntiAliasingModeEnumId, value);
 }
 
+Value getGraphicsServiceUpscaling(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::UpscalingModeEnumId,
+                           static_cast<core::i32>(graphicsValue(world, GraphicsSetting::Upscaling))}};
+}
+
+bool setGraphicsServiceUpscaling(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsChoice(world, GraphicsSetting::Upscaling, generated::UpscalingModeEnumId, value);
+}
+
+Value getGraphicsServiceSharpness(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::Sharpness)};
+}
+
+bool setGraphicsServiceSharpness(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::Sharpness, value);
+}
+
 Value getGraphicsServiceAmbientOcclusion(const World& world, core::InstanceId)
 {
     return Value{graphicsValue(world, GraphicsSetting::AmbientOcclusion) != 0.0};

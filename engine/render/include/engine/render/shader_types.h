@@ -467,6 +467,57 @@ struct GpuFxaaUniforms
 
 static_assert(sizeof(GpuFxaaUniforms) == 16, "GpuFxaaUniforms is a cbuffer layout");
 
+// --- Anti-aliasing and upscaling (ADR 0158), `engine_aa.hlsli` -----------------
+
+// Fragment `b0 space3`: SMAA's `SMAA_RT_METRICS` -- one texel, and the size,
+// of the picture it reads.
+struct GpuSmaaUniforms
+{
+    f32 metrics[4]{};
+};
+static_assert(sizeof(GpuSmaaUniforms) == 16, "GpuSmaaUniforms is a cbuffer layout");
+
+// Fragment `b0 space3`: `FsrEasuCon`'s four constants, float bits as words.
+struct GpuEasuUniforms
+{
+    u32 con[4][4]{};
+};
+static_assert(sizeof(GpuEasuUniforms) == 64, "GpuEasuUniforms is a cbuffer layout");
+
+// Fragment `b0 space3`: `FsrRcasCon`'s constant.
+struct GpuRcasUniforms
+{
+    u32 con[4]{};
+};
+static_assert(sizeof(GpuRcasUniforms) == 16, "GpuRcasUniforms is a cbuffer layout");
+
+// Fragment `b0 space3`: the camera's motion, for `taa_velocity.hlsl`.
+struct GpuReprojectUniforms
+{
+    core::Mat4 inverse;
+    core::Mat4 previous;
+    f32 jitter[4]{};
+};
+static_assert(sizeof(GpuReprojectUniforms) == 144, "GpuReprojectUniforms is a cbuffer layout");
+
+// Vertex `b0 space1`: one moving draw, now jittered, now and a frame ago.
+struct GpuMotionUniforms
+{
+    core::Mat4 position;
+    core::Mat4 current;
+    core::Mat4 previous;
+};
+static_assert(sizeof(GpuMotionUniforms) == 192, "GpuMotionUniforms is a cbuffer layout");
+
+// Fragment `b0 space3`: the temporal resolve.
+struct GpuTaaUniforms
+{
+    f32 texel[4]{};
+    f32 blend[4]{};
+    f32 jitter[4]{};
+};
+static_assert(sizeof(GpuTaaUniforms) == 48, "GpuTaaUniforms is a cbuffer layout");
+
 // Fragment stage, `b0 space3`, for the sky pass. The sky is drawn as a
 // fullscreen triangle before any geometry, so it needs the inverse view
 // projection to turn a screen position back into a direction.

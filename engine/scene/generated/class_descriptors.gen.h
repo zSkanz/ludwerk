@@ -108,12 +108,13 @@ inline constexpr EnumId GraphicsLevelEnumId = 67;
 inline constexpr EnumId GraphicsGroupEnumId = 68;
 inline constexpr EnumId ShadowQualityEnumId = 69;
 inline constexpr EnumId AntiAliasingModeEnumId = 70;
-inline constexpr EnumId TextureQualityEnumId = 71;
-inline constexpr EnumId WindowModeEnumId = 72;
-inline constexpr EnumId SettingSourceEnumId = 73;
-inline constexpr EnumId ScrollingDirectionEnumId = 74;
-inline constexpr EnumId ElasticBehaviorEnumId = 75;
-inline constexpr EnumId AnimationCullingModeEnumId = 76;
+inline constexpr EnumId UpscalingModeEnumId = 71;
+inline constexpr EnumId TextureQualityEnumId = 72;
+inline constexpr EnumId WindowModeEnumId = 73;
+inline constexpr EnumId SettingSourceEnumId = 74;
+inline constexpr EnumId ScrollingDirectionEnumId = 75;
+inline constexpr EnumId ElasticBehaviorEnumId = 76;
+inline constexpr EnumId AnimationCullingModeEnumId = 77;
 
 } // namespace generated
 
@@ -851,6 +852,10 @@ Value getGraphicsServiceShadowDistance(const World& world, core::InstanceId id);
 bool setGraphicsServiceShadowDistance(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceAntiAliasing(const World& world, core::InstanceId id);
 bool setGraphicsServiceAntiAliasing(World& world, core::InstanceId id, const Value& value);
+Value getGraphicsServiceUpscaling(const World& world, core::InstanceId id);
+bool setGraphicsServiceUpscaling(World& world, core::InstanceId id, const Value& value);
+Value getGraphicsServiceSharpness(const World& world, core::InstanceId id);
+bool setGraphicsServiceSharpness(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceAmbientOcclusion(const World& world, core::InstanceId id);
 bool setGraphicsServiceAmbientOcclusion(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceContactShadows(const World& world, core::InstanceId id);

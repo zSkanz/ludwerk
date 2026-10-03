@@ -664,11 +664,31 @@ local Classes: { Schema.Class } = {
             {
                 Name = "AntiAliasing",
                 Type = "Enum.AntiAliasingMode",
-                Default = "Enum.AntiAliasingMode.FXAA",
+                Default = "Enum.AntiAliasingMode.SMAA",
                 ErrorKey = "scene.err.graphics_setting",
                 Transient = true,
                 HostFact = true,
-                Doc = "How edges are smoothed.",
+                Doc = "How edges are smoothed (ADR 0158).",
+            },
+            {
+                Name = "Upscaling",
+                Type = "Enum.UpscalingMode",
+                Default = "Enum.UpscalingMode.None",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How the world is brought up to the window's resolution when `RenderScale` is under 1 "
+                    .. "(ADR 0158). At a scale of 1 there is nothing to bring up, and it does nothing.",
+            },
+            {
+                Name = "Sharpness",
+                Type = "number",
+                Default = "0.2",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How much the picture is sharpened, 0 to 1, after an FSR 1 upscale and after temporal "
+                    .. "anti-aliasing, which softens (ADR 0158).",
             },
             {
                 Name = "AmbientOcclusion",

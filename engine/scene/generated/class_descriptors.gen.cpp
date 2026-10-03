@@ -4673,7 +4673,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(localizationServiceDesc);
 
     // --- GraphicsService ---
-    static std::array<PropertyDesc, 38> graphicsServiceProperties;
+    static std::array<PropertyDesc, 40> graphicsServiceProperties;
     graphicsServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("QualityLevel"),
@@ -4764,10 +4764,37 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .inert = false,
             .hostFact = true,
             .transient = true,
-            .doc = "How edges are smoothed.",
+            .doc = "How edges are smoothed (ADR 0158).",
             .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
             .get = native::getGraphicsServiceAntiAliasing,
             .set = native::setGraphicsServiceAntiAliasing,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Upscaling"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("UpscalingMode"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How the world is brought up to the window's resolution when `RenderScale` is under 1 (ADR 0158). At a scale of 1 there is nothing to bring up, and it does nothing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceUpscaling,
+            .set = native::setGraphicsServiceUpscaling,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Sharpness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How much the picture is sharpened, 0 to 1, after an FSR 1 upscale and after temporal anti-aliasing, which softens (ADR 0158).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceSharpness,
+            .set = native::setGraphicsServiceSharpness,
         },
         PropertyDesc{
             .name = atoms.intern("AmbientOcclusion"),
@@ -9362,7 +9389,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(shadowQualityDesc);
 
     // --- AntiAliasingMode ---
-    static std::array<EnumItemDesc, 2> antiAliasingModeItems;
+    static std::array<EnumItemDesc, 4> antiAliasingModeItems;
     antiAliasingModeItems = {{
         EnumItemDesc{
             .name = atoms.intern("Off"),
@@ -9374,12 +9401,42 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
             .value = 1,
             .docKey = {},
         },
+        EnumItemDesc{
+            .name = atoms.intern("SMAA"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("TAA"),
+            .value = 3,
+            .docKey = {},
+        },
     }};
     EnumDescriptor antiAliasingModeDesc;
     antiAliasingModeDesc.name = atoms.intern("AntiAliasingMode");
     antiAliasingModeDesc.docKey = {};
     antiAliasingModeDesc.items = antiAliasingModeItems;
     enums.registerEnum(antiAliasingModeDesc);
+
+    // --- UpscalingMode ---
+    static std::array<EnumItemDesc, 2> upscalingModeItems;
+    upscalingModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("None"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("FSR1"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor upscalingModeDesc;
+    upscalingModeDesc.name = atoms.intern("UpscalingMode");
+    upscalingModeDesc.docKey = {};
+    upscalingModeDesc.items = upscalingModeItems;
+    enums.registerEnum(upscalingModeDesc);
 
     // --- TextureQuality ---
     static std::array<EnumItemDesc, 3> textureQualityItems;

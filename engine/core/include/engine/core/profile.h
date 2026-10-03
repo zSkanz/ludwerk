@@ -77,10 +77,15 @@ struct SpikeReport
     std::vector<SpikeRow> rows;
 };
 
+// **This frame is the world settling** (H11): a scene just loaded, its
+// content arriving. Its scopes are kept like any other's, but it is not one
+// of the slowest frames a player feels -- those are play's.
+void markSettling() noexcept;
+
 // The slowest frames, slowest first: the worst `worst`, and any other over
 // `factor` times the median frame, at most `most` in all. A frame's rows are
-// its scopes of at least `smallestMs`, as a tree; the first `skipFrames` are
-// left out.
+// its scopes of at least `smallestMs`, as a tree; the first `skipFrames`, and
+// every frame marked settling, are left out.
 [[nodiscard]] std::vector<SpikeReport> spikes(usize skipFrames, usize worst, f64 factor, usize most, f64 smallestMs);
 
 class Scope

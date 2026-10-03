@@ -1130,6 +1130,8 @@ void PhysicsSync::remember(u64 tick)
                                                .mode = body->mode,
                                                .attributes = predictedAttributesOf(id)});
     }
+    for (IslandEntity& entity : island.entities)
+        entity.pending = pendingOf(entity.id);
     if (!m_backend.saveIsland(m_world, bodies, characters, island.solver))
         return;
     m_islands.insert_or_assign(tick, std::move(island));
@@ -1147,6 +1149,37 @@ std::optional<core::CFrameD> PhysicsSync::remembered(u64 tick, core::InstanceId 
             return entity.cframe;
     }
     return std::nullopt;
+}
+
+PhysicsSync::IslandEntity::Pending PhysicsSync::pendingOf(core::InstanceId id) const
+{
+    IslandEntity::Pending pending;
+    if (id.index < m_bodies.size() && m_bodies[id.index].generation == id.generation)
+        pending.written = m_bodies[id.index].written;
+    if (const auto found = m_characters.find(packInstance(id)); found != m_characters.end())
+        pending.written = found->second.written;
+    if (const RigidBodyComponent* body = m_scene.rigidBodies().find(id); body != nullptr) {
+        pending.velocityWritten = body->velocityWritten;
+        pending.velocity = body->linearVelocity;
+        pending.impulse = body->pendingImpulse;
+        pending.angularImpulse = body->pendingAngularImpulse;
+    }
+    return pending;
+}
+
+void PhysicsSync::putPending(core::InstanceId id, const IslandEntity::Pending& pending)
+{
+    if (id.index < m_bodies.size() && m_bodies[id.index].generation == id.generation)
+        m_bodies[id.index].written = pending.written;
+    if (const auto found = m_characters.find(packInstance(id)); found != m_characters.end())
+        found->second.written = pending.written;
+    if (RigidBodyComponent* body = m_scene.rigidBodies().find(id); body != nullptr) {
+        body->velocityWritten = pending.velocityWritten;
+        if (pending.velocityWritten)
+            body->linearVelocity = pending.velocity;
+        body->pendingImpulse = pending.impulse;
+        body->pendingAngularImpulse = pending.angularImpulse;
+    }
 }
 
 std::optional<PredictedAttributes> PhysicsSync::rememberedAttributes(u64 tick, core::InstanceId id) const
@@ -1173,14 +1206,13 @@ bool PhysicsSync::restoreIsland(const Island& island)
     for (const IslandEntity& entity : island.entities) {
         PartComponent* part = m_scene.parts().find(entity.id);
         part->cframe = entity.cframe;
-        if (entity.id.index < m_bodies.size() && m_bodies[entity.id.index].generation == entity.id.generation)
-            m_bodies[entity.id.index].written = entity.cframe;
-        if (const auto found = m_characters.find(packInstance(entity.id)); found != m_characters.end())
-            found->second.written = entity.cframe;
         if (RigidBodyComponent* body = m_scene.rigidBodies().find(entity.id); body != nullptr && entity.body) {
             body->linearVelocity = entity.linear;
             body->angularVelocity = entity.angular;
         }
+        // Where the backend has it, and what waited for the next step (D525):
+        // a place written after the step is applied by the step taken again.
+        putPending(entity.id, entity.pending);
         if (CharacterBodyComponent* body = m_scene.characterBodies().find(entity.id);
             body != nullptr && entity.character) {
             body->grounded = entity.grounded;
@@ -1226,6 +1258,11 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
         const bool pendingJump = body->jumpRequested;
         const f32 pendingWalk = body->walkSpeed;
         const f32 pendingJumpSpeed = body->jumpSpeed;
+        // And what scripts wrote after the last live step -- a velocity, an
+        // impulse (D525) -- for the next live step, as they wrote it.
+        std::vector<std::pair<core::InstanceId, IslandEntity::Pending>> livePending;
+        for (const IslandEntity& entity : saved.entities)
+            livePending.emplace_back(entity.id, pendingOf(entity.id));
         if (restoreIsland(saved)) {
             // The authority's word on the character, when it differs. Put
             // somewhere new, a controller finds its contacts again; nudged by
@@ -1299,6 +1336,19 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
             body->jumpRequested = pendingJump;
             body->walkSpeed = pendingWalk;
             body->jumpSpeed = pendingJumpSpeed;
+            for (const auto& [id, live] : livePending) {
+                RigidBodyComponent* rigid = m_scene.rigidBodies().find(id);
+                if (rigid == nullptr)
+                    continue;
+                if (live.velocityWritten) {
+                    rigid->velocityWritten = true;
+                    rigid->linearVelocity = live.velocity;
+                }
+                if (!(live.impulse == core::Vec3{}))
+                    rigid->pendingImpulse = live.impulse;
+                if (!(live.angularImpulse == core::Vec3{}))
+                    rigid->pendingAngularImpulse = live.angularImpulse;
+            }
             return frames;
         }
     }

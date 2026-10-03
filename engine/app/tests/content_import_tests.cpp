@@ -23,6 +23,7 @@
 #include "engine/scene/components.h"
 #include "engine/scene/enum_registry.h"
 #include "engine/scene/world.h"
+#include "project_fixture.h"
 
 #if ENG_DEBUG_UI
 #include "engine/assetc/compiler.h"
@@ -217,6 +218,33 @@ TEST_CASE("D507: opening a project again reads none of its unchanged sources, an
     asset::ContentMounts third;
     const app::ContentImportReport changed = app::openProjectContent(project.root, project.content(), third);
     CHECK(changed.compiled == std::vector<std::string>{"textures/base.png"});
+}
+
+TEST_CASE("D523: an import with no window says what it compiles while it does, every few seconds")
+{
+    // A first open headless compiled for a minute and a half without a word,
+    // and a slow import looked like a stopped process.
+    seedRealCatalog();
+    engine::app::testing::Captured log;
+    app::ImportLog quiet(5'000'000'000ull);
+    const core::u64 second = 1'000'000'000ull;
+    quiet.report(0, 200, "models/a.glb", 10 * second);
+    CHECK(log.contains("200 source(s) to compile"));
+    const auto progress = [&log] {
+        int count = 0;
+        for (const std::string& line : log.lines)
+            count += line.find("Compiling the project's content") != std::string::npos ? 1 : 0;
+        return count;
+    };
+    // Not again within the interval; again once it has passed, with where it is.
+    quiet.report(1, 200, "models/b.glb", 12 * second);
+    CHECK(progress() == 0);
+    quiet.report(40, 200, "textures/wall.png", 16 * second);
+    CHECK(progress() == 1);
+    CHECK(log.contains("40 of 200 done, now textures/wall.png"));
+    // Done is said by the totals, not by this.
+    quiet.report(200, 200, "", 99 * second);
+    CHECK(progress() == 1);
 }
 
 TEST_CASE("the loader draws a compiled mesh and a compiled map, with no source file left")

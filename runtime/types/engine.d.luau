@@ -240,6 +240,9 @@ end
 declare extern type EnumAntiAliasingMode extends EnumItem with
 end
 
+declare extern type EnumUpscalingMode extends EnumItem with
+end
+
 declare extern type EnumTextureQuality extends EnumItem with
 end
 
@@ -3951,8 +3954,14 @@ declare extern type GraphicsService extends Instance with
     ShadowCascades: number
     --- How far from the camera the sun casts, in metres, 10 to 1000.
     ShadowDistance: number
-    --- How edges are smoothed.
+    --- How edges are smoothed (ADR 0158).
     AntiAliasing: EnumAntiAliasingMode
+    --- How the world is brought up to the window's resolution when `RenderScale` is under 1 (ADR 0158).
+    --- At a scale of 1 there is nothing to bring up, and it does nothing.
+    Upscaling: EnumUpscalingMode
+    --- How much the picture is sharpened, 0 to 1, after an FSR 1 upscale and after temporal
+    --- anti-aliasing, which softens (ADR 0158).
+    Sharpness: number
     --- Whether creases and corners are darkened.
     AmbientOcclusion: boolean
     --- Whether the sun's shadow is drawn right up to what casts it.
@@ -5536,7 +5545,14 @@ declare Enum: {
     AntiAliasingMode: {
         Off: EnumAntiAliasingMode,
         FXAA: EnumAntiAliasingMode,
+        SMAA: EnumAntiAliasingMode,
+        TAA: EnumAntiAliasingMode,
         GetEnumItems: (self: any) -> { EnumAntiAliasingMode },
+    },
+    UpscalingMode: {
+        None: EnumUpscalingMode,
+        FSR1: EnumUpscalingMode,
+        GetEnumItems: (self: any) -> { EnumUpscalingMode },
     },
     TextureQuality: {
         Low: EnumTextureQuality,

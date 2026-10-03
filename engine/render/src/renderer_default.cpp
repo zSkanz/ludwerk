@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -10,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -27,6 +29,7 @@
 #include "engine/render/shader_types.h"
 #include "engine/render/shadow.h"
 #include "engine/render/surface_source.h"
+#include "smaa_tables.h"
 
 namespace engine::render {
 namespace {
@@ -576,6 +579,41 @@ struct ViewState
     rhi::TextureHandle raysGathered_{};
     u32 lookWidth_ = 0;
     u32 lookHeight_ = 0;
+
+    // --- Anti-aliasing and upscaling (ADR 0158) --------------------------------
+    //
+    // **Made the first frame a mode needs them**, at the render size or, for
+    // the upscale's output, the target's -- and none of them on a frame that
+    // draws through FXAA alone, which is what keeps that frame's command
+    // stream the one it always was. SMAA's edges and weights; the picture an
+    // upscale reads; EASU's output, which RCAS reads; and the temporal pass's
+    // velocities and the history it ping-pongs.
+    rhi::TextureHandle smaaEdges_{};
+    rhi::TextureHandle smaaWeights_{};
+    rhi::TextureHandle aaResolved_{};
+    rhi::TextureHandle upscaled_{};
+    rhi::TextureHandle velocity_{};
+    rhi::TextureHandle history_[2]{};
+    u32 historyIndex_ = 0;
+    bool historyValid_ = false;
+    u32 aaWidth_ = 0;
+    u32 aaHeight_ = 0;
+    u32 upscaledWidth_ = 0;
+    u32 upscaledHeight_ = 0;
+    // **The last frame's camera, unjittered, and the origin its space was
+    // relative to**: what a pixel's motion is measured against.
+    Mat4 previousViewProjection_{};
+    core::DVec3 previousOrigin_{};
+    bool previousCamera_ = false;
+    // Every part's place a frame ago, by its draws' motion key, in the space of
+    // the camera it was drawn with -- and this frame's, filled as it is drawn.
+    struct Placed
+    {
+        Mat4 transform;
+        core::DVec3 origin;
+    };
+    std::unordered_map<u64, Placed> placed_;
+    std::unordered_map<u64, Placed> placing_;
 };
 
 class DefaultRenderer final : public IRenderer, private ViewState
@@ -609,6 +647,11 @@ public:
     void setSettings(const GraphicsSettings& settings) override;
     void setSurfaceSource(ISurfaceSource* source) override { surfaceSource_ = source; }
     [[nodiscard]] const GraphicsSettings& settings() const noexcept override { return settings_; }
+    [[nodiscard]] core::Vec2 cameraJitter(const RenderWorld& world, u32 targetWidth, u32 targetHeight) const override;
+    // Whether this frame of the main view is a temporal one: the one rule
+    // `cameraJitter` and `render` both ask, so a frame is never jittered
+    // without the pass that takes the jitter out.
+    [[nodiscard]] bool temporalFrame(const RenderWorld& world) const noexcept;
 
 private:
     [[nodiscard]] std::optional<core::EngineError> ensureTargets(rhi::IDevice& device, u32 width, u32 height);
@@ -1101,8 +1144,51 @@ private:
     LookPipeline skyLook_;
     [[nodiscard]] bool ensureSkyLook(rhi::IDevice& device);
 
+    // --- Anti-aliasing and upscaling (ADR 0158) --------------------------------
+    //
+    // SMAA's three passes -- its last into a texture or into the window --
+    // FSR 1's two, the camera's motion and the temporal resolve: each made the
+    // first frame it is drawn, like every look pipeline.
+    LookPipeline smaaEdgesPipeline_;
+    LookPipeline smaaWeightsPipeline_;
+    LookPipeline smaaBlend_;
+    LookPipeline smaaBlendWindow_;
+    LookPipeline smaaBlendExact_;
+    LookPipeline smaaBlendExactWindow_;
+    LookPipeline easu_;
+    LookPipeline rcas_;
+    LookPipeline rcasWindow_;
+    LookPipeline taaVelocity_;
+    LookPipeline taaResolve_;
+    // What moves, drawn with where it was: plain and skinned.
+    rhi::PipelineHandle motionPipeline_{};
+    rhi::PipelineHandle motionSkinnedPipeline_{};
+    bool motionTried_ = false;
+    // SMAA's two tables, uploaded once.
+    rhi::TextureHandle smaaArea_{};
+    rhi::TextureHandle smaaSearch_{};
+    bool smaaTablesUploaded_ = false;
+    // Which of the eight sample positions the main view's next frame takes,
+    // and whether this frame is a temporal one.
+    u32 jitterIndex_ = 0;
+    bool temporalNow_ = false;
+    [[nodiscard]] bool ensureMotionPipelines(rhi::IDevice& device);
+    [[nodiscard]] bool ensureSmaaTables(rhi::IDevice& device, rhi::ICmdList& cmd);
+    [[nodiscard]] static bool aaTexture(rhi::IDevice& device, rhi::TextureHandle& slot, u32 width, u32 height,
+                                        rhi::TextureFormat format, const char* name);
+    void releaseAaTextures(rhi::IDevice& device);
+    // How far every pixel moved since the last frame, into `velocity_`.
+    void writeVelocity(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world, const MeshCache& meshes);
+    // This frame blended into its history; the image every pass after reads.
+    [[nodiscard]] rhi::TextureHandle resolveTemporal(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world,
+                                                     rhi::TextureHandle scene);
+    // From the tonemapped `ldr_` to the target: the spatial pass, the upscale
+    // and the sharpening, as asked.
+    void resolvePicture(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target, AntiAliasingMode spatial,
+                        bool upscale, bool sharpen);
+
     // Every look pipeline, for `destroy`.
-    [[nodiscard]] std::array<LookPipeline*, 18> lookPipelines() noexcept
+    [[nodiscard]] std::array<LookPipeline*, 29> lookPipelines() noexcept
     {
         return {&gradedTonemap_,
                 &gradedTonemapWindow_,
@@ -1121,7 +1207,18 @@ private:
                 &exactTonemapWindow_,
                 &exactGradedTonemap_,
                 &exactGradedTonemapWindow_,
-                &bloomDownMasked_};
+                &bloomDownMasked_,
+                &smaaEdgesPipeline_,
+                &smaaWeightsPipeline_,
+                &smaaBlend_,
+                &smaaBlendWindow_,
+                &smaaBlendExact_,
+                &smaaBlendExactWindow_,
+                &easu_,
+                &rcas_,
+                &rcasWindow_,
+                &taaVelocity_,
+                &taaResolve_};
     }
 
     [[nodiscard]] bool lookTexture(rhi::IDevice& device, rhi::TextureHandle& slot, u32 width, u32 height,
@@ -1793,6 +1890,7 @@ void DefaultRenderer::useView(u32 view)
 void DefaultRenderer::releaseActiveView(rhi::IDevice& device)
 {
     releaseLookTextures(device);
+    releaseAaTextures(device);
     const auto release = [&device](rhi::TextureHandle& texture) {
         if (texture.valid())
             device.destroy(texture);
@@ -2157,6 +2255,18 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
             device.destroy(look->handle);
         *look = {};
     }
+    for (rhi::PipelineHandle* pipeline : {&motionPipeline_, &motionSkinnedPipeline_}) {
+        if (pipeline->valid())
+            device.destroy(*pipeline);
+        *pipeline = {};
+    }
+    motionTried_ = false;
+    for (rhi::TextureHandle* table : {&smaaArea_, &smaaSearch_}) {
+        if (table->valid())
+            device.destroy(*table);
+        *table = {};
+    }
+    smaaTablesUploaded_ = false;
     releaseLookTextures(device);
     lookWidth_ = 0;
     lookHeight_ = 0;
@@ -3430,6 +3540,12 @@ bool DefaultRenderer::ensureLookPipeline(rhi::IDevice& device, LookPipeline& slo
         .colorTargets = targets,
         .debugName = shader,
     });
+    // **Said once, by name**: a pass made the first frame it is drawn fails
+    // where nobody is looking, and the frame simply goes without it.
+    if (!slot.handle.valid()) {
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"name", std::string_view{shader}}};
+        core::log(core::LogLevel::Warn, ENG_TR("render.warn.pipeline_failed"), args);
+    }
     return slot.handle.valid();
 }
 
@@ -3446,6 +3562,529 @@ bool DefaultRenderer::lookTexture(rhi::IDevice& device, rhi::TextureHandle& slot
         .debugName = name,
     });
     return slot.valid();
+}
+
+// --- Anti-aliasing and upscaling (ADR 0158) ------------------------------------
+
+namespace {
+
+// The radical inverse of `index` in `base`: Halton's sequence, which fills a
+// pixel evenly in eight samples where a random one clumps.
+[[nodiscard]] f32 halton(u32 index, u32 base) noexcept
+{
+    f32 fraction = 1.0f;
+    f32 result = 0.0f;
+    while (index > 0) {
+        fraction /= static_cast<f32>(base);
+        result += fraction * static_cast<f32>(index % base);
+        index /= base;
+    }
+    return result;
+}
+
+constexpr u32 kJitterSamples = 8;
+
+// A float as the word a constant buffer carries it in.
+[[nodiscard]] u32 bitsOf(f32 value) noexcept
+{
+    return std::bit_cast<u32>(value);
+}
+
+} // namespace
+
+bool DefaultRenderer::temporalFrame(const RenderWorld& world) const noexcept
+{
+    // **Not a picture with nothing behind it**, whose alpha a blend would
+    // lose; **nor a frame with sprites drawn in their own colours** (ADR
+    // 0153): the jitter would move pixel art by a fraction of a pixel every
+    // frame, and what it is is exactly its pixels -- SMAA, which leaves them
+    // be, instead.
+    return settings_.antiAliasing == AntiAliasingMode::Taa && world.camera.valid &&
+           !world.environment.transparentBackground &&
+           std::none_of(world.sprites.begin(), world.sprites.end(),
+                        [](const RenderSprite& sprite) { return sprite.exact; });
+}
+
+core::Vec2 DefaultRenderer::cameraJitter(const RenderWorld& world, u32 targetWidth, u32 targetHeight) const
+{
+    if (!temporalFrame(world) || targetWidth == 0 || targetHeight == 0)
+        return {};
+    // The render size, as `render` will make it.
+    const f32 scale = effectiveRenderScale(settings_, targetWidth, targetHeight);
+    const auto scaled = [scale](u32 value) {
+        const auto result = static_cast<u32>(static_cast<f32>(value) * scale + 0.5f);
+        return result > 0 ? result : 1u;
+    };
+    const u32 sample = jitterIndex_ % kJitterSamples + 1;
+    const f32 x = halton(sample, 2) - 0.5f;
+    const f32 y = halton(sample, 3) - 0.5f;
+    return core::Vec2{2.0f * x / static_cast<f32>(scaled(targetWidth)),
+                      2.0f * y / static_cast<f32>(scaled(targetHeight))};
+}
+
+bool DefaultRenderer::aaTexture(rhi::IDevice& device, rhi::TextureHandle& slot, u32 width, u32 height,
+                                rhi::TextureFormat format, const char* name)
+{
+    if (slot.valid())
+        return true;
+    slot = device.createTexture({
+        .format = format,
+        .usage = rhi::TextureUsage::ColorTarget | rhi::TextureUsage::Sampled,
+        .width = width,
+        .height = height,
+        .debugName = name,
+    });
+    return slot.valid();
+}
+
+void DefaultRenderer::releaseAaTextures(rhi::IDevice& device)
+{
+    for (rhi::TextureHandle* texture :
+         {&smaaEdges_, &smaaWeights_, &aaResolved_, &upscaled_, &velocity_, &history_[0], &history_[1]}) {
+        if (texture->valid())
+            device.destroy(*texture);
+        *texture = {};
+    }
+    historyValid_ = false;
+    aaWidth_ = 0;
+    aaHeight_ = 0;
+    upscaledWidth_ = 0;
+    upscaledHeight_ = 0;
+}
+
+bool DefaultRenderer::ensureSmaaTables(rhi::IDevice& device, rhi::ICmdList& cmd)
+{
+    if (smaaTablesUploaded_)
+        return smaaArea_.valid() && smaaSearch_.valid();
+    smaaTablesUploaded_ = true;
+    smaaArea_ = device.createTexture({
+        .format = rhi::TextureFormat::Rg8Unorm,
+        .usage = rhi::TextureUsage::Sampled,
+        .width = kSmaaAreaWidth,
+        .height = kSmaaAreaHeight,
+        .debugName = "smaa-area",
+    });
+    smaaSearch_ = device.createTexture({
+        .format = rhi::TextureFormat::R8Unorm,
+        .usage = rhi::TextureUsage::Sampled,
+        .width = kSmaaSearchWidth,
+        .height = kSmaaSearchHeight,
+        .debugName = "smaa-search",
+    });
+    if (!smaaArea_.valid() || !smaaSearch_.valid())
+        return false;
+    cmd.uploadTexture(smaaArea_, smaaAreaTable(), 0);
+    cmd.uploadTexture(smaaSearch_, smaaSearchTable(), 0);
+    return true;
+}
+
+bool DefaultRenderer::ensureMotionPipelines(rhi::IDevice& device)
+{
+    if (motionTried_)
+        return motionPipeline_.valid() && motionSkinnedPipeline_.valid();
+    motionTried_ = true;
+    if (shaderLibrary_ == nullptr)
+        return false;
+    core::EngineError error;
+    const auto load = [&](const char* name, rhi::ShaderStage stage) {
+        const rhi::ShaderHandle handle = shaderLibrary_->create(device, name, stage, &error);
+        if (handle.valid() && shaderCount_ < std::size(shaders_))
+            shaders_[shaderCount_++] = handle;
+        return handle;
+    };
+    const rhi::ShaderHandle vertex = load("motion", rhi::ShaderStage::Vertex);
+    const rhi::ShaderHandle fragment = load("motion", rhi::ShaderStage::Fragment);
+    const rhi::ShaderHandle skinnedVertex = load("motion_skinned", rhi::ShaderStage::Vertex);
+    const rhi::ShaderHandle skinnedFragment = load("motion_skinned", rhi::ShaderStage::Fragment);
+    if (!vertex.valid() || !fragment.valid() || !skinnedVertex.valid() || !skinnedFragment.valid()) {
+        core::logText(core::LogLevel::Warn, error.message);
+        return false;
+    }
+    // The mesh streams as the shadow pass reads them: a position, and for
+    // the skinned twin the joints and weights of the second stream.
+    const std::array<rhi::VertexBufferLayout, 1> buffers{rhi::VertexBufferLayout{.slot = 0, .strideBytes = 48}};
+    const std::array<rhi::VertexAttribute, 1> attributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0}};
+    const std::array<rhi::VertexBufferLayout, 2> skinnedBuffers{
+        rhi::VertexBufferLayout{.slot = 0, .strideBytes = 48},
+        rhi::VertexBufferLayout{.slot = 1, .strideBytes = 32},
+    };
+    const std::array<rhi::VertexAttribute, 3> skinnedAttributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
+    };
+    // **Against the depth the prepass drew, never writing it**: a moving
+    // thing hidden behind a still one keeps the still one's motion.
+    const std::array<rhi::ColorTargetDesc, 1> target{rhi::ColorTargetDesc{.format = rhi::TextureFormat::Rg16Float}};
+    const rhi::DepthStencilState depth{.depthTest = true, .depthWrite = false};
+    motionPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = vertex,
+        .fragmentShader = fragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = attributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .depthStencil = depth,
+        .colorTargets = target,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "motion",
+    });
+    motionSkinnedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = skinnedVertex,
+        .fragmentShader = skinnedFragment,
+        .vertexBuffers = skinnedBuffers,
+        .vertexAttributes = skinnedAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .depthStencil = depth,
+        .colorTargets = target,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "motion_skinned",
+    });
+    for (const auto& [pipeline, name] :
+         {std::pair{motionPipeline_, "motion"}, std::pair{motionSkinnedPipeline_, "motion_skinned"}}) {
+        if (!pipeline.valid()) {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"name", std::string_view{name}}};
+            core::log(core::LogLevel::Warn, ENG_TR("render.warn.pipeline_failed"), args);
+        }
+    }
+    return motionPipeline_.valid() && motionSkinnedPipeline_.valid();
+}
+
+void DefaultRenderer::writeVelocity(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world,
+                                    const MeshCache& meshes)
+{
+    if (!aaTexture(device, velocity_, renderWidth_, renderHeight_, rhi::TextureFormat::Rg16Float, "velocity") ||
+        !ensureLookPipeline(device, taaVelocity_, "taa_velocity", rhi::TextureFormat::Rg16Float))
+        return;
+    const RenderCamera& camera = world.camera;
+    // A camera that moved further than anything walks in a frame was cut,
+    // not moved: nothing of the last frame is this one's.
+    if (previousCamera_) {
+        const core::DVec3 moved = camera.origin - previousOrigin_;
+        if (moved.x * moved.x + moved.y * moved.y + moved.z * moved.z > 100.0 * 100.0) {
+            previousCamera_ = false;
+            historyValid_ = false;
+            placed_.clear();
+        }
+    }
+    // The last camera, its space moved to this one's origin -- or, with none,
+    // this one, which moves nothing.
+    const Mat4 previous =
+        previousCamera_
+            ? previousViewProjection_ * core::translation(Vec3{static_cast<f32>(camera.origin.x - previousOrigin_.x),
+                                                               static_cast<f32>(camera.origin.y - previousOrigin_.y),
+                                                               static_cast<f32>(camera.origin.z - previousOrigin_.z)})
+            : camera.unjitteredViewProjection;
+    GpuReprojectUniforms reproject;
+    reproject.inverse = core::inverse(camera.viewProjection);
+    reproject.previous = previous;
+    reproject.jitter[0] = camera.jitter.x * 0.5f;
+    reproject.jitter[1] = -camera.jitter.y * 0.5f;
+    const std::array<rhi::TextureBinding, 1> depth{rhi::TextureBinding{depth_, pointSampler_}};
+    cmd.pushDebugGroup("velocity");
+    fullscreenPass(cmd, taaVelocity_.handle, velocity_, renderWidth_, renderHeight_, "velocity-camera", depth,
+                   asBytes(&reproject, sizeof(reproject)));
+
+    // **What moved by itself**, over that: every part whose place differs
+    // from a frame ago, drawn with both places.
+    placing_.clear();
+    const bool drawable = ensureMotionPipelines(device);
+    const f32 pixelsPerUnit = camera.valid ? lodPixelsPerUnit(camera, height_) : 0.0f;
+    bool begun = false;
+    rhi::PipelineHandle bound{};
+    for (const DrawItem& draw : world.draws) {
+        if (draw.motionKey == 0 || draw.transparent)
+            continue;
+        placing_[draw.motionKey] = Placed{draw.transform, camera.origin};
+        const auto found = placed_.find(draw.motionKey);
+        if (!drawable || !previousCamera_ || found == placed_.end() || !draw.inCameraFrustum || draw.cutout)
+            continue;
+        // The same place, to a hair: nothing to draw over the camera's motion.
+        const Placed& before = found->second;
+        bool moved = false;
+        for (int column = 0; column < 3 && !moved; ++column) {
+            for (int row = 0; row < 3; ++row) {
+                if (std::abs(draw.transform.m[column][row] - before.transform.m[column][row]) > 1e-5f) {
+                    moved = true;
+                    break;
+                }
+            }
+        }
+        for (int axis = 0; axis < 3 && !moved; ++axis) {
+            const f64 now = static_cast<f64>(draw.transform.m[3][axis]) + (&camera.origin.x)[axis];
+            const f64 then = static_cast<f64>(before.transform.m[3][axis]) + (&before.origin.x)[axis];
+            moved = std::abs(now - then) > 1e-4;
+        }
+        if (!moved)
+            continue;
+        const MeshCache::Resolved* resolved = meshes.resolve(draw.mesh);
+        if (resolved == nullptr || resolved->lods.empty())
+            continue;
+        const u32 lod = selectMeshLod(*resolved, draw.transform, pixelsPerUnit);
+        const MeshLodRange& level = resolved->lods[lod];
+        if (draw.section >= level.sectionCount || level.firstSection + draw.section >= resolved->sections.size())
+            continue;
+        const MeshSection& section = resolved->sections[level.firstSection + draw.section];
+        if (section.indexCount == 0)
+            continue;
+        if (!begun) {
+            cmd.beginRenderPass({
+                .colorAttachments = std::array<rhi::ColorAttachment, 1>{rhi::ColorAttachment{
+                    .texture = velocity_,
+                    .loadOp = rhi::LoadOp::Load,
+                    .storeOp = rhi::StoreOp::Store,
+                }},
+                .depthStencil = {.texture = depth_, .loadOp = rhi::LoadOp::Load, .storeOp = rhi::StoreOp::Store},
+                .debugName = "velocity-objects",
+            });
+            cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
+            cmd.setScissor(
+                {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
+            begun = true;
+        }
+        const bool skinned = draw.boneCount > 0 && resolved->skin.valid();
+        const rhi::PipelineHandle pipeline = skinned ? motionSkinnedPipeline_ : motionPipeline_;
+        if (!(pipeline == bound)) {
+            cmd.setPipeline(pipeline);
+            bound = pipeline;
+        }
+        GpuMotionUniforms motion;
+        motion.position = camera.viewProjection * draw.transform;
+        motion.current = camera.unjitteredViewProjection * draw.transform;
+        motion.previous = previousViewProjection_ * before.transform;
+        cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&motion, sizeof(motion)));
+        if (skinned) {
+            const usize first = std::min<usize>(draw.firstBone, world.bones.size());
+            const usize count = std::min<usize>({draw.boneCount, kMaxSkinJoints, world.bones.size() - first});
+            if (count > 0) {
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1,
+                                 asBytes(world.bones.data() + first, sizeof(Mat4) * count));
+            }
+            else {
+                static const GpuSkinUniforms Rest{};
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&Rest, sizeof(Rest)));
+            }
+            const std::array<rhi::BufferHandle, 2> vertexBuffers{resolved->vertices, resolved->skin};
+            cmd.bindVertexBuffers(0, vertexBuffers);
+        }
+        else {
+            const std::array<rhi::BufferHandle, 1> vertexBuffers{resolved->vertices};
+            cmd.bindVertexBuffers(0, vertexBuffers);
+        }
+        cmd.bindIndexBuffer(resolved->indices, rhi::IndexType::U32);
+        cmd.drawIndexed(section.indexCount, 1, resolved->firstIndex + section.firstIndex, resolved->vertexOffset, 0);
+        ++stats_.drawCalls;
+    }
+    if (begun)
+        cmd.endRenderPass();
+    cmd.popDebugGroup();
+}
+
+rhi::TextureHandle DefaultRenderer::resolveTemporal(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world,
+                                                    rhi::TextureHandle scene)
+{
+    const RenderCamera& camera = world.camera;
+    // What this frame was is what the next one is measured against, whatever
+    // the resolve below manages.
+    const auto remember = [&]() {
+        previousViewProjection_ = camera.unjitteredViewProjection;
+        previousOrigin_ = camera.origin;
+        previousCamera_ = true;
+        placed_.swap(placing_);
+        placing_.clear();
+        jitterIndex_ += 1;
+    };
+    if (!velocity_.valid() || !ensureLookPipeline(device, taaResolve_, "taa_resolve", kHdrFormat) ||
+        !aaTexture(device, history_[0], renderWidth_, renderHeight_, kHdrFormat, "history-a") ||
+        !aaTexture(device, history_[1], renderWidth_, renderHeight_, kHdrFormat, "history-b")) {
+        remember();
+        return scene;
+    }
+    const u32 write = historyIndex_ ^ 1u;
+    GpuTaaUniforms taa;
+    taa.texel[0] = 1.0f / static_cast<f32>(renderWidth_);
+    taa.texel[1] = 1.0f / static_cast<f32>(renderHeight_);
+    taa.texel[2] = static_cast<f32>(renderWidth_);
+    taa.texel[3] = static_cast<f32>(renderHeight_);
+    // A sixteenth of this frame at rest -- two cycles of the eight samples
+    // in the history -- and a fifth in motion, where history resampled every
+    // frame softens.
+    taa.blend[0] = 0.0625f;
+    taa.blend[1] = 0.2f;
+    taa.blend[2] = historyValid_ ? 1.0f : 0.0f;
+    // **How far outside this frame's neighbourhood the history may stay**:
+    // a box of one and a half standard deviations. One flickered on wires
+    // thinner than a pixel -- whether one is in the box changes with the
+    // jitter, and the history was cut back to the frame each time -- and a
+    // wider box keeps more of what moved away. Measured (`anti_aliasing_flicker`):
+    // 1 took 30% of FXAA's crawl away, 1.5 nearly half.
+    taa.blend[3] = 1.5f;
+    taa.jitter[0] = camera.jitter.x * 0.5f;
+    taa.jitter[1] = -camera.jitter.y * 0.5f;
+    const std::array<rhi::TextureBinding, 4> bindings{
+        rhi::TextureBinding{scene, pointSampler_},
+        rhi::TextureBinding{history_[historyIndex_], environmentSampler_},
+        rhi::TextureBinding{velocity_, pointSampler_},
+        rhi::TextureBinding{depth_, pointSampler_},
+    };
+    cmd.pushDebugGroup("taa");
+    fullscreenPass(cmd, taaResolve_.handle, history_[write], renderWidth_, renderHeight_, "taa", bindings,
+                   asBytes(&taa, sizeof(taa)));
+    cmd.popDebugGroup();
+    historyIndex_ = write;
+    historyValid_ = true;
+    remember();
+    return history_[write];
+}
+
+void DefaultRenderer::resolvePicture(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target,
+                                     AntiAliasingMode spatial, bool upscale, bool sharpen)
+{
+    const bool intoWindow = target.colorFormat != kLdrFormat;
+    // The spatial pass writes the target when nothing comes after it.
+    const bool last = !upscale && !sharpen;
+    rhi::TextureHandle picture = ldr_;
+    if (!last && !aaTexture(device, aaResolved_, renderWidth_, renderHeight_, kLdrFormat, "aa-resolved"))
+        return;
+
+    if (spatial == AntiAliasingMode::Fxaa) {
+        GpuFxaaUniforms fxaa;
+        // The SOURCE's texel, not the target's. FXAA walks an edge in the image
+        // it is reading, and at a reduced render scale that image is smaller
+        // than what it writes -- a step sized in output texels would look for
+        // edges at the wrong spacing and find none.
+        fxaa.texel[0] = 1.0f / static_cast<f32>(renderWidth_);
+        fxaa.texel[1] = 1.0f / static_cast<f32>(renderHeight_);
+        const std::array<rhi::TextureBinding, 1> ldrBinding{rhi::TextureBinding{ldr_, linearSampler_}};
+        cmd.pushDebugGroup("fxaa");
+        // A view's texture is `kLdrFormat` whatever the window's format is.
+        const bool ldrFormat = !last || target.colorFormat != colorFormat_;
+        const rhi::PipelineHandle fxaaPass = ldrFormat && fxaaViewPipeline_.valid() ? fxaaViewPipeline_ : fxaaPipeline_;
+        if (last)
+            fullscreenPass(cmd, fxaaPass, target.color, target.width, target.height, "fxaa", ldrBinding,
+                           asBytes(&fxaa, sizeof(fxaa)));
+        else
+            fullscreenPass(cmd, fxaaPass, aaResolved_, renderWidth_, renderHeight_, "fxaa", ldrBinding,
+                           asBytes(&fxaa, sizeof(fxaa)));
+        cmd.popDebugGroup();
+        picture = last ? rhi::TextureHandle{} : aaResolved_;
+    }
+    else if (spatial == AntiAliasingMode::Smaa) {
+        // **A frame with sprites drawn in their own colours blends through the
+        // twin that leaves them be** (ADR 0153).
+        const bool exact = spriteExactLive_;
+        LookPipeline& blendSlot = exact ? (last && intoWindow ? smaaBlendExactWindow_ : smaaBlendExact_)
+                                        : (last && intoWindow ? smaaBlendWindow_ : smaaBlend_);
+        const bool ready =
+            ensureLookPipeline(device, smaaEdgesPipeline_, "smaa_edges", rhi::TextureFormat::Rg8Unorm) &&
+            ensureLookPipeline(device, smaaWeightsPipeline_, "smaa_weights", rhi::TextureFormat::Rgba8Unorm) &&
+            ensureLookPipeline(device, blendSlot, exact ? "smaa_blend_exact" : "smaa_blend",
+                               last && intoWindow ? target.colorFormat : kLdrFormat) &&
+            ensureSmaaTables(device, cmd) &&
+            aaTexture(device, smaaEdges_, renderWidth_, renderHeight_, rhi::TextureFormat::Rg8Unorm, "smaa-edges") &&
+            aaTexture(device, smaaWeights_, renderWidth_, renderHeight_, rhi::TextureFormat::Rgba8Unorm,
+                      "smaa-weights");
+        if (ready) {
+            GpuSmaaUniforms smaa;
+            smaa.metrics[0] = 1.0f / static_cast<f32>(renderWidth_);
+            smaa.metrics[1] = 1.0f / static_cast<f32>(renderHeight_);
+            smaa.metrics[2] = static_cast<f32>(renderWidth_);
+            smaa.metrics[3] = static_cast<f32>(renderHeight_);
+            const auto uniforms = asBytes(&smaa, sizeof(smaa));
+            // **Linear and clamped, every one** -- its authors' requirement.
+            const std::array<rhi::TextureBinding, 1> colour{rhi::TextureBinding{ldr_, environmentSampler_}};
+            const std::array<rhi::TextureBinding, 3> tables{
+                rhi::TextureBinding{smaaEdges_, environmentSampler_},
+                rhi::TextureBinding{smaaArea_, environmentSampler_},
+                rhi::TextureBinding{smaaSearch_, environmentSampler_},
+            };
+            const std::array<rhi::TextureBinding, 3> blendTextures{
+                rhi::TextureBinding{ldr_, environmentSampler_}, rhi::TextureBinding{smaaWeights_, environmentSampler_},
+                rhi::TextureBinding{exact ? spriteMask_ : blackPixel_, environmentSampler_}};
+            const std::span<const rhi::TextureBinding> blend{blendTextures.data(), exact ? usize{3} : usize{2}};
+            cmd.pushDebugGroup("smaa");
+            fullscreenPass(cmd, smaaEdgesPipeline_.handle, smaaEdges_, renderWidth_, renderHeight_, "smaa-edges",
+                           colour, uniforms);
+            fullscreenPass(cmd, smaaWeightsPipeline_.handle, smaaWeights_, renderWidth_, renderHeight_, "smaa-weights",
+                           tables, uniforms);
+            if (last)
+                fullscreenPass(cmd, blendSlot.handle, target.color, target.width, target.height, "smaa-blend", blend,
+                               uniforms);
+            else
+                fullscreenPass(cmd, blendSlot.handle, aaResolved_, renderWidth_, renderHeight_, "smaa-blend", blend,
+                               uniforms);
+            cmd.popDebugGroup();
+            picture = last ? rhi::TextureHandle{} : aaResolved_;
+        }
+        else if (last) {
+            // Nothing to smooth with: the picture as it is, upscaled as the
+            // tonemap upscales.
+            const std::array<rhi::TextureBinding, 1> ldrBinding{rhi::TextureBinding{ldr_, linearSampler_}};
+            GpuFxaaUniforms fxaa;
+            fxaa.texel[0] = 1.0f / static_cast<f32>(renderWidth_);
+            fxaa.texel[1] = 1.0f / static_cast<f32>(renderHeight_);
+            const rhi::PipelineHandle fxaaPass =
+                target.colorFormat != colorFormat_ && fxaaViewPipeline_.valid() ? fxaaViewPipeline_ : fxaaPipeline_;
+            fullscreenPass(cmd, fxaaPass, target.color, target.width, target.height, "fxaa", ldrBinding,
+                           asBytes(&fxaa, sizeof(fxaa)));
+            return;
+        }
+    }
+    if (last)
+        return;
+
+    LookPipeline& rcasSlot = intoWindow ? rcasWindow_ : rcas_;
+    if (!ensureLookPipeline(device, rcasSlot, "fsr_rcas", target.colorFormat))
+        return;
+    // **RCAS's strength in stops**: 0 the most it sharpens, 2 the least we
+    // ask of it -- `Sharpness` 1 and 0.
+    GpuRcasUniforms rcas;
+    rcas.con[0] = bitsOf(std::exp2(-2.0f * (1.0f - std::clamp(settings_.sharpness, 0.0f, 1.0f))));
+    rhi::TextureHandle sharpened = picture;
+
+    if (upscale) {
+        if (upscaledWidth_ != target.width || upscaledHeight_ != target.height) {
+            if (upscaled_.valid())
+                device.destroy(upscaled_);
+            upscaled_ = {};
+            upscaledWidth_ = target.width;
+            upscaledHeight_ = target.height;
+        }
+        if (!ensureLookPipeline(device, easu_, "fsr_easu", kLdrFormat) ||
+            !aaTexture(device, upscaled_, target.width, target.height, kLdrFormat, "upscaled"))
+            return;
+        // `FsrEasuCon`, for a picture the size of the render into the target.
+        const f32 inWidth = static_cast<f32>(renderWidth_);
+        const f32 inHeight = static_cast<f32>(renderHeight_);
+        const f32 outWidth = static_cast<f32>(target.width);
+        const f32 outHeight = static_cast<f32>(target.height);
+        GpuEasuUniforms easu;
+        easu.con[0][0] = bitsOf(inWidth / outWidth);
+        easu.con[0][1] = bitsOf(inHeight / outHeight);
+        easu.con[0][2] = bitsOf(0.5f * inWidth / outWidth - 0.5f);
+        easu.con[0][3] = bitsOf(0.5f * inHeight / outHeight - 0.5f);
+        easu.con[1][0] = bitsOf(1.0f / inWidth);
+        easu.con[1][1] = bitsOf(1.0f / inHeight);
+        easu.con[1][2] = bitsOf(1.0f / inWidth);
+        easu.con[1][3] = bitsOf(-1.0f / inHeight);
+        easu.con[2][0] = bitsOf(-1.0f / inWidth);
+        easu.con[2][1] = bitsOf(2.0f / inHeight);
+        easu.con[2][2] = bitsOf(1.0f / inWidth);
+        easu.con[2][3] = bitsOf(2.0f / inHeight);
+        easu.con[3][0] = bitsOf(0.0f);
+        easu.con[3][1] = bitsOf(4.0f / inHeight);
+        const std::array<rhi::TextureBinding, 1> source{rhi::TextureBinding{picture, environmentSampler_}};
+        cmd.pushDebugGroup("fsr1");
+        fullscreenPass(cmd, easu_.handle, upscaled_, target.width, target.height, "fsr-easu", source,
+                       asBytes(&easu, sizeof(easu)));
+        cmd.popDebugGroup();
+        sharpened = upscaled_;
+    }
+    const std::array<rhi::TextureBinding, 1> source{rhi::TextureBinding{sharpened, pointSampler_}};
+    cmd.pushDebugGroup("rcas");
+    fullscreenPass(cmd, rcasSlot.handle, target.color, target.width, target.height, "fsr-rcas", source,
+                   asBytes(&rcas, sizeof(rcas)));
+    cmd.popDebugGroup();
 }
 
 void DefaultRenderer::releaseLookTextures(rhi::IDevice& device)
@@ -4019,7 +4658,9 @@ void DefaultRenderer::drawHighlights(rhi::ICmdList& cmd, rhi::IDevice& device, c
             cmd.bindTextures(rhi::ShaderStage::Fragment, 0, sceneDepth);
         }
         highlightFilter_ = static_cast<core::u8>(index + 1);
-        drawGeometry(cmd, world, meshes, world.camera.viewProjection, still, skinned, Selection::Highlight);
+        // Unjittered (ADR 0158): over the finished picture, after the
+        // temporal pass took the jitter out of it.
+        drawGeometry(cmd, world, meshes, world.camera.unjitteredViewProjection, still, skinned, Selection::Highlight);
         highlightFilter_ = 0;
         cmd.endRenderPass();
 
@@ -4919,6 +5560,22 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         lookWidth_ = renderWidth_;
         lookHeight_ = renderHeight_;
     }
+    // And the anti-aliasing's, with whatever history they held.
+    if (aaWidth_ != renderWidth_ || aaHeight_ != renderHeight_) {
+        releaseAaTextures(device);
+        aaWidth_ = renderWidth_;
+        aaHeight_ = renderHeight_;
+    }
+    // **The temporal pass is the world's main view's** (ADR 0158): a view
+    // into a texture -- a `ViewportFrame`, a sub-world -- is drawn once
+    // whenever it changes and keeps no history, and smooths by SMAA -- and
+    // see `temporalFrame` for the rest.
+    temporalNow_ = activeView_ == 0 && temporalFrame(world);
+    if (!temporalNow_) {
+        historyValid_ = false;
+        previousCamera_ = false;
+        placed_.clear();
+    }
 
     if (!defaultsUploaded_) {
         // White multiplies to itself, (0.5, 0.5, 1) is the tangent-space normal
@@ -5460,6 +6117,13 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     }
     cmd.endRenderPass();
     cmd.popDebugGroup();
+
+    // **How far each pixel moved**, for the temporal pass (ADR 0158): from the
+    // depth just drawn, and what moved by itself over it.
+    if (temporalNow_) {
+        ENG_PROFILE_NEXT(passes, "render.velocity");
+        writeVelocity(device, cmd, world, meshes);
+    }
 
     // --- Ambient occlusion ---------------------------------------------------
     ENG_PROFILE_NEXT(passes, "render.ao");
@@ -6184,6 +6848,13 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     if (look.blurSize > 0.0f && world.camera.valid)
         blurImage(device, cmd, sceneColor, look.blurSize);
 
+    // **The temporal pass** (ADR 0158), last of the passes on the scene and
+    // before exposure and bloom: they read the picture it settled.
+    if (temporalNow_) {
+        ENG_PROFILE_NEXT(passes, "render.taa");
+        sceneColor = resolveTemporal(device, cmd, world, sceneColor);
+    }
+
     // --- Automatic exposure -------------------------------------------------
     ENG_PROFILE_NEXT(passes, "render.exposure");
     //
@@ -6334,7 +7005,20 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     GpuGradeUniforms grade;
     // A view with nothing behind it goes straight to its target: the
     // anti-aliasing resolve writes an opaque picture, and would lose the alpha.
-    const bool resolve = settings_.antiAliasing && !world.environment.transparentBackground;
+    //
+    // **What follows the tonemap** (ADR 0158): a spatial anti-aliasing pass --
+    // FXAA, or SMAA, which a temporal frame needs no more of and a view that
+    // asked for TAA takes in its place -- then, for a world drawn smaller than
+    // its target, FSR 1's upscale, and RCAS's sharpening after it or after the
+    // temporal pass. Any of them, and the tonemap writes `ldr_` for them.
+    const bool opaquePicture = !world.environment.transparentBackground;
+    const AntiAliasingMode spatial = settings_.antiAliasing == AntiAliasingMode::Taa
+                                         ? (temporalNow_ ? AntiAliasingMode::Off : AntiAliasingMode::Smaa)
+                                         : settings_.antiAliasing;
+    const bool smaller = renderWidth_ < target.width || renderHeight_ < target.height;
+    const bool upscale = opaquePicture && settings_.upscaling == UpscalingMode::Fsr1 && smaller;
+    const bool sharpen = opaquePicture && !upscale && temporalNow_ && !smaller && settings_.sharpness > 0.0f;
+    const bool resolve = opaquePicture && (spatial != AntiAliasingMode::Off || upscale || sharpen);
     // **Written in the format of what it writes** (audit R2): the LDR texture
     // when a resolve follows, the target itself otherwise -- a window's
     // swapchain, or a view's `kLdrFormat` texture.
@@ -6394,27 +7078,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // --- Anti-aliasing -------------------------------------------------------
     ENG_PROFILE_NEXT(passes, "render.aa");
     //
-    // FXAA, on the tonemapped image, resolving to the swapchain. Spatial rather
-    // than temporal on purpose (M7.5 brief, Decision 10), and nothing here
-    // forecloses a temporal pass -- which would replace this one rather than
-    // fight it.
-    if (resolve) {
-        GpuFxaaUniforms fxaa;
-        // The SOURCE's texel, not the target's. FXAA walks an edge in the image
-        // it is reading, and at a reduced render scale that image is smaller
-        // than what it writes -- a step sized in output texels would look for
-        // edges at the wrong spacing and find none.
-        fxaa.texel[0] = 1.0f / static_cast<f32>(renderWidth_);
-        fxaa.texel[1] = 1.0f / static_cast<f32>(renderHeight_);
-        const std::array<rhi::TextureBinding, 1> ldrBinding{rhi::TextureBinding{ldr_, linearSampler_}};
-        cmd.pushDebugGroup("fxaa");
-        // A view's texture is `kLdrFormat` whatever the window's format is.
-        const rhi::PipelineHandle fxaaPass =
-            target.colorFormat != colorFormat_ && fxaaViewPipeline_.valid() ? fxaaViewPipeline_ : fxaaPipeline_;
-        fullscreenPass(cmd, fxaaPass, target.color, target.width, target.height, "fxaa", ldrBinding,
-                       asBytes(&fxaa, sizeof(fxaa)));
-        cmd.popDebugGroup();
-    }
+    // The spatial pass, the upscale and the sharpening (`resolvePicture`).
+    if (resolve)
+        resolvePicture(device, cmd, target, spatial, upscale, sharpen);
 
     // A game's highlights (ADR 0129), over the finished image and under the
     // editor's own mark.
@@ -6455,8 +7121,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.setScissor({.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
     if (world.camera.valid) {
         cmd.setPipeline(outlinePipeline_);
-        drawGeometry(cmd, world, meshes, world.camera.viewProjection, outlinePipeline_, outlineSkinnedPipeline_,
-                     Selection::Outline);
+        drawGeometry(cmd, world, meshes, world.camera.unjitteredViewProjection, outlinePipeline_,
+                     outlineSkinnedPipeline_, Selection::Outline);
     }
     cmd.endRenderPass();
 

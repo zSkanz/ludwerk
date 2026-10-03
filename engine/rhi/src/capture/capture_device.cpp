@@ -296,6 +296,8 @@ std::string_view name(TextureFormat value)
         return "Rgba16Float";
     case TextureFormat::Rgba32Float:
         return "Rgba32Float";
+    case TextureFormat::Rg16Float:
+        return "Rg16Float";
     case TextureFormat::D16Unorm:
         return "D16Unorm";
     case TextureFormat::D24UnormS8Uint:

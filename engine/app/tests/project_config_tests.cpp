@@ -465,6 +465,8 @@ void checkSameSettings(const render::GraphicsSettings& left, const render::Graph
     CHECK(left.contactShadows == right.contactShadows);
     CHECK(sameMetres(left.terrainPixelError, right.terrainPixelError));
     CHECK(left.antiAliasing == right.antiAliasing);
+    CHECK(left.upscaling == right.upscaling);
+    CHECK(sameMetres(left.sharpness, right.sharpness));
     CHECK(left.depthOfField == right.depthOfField);
     CHECK(left.sunRays == right.sunRays);
     CHECK(left.autoExposure == right.autoExposure);
@@ -483,7 +485,8 @@ TEST_CASE("the model's layers resolve to exactly what the loader resolved")
         "[graphics]\nquality = \"low\"\nbloom = true\nrender_scale = 0.3\nshadow_resolution = 3000\n"
         "light_budget = 9999\nanti_aliasing = false\ncontact_shadows = true\n",
         "[graphics]\nquality = \"ultra\"\nshadow_cascades = 2\ndepth_of_field = false\nsun_rays = false\n"
-        "auto_exposure = false\nambient_occlusion = false\n\n[graphics.android]\nquality = \"low\"\nrender_cap = 600\n",
+        "auto_exposure = false\nambient_occlusion = false\nanti_aliasing = \"taa\"\nsharpness = 0.5\n\n"
+        "[graphics.android]\nquality = \"low\"\nrender_cap = 600\nupscaling = \"none\"\n",
         "[graphics]\nshadow_distance = 5\nrender_cap = 100\n\n[display]\nvsync = false\nmax_frame_rate = 90\n",
     };
     std::array<app::GraphicsOverrides, 3> overrides;
@@ -491,7 +494,9 @@ TEST_CASE("the model's layers resolve to exactly what the loader resolved")
     overrides[1].shadowResolution = 1024;
     overrides[2].bloom = false;
     overrides[2].renderScale = 0.8f;
-    overrides[2].antiAliasing = false;
+    overrides[2].antiAliasing = render::AntiAliasingMode::Off;
+    overrides[1].upscaling = render::UpscalingMode::Fsr1;
+    overrides[1].sharpness = 0.6f;
     overrides[2].vsync = true;
     overrides[2].maxFrameRate = 30;
 

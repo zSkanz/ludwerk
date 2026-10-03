@@ -43,7 +43,9 @@ namespace engine::scene {
     X(ShadowResolution, Whole, 256.0, 2048.0, 2048.0, true, true)                                                      \
     X(ShadowCascades, Whole, 0.0, 4.0, 4.0, true, true)                                                                \
     X(ShadowDistance, Number, 10.0, 1000.0, 120.0, true, true)                                                         \
-    X(AntiAliasing, Choice, 0.0, 1.0, 1.0, true, true)                                                                 \
+    X(AntiAliasing, Choice, 0.0, 3.0, 2.0, true, true)                                                                 \
+    X(Upscaling, Choice, 0.0, 1.0, 0.0, true, true)                                                                    \
+    X(Sharpness, Number, 0.0, 1.0, 0.2, true, true)                                                                    \
     X(AmbientOcclusion, Flag, 0.0, 1.0, 1.0, true, true)                                                               \
     X(ContactShadows, Flag, 0.0, 1.0, 1.0, true, true)                                                                 \
     X(Bloom, Flag, 0.0, 1.0, 1.0, true, true)                                                                          \

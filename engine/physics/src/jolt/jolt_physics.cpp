@@ -3592,7 +3592,16 @@ private:
                 // character and never reached: `mHadCollision` is what separates
                 // "touching" from "about to". A discarded one was refused by the
                 // validate callback and never happened at all.
-                if (!contact.mHadCollision || contact.mWasDiscarded)
+                //
+                // **A sensor -- a part that does not collide and does touch --
+                // is touched by being inside it** (D524): Jolt marks a
+                // character's contact with one as collided only when the sweep
+                // runs into the contact's plane, so a character that stood in
+                // a zone, or crossed a pad its sweep never met, touched
+                // nothing. Its contact is real where the shapes overlap.
+                const bool touching =
+                    contact.mIsSensorB ? contact.mDistance <= 0.0f : contact.mHadCollision && !contact.mWasDiscarded;
+                if (!touching)
                     continue;
                 // Another `CharacterVirtual` directly, which this engine never
                 // produces: `mCharacterVsCharacterCollision` is deliberately

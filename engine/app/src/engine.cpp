@@ -1594,6 +1594,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // put the whole materialisation burst in the measured window.
     SoakRecorder soak(60);
     core::u64 lastFrameNs = 0;
+    // The scene load the world last settled from, and until when (H11).
+    bool settleSeen = false;
+    core::u32 settleLoads = 0;
+    core::u64 settleUntilNs = 0;
     // What the ground's own streaming cost the frame before, for the soak: it
     // is streaming as the parts' is, and the hitch check is about both.
     f64 groundPumpMs = 0.0;
@@ -1867,9 +1871,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         const std::string restfulTitle = window != nullptr ? platform::windowTitle(*window) : std::string();
         bool closeAsked = false;
         u64 shownAtNs = 0;
+        // With no window to say it in, the log says it (D523).
+        ImportLog quietImport;
         const ImportProgress importProgress = [&](usize done, usize total, std::string_view name) {
-            if (window == nullptr || device == nullptr)
+            if (window == nullptr || device == nullptr) {
+                quietImport.report(done, total, name, platform::nowNs());
                 return;
+            }
             for (const platform::Event& event : platform::pumpEvents()) {
                 if (event.type == platform::EventType::Quit || event.type == platform::EventType::WindowCloseRequested)
                     closeAsked = true;
@@ -2687,6 +2695,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // them covers is the frame's own.
         core::profile::endFrame();
         ENG_PROFILE_SCOPE("frame");
+        // **Every stretch of the frame in a scope of its own** (H11): what no
+        // scope covered was a frame's own time, and a 45 ms frame that the
+        // tree accounted 3.5 ms of said nothing about the other 41.
+        core::profile::Sections stretch;
+        ENG_PROFILE_NEXT(stretch, "frame.begin");
         if (options.frames != 0 && scheduler.totalFrames() >= options.frames)
             break;
 
@@ -2820,6 +2833,20 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             }
         }
 
+        // **The world settling** (H11): the frames of a scene load and the
+        // few seconds after it, left out of the slowest-frames list so its
+        // slots go to frames of play.
+        if (options.frameStats && host != nullptr) {
+            const core::u32 loads = host->world().engineState().sceneLoads;
+            if (!settleSeen || loads != settleLoads) {
+                settleSeen = true;
+                settleLoads = loads;
+                settleUntilNs = nowNs + static_cast<core::u64>(options.frameStatsWarmupSeconds * 1.0e9);
+            }
+            if (nowNs < settleUntilNs)
+                core::profile::markSettling();
+        }
+
         if (options.frameStats || !options.soakReportPath.empty()) {
             // The WALL clock, not `frame.renderDt`. Headless drives the frame
             // loop from a synthetic 1/60 s step so a golden capture cannot
@@ -2918,6 +2945,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             scheduler.setMaxCatchUpTicks(catchUpTicksFor(baseCatchUpTicks, scheduler.timing().fixedDt, cap));
         }
 
+        ENG_PROFILE_NEXT(stretch, "frame.settings");
         // **The graphics settings, once a frame** (ADR 0147). The host's
         // layers are put back into the world's model -- a world restored to an
         // earlier tick does not bring back an old command line -- a script's
@@ -3030,6 +3058,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // Before the reload, deliberately. A write queued against the outgoing
         // world is dropped by `onWorldChanged` rather than replayed against a
         // world that never issued the ids it names.
+        ENG_PROFILE_NEXT(stretch, "frame.editor");
         // **Recorded before the write, because undo restores what was there.**
         // A whole frame's queued edits are one step: they were typed in one
         // frame and a person undoing thinks of them as one thing.
@@ -4684,6 +4713,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // budget, and it is denominated in time rather than in chunks because
         // a chunk's cost varies with what is in it.
         //
+        ENG_PROFILE_NEXT(stretch, "frame.content");
         // **The ground first, and the two share the two milliseconds** rather
         // than each taking them: two managers are two budgets that do not know
         // about each other, and would overrun together. The ground goes first
@@ -4787,6 +4817,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             return streaming.areaResident(position, radius) && fields.areaResident(position, radius);
         });
 
+        ENG_PROFILE_NEXT(stretch, "frame.reload");
         // **The editor's own reload** (ADR 0057), which `ludwerk edit` has never
         // had: it is started without `--dev-control`, and the only call site was
         // gated on it. Saving a script writes the file and then rebuilds the
@@ -4939,6 +4970,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             }
         }
 
+        ENG_PROFILE_NEXT(stretch, "frame.simulation");
         // **The streaming pause, which is a property that had a reader waiting
         // for it (D055).** `StreamingManager::minimumRingResident()` exists,
         // its own comment says it "is what `StreamingService.PauseOutsideLoadedArea`
@@ -5022,6 +5054,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             answerSamples();
         }
         phaseSimMs += msSince(simStartedNs);
+        ENG_PROFILE_NEXT(stretch, "frame.network");
         // A frame that ran no tick still services the connection: a paused
         // editor, or a frame that arrived early, must not look like a peer
         // that stopped answering.
@@ -5040,6 +5073,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         if (network.active() && options.headless && simTicks == 0)
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
+        ENG_PROFILE_NEXT(stretch, "frame.input");
         // **The pointer's state, applied to the window it belongs to.** Both
         // properties were stored and read by nothing until M8 (D049): a script
         // could set `InputService.PointerLocked` and the cursor kept wandering
@@ -5171,6 +5205,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
         // Where this frame sits between those two ticks.
         //
+        ENG_PROFILE_NEXT(stretch, "frame.overlays");
         // **Zero on the synthetic clock, by construction and not by accident.**
         // A headless run drives exactly one fixed step per frame, so its frames
         // ARE the ticks -- and every golden in this repository was recorded that
@@ -5392,6 +5427,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         if (!options.devControlUrl.empty() && options.headless && !control.connected())
             quit = true;
 
+        ENG_PROFILE_NEXT(stretch, "frame.events");
         if (!options.headless) {
             const std::span<const platform::Event> events = platform::pumpEvents();
             for (const platform::Event& event : events) {
@@ -5609,6 +5645,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             }
         }
 
+        ENG_PROFILE_NEXT(stretch, "frame.draw");
         const core::u64 beginWaitNs = platform::nowNs();
         rhi::ICmdList* cmd = nullptr;
         {
@@ -6609,6 +6646,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             }
             else if (useRenderer) {
                 ENG_PROFILE_SCOPE("render.world");
+                // **Where this frame samples each pixel** (ADR 0158): a
+                // fraction of a pixel off from the last, for the temporal
+                // pass, and nowhere else at all.
+                render::jitterCamera(snapshot.camera, renderer->cameraJitter(snapshot, targetWidth, targetHeight));
                 renderer->render(
                     *device, *cmd,
                     {.color = target, .colorFormat = targetFormat, .width = targetWidth, .height = targetHeight},
@@ -6629,7 +6670,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         .width = static_cast<f32>(targetWidth),
                         .height = static_cast<f32>(targetHeight),
                     });
-                    debugRenderer.render(*cmd, snapshot.camera.viewProjection);
+                    // Unjittered (ADR 0158): an overlay on the finished
+                    // picture, which the temporal pass has steadied.
+                    debugRenderer.render(*cmd, snapshot.camera.unjitteredViewProjection);
                     cmd->endRenderPass();
                     cmd->popDebugGroup();
                 }
@@ -6747,6 +6790,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             }
         }
 
+        ENG_PROFILE_NEXT(stretch, "frame.present");
         if (overlay.has_value() && overlay->driveAskedToQuit())
             quit = true;
         // Cleared once the frame is over. A `DrawLine` from a task resumed
@@ -6782,6 +6826,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 return writeError;
         }
 
+        ENG_PROFILE_NEXT(stretch, "wait.idle");
         // **A process with no window and a real clock sleeps until its next
         // tick** -- a dedicated server, above all. A window's present waits for
         // the display, and a headless run on the synthetic clock is meant to
@@ -7060,8 +7105,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // and any other over twice the median, ten at most, each as its tree --
         // the frame a player felt, which no median names.
         const std::vector<core::profile::SpikeReport> slow = core::profile::spikes(kWarmupFrames, 5, 2.0, 10, 0.05);
-        if (!slow.empty())
-            core::log(LogLevel::Info, ENG_TR("engine.frame.info.spikes_header"));
+        if (!slow.empty()) {
+            const std::array<I18nArg, 1> warmupArgs{I18nArg{"seconds", options.frameStatsWarmupSeconds}};
+            core::log(LogLevel::Info, ENG_TR("engine.frame.info.spikes_header"), warmupArgs);
+        }
         for (const core::profile::SpikeReport& spike : slow) {
             const std::array<I18nArg, 2> spikeArgs{I18nArg{"frame", static_cast<core::i64>(spike.frame)},
                                                    I18nArg{"ms", spike.ms}};

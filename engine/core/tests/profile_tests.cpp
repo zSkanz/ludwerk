@@ -170,6 +170,24 @@ TEST_CASE("H11: the slowest frames are given each as its own tree, the worst fir
     CHECK(profile::spikes(14, 1, 2.0, 10, 0.05)[0].frame != 13);
 }
 
+TEST_CASE("H11: a frame of the world settling is not one of the slowest")
+{
+    Rig rig;
+    for (int index = 0; index < 20; ++index) {
+        {
+            ENG_PROFILE_SCOPE("test.frame");
+            spend(index == 2 ? 9.0 : (index == 15 ? 4.0 : 1.0));
+        }
+        // The first five frames are a scene arriving.
+        if (index < 5)
+            profile::markSettling();
+        profile::endFrame();
+    }
+    const std::vector<profile::SpikeReport> slow = profile::spikes(0, 1, 2.0, 10, 0.05);
+    REQUIRE(slow.size() == 1);
+    CHECK(slow[0].frame == 15);
+}
+
 TEST_CASE("H0: off, or on another thread, a scope records nothing")
 {
     {

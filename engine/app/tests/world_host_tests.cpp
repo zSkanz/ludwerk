@@ -524,6 +524,115 @@ TEST_CASE("a replay from a remembered tick is the live step again, to the bit (A
     }
 }
 
+TEST_CASE("D525: a replay from the tick a predicted touch launched or moved the character is the live step again")
+{
+    // A pad's predicted touch runs after the step solves, and what it writes --
+    // a velocity, a place -- waits for the next step. The island remembered
+    // after that step kept the place and not the wait: a replay starting there
+    // never launched or moved the character, and was corrected for it, tick
+    // after tick, at any ping.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        local function block(name: string, position: vector, size: vector, collides: boolean)
+            local part = Instance.new("Part")
+            part.Name = name
+            part.Size = size
+            part.Position = position
+            part.Anchored = true
+            part.CanCollide = collides
+            part.Parent = workspace
+            return part
+        end
+        block("Ground", vector.create(0, -1, 0), vector.create(200, 2, 200), true)
+        local launcher = block("Launcher", vector.create(4, 0.1, 0), vector.create(2, 0.2, 4), false)
+        local mover = block("Mover", vector.create(14, 0.1, 0), vector.create(2, 0.2, 4), false)
+        local walker = Instance.new("CharacterBody")
+        walker.Name = "Walker"
+        walker.Position = vector.create(0, 3, 0)
+        walker.Parent = workspace
+        NetworkService:GetPlayers()[1].Character = walker
+        launcher:BindToPredictedTouch(function(character, step)
+            character.LinearVelocity = vector.create(2, 9, 0)
+        end)
+        mover:BindToPredictedTouch(function(character, step)
+            character.CFrame = CFrame.new(vector.create(30, 3, 2))
+        end)
+        local ticks = 0
+        game:GetService("RunService").Heartbeat:Connect(function()
+            ticks += 1
+            if ticks > 60 then
+                walker:Move(vector.create(1, 0, 0))
+            end
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 61; ++tick)
+        host.tick();
+    const scene::World& world = host.world();
+    const core::InstanceId walker = world.findFirstChild(host.workspace(), world.atoms().lookup("Walker"));
+    REQUIRE(walker.valid());
+    scene::PhysicsSync* physics = host.physics();
+    REQUIRE(physics != nullptr);
+
+    // Each tick: the island, and what a replay starting there is told.
+    struct Moment
+    {
+        scene::CharacterReplayStart start;
+        scene::CharacterCommand command;
+        core::DVec3 place;
+    };
+    // Fewer than the islands a replica keeps, so every one is there to start from.
+    std::vector<Moment> moments;
+    for (int tick = 0; tick < 120; ++tick) {
+        host.tick();
+        Moment moment;
+        const std::optional<scene::CharacterCommand> command = physics->lastCommand(walker);
+        REQUIRE(command.has_value());
+        moment.command = *command;
+        moment.place = world.parts().find(walker)->cframe.position;
+        moment.start.tick = 2000 + static_cast<core::u64>(tick);
+        moment.start.transform = world.parts().find(walker)->cframe;
+        moment.start.verticalVelocity = world.characterBodies().find(walker)->verticalVelocity;
+        moment.start.push = world.characterBodies().find(walker)->push;
+        moment.start.grounded = world.characterBodies().find(walker)->grounded;
+        physics->remember(moment.start.tick);
+        moments.push_back(moment);
+    }
+    // It was launched and it was moved, live.
+    double highest = 0.0;
+    for (const Moment& moment : moments)
+        highest = std::max(highest, moment.place.y);
+    REQUIRE(highest > 2.5);
+    REQUIRE(moments.back().place.x > 29.0);
+
+    // From every tick, the rest stepped again: the live steps, to a hair.
+    int checked = 0;
+    for (std::size_t from = 0; from + 40 < moments.size(); ++from) {
+        std::vector<scene::CharacterCommand> commands;
+        for (std::size_t at = from + 1; at < from + 40; ++at)
+            commands.push_back(moments[at].command);
+        const std::vector<core::CFrameD> replayed = physics->replay(walker, moments[from].start, commands);
+        REQUIRE(replayed.size() == commands.size());
+        for (std::size_t at = 0; at < replayed.size(); ++at) {
+            const core::DVec3 live = moments[from + 1 + at].place;
+            const core::DVec3 again = replayed[at].position;
+            const double apart =
+                std::sqrt((live.x - again.x) * (live.x - again.x) + (live.y - again.y) * (live.y - again.y) +
+                          (live.z - again.z) * (live.z - again.z));
+            CAPTURE(from);
+            CAPTURE(at);
+            CHECK(apart < 0.001);
+            ++checked;
+        }
+    }
+    CHECK(checked > 400);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
 TEST_CASE("a replay of a character pushing crates is the live step again, to the bit (ADR 0133)")
 {
     Captured log;

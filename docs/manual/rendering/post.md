@@ -163,8 +163,9 @@ reaches white. sRGB encoding happens here and nowhere else.
 
 Ambient occlusion is screen-space, from the depth prepass, at half resolution,
 and it darkens the image-based and ambient light only -- never the sun, which
-has its shadow map. Anti-aliasing is FXAA, on the finished picture. There is no
-temporal anti-aliasing, because there is no velocity buffer.
+has its shadow map. Anti-aliasing is FXAA or SMAA on the finished picture, or
+TAA before exposure, with FSR 1 and its sharpening after it -- see
+[Anti-aliasing and upscaling](manual:rendering/quality) (ADR 0158).
 
 ## What the machine decides
 

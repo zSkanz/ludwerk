@@ -40,7 +40,10 @@ struct GraphicsOverrides
     std::optional<core::u32> lightBudget;
     std::optional<bool> bloom;
     std::optional<bool> ambientOcclusion;
-    std::optional<bool> antiAliasing;
+    std::optional<render::AntiAliasingMode> antiAliasing;
+    // `--upscaling=none|fsr1` and `--sharpness=X` (ADR 0158).
+    std::optional<render::UpscalingMode> upscaling;
+    std::optional<core::f32> sharpness;
     std::optional<bool> autoExposure;
     std::optional<bool> contactShadows;
     // `--vsync`, `--no-vsync`, `--max-frame-rate=N`, `--background-frame-rate=N`

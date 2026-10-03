@@ -108,6 +108,19 @@ public:
     // into the scene that gets hashed.
     virtual void setSettings(const GraphicsSettings& settings) = 0;
 
+    // **Where the next frame of `world` into a target this size is sampled**
+    // (ADR 0158), in NDC units: what `jitterCamera` folds into the camera
+    // between extraction and `render`. Zero when this frame of the main view
+    // draws nothing temporal.
+    [[nodiscard]] virtual core::Vec2 cameraJitter(const RenderWorld& world, core::u32 targetWidth,
+                                                  core::u32 targetHeight) const
+    {
+        (void)world;
+        (void)targetWidth;
+        (void)targetHeight;
+        return {};
+    }
+
     // Where surface shaders named by URN come from (ADR 0091): the editor's
     // compiler, or a packaged game's pack. Null -- the default -- draws every
     // such surface with the built-in one. Not owned.

@@ -41,6 +41,9 @@ struct State
     std::vector<i32> roots;
     i32 current = -1;
     u64 frames = 0;
+    // Each kept frame's mark, as `ms` keeps a scope's, and this frame's.
+    std::vector<u8> settling;
+    bool settlingNow = false;
     // Bumped when the tree is thrown away, so a scope open across it does not
     // close into a node that is somebody else's.
     u32 generation = 0;
@@ -92,6 +95,8 @@ void setEnabled(bool on)
     g_state.roots.clear();
     g_state.current = -1;
     g_state.frames = 0;
+    g_state.settling.clear();
+    g_state.settlingNow = false;
     g_state.generation += 1;
     t_generation = g_state.generation;
     t_recording = on;
@@ -170,7 +175,17 @@ void endFrame()
         node.frameNs = 0;
         node.frameCalls = 0;
     }
+    if (g_state.settling.size() < length)
+        g_state.settling.resize(length, 0);
+    g_state.settling[slot] = g_state.settlingNow ? 1 : 0;
+    g_state.settlingNow = false;
     g_state.frames += 1;
+}
+
+void markSettling() noexcept
+{
+    if (t_recording)
+        g_state.settlingNow = true;
 }
 
 std::vector<SpikeReport> spikes(usize skipFrames, usize worst, f64 factor, usize most, f64 smallestMs)
@@ -187,6 +202,10 @@ std::vector<SpikeReport> spikes(usize skipFrames, usize worst, f64 factor, usize
         for (u64 frame = g_state.frames - HistoryFrames; frame < g_state.frames; ++frame)
             kept.emplace_back(static_cast<usize>(frame % HistoryFrames), frame);
     }
+    // Not the world settling: the slots are play's.
+    std::erase_if(kept, [](const std::pair<usize, u64>& frame) {
+        return frame.first < g_state.settling.size() && g_state.settling[frame.first] != 0;
+    });
     if (kept.empty())
         return out;
 

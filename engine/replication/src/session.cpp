@@ -2065,8 +2065,16 @@ void AuthoritySession::applyIntents(scene::World& world)
             continue;
         }
         u64 next = peer.appliedTick + 1;
+        // **Never skipped while its predicted steps keep state** (D526): the
+        // step runs once for the ticks skipped, and a timer it counts down --
+        // a cooldown, a dash -- would count one tick for several of the
+        // player's own, and be corrected until it ran out. A hold is harmless:
+        // neither machine steps the player then.
+        const scene::CharacterBodyComponent* stepped =
+            player->character.valid() ? world.characterBodies().find(player->character) : nullptr;
+        const bool predictedState = stepped != nullptr && !stepped->predictedAttributes.empty();
         if (depth > static_cast<u64>(peer.intentDelay) + IntentCatchUp ||
-            (resting && depth > static_cast<u64>(peer.intentDelay) + 1)) {
+            (resting && !predictedState && depth > static_cast<u64>(peer.intentDelay) + 1)) {
             // Too far behind the newest: caught up, what is skipped dropped --
             // but not a button pressed in it (D480).
             next = newest - peer.intentDelay;

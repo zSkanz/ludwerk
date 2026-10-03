@@ -23,7 +23,9 @@ TEST_CASE("High is exactly what the engine shipped before there were presets")
     CHECK(high.lightBudget == kMaxClusteredLights);
     CHECK(high.bloom);
     CHECK(high.ambientOcclusion);
-    CHECK(high.antiAliasing);
+    // SMAA rather than FXAA since ADR 0158, the one change that moved it.
+    CHECK(high.antiAliasing == AntiAliasingMode::Smaa);
+    CHECK(high.upscaling == UpscalingMode::None);
     CHECK(high.autoExposure);
 
     // And it is the default, so a caller that never sets anything gets it.

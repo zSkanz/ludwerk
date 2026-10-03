@@ -90,6 +90,20 @@ function(engine_add_shaders target)
         file(GLOB_RECURSE headers CONFIGURE_DEPENDS "${include_dir}/*.hlsli")
         list(SORT headers)
     endif()
+    # **The vendored shader sources the engine's passes include** (ADR 0158):
+    # SMAA's reference shader and FSR 1's portable headers, included where they
+    # were vendored by a path relative to the file that includes them --
+    # shadercross takes one include directory -- rather than copied beside the
+    # engine's own, since they are upstream's bytes (R13). Depended on like the
+    # headers above.
+    set(vendor_headers "")
+    foreach(vendored IN ITEMS "third_party/smaa" "third_party/fidelityfx_fsr1/ffx-fsr")
+        if(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/${vendored}")
+            file(GLOB vendored_files CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/${vendored}/*.h"
+                 "${CMAKE_SOURCE_DIR}/${vendored}/*.hlsl")
+            list(APPEND vendor_headers ${vendored_files})
+        endif()
+    endforeach()
 
     # Resolved at configure time, because add_custom_command(OUTPUT) forbids
     # generator expressions -- $<TARGET_FILE_DIR:...> here is a configure error,
@@ -168,7 +182,7 @@ function(engine_add_shaders target)
                         -e ${entrypoint}
                         ${include_args}
                         -o "${output}"
-                    DEPENDS shadercross "${source}" ${headers} ${siblings}
+                    DEPENDS shadercross "${source}" ${headers} ${vendor_headers} ${siblings}
                     COMMENT "Shader ${name}.${stage} -> ${format}"
                     VERBATIM)
                 list(APPEND outputs "${output}")
@@ -192,7 +206,7 @@ function(engine_add_shaders target)
                     -e ${entrypoint}
                     ${include_args}
                     -o "${reflect_output}"
-                DEPENDS shadercross "${source}" ${headers} ${siblings}
+                DEPENDS shadercross "${source}" ${headers} ${vendor_headers} ${siblings}
                 COMMENT "Shader ${name}.${stage} -> reflection"
                 VERBATIM)
             list(APPEND outputs "${reflect_output}")
@@ -236,7 +250,7 @@ ${format_block}
                 OUTPUT "${output}"
                 COMMAND shadercross "${source}" -s HLSL -d ${dest_${format}} -t compute -e ComputeMain
                         ${include_args} -o "${output}"
-                DEPENDS shadercross "${source}" ${headers}
+                DEPENDS shadercross "${source}" ${headers} ${vendor_headers}
                 COMMENT "Shader ${name}.compute -> ${format}"
                 VERBATIM)
             list(APPEND outputs "${output}")
@@ -248,7 +262,7 @@ ${format_block}
             OUTPUT "${reflect_output}"
             COMMAND shadercross "${source}" -s HLSL -d JSON -t compute -e ComputeMain ${include_args}
                     -o "${reflect_output}"
-            DEPENDS shadercross "${source}" ${headers}
+            DEPENDS shadercross "${source}" ${headers} ${vendor_headers}
             COMMENT "Shader ${name}.compute -> reflection"
             VERBATIM)
         list(APPEND outputs "${reflect_output}")

@@ -39,6 +39,7 @@ endif()
 add_library(engine_imgcmp_lib STATIC
     src/command_line.cpp
     src/compare.cpp
+    src/flicker.cpp
     src/holes.cpp
     src/image.cpp
     src/shadow.cpp
@@ -88,10 +89,17 @@ target_link_libraries(imgsteps PRIVATE engine::warnings engine_imgcmp_lib)
 add_executable(imgtile src/tile_main.cpp)
 target_link_libraries(imgtile PRIVATE engine::warnings engine_imgcmp_lib)
 
+# `imgflicker` measures how much a sequence of frames flickers -- a thin line
+# crawling under a moving camera, which is what temporal anti-aliasing is for
+# (ADR 0158).
+add_executable(imgflicker src/flicker_main.cpp)
+target_link_libraries(imgflicker PRIVATE engine::warnings engine_imgcmp_lib)
+
 if(ENG_BUILD_TESTS)
     add_executable(engine_imgcmp_tests
         tests/command_line_tests.cpp
         tests/compare_tests.cpp
+        tests/flicker_tests.cpp
         tests/holes_tests.cpp
         tests/image_tests.cpp
         tests/shadow_tests.cpp

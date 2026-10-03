@@ -212,6 +212,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   `BasePart:BindToPredictedTouch` does the same when a character lands on a
   part. Attributes they write on the character are predicted state the server
   corrects. A dash and a stamp's jump pad run at 165 ms without a rubber band.
+- **SMAA, TAA and FSR 1** (ADR 0158): `Enum.AntiAliasingMode` gains `SMAA`
+  -- the default from Medium up -- and `TAA`, Ultra's, which stops thin lines
+  crawling in motion; `GraphicsService.Upscaling = FSR1` brings a reduced render
+  scale up with AMD's FSR 1, and `Sharpness` sets RCAS after it and after TAA.
+  Phones upscale with FSR 1 at every level. `anti_aliasing = "taa"`,
+  `--anti-aliasing=smaa`, `--upscaling=fsr1`, `--sharpness=0.4`.
+- **The slowest frames are play's** (H11): the frames of a scene load and the
+  three seconds after it (`--frame-stats-warmup=SECONDS`) are left out of the
+  slowest-frames list, and every stretch of the frame has a scope of its own.
 - **Input written by code** (G38): `RunService:BindToIntent` writes a
   player's intents -- a turn from the mouse, a gesture, a bot -- as an
   `InputAction` would. Intents now cross by number, each action's name once a
@@ -1082,6 +1091,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **Predicted touches on triggers, and replays through them** (D524, D525): a
+  character begins and ends touching a part that does not collide -- a jump
+  pad, a teleport, a zone -- by standing in it, for `Touched` and for
+  `BindToPredictedTouch`; and a launch or a move a predicted touch makes is
+  stepped again by a correction that answers its tick, rather than lost. And
+  the authority never skips ticks of input of a player whose predicted steps
+  keep state -- a cooldown counted one tick for several (D526).
+- **The local gate no longer ends other engines** (D523): it stopped every
+  `engine-host` on the machine by name before its build -- a packaged game
+  under test, another session's server -- with exit -1 and no log; it stops
+  only its own build's now. And a project opened headless for the first time
+  says what it compiles while it does.
 - **A player is no longer corrected for a busy machine** (D498): a burst of
   input held up on the way made the server step some ticks twice; the client
   now says when its own clock dropped time, and only that re-anchors at once.

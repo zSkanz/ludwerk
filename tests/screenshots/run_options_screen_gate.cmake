@@ -55,14 +55,22 @@ endfunction()
 set(levels low medium high ultra)
 set(frames 15 35 55 75)
 set(previous "")
+# **One anti-aliasing for every picture here** (ADR 0158): `Ultra`'s is the
+# temporal pass, whose history begins when it is chosen -- on the screen, a
+# few frames before the picture; from the start, seventy frames before it --
+# and whose sample positions are counted from then. The two would differ by
+# design, in a way that says nothing about whether the level reached what
+# draws, which is this gate's question.
+set(SMOOTHING --anti-aliasing=smaa)
 foreach(level frame IN ZIP_LISTS levels frames)
-    render("${OUTPUT}/${level}-by-screen.png" ${frame} --width=640 --height=360)
+    render("${OUTPUT}/${level}-by-screen.png" ${frame} --width=640 --height=360 ${SMOOTHING})
     if(NOT EXISTS "${OUTPUT}/${level}-by-screen.png")
         # The skip was already printed by `render`; there is nothing to compare.
         return()
     endif()
     if(level STREQUAL "low" OR level STREQUAL "ultra")
-        render("${OUTPUT}/${level}-from-start.png" ${frame} --width=640 --height=360 "--quality=${level}")
+        render("${OUTPUT}/${level}-from-start.png" ${frame} --width=640 --height=360 "--quality=${level}"
+               ${SMOOTHING})
     endif()
 
     # The same picture, to within what a frame's history leaves: a shadow
@@ -122,9 +130,11 @@ execute_process(
         # Something was stepped, so Apply says there is something to apply; Back is a button.
         "0.195,0.883=0,200,0"
         "0.805,0.883=90,90,90"
-        # The first row's "less" button, and the eighth row -- ambient occlusion, on at Ultra.
+        # The first row's "less" button, and the eighth row's -- terrain detail, a
+        # stepper since the anti-aliasing rows came in above it (ADR 0158);
+        # a setting that is on is the second page's vertical sync, below.
         "0.5,0.254=90,90,90"
-        "0.508,0.74=0,200,0"
+        "0.508,0.74=90,90,90"
     RESULT_VARIABLE probe_result
     OUTPUT_VARIABLE probe_output
     ERROR_VARIABLE probe_output)

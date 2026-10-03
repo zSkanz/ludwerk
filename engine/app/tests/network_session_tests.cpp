@@ -1561,10 +1561,11 @@ return Dash
 
 // **A jump pad, as a stamp with its script** -- on both ends, since a script
 // with no side runs on each, the client's under its copy of the pad: it jumps
-// whoever lands on it, in the predicted step.
+// whoever walks onto it, in the predicted step. A trigger, as pads are: it does
+// not collide, and is touched by being stood in (D524).
 constexpr std::string_view JumpPadStamp =
     R"json({"format":"scene","version":2,"root":{"class":"Model","name":"JumpPad","children":[)json"
-    R"json({"class":"Part","name":"Pad","properties":{"Anchored":true},"children":[)json"
+    R"json({"class":"Part","name":"Pad","properties":{"Anchored":true,"CanCollide":false},"children":[)json"
     R"json({"class":"Script","name":"Launch","properties":{"Source":")json"
     R"json(local pad = script.Parent\npad:BindToPredictedTouch(function(character, step)\n)json"
     R"json(    character:Jump()\n)json"

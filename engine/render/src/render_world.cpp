@@ -578,6 +578,47 @@ RenderMaterial materialBlockOf(const scene::World& world, core::NameAtom materia
     return blockOf(world, resolved.properties, textures);
 }
 
+namespace {
+
+// An instance, as the key its draws' motion is found by again next frame.
+[[nodiscard]] u64 motionKeyOf(core::InstanceId id) noexcept
+{
+    return (static_cast<u64>(id.generation) << 32) | static_cast<u64>(id.index);
+}
+
+} // namespace
+
+void jitterCamera(RenderCamera& camera, core::Vec2 jitter) noexcept
+{
+    if (!camera.valid || (jitter.x == 0.0f && jitter.y == 0.0f))
+        return;
+    // **In the projection's translation row**, which is where a sub-pixel
+    // offset belongs: it must move the whole frustum, not the geometry in it.
+    // Under a perspective projection w is -z, so the row scaled by depth
+    // carries it and with the sign that makes the picture move by `jitter`;
+    // under an orthographic one w is 1 and the constant row does.
+    const bool orthographic = camera.projection.m[3][3] == 1.0f;
+    Mat4 offset;
+    for (auto& column : offset.m) {
+        for (f32& value : column)
+            value = 0.0f;
+    }
+    const int row = orthographic ? 3 : 2;
+    const f32 sign = orthographic ? 1.0f : -1.0f;
+    offset.m[row][0] = sign * jitter.x;
+    offset.m[row][1] = sign * jitter.y;
+    const Mat4 moved = offset * camera.view;
+    for (int column = 0; column < 4; ++column) {
+        for (int at = 0; at < 4; ++at) {
+            camera.projection.m[column][at] += offset.m[column][at];
+            camera.viewProjection.m[column][at] += moved.m[column][at];
+            camera.skyViewProjection.m[column][at] += moved.m[column][at];
+        }
+    }
+    camera.jitter = jitter;
+    camera.frustum = core::frustumFromViewProjection(camera.viewProjection);
+}
+
 void extract(const scene::World& world, core::InstanceId root, core::InstanceId lightingHost, const MeshLibrary& meshes,
              f32 viewportAspect, f32 shadowRadius, const AnimationSystem* animation, f32 alpha,
              const TransformHistory* history, RenderWorld& out, const ViewOverride* view,
@@ -766,19 +807,11 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         if (camera->clipPlaneOn && !orthographic)
             obliqueNearPlane(out.camera.projection, out.camera.view, camera->clipPlane, cameraFrame.position);
 
-        // The jitter, folded into the projection's translation row -- which is
-        // where a sub-pixel offset belongs, because it must move the whole frustum
-        // rather than the geometry inside it. Zero everywhere today, so this is a
-        // pair of additions of zero and every golden is unchanged. Under an
-        // orthographic projection w is 1, so the row that offsets x and y is the
-        // constant one rather than the one scaled by depth.
-        const int jitterRow = orthographic ? 3 : 2;
-        out.camera.projection.m[jitterRow][0] += out.camera.jitter.x;
-        out.camera.projection.m[jitterRow][1] += out.camera.jitter.y;
-        unclipped.m[jitterRow][0] += out.camera.jitter.x;
-        unclipped.m[jitterRow][1] += out.camera.jitter.y;
+        // Unjittered here: a temporal pass jitters the camera after
+        // extraction (`jitterCamera`), and nothing else does.
         out.camera.viewProjection = out.camera.projection * out.camera.view;
         out.camera.skyViewProjection = unclipped * out.camera.view;
+        out.camera.unjitteredViewProjection = out.camera.viewProjection;
         out.camera.frustum = core::frustumFromViewProjection(out.camera.viewProjection);
     }
 
@@ -1185,6 +1218,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 .terrain = false,
                 .voxelBlock = false,
             });
+            out.draws.back().motionKey = motionKeyOf(id);
         }
     });
 
@@ -1778,6 +1812,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             .terrain = false,
             .voxelBlock = false,
         });
+        out.draws.back().motionKey = motionKeyOf(id);
     });
 
     // --- Ropes, rods and springs (ADR 0127) -----------------------------------
@@ -1882,6 +1917,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 .terrain = false,
                 .voxelBlock = false,
             });
+            out.draws.back().motionKey = motionKeyOf(id);
         });
     }
 

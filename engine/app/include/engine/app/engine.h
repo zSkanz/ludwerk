@@ -266,6 +266,9 @@ struct EngineOptions
     bool partitionOnly = false;
 
     bool frameStats = false;
+    // `--frame-stats-warmup=SECONDS` (H11): how long after each scene load the
+    // world is settling, and its frames are not in the slowest-frames list.
+    core::f64 frameStatsWarmupSeconds = 3.0;
     // `--frame-report=SECONDS` and `[debug] frame_report_seconds`: a line in
     // the log every so many seconds saying how the frames went. Zero is off.
     core::f64 frameReportSeconds = 0.0;

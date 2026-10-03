@@ -87,12 +87,17 @@ struct RenderCamera
     // a screen position back into a direction -- the sky, the air -- uses
     // this, because an oblique far plane has points at infinity in it.
     Mat4 skyViewProjection;
+    // **The view-projection without the jitter** (ADR 0158): what a motion
+    // vector is measured in, so a still camera moves nothing. The same as
+    // `viewProjection` on every frame that is not jittered.
+    Mat4 unjitteredViewProjection;
     // In the same camera-relative space, so culling needs no conversion.
     Frustum frustum;
     f32 nearPlane = 0.1f;
     f32 farPlane = 5000.0f;
-    // A sub-pixel offset folded into the projection, in NDC units. Zero
-    // everywhere, and that is the point.
+    // A sub-pixel offset folded into the projection, in NDC units: what the
+    // picture moves by. Zero on every frame but a temporal pass's (ADR 0158),
+    // which `jitterCamera` sets.
     //
     // **A jitterable projection is a renderer OUTPUT, not private state of an
     // anti-aliasing pass** (roadmap, M7.5's second design constraint, human
@@ -101,13 +106,17 @@ struct RenderCamera
     // declaring them here rather than inside whichever pass first wants them is
     // what makes that later work days instead of a milestone.
     //
-    // The other half deliberately does NOT ship: writing a velocity target on
-    // every forward draw and carrying a previous transform on every `DrawItem`
-    // is renderer-wide bandwidth for a consumer that does not exist, which is
-    // the speculative abstraction the review bar forbids. What it would take is
-    // written down in the M7.5 brief, Decision 10.
+    // The other half shipped with its consumer (ADR 0158): a velocity target
+    // written only on a frame with the temporal pass, from the depth for what
+    // stands still and by a pass of its own for what moves -- never a second
+    // target on every forward draw.
     core::Vec2 jitter;
 };
+
+// **Moves the picture by `jitter`, in NDC units** (ADR 0158): folded into the
+// projection and every matrix made from it, after extraction, by the host
+// that asked the renderer where this frame's sample lies.
+void jitterCamera(RenderCamera& camera, core::Vec2 jitter) noexcept;
 
 enum class LightKind : core::u8
 {
@@ -344,6 +353,11 @@ struct DrawItem
     // A terrain draw's geomorph: its row in `RenderWorld::terrainMorphs`, or
     // `NoTerrainMorph`.
     u32 terrainMorph = NoTerrainMorph;
+    // **Which thing this draw is, for its motion** (ADR 0158): the instance,
+    // packed, for a part a frame can find again in the next; zero for what
+    // never moves on its own -- the ground, the blocks, the water -- whose
+    // motion is the camera's.
+    u64 motionKey = 0;
 };
 
 // **What casts into the sun's map**: what is drawn solid. A see-through

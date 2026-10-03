@@ -47,12 +47,14 @@ How often an `AnimationPlayer`'s meshes are posed when nobody needs every tick o
 
 ## Enum.AntiAliasingMode
 
-How edges are smoothed.
+How edges are smoothed (ADR 0158).
 
 | Item | Value | Description |
 |---|---|---|
 | `Off` | 0 | Not at all. |
-| `FXAA` | 1 | A pass over the finished picture. |
+| `FXAA` | 1 | A pass over the finished picture that finds its edges by contrast and softens them. The cheapest; it blurs fine texture a little. |
+| `SMAA` | 2 | Edges found by their shape and blended by the area each covers, in three passes over the finished picture. Sharper than FXAA for a little more. |
+| `TAA` | 3 | Each frame drawn a fraction of a pixel off from the last and blended into the frames before it: what crawls and shimmers in motion -- a fence, a wire, far grass -- is smoothed as no single frame can. The world's main camera only; a `ViewportFrame` and a sub-world use SMAA. |
 
 ## Enum.ApplyStrokeMode
 
@@ -904,6 +906,15 @@ How one child of a `UIListLayout` takes room that is left over, or gives up room
 | `Shrink` | 2 | It shrinks when the line is too long, and never grows. |
 | `Fill` | 3 | Both: it grows and it shrinks. |
 | `Custom` | 4 | By `GrowRatio` and `ShrinkRatio`, each as it is written. |
+
+## Enum.UpscalingMode
+
+How a world drawn below the window's resolution -- `GraphicsService.RenderScale` under 1 -- is brought up to it (ADR 0158).
+
+| Item | Value | Description |
+|---|---|---|
+| `None` | 0 | Filtered, as a picture is stretched. |
+| `FSR1` | 1 | AMD FidelityFX Super Resolution 1: an upscale that keeps edges, then sharpening. |
 
 ## Enum.UserInputType
 

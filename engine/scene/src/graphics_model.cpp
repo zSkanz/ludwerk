@@ -26,7 +26,7 @@ constexpr i32 ShadowsOff = 0;
 using S = GraphicsSetting;
 
 constexpr std::array ViewDistanceGroup{S::ViewDistance, S::TerrainDetail, S::LODBias, S::MaximumLODLevel};
-constexpr std::array AntiAliasingGroup{S::AntiAliasing};
+constexpr std::array AntiAliasingGroup{S::AntiAliasing, S::Upscaling, S::Sharpness};
 constexpr std::array PostProcessingGroup{S::Bloom, S::DepthOfField, S::SunRays, S::AutoExposure, S::MotionBlur};
 constexpr std::array ShadowsGroup{S::ShadowQuality, S::ShadowResolution, S::ShadowCascades, S::ShadowDistance,
                                   S::ContactShadows};

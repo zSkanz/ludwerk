@@ -567,6 +567,67 @@ TEST_CASE("a character touches the wall it walks into, and the floor it stands o
     CHECK(state.transform.position.z < 5.6);
 }
 
+TEST_CASE("D524: a character begins and ends touching a part it passes through, and one it stands in")
+{
+    // A jump pad, a teleport, a zone: a part that does not collide and does
+    // touch. A character walked through one and nothing began -- Jolt marks a
+    // character's contact with a sensor as collided only when its sweep runs
+    // into the contact's plane, and only collided contacts were kept.
+    Fixture fixture;
+    fixture.spawn(floorDesc());
+
+    BodyDesc pad;
+    pad.shape.size = core::Vec3{4.0f, 0.2f, 2.0f};
+    pad.transform.position = core::DVec3{0.0, 0.1, 4.0};
+    pad.motion = MotionType::Static;
+    pad.collidable = false;
+    pad.userData = 31;
+    fixture.spawn(pad);
+    // And a zone it starts inside and never leaves.
+    BodyDesc zone;
+    zone.shape.size = core::Vec3{3.0f, 4.0f, 3.0f};
+    zone.transform.position = core::DVec3{0.0, 2.0, 0.0};
+    zone.motion = MotionType::Static;
+    zone.collidable = false;
+    zone.userData = 32;
+    fixture.spawn(zone);
+
+    CharacterDesc desc;
+    desc.transform.position = core::DVec3{0.0, 1.5, 0.0};
+    desc.userData = 9;
+    const CharacterHandle character = fixture.physics->createCharacter(fixture.world, desc);
+    REQUIRE(character.valid());
+
+    std::vector<u64> began;
+    std::vector<u64> ended;
+    const auto walk = [&](int ticks, f32 speed) {
+        for (int i = 0; i < ticks; ++i) {
+            const CharacterState state = fixture.physics->characterState(fixture.world, character);
+            const f32 vertical =
+                state.ground == CharacterGround::Grounded ? 0.0f : state.linearVelocity.y - 9.81f * kFixedDt;
+            fixture.physics->moveCharacter(fixture.world, character, core::Vec3{0.0f, vertical, speed}, kFixedDt);
+            fixture.physics->step(fixture.world, kFixedDt);
+            for (const ContactEvent& event : fixture.physics->drainContacts(fixture.world)) {
+                if (event.firstUserData != 9)
+                    continue;
+                (event.phase == ContactPhase::Began ? began : ended).push_back(event.secondUserData);
+            }
+        }
+    };
+    // Standing in the zone: it began, and it holds.
+    walk(30, 0.0f);
+    CHECK(std::count(began.begin(), began.end(), 32u) == 1);
+    CHECK(std::count(ended.begin(), ended.end(), 32u) == 0);
+    // Walked across the pad and six metres on: it began once and ended once,
+    // and the pad stopped nobody.
+    walk(120, 3.0f);
+    CHECK(std::count(began.begin(), began.end(), 31u) == 1);
+    CHECK(std::count(ended.begin(), ended.end(), 31u) == 1);
+    CHECK(std::count(ended.begin(), ended.end(), 32u) == 1);
+    const CharacterState state = fixture.physics->characterState(fixture.world, character);
+    CHECK(state.transform.position.z > 5.5);
+}
+
 TEST_CASE("D441: a character's velocity is what its step did, not what it was asked for")
 {
     // Walking into a tree for twenty seconds, never moving, a character

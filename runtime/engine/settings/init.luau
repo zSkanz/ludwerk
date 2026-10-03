@@ -171,6 +171,13 @@ local Rows: { Row } = {
         "engine.graphics.choice.anti_aliasing."
     ),
     choice(
+        "Upscaling",
+        "engine.graphics.setting.upscaling",
+        Enum.UpscalingMode:GetEnumItems(),
+        "engine.graphics.choice.upscaling."
+    ),
+    scale("Sharpness", "engine.graphics.setting.sharpness", { 0, 0.2, 0.4, 0.6, 0.8, 1 }),
+    choice(
         "ShadowQuality",
         "engine.graphics.setting.shadow_quality",
         Enum.ShadowQuality:GetEnumItems(),

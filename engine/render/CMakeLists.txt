@@ -29,6 +29,7 @@ engine_add_module(render
         src/native_accessors.cpp
         src/renderer_default.cpp
         src/settings.cpp
+        src/smaa_tables.cpp
         src/transform_history.cpp
         src/draw_poses.cpp
         src/mesh_loader.cpp

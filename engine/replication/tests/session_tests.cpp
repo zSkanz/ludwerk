@@ -2622,12 +2622,6 @@ TEST_CASE("a press whose intent came after its tick was stood in for is applied 
     CHECK(jumped == 1);
 }
 
-// --- A peer whose clock moved (D480) ---------------------------------------------
-
-namespace {
-
-// A replica's intent stream, sent by hand: one message, one tick, one `Move`
-// direction -- so a test says exactly which tick number carries what.
 TEST_CASE("G38: an action's name crosses once, an intent that overtakes it waits for it, and a name once given stands")
 {
     PlayedMatch match;
@@ -2732,6 +2726,12 @@ TEST_CASE("G38: a replica names each action once a connection, and leaves a butt
     CHECK(static_cast<double>(seen->intents[0].axis.x) == doctest::Approx(0.5));
 }
 
+// --- A peer whose clock moved (D480) ---------------------------------------------
+
+namespace {
+
+// A replica's intent stream, sent by hand: one message, one tick, one `Move`
+// direction -- so a test says exactly which tick number carries what.
 struct MoveStream
 {
     PlayedMatch& match;
@@ -2773,6 +2773,63 @@ struct MoveStream
 };
 
 } // namespace
+
+TEST_CASE("D526: the authority never skips ticks of a player whose predicted steps keep state")
+{
+    // The intent delay adapts by holding a tick, or skipping some, while the
+    // player is idle -- because then it moves nothing. But a skip runs the
+    // player's predicted step once for the ticks skipped, and a timer it counts
+    // down counted one tick for several of the player's own.
+    struct Counted
+    {
+        int held = 0;
+        int skipped = 0;
+    };
+    const auto holdsWith = [](bool predicted) {
+        PlayedMatch match;
+        match.run(10);
+        MoveStream stream(match);
+        core::u64 sent = match.tick;
+        // A character the player has, at rest.
+        const core::InstanceId body =
+            match.server.world.create(match.server.classes.findId(match.server.atoms.intern("CharacterBody")));
+        REQUIRE(body.valid());
+        REQUIRE_FALSE(match.server.world.setParent(body, match.server.workspace).has_value());
+        match.server.world.players().find(match.remote())->character = body;
+        scene::CharacterBodyComponent* character = match.server.world.characterBodies().find(body);
+        REQUIRE(character != nullptr);
+        if (predicted)
+            character->predictedAttributes.push_back(match.server.atoms.intern("Cooldown"));
+        // Idle input a tick at a time, stalling for four ticks and then
+        // catching up in a burst, as a replica that hitched does -- what makes
+        // the delay hold a tick to grow, or skip some to shrink.
+        Counted counted;
+        core::u64 last = 0;
+        for (int at = 0; at < 120; ++at) {
+            const int phase = at % 12;
+            const int sends = phase < 5 ? 1 : (phase < 9 ? 0 : (phase < 11 ? 3 : 1));
+            for (int each = 0; each < sends; ++each)
+                stream.send(++sent, 0.0f);
+            stream.tick();
+            const core::u64 now = match.server.world.players().find(match.remote())->intentTick;
+            if (now != 0 && last != 0 && now == last)
+                ++counted.held;
+            if (now != 0 && last != 0 && now > last + 1)
+                ++counted.skipped;
+            last = now;
+        }
+        return counted;
+    };
+    // At rest, the delay is free to move both ways.
+    const Counted still = holdsWith(false);
+    CHECK(still.skipped > 0);
+    // **With predicted state**: never skipped -- its predicted
+    // step runs once a tick taken, and a timer it counts down would count one
+    // tick for several of its own machine's. Held is harmless: neither machine
+    // steps it then.
+    const Counted timed = holdsWith(true);
+    CHECK(timed.skipped == 0);
+}
 
 TEST_CASE("D480: a replica that dropped simulated time is heard again, a few ticks on")
 {

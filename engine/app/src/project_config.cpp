@@ -81,8 +81,25 @@ void applyFile(const core::TomlDocument& document, std::string_view table, Graph
         settings.bloom = *value;
     if (const std::optional<bool> value = flag("ambient_occlusion"))
         settings.ambientOcclusion = *value;
+    // A name -- "off", "fxaa", "smaa", "taa" -- or, as it has always been
+    // written, a switch: on is FXAA.
     if (const std::optional<bool> value = flag("anti_aliasing"))
-        settings.antiAliasing = *value;
+        settings.antiAliasing = *value ? render::AntiAliasingMode::Fxaa : render::AntiAliasingMode::Off;
+    if (const std::optional<std::string_view> named = document.string(key("anti_aliasing"))) {
+        const std::array<std::string_view, 4> names{"off", "fxaa", "smaa", "taa"};
+        for (usize index = 0; index < names.size(); ++index) {
+            if (names[index] == *named)
+                settings.antiAliasing = static_cast<render::AntiAliasingMode>(index);
+        }
+    }
+    if (const std::optional<std::string_view> named = document.string(key("upscaling"))) {
+        if (*named == "none")
+            settings.upscaling = render::UpscalingMode::None;
+        else if (*named == "fsr1")
+            settings.upscaling = render::UpscalingMode::Fsr1;
+    }
+    if (const std::optional<f64> value = number("sharpness", 0.0, 1.0))
+        settings.sharpness = static_cast<f32>(*value);
     // So each of the audit's suspects for the dots on distant terrain can be
     // turned off alone (terrain audit T0).
     if (const std::optional<bool> value = flag("contact_shadows"))
@@ -137,6 +154,10 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         settings.ambientOcclusion = *overrides.ambientOcclusion;
     if (overrides.antiAliasing)
         settings.antiAliasing = *overrides.antiAliasing;
+    if (overrides.upscaling)
+        settings.upscaling = *overrides.upscaling;
+    if (overrides.sharpness)
+        settings.sharpness = *overrides.sharpness;
     if (overrides.autoExposure)
         settings.autoExposure = *overrides.autoExposure;
     if (overrides.contactShadows)
@@ -152,7 +173,8 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         // And a shadow's, a bend's, a colour's or a layer's value must be the
         // shader's, not an exposure's.
         if (settings.debugView == render::DebugView::Holes || render::blackSky(settings.debugView)) {
-            settings.antiAliasing = false;
+            settings.antiAliasing = render::AntiAliasingMode::Off;
+            settings.upscaling = render::UpscalingMode::None;
             settings.bloom = false;
             settings.ambientOcclusion = false;
             settings.autoExposure = false;
@@ -185,7 +207,11 @@ void saySettings(GraphicsLayer& layer, const GraphicsSettings& settings)
     say(layer, GraphicsSetting::Bloom, settings.bloom ? 1.0 : 0.0);
     say(layer, GraphicsSetting::AmbientOcclusion, settings.ambientOcclusion ? 1.0 : 0.0);
     say(layer, GraphicsSetting::ContactShadows, settings.contactShadows ? 1.0 : 0.0);
-    say(layer, GraphicsSetting::AntiAliasing, settings.antiAliasing ? 1.0 : 0.0);
+    say(layer, GraphicsSetting::AntiAliasing, static_cast<f64>(settings.antiAliasing));
+    say(layer, GraphicsSetting::Upscaling, static_cast<f64>(settings.upscaling));
+    // In hundredths: a float's 0.2 is 0.20000000298 as a double, and a script
+    // reading the preset's sharpness reads the number the preset was given.
+    say(layer, GraphicsSetting::Sharpness, std::round(static_cast<f64>(settings.sharpness) * 100.0) / 100.0);
     say(layer, GraphicsSetting::AutoExposure, settings.autoExposure ? 1.0 : 0.0);
     say(layer, GraphicsSetting::DepthOfField, settings.depthOfField ? 1.0 : 0.0);
     say(layer, GraphicsSetting::SunRays, settings.sunRays ? 1.0 : 0.0);
@@ -261,7 +287,11 @@ void seedCommandLine(scene::GraphicsModel& model, const GraphicsOverrides& overr
     if (overrides.ambientOcclusion)
         say(layer, GraphicsSetting::AmbientOcclusion, *overrides.ambientOcclusion ? 1.0 : 0.0);
     if (overrides.antiAliasing)
-        say(layer, GraphicsSetting::AntiAliasing, *overrides.antiAliasing ? 1.0 : 0.0);
+        say(layer, GraphicsSetting::AntiAliasing, static_cast<f64>(*overrides.antiAliasing));
+    if (overrides.upscaling)
+        say(layer, GraphicsSetting::Upscaling, static_cast<f64>(*overrides.upscaling));
+    if (overrides.sharpness)
+        say(layer, GraphicsSetting::Sharpness, static_cast<f64>(*overrides.sharpness));
     if (overrides.autoExposure)
         say(layer, GraphicsSetting::AutoExposure, *overrides.autoExposure ? 1.0 : 0.0);
     if (overrides.contactShadows)
@@ -310,7 +340,8 @@ void seedCommandLine(scene::GraphicsModel& model, const GraphicsOverrides& overr
 [[nodiscard]] std::span<const std::string_view> choicesOf(GraphicsSetting setting) noexcept
 {
     static constexpr std::array<std::string_view, 5> Shadow{"off", "low", "medium", "high", "ultra"};
-    static constexpr std::array<std::string_view, 2> Smoothing{"off", "fxaa"};
+    static constexpr std::array<std::string_view, 4> Smoothing{"off", "fxaa", "smaa", "taa"};
+    static constexpr std::array<std::string_view, 2> Upscale{"none", "fsr1"};
     static constexpr std::array<std::string_view, 3> Texture{"low", "medium", "high"};
     static constexpr std::array<std::string_view, 3> Window{"windowed", "borderless", "fullscreen"};
     static constexpr std::array<std::string_view, 5> Level{"low", "medium", "high", "ultra", "cinematic"};
@@ -319,6 +350,8 @@ void seedCommandLine(scene::GraphicsModel& model, const GraphicsOverrides& overr
         return Shadow;
     case GraphicsSetting::AntiAliasing:
         return Smoothing;
+    case GraphicsSetting::Upscaling:
+        return Upscale;
     case GraphicsSetting::TextureQuality:
         return Texture;
     case GraphicsSetting::WindowMode:
@@ -418,7 +451,11 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
     settings.bloom = value(GraphicsSetting::Bloom) != 0.0;
     settings.ambientOcclusion = value(GraphicsSetting::AmbientOcclusion) != 0.0;
     settings.contactShadows = value(GraphicsSetting::ContactShadows) != 0.0;
-    settings.antiAliasing = value(GraphicsSetting::AntiAliasing) != 0.0;
+    settings.antiAliasing =
+        static_cast<render::AntiAliasingMode>(std::clamp(static_cast<int>(value(GraphicsSetting::AntiAliasing)), 0, 3));
+    settings.upscaling =
+        static_cast<render::UpscalingMode>(std::clamp(static_cast<int>(value(GraphicsSetting::Upscaling)), 0, 1));
+    settings.sharpness = static_cast<f32>(value(GraphicsSetting::Sharpness));
     settings.autoExposure = value(GraphicsSetting::AutoExposure) != 0.0;
     settings.depthOfField = value(GraphicsSetting::DepthOfField) != 0.0;
     settings.sunRays = value(GraphicsSetting::SunRays) != 0.0;

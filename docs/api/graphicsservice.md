@@ -22,7 +22,7 @@ offers is on the base's page, which is what keeps one added member on
 |---|---|---|---|---|
 | `AmbientOcclusion` | `boolean` | `true` | read/write | Whether creases and corners are darkened. |
 | `AnisotropicFiltering` | `number` | `8` | read/write | How sharp a texture stays at a grazing angle, 1 to 16. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands. |
-| `AntiAliasing` | `Enum.AntiAliasingMode` | `Enum.AntiAliasingMode.FXAA` | read/write | How edges are smoothed. |
+| `AntiAliasing` | `Enum.AntiAliasingMode` | `Enum.AntiAliasingMode.SMAA` | read/write | How edges are smoothed (ADR 0158). |
 | `AsyncUploadBudget` | `number` | `2` | read/write | The milliseconds a frame may spend sending data to the GPU. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands. |
 | `AutoExposure` | `boolean` | `true` | read/write | Whether the picture's brightness follows the scene. Off, the exposure is held. |
 | `BackgroundFrameRate` | `number` | `10` | read/write | The cap while the window is not in front or is minimised; 0 is no throttle. |
@@ -49,12 +49,14 @@ offers is on the base's page, which is what keeps one added member on
 | `ShadowDistance` | `number` | `120` | read/write | How far from the camera the sun casts, in metres, 10 to 1000. |
 | `ShadowQuality` | `Enum.ShadowQuality` | `Enum.ShadowQuality.High` | read/write | The sun's shadow, as a level. Writing one writes `ShadowResolution` and `ShadowCascades` as that level has them; `Off` is no cascades. |
 | `ShadowResolution` | `number` | `2048` | read/write | One shadow cascade's side in texels, 256 to 2048, rounded down to a power of two. |
+| `Sharpness` | `number` | `0.2` | read/write | How much the picture is sharpened, 0 to 1, after an FSR 1 upscale and after temporal anti-aliasing, which softens (ADR 0158). |
 | `SkinWeights` | `number` | `4` | read/write | How many bones may move one vertex, 1 to 4. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands. |
 | `SoftParticles` | `boolean` | `true` | read/write | Whether particles fade where they meet a surface. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands. |
 | `SunRays` | `boolean` | `true` | read/write | Whether a world's `SunRaysEffect` is drawn, by the same rule. |
 | `TerrainDetail` | `number` | `1` | read/write | How fine distant ground is, as a scale on the level's own: 2 refines it at twice the distance, 0.5 at half. |
 | `TextureQuality` | `Enum.TextureQuality` | `Enum.TextureQuality.High` | read/write | How much of each texture is kept. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands. |
 | `TextureStreamingBudget` | `number` | `0` | read/write | The memory textures may keep resident, in mebibytes; 0 is no limit. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands. |
+| `Upscaling` | `Enum.UpscalingMode` | `Enum.UpscalingMode.None` | read/write | How the world is brought up to the window's resolution when `RenderScale` is under 1 (ADR 0158). At a scale of 1 there is nothing to bring up, and it does nothing. |
 | `VSync` | `boolean` | `true` | read/write | Whether a frame waits for the display. On by default; a handheld is always on. |
 | `ViewDistance` | `number` | `1` | read/write | A scale on how far things are drawn, 0.25 to 4. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands. |
 | `WindowMode` | `Enum.WindowMode` | `Enum.WindowMode.Windowed` | read/write | How the window sits on the display. A handheld has the whole display whatever this says. |

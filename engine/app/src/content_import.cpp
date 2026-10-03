@@ -1,6 +1,7 @@
 #include "engine/app/content_import.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
@@ -14,6 +15,7 @@
 #include "engine/asset/material.h"
 #include "engine/asset/model.h"
 #include "engine/core/content_hash.h"
+#include "engine/core/i18n.h"
 #include "engine/core/json.h"
 #include "engine/core/json_writer.h"
 #include "engine/core/log.h"
@@ -503,6 +505,26 @@ ModelMaterials writeModelMaterials(const std::filesystem::path& contentRoot, con
         out.bySubmesh.push_back(origin < bySource.size() ? bySource[origin] : std::string{});
     }
     return out;
+}
+
+void ImportLog::report(core::usize done, core::usize total, std::string_view name, core::u64 nowNs)
+{
+    if (done >= total)
+        return;
+    if (!m_started) {
+        m_started = true;
+        m_lastNs = nowNs;
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"total", static_cast<core::i64>(total)}};
+        core::log(core::LogLevel::Info, ENG_TR("app.info.import_started"), args);
+        return;
+    }
+    if (nowNs - m_lastNs < m_everyNs)
+        return;
+    m_lastNs = nowNs;
+    const std::array<core::I18nArg, 3> args{core::I18nArg{"done", static_cast<core::i64>(done)},
+                                            core::I18nArg{"total", static_cast<core::i64>(total)},
+                                            core::I18nArg{"name", std::string(name)}};
+    core::log(core::LogLevel::Info, ENG_TR("app.info.import_progress"), args);
 }
 
 } // namespace engine::app

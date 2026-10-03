@@ -322,16 +322,23 @@ Invoke-Stage 'windows' {
     # (CLAUDE.md warns about `tail`/`head` for a different symptom of the same
     # thing), and a gate that silently measures yesterday's binary is worse than
     # one that refuses to start.
-    $stale = Get-Process -Name 'engine-host' -ErrorAction SilentlyContinue
-    if ($stale) {
-        Write-Host "[gate] $($stale.Count) engine-host process(es) still running; they would hold the executable open." -ForegroundColor Yellow
-        $stale | Stop-Process -Force
-        Start-Sleep -Milliseconds 200
-    }
-
+    #
+    # **Only the hosts that run from this build's own folder** (D523): they are
+    # the only ones that hold the executable the link writes. Stopped by name,
+    # every engine-host on the machine went with them -- a packaged game being
+    # tested, another session's server -- ended from outside with exit -1, no
+    # line in their log and no dump, whenever a gate started.
     $vcvars = Get-DeveloperShellEnv
     if (-not $env:ENG_BUILD_ROOT) {
         $env:ENG_BUILD_ROOT = Join-Path $env:LOCALAPPDATA "$BrandName\build"
+    }
+    $ownBinaries = [System.IO.Path]::GetFullPath((Join-Path $env:ENG_BUILD_ROOT 'win-msvc-dev')) + [System.IO.Path]::DirectorySeparatorChar
+    $stale = Get-Process -Name 'engine-host' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($ownBinaries, [System.StringComparison]::OrdinalIgnoreCase) }
+    if ($stale) {
+        Write-Host "[gate] $(@($stale).Count) engine-host process(es) of this build still running; they would hold the executable open." -ForegroundColor Yellow
+        $stale | Stop-Process -Force
+        Start-Sleep -Milliseconds 200
     }
 
     # One cmd invocation, because the environment vcvars64.bat establishes does

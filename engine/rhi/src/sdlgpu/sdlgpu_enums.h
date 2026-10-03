@@ -56,6 +56,8 @@ namespace engine::rhi::sdlgpu {
         return SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM_SRGB;
     case TextureFormat::Bc7RgbaUnormSrgb:
         return SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM_SRGB;
+    case TextureFormat::Rg16Float:
+        return SDL_GPU_TEXTUREFORMAT_R16G16_FLOAT;
     }
     return SDL_GPU_TEXTUREFORMAT_INVALID;
 }
@@ -372,6 +374,7 @@ namespace engine::rhi::sdlgpu {
     case TextureFormat::Bgra8Unorm:
     case TextureFormat::Bgra8UnormSrgb:
     case TextureFormat::R32Float:
+    case TextureFormat::Rg16Float:
     case TextureFormat::D24UnormS8Uint:
     case TextureFormat::D32Float:
         return 4;

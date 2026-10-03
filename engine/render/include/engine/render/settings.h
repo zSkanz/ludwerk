@@ -37,6 +37,25 @@ enum class QualityLevel : core::u8
     Ultra,
 };
 
+// **How edges are smoothed** (ADR 0158), as `Enum.AntiAliasingMode` numbers
+// them. FXAA and SMAA read the finished picture; TAA blends each frame into
+// the ones before it, drawn a fraction of a pixel apart.
+enum class AntiAliasingMode : core::u8
+{
+    Off,
+    Fxaa,
+    Smaa,
+    Taa,
+};
+
+// **How a world drawn below the output's resolution is brought up to it**
+// (ADR 0158), as `Enum.UpscalingMode` numbers them: filtered, or by FSR 1.
+enum class UpscalingMode : core::u8
+{
+    None,
+    Fsr1,
+};
+
 // **What the renderer draws in place of the picture** (terrain audit T0): a
 // test instrument, like `forcedSurface`, and never a setting a player has.
 //   Holes      the sky magenta and every terrain flat white, nothing else lit:
@@ -137,7 +156,14 @@ struct GraphicsSettings
     // the viewport's own height. Smaller is finer ground further out, and
     // more of it to build and draw.
     f32 terrainPixelError = 2.0f;
-    bool antiAliasing = true;
+    AntiAliasingMode antiAliasing = AntiAliasingMode::Smaa;
+    // How a world drawn smaller than the output is brought up to it -- which
+    // only matters when it is: at a render scale of 1 there is nothing to
+    // upscale, and FSR 1 does nothing.
+    UpscalingMode upscaling = UpscalingMode::None;
+    // **How much RCAS sharpens**, 0 to 1 (ADR 0158): after FSR 1's upscale,
+    // and after temporal anti-aliasing, which softens.
+    f32 sharpness = 0.2f;
     // Whether a world's `DepthOfFieldEffect` is drawn (ADR 0096). **The machine
     // wins over the world**, as it does for bloom: a scene that asks for focus
     // on a machine that cannot afford it draws sharp. `BlurEffect` and
@@ -170,10 +196,10 @@ struct GraphicsSettings
     bool instancing = true;
 };
 
-// The named set every preset is. `High` is exactly what the engine shipped
-// through M7.5, which is a requirement rather than a coincidence: every golden
-// in the repository was recorded against it, so a preset that changed the
-// default would have re-recorded all of them and hidden whatever else moved.
+// The named set every preset is. `High` was exactly what the engine shipped
+// through M7.5, because every golden in the repository was recorded against
+// it; ADR 0158 moved its anti-aliasing from FXAA to SMAA, alone and on purpose,
+// and the goldens were recorded again for that one change.
 [[nodiscard]] GraphicsSettings settingsFor(QualityLevel quality) noexcept;
 
 // Clamps every field into the range the renderer can honour, so a hand-edited

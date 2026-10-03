@@ -267,6 +267,16 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.frameStats = true;
             continue;
         }
+        if (arg.starts_with("--frame-stats-warmup=")) {
+            engine::core::u64 seconds = 0;
+            if (!numericValue(arg.substr(21), seconds) || seconds > 600) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.frameStatsWarmupSeconds = static_cast<engine::core::f64>(seconds);
+            continue;
+        }
         if (arg.starts_with("--frame-report=")) {
             engine::core::u64 seconds = 0;
             if (!numericValue(arg.substr(15), seconds) || seconds > 3600) {
@@ -719,7 +729,42 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             continue;
         }
         if (arg == "--anti-aliasing" || arg == "--no-anti-aliasing") {
-            graphics.antiAliasing = arg == "--anti-aliasing";
+            graphics.antiAliasing = arg == "--anti-aliasing" ? engine::render::AntiAliasingMode::Fxaa
+                                                             : engine::render::AntiAliasingMode::Off;
+            continue;
+        }
+        // **Which anti-aliasing, and how an upscale is done** (ADR 0158).
+        if (arg.starts_with("--anti-aliasing=") || arg.starts_with("--upscaling=") || arg.starts_with("--sharpness=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            bool known = false;
+            if (arg.starts_with("--anti-aliasing=")) {
+                const std::array<std::string_view, 4> names{"off", "fxaa", "smaa", "taa"};
+                for (std::size_t index = 0; index < names.size(); ++index) {
+                    if (names[index] == value) {
+                        graphics.antiAliasing = static_cast<engine::render::AntiAliasingMode>(index);
+                        known = true;
+                    }
+                }
+            }
+            else if (arg.starts_with("--upscaling=")) {
+                known = value == "none" || value == "fsr1";
+                if (known)
+                    graphics.upscaling =
+                        value == "fsr1" ? engine::render::UpscalingMode::Fsr1 : engine::render::UpscalingMode::None;
+            }
+            else {
+                char* end = nullptr;
+                const std::string text(value);
+                const double number = std::strtod(text.c_str(), &end);
+                known = !text.empty() && end == text.c_str() + text.size() && number >= 0.0 && number <= 1.0;
+                if (known)
+                    graphics.sharpness = static_cast<engine::core::f32>(number);
+            }
+            if (!known) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
             continue;
         }
         if (arg == "--auto-exposure" || arg == "--no-auto-exposure") {

@@ -23,7 +23,9 @@ light_budget = 256        # lights one frame may carry
 bloom = true
 ambient_occlusion = true
 contact_shadows = true
-anti_aliasing = true
+anti_aliasing = "smaa"    # off | fxaa | smaa | taa (true is fxaa)
+upscaling = "none"        # none | fsr1 -- how a render scale under 1 is brought up
+sharpness = 0.2           # 0 to 1, after an FSR 1 upscale and after TAA
 auto_exposure = true
 ```
 
@@ -77,7 +79,8 @@ nothing gets it.
 | `bloom` | false | true | **true** | true |
 | `ambient_occlusion` | false | false | **true** | true |
 | `contact_shadows` | false | true | **true** | true |
-| `anti_aliasing` | true | true | **true** | true |
+| `anti_aliasing` | fxaa | smaa | **smaa** | taa |
+| `upscaling` | fsr1 | none | **none** | none |
 | `auto_exposure` | true | true | **true** | true |
 | `depth_of_field` | false | false | **true** | true |
 | `sun_rays` | false | true | **true** | true |
@@ -90,6 +93,29 @@ for either way (ADR 0096).
 what a coarser level gets wrong may cover before a nearer, finer one is drawn
 -- 4 at low, 3 at medium, 2 at high and 1.5 at ultra (ADR 0140). It has no key
 of its own. See [Terrain](manual:world/terrain).
+
+**On a phone every level upscales with FSR 1**, since each but Ultra caps the
+resolution the world is drawn at, and uses FXAA below High and never TAA.
+
+## Anti-aliasing and upscaling
+
+Four ways to smooth edges (ADR 0158):
+
+- **FXAA**: one pass over the finished picture, finding edges by contrast. The
+  cheapest; it softens fine texture a little.
+- **SMAA**: edges found by their shape and blended by the area each covers, in
+  three passes. Sharper than FXAA for a little more. The default.
+- **TAA**: each frame is drawn a fraction of a pixel off from the last, and
+  blended into the frames before it through motion vectors. It is the one that
+  stops a fence, a wire or far grass crawling as the camera moves. It runs on
+  the world's main camera; a `ViewportFrame`, a sub-world and a frame with
+  sprites drawn in their own colours use SMAA instead.
+- **Off**.
+
+**`upscaling = "fsr1"`** brings a world drawn at a `render_scale` under 1 up to
+the window with AMD FidelityFX Super Resolution 1 -- an upscale that keeps
+edges, then sharpening -- where `none` stretches it. `sharpness` is how much
+RCAS sharpens after it, and after TAA, which softens.
 
 Two of those are worth a sentence each.
 
@@ -155,6 +181,9 @@ apply, because they were typed by the same person as the preset.
 --bloom            / --no-bloom
 --ambient-occlusion / --no-ambient-occlusion
 --anti-aliasing    / --no-anti-aliasing
+--anti-aliasing=off|fxaa|smaa|taa
+--upscaling=none|fsr1
+--sharpness=F
 --auto-exposure    / --no-auto-exposure
 ```
 

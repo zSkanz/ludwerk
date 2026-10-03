@@ -27,7 +27,10 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.ambientOcclusion = false;
         settings.contactShadows = false;
         settings.terrainPixelError = 4.0f;
-        settings.antiAliasing = true;
+        settings.antiAliasing = AntiAliasingMode::Fxaa;
+        // The world at three quarters, brought up by FSR 1 rather than
+        // filtered: the edges a reduced scale softens, kept (ADR 0158).
+        settings.upscaling = UpscalingMode::Fsr1;
         settings.autoExposure = true;
         settings.depthOfField = false;
         settings.sunRays = false;
@@ -43,7 +46,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.ambientOcclusion = false;
         settings.contactShadows = true;
         settings.terrainPixelError = 3.0f;
-        settings.antiAliasing = true;
+        settings.antiAliasing = AntiAliasingMode::Smaa;
         settings.autoExposure = true;
         settings.depthOfField = false;
         break;
@@ -60,7 +63,9 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.ambientOcclusion = true;
         settings.contactShadows = true;
         settings.terrainPixelError = 2.0f;
-        settings.antiAliasing = true;
+        // SMAA rather than FXAA (ADR 0158): an edge found by its shape and
+        // blended by the area it covers, which keeps what FXAA blurs.
+        settings.antiAliasing = AntiAliasingMode::Smaa;
         settings.autoExposure = true;
         break;
 
@@ -88,7 +93,9 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.ambientOcclusion = true;
         settings.contactShadows = true;
         settings.terrainPixelError = 1.5f;
-        settings.antiAliasing = true;
+        // The temporal pass: what still crawls in motion under SMAA -- a fence,
+        // a wire, the far grass -- is sampled at eight places over eight frames.
+        settings.antiAliasing = AntiAliasingMode::Taa;
         settings.autoExposure = true;
         break;
     }
@@ -103,6 +110,16 @@ QualityLevel defaultQuality(bool handheld) noexcept
 
 GraphicsSettings handheldSettings(GraphicsSettings settings) noexcept
 {
+    // **A phone's world is drawn below its display and brought up by FSR 1**
+    // (ADR 0158): every level caps the resolution but Ultra, and a picture
+    // upscaled is a picture whose edges FSR keeps. FXAA rather than SMAA below
+    // High, for the two passes it saves on a phone's GPU; never the temporal
+    // pass, whose history is a full-resolution image more to keep.
+    settings.upscaling = UpscalingMode::Fsr1;
+    if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium)
+        settings.antiAliasing = AntiAliasingMode::Fxaa;
+    else if (settings.antiAliasing == AntiAliasingMode::Taa)
+        settings.antiAliasing = AntiAliasingMode::Smaa;
     switch (settings.quality) {
     case QualityLevel::Low:
         settings.renderResolutionCap = 720;

@@ -648,6 +648,21 @@ private:
         i32 mode = 0;
         // A character's predicted attributes (G37).
         PredictedAttributes attributes;
+        // **What a script wrote after the step, waiting for the next** (D525):
+        // a predicted touch runs after the solve, and a velocity, an impulse
+        // or a place it gives is the next step's. Remembered with the rest, so
+        // a replay starting at this tick takes them as the live step did.
+        struct Pending
+        {
+            // Where the backend has it: a place written and not yet applied
+            // differs from `cframe`.
+            core::CFrameD written{};
+            bool velocityWritten = false;
+            core::Vec3 velocity{};
+            core::Vec3 impulse{};
+            core::Vec3 angularImpulse{};
+        };
+        Pending pending{};
     };
     struct Island
     {
@@ -688,6 +703,8 @@ private:
     void runPredictedSteps(f64 fixedDt);
     void runPredictedTouches(std::span<const physics::ContactEvent> events, f64 fixedDt);
     [[nodiscard]] PredictedAttributes predictedAttributesOf(core::InstanceId id) const;
+    [[nodiscard]] IslandEntity::Pending pendingOf(core::InstanceId id) const;
+    void putPending(core::InstanceId id, const IslandEntity::Pending& pending);
     void putPredictedAttributes(core::InstanceId id, const PredictedAttributes& attributes);
     [[nodiscard]] std::vector<core::InstanceId> simulatedIds() const;
     // Characters are few and are not on this path, so a map stays a map --

@@ -95,6 +95,9 @@ enum class TextureFormat : u8
     Bc1RgbaUnormSrgb,
     Bc3RgbaUnormSrgb,
     Bc7RgbaUnormSrgb,
+    // Two half floats: a screen-space motion vector (ADR 0158), which is
+    // what every temporal pass reads. Added when the first one arrived.
+    Rg16Float,
 };
 
 [[nodiscard]] constexpr bool isDepthFormat(TextureFormat format) noexcept

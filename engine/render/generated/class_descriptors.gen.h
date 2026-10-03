@@ -110,12 +110,13 @@ inline constexpr scene::EnumId GraphicsLevelEnumId = 67;
 inline constexpr scene::EnumId GraphicsGroupEnumId = 68;
 inline constexpr scene::EnumId ShadowQualityEnumId = 69;
 inline constexpr scene::EnumId AntiAliasingModeEnumId = 70;
-inline constexpr scene::EnumId TextureQualityEnumId = 71;
-inline constexpr scene::EnumId WindowModeEnumId = 72;
-inline constexpr scene::EnumId SettingSourceEnumId = 73;
-inline constexpr scene::EnumId ScrollingDirectionEnumId = 74;
-inline constexpr scene::EnumId ElasticBehaviorEnumId = 75;
-inline constexpr scene::EnumId AnimationCullingModeEnumId = 76;
+inline constexpr scene::EnumId UpscalingModeEnumId = 71;
+inline constexpr scene::EnumId TextureQualityEnumId = 72;
+inline constexpr scene::EnumId WindowModeEnumId = 73;
+inline constexpr scene::EnumId SettingSourceEnumId = 74;
+inline constexpr scene::EnumId ScrollingDirectionEnumId = 75;
+inline constexpr scene::EnumId ElasticBehaviorEnumId = 76;
+inline constexpr scene::EnumId AnimationCullingModeEnumId = 77;
 
 } // namespace generated
 

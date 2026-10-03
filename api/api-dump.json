@@ -2014,7 +2014,7 @@
         {
           "Name": "AntiAliasing",
           "Type": "Enum.AntiAliasingMode",
-          "Default": "Enum.AntiAliasingMode.FXAA",
+          "Default": "Enum.AntiAliasingMode.SMAA",
           "Transient": true
         },
         {
@@ -2174,6 +2174,12 @@
           "Transient": true
         },
         {
+          "Name": "Sharpness",
+          "Type": "number",
+          "Default": "0.2",
+          "Transient": true
+        },
+        {
           "Name": "SkinWeights",
           "Type": "number",
           "Default": "4",
@@ -2207,6 +2213,12 @@
           "Name": "TextureStreamingBudget",
           "Type": "number",
           "Default": "0",
+          "Transient": true
+        },
+        {
+          "Name": "Upscaling",
+          "Type": "Enum.UpscalingMode",
+          "Default": "Enum.UpscalingMode.None",
           "Transient": true
         },
         {
@@ -11474,6 +11486,14 @@
         {
           "Name": "Off",
           "Value": 0
+        },
+        {
+          "Name": "SMAA",
+          "Value": 2
+        },
+        {
+          "Name": "TAA",
+          "Value": 3
         }
       ]
     },
@@ -13398,6 +13418,19 @@
         {
           "Name": "Shrink",
           "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "UpscalingMode",
+      "Items": [
+        {
+          "Name": "FSR1",
+          "Value": 1
+        },
+        {
+          "Name": "None",
+          "Value": 0
         }
       ]
     },

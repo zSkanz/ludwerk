@@ -1140,6 +1140,21 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 180)
 
+    # **What temporal anti-aliasing is for, measured** (ADR 0158): a fence under
+    # a camera panning a third of a pixel a frame, drawn with each mode, and
+    # how much the frames pop -- TAA must flicker clearly least. A comparison
+    # of this machine's own renders, so a gate wherever there is a device.
+    add_test(NAME anti_aliasing_flicker
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DFLICKER=$<TARGET_FILE:imgflicker>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/flicker
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/anti-aliasing-flicker
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_flicker_gate.cmake)
+    set_tests_properties(anti_aliasing_flicker PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 240)
+
     # Local shadows, as a differential and for exactly the same reason -- see
     # the driver. `SpotLight.Shadows` and `PointLight.Shadows` were accepted,
     # read back and plumbed to `RenderLight::shadows` for three milestones while

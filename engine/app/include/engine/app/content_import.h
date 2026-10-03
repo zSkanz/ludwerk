@@ -88,6 +88,25 @@ struct ContentImportReport
 // person asked for never skips -- it has to report the pieces it made.
 using ImportProgress = std::function<void(core::usize done, core::usize total, std::string_view name)>;
 
+// **What an import with no window says while it works** (D523): a project
+// opened headless for the first time compiled every source in silence -- a
+// minute and a half for the paint-war game's two hundred, nearly three on a
+// busy machine -- and whoever waited could not tell a slow import from a
+// stopped process. It says how much there is when it starts, and then every
+// `every` how far it has got and what it is on.
+class ImportLog
+{
+public:
+    explicit ImportLog(core::u64 everyNs = 5'000'000'000ull) noexcept : m_everyNs(everyNs) {}
+    // The `ImportProgress` call, with the time it is made.
+    void report(core::usize done, core::usize total, std::string_view name, core::u64 nowNs);
+
+private:
+    core::u64 m_everyNs;
+    core::u64 m_lastNs = 0;
+    bool m_started = false;
+};
+
 [[nodiscard]] ContentImportReport compileImported(const std::filesystem::path& projectRoot,
                                                   const std::filesystem::path& contentRoot,
                                                   std::span<const std::string> names,

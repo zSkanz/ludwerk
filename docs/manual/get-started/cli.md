@@ -201,7 +201,8 @@ engine-host [script.luau | project-dir]
   [--quality=low|medium|high|ultra --render-scale=F
    --shadow-resolution=N --shadow-cascades=N --shadow-distance=F
    --light-budget=N --[no-]bloom --[no-]ambient-occlusion
-   --[no-]contact-shadows --[no-]anti-aliasing --[no-]auto-exposure]
+   --[no-]contact-shadows --[no-]anti-aliasing --anti-aliasing=MODE --upscaling=MODE
+   --sharpness=F --[no-]auto-exposure]
   [--screenshot-every=N --debug-view=VIEW --terrain-detail=full|distance
    --no-instancing]
   [--pace=HZ]
