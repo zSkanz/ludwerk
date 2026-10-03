@@ -74,7 +74,7 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     }
 
 #ifdef ENG_TONEMAP_EXACT
-    return resolveExact(float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(graded)), input.Position.xy), alpha), hdr,
+    return resolveExact(float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(graded)), input.Position.xy), alpha),
                         input.Uv);
 #else
     return float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(graded)), input.Position.xy), alpha);

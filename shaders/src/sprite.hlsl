@@ -20,6 +20,13 @@
 cbuffer SpriteView : register(b0, space1)
 {
     column_major float4x4 ViewProjection;
+#ifdef ENG_SPRITE_EXACT
+    // The view without the temporal pass's jitter (ADR 0158): an exact sprite
+    // is placed by it, so pixel art never moves by a fraction of a pixel and
+    // the resolve can pass its pixels through. The same matrix on a frame
+    // without the pass.
+    column_major float4x4 UnjitteredViewProjection;
+#endif
 };
 
 Texture2D<float4> SpriteTexture : register(t0, space2);
@@ -74,7 +81,12 @@ Interpolants VertexMain(VertexInput input)
     }
 
     Interpolants output;
+#ifdef ENG_SPRITE_EXACT
+    const bool exact = (uint(input.Turn.w + 0.5f) & 4u) != 0u;
+    output.Position = mul(exact ? UnjitteredViewProjection : ViewProjection, float4(position, input.Turn.z, 1.0f));
+#else
     output.Position = mul(ViewProjection, float4(position, input.Turn.z, 1.0f));
+#endif
     output.Color = float4(decodeSrgb(input.Color.rgb), input.Color.a);
     // The top of the picture is the top of the sprite: y grows upwards in the
     // world and downwards in an image.

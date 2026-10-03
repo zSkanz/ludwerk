@@ -652,6 +652,12 @@ public:
     // `cameraJitter` and `render` both ask, so a frame is never jittered
     // without the pass that takes the jitter out.
     [[nodiscard]] bool temporalFrame(const RenderWorld& world) const noexcept;
+    // The fraction of the target the world is drawn at: the settings' scale
+    // and cap, or the whole of it for a picture of sprites alone.
+    [[nodiscard]] f32 worldRenderScale(const RenderWorld& world, u32 width, u32 height) const noexcept
+    {
+        return spritesOnly(world) ? 1.0f : effectiveRenderScale(settings_, width, height);
+    }
 
 private:
     [[nodiscard]] std::optional<core::EngineError> ensureTargets(rhi::IDevice& device, u32 width, u32 height);
@@ -3595,14 +3601,13 @@ constexpr u32 kJitterSamples = 8;
 bool DefaultRenderer::temporalFrame(const RenderWorld& world) const noexcept
 {
     // **Not a picture with nothing behind it**, whose alpha a blend would
-    // lose; **nor a frame with sprites drawn in their own colours** (ADR
-    // 0153): the jitter would move pixel art by a fraction of a pixel every
-    // frame, and what it is is exactly its pixels -- SMAA, which leaves them
-    // be, instead.
+    // lose; **nor a picture of sprites alone** (`spritesOnly`), which SMAA
+    // smooths instead -- a 2D game is not jittered at all. A sprite drawn in
+    // its own colours among 3D surfaces is neither jittered nor blended: it
+    // is drawn where the camera is without its jitter, and the resolve passes
+    // its pixels through (ADR 0158).
     return settings_.antiAliasing == AntiAliasingMode::Taa && world.camera.valid &&
-           !world.environment.transparentBackground &&
-           std::none_of(world.sprites.begin(), world.sprites.end(),
-                        [](const RenderSprite& sprite) { return sprite.exact; });
+           !world.environment.transparentBackground && !spritesOnly(world);
 }
 
 core::Vec2 DefaultRenderer::cameraJitter(const RenderWorld& world, u32 targetWidth, u32 targetHeight) const
@@ -3610,7 +3615,7 @@ core::Vec2 DefaultRenderer::cameraJitter(const RenderWorld& world, u32 targetWid
     if (!temporalFrame(world) || targetWidth == 0 || targetHeight == 0)
         return {};
     // The render size, as `render` will make it.
-    const f32 scale = effectiveRenderScale(settings_, targetWidth, targetHeight);
+    const f32 scale = worldRenderScale(world, targetWidth, targetHeight);
     const auto scaled = [scale](u32 value) {
         const auto result = static_cast<u32>(static_cast<f32>(value) * scale + 0.5f);
         return result > 0 ? result : 1u;
@@ -3921,11 +3926,12 @@ rhi::TextureHandle DefaultRenderer::resolveTemporal(rhi::IDevice& device, rhi::I
     taa.blend[3] = 1.5f;
     taa.jitter[0] = camera.jitter.x * 0.5f;
     taa.jitter[1] = -camera.jitter.y * 0.5f;
-    const std::array<rhi::TextureBinding, 4> bindings{
+    const std::array<rhi::TextureBinding, 5> bindings{
         rhi::TextureBinding{scene, pointSampler_},
         rhi::TextureBinding{history_[historyIndex_], environmentSampler_},
         rhi::TextureBinding{velocity_, pointSampler_},
         rhi::TextureBinding{depth_, pointSampler_},
+        rhi::TextureBinding{spriteExactLive_ ? spriteMask_ : blackPixel_, pointSampler_},
     };
     cmd.pushDebugGroup("taa");
     fullscreenPass(cmd, taaResolve_.handle, history_[write], renderWidth_, renderHeight_, "taa", bindings,
@@ -4073,14 +4079,21 @@ void DefaultRenderer::resolvePicture(rhi::IDevice& device, rhi::ICmdList& cmd, c
         easu.con[2][3] = bitsOf(2.0f / inHeight);
         easu.con[3][0] = bitsOf(0.0f);
         easu.con[3][1] = bitsOf(4.0f / inHeight);
-        const std::array<rhi::TextureBinding, 1> source{rhi::TextureBinding{picture, environmentSampler_}};
+        // With the sprites' mask, which the upscale takes the nearest texel
+        // under (ADR 0158): pixel art is never filtered.
+        const std::array<rhi::TextureBinding, 2> source{
+            rhi::TextureBinding{picture, environmentSampler_},
+            rhi::TextureBinding{spriteExactLive_ ? spriteMask_ : blackPixel_, pointSampler_}};
         cmd.pushDebugGroup("fsr1");
         fullscreenPass(cmd, easu_.handle, upscaled_, target.width, target.height, "fsr-easu", source,
                        asBytes(&easu, sizeof(easu)));
         cmd.popDebugGroup();
         sharpened = upscaled_;
     }
-    const std::array<rhi::TextureBinding, 1> source{rhi::TextureBinding{sharpened, pointSampler_}};
+    // And under the mask, the picture unsharpened.
+    const std::array<rhi::TextureBinding, 2> source{
+        rhi::TextureBinding{sharpened, pointSampler_},
+        rhi::TextureBinding{spriteExactLive_ ? spriteMask_ : blackPixel_, pointSampler_}};
     cmd.pushDebugGroup("rcas");
     fullscreenPass(cmd, rcasSlot.handle, target.color, target.width, target.height, "fsr-rcas", source,
                    asBytes(&rcas, sizeof(rcas)));
@@ -5540,8 +5553,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // writes `target`, so a reduced scale costs every per-pixel pass at once
     // and costs the 2D pass -- which the host draws afterwards, at the target's
     // own size -- nothing at all.
-    // The scale, and the cap on a handheld's resolution (`effectiveRenderScale`).
-    const f32 worldScale = effectiveRenderScale(settings_, target.width, target.height);
+    // The scale, and the cap on a handheld's resolution (`effectiveRenderScale`)
+    // -- and neither for a picture of sprites alone (`spritesOnly`).
+    const f32 worldScale = worldRenderScale(world, target.width, target.height);
     const auto scaled = [&](u32 value) {
         const auto result = static_cast<u32>(static_cast<f32>(value) * worldScale + 0.5f);
         return result > 0 ? result : 1u;
@@ -6539,10 +6553,18 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 cmd.setScissor(
                     {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
             }
-            GpuWorldUiView spriteView;
-            spriteView.viewProjection = world.camera.viewProjection;
             cmd.setPipeline(spriteExactLive_ ? spriteExactPipeline_ : spritePipeline_);
-            cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&spriteView, sizeof(spriteView)));
+            if (spriteExactLive_) {
+                GpuSpriteExactView exactView;
+                exactView.viewProjection = world.camera.viewProjection;
+                exactView.unjitteredViewProjection = world.camera.unjitteredViewProjection;
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&exactView, sizeof(exactView)));
+            }
+            else {
+                GpuWorldUiView spriteView;
+                spriteView.viewProjection = world.camera.viewProjection;
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&spriteView, sizeof(spriteView)));
+            }
             const std::array<rhi::BufferHandle, 1> spriteBuffers{spriteBuffer_};
             cmd.bindVertexBuffers(0, spriteBuffers);
             u32 first = 0;
@@ -7041,7 +7063,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // **A frame with sprites drawn in their own colours resolves through the
     // twin that reads their mask** (ADR 0153) -- plain or graded, into the
     // texture or the window, four in all and each made when first needed. The
-    // mask is sampled as the scene is, so an upscale filters both alike.
+    // mask, and the sprite's colour under it, through a point sampler: a world
+    // drawn smaller than the window is scaled up here, and pixel art by the
+    // nearest texel (ADR 0158).
     LookPipeline* exactSlot = nullptr;
     if (spriteExactLive_) {
         LookPipeline& slot = graded ? (intoWindow ? exactGradedTonemapWindow_ : exactGradedTonemap_)
@@ -7053,7 +7077,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     const std::array<rhi::TextureBinding, 4> tonemapTextures{
         rhi::TextureBinding{sceneColor, environmentSampler_}, rhi::TextureBinding{bloom_[0], environmentSampler_},
         rhi::TextureBinding{exposure_[nextExposure], linearSampler_},
-        rhi::TextureBinding{exactSlot != nullptr ? spriteMask_ : whitePixel_, environmentSampler_}};
+        rhi::TextureBinding{exactSlot != nullptr ? spriteMask_ : whitePixel_, pointSampler_}};
     const std::span<const rhi::TextureBinding> tonemapBindings{tonemapTextures.data(),
                                                                exactSlot != nullptr ? usize{4} : usize{3}};
 

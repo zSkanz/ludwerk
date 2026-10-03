@@ -1929,3 +1929,31 @@ TEST_CASE("ADR 0127: a visible rope is one cylinder from end to end, and one tha
     render::extract(fixture.world, workspace, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
     CHECK(snapshot.draws.size() == 2);
 }
+
+TEST_CASE("spritesOnly: sprites and not one 3D surface, which is drawn at the window's resolution")
+{
+    // ADR 0158: a picture of sprites alone is not scaled, upscaled or jittered;
+    // one with a mesh, a terrain or foliage among its sprites follows the 3D.
+    using namespace render;
+    RenderWorld world;
+    CHECK_FALSE(spritesOnly(world));
+    world.sprites.push_back(RenderSprite{});
+    CHECK(spritesOnly(world));
+    // Particles, decals and world UI are drawn over sprites, not 3D surfaces.
+    world.particles.push_back(RenderParticle{});
+    world.decals.push_back(RenderDecal{});
+    CHECK(spritesOnly(world));
+
+    RenderWorld withMesh = world;
+    withMesh.draws.push_back(DrawItem{});
+    CHECK_FALSE(spritesOnly(withMesh));
+    RenderWorld withTerrain = world;
+    withTerrain.terrains.push_back(RenderTerrain{});
+    CHECK_FALSE(spritesOnly(withTerrain));
+    RenderWorld withFoliage = world;
+    withFoliage.foliageRuns.push_back(RenderFoliageRun{});
+    CHECK_FALSE(spritesOnly(withFoliage));
+    // And a 3D world with no sprites is not one either.
+    withMesh.sprites.clear();
+    CHECK_FALSE(spritesOnly(withMesh));
+}

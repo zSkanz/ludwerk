@@ -146,3 +146,42 @@ The shared shape:
   passes and an image at the target's size.
 - The capture goldens were recorded again for High's SMAA. A frame through
   FXAA (`--anti-aliasing=fxaa`) still matches the M7.5 stream.
+
+## Amendment, 2026-10-03: the UI and the 2D layer
+
+The engines that scale a picture scale its 3D. Godot's resolution scaling
+reaches the 3D alone, and its 2D is drawn at full resolution. Unity, Unreal
+and Godot all draw the UI after the upscale. A pixel-perfect 2D camera turns
+anti-aliasing off and scales by whole numbers. Measured against that:
+
+- **The screen's UI was right already.** It is drawn after the world's picture
+  is resolved and scaled, at the window's resolution, so it is never scaled,
+  smoothed or jittered.
+- **A picture of sprites alone** (`spritesOnly`: sprites, and no mesh, terrain
+  or foliage) is drawn at the window's resolution whatever `RenderScale` says.
+  It upscales nothing and takes no temporal pass; TAA falls to SMAA for it, as
+  for a view. A handheld's FSR 1 at three quarters no longer softens a 2D
+  phone game. Particles, decals and world UI do not make a picture 3D.
+- **Sprites among 3D surfaces follow the 3D picture**: its scale, its upscale
+  and its temporal pass.
+- **Except a sprite drawn in its own colours** (ADR 0153), which is never
+  jittered, blended, filtered or sharpened:
+  - it is placed by the camera without the jitter;
+  - the TAA resolve, FSR 1's upscale and RCAS's sharpening pass its pixels
+    through, by the sprite mask;
+  - scaled up, by FSR 1 or by the resolve, it takes the nearest texel.
+
+  Such a frame used to fall to SMAA whole. The 3D around the pixel art now
+  keeps its temporal pass.
+
+`anti_aliasing_2d` holds all three:
+- the label is the same pixels at half scale through FSR 1 and TAA as at full
+  scale with none;
+- sprites alone at half scale through FSR 1 and TAA are the frame drawn at
+  full scale through SMAA;
+- a one-pixel checkerboard among 3D surfaces is only its two colours through
+  FSR 1 and TAA, through TAA alone, and through FSR 1 and SMAA.
+
+**For the second delivery**: frame generation interpolates the world alone.
+The UI is drawn onto every presented frame, interpolated and real, at the
+display's rate. This is the composition form AMD's integration guide prefers.

@@ -588,6 +588,11 @@ namespace {
 
 } // namespace
 
+bool spritesOnly(const RenderWorld& world) noexcept
+{
+    return !world.sprites.empty() && world.draws.empty() && world.terrains.empty() && world.foliageRuns.empty();
+}
+
 void jitterCamera(RenderCamera& camera, core::Vec2 jitter) noexcept
 {
     if (!camera.valid || (jitter.x == 0.0f && jitter.y == 0.0f))

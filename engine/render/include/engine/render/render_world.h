@@ -775,6 +775,15 @@ struct RenderWorld
     }
 };
 
+// **A picture of sprites alone** (ADR 0158, the 2D layer): sprites and not one
+// 3D surface -- no mesh, no terrain, no foliage. Such a frame is drawn at the
+// target's own resolution whatever the render scale says, upscales nothing
+// and takes no temporal pass, as a 2D renderer in the engines that scale only
+// their 3D does: a phone's three-quarter scale would soften every sprite of a
+// 2D game and buy nothing. Particles, decals and world UI do not make a frame
+// 3D -- they are drawn over the sprites or over nothing.
+[[nodiscard]] bool spritesOnly(const RenderWorld& world) noexcept;
+
 // Builds `sortKey`. Exposed because it is the ordering contract and a test
 // asserts on it directly rather than on a sorted list, which would only prove
 // that *something* was consistent.

@@ -62,6 +62,10 @@ local LicenceNames = {
     "LICENCE",
     "LICENCE.txt",
     "License.txt",
+    -- AMD's FidelityFX repositories. Matched by the exact name, because a
+    -- case-sensitive file system -- CI's Linux runner -- is the one that
+    -- decides whether the file is there.
+    "license.txt",
     "COPYING",
     "COPYING.txt",
     "LICENSE_A2",

@@ -135,9 +135,15 @@ float3 ditherOutput(float3 encoded, float2 pixel)
 // dither -- half a step of noise is the difference between the colour and its
 // neighbour. Where a sprite half covers a pixel -- an anti-aliased edge, a
 // transparent texel -- the two answers mix by how much of it is sprite.
-float4 resolveExact(float4 resolved, float3 hdr, float2 uv)
+//
+// **Through a point sampler** (ADR 0158), the mask and the sprite's colour
+// alike: a world drawn smaller than the window is scaled up by this pass, and
+// pixel art is scaled by the nearest texel, never filtered. A one-to-one pass
+// reads the same texel either way.
+float4 resolveExact(float4 resolved, float2 uv)
 {
     const float exact = ExactTexture.SampleLevel(ExactSampler, uv, 0.0f);
+    const float3 hdr = HdrTexture.SampleLevel(ExactSampler, uv, 0.0f).rgb;
     return float4(lerp(resolved.rgb, encodeSrgb(saturate(hdr)), exact), resolved.a);
 }
 #endif
@@ -170,7 +176,7 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     const float3 exposed = max(scene * exposure, float3(0.0f, 0.0f, 0.0f));
 
 #ifdef ENG_TONEMAP_EXACT
-    return resolveExact(float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), input.Position.xy), alpha), hdr,
+    return resolveExact(float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), input.Position.xy), alpha),
                         input.Uv);
 #else
     return float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), input.Position.xy), alpha);

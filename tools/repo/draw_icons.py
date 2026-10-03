@@ -353,6 +353,13 @@ def draw_icon(group, name):
     if planned is not None:
         return planned
     i = Icon()
+    if group == "class" and name == "Swarm":
+        # Three agents travelling toward one target; not a team or a single walker.
+        for x,y in ((3,3),(3,15),(10,8)):
+            h = 8 if x == 10 else 6
+            i.line((x,y),(x+5,y+h/2),(x,y+h),closed=True)
+        i.circle(21,12,1.5,True)
+        return i
     if group == "class" and name == "CryptoService":
         # A protected key: one shield contour and a short, readable key inside.
         i.line((12,2),(21,5),(20,14),(17,19),(12,22),(7,19),(4,14),(3,5),closed=True)
@@ -1045,6 +1052,21 @@ def preview(theme, images):
                 sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
             d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
     sheet.save(ART / "editor-localization-review.png")
+    additions = ("class.Swarm", "class.NavigationAgent", "class.Team", "class.NavigationService")
+    sheet = Image.new("RGB",(1040,240))
+    d = ImageDraw.Draw(sheet)
+    for row,(mode,bg) in enumerate((("dark","#1F1F1F"),("light","#FFFFFF"))):
+        d.rectangle((0,row*120,1040,(row+1)*120),fill=bg)
+        fg = "#CCCCCC" if mode == "dark" else "#3B3B3B"
+        d.text((20,row*120+8),"ORBIT / Swarm and navigation / 32, 24, 16, 13 px",font=font,fill=fg)
+        for n,icon_id in enumerate(additions):
+            x,y = 20+n*260,row*120+35
+            color = theme["palette"][theme["roles"].get(icon_id,theme["defaultRole"])][mode]
+            for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size),Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
+    sheet.save(ART / "swarm-review.png")
     cards=[]
     for path in images:
         cards.append(f'<figure><div><img src="{path.replace(".png", ".svg")}" width="48"><img src="{path.replace(".png", ".svg")}" width="24"><img src="{path.replace(".png", ".svg")}" width="16"></div><figcaption>{html.escape(path[:-4])}</figcaption></figure>')

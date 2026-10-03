@@ -12,6 +12,11 @@
 
 Texture2D SourceTexture : register(t0, space2);
 SamplerState SourceSampler : register(s0, space2);
+// **Which pixels are a sprite drawn in its own colours** (ADR 0153), at the
+// world's render size and through a point sampler -- black on a frame without
+// one. Pixel art is not sharpened: its pixels are what it is.
+Texture2D<float> ExactTexture : register(t1, space2);
+SamplerState ExactSampler : register(s1, space2);
 
 #define A_GPU 1
 #define A_HLSL 1
@@ -61,5 +66,8 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     uint height;
     SourceTexture.GetDimensions(width, height);
     FsrRcasF(r, g, b, AU2(input.Uv * float2(width, height)), RcasCon);
+    const float exact = ExactTexture.SampleLevel(ExactSampler, input.Uv, 0.0f);
+    if (exact > 0.0f)
+        return float4(lerp(float3(r, g, b), SourceTexture.SampleLevel(SourceSampler, input.Uv, 0.0f).rgb, exact), 1.0f);
     return float4(r, g, b, 1.0f);
 }

@@ -1155,6 +1155,20 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 240)
 
+    # **What the anti-aliasing and the upscale leave alone** (ADR 0158): the
+    # screen's UI, a picture of sprites alone, and pixel art among 3D surfaces
+    # -- see the driver for each claim.
+    add_test(NAME anti_aliasing_2d
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCENES=${CMAKE_SOURCE_DIR}/tests/screenshots/aa2d
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/anti-aliasing-2d
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_aa_2d_gate.cmake)
+    set_tests_properties(anti_aliasing_2d PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 240)
+
     # Local shadows, as a differential and for exactly the same reason -- see
     # the driver. `SpotLight.Shadows` and `PointLight.Shadows` were accepted,
     # read back and plumbed to `RenderLight::shadows` for three milestones while

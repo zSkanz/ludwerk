@@ -232,6 +232,7 @@ inline constexpr std::string_view ClassStreamingService = "class.StreamingServic
 inline constexpr std::string_view ClassSubWorld = "class.SubWorld";
 inline constexpr std::string_view ClassSunRaysEffect = "class.SunRaysEffect";
 inline constexpr std::string_view ClassSurfaceGui = "class.SurfaceGui";
+inline constexpr std::string_view ClassSwarm = "class.Swarm";
 inline constexpr std::string_view ClassTagService = "class.TagService";
 inline constexpr std::string_view ClassTeam = "class.Team";
 inline constexpr std::string_view ClassTeamService = "class.TeamService";

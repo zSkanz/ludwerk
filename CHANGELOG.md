@@ -1098,6 +1098,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   stepped again by a correction that answers its tick, rather than lost. And
   the authority never skips ticks of input of a player whose predicted steps
   keep state -- a cooldown counted one tick for several (D526).
+- **The 2D layer under scaling and anti-aliasing** (ADR 0158, amended). A
+  picture of sprites alone is drawn at the window's resolution whatever
+  `RenderScale` says, upscales nothing and is never jittered, so a phone's
+  three-quarter scale no longer softens a 2D game. Pixel art among 3D surfaces
+  keeps its pixels: it is placed without the jitter, passed through by TAA,
+  FSR 1 and RCAS, and scaled by the nearest texel. The 3D around it keeps its
+  temporal pass rather than falling to SMAA. `imgprobe` checks a region's
+  palette, and a region against another image.
 - **The local gate no longer ends other engines** (D523): it stopped every
   `engine-host` on the machine by name before its build -- a packaged game
   under test, another session's server -- with exit -1 and no log; it stops

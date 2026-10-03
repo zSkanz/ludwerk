@@ -26,6 +26,12 @@ Texture2D VelocityTexture : register(t2, space2);
 SamplerState VelocitySampler : register(s2, space2);
 Texture2D DepthTexture : register(t3, space2);
 SamplerState DepthSampler : register(s3, space2);
+// **Which pixels are a sprite drawn in its own colours** (ADR 0153), through a
+// point sampler -- black on a frame without one. Such a sprite is drawn without
+// the jitter, and its pixels pass through as this frame has them: pixel art is
+// never blended with what was there before.
+Texture2D<float> ExactTexture : register(t4, space2);
+SamplerState ExactSampler : register(s4, space2);
 
 struct Interpolants
 {
@@ -143,7 +149,8 @@ float4 FragmentMain(Interpolants input) : SV_Target0
         VelocityTexture.SampleLevel(VelocitySampler, (float2(nearestPixel) + 0.5f) * TaaTexel.xy, 0.0f).xy;
     const float2 before = input.Uv - velocity;
     const bool outside = any(before < 0.0f) || any(before > 1.0f);
-    if (TaaBlend.z < 0.5f || outside)
+    const float exact = ExactTexture.SampleLevel(ExactSampler, (float2(pixel) + 0.5f) * TaaTexel.xy, 0.0f);
+    if (TaaBlend.z < 0.5f || outside || exact >= 1.0f)
         return float4(expand(fromYCoCg(centre)), 1.0f);
 
     const float3 history = clipToBox(toYCoCg(compress(sampleHistory(before))), low, high);
@@ -155,7 +162,9 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     const float currentWeight = alpha / (1.0f + centre.x);
     const float historyWeight = (1.0f - alpha) / (1.0f + history.x);
     const float3 blended = (centre * currentWeight + history * historyWeight) / (currentWeight + historyWeight);
-    const float3 result = expand(max(fromYCoCg(blended), 0.0f));
+    // An exact sprite's edge, which half covers the pixel, takes this frame by
+    // as much as it covers.
+    const float3 result = expand(max(fromYCoCg(lerp(blended, centre, exact)), 0.0f));
     // Nothing that is not a number is carried into the next frame.
     return float4(any(isnan(result)) ? 0.0f.xxx : result, 1.0f);
 }

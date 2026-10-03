@@ -108,8 +108,8 @@ Four ways to smooth edges (ADR 0158):
 - **TAA**: each frame is drawn a fraction of a pixel off from the last, and
   blended into the frames before it through motion vectors. It is the one that
   stops a fence, a wire or far grass crawling as the camera moves. It runs on
-  the world's main camera; a `ViewportFrame`, a sub-world and a frame with
-  sprites drawn in their own colours use SMAA instead.
+  the world's main camera; a `ViewportFrame`, a sub-world and a picture of
+  sprites alone use SMAA instead.
 - **Off**.
 
 **`upscaling = "fsr1"`** brings a world drawn at a `render_scale` under 1 up to
@@ -134,6 +134,16 @@ it is genuinely sharper.
 The **world** renders at that fraction and is upscaled into the target. The post
 chain and the UI are unaffected: the 2D pass draws at full resolution on top,
 which is the whole reason a render scale is worth having.
+
+**A picture of sprites alone is not scaled.** A world with sprites and no mesh,
+terrain or foliage is drawn at the window's resolution whatever `render_scale`
+says, upscales nothing and takes no temporal pass. A 2D game is as sharp on a
+phone, whose preset scales to three quarters, as on a desktop.
+
+**Sprites among 3D surfaces follow the 3D picture**, except a sprite drawn in
+its own colours (`Part2D.ExactColor`, the default). Pixel art is never
+jittered or blended by TAA, never filtered by FSR 1 and never sharpened. Scaled
+up, it takes the nearest texel.
 
 The floor is 0.5 because below that the world is upscaled by more than two and
 the crisp UI drawn over it makes the difference impossible to ignore.

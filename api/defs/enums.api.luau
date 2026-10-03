@@ -1798,8 +1798,9 @@ local Definition: Schema.Definition = {
                     Value = 3,
                     Doc = "Each frame drawn a fraction of a pixel off from the last and blended into the frames "
                         .. "before it: what crawls and shimmers in motion -- a fence, a wire, far grass -- is "
-                        .. "smoothed as no single frame can. The world's main camera only; a `ViewportFrame` and a "
-                        .. "sub-world use SMAA.",
+                        .. "smoothed as no single frame can. The world's main camera only; a `ViewportFrame`, a "
+                        .. "sub-world and a picture of sprites alone use SMAA. Pixel art among 3D surfaces is "
+                        .. "never jittered or blended.",
                 },
             } :: { Schema.EnumItem },
         },

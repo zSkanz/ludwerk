@@ -10,6 +10,12 @@
 
 Texture2D SourceTexture : register(t0, space2);
 SamplerState SourceSampler : register(s0, space2);
+// **Which pixels are a sprite drawn in its own colours** (ADR 0153), at the
+// source's size and through a point sampler -- black on a frame without one.
+// Pixel art is scaled up by the nearest texel, never filtered: its pixels are
+// what it is.
+Texture2D<float> ExactTexture : register(t1, space2);
+SamplerState ExactSampler : register(s1, space2);
 
 #define A_GPU 1
 #define A_HLSL 1
@@ -56,5 +62,8 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     SourceTexture.GetDimensions(width, height);
     const float2 output = float2(width, height) / asfloat(EasuCon0.xy);
     FsrEasuF(colour, AU2(input.Uv * output), EasuCon0, EasuCon1, EasuCon2, EasuCon3);
+    const float exact = ExactTexture.SampleLevel(ExactSampler, input.Uv, 0.0f);
+    if (exact > 0.0f)
+        colour = lerp(colour, SourceTexture.SampleLevel(ExactSampler, input.Uv, 0.0f).rgb, exact);
     return float4(colour, 1.0f);
 }

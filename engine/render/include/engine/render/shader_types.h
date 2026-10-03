@@ -627,6 +627,17 @@ struct GpuWorldUiView
 
 static_assert(sizeof(GpuWorldUiView) == 64, "GpuWorldUiView is a cbuffer layout");
 
+// Vertex stage, `b0 space1`, for `sprite_exact` (ADR 0153, 0158): the view, and
+// the same view without the temporal pass's jitter -- where a sprite drawn in
+// its own colours is placed, so pixel art never moves by a fraction of one.
+struct GpuSpriteExactView
+{
+    core::Mat4 viewProjection;
+    core::Mat4 unjitteredViewProjection;
+};
+
+static_assert(sizeof(GpuSpriteExactView) == 128, "GpuSpriteExactView is a cbuffer layout");
+
 // Fragment stage, `b0 space3`, for `ui_world`: x is the brightness.
 struct GpuWorldUiLook
 {
