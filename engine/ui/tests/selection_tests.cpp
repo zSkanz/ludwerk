@@ -688,7 +688,8 @@ TEST_CASE("G40: pulled past its end a list gives, less the further, and springs 
     CHECK(list.scroll().overscroll.y - half > -35.0f);
     // The rows are drawn where the pull put them.
     list.fixture.layout();
-    CHECK(list.fixture.object(list.rows[0]).absolutePosition.y == doctest::Approx(-static_cast<double>(list.scroll().overscroll.y)));
+    CHECK(list.fixture.object(list.rows[0]).absolutePosition.y ==
+          doctest::Approx(-static_cast<double>(list.scroll().overscroll.y)));
 
     // Held, it stays; let go, it comes back.
     list.wait(0.2);
