@@ -8,8 +8,10 @@
 // that only appears with loss or reordering is invisible here. That is stated
 // rather than implied, because a green loopback test reads like more assurance
 // than it is.
+#include <chrono>
 #include <doctest/doctest.h>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "engine/core/i18n.h"
@@ -301,7 +303,17 @@ TEST_CASE("a peer that goes silent is gone within the timeout, not thirty second
     seedCatalog();
     auto server = createEnetTransport();
     auto client = createEnetTransport();
-    REQUIRE_FALSE(server->open({.port = EchoPort, .maxPeers = 4, .channels = 2, .timeoutMs = 1000}).has_value());
+    // Serviced only when polled, so that not polling it is silence: with its
+    // thread, a server whose game froze still answers the transport.
+    REQUIRE_FALSE(server
+                      ->open({.port = EchoPort,
+                              .maxPeers = 4,
+                              .channels = 2,
+                              .timeoutMs = 1000,
+                              .maxMessageBytes = 0,
+                              .maxPeersPerAddress = 0,
+                              .serviceThread = false})
+                      .has_value());
     REQUIRE_FALSE(client->open({.port = 0, .maxPeers = 4, .channels = 2, .timeoutMs = 1000}).has_value());
     PeerId toServer;
     REQUIRE_FALSE(client->connect("127.0.0.1", EchoPort, toServer).has_value());
@@ -352,4 +364,67 @@ TEST_CASE("a peer that closes tells the other end at once")
     }
     CHECK(told);
     CHECK(server->peerCount() == 0);
+}
+
+TEST_CASE("N9: the round trip is the link's, not the frame rate's")
+{
+    // The owner read a ping of a hundred milliseconds whenever his window was
+    // behind another: the transport was serviced once a frame, and a window
+    // in the background draws ten frames a second. With its own thread an
+    // acknowledgement leaves the moment the packet arrives.
+    seedCatalog();
+    auto server = createEnetTransport();
+    auto client = createEnetTransport();
+    REQUIRE_FALSE(server->open({.port = EchoPort, .maxPeers = 4, .channels = 2}).has_value());
+    REQUIRE_FALSE(client->open({.port = 0, .maxPeers = 4, .channels = 2}).has_value());
+    PeerId toServer;
+    REQUIRE_FALSE(client->connect("127.0.0.1", EchoPort, toServer).has_value());
+    std::vector<TransportEvent> serverEvents;
+    std::vector<TransportEvent> clientEvents;
+    REQUIRE(pumpUntil(*server, *client, serverEvents, clientEvents, [&] {
+        return has(serverEvents, TransportEvent::Kind::Connected) && has(clientEvents, TransportEvent::Kind::Connected);
+    }));
+    // Ten frames a second for two seconds, each sending one reliable message.
+    const std::vector<u8> payload(64, 7);
+    for (int frame = 0; frame < 20; ++frame) {
+        REQUIRE_FALSE(client->send(toServer, payload, Delivery::Reliable, 0).has_value());
+        client->flush();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        REQUIRE_FALSE(client->poll(clientEvents, 0).has_value());
+        REQUIRE_FALSE(server->poll(serverEvents, 0).has_value());
+    }
+    CHECK(client->link(toServer).roundTripMs < 25u);
+}
+
+TEST_CASE("netcode ledger A: a simulated delay is the round trip ENet itself measures")
+{
+    // Below the transport: a relay in this process holds each datagram 50 ms
+    // each way, so the round trip ENet reports is about 100 ms -- what an
+    // in-process wrapper above the transport could never show it.
+    seedCatalog();
+    auto server = createEnetTransport();
+    auto client = createEnetTransport();
+    REQUIRE_FALSE(server->open({.port = EchoPort, .maxPeers = 4, .channels = 2}).has_value());
+    TransportConfig conditioned{.port = 0, .maxPeers = 4, .channels = 2};
+    conditioned.simulatedDelayMs = 50;
+    REQUIRE_FALSE(client->open(conditioned).has_value());
+    PeerId toServer;
+    REQUIRE_FALSE(client->connect("127.0.0.1", EchoPort, toServer).has_value());
+    std::vector<TransportEvent> serverEvents;
+    std::vector<TransportEvent> clientEvents;
+    REQUIRE(pumpUntil(*server, *client, serverEvents, clientEvents, [&] {
+        return has(serverEvents, TransportEvent::Kind::Connected) && has(clientEvents, TransportEvent::Kind::Connected);
+    }));
+    const std::vector<u8> payload(32, 1);
+    for (int frame = 0; frame < 30; ++frame) {
+        REQUIRE_FALSE(client->send(toServer, payload, Delivery::Reliable, 0).has_value());
+        client->flush();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        REQUIRE_FALSE(client->poll(clientEvents, 0).has_value());
+        REQUIRE_FALSE(server->poll(serverEvents, 0).has_value());
+    }
+    const u32 roundTrip = client->link(toServer).roundTripMs;
+    CAPTURE(roundTrip);
+    CHECK(roundTrip >= 90u);
+    CHECK(roundTrip <= 160u);
 }

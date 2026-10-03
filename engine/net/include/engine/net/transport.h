@@ -133,6 +133,25 @@ struct TransportConfig
 
     // Connections one address may hold at once. Zero: no limit.
     usize maxPeersPerAddress = 0;
+
+    // **Serviced by a thread of its own** (N9): acknowledgements and pings
+    // answered the moment they arrive, whatever the frame loop is doing.
+    // Off, the transport is serviced only inside `poll` -- what a test uses
+    // to stand for a process that has stopped answering, which with the
+    // thread a frozen game no longer is to the transport.
+    bool serviceThread = true;
+
+    // **A worse network than the one there is** (netcode ledger A): what a
+    // connection this host makes goes through a link conditioner -- a relay
+    // in this process, below the transport -- that holds each datagram, each
+    // way, for `simulatedDelayMs` give or take `simulatedJitterMs`, and loses
+    // `simulatedLossPercent` of them. Below ENet, so ENet's own round trip,
+    // resends and timeouts see it as they would see the real thing. For
+    // measuring and testing only; `engine-host --net-delay` refuses it in a
+    // shipping build. Zero for all three: no relay.
+    u32 simulatedDelayMs = 0;
+    u32 simulatedJitterMs = 0;
+    f32 simulatedLossPercent = 0.0f;
 };
 
 // **What a connection is like, as the transport measured it** (the multiplayer
@@ -167,9 +186,19 @@ public:
     [[nodiscard]] virtual std::optional<core::EngineError> connect(std::string_view host, u16 port,
                                                                    PeerId& outPeer) = 0;
     virtual void disconnect(PeerId peer) = 0;
+    // **Lets a peer go at once** (NA29), freeing its slot without the round
+    // trip a disconnect waits for: a connection that never said who it was
+    // held a slot for ten seconds, and thirty-two of them filled a server.
+    virtual void drop(PeerId peer) { disconnect(peer); }
 
     [[nodiscard]] virtual std::optional<core::EngineError> send(PeerId peer, std::span<const u8> payload,
                                                                 Delivery delivery, u8 channel) = 0;
+
+    // **Puts what was sent on the wire now** (N9): called after a tick's
+    // sends, so they leave together and at once rather than when the
+    // transport next services itself. Nothing to do for a transport that
+    // sends as it is asked.
+    virtual void flush() {}
 
     // Drains up to `timeoutMs` of waiting events into `out`, appending. Returns
     // with whatever it has when the time is spent; zero means "whatever is

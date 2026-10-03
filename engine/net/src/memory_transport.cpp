@@ -186,6 +186,8 @@ public:
     {}
 
     std::optional<core::EngineError> open(const TransportConfig& config) override { return m_inner->open(config); }
+    void flush() override { m_inner->flush(); }
+    void drop(PeerId peer) override { m_inner->drop(peer); }
     void close() override
     {
         m_held.reset();
