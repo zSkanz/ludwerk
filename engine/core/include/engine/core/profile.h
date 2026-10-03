@@ -59,6 +59,30 @@ struct ScopeReport
 // that did not run in a frame counts that frame as zero.
 [[nodiscard]] std::vector<ScopeReport> report(usize skipFrames);
 
+// **One slow frame, scope by scope** (H11): what a median and a p95 over the
+// run cannot say about the frame a player felt.
+struct SpikeRow
+{
+    std::string name;
+    u32 depth = 0;
+    f64 ms = 0.0;
+    u32 calls = 0;
+};
+
+struct SpikeReport
+{
+    // Counted from the first frame closed after it was turned on.
+    u64 frame = 0;
+    f64 ms = 0.0;
+    std::vector<SpikeRow> rows;
+};
+
+// The slowest frames, slowest first: the worst `worst`, and any other over
+// `factor` times the median frame, at most `most` in all. A frame's rows are
+// its scopes of at least `smallestMs`, as a tree; the first `skipFrames` are
+// left out.
+[[nodiscard]] std::vector<SpikeReport> spikes(usize skipFrames, usize worst, f64 factor, usize most, f64 smallestMs);
+
 class Scope
 {
 public:

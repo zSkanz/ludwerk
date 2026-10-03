@@ -571,6 +571,8 @@ public:
     explicit HeldTransport(std::unique_ptr<net::ITransport> inner) : m_inner(std::move(inner)) {}
 
     bool holding = false;
+    // The type of every message sent through it, held or not.
+    std::vector<core::u8> sentTypes;
 
     void release()
     {
@@ -598,6 +600,8 @@ public:
             m_held.push_back(Held{peer, std::vector<core::u8>(payload.begin(), payload.end()), delivery, channel});
             return std::nullopt;
         }
+        if (!payload.empty())
+            sentTypes.push_back(payload[0]);
         return m_inner->send(peer, payload, delivery, channel);
     }
     void flush() override { m_inner->flush(); }
@@ -2378,6 +2382,15 @@ struct Bytes
 
 // A replica joined to a fake authority: the test is the server, and writes
 // whatever bytes it likes to the replica.
+// Numbers this connection's intents written by hand carry (G38, protocol
+// 37): 0 is `Move`, 1 is `Jump`.
+void nameIntents(PlayedMatch& match)
+{
+    Bytes names;
+    names.u8v(24).u16v(2).u16v(0).text("Move").u16v(1).text("Jump");
+    REQUIRE_FALSE(match.clientTransport->send(match.toServer, names.data, net::Delivery::Reliable, 0).has_value());
+}
+
 struct FakeAuthority
 {
     std::shared_ptr<net::MemoryNetwork> network = net::createMemoryNetwork();
@@ -2458,6 +2471,7 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
     const NetId ballNet = match.authority->netIdOf(ball);
     REQUIRE(ballNet.valid());
     (void)match.server.atoms.intern("Move");
+    nameIntents(match);
 
     // Forty intent messages in one tick: a burst's worth is read -- the
     // replica's own from the last step among them -- and the rest are a peer
@@ -2470,7 +2484,7 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
             .u8v(1)
             .u64v(100000 + at)
             .u16v(1)
-            .text("Move")
+            .u16v(0)
             .u8v(2)
             .f32v(static_cast<float>(at))
             .f32v(0.0f)
@@ -2491,7 +2505,7 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
     Bytes many;
     many.u8v(7).u32v(0).u8v(1).u64v(300000).u16v(300);
     for (int at = 0; at < 300; ++at)
-        many.text("Move").u8v(2).f32v(9.0f).f32v(0.0f).f32v(0.0f).u8v(1);
+        many.u16v(0).u8v(2).f32v(9.0f).f32v(0.0f).f32v(0.0f).u8v(1);
     REQUIRE_FALSE(match.clientTransport->send(match.toServer, five.data, net::Delivery::Unreliable, 2).has_value());
     REQUIRE_FALSE(match.clientTransport->send(match.toServer, many.data, net::Delivery::Unreliable, 2).has_value());
     match.authority->receive(match.server.world, match.server.workspace);
@@ -2567,6 +2581,7 @@ TEST_CASE("a press whose intent came after its tick was stood in for is applied 
     PlayedMatch match;
     match.run(10);
     (void)match.server.atoms.intern("Jump");
+    nameIntents(match);
     const scene::PlayerComponent* player = match.server.world.players().find(match.remote());
     REQUIRE(player != nullptr);
     // How many times this replica has dropped simulated time (D498).
@@ -2575,7 +2590,7 @@ TEST_CASE("a press whose intent came after its tick was stood in for is applied 
         Bytes intent;
         intent.u8v(7).u32v(epoch).u8v(1).u64v(tick);
         if (jump)
-            intent.u16v(1).text("Jump").u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(1);
+            intent.u16v(1).u16v(1).u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(1);
         else
             intent.u16v(0);
         REQUIRE_FALSE(
@@ -2613,6 +2628,110 @@ namespace {
 
 // A replica's intent stream, sent by hand: one message, one tick, one `Move`
 // direction -- so a test says exactly which tick number carries what.
+TEST_CASE("G38: an action's name crosses once, an intent that overtakes it waits for it, and a name once given stands")
+{
+    PlayedMatch match;
+    match.run(10);
+    (void)match.server.atoms.intern("Jump");
+    (void)match.server.atoms.intern("Move");
+    const scene::PlayerComponent* player = match.server.world.players().find(match.remote());
+    REQUIRE(player != nullptr);
+    const auto send = [&](core::u64 tick, bool jump) {
+        Bytes intent;
+        intent.u8v(7).u32v(0).u8v(1).u64v(tick);
+        if (jump)
+            intent.u16v(1).u16v(5).u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(1);
+        else
+            intent.u16v(0);
+        REQUIRE_FALSE(
+            match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
+    };
+    const auto name = [&](std::string_view text) {
+        Bytes names;
+        names.u8v(24).u16v(1).u16v(5).text(text);
+        REQUIRE_FALSE(match.clientTransport->send(match.toServer, names.data, net::Delivery::Reliable, 0).has_value());
+    };
+    const auto held = [&] {
+        for (const scene::PlayerIntent& intent : player->intents) {
+            if (intent.pressed)
+                return std::string(match.server.atoms.text(intent.action));
+        }
+        return std::string();
+    };
+    // A jump numbered 5 arrives before the name it stands for, which was
+    // held up on its own channel: nothing is applied for it yet, and nothing
+    // is lost.
+    const core::u64 first = match.tick + 1;
+    send(first, true);
+    send(first + 1, false);
+    match.authority->receive(match.server.world, match.server.workspace);
+    CHECK(held().empty());
+    name("Jump");
+    std::string seen;
+    for (core::u64 at = 2; at < 12 && seen.empty(); ++at) {
+        send(first + at, false);
+        match.authority->receive(match.server.world, match.server.workspace);
+        seen = held();
+    }
+    CHECK(seen == "Jump");
+
+    // Given again under another name, the number still means what it did:
+    // a peer cannot make one action read as another.
+    name("Move");
+    match.authority->receive(match.server.world, match.server.workspace);
+    seen.clear();
+    for (core::u64 at = 12; at < 24 && seen.empty(); ++at) {
+        send(first + at, true);
+        match.authority->receive(match.server.world, match.server.workspace);
+        seen = held();
+    }
+    CHECK(seen == "Jump");
+
+    // A name past what a connection may give, or empty, is refused whole.
+    const core::u64 droppedBefore = match.authority->stats().messagesDropped;
+    Bytes tooFar;
+    tooFar.u8v(24).u16v(1).u16v(MaxIntentNames).text("Fly");
+    Bytes empty;
+    empty.u8v(24).u16v(1).u16v(6).text("");
+    REQUIRE_FALSE(match.clientTransport->send(match.toServer, tooFar.data, net::Delivery::Reliable, 0).has_value());
+    REQUIRE_FALSE(match.clientTransport->send(match.toServer, empty.data, net::Delivery::Reliable, 0).has_value());
+    match.authority->receive(match.server.world, match.server.workspace);
+    CHECK(match.authority->stats().messagesDropped == droppedBefore + 2);
+}
+
+TEST_CASE("G38: a replica names each action once a connection, and leaves a button not held out")
+{
+    PlayedMatch match(nullptr, nullptr, true);
+    match.run(10);
+    (void)match.server.atoms.intern("Jump");
+    (void)match.server.atoms.intern("Move");
+    scene::PlayerComponent* mine = match.client.world.players().find(scene::localPlayerOf(match.client.world));
+    REQUIRE(mine != nullptr);
+    mine->intents = {
+        scene::PlayerIntent{match.client.atoms.intern("Jump"), 0, core::Vec3{}, false},
+        scene::PlayerIntent{match.client.atoms.intern("Move"), 2, core::Vec3{0.5f, 0.0f, 0.0f}, false},
+    };
+    const auto namesSent = [&] {
+        return std::count(match.held->sentTypes.begin(), match.held->sentTypes.end(), core::u8{24});
+    };
+    match.run(4);
+    // `Move` was named once, with the first tick that held it; `Jump`, never
+    // held, never.
+    CHECK(namesSent() == 1);
+    mine->intents[0].pressed = true;
+    match.run(4);
+    CHECK(namesSent() == 2);
+    mine->intents[0].pressed = false;
+    match.run(6);
+    const scene::PlayerComponent* seen = match.server.world.players().find(match.remote());
+    REQUIRE(seen != nullptr);
+    CHECK(namesSent() == 2);
+    // The button let go was not sent: it reads as one not sent, false.
+    REQUIRE(seen->intents.size() == 1);
+    CHECK(match.server.atoms.text(seen->intents[0].action) == "Move");
+    CHECK(static_cast<double>(seen->intents[0].axis.x) == doctest::Approx(0.5));
+}
+
 struct MoveStream
 {
     PlayedMatch& match;
@@ -2621,6 +2740,7 @@ struct MoveStream
     explicit MoveStream(PlayedMatch& played) : match(played)
     {
         (void)match.server.atoms.intern("Move");
+        nameIntents(match);
         player = match.server.world.players().find(match.remote());
         REQUIRE(player != nullptr);
     }
@@ -2633,7 +2753,7 @@ struct MoveStream
     {
         Bytes intent;
         intent.u8v(7).u32v(epoch).u8v(1).u64v(tick);
-        intent.u16v(1).text("Move").u8v(2).f32v(x).f32v(0.0f).f32v(0.0f).u8v(0);
+        intent.u16v(1).u16v(0).u8v(2).f32v(x).f32v(0.0f).f32v(0.0f).u8v(0);
         REQUIRE_FALSE(
             match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
     }
@@ -2739,6 +2859,7 @@ TEST_CASE("D480: a press made in the ticks before the stream is anchored again i
     PlayedMatch match;
     match.run(10);
     (void)match.server.atoms.intern("Jump");
+    nameIntents(match);
     const scene::PlayerComponent* player = match.server.world.players().find(match.remote());
     REQUIRE(player != nullptr);
     // How many times this replica has dropped simulated time (D498).
@@ -2747,7 +2868,7 @@ TEST_CASE("D480: a press made in the ticks before the stream is anchored again i
         Bytes intent;
         intent.u8v(7).u32v(epoch).u8v(1).u64v(tick);
         if (jump)
-            intent.u16v(1).text("Jump").u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(1);
+            intent.u16v(1).u16v(1).u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(1);
         else
             intent.u16v(0);
         REQUIRE_FALSE(
@@ -2808,6 +2929,7 @@ struct FramedReplica
     {
         (void)match.server.atoms.intern("Move");
         (void)match.server.atoms.intern("Jump");
+        nameIntents(match);
         player = match.server.world.players().find(match.remote());
         REQUIRE(player != nullptr);
     }
@@ -2823,8 +2945,8 @@ struct FramedReplica
         intent.u8v(7).u32v(epoch).u8v(static_cast<core::u8>(sent.size()));
         for (const Sent& each : sent) {
             intent.u64v(each.tick);
-            intent.u16v(2).text("Move").u8v(2).f32v(each.x).f32v(0.0f).f32v(0.0f).u8v(0);
-            intent.text("Jump").u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(each.jump ? 1 : 0);
+            intent.u16v(2).u16v(0).u8v(2).f32v(each.x).f32v(0.0f).f32v(0.0f).u8v(0);
+            intent.u16v(1).u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(each.jump ? 1 : 0);
         }
         REQUIRE_FALSE(
             match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());

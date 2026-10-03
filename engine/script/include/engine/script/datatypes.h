@@ -16,6 +16,7 @@
 
 #include "engine/core/id.h"
 #include "engine/core/math.h"
+#include "engine/core/random.h"
 #include "engine/scene/enum_registry.h"
 #include "engine/scene/value.h"
 #include "engine/script/binding.h"
@@ -49,6 +50,9 @@ void pushVector3(lua_State* L, core::Vec3 value);
 
 void pushVector2(lua_State* L, core::Vec2 value);
 [[nodiscard]] core::Vec2 checkVector2(lua_State* L, int index);
+
+// A `Random` positioned where `value` is (G37: a predicted step's).
+void pushRandom(lua_State* L, const core::Pcg32& value);
 
 // An enum item by id and value. Exported because an engine-raised fire carries
 // one -- `DebugService.MessageOut` hands its handler an `Enum.LogLevel` -- and

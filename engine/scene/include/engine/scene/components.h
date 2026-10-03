@@ -234,6 +234,11 @@ struct CharacterBodyComponent
     // so the transition can be detected without a second flag.
     core::InstanceId groundPart;
 
+    // **The attributes its predicted steps write** (G37), by name, sorted by
+    // atom: what a replica remembers each tick and puts back before stepping
+    // again, and what the authority sends it beside the character's state.
+    std::vector<core::NameAtom> predictedAttributes;
+
     // The command for the next tick. Cleared by the mirror once consumed, so a
     // character told nothing stops -- which is what `Move`'s Doc promises.
     core::Vec3 moveDirection{0.0f, 0.0f, 0.0f};
@@ -1452,6 +1457,11 @@ struct PlayerComponent
     bool local = false;
     // This tick's intents, in the order the sending machine's actions are.
     std::vector<PlayerIntent> intents;
+    // **Whose tick they are** (G37): the tick of the machine that made them --
+    // a replica's own tick for its player, on the replica and on the
+    // authority alike, so a predicted step numbers a player's ticks the same
+    // on both ends.
+    u64 intentTick = 0;
     // `Player.Character`: the part that is them, on this machine.
     core::InstanceId character;
 };

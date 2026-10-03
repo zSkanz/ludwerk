@@ -2321,6 +2321,78 @@ local Datatypes: { Schema.Datatype } = {
         } :: { Schema.Property },
     },
     {
+        Name = "IntentWriter",
+        Module = "script",
+        Doc = "What a `RunService:BindToIntent` function writes this tick's intents with (G38). Good only "
+            .. "during that call.",
+        Methods = {
+            {
+                Name = "Set",
+                Parameters = {
+                    { Name = "action", Type = "string" },
+                    { Name = "value", Type = "boolean | number | Vector2 | vector" },
+                },
+                Returns = {},
+                Doc = "This tick's intent named `action`: a boolean is pressed or not, a number is one axis, a "
+                    .. "`Vector2` two and a `vector` three. A value that is not finite is refused.",
+            },
+        },
+    },
+    {
+        Name = "PredictedStep",
+        Module = "script",
+        Doc = "One character's tick, as a `RunService:BindToPredictedStep` or a "
+            .. "`BasePart:BindToPredictedTouch` function is handed it (ADR 0157). Good only during "
+            .. "that call.",
+        Properties = {
+            {
+                Name = "Character",
+                Type = "BasePart",
+                ReadOnly = true,
+                Doc = "The character being stepped: its player's `Character` on this machine.",
+            },
+            { Name = "Player", Type = "Player", ReadOnly = true, Doc = "Whose character it is." },
+            {
+                Name = "Tick",
+                Type = "number",
+                ReadOnly = true,
+                Doc = "The player's own tick: the number their machine gave the tick of input this step "
+                    .. "takes, the same on the authority and on their replica. What a dash that lasts twenty "
+                    .. "ticks counts in.",
+            },
+            { Name = "DeltaTime", Type = "number", ReadOnly = true, Doc = "The step's length, in seconds." },
+            {
+                Name = "Replaying",
+                Type = "boolean",
+                ReadOnly = true,
+                Doc = "Whether this is a step taken again after a correction, on a replica. What only "
+                    .. "happens once -- a sound, a particle -- checks it.",
+            },
+            {
+                Name = "Random",
+                Type = "Random",
+                ReadOnly = true,
+                Doc = "A generator seeded by the player and `Tick`: the same draws live and stepped again, "
+                    .. "on both ends. Each read starts it again; keep it in a local.",
+            },
+        },
+        Methods = {
+            {
+                Name = "GetIntent",
+                Parameters = { { Name = "action", Type = "string" } },
+                Returns = { "boolean | number | Vector2 | vector" },
+                Doc = "The player's intent named `action` at this tick, as `Player:GetIntent` answers it -- "
+                    .. "stepped again, the one the tick first had.",
+            },
+            {
+                Name = "Pressed",
+                Parameters = { { Name = "action", Type = "string" } },
+                Returns = { "boolean" },
+                Doc = "Whether the button `action` went down at this tick: held now and not at the step " .. "before.",
+            },
+        },
+    },
+    {
         Name = "AnimationTrack",
         Module = "script",
         Doc = "One clip playing on one `AnimationPlayer`, returned by `LoadAnimation` (§2.2). A handle rather "

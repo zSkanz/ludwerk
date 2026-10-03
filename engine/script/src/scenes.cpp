@@ -11,10 +11,15 @@
 
 #include "class_descriptors.gen.h"
 #include "engine/core/content_path.h"
+#include "engine/core/finite.h"
 #include "engine/core/i18n.h"
 #include "engine/core/json.h"
 #include "engine/core/log.h"
+#include "engine/core/random.h"
 #include "engine/core/text_key.h"
+#include "engine/input/input.h"
+#include "engine/scene/character_replay.h"
+#include "engine/scene/players.h"
 #include "engine/scene/world.h"
 #include "engine/script/binding.h"
 #include "engine/script/datatypes.h"
@@ -732,13 +737,28 @@ core::u32 closeScene(lua_State* L, core::u32 next)
         unref(L, binding.functionRef);
         return true;
     });
-    // A render step goes with the script that bound it (ADR 0136, 0124).
+    // A render step goes with the script that bound it (ADR 0136, 0124), and
+    // so does an intent writer (G38) and a predicted step or touch (G37).
     std::erase_if(state.renderSteps, [&](const RenderStep& step) {
         if (!ownedByScene(L, step.owner))
             return false;
         unref(L, step.functionRef);
         return true;
     });
+    std::erase_if(state.intentBindings, [&](const IntentBinding& binding) {
+        if (!ownedByScene(L, binding.owner))
+            return false;
+        unref(L, binding.functionRef);
+        return true;
+    });
+    for (std::vector<PredictedBinding>* bindings : {&state.predictedSteps, &state.predictedTouches}) {
+        std::erase_if(*bindings, [&](const PredictedBinding& binding) {
+            if (!ownedByScene(L, binding.owner))
+                return false;
+            unref(L, binding.functionRef);
+            return true;
+        });
+    }
 
     state.closed[closing] = closingPath;
     if (next != 0 && next == state.prepared) {
@@ -826,6 +846,432 @@ void runRenderSteps(lua_State* L, double dt)
         (void)resumeScheduled(L, co, 1);
         lua_pop(L, 1);
     }
+}
+
+// --- Intents written by code (G38) ----------------------------------------------
+
+int runServiceBindToIntent(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    if (length == 0)
+        raise(L, ENG_TR("script.err.intent_binding_name"));
+    const std::string name{text, length};
+    SceneState& state = scenes(L);
+    std::erase_if(state.intentBindings, [&](const IntentBinding& binding) {
+        if (binding.name != name)
+            return false;
+        unref(L, binding.functionRef);
+        return true;
+    });
+    lua_pushvalue(L, 3);
+    const int ref = lua_ref(L, -1);
+    lua_pop(L, 1);
+    state.intentBindings.push_back(IntentBinding{name, state.nextIntentBinding++, ref, scriptOfThread(L)});
+    return 0;
+}
+
+int runServiceUnbindFromIntent(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const std::string_view name{text, length};
+    std::erase_if(scenes(L).intentBindings, [&](const IntentBinding& binding) {
+        if (binding.name != name)
+            return false;
+        unref(L, binding.functionRef);
+        return true;
+    });
+    return 0;
+}
+
+namespace {
+
+struct IntentWriterUserdata
+{
+    core::u32 run = 0;
+};
+
+// `IntentWriter:Set(action, value)`: the local player's intent named
+// `action`, written over whatever the input made of it.
+int intentWriterSet(lua_State* L)
+{
+    const auto* writer = static_cast<const IntentWriterUserdata*>(
+        luaL_checkudatatagged(L, 1, static_cast<int>(UserdataTag::IntentWriter)));
+    SceneState& state = scenes(L);
+    if (writer->run == 0 || writer->run != state.intentRun)
+        raise(L, ENG_TR("script.err.intent_writer_spent"));
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    scene::PlayerIntent intent;
+    if (lua_isboolean(L, 3)) {
+        intent.type = static_cast<i32>(input::ActionType::Bool);
+        intent.pressed = lua_toboolean(L, 3) != 0;
+        intent.axis = core::Vec3{intent.pressed ? 1.0f : 0.0f, 0.0f, 0.0f};
+    }
+    else if (lua_isnumber(L, 3)) {
+        const double value = lua_tonumber(L, 3);
+        if (!std::isfinite(value))
+            raise(L, ENG_TR("script.err.not_finite"));
+        intent.type = static_cast<i32>(input::ActionType::Direction1D);
+        intent.axis = core::Vec3{static_cast<f32>(value), 0.0f, 0.0f};
+        intent.pressed = value != 0.0;
+    }
+    else if (lua_isvector(L, 3)) {
+        const core::Vec3 value = checkVector3(L, 3);
+        if (!core::isFinite(value))
+            raise(L, ENG_TR("script.err.not_finite"));
+        intent.type = static_cast<i32>(input::ActionType::Direction3D);
+        intent.axis = value;
+        intent.pressed = value.x != 0.0f || value.y != 0.0f || value.z != 0.0f;
+    }
+    else if (lua_userdatatag(L, 3) == static_cast<int>(UserdataTag::Vector2)) {
+        const core::Vec2 value = checkVector2(L, 3);
+        if (!std::isfinite(value.x) || !std::isfinite(value.y))
+            raise(L, ENG_TR("script.err.not_finite"));
+        intent.type = static_cast<i32>(input::ActionType::Direction2D);
+        intent.axis = core::Vec3{value.x, value.y, 0.0f};
+        intent.pressed = value.x != 0.0f || value.y != 0.0f;
+    }
+    else {
+        raise(L, ENG_TR("script.err.intent_value"));
+    }
+
+    scene::World& world = *context(L).world;
+    intent.action = world.atoms().intern(std::string_view{text, length});
+    scene::PlayerComponent* player = world.players().find(scene::localPlayerOf(world));
+    if (player == nullptr)
+        return 0;
+    for (scene::PlayerIntent& held : player->intents) {
+        if (held.action == intent.action) {
+            held = intent;
+            return 0;
+        }
+    }
+    player->intents.push_back(intent);
+    return 0;
+}
+
+} // namespace
+
+void runIntentWriters(lua_State* L)
+{
+    SceneState& state = scenes(L);
+    if (state.intentBindings.empty())
+        return;
+    // A run of its own, so a writer kept from this one writes nothing in the
+    // next; taken in bind order first, as a writer may bind or unbind.
+    state.intentRun = ++state.intentRuns == 0 ? ++state.intentRuns : state.intentRuns;
+    std::vector<IntentBinding> running = state.intentBindings;
+    std::stable_sort(running.begin(), running.end(),
+                     [](const IntentBinding& a, const IntentBinding& b) { return a.order < b.order; });
+    for (const IntentBinding& binding : running) {
+        const std::vector<IntentBinding>& bound = scenes(L).intentBindings;
+        if (std::find_if(bound.begin(), bound.end(),
+                         [&](const IntentBinding& now) { return now.order == binding.order; }) == bound.end())
+            continue;
+        lua_getref(L, binding.functionRef);
+        const SuppressReason reason = suppressionFor(L, scriptOfFunction(L, -1), runEnvOfFunction(L, -1));
+        lua_pop(L, 1);
+        if (reason != SuppressReason::None)
+            continue;
+        lua_State* co = lua_newthread(L);
+        lua_getref(L, binding.functionRef);
+        lua_xmove(L, co, 1);
+        void* memory = lua_newuserdatataggedwithmetatable(co, sizeof(IntentWriterUserdata),
+                                                          static_cast<int>(UserdataTag::IntentWriter));
+        static_cast<IntentWriterUserdata*>(memory)->run = scenes(L).intentRun;
+        (void)resumeScheduled(L, co, 1);
+        lua_pop(L, 1);
+    }
+    scenes(L).intentRun = 0;
+}
+
+// --- Scripts in the predicted step (G37) ------------------------------------------
+
+void pushIntentValue(lua_State* L, const scene::PlayerIntent& intent)
+{
+    // The same switch `InputAction:GetState` answers through, so the two can
+    // never disagree about what a value looks like.
+    switch (static_cast<input::ActionType>(intent.type)) {
+    case input::ActionType::Bool:
+        lua_pushboolean(L, intent.pressed ? 1 : 0);
+        return;
+    case input::ActionType::Direction1D:
+        lua_pushnumber(L, static_cast<double>(intent.axis.x));
+        return;
+    case input::ActionType::Direction2D:
+    case input::ActionType::ViewportPosition:
+        pushVector2(L, core::Vec2{intent.axis.x, intent.axis.y});
+        return;
+    case input::ActionType::Direction3D:
+        pushVector3(L, intent.axis);
+        return;
+    }
+    lua_pushboolean(L, 0);
+}
+
+int runServiceBindToPredictedStep(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    if (length == 0)
+        raise(L, ENG_TR("script.err.intent_binding_name"));
+    const std::string name{text, length};
+    SceneState& state = scenes(L);
+    std::erase_if(state.predictedSteps, [&](const PredictedBinding& binding) {
+        if (binding.name != name)
+            return false;
+        unref(L, binding.functionRef);
+        return true;
+    });
+    lua_pushvalue(L, 3);
+    const int ref = lua_ref(L, -1);
+    lua_pop(L, 1);
+    state.predictedSteps.push_back(PredictedBinding{name, state.nextPredicted++, ref, scriptOfThread(L), {}});
+    return 0;
+}
+
+int runServiceUnbindFromPredictedStep(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const std::string_view name{text, length};
+    std::erase_if(scenes(L).predictedSteps, [&](const PredictedBinding& binding) {
+        if (binding.name != name)
+            return false;
+        unref(L, binding.functionRef);
+        return true;
+    });
+    return 0;
+}
+
+int partBindToPredictedTouch(lua_State* L)
+{
+    const core::InstanceId part = checkInstance(L, 1);
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+    SceneState& state = scenes(L);
+    // One a part: bound again, the new function takes its place.
+    std::erase_if(state.predictedTouches, [&](const PredictedBinding& binding) {
+        if (binding.part != part && context(L).world->alive(binding.part))
+            return false;
+        unref(L, binding.functionRef);
+        return true;
+    });
+    lua_pushvalue(L, 2);
+    const int ref = lua_ref(L, -1);
+    lua_pop(L, 1);
+    state.predictedTouches.push_back(PredictedBinding{{}, state.nextPredicted++, ref, scriptOfThread(L), part});
+    return 0;
+}
+
+int partUnbindFromPredictedTouch(lua_State* L)
+{
+    const core::InstanceId part = checkInstance(L, 1);
+    std::erase_if(scenes(L).predictedTouches, [&](const PredictedBinding& binding) {
+        if (binding.part != part)
+            return false;
+        unref(L, binding.functionRef);
+        return true;
+    });
+    return 0;
+}
+
+bool predictedTouchBound(lua_State* L, core::InstanceId part)
+{
+    const std::vector<PredictedBinding>& bound = scenes(L).predictedTouches;
+    return std::any_of(bound.begin(), bound.end(),
+                       [&](const PredictedBinding& binding) { return binding.part == part; });
+}
+
+namespace {
+
+struct PredictedStepUserdata
+{
+    core::u32 run = 0;
+};
+
+// The step a `PredictedStep` stands for, or an error: one kept past its call
+// reads nothing.
+const scene::PredictedTick& checkPredicted(lua_State* L)
+{
+    const auto* step = static_cast<const PredictedStepUserdata*>(
+        luaL_checkudatatagged(L, 1, static_cast<int>(UserdataTag::PredictedStep)));
+    const SceneState& state = scenes(L);
+    if (step->run == 0 || step->run != state.predictedRun || state.predictedNow == nullptr)
+        raise(L, ENG_TR("script.err.predicted_step_spent"));
+    return *state.predictedNow;
+}
+
+int predictedCharacter(lua_State* L)
+{
+    pushInstance(L, checkPredicted(L).character);
+    return 1;
+}
+
+int predictedPlayer(lua_State* L)
+{
+    pushInstance(L, checkPredicted(L).player);
+    return 1;
+}
+
+int predictedTickNumber(lua_State* L)
+{
+    lua_pushnumber(L, static_cast<double>(checkPredicted(L).tick));
+    return 1;
+}
+
+int predictedDeltaTime(lua_State* L)
+{
+    lua_pushnumber(L, checkPredicted(L).dt);
+    return 1;
+}
+
+int predictedIsReplay(lua_State* L)
+{
+    lua_pushboolean(L, checkPredicted(L).replay ? 1 : 0);
+    return 1;
+}
+
+// **The same draws live and stepped again, on both ends**: seeded by the
+// player and their tick, which is all a step is.
+int predictedRandom(lua_State* L)
+{
+    const scene::PredictedTick& tick = checkPredicted(L);
+    const core::u64 seed = (tick.tick * 0x9E3779B97F4A7C15ull) ^ (static_cast<core::u64>(tick.userId) << 1u);
+    pushRandom(L, core::Pcg32{seed});
+    return 1;
+}
+
+int predictedGetIntent(lua_State* L)
+{
+    const scene::PredictedTick& tick = checkPredicted(L);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    // **Interned here, by the code that reads it**, as `Player:GetIntent`
+    // does: what makes a peer's intent of that name arrive.
+    const core::NameAtom name = context(L).world->atoms().intern(std::string_view{text, length});
+    for (const scene::PlayerIntent& intent : tick.intents) {
+        if (name.id != 0 && intent.action == name) {
+            pushIntentValue(L, intent);
+            return 1;
+        }
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+int predictedPressed(lua_State* L)
+{
+    const scene::PredictedTick& tick = checkPredicted(L);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const core::NameAtom name = context(L).world->atoms().intern(std::string_view{text, length});
+    const bool pressed =
+        name.id != 0 && std::find(tick.presses.begin(), tick.presses.end(), name) != tick.presses.end();
+    lua_pushboolean(L, pressed ? 1 : 0);
+    return 1;
+}
+
+// One predicted call: the bindings in the order bound, each handed what
+// `push` pushes, with the step `tick` in force while they run.
+template <typename Push>
+void runPredicted(lua_State* L, const scene::PredictedTick& tick, const std::vector<PredictedBinding>& bindings,
+                  Push push)
+{
+    SceneState& state = scenes(L);
+    VmContext& ctx = context(L);
+    // Kept for a nested call -- a step that steps the simulation itself -- and
+    // put back after.
+    const scene::PredictedTick* outer = state.predictedNow;
+    const core::u32 outerRun = state.predictedRun;
+    const core::InstanceId outerCharacter = ctx.predictedCharacter;
+    state.predictedNow = &tick;
+    state.predictedRun = ++state.predictedRuns == 0 ? ++state.predictedRuns : state.predictedRuns;
+    ctx.predictedCharacter = tick.character;
+    const core::u32 run = state.predictedRun;
+    // Taken in bind order first: a function may bind or unbind, and what it
+    // does takes effect from the next step.
+    std::vector<PredictedBinding> running = bindings;
+    std::stable_sort(running.begin(), running.end(),
+                     [](const PredictedBinding& a, const PredictedBinding& b) { return a.order < b.order; });
+    for (const PredictedBinding& binding : running) {
+        lua_getref(L, binding.functionRef);
+        if (!lua_isfunction(L, -1)) {
+            lua_pop(L, 1);
+            continue;
+        }
+        const SuppressReason reason = suppressionFor(L, scriptOfFunction(L, -1), runEnvOfFunction(L, -1));
+        lua_pop(L, 1);
+        if (reason != SuppressReason::None)
+            continue;
+        lua_State* co = lua_newthread(L);
+        lua_getref(L, binding.functionRef);
+        lua_xmove(L, co, 1);
+        const int count = push(co);
+        void* memory = lua_newuserdatataggedwithmetatable(co, sizeof(PredictedStepUserdata),
+                                                          static_cast<int>(UserdataTag::PredictedStep));
+        static_cast<PredictedStepUserdata*>(memory)->run = run;
+        (void)callUnyielding(L, co, count + 1);
+        lua_pop(L, 1);
+    }
+    state.predictedNow = outer;
+    state.predictedRun = outerRun;
+    ctx.predictedCharacter = outerCharacter;
+}
+
+} // namespace
+
+void runPredictedStep(lua_State* L, const scene::PredictedTick& tick)
+{
+    if (scenes(L).predictedSteps.empty())
+        return;
+    runPredicted(L, tick, scenes(L).predictedSteps, [](lua_State*) { return 0; });
+}
+
+void runPredictedTouch(lua_State* L, const scene::PredictedTick& tick, core::InstanceId part)
+{
+    std::vector<PredictedBinding> bound;
+    for (const PredictedBinding& binding : scenes(L).predictedTouches) {
+        if (binding.part == part)
+            bound.push_back(binding);
+    }
+    if (bound.empty())
+        return;
+    runPredicted(L, tick, bound, [&](lua_State* co) {
+        pushInstance(co, tick.character);
+        return 1;
+    });
+}
+
+void registerPredictedStep(lua_State* L)
+{
+    VmContext& ctx = context(L);
+    MemberTable& getters = ctx.getters[static_cast<usize>(UserdataTag::PredictedStep)];
+    addMember(getters, ctx.world->atoms(), "Character", predictedCharacter);
+    addMember(getters, ctx.world->atoms(), "Player", predictedPlayer);
+    addMember(getters, ctx.world->atoms(), "Tick", predictedTickNumber);
+    addMember(getters, ctx.world->atoms(), "DeltaTime", predictedDeltaTime);
+    addMember(getters, ctx.world->atoms(), "Replaying", predictedIsReplay);
+    addMember(getters, ctx.world->atoms(), "Random", predictedRandom);
+    MemberTable& methods = ctx.methods[static_cast<usize>(UserdataTag::PredictedStep)];
+    addMember(methods, ctx.world->atoms(), "GetIntent", predictedGetIntent);
+    addMember(methods, ctx.world->atoms(), "Pressed", predictedPressed);
+    installTagMetatable(L, UserdataTag::PredictedStep, nullptr, nullptr);
+}
+
+void registerIntentWriter(lua_State* L)
+{
+    VmContext& ctx = context(L);
+    MemberTable& methods = ctx.methods[static_cast<usize>(UserdataTag::IntentWriter)];
+    addMember(methods, ctx.world->atoms(), "Set", intentWriterSet);
+    installTagMetatable(L, UserdataTag::IntentWriter, nullptr, nullptr);
 }
 
 void deliverHeldMessages(lua_State* L)

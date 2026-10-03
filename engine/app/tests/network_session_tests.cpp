@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <doctest/doctest.h>
 #include <map>
 #include <memory>
@@ -37,6 +38,64 @@ constexpr core::i32 Offline = 0;
 constexpr core::i32 Connected = 2;
 constexpr core::i32 Hosting = 3;
 
+// **A link with latency** (G37's acceptance): every message this end sends,
+// reliable or not, is held for `polls` of its own polls and then sent in the
+// order it was given -- at a poll a frame, `polls` frames each way.
+class DelayedTransport final : public net::ITransport
+{
+public:
+    DelayedTransport(std::unique_ptr<net::ITransport> inner, core::u32 polls)
+        : m_inner(std::move(inner)), m_polls(polls)
+    {}
+
+    [[nodiscard]] std::optional<core::EngineError> open(const net::TransportConfig& config) override
+    {
+        return m_inner->open(config);
+    }
+    void close() override { m_inner->close(); }
+    [[nodiscard]] std::optional<core::EngineError> connect(std::string_view host, core::u16 port,
+                                                           net::PeerId& outPeer) override
+    {
+        return m_inner->connect(host, port, outPeer);
+    }
+    void disconnect(net::PeerId peer) override { m_inner->disconnect(peer); }
+    [[nodiscard]] std::optional<core::EngineError> send(net::PeerId peer, std::span<const core::u8> payload,
+                                                        net::Delivery delivery, core::u8 channel) override
+    {
+        m_held.push_back(
+            Held{m_now + m_polls, peer, std::vector<core::u8>(payload.begin(), payload.end()), delivery, channel});
+        return std::nullopt;
+    }
+    void flush() override { m_inner->flush(); }
+    [[nodiscard]] std::optional<core::EngineError> poll(std::vector<net::TransportEvent>& out,
+                                                        core::u32 timeoutMs) override
+    {
+        m_now += 1;
+        while (!m_held.empty() && m_held.front().due <= m_now) {
+            const Held& each = m_held.front();
+            (void)m_inner->send(each.peer, each.bytes, each.delivery, each.channel);
+            m_held.pop_front();
+        }
+        m_inner->flush();
+        return m_inner->poll(out, timeoutMs);
+    }
+    [[nodiscard]] core::usize peerCount() const noexcept override { return m_inner->peerCount(); }
+
+private:
+    struct Held
+    {
+        core::u64 due = 0;
+        net::PeerId peer;
+        std::vector<core::u8> bytes;
+        net::Delivery delivery;
+        core::u8 channel = 0;
+    };
+    std::unique_ptr<net::ITransport> m_inner;
+    core::u32 m_polls = 0;
+    core::u64 m_now = 0;
+    std::deque<Held> m_held;
+};
+
 struct Machine
 {
     Project project;
@@ -69,6 +128,23 @@ struct Machine
         network = std::make_unique<app::NetworkSession>([this]() { return host.get(); }, base,
                                                         [wire]() { return net::createMemoryTransport(wire); });
         network->setJoinTimeout(0.5);
+    }
+
+    // The engine's own replication settings, over a link that holds every
+    // message `polls` frames each way (G37).
+    void bootDelayed(const std::shared_ptr<net::MemoryNetwork>& wire, core::u32 polls)
+    {
+        app::WorldHostOptions options = bootOptions(project.root);
+        options.bootStamps = [root = project.root](std::string_view stamp) -> std::optional<std::string> {
+            std::string text;
+            if (!platform::readTextFile(root / "content" / std::filesystem::path(stamp), text))
+                return std::nullopt;
+            return text;
+        };
+        REQUIRE_FALSE(host->boot(options).has_value());
+        network = std::make_unique<app::NetworkSession>(
+            [this]() { return host.get(); }, replication::Config{},
+            [wire, polls]() { return std::make_unique<DelayedTransport>(net::createMemoryTransport(wire), polls); });
     }
 
     // The engine's own replication settings, over a transport that loses,
@@ -970,6 +1046,13 @@ public:
         return physics != nullptr ? physics->remembered(tick, id) : std::nullopt;
     }
 
+    [[nodiscard]] std::optional<scene::PredictedAttributes> rememberedAttributes(core::u64 tick,
+                                                                                 core::InstanceId id) const override
+    {
+        const scene::PhysicsSync* physics = m_host.physics();
+        return physics != nullptr ? physics->rememberedAttributes(tick, id) : std::nullopt;
+    }
+
     core::u64 remembers = 0;
     core::u64 rememberMicros = 0;
 
@@ -1451,6 +1534,214 @@ part("Crate3", vector.create(2, 2, 2), vector.create(14, 1, 0), false))";
             predicted = replica->stats().predictedBodies;
     }
     CHECK(predicted == 2);
+}
+
+// --- G37: scripts in the predicted step -------------------------------------------------
+
+// Both ends' game: a dash that lasts a second, written in the predicted step
+// with the tick it ends at as an attribute, and a walk held by an intent.
+constexpr std::string_view DashShared = R"(
+local RunService = game:GetService("RunService")
+local Dash = {}
+function Dash.bind()
+    RunService:BindToPredictedStep("dash", function(step)
+        local body = step.Character :: CharacterBody
+        local ends = (body:GetAttribute("DashUntil") :: number?) or 0
+        if step:Pressed("Dash") and step.Tick >= ends then
+            ends = step.Tick + 60
+            body:SetAttribute("DashUntil", ends)
+        end
+        if step.Tick < ends or step:GetIntent("Walk") == true then
+            body:Move(vector.create(1, 0, 0))
+        end
+    end)
+end
+return Dash
+)";
+
+// **A jump pad, as a stamp with its script** -- on both ends, since a script
+// with no side runs on each, the client's under its copy of the pad: it jumps
+// whoever lands on it, in the predicted step.
+constexpr std::string_view JumpPadStamp =
+    R"json({"format":"scene","version":2,"root":{"class":"Model","name":"JumpPad","children":[)json"
+    R"json({"class":"Part","name":"Pad","properties":{"Anchored":true},"children":[)json"
+    R"json({"class":"Script","name":"Launch","properties":{"Source":")json"
+    R"json(local pad = script.Parent\npad:BindToPredictedTouch(function(character, step)\n)json"
+    R"json(    character:Jump()\n)json"
+    R"json(    character:SetAttribute(\"Bounces\", (character:GetAttribute(\"Bounces\") or 0) + 1)\n)json"
+    R"json(end)\n"}}]}]}})json";
+
+constexpr std::string_view DashServer = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+local Dash = require("@shared/dash")
+NetworkService:Host(47123)
+local floor = Instance.new("Part")
+floor.Anchored = true
+floor.Size = vector.create(120, 1, 120)
+floor.Position = vector.create(0, -0.5, 0)
+floor.Parent = workspace
+local stamp = Instance.stamp("jumppad")
+local pad = stamp:FindFirstChild("Pad") :: BasePart
+pad.Size = vector.create(6, 0.2, 6)
+pad.Position = vector.create(0, 0.1, 0)
+stamp.Parent = workspace
+Dash.bind()
+local bodies: { [Player]: CharacterBody } = {}
+local seen = nil
+local dashes = 0
+local nudgeAt = -1
+local ticks = 0
+RunService.Heartbeat:Connect(function()
+    ticks += 1
+    for _, player in NetworkService:GetPlayers() do
+        if player.UserId ~= 2 then
+            continue
+        end
+        local body = bodies[player]
+        if not body then
+            body = Instance.new("CharacterBody")
+            body.Name = "Hero"
+            body.Size = vector.create(2, 4, 2)
+            body.Position = vector.create(-20, 3, 0)
+            body.WalkSpeed = 8
+            body.JumpSpeed = 6
+            body.Parent = workspace
+            bodies[player] = body
+            player.Character = body
+        end
+        -- The second dash is pushed aside half a metre, twenty ticks in: a
+        -- correction in the middle of a dash.
+        local ends = body:GetAttribute("DashUntil")
+        if ends ~= nil and ends ~= seen and ends < 1e8 then
+            seen = ends
+            dashes += 1
+            if dashes == 2 then
+                nudgeAt = ticks + 20
+            end
+        end
+        if ticks == nudgeAt then
+            body.Position += vector.create(0, 0, 0.5)
+        end
+        workspace:SetAttribute("ServerDashUntil", ends)
+    end
+end)
+)";
+
+constexpr std::string_view DashClient = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+local Dash = require("@shared/dash")
+NetworkService:Join("memory:47123")
+local ticks = 0
+local phase = "wait"
+local bound = false
+RunService:BindToIntent("course", function(intent)
+    intent:Set("Dash", phase == "dash1" and ticks < 62 or phase == "dash2" and ticks < 282)
+    intent:Set("Walk", phase == "walk")
+end)
+RunService.Heartbeat:Connect(function()
+    local me = NetworkService.LocalPlayer
+    local body = if me then me.Character else nil
+    if NetworkService.State ~= Enum.NetworkState.Connected or not me or not body then
+        return
+    end
+    if not bound then
+        bound = true
+        Dash.bind()
+    end
+    ticks += 1
+    if ticks == 60 then
+        phase = "dash1"
+    elseif ticks == 140 then
+        phase = "walk"
+    elseif ticks == 280 then
+        phase = "dash2"
+    elseif ticks == 380 then
+        -- **A hacked client**: its own code writes the dash's end far away.
+        phase = "hack"
+        body:SetAttribute("DashUntil", 1e9)
+    elseif ticks == 480 then
+        phase = "settle"
+    elseif ticks == 560 then
+        print("dash-done")
+    end
+    workspace:SetAttribute("Phase", phase)
+end)
+)";
+
+TEST_CASE("G37: a dash and a jump pad written in the predicted step, at 165 ms, are not rubber-banded")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    server.project.write("src/shared/dash.luau", std::string(DashShared));
+    server.project.write("src/server/init.luau", std::string(DashServer));
+    server.project.write("content/stamps/jumppad.stamp.json", std::string(JumpPadStamp));
+    // Five frames each way: 165 ms there and back at 60 Hz.
+    server.bootDelayed(wire, 5);
+    Machine client;
+    client.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    client.project.write("src/shared/dash.luau", std::string(DashShared));
+    client.project.write("src/client/init.luau", std::string(DashClient));
+    client.project.write("content/stamps/jumppad.stamp.json", std::string(JumpPadStamp));
+    client.bootDelayed(wire, 5);
+    HostReplay replay(*client.host);
+    client.network->setCharacterReplay(&replay);
+
+    core::u64 seen = 0;
+    std::map<std::string, std::pair<int, double>> byPhase;
+    for (int frame = 0; frame < 3000 && !log.contains("dash-done"); ++frame) {
+        server.frame();
+        client.frame();
+        const replication::IReplication* replica = client.network->replication();
+        if (replica == nullptr)
+            continue;
+        const replication::Stats stats = replica->stats();
+        if (stats.corrections == seen)
+            continue;
+        seen = stats.corrections;
+        const scene::Value phase =
+            client.host->world().getAttribute(client.host->workspace(), client.host->world().atoms().lookup("Phase"));
+        const std::string name = std::holds_alternative<std::string>(phase) ? std::get<std::string>(phase) : "?";
+        byPhase[name].first += 1;
+        byPhase[name].second = std::max(byPhase[name].second, stats.lastCorrectionMetres);
+        MESSAGE("MEASURE correction phase=" << name << " size=" << stats.lastCorrectionMetres);
+    }
+    REQUIRE(log.contains("dash-done"));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+
+    // A dash, a walk over the pad and its bounces: not one correction.
+    CHECK(byPhase["dash1"].first == 0);
+    CHECK(byPhase["walk"].first == 0);
+    // The dash pushed aside is corrected -- and stepped again, so it goes on
+    // where it was going rather than stopping.
+    CHECK(byPhase["dash2"].first == 1);
+    CHECK(byPhase["dash2"].second == doctest::Approx(0.5).epsilon(0.2));
+    // The hacked client is pulled back to where the authority has it, at
+    // once: the steps it took on its own are taken again without the dash.
+    CHECK(byPhase["hack"].first == 1);
+    CHECK(byPhase["hack"].second > 1.0);
+
+    // And at the end both ends agree: where the character is, when its dash
+    // ended, and how many times the pad threw it.
+    const scene::World& here = client.host->world();
+    const scene::World& there = server.host->world();
+    const core::InstanceId mine = here.findFirstChild(client.host->workspace(), here.atoms().lookup("Hero"));
+    const core::InstanceId theirs = there.findFirstChild(server.host->workspace(), there.atoms().lookup("Hero"));
+    REQUIRE(mine.valid());
+    REQUIRE(theirs.valid());
+    const core::DVec3 apart = here.parts().find(mine)->cframe.position - there.parts().find(theirs)->cframe.position;
+    CHECK(std::sqrt(apart.x * apart.x + apart.y * apart.y + apart.z * apart.z) < 0.01);
+    const scene::Value ends = here.getAttribute(mine, here.atoms().lookup("DashUntil"));
+    CHECK(ends == there.getAttribute(theirs, there.atoms().lookup("DashUntil")));
+    REQUIRE(std::holds_alternative<double>(ends));
+    CHECK(std::get<double>(ends) < 1e8);
+    const scene::Value bounces = there.getAttribute(theirs, there.atoms().lookup("Bounces"));
+    REQUIRE(std::holds_alternative<double>(bounces));
+    CHECK(std::get<double>(bounces) >= 1.0);
+    CHECK(here.getAttribute(mine, here.atoms().lookup("Bounces")) == bounces);
 }
 
 TEST_CASE("another machine's moving part is drawn between ticks, with what hangs on it (ADR 0134)")

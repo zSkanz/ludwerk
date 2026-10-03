@@ -93,6 +93,10 @@ public:
     // with the live step, so the prediction redone is the prediction made.
     void remember(u64 tick) override;
     [[nodiscard]] std::optional<core::CFrameD> remembered(u64 tick, core::InstanceId id) const override;
+    [[nodiscard]] std::optional<PredictedAttributes> rememberedAttributes(u64 tick, core::InstanceId id) const override;
+    // **Who runs the predicted steps** (G37): the script runtime, handed in by
+    // `app`. Null: nothing runs in the step.
+    void setPredictedStepHost(PredictedStepHost* host) noexcept { m_predictedHost = host; }
     [[nodiscard]] usize rememberedTicks() const noexcept { return m_islands.size(); }
 
     // --- Rollback (ADR 0101) ----------------------------------------------
@@ -336,6 +340,11 @@ private:
         bool follower = false;
         // What the last step that moved it was told, for `lastCommand`.
         std::optional<CharacterCommand> last;
+        // **Its player's input at its last predicted step** (G37): the tick,
+        // the intents and the presses, and whether it has had one -- a tick
+        // the authority holds a player's input for is not stepped twice.
+        CharacterCommand input;
+        bool predicted = false;
     };
 
     // What a controller carries from one step to the next that its transform
@@ -497,7 +506,8 @@ private:
     bool m_anySpring = false;
     void writeBack();
     void writeCharacters();
-    void publishContacts();
+    void publishContacts(f64 fixedDt);
+    void publishTouches(std::span<const physics::ContactEvent> events);
 
     [[nodiscard]] bool inWorld(core::InstanceId id) const;
     // Whether a part is the driven end of an active weld, which is what makes
@@ -636,6 +646,8 @@ private:
         f32 vertical = 0.0f;
         core::Vec3 push{};
         i32 mode = 0;
+        // A character's predicted attributes (G37).
+        PredictedAttributes attributes;
     };
     struct Island
     {
@@ -659,6 +671,24 @@ private:
     u64 m_writeBackStamp = 0;
     // Set while `stepQuietly` runs: contacts are drained and not published.
     bool m_quiet = false;
+    // **The predicted steps** (G37): who runs them; the characters this step
+    // ran them for, with their input, for the touches the step begins; and,
+    // while a replay steps again, the character and the command it steps.
+    PredictedStepHost* m_predictedHost = nullptr;
+    struct PredictedNow
+    {
+        core::InstanceId character;
+        core::InstanceId player;
+        u32 userId = 0;
+        CharacterCommand input;
+    };
+    std::vector<PredictedNow> m_predictedNow;
+    core::InstanceId m_replayCharacter;
+    const CharacterCommand* m_replayCommand = nullptr;
+    void runPredictedSteps(f64 fixedDt);
+    void runPredictedTouches(std::span<const physics::ContactEvent> events, f64 fixedDt);
+    [[nodiscard]] PredictedAttributes predictedAttributesOf(core::InstanceId id) const;
+    void putPredictedAttributes(core::InstanceId id, const PredictedAttributes& attributes);
     [[nodiscard]] std::vector<core::InstanceId> simulatedIds() const;
     // Characters are few and are not on this path, so a map stays a map --
     // an ORDERED one (audit E6): `writeCharacters` fires `Landed` and writes

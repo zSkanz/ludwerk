@@ -756,6 +756,17 @@ void PhysicsSync::applyCharacter(core::InstanceId id, PartComponent& part, Rigid
     command.flySpeed = character.flySpeed;
     command.flying = character.flying;
     record.last = command;
+    // **Kept as the code outside the predicted step left it** (G37): a step
+    // taken again runs the predicted step again, which writes its own move
+    // over this -- or, where it chooses not to this time, does not, and a
+    // move it wrote the first time must not be stepped with anyway.
+    for (const PredictedNow& now : m_predictedNow) {
+        if (now.character == id) {
+            record.last->moveDirection = now.input.moveDirection;
+            record.last->jump = now.input.jump;
+            break;
+        }
+    }
     const CharacterMotion motion =
         stepController(record, command, CharacterMotion{character.verticalVelocity, character.push, character.mode},
                        grounded, state.groundNormal, state.transform.position);
@@ -899,12 +910,173 @@ PhysicsSync::CharacterMotion PhysicsSync::stepController(const CharacterRecord& 
     return motion;
 }
 
+namespace {
+
+// The player whose character `character` is, or none.
+[[nodiscard]] core::InstanceId playerOfCharacter(const World& world, core::InstanceId character)
+{
+    core::InstanceId found;
+    world.players().forEach([&](core::InstanceId id, const PlayerComponent& player) {
+        if (!found.valid() && player.character == character && !world.destroyed(id))
+            found = id;
+    });
+    return found;
+}
+
+} // namespace
+
 std::optional<CharacterCommand> PhysicsSync::lastCommand(core::InstanceId character) const
 {
     const auto found = m_characters.find(packInstance(character));
-    if (found == m_characters.end() || found->second.follower)
+    if (found == m_characters.end() || found->second.follower || !found->second.last.has_value())
         return std::nullopt;
-    return found->second.last;
+    // With its player's input at that step (G37), for a replay to hand the
+    // predicted step again.
+    CharacterCommand command = *found->second.last;
+    command.tick = found->second.input.tick;
+    command.intents = found->second.input.intents;
+    command.presses = found->second.input.presses;
+    return command;
+}
+
+PredictedAttributes PhysicsSync::predictedAttributesOf(core::InstanceId id) const
+{
+    PredictedAttributes out;
+    const CharacterBodyComponent* body = m_scene.characterBodies().find(id);
+    if (body == nullptr)
+        return out;
+    for (const core::NameAtom name : body->predictedAttributes) {
+        Value value = m_scene.getAttribute(id, name);
+        if (!std::holds_alternative<std::monostate>(value))
+            out.emplace_back(name, std::move(value));
+    }
+    return out;
+}
+
+void PhysicsSync::putPredictedAttributes(core::InstanceId id, const PredictedAttributes& attributes)
+{
+    CharacterBodyComponent* body = m_scene.characterBodies().find(id);
+    if (body == nullptr)
+        return;
+    // Every name either side predicts: one the moment did not have is
+    // removed, and one the moment had that this machine had not yet marked
+    // is marked -- the authority's word on what is predicted, too.
+    for (const auto& [name, value] : attributes) {
+        const auto at = std::lower_bound(body->predictedAttributes.begin(), body->predictedAttributes.end(), name,
+                                         [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; });
+        if (at == body->predictedAttributes.end() || !(*at == name))
+            body->predictedAttributes.insert(at, name);
+    }
+    const std::vector<core::NameAtom> names = body->predictedAttributes;
+    for (const core::NameAtom name : names) {
+        const auto found =
+            std::find_if(attributes.begin(), attributes.end(), [&](const auto& entry) { return entry.first == name; });
+        if (found == attributes.end()) {
+            (void)m_scene.setAttribute(id, name, Value{});
+            continue;
+        }
+        const Value now = m_scene.getAttribute(id, name);
+        if (!(now == found->second))
+            (void)m_scene.setAttribute(id, name, found->second);
+    }
+}
+
+void PhysicsSync::runPredictedSteps(f64 fixedDt)
+{
+    m_predictedNow.clear();
+    if (m_predictedHost == nullptr)
+        return;
+    // **Stepping again**: the one character, with the input it was first
+    // stepped with.
+    if (m_replayCommand != nullptr) {
+        const core::InstanceId player = playerOfCharacter(m_scene, m_replayCharacter);
+        const PlayerComponent* owner = player.valid() ? m_scene.players().find(player) : nullptr;
+        if (owner == nullptr)
+            return;
+        m_predictedNow.push_back(PredictedNow{m_replayCharacter, player, owner->userId, *m_replayCommand});
+        const PredictedNow& now = m_predictedNow.back();
+        m_predictedHost->predictedStep(PredictedTick{now.character, now.player, now.userId, now.input.tick, fixedDt,
+                                                     true, now.input.intents, now.input.presses});
+        return;
+    }
+    // A script's own `StepSimulation` (ADR 0101) is a step its scripts take
+    // themselves; nothing more runs in it.
+    if (m_quiet)
+        return;
+    // **Every character a player has that this machine steps**, in id order
+    // (R10): on the authority all of them, on a replica its own.
+    std::vector<std::pair<u64, core::InstanceId>> stepped;
+    m_scene.players().forEach([&](core::InstanceId player, const PlayerComponent& component) {
+        if (!component.character.valid() || m_scene.destroyed(player))
+            return;
+        const auto found = m_characters.find(packInstance(component.character));
+        if (found == m_characters.end() || found->second.follower)
+            return;
+        stepped.emplace_back(packInstance(component.character), player);
+    });
+    std::sort(stepped.begin(), stepped.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& [key, player] : stepped) {
+        CharacterRecord& record = m_characters.at(key);
+        const PlayerComponent* owner = m_scene.players().find(player);
+        if (owner == nullptr)
+            continue;
+        // A tick whose input the authority held -- the same tick again -- is
+        // not stepped twice: a step counts a player's ticks.
+        if (record.predicted && record.input.tick == owner->intentTick && owner->intentTick != 0)
+            continue;
+        CharacterCommand input;
+        input.tick = owner->intentTick;
+        input.intents = owner->intents;
+        // What the code outside the step told it, before the step writes.
+        if (const CharacterBodyComponent* body = m_scene.characterBodies().find(unpackInstance(key)); body != nullptr) {
+            input.moveDirection = body->moveDirection;
+            input.jump = body->jumpRequested;
+        }
+        // **A press is a button down now that was not at the last step**.
+        for (const PlayerIntent& intent : owner->intents) {
+            if (intent.type != 0 || !intent.pressed)
+                continue;
+            const bool before =
+                record.predicted &&
+                std::any_of(record.input.intents.begin(), record.input.intents.end(),
+                            [&](const PlayerIntent& held) { return held.action == intent.action && held.pressed; });
+            if (!before)
+                input.presses.push_back(intent.action);
+        }
+        record.input = input;
+        record.predicted = true;
+        m_predictedNow.push_back(PredictedNow{unpackInstance(key), player, owner->userId, std::move(input)});
+    }
+    // Indexed, and copied out: a script may make or retire a character, and
+    // the list is this step's either way.
+    for (usize at = 0; at < m_predictedNow.size(); ++at) {
+        const PredictedNow now = m_predictedNow[at];
+        if (!m_scene.alive(now.character))
+            continue;
+        m_predictedHost->predictedStep(PredictedTick{now.character, now.player, now.userId, now.input.tick, fixedDt,
+                                                     false, now.input.intents, now.input.presses});
+    }
+}
+
+void PhysicsSync::runPredictedTouches(std::span<const physics::ContactEvent> events, f64 fixedDt)
+{
+    if (m_predictedHost == nullptr || m_predictedNow.empty())
+        return;
+    for (const physics::ContactEvent& event : events) {
+        if (event.phase != physics::ContactPhase::Began)
+            continue;
+        const core::InstanceId character = unpackInstance(event.firstUserData);
+        const core::InstanceId part = unpackInstance(event.secondUserData);
+        const auto stepping = std::find_if(m_predictedNow.begin(), m_predictedNow.end(),
+                                           [&](const PredictedNow& entry) { return entry.character == character; });
+        if (stepping == m_predictedNow.end() || !m_scene.alive(part) || !m_scene.alive(character) ||
+            !m_predictedHost->touchBound(part))
+            continue;
+        const PredictedNow now = *stepping;
+        m_predictedHost->predictedTouch(PredictedTick{now.character, now.player, now.userId, now.input.tick, fixedDt,
+                                                      m_replayCommand != nullptr, now.input.intents, now.input.presses},
+                                        part);
+    }
 }
 
 void PhysicsSync::remember(u64 tick)
@@ -927,7 +1099,8 @@ void PhysicsSync::remember(u64 tick)
                                                .cframe = part->cframe,
                                                .body = true,
                                                .linear = body->linearVelocity,
-                                               .angular = body->angularVelocity});
+                                               .angular = body->angularVelocity,
+                                               .attributes = {}});
     }
     // In id order, whatever order the map holds them in (R10).
     std::vector<u64> keys;
@@ -954,7 +1127,8 @@ void PhysicsSync::remember(u64 tick)
                                                .jump = body->jumpRequested,
                                                .vertical = body->verticalVelocity,
                                                .push = body->push,
-                                               .mode = body->mode});
+                                               .mode = body->mode,
+                                               .attributes = predictedAttributesOf(id)});
     }
     if (!m_backend.saveIsland(m_world, bodies, characters, island.solver))
         return;
@@ -971,6 +1145,18 @@ std::optional<core::CFrameD> PhysicsSync::remembered(u64 tick, core::InstanceId 
     for (const IslandEntity& entity : island->second.entities) {
         if (entity.id == id)
             return entity.cframe;
+    }
+    return std::nullopt;
+}
+
+std::optional<PredictedAttributes> PhysicsSync::rememberedAttributes(u64 tick, core::InstanceId id) const
+{
+    const auto island = m_islands.find(tick);
+    if (island == m_islands.end())
+        return std::nullopt;
+    for (const IslandEntity& entity : island->second.entities) {
+        if (entity.id == id && entity.character)
+            return entity.attributes;
     }
     return std::nullopt;
 }
@@ -1005,6 +1191,8 @@ bool PhysicsSync::restoreIsland(const Island& island)
             body->verticalVelocity = entity.vertical;
             body->push = entity.push;
             body->mode = entity.mode;
+            // And what its predicted steps had written by then (G37).
+            putPredictedAttributes(entity.id, entity.attributes);
         }
     }
     return true;
@@ -1062,6 +1250,9 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
             body->verticalVelocity = start.verticalVelocity;
             body->push = start.push;
             body->grounded = start.grounded;
+            // The authority's word on its predicted attributes (G37).
+            if (start.attributes.has_value())
+                putPredictedAttributes(character, *start.attributes);
             // And what it pushes, where the authority had it (ADR 0133) --
             // but only what the authority disagrees about. A body put back
             // where it already is is not left as it was: it is woken, and its
@@ -1094,7 +1285,13 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
                 body->jumpRequested = command.jump;
                 body->walkSpeed = command.walkSpeed;
                 body->jumpSpeed = command.jumpSpeed;
+                // The predicted step runs again in it (G37), with the input
+                // it first ran with.
+                m_replayCharacter = character;
+                m_replayCommand = &command;
                 stepQuietly(static_cast<f64>(command.dt));
+                m_replayCommand = nullptr;
+                m_replayCharacter = core::InstanceId{};
                 frames.push_back(part->cframe);
                 remember(start.tick + 1 + at);
             }
@@ -1111,6 +1308,8 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
     // authority said what it was standing on. Every later step's is the one
     // the step before found, exactly as the simulation's own.
     m_backend.setCharacterTransform(m_world, record.handle, start.transform);
+    if (start.attributes.has_value())
+        putPredictedAttributes(character, *start.attributes);
     CharacterMotion motion{start.verticalVelocity, start.push, body->mode};
     bool grounded = start.grounded;
     // What it stands on now, as the simulation's own first step asks it.
@@ -2607,19 +2806,33 @@ void PhysicsSync::writeCharacters()
     }
 }
 
-void PhysicsSync::publishContacts()
+void PhysicsSync::publishContacts(f64 fixedDt)
 {
-    if (m_quiet) {
-        (void)m_backend.drainContacts(m_world);
+    const std::span<const physics::ContactEvent> drained = m_backend.drainContacts(m_world);
+    // **The touches a predicted character began** (G37), stepped again or
+    // not: copied first, since what a script does may step nothing but may
+    // ask the backend.
+    if (m_predictedHost != nullptr && !m_predictedNow.empty() && !drained.empty()) {
+        const std::vector<physics::ContactEvent> began(drained.begin(), drained.end());
+        runPredictedTouches(began, fixedDt);
+        if (!m_quiet)
+            publishTouches(began);
         return;
     }
+    if (m_quiet)
+        return;
+    publishTouches(drained);
+}
+
+void PhysicsSync::publishTouches(std::span<const physics::ContactEvent> events)
+{
     const core::NameAtom touched = m_scene.atoms().intern("Touched");
     const core::NameAtom touchEnded = m_scene.atoms().intern("TouchEnded");
     const core::NameAtom collided = m_scene.atoms().intern("Collided");
 
     // Both directions, because `Touched` is a fact about each part and a script
     // connects to one of them without knowing which side of the pair it is.
-    for (const physics::ContactEvent& event : m_backend.drainContacts(m_world)) {
+    for (const physics::ContactEvent& event : events) {
         const core::InstanceId first = unpackInstance(event.firstUserData);
         const core::InstanceId second = unpackInstance(event.secondUserData);
         if (!m_scene.alive(first) || !m_scene.alive(second))
@@ -2943,6 +3156,14 @@ void PhysicsSync::step(f64 fixedDt)
     if (!m_workspace.valid())
         return;
 
+    {
+        ENG_PROFILE_SCOPE("scripts.predicted");
+        // **The predicted steps first** (G37): what their scripts write --
+        // a move, a velocity, a place, an attribute -- is this step's, and
+        // so is taken again with it.
+        runPredictedSteps(fixedDt);
+    }
+
     const auto begin = std::chrono::steady_clock::now();
     {
         ENG_PROFILE_SCOPE("physics.apply");
@@ -2996,7 +3217,7 @@ void PhysicsSync::step(f64 fixedDt)
     }
     {
         ENG_PROFILE_SCOPE("physics.contacts");
-        publishContacts();
+        publishContacts(fixedDt);
     }
     const auto end = std::chrono::steady_clock::now();
 

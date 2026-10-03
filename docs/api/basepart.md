@@ -53,6 +53,10 @@ Adds an instantaneous change of momentum at the part's centre of mass, in kilogr
 
 The same push, at a point in the world: off the centre it also turns the part, as a shove at a boat's bow swings it round (ADR 0118). Applied at the next tick.
 
+### `BindToPredictedTouch(fn: (character: BasePart, step: PredictedStep) -> ())`
+
+Runs `fn(character, step)` **inside the simulation step** (ADR 0157) when a player's character this machine steps begins touching this part -- on a replica, again for every tick it steps over after a correction, exactly as `RunService:BindToPredictedStep` runs. What a jump pad, a booster or a trampoline does to who lands on it, predicted without a rubber band. Nothing runs while nobody touches it. One function a part: binding again replaces it. It may not wait.
+
 ### `ClearMaterialParameter(name: string)`
 
 Removes this part's override of one parameter, so it draws with the material's value again. Clearing one that is not overridden does nothing.
@@ -76,6 +80,10 @@ Overrides one parameter of the material this part wears, for this part alone. **
 ### `SetNetworkOwner(player: Player?)`
 
 Hands this part to one player's machine (ADR 0099), which then simulates it and sends where it is: what that player pushes moves at once rather than a round trip later. `nil` hands it back to the authority. Only the authority may call it, and only on a part that is not anchored; a player who leaves gives back everything they owned. **What the owner sends is trusted** -- a game that must not trust it checks it, or does not hand the part over.
+
+### `UnbindFromPredictedTouch()`
+
+Stops this part's predicted touch. Nothing bound is not an error.
 
 ## Events
 

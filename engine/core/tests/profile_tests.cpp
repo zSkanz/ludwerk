@@ -135,6 +135,41 @@ TEST_CASE("H0: a scope that ran only in frames left out is not reported")
     CHECK(rows[0].name == "test.frame");
 }
 
+TEST_CASE("H11: the slowest frames are given each as its own tree, the worst first")
+{
+    Rig rig;
+    for (int index = 0; index < 20; ++index) {
+        {
+            ENG_PROFILE_SCOPE("test.frame");
+            {
+                ENG_PROFILE_SCOPE("test.tick");
+                spend(1.0);
+            }
+            // Frames 7 and 13 are slow, and slow somewhere else.
+            if (index == 7 || index == 13) {
+                ENG_PROFILE_SCOPE("test.spike");
+                spend(index == 13 ? 9.0 : 6.0);
+            }
+        }
+        profile::endFrame();
+    }
+    // The worst one, and the other over twice the median.
+    std::vector<profile::SpikeReport> slow = profile::spikes(0, 1, 2.0, 10, 0.05);
+    REQUIRE(slow.size() == 2);
+    CHECK(slow[0].frame == 13);
+    CHECK(slow[0].ms == doctest::Approx(10.0));
+    CHECK(slow[1].frame == 7);
+    // Its own tree: the frame, the tick and what made it slow.
+    REQUIRE(slow[0].rows.size() == 3);
+    CHECK(slow[0].rows[0].name == "test.frame");
+    CHECK(slow[0].rows[2].name == "test.spike");
+    CHECK(slow[0].rows[2].depth == 1);
+    CHECK(slow[0].rows[2].ms == doctest::Approx(9.0));
+    // At most as many as asked for; the warm-up left out.
+    CHECK(profile::spikes(0, 1, 2.0, 1, 0.05).size() == 1);
+    CHECK(profile::spikes(14, 1, 2.0, 10, 0.05)[0].frame != 13);
+}
+
 TEST_CASE("H0: off, or on another thread, a scope records nothing")
 {
     {

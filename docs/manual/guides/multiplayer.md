@@ -284,6 +284,79 @@ A client that does not step its own character at all still gets the newer of
 the two pictures: its hero is put where the authority's newest snapshot has
 it, where everyone else's is drawn a few ticks in the past.
 
+### Movement your code adds: the predicted step
+
+A dash, a double jump, a dodge, a jump pad -- movement a script adds to a
+`CharacterBody` -- belongs **inside the simulation step**, where the
+prediction can take it again (ADR 0157). Written in `Heartbeat`, it runs once
+on each machine at each machine's moment: the authority applies the player's
+input a few ticks after their machine did, the two dashes start at different
+ticks, and the character is pulled back at the start and the end of every one.
+
+```luau
+--!strict
+-- GlobalScriptService.Shared.Dash: required by the server and by the client
+local RunService = game:GetService("RunService")
+
+RunService:BindToPredictedStep("dash", function(step)
+    local body = step.Character :: CharacterBody
+    local ends = (body:GetAttribute("DashUntil") :: number?) or 0
+    if step:Pressed("Dash") and step.Tick >= ends then
+        ends = step.Tick + 60 -- a second
+        body:SetAttribute("DashUntil", ends)
+    end
+    if step.Tick < ends then
+        body:Move(body.CFrame.LookVector)
+    end
+end)
+```
+
+The function runs before the physics solves, once a tick for every player's
+character the machine steps -- all of them on the server, its own on a client
+-- and on a client **again for every tick it steps over** after the server
+corrects it, with the input that tick had and `step.Replaying` true.
+
+- **Read input from `step`**: `step:GetIntent(action)` and
+  `step:Pressed(action)`, the button going down at this tick.
+- **Count time in `step.Tick`**, the player's own tick: the same number on the
+  server and on their machine, whatever the latency between them.
+- **Keep state in attributes on `step.Character`.** An attribute the step
+  writes there is predicted: remembered every tick, put back before a step is
+  taken again, and the server's value sent to the client beside the character.
+  A client whose own code writes one is put right.
+- **Draw from `step.Random`**, seeded by the player and the tick.
+- **Check `step.Replaying` before a sound or a particle**, which should happen
+  once.
+- It may not wait: `task.wait` in it raises.
+
+A part can do the same when a character lands on it:
+
+```luau
+--!strict
+-- A Script in a jump pad's stamp, with no side: it runs on every machine.
+local pad = script.Parent :: BasePart
+pad:BindToPredictedTouch(function(character, step)
+    (character :: CharacterBody):Jump()
+end)
+```
+
+### Input your code writes
+
+An intent is what a player did, and what the server applies for them. Input
+that is not an `InputAction` -- a turn worked out from the mouse, a gesture, a
+bot -- becomes one through `RunService:BindToIntent`, which runs every tick
+right after the machine's input is read:
+
+```luau
+--!strict
+RunService:BindToIntent("aim", function(intent)
+    intent:Set("Turn", turnFromMouse())
+end)
+```
+
+Every reader of `Player:GetIntent` and `step:GetIntent` sees it, on this
+machine and on the server.
+
 ## Attributes: state every machine sees
 
 **An attribute the authority sets reaches every replica that has the

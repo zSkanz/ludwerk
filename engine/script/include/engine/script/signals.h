@@ -396,5 +396,9 @@ bool resumeScheduledWithError(lua_State* L, lua_State* co);
 // with its results on `co`'s stack, `LUA_YIELD` or `LUA_BREAK` parked, and
 // anything else an error, already reported the way a handler's is.
 int startScheduled(lua_State* L, lua_State* co, int argCount);
+// **A call that may not wait** (G37): the function and its arguments on `co`,
+// run to the end under the watchdog -- `task.wait` in it raises -- and an
+// error reported as a handler's is. LUA_OK, or the error's status.
+int callUnyielding(lua_State* L, lua_State* co, int argCount);
 
 } // namespace engine::script

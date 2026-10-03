@@ -312,6 +312,13 @@ public:
         return physics != nullptr ? physics->remembered(tick, id) : std::nullopt;
     }
 
+    [[nodiscard]] std::optional<scene::PredictedAttributes> rememberedAttributes(core::u64 tick,
+                                                                                 core::InstanceId id) const override
+    {
+        const scene::PhysicsSync* physics = m_host != nullptr ? m_host->physics() : nullptr;
+        return physics != nullptr ? physics->rememberedAttributes(tick, id) : std::nullopt;
+    }
+
 private:
     std::unique_ptr<WorldHost>& m_host;
 };
@@ -7047,6 +7054,27 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 I18nArg{"calls", row.calls},
             };
             core::log(LogLevel::Info, ENG_TR("engine.frame.info.scope"), scopeArgs);
+        }
+
+        // **And the slowest frames, each on its own** (H11): the worst five
+        // and any other over twice the median, ten at most, each as its tree --
+        // the frame a player felt, which no median names.
+        const std::vector<core::profile::SpikeReport> slow = core::profile::spikes(kWarmupFrames, 5, 2.0, 10, 0.05);
+        if (!slow.empty())
+            core::log(LogLevel::Info, ENG_TR("engine.frame.info.spikes_header"));
+        for (const core::profile::SpikeReport& spike : slow) {
+            const std::array<I18nArg, 2> spikeArgs{I18nArg{"frame", static_cast<core::i64>(spike.frame)},
+                                                   I18nArg{"ms", spike.ms}};
+            core::log(LogLevel::Info, ENG_TR("engine.frame.info.spike"), spikeArgs);
+            for (const core::profile::SpikeRow& row : spike.rows) {
+                const std::array<I18nArg, 4> rowArgs{
+                    I18nArg{"indent", std::string(static_cast<core::usize>(row.depth) * 2 + 2, ' ')},
+                    I18nArg{"scope", row.name},
+                    I18nArg{"ms", row.ms},
+                    I18nArg{"calls", static_cast<core::i64>(row.calls)},
+                };
+                core::log(LogLevel::Info, ENG_TR("engine.frame.info.spike_scope"), rowArgs);
+            }
         }
     }
 

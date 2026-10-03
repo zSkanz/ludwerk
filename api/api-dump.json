@@ -474,6 +474,17 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "BindToPredictedTouch",
+          "Parameters": [
+            {
+              "Name": "fn",
+              "Type": "(character: BasePart, step: PredictedStep) -> ()"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "ClearMaterialParameter",
           "Parameters": [
             {
@@ -530,6 +541,12 @@
               "Type": "Player?"
             }
           ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "UnbindFromPredictedTouch",
+          "Parameters": [],
           "Returns": [],
           "ThreadSafety": "Unsafe"
         }
@@ -4735,6 +4752,36 @@
       ],
       "Methods": [
         {
+          "Name": "BindToIntent",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "fn",
+              "Type": "(intent: IntentWriter) -> ()"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "BindToPredictedStep",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "fn",
+              "Type": "(step: PredictedStep) -> ()"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "BindToRenderStep",
           "Parameters": [
             {
@@ -4791,6 +4838,28 @@
         {
           "Name": "StepSimulation",
           "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "UnbindFromIntent",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "UnbindFromPredictedStep",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
           "Returns": [],
           "ThreadSafety": "Unsafe"
         },
@@ -9222,6 +9291,29 @@
       "Operators": []
     },
     {
+      "Name": "IntentWriter",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "Set",
+          "Parameters": [
+            {
+              "Name": "action",
+              "Type": "string"
+            },
+            {
+              "Name": "value",
+              "Type": "boolean | number | Vector2 | vector"
+            }
+          ],
+          "Returns": []
+        }
+      ],
+      "Operators": []
+    },
+    {
       "Name": "Material",
       "Constructors": [
         {
@@ -9523,6 +9615,66 @@
           "Returns": ["boolean"]
         }
       ]
+    },
+    {
+      "Name": "PredictedStep",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Character",
+          "Type": "BasePart",
+          "ReadOnly": true
+        },
+        {
+          "Name": "DeltaTime",
+          "Type": "number",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Player",
+          "Type": "Player",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Random",
+          "Type": "Random",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Replaying",
+          "Type": "boolean",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Tick",
+          "Type": "number",
+          "ReadOnly": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetIntent",
+          "Parameters": [
+            {
+              "Name": "action",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean | number | Vector2 | vector"]
+        },
+        {
+          "Name": "Pressed",
+          "Parameters": [
+            {
+              "Name": "action",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean"]
+        }
+      ],
+      "Operators": []
     },
     {
       "Name": "Promise",

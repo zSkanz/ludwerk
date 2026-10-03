@@ -1638,23 +1638,8 @@ int playerGetIntent(lua_State* L)
         for (const scene::PlayerIntent& intent : player->intents) {
             if (!(intent.action == name))
                 continue;
-            // The same switch `InputAction:GetState` answers through, so the
-            // two can never disagree about what a value looks like.
-            switch (static_cast<input::ActionType>(intent.type)) {
-            case input::ActionType::Bool:
-                lua_pushboolean(L, intent.pressed ? 1 : 0);
-                return 1;
-            case input::ActionType::Direction1D:
-                lua_pushnumber(L, static_cast<f64>(intent.axis.x));
-                return 1;
-            case input::ActionType::Direction2D:
-            case input::ActionType::ViewportPosition:
-                pushVector2(L, core::Vec2{intent.axis.x, intent.axis.y});
-                return 1;
-            case input::ActionType::Direction3D:
-                pushVector3(L, intent.axis);
-                return 1;
-            }
+            pushIntentValue(L, intent);
+            return 1;
         }
     }
     lua_pushboolean(L, 0);
@@ -2546,6 +2531,10 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"UIService", "GetFocusedTextInput", uiServiceGetFocusedTextInput},
     {"RunService", "Pause", runServicePause},
     {"RunService", "BindToRenderStep", runServiceBindToRenderStep},
+    {"RunService", "BindToIntent", runServiceBindToIntent},
+    {"RunService", "UnbindFromIntent", runServiceUnbindFromIntent},
+    {"RunService", "BindToPredictedStep", runServiceBindToPredictedStep},
+    {"RunService", "UnbindFromPredictedStep", runServiceUnbindFromPredictedStep},
     {"RunService", "UnbindFromRenderStep", runServiceUnbindFromRenderStep},
     {"RunService", "Resume", runServiceResume},
     {"RunService", "IsPaused", runServiceIsPaused},

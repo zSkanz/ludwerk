@@ -1830,6 +1830,62 @@ local Classes: { Schema.Class } = {
                     .. "belongs to the script that made it and goes with its scene (ADR 0124).",
             },
             {
+                Name = "BindToIntent",
+                Parameters = {
+                    { Name = "name", Type = "string" },
+                    { Name = "fn", Type = "(intent: IntentWriter) -> ()" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Runs `fn(intent)` **every simulation tick**, right after this machine's input becomes its "
+                    .. "player's intents, in the order bound (G38). `intent:Set(action, value)` writes an intent "
+                    .. "by name -- a boolean, a number, a `Vector2` or a `vector` -- which every reader of "
+                    .. "`Player:GetIntent` sees, on this machine and, in a match, on the authority: input that "
+                    .. "is not an `InputAction`, such as a turn worked out from the mouse, a touch gesture or a "
+                    .. "bot.\n\nA value written wins over an `InputAction` of the same name. The writer is "
+                    .. "good only during the call. Binding a name already bound replaces it; a binding belongs "
+                    .. "to the script that made it and goes with its scene.",
+            },
+            {
+                Name = "UnbindFromIntent",
+                Parameters = { { Name = "name", Type = "string" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Stops the intent writer bound under `name`. A name nothing is bound under is not an error.",
+            },
+            {
+                Name = "BindToPredictedStep",
+                Parameters = {
+                    { Name = "name", Type = "string" },
+                    { Name = "fn", Type = "(step: PredictedStep) -> ()" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Runs `fn(step)` **inside the simulation step** (ADR 0157), before the physics "
+                    .. "solves it, once for every player's character this machine steps: on the authority all "
+                    .. "of them, on a replica its own. What it writes there -- `Move`, `Jump`, a velocity, an "
+                    .. "impulse, a place, an attribute on the character -- is part of the step, so when a "
+                    .. "replica is corrected and steps its own character again, `fn` runs again for each tick "
+                    .. "stepped, with the input that tick had, and `step.Replaying` is true. A dash, a double "
+                    .. "jump, a dodge, a jump pad: movement a script makes that a replica predicts without a "
+                    .. "rubber band at any ping.\n\nRead the player's input from `step` -- `GetIntent` and "
+                    .. "`Pressed` -- and count time in `step.Tick`, the player's own tick, which is the same "
+                    .. "number on both ends. An attribute the function writes on `step.Character` is "
+                    .. "**predicted state**: remembered every tick, put back before a step is taken again, and "
+                    .. "the authority's value sent to the replica beside the character, so a replica that wrote "
+                    .. "its own is put right. Draw from `step.Random`, never from an unseeded `Random`.\n\n"
+                    .. "It may not wait: `task.wait` in it raises. Functions run in the order bound; binding a "
+                    .. "name already bound replaces it, and a binding belongs to the script that made it and "
+                    .. "goes with its scene. In a game played alone it runs once a tick, never again.",
+            },
+            {
+                Name = "UnbindFromPredictedStep",
+                Parameters = { { Name = "name", Type = "string" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Stops the predicted step bound under `name`. A name nothing is bound under is not an error.",
+            },
+            {
                 Name = "UnbindFromRenderStep",
                 Parameters = { { Name = "name", Type = "string" } },
                 Returns = {},

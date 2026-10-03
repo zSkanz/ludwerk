@@ -20,6 +20,11 @@
 
 struct lua_State;
 
+namespace engine::scene {
+struct PlayerIntent;
+struct PredictedTick;
+} // namespace engine::scene
+
 namespace engine::script {
 
 // A function registered to run at a close, and the script whose thread
@@ -43,6 +48,26 @@ struct RenderStep
     core::u64 order = 0;
     int functionRef = -1;
     core::InstanceId owner;
+};
+
+// A `RunService:BindToIntent` function (G38).
+struct IntentBinding
+{
+    std::string name;
+    core::u64 order = 0;
+    int functionRef = -1;
+    core::InstanceId owner;
+};
+
+// A `RunService:BindToPredictedStep` function, or -- with its part -- a
+// `BasePart:BindToPredictedTouch` one (G37).
+struct PredictedBinding
+{
+    std::string name;
+    core::u64 order = 0;
+    int functionRef = -1;
+    core::InstanceId owner;
+    core::InstanceId part;
 };
 
 struct MessageBinding
@@ -117,6 +142,21 @@ struct SceneState
     std::vector<MessageBinding> bindings;
     std::vector<RenderStep> renderSteps;
     core::u64 nextRenderStep = 1;
+    std::vector<IntentBinding> intentBindings;
+    core::u64 nextIntentBinding = 1;
+    // The run of the intent writers now on, 0 between runs: a writer kept past
+    // its call writes nothing.
+    core::u32 intentRun = 0;
+    core::u32 intentRuns = 0;
+    // The predicted steps and touches bound (G37); the step running now, and
+    // its run, 0 between runs: a `PredictedStep` kept past its call reads
+    // nothing.
+    std::vector<PredictedBinding> predictedSteps;
+    std::vector<PredictedBinding> predictedTouches;
+    core::u64 nextPredicted = 1;
+    const scene::PredictedTick* predictedNow = nullptr;
+    core::u32 predictedRun = 0;
+    core::u32 predictedRuns = 0;
     std::vector<HeldMessage> held;
 
     std::vector<SceneLoadRecord> loads;
@@ -140,6 +180,32 @@ void registerSceneTypes(lua_State* L);
 int runServiceBindToRenderStep(lua_State* L);
 int runServiceUnbindFromRenderStep(lua_State* L);
 void runRenderSteps(lua_State* L, double dt);
+
+// `RunService:BindToIntent` and `UnbindFromIntent` (G38), and the writers run
+// once a tick, right after this machine's input became its player's intents,
+// through `ScriptRuntime::runIntentWriters`. `IntentWriter` is registered with
+// the scene types.
+int runServiceBindToIntent(lua_State* L);
+int runServiceUnbindFromIntent(lua_State* L);
+void runIntentWriters(lua_State* L);
+void registerIntentWriter(lua_State* L);
+
+// `RunService:BindToPredictedStep`, `UnbindFromPredictedStep`, and
+// `BasePart:BindToPredictedTouch` and `UnbindFromPredictedTouch` (G37); run
+// by the physics mirror inside the step, through the runtime's
+// `scene::PredictedStepHost`. `PredictedStep` is registered with the scene
+// types.
+int runServiceBindToPredictedStep(lua_State* L);
+int runServiceUnbindFromPredictedStep(lua_State* L);
+int partBindToPredictedTouch(lua_State* L);
+int partUnbindFromPredictedTouch(lua_State* L);
+void runPredictedStep(lua_State* L, const scene::PredictedTick& tick);
+void runPredictedTouch(lua_State* L, const scene::PredictedTick& tick, core::InstanceId part);
+[[nodiscard]] bool predictedTouchBound(lua_State* L, core::InstanceId part);
+void registerPredictedStep(lua_State* L);
+// An intent as `Player:GetIntent` answers it: a boolean, a number, a
+// `Vector2` or a `vector` by its type.
+void pushIntentValue(lua_State* L, const scene::PlayerIntent& intent);
 
 // `game:SendMessage` and `game:BindToMessage`, in `services.cpp`'s table.
 int dataModelSendMessage(lua_State* L);

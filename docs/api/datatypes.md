@@ -326,6 +326,16 @@ One raw input, as `InputService.InputBegan`, `InputChanged` and `InputEnded` car
 | `TouchId` | `number` | — | read-only | Which finger, for a `Touch` input: the same number from its `InputBegan` to its `InputEnded`, so a handler follows two thumbs at once. Counted from 1, and reused once a finger lifts. Zero for anything that is not a touch. |
 | `UserInputType` | `Enum.UserInputType` | — | read-only | What kind of input this is. The coarse question, for a handler that does not care which key. |
 
+## IntentWriter
+
+What a `RunService:BindToIntent` function writes this tick's intents with (G38). Good only during that call.
+
+## IntentWriter — methods
+
+### `Set(action: string, value: boolean | number | Vector2 | vector)`
+
+This tick's intent named `action`: a boolean is pressed or not, a number is one axis, a `Vector2` two and a `vector` three. A value that is not finite is refused.
+
 ## Material
 
 A surface: a colour, a set of maps, and how rough and metallic it is (ADR 0090). **Not an `Instance`** -- nothing parents one, and nothing finds one in a `Workspace`. A project keeps a material as a `.material.json` asset under `content/`, and a part wears one through `BasePart.Material`.
@@ -437,6 +447,31 @@ A stop at `time`, which must be between 0 and 1.
 | Operator | Signature | Description |
 |---|---|---|
 | `__eq` | `(other: NumberSequenceKeypoint): boolean` | Exact equality of all three numbers. |
+
+## PredictedStep
+
+One character's tick, as a `RunService:BindToPredictedStep` or a `BasePart:BindToPredictedTouch` function is handed it (ADR 0157). Good only during that call.
+
+## PredictedStep — properties
+
+| Name | Type | Default | Access | Description |
+|---|---|---|---|---|
+| `Character` | `BasePart` | — | read-only | The character being stepped: its player's `Character` on this machine. |
+| `DeltaTime` | `number` | — | read-only | The step's length, in seconds. |
+| `Player` | `Player` | — | read-only | Whose character it is. |
+| `Random` | `Random` | — | read-only | A generator seeded by the player and `Tick`: the same draws live and stepped again, on both ends. Each read starts it again; keep it in a local. |
+| `Replaying` | `boolean` | — | read-only | Whether this is a step taken again after a correction, on a replica. What only happens once -- a sound, a particle -- checks it. |
+| `Tick` | `number` | — | read-only | The player's own tick: the number their machine gave the tick of input this step takes, the same on the authority and on their replica. What a dash that lasts twenty ticks counts in. |
+
+## PredictedStep — methods
+
+### `GetIntent(action: string): boolean | number | Vector2 | vector`
+
+The player's intent named `action` at this tick, as `Player:GetIntent` answers it -- stepped again, the one the tick first had.
+
+### `Pressed(action: string): boolean`
+
+Whether the button `action` went down at this tick: held now and not at the step before.
 
 ## Promise
 

@@ -677,6 +677,18 @@ int methodSetAttribute(lua_State* L)
         };
         raise(L, ENG_TR("scene.err.attribute_type"), args);
     }
+    // **Written by its predicted step, it is predicted state** (G37):
+    // remembered each tick, put back before a step is taken again, and the
+    // authority's sent beside the character.
+    if (context(L).predictedCharacter == id) {
+        if (scene::CharacterBodyComponent* body = world(L).characterBodies().find(id); body != nullptr) {
+            std::vector<core::NameAtom>& names = body->predictedAttributes;
+            const auto at = std::lower_bound(names.begin(), names.end(), name,
+                                             [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; });
+            if (at == names.end() || !(*at == name))
+                names.insert(at, name);
+        }
+    }
     flushSceneChanges(L);
     return 0;
 }
@@ -2894,6 +2906,8 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"PVInstance", "PivotTo", methodPivotTo},
     {"Model", "GetExtentsSize", methodGetExtentsSize},
     {"BasePart", "ApplyImpulse", methodApplyImpulse},
+    {"BasePart", "BindToPredictedTouch", partBindToPredictedTouch},
+    {"BasePart", "UnbindFromPredictedTouch", partUnbindFromPredictedTouch},
     {"Swarm", "AddAgent", methodSwarmAddAgent},
     {"Swarm", "RemoveAgent", methodSwarmRemoveAgent},
     {"Swarm", "SetAgentSpeed", methodSwarmSetAgentSpeed},

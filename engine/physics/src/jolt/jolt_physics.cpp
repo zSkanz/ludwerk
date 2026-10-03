@@ -1930,6 +1930,19 @@ public:
                 return false;
             recorder.Write(packHandle(handle));
             record->character->SaveState(recorder);
+            // **And what it was touching** (G37): stepped again from here, a
+            // touch it began after is begun again, and one it was already in
+            // is not.
+            u64 touching = 0;
+            for (const CharacterPair& pair : m_previousCharacterPairs)
+                touching += pair.character == packHandle(handle) ? 1 : 0;
+            recorder.Write(touching);
+            for (const CharacterPair& pair : m_previousCharacterPairs) {
+                if (pair.character != packHandle(handle))
+                    continue;
+                recorder.Write(pair.other);
+                recorder.Write(pair.otherIsCharacter);
+            }
         }
         // **And the contacts the solver warm-starts from.** Without them a
         // step taken again started from the impulses of the newest step, not
@@ -1983,6 +1996,18 @@ public:
             if (record == nullptr || record->character == nullptr)
                 return false;
             record->character->RestoreState(recorder);
+            u64 touching = 0;
+            recorder.Read(touching);
+            std::erase_if(m_previousCharacterPairs,
+                          [&](const CharacterPair& pair) { return pair.character == packed; });
+            for (u64 pair = 0; pair < touching && !recorder.IsFailed(); ++pair) {
+                CharacterPair restored;
+                restored.character = packed;
+                recorder.Read(restored.other);
+                recorder.Read(restored.otherIsCharacter);
+                m_previousCharacterPairs.push_back(restored);
+            }
+            std::sort(m_previousCharacterPairs.begin(), m_previousCharacterPairs.end());
         }
         if (recorder.IsFailed() || !m_system.RestoreState(recorder))
             return false;

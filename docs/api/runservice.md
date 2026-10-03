@@ -21,6 +21,20 @@ offers is on the base's page, which is what keeps one added member on
 
 ## Methods
 
+### `BindToIntent(name: string, fn: (intent: IntentWriter) -> ())`
+
+Runs `fn(intent)` **every simulation tick**, right after this machine's input becomes its player's intents, in the order bound (G38). `intent:Set(action, value)` writes an intent by name -- a boolean, a number, a `Vector2` or a `vector` -- which every reader of `Player:GetIntent` sees, on this machine and, in a match, on the authority: input that is not an `InputAction`, such as a turn worked out from the mouse, a touch gesture or a bot.
+
+A value written wins over an `InputAction` of the same name. The writer is good only during the call. Binding a name already bound replaces it; a binding belongs to the script that made it and goes with its scene.
+
+### `BindToPredictedStep(name: string, fn: (step: PredictedStep) -> ())`
+
+Runs `fn(step)` **inside the simulation step** (ADR 0157), before the physics solves it, once for every player's character this machine steps: on the authority all of them, on a replica its own. What it writes there -- `Move`, `Jump`, a velocity, an impulse, a place, an attribute on the character -- is part of the step, so when a replica is corrected and steps its own character again, `fn` runs again for each tick stepped, with the input that tick had, and `step.Replaying` is true. A dash, a double jump, a dodge, a jump pad: movement a script makes that a replica predicts without a rubber band at any ping.
+
+Read the player's input from `step` -- `GetIntent` and `Pressed` -- and count time in `step.Tick`, the player's own tick, which is the same number on both ends. An attribute the function writes on `step.Character` is **predicted state**: remembered every tick, put back before a step is taken again, and the authority's value sent to the replica beside the character, so a replica that wrote its own is put right. Draw from `step.Random`, never from an unseeded `Random`.
+
+It may not wait: `task.wait` in it raises. Functions run in the order bound; binding a name already bound replaces it, and a binding belongs to the script that made it and goes with its scene. In a game played alone it runs once a tick, never again.
+
 ### `BindToRenderStep(name: string, priority: number, fn: (dt: number) -> ())`
 
 Runs `fn(dt)` **every drawn frame**, in `priority` order -- lowest first, and in the order bound between equals -- after the input a frame reads at `Rate = Render` and before `PreRender` fires, with the time since the last frame (ADR 0136). What a camera that follows something is for: in it, `GetRenderCFrame` answers where things are drawn, and a camera written is drawn exactly as written. `Enum.RenderPriority` holds the landmarks, as numbers: `Enum.RenderPriority.Camera.Value + 1` runs just after the camera.
@@ -50,6 +64,14 @@ Restarts a paused world, and its clock with it. Idempotent: resuming a running w
 ### `StepSimulation()`
 
 Steps the 3D simulation one fixed tick now, as the tick would, without running a script and **without `Touched` or `TouchEnded`**: a tick simulated again already fired its touches. What re-simulating after `RestoreSimulation` is: set each tick's inputs -- a character's `MoveDirection`, an impulse -- and step, once per tick to catch up.
+
+### `UnbindFromIntent(name: string)`
+
+Stops the intent writer bound under `name`. A name nothing is bound under is not an error.
+
+### `UnbindFromPredictedStep(name: string)`
+
+Stops the predicted step bound under `name`. A name nothing is bound under is not an error.
 
 ### `UnbindFromRenderStep(name: string)`
 

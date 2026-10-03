@@ -3155,6 +3155,25 @@ local Messages: { Schema.Message } = {
                 Doc = "How many ticks the authority has found none of this replica's intents to apply "
                     .. "(protocol 22), for its network overlay.",
             },
+            {
+                Name = "predictedCount",
+                Type = "u16",
+                Doc = "At most 64; 0 for a replica with no character, or one whose predicted steps write "
+                    .. "no attribute.",
+            },
+            {
+                Name = "predicted",
+                Type = "repeat",
+                Count = "predictedCount",
+                Doc = "The replica's own character's predicted attributes (protocol 37, G37): every "
+                    .. "attribute a predicted step has written on it, as it stands after the step of "
+                    .. "`intentTick`. The replica checks its prediction against them and takes them; the "
+                    .. "`Attributes` copy of them is not applied to its own character.",
+                Each = {
+                    { Name = "name", Type = "text" },
+                    { Name = "value", Type = "attribute", Doc = 'See "Attribute values"; Nil for none.' },
+                },
+            },
             { Name = "atomCount", Type = "u32", Doc = "32 bits from protocol 33: 16 wrapped past 65 535 names." },
             {
                 Name = "atoms",
@@ -3241,13 +3260,22 @@ local Messages: { Schema.Message } = {
                 Doc = "Oldest first. A tick already applied or already queued is a copy, and dropped.",
                 Each = {
                     { Name = "tick", Type = "u64", Doc = "The replica's tick." },
-                    { Name = "count", Type = "u16" },
+                    {
+                        Name = "count",
+                        Type = "u16",
+                        Doc = "A button not held is left out (protocol 37): it reads as an action not sent.",
+                    },
                     {
                         Name = "intents",
                         Type = "repeat",
                         Count = "count",
                         Each = {
-                            { Name = "action", Type = "text", Doc = "The input action's name." },
+                            {
+                                Name = "action",
+                                Type = "u16",
+                                Doc = "The number an `IntentNames` gave the action's name on this connection "
+                                    .. "(protocol 37). One whose name has not arrived waits for it.",
+                            },
                             {
                                 Name = "type",
                                 Type = "u8",
@@ -3266,6 +3294,28 @@ local Messages: { Schema.Message } = {
             .. "client that could assert what happened is a client that always hits. The authority "
             .. "queues it by tick and applies one tick a tick, in order, a few behind the newest "
             .. "(protocol 22).",
+    },
+    {
+        Name = "IntentNames",
+        Id = 24,
+        Channel = "Control",
+        Direction = "ToAuthority",
+        Layout = {
+            { Name = "count", Type = "u16", Doc = "At most 256." },
+            {
+                Name = "names",
+                Type = "repeat",
+                Count = "count",
+                Each = {
+                    { Name = "id", Type = "u16", Doc = "Below 1024, numbered in the order first used." },
+                    { Name = "name", Type = "text", Doc = "The action's name, 1 to 255 bytes." },
+                },
+            },
+        },
+        Doc = "The numbers a replica's `Intent`s will carry for its actions' names (protocol 37, G38): "
+            .. "sent once a connection, reliably, before the first intent that uses one. A name once "
+            .. "given stands for the connection. A name on every intent was most of what a tick of "
+            .. "input cost, and an intent written by code may name many actions.",
     },
     {
         Name = "Players",

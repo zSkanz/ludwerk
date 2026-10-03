@@ -201,6 +201,21 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   scripts by phase, the network, the UI, the renderer's passes and the waits --
   with each scope's median, p95, worst frame, calls a frame, and what no scope
   inside it accounts for.
+- **The slowest frames, each on its own** (H11): `--frame-stats` ends with the
+  worst five frames, and any other over twice the median, each as its own tree
+  of scopes; and the Luau collector's steps are a scope of their own,
+  `scripts.gc`, under whatever was running when one came.
+- **Scripts run in the predicted step** (G37, ADR 0157):
+  `RunService:BindToPredictedStep` runs inside the simulation step for every
+  player's character a machine steps, on the player's own tick, and a client
+  runs it again for every tick it steps over after a correction.
+  `BasePart:BindToPredictedTouch` does the same when a character lands on a
+  part. Attributes they write on the character are predicted state the server
+  corrects. A dash and a stamp's jump pad run at 165 ms without a rubber band.
+- **Input written by code** (G38): `RunService:BindToIntent` writes a
+  player's intents -- a turn from the mouse, a gesture, a bot -- as an
+  `InputAction` would. Intents now cross by number, each action's name once a
+  connection (protocol 37).
 - **A crowd of one skinned mesh is drawn in one call a pass** (H2): every
   skinned run's palettes in one storage buffer, read by instance; five hundred
   animated enemies went from 1,800 draws to a few dozen. `--no-instancing`

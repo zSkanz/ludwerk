@@ -705,7 +705,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setBasePartAngularVelocity,
         },
     }};
-    static std::array<MethodDesc, 9> basePartMethods;
+    static std::array<MethodDesc, 11> basePartMethods;
     basePartMethods = {{
         MethodDesc{
             .name = atoms.intern("SetMaterialParameter"),
@@ -742,6 +742,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Adds an instantaneous change of momentum at the part's centre of mass, in kilogram-metres per second. Applied at the next simulation tick and ignored by an anchored part, which has no momentum to change.",
+        },
+        MethodDesc{
+            .name = atoms.intern("BindToPredictedTouch"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Runs `fn(character, step)` **inside the simulation step** (ADR 0157) when a player's character this machine steps begins touching this part -- on a replica, again for every tick it steps over after a correction, exactly as `RunService:BindToPredictedStep` runs. What a jump pad, a booster or a trampoline does to who lands on it, predicted without a rubber band. Nothing runs while nobody touches it. One function a part: binding again replaces it. It may not wait.",
+        },
+        MethodDesc{
+            .name = atoms.intern("UnbindFromPredictedTouch"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Stops this part's predicted touch. Nothing bound is not an error.",
         },
         MethodDesc{
             .name = atoms.intern("GetRenderCFrame"),
@@ -5780,7 +5792,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 8> runServiceMethods;
+    static std::array<MethodDesc, 12> runServiceMethods;
     runServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("Pause"),
@@ -5799,6 +5811,30 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Runs `fn(dt)` **every drawn frame**, in `priority` order -- lowest first, and in the order bound between equals -- after the input a frame reads at `Rate = Render` and before `PreRender` fires, with the time since the last frame (ADR 0136). What a camera that follows something is for: in it, `GetRenderCFrame` answers where things are drawn, and a camera written is drawn exactly as written. `Enum.RenderPriority` holds the landmarks, as numbers: `Enum.RenderPriority.Camera.Value + 1` runs just after the camera.\012\012Binding a name already bound replaces it. Nothing runs without a window. A binding belongs to the script that made it and goes with its scene (ADR 0124).",
+        },
+        MethodDesc{
+            .name = atoms.intern("BindToIntent"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Runs `fn(intent)` **every simulation tick**, right after this machine's input becomes its player's intents, in the order bound (G38). `intent:Set(action, value)` writes an intent by name -- a boolean, a number, a `Vector2` or a `vector` -- which every reader of `Player:GetIntent` sees, on this machine and, in a match, on the authority: input that is not an `InputAction`, such as a turn worked out from the mouse, a touch gesture or a bot.\012\012A value written wins over an `InputAction` of the same name. The writer is good only during the call. Binding a name already bound replaces it; a binding belongs to the script that made it and goes with its scene.",
+        },
+        MethodDesc{
+            .name = atoms.intern("UnbindFromIntent"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Stops the intent writer bound under `name`. A name nothing is bound under is not an error.",
+        },
+        MethodDesc{
+            .name = atoms.intern("BindToPredictedStep"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Runs `fn(step)` **inside the simulation step** (ADR 0157), before the physics solves it, once for every player's character this machine steps: on the authority all of them, on a replica its own. What it writes there -- `Move`, `Jump`, a velocity, an impulse, a place, an attribute on the character -- is part of the step, so when a replica is corrected and steps its own character again, `fn` runs again for each tick stepped, with the input that tick had, and `step.Replaying` is true. A dash, a double jump, a dodge, a jump pad: movement a script makes that a replica predicts without a rubber band at any ping.\012\012Read the player's input from `step` -- `GetIntent` and `Pressed` -- and count time in `step.Tick`, the player's own tick, which is the same number on both ends. An attribute the function writes on `step.Character` is **predicted state**: remembered every tick, put back before a step is taken again, and the authority's value sent to the replica beside the character, so a replica that wrote its own is put right. Draw from `step.Random`, never from an unseeded `Random`.\012\012It may not wait: `task.wait` in it raises. Functions run in the order bound; binding a name already bound replaces it, and a binding belongs to the script that made it and goes with its scene. In a game played alone it runs once a tick, never again.",
+        },
+        MethodDesc{
+            .name = atoms.intern("UnbindFromPredictedStep"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Stops the predicted step bound under `name`. A name nothing is bound under is not an error.",
         },
         MethodDesc{
             .name = atoms.intern("UnbindFromRenderStep"),

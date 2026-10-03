@@ -111,6 +111,7 @@ void captureLocalIntents(World& world)
     if (local == nullptr)
         return;
     local->intents.clear();
+    local->intentTick = world.engineState().tick;
     world.inputActions().forEach([&](core::InstanceId id, const InputActionComponent& action) {
         if (!action.enabled || world.destroyed(id))
             return;

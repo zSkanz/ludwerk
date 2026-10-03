@@ -173,6 +173,79 @@ void endFrame()
     g_state.frames += 1;
 }
 
+std::vector<SpikeReport> spikes(usize skipFrames, usize worst, f64 factor, usize most, f64 smallestMs)
+{
+    std::vector<SpikeReport> out;
+    // The frames kept, as `report` keeps them, with the frame number of each.
+    std::vector<std::pair<usize, u64>> kept;
+    if (g_state.frames <= HistoryFrames) {
+        for (usize frame = std::min<usize>(skipFrames, static_cast<usize>(g_state.frames));
+             frame < static_cast<usize>(g_state.frames); ++frame)
+            kept.emplace_back(frame, frame);
+    }
+    else {
+        for (u64 frame = g_state.frames - HistoryFrames; frame < g_state.frames; ++frame)
+            kept.emplace_back(static_cast<usize>(frame % HistoryFrames), frame);
+    }
+    if (kept.empty())
+        return out;
+
+    const auto sampleOf = [](const Node& node, usize slot) {
+        return slot < node.ms.size() ? static_cast<f64>(node.ms[slot]) : 0.0;
+    };
+    // A frame is its roots together.
+    std::vector<std::pair<f64, usize>> totals;
+    totals.reserve(kept.size());
+    for (usize index = 0; index < kept.size(); ++index) {
+        f64 total = 0.0;
+        for (const i32 root : g_state.roots)
+            total += sampleOf(g_state.nodes[static_cast<usize>(root)], kept[index].first);
+        totals.emplace_back(total, index);
+    }
+    std::vector<f64> ordered;
+    ordered.reserve(totals.size());
+    for (const auto& [total, index] : totals)
+        ordered.push_back(total);
+    std::sort(ordered.begin(), ordered.end());
+    const f64 median = at(ordered, 0.5);
+
+    std::sort(totals.begin(), totals.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (usize rank = 0; rank < totals.size() && out.size() < most; ++rank) {
+        const auto [total, index] = totals[rank];
+        if (rank >= worst && total <= factor * median)
+            break;
+        const usize slot = kept[index].first;
+        SpikeReport spike;
+        spike.frame = kept[index].second;
+        spike.ms = total;
+        std::vector<std::pair<i32, u32>> stack;
+        for (auto root = g_state.roots.rbegin(); root != g_state.roots.rend(); ++root)
+            stack.emplace_back(*root, 0u);
+        while (!stack.empty()) {
+            const auto [node, depth] = stack.back();
+            stack.pop_back();
+            const Node& at = g_state.nodes[static_cast<usize>(node)];
+            const f64 ms = sampleOf(at, slot);
+            // What is smaller than this is smaller below it too.
+            if (ms < smallestMs)
+                continue;
+            SpikeRow row;
+            {
+                const std::lock_guard lock(g_state.sitesMutex);
+                row.name = g_state.sites[at.site];
+            }
+            row.depth = depth;
+            row.ms = ms;
+            row.calls = slot < at.calls.size() ? at.calls[slot] : 0u;
+            spike.rows.push_back(std::move(row));
+            for (auto child = at.children.rbegin(); child != at.children.rend(); ++child)
+                stack.emplace_back(*child, depth + 1);
+        }
+        out.push_back(std::move(spike));
+    }
+    return out;
+}
+
 std::vector<ScopeReport> report(usize skipFrames)
 {
     std::vector<ScopeReport> out;

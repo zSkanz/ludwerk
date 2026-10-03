@@ -1425,6 +1425,7 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     break;
                 }
                 std::vector<std::pair<u64, std::vector<scene::PlayerIntent>>> carried;
+                std::vector<Peer::UnnamedIntent> unnamed;
                 for (u8 slot = 0; slot < ticks && reader.ok(); ++slot) {
                     const u64 tick = reader.u64v();
                     std::vector<scene::PlayerIntent> intents;
@@ -1435,7 +1436,7 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     }
                     intents.reserve(count);
                     for (u16 at = 0; at < count && reader.ok(); ++at) {
-                        const std::string_view name = reader.text();
+                        const u16 id = reader.u16v();
                         scene::PlayerIntent intent;
                         intent.type = static_cast<core::i32>(reader.u8v());
                         intent.axis.x = floatOf(reader.u32v());
@@ -1451,12 +1452,16 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                         // `Enum.InputActionType`: Bool to ViewportPosition, 0 to 4.
                         if (intent.type < 0 || intent.type > 4)
                             continue;
-                        // **Looked up, never interned**: the atom table never
-                        // frees, and a peer naming a new action every packet would
-                        // grow it for ever. An action nothing on this machine has
-                        // named -- no `InputAction`, no `GetIntent` -- is nothing
-                        // anybody here reads.
-                        intent.action = world.atoms().lookup(name);
+                        // **A number this connection's `IntentNames` gave**
+                        // (protocol 37). One whose name has not come yet -- the
+                        // names travel reliably, on another channel -- waits
+                        // for it rather than being lost with its press.
+                        if (id >= peer->intentNames.size() || peer->intentNames[id].empty()) {
+                            if (id < MaxIntentNames)
+                                unnamed.push_back(Peer::UnnamedIntent{tick, id, intent});
+                            continue;
+                        }
+                        intent.action = intentAtom(world, *peer, id);
                         if (!intent.action.valid())
                             continue;
                         intents.push_back(intent);
@@ -1468,6 +1473,11 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 if (!reader.ok() || !reader.done()) {
                     m_stats.messagesDropped += 1;
                     break;
+                }
+                for (const Peer::UnnamedIntent& each : unnamed) {
+                    if (peer->unnamedIntents.size() >= MaxUnnamedIntents)
+                        break;
+                    peer->unnamedIntents.push_back(each);
                 }
                 // **Intents that are late whole, tick after tick, are a clock
                 // that moved and not a packet that was slow** (D480). A replica
@@ -1837,6 +1847,39 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 world.engineState().remoteInbox.push_back(std::move(message));
                 m_stats.messagesReceived += 1;
             }
+            else if (type == MessageType::IntentNames && peer->welcomed) {
+                // **The numbers its intents will carry** (G38, protocol 37).
+                // A name once given stands: a peer cannot make an action held
+                // under one name read as another.
+                const u16 count = reader.u16v();
+                if (!reader.ok() || count > MaxIntentEntries) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                std::vector<std::pair<u16, std::string_view>> given;
+                given.reserve(count);
+                for (u16 at = 0; at < count && reader.ok(); ++at) {
+                    const u16 id = reader.u16v();
+                    const std::string_view name = reader.text();
+                    if (reader.ok() && (id >= MaxIntentNames || name.empty() || name.size() > MaxIntentNameBytes))
+                        reader.fail();
+                    given.emplace_back(id, name);
+                }
+                if (!reader.ok() || !reader.done()) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                for (const auto& [id, name] : given) {
+                    if (id >= peer->intentNames.size()) {
+                        peer->intentNames.resize(static_cast<usize>(id) + 1);
+                        peer->intentAtoms.resize(static_cast<usize>(id) + 1);
+                    }
+                    if (peer->intentNames[id].empty())
+                        peer->intentNames[id] = std::string(name);
+                }
+                takeNamedIntents(world, *peer);
+                m_stats.messagesReceived += 1;
+            }
             else if (type == MessageType::DetectorInput && peer->welcomed && peer->player.valid()) {
                 // **The sender is the connection's player** here too; whether
                 // it could have pressed the thing is the tick's to check
@@ -1868,6 +1911,47 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
     }
     if (ticking)
         applyIntents(world);
+}
+
+core::NameAtom AuthoritySession::intentAtom(scene::World& world, Peer& peer, u16 id)
+{
+    if (id >= peer.intentNames.size() || peer.intentNames[id].empty())
+        return {};
+    core::NameAtom& atom = peer.intentAtoms[id];
+    // **Looked up, never interned**: the atom table never frees, and a peer
+    // naming a new action every packet would grow it for ever. An action
+    // nothing on this machine has named -- no `InputAction`, no `GetIntent` --
+    // is nothing anybody here reads; looked up again until something does.
+    if (!atom.valid())
+        atom = world.atoms().lookup(peer.intentNames[id]);
+    return atom;
+}
+
+void AuthoritySession::takeNamedIntents(scene::World& world, Peer& peer)
+{
+    std::erase_if(peer.unnamedIntents, [&](Peer::UnnamedIntent& each) {
+        if (each.id >= peer.intentNames.size() || peer.intentNames[each.id].empty())
+            return peer.intentStarted && each.tick + MaxQueuedIntents < peer.appliedTick;
+        each.intent.action = intentAtom(world, peer, each.id);
+        if (!each.intent.action.valid())
+            return true;
+        // Still queued: it is part of its tick, as if it had come named.
+        if (const auto queued = peer.intentQueue.find(each.tick); queued != peer.intentQueue.end()) {
+            const bool had =
+                std::any_of(queued->second.begin(), queued->second.end(),
+                            [&](const scene::PlayerIntent& other) { return other.action == each.intent.action; });
+            if (!had)
+                queued->second.push_back(each.intent);
+        }
+        // Its tick has gone: a press in it is carried, late and not lost, as a
+        // press that came after its tick is.
+        else if (each.intent.type == 0 && each.intent.pressed &&
+                 std::find(peer.carriedPresses.begin(), peer.carriedPresses.end(), each.intent.action) ==
+                     peer.carriedPresses.end()) {
+            peer.carriedPresses.push_back(each.intent.action);
+        }
+        return true;
+    });
 }
 
 void AuthoritySession::applyIntents(scene::World& world)
@@ -2031,6 +2115,9 @@ void AuthoritySession::applyIntents(scene::World& world)
                 peer.standIns.erase(peer.standIns.begin());
         }
         player->intents = withCarried(peer);
+        // The peer's own tick (G37): what its predicted steps are numbered by
+        // there, and so here.
+        player->intentTick = next;
         peer.appliedTick = next;
         // Before the first intent's own tick nothing of the peer's has been
         // applied, and the answer stays "none" -- but a stream anchored AGAIN
@@ -2524,6 +2611,33 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         const u64 newest = peer.intentQueue.empty() ? peer.appliedTick : peer.intentQueue.rbegin()->first;
         snapshot.u8v(static_cast<u8>(std::min<u64>(newest > peer.appliedTick ? newest - peer.appliedTick : 0, 255)));
         snapshot.u32v(static_cast<u32>(std::min<u64>(peer.starvations, 0xFFFFFFFFu)));
+    }
+    // **Its own character's predicted attributes** (G37, protocol 37): what
+    // the steps of this peer's ticks wrote, as they stand after the one this
+    // state answers -- the replica's prediction of them is checked against
+    // it, and put right by it.
+    {
+        const scene::PlayerComponent* player = peer.player.valid() ? m_world->players().find(peer.player) : nullptr;
+        const scene::CharacterBodyComponent* body = player != nullptr && player->character.valid()
+                                                        ? m_world->characterBodies().find(player->character)
+                                                        : nullptr;
+        const auto netOf = [this](InstanceId id) { return netIdOf(id).value; };
+        Writer entries;
+        u16 count = 0;
+        if (body != nullptr) {
+            for (const core::NameAtom name : body->predictedAttributes) {
+                if (count == MaxPredictedAttributes)
+                    break;
+                Writer entry;
+                entry.text(m_world->atoms().text(name));
+                if (!writeAttributeValue(entry, m_world->getAttribute(player->character, name), netOf))
+                    continue;
+                entries.bytes.insert(entries.bytes.end(), entry.bytes.begin(), entry.bytes.end());
+                ++count;
+            }
+        }
+        snapshot.u16v(count);
+        snapshot.bytes.insert(snapshot.bytes.end(), entries.bytes.begin(), entries.bytes.end());
     }
     // The names this message's fields mention, by the authority's atom. The
     // replica interns each once and keeps the mapping, so a name costs its
@@ -3191,6 +3305,17 @@ void ReplicaSession::onAttributes(scene::World& world, InstanceId root, std::spa
     if (!target.valid() || !world.alive(target))
         return;
 
+    // **What this replica predicts is not taken from here** (G37): its own
+    // character's predicted attributes come with the snapshot that answers
+    // its prediction, tick by tick; this copy, sent when they change, is
+    // older than the prediction and would undo it.
+    std::set<std::string_view> predicted;
+    if (owner == 0 && m_owned != 0 && localOf(NetId{m_owned}) == target) {
+        if (const scene::CharacterBodyComponent* body = world.characterBodies().find(target); body != nullptr) {
+            for (const core::NameAtom name : body->predictedAttributes)
+                predicted.insert(world.atoms().text(name));
+        }
+    }
     // **Exactly these**: what the authority has now, and nothing it removed.
     // Looked up in a set: a scan of the message for each attribute held was
     // sixty-five thousand squared for one message.
@@ -3200,11 +3325,13 @@ void ReplicaSession::onAttributes(scene::World& world, InstanceId root, std::spa
     scene::AttributeMap current;
     world.collectAttributes(target, current);
     for (const auto& [name, value] : current) {
-        if (!kept.contains(world.atoms().text(name)))
+        if (!kept.contains(world.atoms().text(name)) && !predicted.contains(world.atoms().text(name)))
             (void)world.setAttribute(target, name, scene::Value{});
     }
-    for (const auto& [name, value] : incoming)
-        (void)world.setAttribute(target, world.atoms().intern(name), value);
+    for (const auto& [name, value] : incoming) {
+        if (!predicted.contains(name))
+            (void)world.setAttribute(target, world.atoms().intern(name), value);
+    }
 
     // **Exactly these tags**, too: what the authority took off is gone here.
     scene::TagSet had;
@@ -3792,21 +3919,49 @@ void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
     const scene::PlayerComponent* player = local.valid() ? world.players().find(local) : nullptr;
     if (player == nullptr)
         return;
+    // **By number** (G38, protocol 37): the authority's atom numbers are not
+    // this world's, and an action is what both ends' scripts call it -- so its
+    // name crosses once, reliably, and the number every tick after. Sent
+    // before the intent that first uses it; one that overtakes it waits.
+    Writer names;
+    u16 named = 0;
+    Writer entries;
+    u16 count = 0;
+    for (const scene::PlayerIntent& each : player->intents) {
+        if (count == MaxIntentEntries)
+            break;
+        // A button not held is what an action nobody sent reads as.
+        if (each.type == 0 && !each.pressed)
+            continue;
+        auto id = m_intentIds.find(each.action.id);
+        if (id == m_intentIds.end()) {
+            const std::string_view name = world.atoms().text(each.action);
+            if (m_intentIds.size() >= MaxIntentNames || name.empty() || name.size() > MaxIntentNameBytes)
+                continue;
+            id = m_intentIds.emplace(each.action.id, static_cast<u16>(m_intentIds.size())).first;
+            names.u16v(id->second);
+            names.text(name);
+            named += 1;
+        }
+        entries.u16v(id->second);
+        entries.u8v(static_cast<u8>(each.type));
+        entries.u32v(bitsOf(each.axis.x));
+        entries.u32v(bitsOf(each.axis.y));
+        entries.u32v(bitsOf(each.axis.z));
+        entries.u8v(each.pressed ? 1 : 0);
+        count += 1;
+    }
+    if (named > 0) {
+        Writer message;
+        message.u8v(static_cast<u8>(MessageType::IntentNames));
+        message.u16v(named);
+        message.bytes.insert(message.bytes.end(), names.bytes.begin(), names.bytes.end());
+        sendBytes(m_transport, m_authority, message.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+    }
     Writer one;
     one.u64v(tick);
-    const usize count = std::min<usize>(player->intents.size(), MaxIntentEntries);
-    one.u16v(static_cast<u16>(count));
-    for (usize at = 0; at < count; ++at) {
-        const scene::PlayerIntent& each = player->intents[at];
-        // **By name**: the authority's atom numbers are not this world's, and
-        // an action is what both ends' scripts call it.
-        one.text(world.atoms().text(each.action));
-        one.u8v(static_cast<u8>(each.type));
-        one.u32v(bitsOf(each.axis.x));
-        one.u32v(bitsOf(each.axis.y));
-        one.u32v(bitsOf(each.axis.z));
-        one.u8v(each.pressed ? 1 : 0);
-    }
+    one.u16v(count);
+    one.bytes.insert(one.bytes.end(), entries.bytes.begin(), entries.bytes.end());
     m_sentIntents.emplace_back(tick, std::move(one.bytes));
     while (m_sentIntents.size() > IntentRedundancy)
         m_sentIntents.pop_front();
@@ -3999,6 +4154,7 @@ void ReplicaSession::resetForRejoin(scene::World& world)
     m_predicted.clear();
     m_predicted2d.clear();
     m_sentIntents.clear();
+    m_intentIds.clear();
     m_predictedParts.clear();
     m_owned = 0;
     m_ownedSynced = false;
@@ -4047,6 +4203,23 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     const u64 intentTick = reader.u64v();
     const u8 intentDepth = reader.u8v();
     const u32 intentStarvations = reader.u32v();
+    // Its own character's predicted attributes (G37).
+    const u16 predictedCount = reader.u16v();
+    if (predictedCount > MaxPredictedAttributes)
+        reader.fail();
+    scene::PredictedAttributes predicted;
+    {
+        const auto localOfNet = [this](u32 net) { return localOf(NetId{net}); };
+        for (u16 at = 0; at < predictedCount && reader.ok(); ++at) {
+            const std::string_view name = reader.text();
+            std::optional<scene::Value> value = readAttributeValue(reader, localOfNet);
+            if (!reader.ok() || !value.has_value() || name.empty()) {
+                reader.fail();
+                break;
+            }
+            predicted.emplace_back(world.atoms().intern(name), std::move(*value));
+        }
+    }
     // Older than what the world already shows: a reordered straggler, and
     // applying it would move the world backwards.
     if (!reader.ok() || tick <= m_applied)
@@ -4173,7 +4346,9 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     else if (static_cast<f64>(m_serverClock - tick) > m_lateAverage + 2.0 * m_lateSpread + 1.0)
         m_serverClock -= 1;
     m_ackedIntent = intentTick;
+    m_snapshotAttributes = std::move(predicted);
     applyToWorld(world, root, *state);
+    m_snapshotAttributes.reset();
 
     Writer ack;
     ack.u8v(static_cast<u8>(MessageType::Ack));
@@ -4286,8 +4461,25 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
                                                 std::sqrt(apart.x * apart.x + apart.y * apart.y + apart.z * apart.z));
             }
         }
+        // **And what its predicted steps wrote** (G37): an attribute the
+        // authority has otherwise at that tick -- a dash it never began, a
+        // value this replica's own code wrote over -- is a correction too.
+        bool attributesOff = false;
+        if (authoritative.attributes.has_value() && m_replay != nullptr) {
+            const std::optional<scene::PredictedAttributes> mine =
+                m_replay->rememberedAttributes(m_ackedIntent, character);
+            if (mine.has_value()) {
+                for (const auto& [name, value] : *authoritative.attributes) {
+                    const auto held = std::find_if(mine->begin(), mine->end(),
+                                                   [&](const auto& entry) { return entry.first == name; });
+                    const scene::Value remembered = held != mine->end() ? held->second : scene::Value{};
+                    if (!(remembered == value))
+                        attributesOff = true;
+                }
+            }
+        }
         // **Agreed is agreed**: nothing to do.
-        if (distance < ResyncMetres && !turned && m_lastBodyCorrection < ResyncMetres)
+        if (distance < ResyncMetres && !turned && m_lastBodyCorrection < ResyncMetres && !attributesOff)
             return;
         // **Under a centimetre, stepped again without a word** (ADR 0133).
         // From the same state the two machines step the island to the bit,
@@ -4296,7 +4488,7 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
         // millimetre left alone was a centimetre the next time two crates
         // met. Caught while it is that small it never grows: the same replay
         // as a correction, not counted as one.
-        corrected = distance >= 0.01 || turned || m_lastBodyCorrection >= 0.01;
+        corrected = distance >= 0.01 || turned || m_lastBodyCorrection >= 0.01 || attributesOff;
         if (corrected)
             m_stats.corrections += 1;
     }
@@ -4364,6 +4556,14 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
             part->cframe = now;
             std::erase_if(m_predicted, [this](const Sample& sample) { return sample.tick < m_ackedIntent; });
             return;
+        }
+    }
+    // Not stepped again below: its predicted attributes are the authority's,
+    // as its place is.
+    if (authoritative.attributes.has_value()) {
+        for (const auto& [name, value] : *authoritative.attributes) {
+            if (!(world.getAttribute(character, name) == value))
+                (void)world.setAttribute(character, name, value);
         }
     }
     if (!comparing) {
@@ -4583,6 +4783,7 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
                         else if (motion->name == "JumpSpeed")
                             start.jumpSpeed = asF32(entity.fields[other]);
                     }
+                    start.attributes = m_snapshotAttributes;
                     answer = start;
                     answeredCharacter = local->second;
                 }

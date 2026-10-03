@@ -714,6 +714,25 @@ local Classes: { Schema.Class } = {
                     .. "has no momentum to change.",
             },
             {
+                Name = "BindToPredictedTouch",
+                Parameters = { { Name = "fn", Type = "(character: BasePart, step: PredictedStep) -> ()" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Runs `fn(character, step)` **inside the simulation step** (ADR 0157) when a "
+                    .. "player's character this machine steps begins touching this part -- on a replica, "
+                    .. "again for every tick it steps over after a correction, exactly as "
+                    .. "`RunService:BindToPredictedStep` runs. What a jump pad, a booster or a trampoline "
+                    .. "does to who lands on it, predicted without a rubber band. Nothing runs while nobody "
+                    .. "touches it. One function a part: binding again replaces it. It may not wait.",
+            },
+            {
+                Name = "UnbindFromPredictedTouch",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Stops this part's predicted touch. Nothing bound is not an error.",
+            },
+            {
                 Name = "GetRenderCFrame",
                 Parameters = {},
                 Returns = { "CFrame" },

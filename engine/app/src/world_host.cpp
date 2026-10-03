@@ -482,6 +482,8 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
         // And the bindings, so `Workspace:Raycast` reads the same world the
         // tick steps rather than a second one.
         m_runtime->setPhysics(&*m_physics);
+        // And the scripts that run inside its step (G37).
+        m_physics->setPredictedStepHost(&m_runtime->predictedStepHost());
     }
 #endif
     m_navigation = nav::createNavigation(*m_world);
@@ -731,6 +733,8 @@ std::optional<core::EngineError> WorldHost::restartRuntime()
 
     // What the ending run saved is on disk before its VM goes.
     flushSaves();
+    if (m_physics.has_value())
+        m_physics->setPredictedStepHost(nullptr);
     m_runtime.reset();
 
     m_runtime.emplace(*m_world);
@@ -761,8 +765,10 @@ std::optional<core::EngineError> WorldHost::restartRuntime()
     // what `Ragdoll:Build` reads a rig through.
     m_runtime->setSkeleton(&*m_animation);
     m_runtime->setInput(&m_input);
-    if (m_physics.has_value())
+    if (m_physics.has_value()) {
         m_runtime->setPhysics(&*m_physics);
+        m_physics->setPredictedStepHost(&m_runtime->predictedStepHost());
+    }
     if (m_physics2d.has_value())
         m_runtime->setPhysics2D(&*m_physics2d);
     if (m_navigation != nullptr)
@@ -1157,6 +1163,8 @@ void WorldHost::tick()
     {
         ENG_PROFILE_SCOPE("input.intents");
         scene::captureLocalIntents(*m_world);
+        // And what code writes into them (G38), over what the input made.
+        m_runtime->runIntentWriters();
     }
 
     // The sound timeline, beside the input dispatch and for the same reason:

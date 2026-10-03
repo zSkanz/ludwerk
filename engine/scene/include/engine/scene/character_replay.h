@@ -9,11 +9,15 @@
 
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "engine/core/id.h"
 #include "engine/core/math.h"
+#include "engine/core/name_atom.h"
 #include "engine/core/types.h"
+#include "engine/scene/components.h"
+#include "engine/scene/value.h"
 
 namespace engine::scene {
 
@@ -33,7 +37,18 @@ struct CharacterCommand
     core::f32 swimSpeed = 10.0f;
     core::f32 flySpeed = 16.0f;
     bool flying = false;
+
+    // **What its player did, for the predicted step** (G37): the player's
+    // tick, their intents and the buttons that went down at it. Empty for a
+    // character no player has.
+    core::u64 tick = 0;
+    std::vector<PlayerIntent> intents;
+    std::vector<core::NameAtom> presses;
 };
+
+// The attributes a predicted step writes, by name, as one moment had them; a
+// name missing is an attribute that was not there.
+using PredictedAttributes = std::vector<std::pair<core::NameAtom, Value>>;
 
 // Where a replay starts: the authority's word on the character at the tick it
 // last answered, including the two things a transform does not say.
@@ -66,6 +81,42 @@ struct CharacterReplayStart
         core::Vec3 angular{};
     };
     std::vector<Body> bodies;
+    // **Its predicted attributes, as the authority had them** (G37), put back
+    // with the rest before the steps are taken again. Nothing: the authority
+    // said nothing of them.
+    std::optional<PredictedAttributes> attributes;
+};
+
+// **One character's predicted step** (G37): what a script bound to it is
+// handed. The intents are the player's at `tick` -- on a step taken again,
+// the ones it was first taken with.
+struct PredictedTick
+{
+    core::InstanceId character;
+    core::InstanceId player;
+    core::u32 userId = 0;
+    core::u64 tick = 0;
+    core::f64 dt = 0.0;
+    bool replay = false;
+    std::span<const PlayerIntent> intents;
+    std::span<const core::NameAtom> presses;
+};
+
+// **Scripts in the simulation step** (G37): the narrow interface the mirror
+// calls them through, in the shape `ICharacterReplay` set -- `scene` declares
+// it, the script runtime implements it, `app` connects the two.
+class PredictedStepHost
+{
+public:
+    virtual ~PredictedStepHost() = default;
+    // Before the step: once for each character a player has that this machine
+    // steps -- or, stepping again, for the one being stepped.
+    virtual void predictedStep(const PredictedTick& tick) = 0;
+    // Whether anything is bound to `part`'s predicted touch: asked of every
+    // touch a predicted character begins, so it must be cheap.
+    [[nodiscard]] virtual bool touchBound(core::InstanceId part) const = 0;
+    // A predicted character began touching `part` in the step of `tick`.
+    virtual void predictedTouch(const PredictedTick& tick, core::InstanceId part) = 0;
 };
 
 class ICharacterReplay
@@ -94,6 +145,15 @@ public:
     // Where `id` was after the step of `tick`, as remembered; nothing when it
     // was not simulated here then.
     [[nodiscard]] virtual std::optional<core::CFrameD> remembered(core::u64 tick, core::InstanceId id) const
+    {
+        (void)tick;
+        (void)id;
+        return std::nullopt;
+    }
+    // Its predicted attributes after the step of `tick` (G37), as
+    // remembered; nothing when it was not remembered then.
+    [[nodiscard]] virtual std::optional<PredictedAttributes> rememberedAttributes(core::u64 tick,
+                                                                                  core::InstanceId id) const
     {
         (void)tick;
         (void)id;

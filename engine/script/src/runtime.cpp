@@ -12,6 +12,7 @@
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/random.h"
+#include "engine/scene/character_replay.h"
 #include "engine/script/builtins.h"
 #include "engine/script/bytecode.h"
 #include "engine/script/crypto_service.h"
@@ -200,8 +201,16 @@ void* cappedAlloc(void* user, void* block, size_t oldSize, size_t newSize)
 // at every loop back edge is a cost a correct script would pay.
 void watchdogInterrupt(lua_State* L, int gc)
 {
-    if (gc >= 0)
+    if (gc >= 0) {
+        // A collector step: its start, then its end (H11).
+        VmContext& ctx = context(L);
+        if (!ctx.gcStepOpen)
+            ENG_PROFILE_NEXT(ctx.gcSteps, "scripts.gc");
+        else
+            ctx.gcSteps.close();
+        ctx.gcStepOpen = !ctx.gcStepOpen;
         return;
+    }
     VmContext& ctx = context(L);
     if (ctx.killAfterNs == 0 || ctx.resumeStartedNs == 0 || (++ctx.interruptTicks & 255u) != 0)
         return;
@@ -214,10 +223,36 @@ void watchdogInterrupt(lua_State* L, int gc)
     raise(L, ENG_TR("script.err.script_timeout"), args);
 }
 
+// The runtime as the mirror's `scene::PredictedStepHost` (G37).
+class PredictedHost final : public scene::PredictedStepHost
+{
+public:
+    explicit PredictedHost(lua_State*& state) noexcept : m_state(state) {}
+
+    void predictedStep(const scene::PredictedTick& tick) override
+    {
+        if (m_state != nullptr)
+            script::runPredictedStep(m_state, tick);
+    }
+    [[nodiscard]] bool touchBound(core::InstanceId part) const override
+    {
+        return m_state != nullptr && script::predictedTouchBound(m_state, part);
+    }
+    void predictedTouch(const scene::PredictedTick& tick, core::InstanceId part) override
+    {
+        if (m_state != nullptr)
+            script::runPredictedTouch(m_state, tick, part);
+    }
+
+private:
+    lua_State*& m_state;
+};
+
 struct ScriptRuntime::Impl
 {
     ScriptHeap heap;
     lua_State* state = nullptr;
+    PredictedHost predicted{state};
     // Reached from every binding through `lua_callbacks(L)->userdata`. Owned
     // here, and by a stable address: the callbacks hold a pointer to it for the
     // life of the state.
@@ -383,6 +418,17 @@ void ScriptRuntime::runRenderSteps(f64 dt)
 {
     if (m_impl->state != nullptr)
         script::runRenderSteps(m_impl->state, dt);
+}
+
+void ScriptRuntime::runIntentWriters()
+{
+    if (m_impl->state != nullptr)
+        script::runIntentWriters(m_impl->state);
+}
+
+scene::PredictedStepHost& ScriptRuntime::predictedStepHost() noexcept
+{
+    return m_impl->predicted;
 }
 
 void ScriptRuntime::setDrawnPoseSink(const DrawnPoseSink& sink)

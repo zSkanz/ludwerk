@@ -109,6 +109,10 @@ const char* typeName(UserdataTag tag) noexcept
         return "Scene";
     case UserdataTag::SceneLoad:
         return "SceneLoad";
+    case UserdataTag::IntentWriter:
+        return "IntentWriter";
+    case UserdataTag::PredictedStep:
+        return "PredictedStep";
     case UserdataTag::AnimationTrack:
         return "AnimationTrack";
     case UserdataTag::InputObject:

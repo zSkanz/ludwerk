@@ -238,7 +238,10 @@ then where the time went, scope by scope: the simulation's phases, the
 physics' steps, animation, the scripts by phase, the network, the UI, the
 renderer's passes and the waits, each with its median, p95, worst frame, how
 many times it ran a frame, and its `self` -- what no scope inside it accounts
-for. A cost nobody has named yet shows up as a parent's `self`.
+for. A cost nobody has named yet shows up as a parent's `self`. Then the
+slowest frames, each on its own -- the worst five and any other over twice the
+median -- as the tree of that one frame: what a player felt as a hitch, which
+no median names. The Luau collector's steps are `scripts.gc`.
 
 `--pace=HZ` makes a headless run wait out each frame's share of a second, the
 wait left out of `--frame-stats`: without it a headless flight is over in a

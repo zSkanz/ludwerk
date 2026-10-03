@@ -28,6 +28,10 @@
 
 struct lua_State;
 
+namespace engine::scene {
+class PredictedStepHost;
+} // namespace engine::scene
+
 namespace engine::script {
 
 class Debugger;
@@ -126,6 +130,13 @@ public:
     // frame, inside the render phase, after the render-rate input dispatch and
     // before `PreRender` fires; never without a window.
     void runRenderSteps(f64 dt);
+    // `RunService:BindToIntent`'s functions (G38), once a tick, right after
+    // `scene::captureLocalIntents`.
+    void runIntentWriters();
+    // **What the physics mirror runs scripts in its step through** (G37):
+    // the predicted steps and touches. Handed to the mirror by `app`, and
+    // taken back from it before this runtime goes.
+    [[nodiscard]] scene::PredictedStepHost& predictedStepHost() noexcept;
     // Where `GetRenderCFrame` reads the frame's poses: set for a render phase,
     // cleared (a default sink) after it.
     void setDrawnPoseSink(const DrawnPoseSink& sink);

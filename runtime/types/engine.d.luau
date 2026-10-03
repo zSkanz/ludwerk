@@ -729,6 +729,35 @@ declare extern type InputObject with
     read TouchId: number
 end
 
+declare extern type IntentWriter with
+    --- This tick's intent named `action`: a boolean is pressed or not, a number is one axis, a
+    --- `Vector2` two and a `vector` three. A value that is not finite is refused.
+    function Set(self, action: string, value: boolean | number | Vector2 | vector): ()
+end
+
+declare extern type PredictedStep with
+    --- The character being stepped: its player's `Character` on this machine.
+    read Character: BasePart
+    --- Whose character it is.
+    read Player: Player
+    --- The player's own tick: the number their machine gave the tick of input this step takes, the same
+    --- on the authority and on their replica. What a dash that lasts twenty ticks counts in.
+    read Tick: number
+    --- The step's length, in seconds.
+    read DeltaTime: number
+    --- Whether this is a step taken again after a correction, on a replica. What only happens once -- a
+    --- sound, a particle -- checks it.
+    read Replaying: boolean
+    --- A generator seeded by the player and `Tick`: the same draws live and stepped again, on both
+    --- ends. Each read starts it again; keep it in a local.
+    read Random: Random
+    --- The player's intent named `action` at this tick, as `Player:GetIntent` answers it -- stepped
+    --- again, the one the tick first had.
+    function GetIntent(self, action: string): boolean | number | Vector2 | vector
+    --- Whether the button `action` went down at this tick: held now and not at the step before.
+    function Pressed(self, action: string): boolean
+end
+
 declare extern type AnimationTrack with
     --- Whether the clock is advancing. False for a track that reached the end of a clip that is not
     --- `Looped` -- which still HOLDS its last frame until it is stopped or replayed, because `Ended` is
@@ -1176,6 +1205,14 @@ declare extern type BasePart extends PVInstance with
     --- second. Applied at the next simulation tick and ignored by an anchored part, which has no
     --- momentum to change.
     function ApplyImpulse(self, impulse: vector): ()
+    --- Runs `fn(character, step)` **inside the simulation step** (ADR 0157) when a player's character
+    --- this machine steps begins touching this part -- on a replica, again for every tick it steps over
+    --- after a correction, exactly as `RunService:BindToPredictedStep` runs. What a jump pad, a booster
+    --- or a trampoline does to who lands on it, predicted without a rubber band. Nothing runs while
+    --- nobody touches it. One function a part: binding again replaces it. It may not wait.
+    function BindToPredictedTouch(self, fn: (character: BasePart, step: PredictedStep) -> ()): ()
+    --- Stops this part's predicted touch. Nothing bound is not an error.
+    function UnbindFromPredictedTouch(self): ()
     --- **Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture shows
     --- it -- in a render phase, which is a `RunService:BindToRenderStep` function, a `PreRender`
     --- handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, a run with no
@@ -4337,6 +4374,34 @@ declare extern type RunService extends Instance with
     --- replaces it. Nothing runs without a window. A binding belongs to the script that made it and
     --- goes with its scene (ADR 0124).
     function BindToRenderStep(self, name: string, priority: number, fn: (dt: number) -> ()): ()
+    --- Runs `fn(intent)` **every simulation tick**, right after this machine's input becomes its
+    --- player's intents, in the order bound (G38). `intent:Set(action, value)` writes an intent by name
+    --- -- a boolean, a number, a `Vector2` or a `vector` -- which every reader of `Player:GetIntent`
+    --- sees, on this machine and, in a match, on the authority: input that is not an `InputAction`,
+    --- such as a turn worked out from the mouse, a touch gesture or a bot. A value written wins over an
+    --- `InputAction` of the same name. The writer is good only during the call. Binding a name already
+    --- bound replaces it; a binding belongs to the script that made it and goes with its scene.
+    function BindToIntent(self, name: string, fn: (intent: IntentWriter) -> ()): ()
+    --- Stops the intent writer bound under `name`. A name nothing is bound under is not an error.
+    function UnbindFromIntent(self, name: string): ()
+    --- Runs `fn(step)` **inside the simulation step** (ADR 0157), before the physics solves it, once
+    --- for every player's character this machine steps: on the authority all of them, on a replica its
+    --- own. What it writes there -- `Move`, `Jump`, a velocity, an impulse, a place, an attribute on
+    --- the character -- is part of the step, so when a replica is corrected and steps its own character
+    --- again, `fn` runs again for each tick stepped, with the input that tick had, and `step.Replaying`
+    --- is true. A dash, a double jump, a dodge, a jump pad: movement a script makes that a replica
+    --- predicts without a rubber band at any ping. Read the player's input from `step` -- `GetIntent`
+    --- and `Pressed` -- and count time in `step.Tick`, the player's own tick, which is the same number
+    --- on both ends. An attribute the function writes on `step.Character` is **predicted state**:
+    --- remembered every tick, put back before a step is taken again, and the authority's value sent to
+    --- the replica beside the character, so a replica that wrote its own is put right. Draw from
+    --- `step.Random`, never from an unseeded `Random`. It may not wait: `task.wait` in it raises.
+    --- Functions run in the order bound; binding a name already bound replaces it, and a binding
+    --- belongs to the script that made it and goes with its scene. In a game played alone it runs once
+    --- a tick, never again.
+    function BindToPredictedStep(self, name: string, fn: (step: PredictedStep) -> ()): ()
+    --- Stops the predicted step bound under `name`. A name nothing is bound under is not an error.
+    function UnbindFromPredictedStep(self, name: string): ()
     --- Stops the render step bound under `name`. A name nothing is bound under is not an error.
     function UnbindFromRenderStep(self, name: string): ()
     --- Whether the world is currently paused. Since `Pause` and `Resume` are both idempotent, this is

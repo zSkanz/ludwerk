@@ -810,6 +810,22 @@ int startScheduled(lua_State* L, lua_State* co, int argCount)
     return status;
 }
 
+int callUnyielding(lua_State* L, lua_State* co, int argCount)
+{
+    if (!enterResume(L)) {
+        lua_pushstring(co, core::formatKeyPrefixed(ENG_TR("script.err.resume_too_deep")).c_str());
+        reportHandlerError(L, co, LUA_ERRRUN);
+        return LUA_ERRRUN;
+    }
+    // Called, not resumed: a C boundary under it is what makes every wait
+    // in it raise rather than leave the rest of the function for later.
+    const int status = lua_pcall(co, argCount, 0, 0);
+    leaveResume(L, co);
+    if (status != LUA_OK)
+        reportHandlerError(L, co, status);
+    return status;
+}
+
 u64 watchdogNow() noexcept
 {
     return static_cast<u64>(

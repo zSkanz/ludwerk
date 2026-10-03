@@ -3409,6 +3409,163 @@ namespace {
 
 } // namespace
 
+TEST_CASE("G38: intents written by code are this tick's, read by GetIntent, and a kept writer writes nothing")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        local NetworkService = game:GetService("NetworkService")
+        local function mark(name: string)
+            local folder = Instance.new("Folder")
+            folder.Name = name
+            folder.Parent = workspace
+        end
+        local kept = nil
+        local ticks = 0
+        RunService:BindToIntent("aim", function(intent)
+            intent:Set("Turn", 0.5)
+            intent:Set("Fire", true)
+            intent:Set("Look", Vector2.new(1, 2))
+            intent:Set("Walk", vector.create(0, 0, -1))
+            kept = intent
+        end)
+        RunService.Heartbeat:Connect(function()
+            ticks += 1
+            local me = NetworkService:GetPlayers()[1]
+            if ticks == 1 then
+                mark(`turn {me:GetIntent("Turn")}`)
+                mark(`fire {tostring(me:GetIntent("Fire"))}`)
+                mark(`look {me:GetIntent("Look").Y}`)
+                mark(`walk {me:GetIntent("Walk").Z}`)
+                local ok = pcall(function()
+                    kept:Set("Turn", 1)
+                end)
+                mark(`kept {tostring(ok)}`)
+                RunService:UnbindFromIntent("aim")
+            elseif ticks == 2 then
+                -- Unbound: nothing writes it, and this tick's intents start empty.
+                mark(`after {tostring(me:GetIntent("Fire"))}`)
+            end
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.tick();
+    host.tick();
+    CHECK(leftMark(host, "turn 0.5"));
+    CHECK(leftMark(host, "fire true"));
+    CHECK(leftMark(host, "look 2"));
+    CHECK(leftMark(host, "walk -1"));
+    CHECK(leftMark(host, "kept false"));
+    CHECK(leftMark(host, "after false"));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
+TEST_CASE("G37: a predicted step runs once a tick with its player's input, and a touch once as it begins")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        local NetworkService = game:GetService("NetworkService")
+        local function mark(name: string)
+            local folder = Instance.new("Folder")
+            folder.Name = name
+            folder.Parent = workspace
+        end
+        local floor = Instance.new("Part")
+        floor.Name = "Pad"
+        floor.Anchored = true
+        floor.Size = vector.create(40, 1, 40)
+        floor.Position = vector.create(0, -0.5, 0)
+        floor.Parent = workspace
+        local body = Instance.new("CharacterBody")
+        body.Name = "Hero"
+        body.Size = vector.create(2, 4, 2)
+        body.Position = vector.create(0, 6, 0)
+        body.Parent = workspace
+        NetworkService:GetPlayers()[1].Character = body
+
+        local written = 0
+        RunService:BindToIntent("dash", function(intent)
+            written += 1
+            intent:Set("Dash", written == 3 or written == 4 or written == 7)
+        end)
+        local steps, presses, replays, gaps = 0, 0, 0, 0
+        local last = nil
+        local waited = nil
+        RunService:BindToPredictedStep("count", function(step)
+            steps += 1
+            if step:Pressed("Dash") then
+                presses += 1
+            end
+            if step.Replaying then
+                replays += 1
+            end
+            if last and step.Tick ~= last + 1 then
+                gaps += 1
+            end
+            last = step.Tick
+            if step.Character ~= body or step.Player ~= NetworkService:GetPlayers()[1] then
+                gaps += 1
+            end
+            -- A step may not wait.
+            if waited == nil then
+                waited = pcall(task.wait, 0)
+            end
+            step.Character:SetAttribute("LastTick", step.Tick)
+            local a = step.Random:NextNumber()
+            local b = step.Random:NextNumber()
+            if a ~= b then
+                gaps += 1
+            end
+        end)
+        local touches = 0
+        floor:BindToPredictedTouch(function(character, step)
+            if character == body and step.Tick > 0 then
+                touches += 1
+            end
+        end)
+        local ticks = 0
+        RunService.Heartbeat:Connect(function()
+            ticks += 1
+            if ticks == 90 then
+                mark(`steps {steps}`)
+                mark(`presses {presses}`)
+                mark(`replays {replays}`)
+                mark(`gaps {gaps}`)
+                mark(`waited {tostring(waited)}`)
+                mark(`touches {touches}`)
+                mark(`last {body:GetAttribute("LastTick") == last}`)
+            end
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int at = 0; at < 90; ++at)
+        host.tick();
+    // A step a tick from the first the body had a controller on, none twice.
+    CHECK(leftMark(host, "steps 89"));
+    CHECK(leftMark(host, "presses 2"));
+    CHECK(leftMark(host, "replays 0"));
+    CHECK(leftMark(host, "gaps 0"));
+    CHECK(leftMark(host, "waited false"));
+    CHECK(leftMark(host, "touches 1"));
+    CHECK(leftMark(host, "last true"));
+    // What the step wrote on its character is predicted state.
+    const scene::World& world = host.world();
+    const core::InstanceId hero = world.findFirstChild(host.workspace(), world.atoms().lookup("Hero"));
+    REQUIRE(hero.valid());
+    const scene::CharacterBodyComponent* body = world.characterBodies().find(hero);
+    REQUIRE(body != nullptr);
+    REQUIRE(body->predictedAttributes.size() == 1);
+    CHECK(world.atoms().text(body->predictedAttributes[0]) == "LastTick");
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
 TEST_CASE("render steps run by priority before PreRender, stop when unbound, and never without a frame (ADR 0136)")
 {
     Captured log;

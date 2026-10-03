@@ -1800,6 +1800,8 @@ void registerDatatypes(lua_State* L)
     registerTweenTypes(L);
     registerSaveTypes(L);
     registerSceneTypes(L);
+    registerIntentWriter(L);
+    registerPredictedStep(L);
     registerAnimationTypes(L);
     registerInputTypes(L);
     registerMaterialTypes(L);
@@ -1839,6 +1841,11 @@ core::Color3 checkColor3(lua_State* L, int index)
 void pushVector3(lua_State* L, core::Vec3 value)
 {
     pushVec3(L, value);
+}
+
+void pushRandom(lua_State* L, const core::Pcg32& value)
+{
+    pushTagged(L, UserdataTag::Random, value);
 }
 
 void pushVector2(lua_State* L, core::Vec2 value)

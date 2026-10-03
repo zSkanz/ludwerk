@@ -103,6 +103,16 @@ inline constexpr u32 MaxIntentsPerTick = 8;
 inline constexpr u32 MaxIntentBurst = 32;
 inline constexpr u32 IntentBudgetPerTick = 2;
 inline constexpr u16 MaxIntentEntries = 256;
+// **An action's name crosses once a connection** (G38, protocol 37): an
+// `IntentNames` message gives it a number, and every intent after carries the
+// number. As many names as a connection may give, how long one may be, and how
+// many entries may wait for a name that has not come yet.
+inline constexpr u16 MaxIntentNames = 1024;
+inline constexpr usize MaxIntentNameBytes = 255;
+inline constexpr usize MaxUnnamedIntents = 256;
+// The most predicted attributes a snapshot carries for a replica's own
+// character (G37).
+inline constexpr u16 MaxPredictedAttributes = 64;
 
 // **Intents, buffered and applied one a tick** (the multiplayer smoothness
 // brief, protocol 22). An `Intent` message carries the newest tick and up to
@@ -340,6 +350,20 @@ private:
         // lacked is carried into the next tick instead -- late, not lost.
         std::map<u64, std::vector<scene::PlayerIntent>> standIns;
         std::vector<core::NameAtom> carriedPresses;
+        // **The names behind its intent numbers** (G38, protocol 37), as its
+        // `IntentNames` gave them -- empty for a number not given -- and the
+        // atom each is here, once anything here has named it.
+        std::vector<std::string> intentNames;
+        std::vector<core::NameAtom> intentAtoms;
+        // Entries whose number named nothing yet: an intent that overtook its
+        // name, which travels on another channel. Taken when the name comes.
+        struct UnnamedIntent
+        {
+            u64 tick = 0;
+            u16 id = 0;
+            scene::PlayerIntent intent;
+        };
+        std::vector<UnnamedIntent> unnamedIntents;
         // The newest tick queued when the delay last held a tick to grow.
         u64 pausedAtNewest = 0;
         // **A peer whose clock moved against this one's** (D480). How many
@@ -457,6 +481,11 @@ private:
     void encodeGroundWhole(const scene::World& world, Send send);
     // One intent a peer, the next in tick order, as this tick's.
     void applyIntents(scene::World& world);
+    // The atom a peer's intent number stands for here, or none: a number it
+    // has not named, or a name nothing here has.
+    static core::NameAtom intentAtom(scene::World& world, Peer& peer, u16 id);
+    // The entries that waited for names this peer has now given.
+    static void takeNamedIntents(scene::World& world, Peer& peer);
     void sendAttributes(Peer& peer, const std::vector<u32>& entering);
 
     using TileBlock = std::pair<scene::TileChunkKey, scene::TileChunk>;
@@ -779,6 +808,13 @@ private:
     // The last `IntentRedundancy` intents sent, encoded, oldest first: each
     // message carries them all (protocol 22).
     std::deque<std::pair<u64, std::vector<u8>>> m_sentIntents;
+    // The number each action's name was given on this connection (G38), by
+    // atom: given in the order first sent, and sent once, reliably.
+    std::map<u32, u16> m_intentIds;
+    // **The own character's predicted attributes, as the snapshot being
+    // applied has them** (G37): the authority's word, compared with what this
+    // replica remembers at the tick it answers. Nothing: it said nothing.
+    std::optional<scene::PredictedAttributes> m_snapshotAttributes;
     // How many times this machine has dropped simulated time (D498), sent
     // with every intent.
     u32 m_timeEpoch = 0;

@@ -44,6 +44,7 @@
 #include "engine/core/id.h"
 #include "engine/core/math.h"
 #include "engine/core/name_atom.h"
+#include "engine/core/profile.h"
 #include "engine/core/types.h"
 #include "engine/scene/class_registry.h"
 
@@ -166,6 +167,12 @@ enum class UserdataTag : int
     Scene = 27,
     // ADR 0125: the handle `LoadSceneAsync` returns, by its load's id.
     SceneLoad = 28,
+    // G38: what a `BindToIntent` function writes with, by the run it belongs
+    // to -- good only while that run is on.
+    IntentWriter = 29,
+    // G37: what a predicted step's function is handed, by the run it belongs
+    // to -- good only while that run is on.
+    PredictedStep = 30,
 
     // Not a tag. The count exists so a registration loop can assert it covered
     // everything, and so the budget remaining is a number someone can read.
@@ -236,6 +243,17 @@ struct VmContext
     u64 killAfterNs = 0;
     u64 lastLongFrameWarnNs = 0;
     u32 interruptTicks = 0;
+
+    // **The collector's steps, timed** (H11): Luau calls the interrupt at the
+    // start and the end of every incremental step, never nested, and the
+    // stretch between is `scripts.gc` in the frame's scopes -- under whatever
+    // scope the step happened in.
+    core::profile::Sections gcSteps;
+    bool gcStepOpen = false;
+
+    // **The character a predicted step is running for** (G37): an attribute
+    // written on it now is predicted state, remembered and stepped again.
+    core::InstanceId predictedCharacter;
 
     // Owned by `ScriptRuntime`, whose lifetime is the only one that brackets the
     // `lua_State`. Pointers rather than values so that `binding.h` -- which
