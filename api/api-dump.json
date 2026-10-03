@@ -5082,6 +5082,23 @@
       "Tags": [],
       "Properties": [
         {
+          "Name": "AbsoluteCanvasSize",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "AbsoluteWindowSize",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "AutomaticCanvasSize",
+          "Type": "Enum.AutomaticSize",
+          "Default": "Enum.AutomaticSize.None"
+        },
+        {
           "Name": "CanvasPosition",
           "Type": "Vector2",
           "Default": "Vector2.zero"
@@ -5092,9 +5109,34 @@
           "Default": "UDim2.new()"
         },
         {
+          "Name": "ElasticBehavior",
+          "Type": "Enum.ElasticBehavior",
+          "Default": "Enum.ElasticBehavior.WhenScrollable"
+        },
+        {
+          "Name": "ScrollBarImageColor",
+          "Type": "Color3",
+          "Default": "Color3.new(0.5, 0.5, 0.5)"
+        },
+        {
+          "Name": "ScrollBarImageTransparency",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
           "Name": "ScrollBarThickness",
           "Type": "number",
           "Default": "12"
+        },
+        {
+          "Name": "ScrollingDirection",
+          "Type": "Enum.ScrollingDirection",
+          "Default": "Enum.ScrollingDirection.XY"
+        },
+        {
+          "Name": "ScrollingEnabled",
+          "Type": "boolean",
+          "Default": "true"
         }
       ],
       "Methods": [],
@@ -11312,6 +11354,23 @@
       ]
     },
     {
+      "Name": "ElasticBehavior",
+      "Items": [
+        {
+          "Name": "Always",
+          "Value": 1
+        },
+        {
+          "Name": "Never",
+          "Value": 2
+        },
+        {
+          "Name": "WhenScrollable",
+          "Value": 0
+        }
+      ]
+    },
+    {
       "Name": "Face",
       "Items": [
         {
@@ -12625,6 +12684,23 @@
         {
           "Name": "Sensor",
           "Value": 4
+        }
+      ]
+    },
+    {
+      "Name": "ScrollingDirection",
+      "Items": [
+        {
+          "Name": "X",
+          "Value": 1
+        },
+        {
+          "Name": "XY",
+          "Value": 3
+        },
+        {
+          "Name": "Y",
+          "Value": 2
         }
       ]
     },

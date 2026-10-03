@@ -1866,6 +1866,30 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "ScrollingDirection",
+            Doc = "Which axes a `ScrollFrame` moves its canvas along (G40). The values are the axes' bits, as "
+                .. "`AutomaticSize`'s are.",
+            Items = {
+                { Name = "X", Value = 1, Doc = "Across only: a carousel." },
+                { Name = "Y", Value = 2, Doc = "Down only: a list." },
+                { Name = "XY", Value = 3, Doc = "Both: a map, or a canvas larger than its frame both ways." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "ElasticBehavior",
+            Doc = "Whether a `ScrollFrame` dragged past its end gives a little and springs back (G40), "
+                .. "which is how a hand knows it reached the end rather than that the list stopped answering.",
+            Items = {
+                {
+                    Name = "WhenScrollable",
+                    Value = 0,
+                    Doc = "On an axis whose canvas is longer than the frame: a list too short to scroll stays put.",
+                },
+                { Name = "Always", Value = 1, Doc = "On every axis it scrolls along, whether or not there is room." },
+                { Name = "Never", Value = 2, Doc = "A hard stop at either end." },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

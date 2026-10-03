@@ -1,6 +1,7 @@
 // ADR 0128's hands: a selection moved by a gamepad or the arrow keys, an
 // element dragged by a pointer, pages turned by a swipe, and a list scrolled by
-// the wheel and by a finger (D477).
+// the wheel and by a finger (D477) -- thrown, pulled past its end, dragged by
+// its bar, nested in another and scrolled to a selection (G40).
 #include <cmath>
 #include <doctest/doctest.h>
 #include <optional>
@@ -124,6 +125,18 @@ struct Fixture
         ui::InteractionInput input;
         input.pointer = at;
         input.released = true;
+        return send(input);
+    }
+
+    // The pointer at `at` at `time` seconds: what a fling is measured from.
+    ui::InteractionResult touch(Vec2 at, double time, bool pressed, bool held)
+    {
+        ui::InteractionInput input;
+        input.pointer = at;
+        input.pressed = pressed;
+        input.pointerHeld = held;
+        input.released = !pressed && !held;
+        input.time = time;
         return send(input);
     }
 
@@ -564,6 +577,268 @@ TEST_CASE("D477: a list dragged by a finger scrolls, and the row under the finge
         (void)fixture.release(Vec2{50.0f, 50.0f});
         CHECK(fixture.said(fixture.events(), "Activated"));
     }
+}
+
+// --- A ScrollFrame, as a phone's list (G40) ---------------------------------------
+
+namespace {
+
+// A list of `rows` buttons 40 tall in a frame 200 by 100, its canvas grown to
+// hold them.
+struct List
+{
+    Fixture fixture;
+    InstanceId frame;
+    std::vector<InstanceId> rows;
+
+    explicit List(int count = 50)
+    {
+        frame = fixture.box("ScrollFrame", fixture.screen, 0.0f, 0.0f, 200.0f, 100.0f);
+        scroll().automaticCanvasSize = 2;
+        (void)fixture.child("UIListLayout", frame);
+        for (int index = 0; index < count; ++index)
+            rows.push_back(fixture.box("TextButton", frame, 0.0f, 0.0f, 200.0f, 40.0f));
+        fixture.layout();
+    }
+
+    [[nodiscard]] scene::ScrollFrameComponent& scroll() { return *fixture.world->scrollFrames().find(frame); }
+
+    // Time passing with no hand on it, a frame at a time.
+    void wait(double seconds)
+    {
+        for (double gone = 0.0; gone < seconds; gone += 1.0 / 60.0) {
+            ui::advance(*fixture.world, 1.0f / 60.0f);
+            fixture.layout();
+        }
+    }
+};
+
+} // namespace
+
+TEST_CASE("G40: a list thrown by a finger glides on, slows and stops; one stopped first does not")
+{
+    List list;
+    // Seventy pixels up in a fifteenth of a second, and let go while moving.
+    (void)list.fixture.touch(Vec2{50.0f, 90.0f}, 0.0, true, true);
+    (void)list.fixture.touch(Vec2{50.0f, 70.0f}, 0.016, false, true);
+    (void)list.fixture.touch(Vec2{50.0f, 45.0f}, 0.033, false, true);
+    (void)list.fixture.touch(Vec2{50.0f, 20.0f}, 0.066, false, false);
+    CHECK(list.scroll().canvasPosition.y == doctest::Approx(70.0));
+    CHECK(list.scroll().flingVelocity.y > 900.0f);
+    (void)list.fixture.events();
+
+    list.wait(0.1);
+    const float early = list.scroll().canvasPosition.y;
+    CHECK(early > 150.0f);
+    list.wait(3.0);
+    // About its speed over the friction further on, and then still.
+    CHECK(list.scroll().flingVelocity.y == 0.0f);
+    const float rest = list.scroll().canvasPosition.y;
+    CHECK(rest > 400.0f);
+    CHECK(rest < 700.0f);
+    list.wait(0.5);
+    CHECK(list.scroll().canvasPosition.y == rest);
+
+    SUBCASE("a finger that stopped before it lifted throws nothing")
+    {
+        (void)list.fixture.touch(Vec2{50.0f, 90.0f}, 10.0, true, true);
+        (void)list.fixture.touch(Vec2{50.0f, 40.0f}, 10.05, false, true);
+        (void)list.fixture.touch(Vec2{50.0f, 40.0f}, 10.3, false, true);
+        (void)list.fixture.touch(Vec2{50.0f, 40.0f}, 10.31, false, false);
+        CHECK(list.scroll().flingVelocity.y == 0.0f);
+    }
+}
+
+TEST_CASE("G40: a press on a gliding list stops it and presses nothing; the next press does")
+{
+    List list;
+    (void)list.fixture.touch(Vec2{50.0f, 90.0f}, 0.0, true, true);
+    (void)list.fixture.touch(Vec2{50.0f, 50.0f}, 0.02, false, true);
+    (void)list.fixture.touch(Vec2{50.0f, 10.0f}, 0.04, false, false);
+    list.wait(0.05);
+    REQUIRE(list.scroll().flingVelocity.y > 0.0f);
+    (void)list.fixture.events();
+
+    (void)list.fixture.touch(Vec2{50.0f, 50.0f}, 1.0, true, true);
+    CHECK(list.scroll().flingVelocity.y == 0.0f);
+    const float caught = list.scroll().canvasPosition.y;
+    (void)list.fixture.touch(Vec2{50.0f, 50.0f}, 1.1, false, false);
+    CHECK_FALSE(list.fixture.said(list.fixture.events(), "Activated"));
+    list.wait(0.5);
+    CHECK(list.scroll().canvasPosition.y == caught);
+
+    (void)list.fixture.touch(Vec2{50.0f, 50.0f}, 2.0, true, true);
+    (void)list.fixture.touch(Vec2{50.0f, 50.0f}, 2.1, false, false);
+    CHECK(list.fixture.said(list.fixture.events(), "Activated"));
+}
+
+TEST_CASE("G40: pulled past its end a list gives, less the further, and springs back; CanvasPosition never leaves")
+{
+    List list;
+    (void)list.fixture.touch(Vec2{50.0f, 10.0f}, 0.0, true, true);
+    (void)list.fixture.touch(Vec2{50.0f, 60.0f}, 0.1, false, true);
+    // Fifty pixels down at the top: the canvas stays at the start, and the
+    // content shows some of the pull, not all of it.
+    CHECK(list.scroll().canvasPosition.y == 0.0f);
+    const float half = list.scroll().overscroll.y;
+    CHECK(half < -5.0f);
+    CHECK(half > -50.0f);
+    (void)list.fixture.touch(Vec2{50.0f, 95.0f}, 0.2, false, true);
+    CHECK(list.scroll().overscroll.y < half);
+    CHECK(list.scroll().overscroll.y - half > -35.0f);
+    // The rows are drawn where the pull put them.
+    list.fixture.layout();
+    CHECK(list.fixture.object(list.rows[0]).absolutePosition.y == doctest::Approx(-static_cast<double>(list.scroll().overscroll.y)));
+
+    // Held, it stays; let go, it comes back.
+    list.wait(0.2);
+    CHECK(list.scroll().overscroll.y < half);
+    (void)list.fixture.touch(Vec2{50.0f, 95.0f}, 3.0, false, false);
+    list.wait(1.0);
+    CHECK(list.scroll().overscroll.y == 0.0f);
+    CHECK(list.fixture.object(list.rows[0]).absolutePosition.y == doctest::Approx(0.0));
+
+    SUBCASE("Never is a hard stop")
+    {
+        list.scroll().elasticBehavior = 2;
+        (void)list.fixture.touch(Vec2{50.0f, 10.0f}, 5.0, true, true);
+        (void)list.fixture.touch(Vec2{50.0f, 60.0f}, 5.1, false, true);
+        CHECK(list.scroll().overscroll.y == 0.0f);
+        (void)list.fixture.touch(Vec2{50.0f, 60.0f}, 5.2, false, false);
+    }
+    SUBCASE("a list too short to scroll stays put, and its row is pressed")
+    {
+        List shortList(2);
+        (void)shortList.fixture.touch(Vec2{50.0f, 5.0f}, 0.0, true, true);
+        (void)shortList.fixture.touch(Vec2{50.0f, 35.0f}, 0.1, false, true);
+        CHECK(shortList.scroll().overscroll.y == 0.0f);
+        (void)shortList.fixture.touch(Vec2{50.0f, 35.0f}, 0.2, false, false);
+        CHECK(shortList.fixture.said(shortList.fixture.events(), "Activated"));
+        // Always gives even then.
+        shortList.scroll().elasticBehavior = 1;
+        (void)shortList.fixture.touch(Vec2{50.0f, 5.0f}, 1.0, true, true);
+        (void)shortList.fixture.touch(Vec2{50.0f, 35.0f}, 1.1, false, true);
+        CHECK(shortList.scroll().overscroll.y < 0.0f);
+        (void)shortList.fixture.touch(Vec2{50.0f, 35.0f}, 1.2, false, false);
+        CHECK_FALSE(shortList.fixture.said(shortList.fixture.events(), "Activated"));
+    }
+}
+
+TEST_CASE("G40: a list thrown at its end stops there and bounces")
+{
+    List list(5); // 200 of canvas, 100 of travel
+    (void)list.fixture.touch(Vec2{50.0f, 90.0f}, 0.0, true, true);
+    (void)list.fixture.touch(Vec2{50.0f, 50.0f}, 0.02, false, true);
+    (void)list.fixture.touch(Vec2{50.0f, 10.0f}, 0.04, false, false);
+    list.wait(0.1);
+    CHECK(list.scroll().canvasPosition.y == doctest::Approx(100.0));
+    CHECK(list.scroll().flingVelocity.y == 0.0f);
+    CHECK(list.scroll().overscroll.y > 0.0f);
+    list.wait(1.0);
+    CHECK(list.scroll().overscroll.y == 0.0f);
+    CHECK(list.scroll().canvasPosition.y == doctest::Approx(100.0));
+}
+
+TEST_CASE("G40: ScrollingEnabled and ScrollingDirection say what a hand may do")
+{
+    List list;
+    SUBCASE("not enabled: neither the wheel nor a finger, and the row is pressed")
+    {
+        list.scroll().scrollingEnabled = false;
+        CHECK_FALSE(list.fixture.wheel(Vec2{50.0f, 50.0f}, -1.0f).wheelTaken);
+        // Up within the first row, so the press and the release are on it.
+        (void)list.fixture.touch(Vec2{50.0f, 35.0f}, 0.0, true, true);
+        (void)list.fixture.touch(Vec2{50.0f, 5.0f}, 0.1, false, true);
+        (void)list.fixture.touch(Vec2{50.0f, 5.0f}, 0.2, false, false);
+        CHECK(list.scroll().canvasPosition.y == 0.0f);
+        CHECK(list.fixture.said(list.fixture.events(), "Activated"));
+    }
+    SUBCASE("across only: the wheel turns it across")
+    {
+        const InstanceId strip = list.fixture.box("ScrollFrame", list.fixture.screen, 300.0f, 0.0f, 200.0f, 100.0f);
+        scene::ScrollFrameComponent& across = *list.fixture.world->scrollFrames().find(strip);
+        across.canvasSize = UDim2{UDim{0.0f, 800.0f}, UDim{}};
+        across.scrollingDirection = 1;
+        CHECK(list.fixture.wheel(Vec2{350.0f, 50.0f}, -1.0f).wheelTaken);
+        CHECK(across.canvasPosition.x == doctest::Approx(48.0));
+        CHECK(across.canvasPosition.y == 0.0f);
+    }
+}
+
+TEST_CASE("G40: the thumb drags the canvas as far along as it goes along its track, and the track pages")
+{
+    Fixture fixture;
+    const InstanceId frame = fixture.box("ScrollFrame", fixture.screen, 0.0f, 0.0f, 100.0f, 100.0f);
+    scene::ScrollFrameComponent& scroll = *fixture.world->scrollFrames().find(frame);
+    scroll.canvasSize = UDim2{UDim{}, UDim{0.0f, 400.0f}};
+    scroll.scrollBarThickness = 10.0f;
+    (void)fixture.box("TextButton", frame, 0.0f, 0.0f, 100.0f, 400.0f);
+    fixture.layout();
+
+    // The thumb is the top quarter of the track along the right edge: 75 of
+    // travel for 300 of canvas, four to one.
+    (void)fixture.press(Vec2{95.0f, 10.0f});
+    (void)fixture.hold(Vec2{95.0f, 40.0f});
+    CHECK(scroll.canvasPosition.y == doctest::Approx(120.0));
+    (void)fixture.hold(Vec2{95.0f, 500.0f});
+    CHECK(scroll.canvasPosition.y == doctest::Approx(300.0));
+    (void)fixture.release(Vec2{95.0f, 500.0f});
+    // The button under the bar was not pressed by it.
+    CHECK_FALSE(fixture.said(fixture.events(), "Activated"));
+
+    // On the track above the thumb: a view back.
+    (void)fixture.press(Vec2{95.0f, 10.0f});
+    (void)fixture.release(Vec2{95.0f, 10.0f});
+    CHECK(scroll.canvasPosition.y == doctest::Approx(200.0));
+    CHECK_FALSE(fixture.said(fixture.events(), "Activated"));
+}
+
+TEST_CASE("G40: a drag in a list inside a carousel goes to the one that scrolls the way it started")
+{
+    Fixture fixture;
+    const InstanceId carousel = fixture.box("ScrollFrame", fixture.screen, 0.0f, 0.0f, 200.0f, 100.0f);
+    const InstanceId list = fixture.box("ScrollFrame", carousel, 0.0f, 0.0f, 200.0f, 100.0f);
+    // Both made before either is held: a pool that grows moves what is in it.
+    scene::ScrollFrameComponent& outer = *fixture.world->scrollFrames().find(carousel);
+    outer.canvasSize = UDim2{UDim{0.0f, 600.0f}, UDim{}};
+    outer.scrollingDirection = 1;
+    scene::ScrollFrameComponent& inner = *fixture.world->scrollFrames().find(list);
+    inner.canvasSize = UDim2{UDim{}, UDim{0.0f, 400.0f}};
+    (void)fixture.box("TextButton", list, 0.0f, 0.0f, 200.0f, 400.0f);
+    fixture.layout();
+
+    // Down first: the list, and only down, however sideways it wanders after.
+    (void)fixture.touch(Vec2{100.0f, 80.0f}, 0.0, true, true);
+    (void)fixture.touch(Vec2{98.0f, 60.0f}, 0.1, false, true);
+    (void)fixture.touch(Vec2{40.0f, 40.0f}, 0.2, false, true);
+    CHECK(inner.canvasPosition.y == doctest::Approx(40.0));
+    CHECK(inner.canvasPosition.x == 0.0f);
+    CHECK(outer.canvasPosition.x == 0.0f);
+    (void)fixture.touch(Vec2{40.0f, 40.0f}, 1.0, false, false);
+
+    // Sideways first: the carousel, which the list cannot do.
+    (void)fixture.touch(Vec2{150.0f, 50.0f}, 2.0, true, true);
+    (void)fixture.touch(Vec2{130.0f, 52.0f}, 2.1, false, true);
+    (void)fixture.touch(Vec2{90.0f, 80.0f}, 2.2, false, true);
+    CHECK(outer.canvasPosition.x == doctest::Approx(60.0));
+    CHECK(inner.canvasPosition.y == doctest::Approx(40.0));
+    (void)fixture.touch(Vec2{90.0f, 80.0f}, 3.0, false, false);
+    CHECK_FALSE(fixture.said(fixture.events(), "Activated"));
+}
+
+TEST_CASE("G40: a selection moved out of sight scrolls into view, down and back up")
+{
+    List list(10);
+    list.fixture.selected() = list.rows[5];
+    (void)list.fixture.navigate(0, 0);
+    // Row five is 200 to 240: its bottom at the bottom of the view.
+    CHECK(list.scroll().canvasPosition.y == doctest::Approx(140.0));
+    (void)list.fixture.navigate(0, 1);
+    CHECK(list.fixture.selected() == list.rows[6]);
+    CHECK(list.scroll().canvasPosition.y == doctest::Approx(180.0));
+    list.fixture.selected() = list.rows[1];
+    (void)list.fixture.navigate(0, 0);
+    CHECK(list.scroll().canvasPosition.y == doctest::Approx(40.0));
 }
 
 // --- Pages, by hand -------------------------------------------------------------

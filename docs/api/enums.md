@@ -171,6 +171,16 @@ The shape of a tween's progress curve (§2.1). The set is the one tutorials and 
 | `Bounce` | 9 | Settles by bouncing, like something dropped. |
 | `Elastic` | 10 | Oscillates past both ends before settling. Like `Back`, it leaves 0-1. |
 
+## Enum.ElasticBehavior
+
+Whether a `ScrollFrame` dragged past its end gives a little and springs back (G40), which is how a hand knows it reached the end rather than that the list stopped answering.
+
+| Item | Value | Description |
+|---|---|---|
+| `WhenScrollable` | 0 | On an axis whose canvas is longer than the frame: a list too short to scroll stays put. |
+| `Always` | 1 | On every axis it scrolls along, whether or not there is room. |
+| `Never` | 2 | A hard stop at either end. |
+
 ## Enum.Face
 
 One face of a part, for what is drawn on it (F3). Named from the part's own point of view.
@@ -691,6 +701,16 @@ Which ways up a game may be held, on a device that turns (`UIService.ScreenOrien
 | `LandscapeSensor` | 2 | Either landscape, following the device as it is turned over. The default: most games are drawn for a wide screen. |
 | `Portrait` | 3 | Upright. |
 | `Sensor` | 4 | Any way up, following the device -- and the player's own rotation lock. |
+
+## Enum.ScrollingDirection
+
+Which axes a `ScrollFrame` moves its canvas along (G40). The values are the axes' bits, as `AutomaticSize`'s are.
+
+| Item | Value | Description |
+|---|---|---|
+| `X` | 1 | Across only: a carousel. |
+| `Y` | 2 | Down only: a list. |
+| `XY` | 3 | Both: a map, or a canvas larger than its frame both ways. |
 
 ## Enum.SettingSource
 

@@ -1,0 +1,17 @@
+# A settings list as a phone has one (G40): a column of rows in a ScrollFrame
+# that a finger throws and that gives at its ends, with a strip of wallpapers
+# inside it that scrolls sideways.
+#
+# No scene file: the script builds the screen, because the list is the subject.
+
+[project]
+name = "Ludwerk Settings List"
+id = "dev.ludwerk.settings-list"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"
+
+[window]
+title = "Ludwerk — Settings"
+width = 540
+height = 960

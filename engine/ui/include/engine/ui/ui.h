@@ -455,7 +455,8 @@ void resetLayoutStats() noexcept;
 // script turns one too.
 //
 // **What moves by itself, moved by `seconds`**: the slide of every page layout
-// that is turning. Once a frame, before `layout`; a tree something slid in is
+// that is turning, and every `ScrollFrame` that was thrown or pulled past its
+// end (G40). Once a frame, before `layout`; a tree something slid in is
 // laid out again. Frame time rather than simulation time -- a page turn is
 // drawn, not simulated, and `CurrentPage` already changed when it was asked.
 void advance(scene::World& world, f32 seconds);

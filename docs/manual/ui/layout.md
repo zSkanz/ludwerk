@@ -166,7 +166,26 @@ than showing emptiness.
 
 `ScrollFrame.ScrollBarThickness` defaults to 12; zero draws no bar and still
 scrolls, which is what a touch surface wants. A bar appears only on an axis that
-can actually move.
+can actually move. It is drawn in `ScrollBarImageColor` -- a middle grey, which
+reads on a light panel and a dark one -- faded by `ScrollBarImageTransparency`,
+with the track a quarter as solid as the thumb.
+
+**`AutomaticCanvasSize`** grows the canvas to hold what is in it, on the axes it
+names: a `UIListLayout`'s or `UIGridLayout`'s line, or else the furthest any child
+reaches, with the frame's `UIPadding` around it. The canvas is then the larger of
+`CanvasSize` and the contents, so a list whose rows a script adds scrolls without
+the script measuring anything:
+
+```luau
+local list = Instance.new("ScrollFrame")
+list.Size = UDim2.fromScale(1, 1)
+list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Instance.new("UIListLayout").Parent = list
+```
+
+`AbsoluteCanvasSize` and `AbsoluteWindowSize` are what the last layout found, in
+pixels: the canvas (never smaller than the frame) and the part of it that shows.
+Their difference is how far it can scroll.
 
 ## UICorner
 

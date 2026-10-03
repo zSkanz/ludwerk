@@ -1385,7 +1385,7 @@ if(ENG_BUILD_TESTS)
     foreach(example 01-instances 02-meshes 03-physics-playground 06-scene 11-ocean 12-ragdoll 20-platformer
                     21-navigation 22-atmosphere 23-surfaces 24-scenes 25-gradients-and-strokes
                     26-security-cameras 27-mirrors-and-portals 28-arcade 29-meadow
-                    30-interactions 31-lake-and-river 32-menus 33-options)
+                    30-interactions 31-lake-and-river 32-menus 33-options 34-settings-list)
         add_test(NAME example_boot_${example}
             COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/${example}"
                     --headless --frames=20 --exit --rhi=null)

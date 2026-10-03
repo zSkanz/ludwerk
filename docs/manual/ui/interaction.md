@@ -136,7 +136,33 @@ A `ScrollFrame` is scrolled by hand:
   frame it is inside, and failing that to a `UIPageLayout` under the pointer;
 - **a drag**, by a finger or a held mouse: the content follows the pointer. The
   row under the finger is not pressed when the list moved; in a list with
-  nowhere to scroll, it is.
+  nowhere to scroll, it is;
+- **a fling**: let go while moving and the list glides on, slowing, about as
+  far as it was going fast. A press on a gliding list stops it there and
+  presses nothing; the next press does;
+- **past the end** it gives -- less the further it is pulled -- and springs
+  back when the finger lifts, and a fling that reaches the end bounces.
+  `ElasticBehavior` says when: `WhenScrollable` (the default: on an axis with
+  somewhere to scroll), `Always`, or `Never`. `CanvasPosition` never leaves the
+  canvas; the give is drawn and not reported;
+- **the bar**: drag the thumb and the canvas goes as far along itself as the
+  thumb goes along its track; press the track beside the thumb and it moves a
+  view that way;
+- **a selection**: moved by a gamepad or the arrow keys -- or set by a script
+  -- out of sight, every scroll frame it is inside scrolls just far enough to
+  show it.
+
+**A list inside another** -- a column of rows on a sideways carousel -- needs no
+code. The drag's first few pixels say which way it goes, and the innermost
+frame that scrolls that way and has somewhere to go takes it, keeping that axis
+until the finger lifts: down scrolls the column, sideways turns the carousel.
+A sideways drag on a list over the pages of a `UIPageLayout` turns the page the
+same way.
+
+`ScrollingEnabled = false` stops every hand -- the wheel, a drag, the bar and a
+selection -- and leaves `CanvasPosition` to scripts. `ScrollingDirection` (`X`,
+`Y` or `XY`) says which axes a hand moves; a frame that only scrolls across takes
+the wheel across.
 
 `CanvasPosition` is a property like any other: write it to scroll from a
 script, and read it to know where the player is.

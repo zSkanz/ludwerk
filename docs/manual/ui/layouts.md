@@ -45,12 +45,10 @@ need 430), so the seven are rows of three, three and one.
 | `AbsoluteContentSize` | Read-only: how much room the cells take, in pixels. |
 
 **A grid that scrolls** is a grid in a `ScrollFrame` whose canvas is as tall as
-the grid. `AbsoluteContentSize` is in pixels and `CanvasSize` in the screen's
-own units, which differ when the `ScreenGui` has a `ReferenceHeight`:
+the grid, which `AutomaticCanvasSize` keeps it:
 
 ```luau
-local unit = UIService.ViewportSize.Y / screen.ReferenceHeight
-list.CanvasSize = UDim2.fromOffset(0, grid.AbsoluteContentSize.Y / unit)
+list.AutomaticCanvasSize = Enum.AutomaticSize.Y
 ```
 
 A parent with `AutomaticSize` is as large as its grid. Along the line it has all

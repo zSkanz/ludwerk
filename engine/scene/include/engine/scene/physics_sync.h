@@ -651,6 +651,9 @@ private:
     [[nodiscard]] bool restoreIsland(const Island& island);
 
     std::vector<BodyRecord> m_bodies;
+    // The parts a constraint holds, gathered each tick before the bodies are
+    // synced: they keep a body even when nothing else would (D513).
+    std::vector<core::InstanceId> m_constrainedParts;
     // Counted up by each `writeBack`: a body stamped with the current count
     // was in this step's active list.
     u64 m_writeBackStamp = 0;

@@ -1193,6 +1193,63 @@ TEST_CASE("a constraint is retired BEFORE the bodies it holds")
     CHECK(destroyedConstraint < firstDestroyedBody);
 }
 
+TEST_CASE("D513: an anchored part nothing can meet has no body, however often it moves")
+{
+    // A game drew its enemies from parts -- anchored, not colliding, not
+    // queried, not touched -- and moved six hundred of them a frame: each was
+    // still a body, a sensor made kinematic by the move, and the solver spent
+    // 15 ms a frame on them and overflowed its contact cache.
+    Mirror mirror;
+    std::vector<core::InstanceId> figures;
+    for (int index = 0; index < 2000; ++index) {
+        const core::InstanceId id = mirror.part("Figure", core::DVec3{static_cast<double>(index % 50), 0.0, 0.0});
+        RigidBodyComponent& body = mirror.body(id);
+        body.anchored = true;
+        body.canCollide = false;
+        body.canQuery = false;
+        body.canTouch = false;
+        figures.push_back(id);
+    }
+    for (int tick = 0; tick < 300; ++tick) {
+        for (const core::InstanceId id : figures)
+            mirror.transform(id).cframe.position.y = static_cast<double>(tick) * 0.01;
+        mirror.step();
+    }
+    CHECK(mirror.sync.bodyCount() == 0);
+    CHECK(mirror.backend.created.empty());
+    CHECK(mirror.backend.transforms.empty());
+
+    // The moment one of them can be touched, it is a body again.
+    mirror.body(figures.front()).canTouch = true;
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 1);
+    // And back: it goes.
+    mirror.body(figures.front()).canTouch = false;
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 0);
+    CHECK(mirror.backend.destroyed.size() == 1);
+}
+
+TEST_CASE("D513: an anchored part a joint holds keeps its body, colliding or not")
+{
+    Mirror mirror;
+    const Jointed a = jointedPart(mirror, "A");
+    const Jointed b = jointedPart(mirror, "B", core::DVec3{1.0, 0.0, 0.0});
+    RigidBodyComponent& held = mirror.body(a.part);
+    held.anchored = true;
+    held.canCollide = false;
+    held.canQuery = false;
+    held.canTouch = false;
+    const core::InstanceId id = mirror.fixture.world.create(mirror.fixture.schema.constraintClass);
+    REQUIRE(mirror.fixture.world.setParent(id, mirror.workspace) == std::nullopt);
+    mirror.fixture.world.constraints().find(id)->attachment0 = a.attachment;
+    mirror.fixture.world.constraints().find(id)->attachment1 = b.attachment;
+
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 2);
+    CHECK(mirror.backend.constraints.size() == 1);
+}
+
 TEST_CASE("a joint whose ends a script has not finished assigning is not built")
 {
     // Not an error: it is what every script that sets two properties on two
@@ -1492,6 +1549,53 @@ TEST_CASE("a ragdoll drives only the bones under it")
 
     REQUIRE(skeleton.committed.size() == 1);
     CHECK(skeleton.committed[0].joint == 1);
+}
+
+TEST_CASE("D514: a ragdoll drives every skinned mesh of its Model that has its joints, each in its own space")
+{
+    // A character in two meshes -- a body with the ragdoll, and a shirt
+    // wearing the same skeleton beside it in the Model. The shirt stayed in
+    // the air at the last pose it was played to while the body fell.
+    Mirror mirror;
+    RecordingSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const core::InstanceId character = mirror.fixture.model("Character");
+    REQUIRE(mirror.fixture.world.setParent(character, mirror.workspace) == std::nullopt);
+    const Rag rag = ragdollOn(mirror, {100.0, 0.0, 0.0}, {100.0, 3.0, 0.0});
+    REQUIRE(mirror.fixture.world.setParent(rag.meshPart, character) == std::nullopt);
+    mirror.fixture.world.attachments().find(rag.bone)->jointName = mirror.fixture.world.atoms().intern("Hand");
+    mirror.fixture.world.ragdolls().find(rag.ragdoll)->enabled = true;
+
+    // The shirt, a metre to the side of the body: its pose is in ITS space.
+    const core::InstanceId shirt = mirror.part("Shirt", core::DVec3{99.0, 0.0, 0.0});
+    mirror.fixture.world.meshParts().add(shirt, MeshPartComponent{});
+    REQUIRE(mirror.fixture.world.setParent(shirt, character) == std::nullopt);
+    // A plain part in the Model, and a mesh outside it: neither is driven.
+    const core::InstanceId prop = mirror.part("Hat", core::DVec3{100.0, 2.0, 0.0});
+    REQUIRE(mirror.fixture.world.setParent(prop, character) == std::nullopt);
+    const core::InstanceId stranger = mirror.part("Stranger", core::DVec3{0.0, 0.0, 0.0});
+    mirror.fixture.world.meshParts().add(stranger, MeshPartComponent{});
+
+    mirror.step();
+
+    REQUIRE(skeleton.committed.size() == 2);
+    CHECK(skeleton.committed[0].meshPart == rag.meshPart);
+    CHECK(skeleton.committed[0].model.position.x == doctest::Approx(0.0));
+    CHECK(skeleton.committed[1].meshPart == shirt);
+    CHECK(skeleton.committed[1].joint == 1);
+    CHECK(skeleton.committed[1].model.position.x == doctest::Approx(1.0));
+    CHECK(skeleton.committed[1].model.position.y == doctest::Approx(3.0));
+
+    SUBCASE("a mesh with a ragdoll of its own is that ragdoll's")
+    {
+        const core::InstanceId own = mirror.fixture.world.create(mirror.fixture.schema.ragdollClass);
+        REQUIRE(mirror.fixture.world.setParent(own, shirt) == std::nullopt);
+        mirror.fixture.world.ragdolls().find(own)->enabled = true;
+        mirror.step();
+        REQUIRE(skeleton.committed.size() == 1);
+        CHECK(skeleton.committed[0].meshPart == rag.meshPart);
+    }
 }
 
 TEST_CASE("the ragdoll drive runs before the pose is committed")

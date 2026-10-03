@@ -111,6 +111,8 @@ inline constexpr EnumId AntiAliasingModeEnumId = 70;
 inline constexpr EnumId TextureQualityEnumId = 71;
 inline constexpr EnumId WindowModeEnumId = 72;
 inline constexpr EnumId SettingSourceEnumId = 73;
+inline constexpr EnumId ScrollingDirectionEnumId = 74;
+inline constexpr EnumId ElasticBehaviorEnumId = 75;
 
 } // namespace generated
 

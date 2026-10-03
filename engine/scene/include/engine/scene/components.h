@@ -1816,6 +1816,31 @@ struct ScrollFrameComponent
     core::UDim2 canvasSize;
     core::Vec2 canvasPosition;
     f32 scrollBarThickness = 12.0f;
+    core::Color3 scrollBarImageColor{0.5f, 0.5f, 0.5f};
+    f32 scrollBarImageTransparency = 0.0f;
+    bool scrollingEnabled = true;
+    // `Enum.ScrollingDirection`: the axes' bits, 1 X, 2 Y, 3 XY.
+    i32 scrollingDirection = 3;
+    // `Enum.ElasticBehavior`: 0 WhenScrollable, 1 Always, 2 Never.
+    i32 elasticBehavior = 0;
+    // `Enum.AutomaticSize`: 0 None, 1 X, 2 Y, 3 XY.
+    i32 automaticCanvasSize = 0;
+
+    // What the last layout found, in pixels: the canvas it laid the children
+    // on (never smaller than the frame) and the frame. What the bar, the
+    // hand and a script all read, so the three agree on how far it scrolls.
+    core::Vec2 absoluteCanvasSize;
+    core::Vec2 absoluteWindowSize;
+    // How far past either end a hand has pulled the canvas, in its units (G40):
+    // drawn, never reported -- `canvasPosition` stays on the canvas. Springs
+    // back to nothing when nothing holds it.
+    core::Vec2 overscroll;
+    core::Vec2 overscrollVelocity;
+    // A fling's speed, in its units a second: what the canvas keeps doing
+    // after the finger that threw it has lifted.
+    core::Vec2 flingVelocity;
+    // A finger is on it, scrolling: nothing springs back and nothing glides.
+    bool held = false;
 };
 
 struct UIListLayoutComponent

@@ -19,7 +19,6 @@
 	  move between them and `ButtonA` or Enter presses one.
 ]]
 
-local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UIService = game:GetService("UIService")
 
@@ -175,6 +174,8 @@ local slots = Instance.new("ScrollFrame")
 slots.Size = UDim2.fromScale(1, 1)
 slots.BackgroundTransparency = 1
 slots.ScrollBarThickness = 8
+-- As tall as the grid, however many slots fit across.
+slots.AutomaticCanvasSize = Enum.AutomaticSize.Y
 slots.Parent = inventory
 
 local grid = Instance.new("UIGridLayout")
@@ -219,18 +220,6 @@ for index = 1, 42 do
     end)
     slot.Parent = slots
 end
-
--- The canvas is as tall as the grid: what the layout measured, in pixels,
--- turned back into the screen's own units.
-local lastContent = -1
-RunService.Heartbeat:Connect(function()
-    local content = grid.AbsoluteContentSize.Y
-    if content ~= lastContent then
-        lastContent = content
-        local unit = UIService.ViewportSize.Y / screen.ReferenceHeight
-        slots.CanvasSize = UDim2.fromOffset(0, content / math.max(unit, 0.01))
-    end
-end)
 
 -- --- Page 2: the tutorial, pages inside a page ----------------------------------
 

@@ -249,6 +249,12 @@ end
 declare extern type EnumSettingSource extends EnumItem with
 end
 
+declare extern type EnumScrollingDirection extends EnumItem with
+end
+
+declare extern type EnumElasticBehavior extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -2771,11 +2777,40 @@ declare extern type ScrollFrame extends UIObject with
     --- appears only on an axis that can actually move: a canvas that fits its region gets none, because
     --- a bar for an axis with nowhere to go is a bar that lies. The thumb is as long a fraction of the
     --- track as the view is of the canvas, and never shorter than the bar is wide -- a thumb of two
-    --- pixels in a very long canvas is a thumb nobody can grab. Both parts take their colour from the
-    --- frame's own `BackgroundColor`, at a quarter and three quarters alpha. v1 has no theme, and a
-    --- hard-coded grey would be wrong on half of them. The bar is drawn OUTSIDE the region's own clip,
-    --- or it would scroll away with the content it reports on.
+    --- pixels in a very long canvas is a thumb nobody can grab. **The thumb can be dragged**: the
+    --- canvas follows it, as far along the canvas as the thumb is along its track. The bar is drawn
+    --- OUTSIDE the region's own clip, or it would scroll away with the content it reports on.
     ScrollBarThickness: number
+    --- The bar's colour: the thumb in it, and the track under the thumb in it at a quarter of the
+    --- thumb's opacity. A middle grey by default, which reads on a light panel and on a dark one.
+    ScrollBarImageColor: Color3
+    --- How see-through the bar is, from 0 (solid) to 1 (gone, while the frame still scrolls). Apart
+    --- from `BackgroundTransparency`: a clear list keeps its bar.
+    ScrollBarImageTransparency: number
+    --- Whether a hand can scroll it: the wheel, a drag, a fling, the bar and a selection moved out of
+    --- view. A script's `CanvasPosition` writes still move it -- a list that scrolls itself to the
+    --- newest line can still be one nobody else scrolls.
+    ScrollingEnabled: boolean
+    --- Which axes a hand scrolls along. **A drag in a frame inside another goes to the one that scrolls
+    --- the way the drag started**: a vertical list on a horizontal carousel scrolls down when the
+    --- finger goes down and lets the carousel have a sideways drag, and the axis is kept until the
+    --- finger lifts.
+    ScrollingDirection: EnumScrollingDirection
+    --- Whether a drag past the end gives -- less the further it goes -- and springs back when the
+    --- finger lifts, and a fling that reaches the end bounces. `CanvasPosition` never leaves the
+    --- canvas: the give is drawn, not reported.
+    ElasticBehavior: EnumElasticBehavior
+    --- Which axes the canvas grows along to hold its contents: a `UIListLayout`'s or a `UIGridLayout`'s
+    --- line, or else the furthest any child reaches, with the frame's `UIPadding` around it. On such an
+    --- axis the canvas is the larger of `CanvasSize` and the contents, so a list of rows added by a
+    --- script scrolls without the script measuring them.
+    AutomaticCanvasSize: EnumAutomaticSize
+    --- How large the canvas is, in pixels, as the last layout found it -- never smaller than the frame,
+    --- and with `AutomaticCanvasSize` taken into account.
+    read AbsoluteCanvasSize: Vector2
+    --- How much of the canvas shows at once, in pixels, as the last layout found it: the frame's own
+    --- size. `AbsoluteCanvasSize - AbsoluteWindowSize` is how far it can scroll.
+    read AbsoluteWindowSize: Vector2
 end
 
 declare extern type UIListLayout extends Instance with
@@ -5397,6 +5432,18 @@ declare Enum: {
         Preset: EnumSettingSource,
         Engine: EnumSettingSource,
         GetEnumItems: (self: any) -> { EnumSettingSource },
+    },
+    ScrollingDirection: {
+        X: EnumScrollingDirection,
+        Y: EnumScrollingDirection,
+        XY: EnumScrollingDirection,
+        GetEnumItems: (self: any) -> { EnumScrollingDirection },
+    },
+    ElasticBehavior: {
+        WhenScrollable: EnumElasticBehavior,
+        Always: EnumElasticBehavior,
+        Never: EnumElasticBehavior,
+        GetEnumItems: (self: any) -> { EnumElasticBehavior },
     },
 }
 

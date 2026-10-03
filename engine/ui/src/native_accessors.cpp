@@ -1044,6 +1044,131 @@ bool setScrollFrameScrollBarThickness(scene::World& world, core::InstanceId id, 
     return true;
 }
 
+Value getScrollFrameScrollBarImageColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{component->scrollBarImageColor};
+}
+
+bool setScrollFrameScrollBarImageColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* color = std::get_if<core::Color3>(&value);
+    if (color == nullptr)
+        return false;
+    component->scrollBarImageColor = *color;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getScrollFrameScrollBarImageTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->scrollBarImageTransparency)};
+}
+
+bool setScrollFrameScrollBarImageTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    // Kept as written, like `ImageTransparency`; the draw clamps.
+    if (component == nullptr || number == nullptr || !isFinite(*number))
+        return false;
+    component->scrollBarImageTransparency = static_cast<f32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getScrollFrameScrollingEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{component->scrollingEnabled};
+}
+
+bool setScrollFrameScrollingEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (component == nullptr || flag == nullptr)
+        return false;
+    component->scrollingEnabled = *flag;
+    return true;
+}
+
+Value getScrollFrameScrollingDirection(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::ScrollingDirectionEnumId, component->scrollingDirection}};
+}
+
+bool setScrollFrameScrollingDirection(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::ScrollingDirectionEnumId, item))
+        return false;
+    component->scrollingDirection = item;
+    return true;
+}
+
+Value getScrollFrameElasticBehavior(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::ElasticBehaviorEnumId, component->elasticBehavior}};
+}
+
+bool setScrollFrameElasticBehavior(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::ElasticBehaviorEnumId, item))
+        return false;
+    component->elasticBehavior = item;
+    return true;
+}
+
+Value getScrollFrameAutomaticCanvasSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::AutomaticSizeEnumId, component->automaticCanvasSize}};
+}
+
+bool setScrollFrameAutomaticCanvasSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::AutomaticSizeEnumId, item))
+        return false;
+    component->automaticCanvasSize = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getScrollFrameAbsoluteCanvasSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{component->absoluteCanvasSize};
+}
+
+Value getScrollFrameAbsoluteWindowSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{component->absoluteWindowSize};
+}
+
 // --- UIListLayout ----------------------------------------------------------
 
 Value getUIListLayoutFillDirection(const scene::World& world, core::InstanceId id)

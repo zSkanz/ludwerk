@@ -62,7 +62,10 @@ struct SourceStamp
     const auto written = std::filesystem::last_write_time(file, ec);
     if (ec)
         return std::nullopt;
-    return SourceStamp{std::to_string(size), std::to_string(written.time_since_epoch().count())};
+    // As a 64-bit count: the clock's own count is 128 bits on macOS, which
+    // `std::to_string` has no overload for.
+    return SourceStamp{std::to_string(static_cast<unsigned long long>(size)),
+                       std::to_string(static_cast<long long>(written.time_since_epoch().count()))};
 }
 
 // The stamps remembered under `fingerprint`, or none: a different importer, or

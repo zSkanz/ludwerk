@@ -196,6 +196,26 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   the default route's first, never loopback, link-local or a virtual adapter
   -- and the port of the match it hosts or joined: what a host shows the
   friends on its Wi-Fi to type.
+- **`ScrollFrame` scrolls as a phone's list does** (G40), with no code:
+  - **a fling**: let go while moving and it glides on and slows; a press
+    catches it and presses nothing;
+  - **elastic ends** (`ElasticBehavior`): a drag past the end gives, less the
+    further, and springs back, and a fling into the end bounces --
+    `CanvasPosition` never leaves the canvas;
+  - **the bar's thumb drags**, and the track beside it pages;
+    `ScrollBarImageColor` and `ScrollBarImageTransparency` colour it (a middle
+    grey by default, where it took the frame's `BackgroundColor`);
+  - **nested frames**: the drag's first pixels choose the innermost frame that
+    scrolls that way, and it keeps the axis -- a column on a sideways carousel
+    scrolls down, the carousel across, and a sideways drag over a list on
+    `UIPageLayout` pages turns the page;
+  - **a selection moved by a gamepad or the keys scrolls into view**;
+  - `ScrollingEnabled`, `ScrollingDirection` (a frame that only scrolls across
+    takes the wheel across), `AutomaticCanvasSize` (the canvas grows to hold a
+    list, a grid or its children, with its padding), and the read-only
+    `AbsoluteCanvasSize` and `AbsoluteWindowSize`;
+  - new example `examples/34-settings-list`, and `examples/32-menus` sizes its
+    inventory's canvas with `AutomaticCanvasSize` instead of a `Heartbeat`.
 - **Stamps 2.0** (ADR 0155), the prefab model at the level of the other
   engines':
   - a copy has **one pivot**: move it anywhere and its parts stay where the
@@ -1062,6 +1082,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 - **`PivotTo` every frame keeps a model where it is put** (D512): it drifted
   away exponentially, kilometres within a second. Moving a model onto the
   pivot it already has changes nothing.
+- **A part nothing can meet costs the physics nothing** (D513): anchored, with
+  `CanCollide`, `CanQuery` and `CanTouch` all false, it has no body -- a game
+  that draws its figures from parts moves them for the price of a write. Turn
+  `CanTouch` off on parts that only show.
+- **A ragdoll moves the whole character** (D514): every skinned mesh of its
+  `Model` that has its joints -- a shirt, trousers, hair -- by joint name, as an
+  `AnimationPlayer` on the Model does. The other meshes used to stay in the air
+  at their last pose while the body fell.
 - **A server that loads its own scene again restarts every client's scene
   code** (D489), and `SceneLoading` fires on a client before its scene changes;
   a round restarted by `LoadScene` used to restart on the server alone.

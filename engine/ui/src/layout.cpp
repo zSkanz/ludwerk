@@ -5,6 +5,7 @@
 #include "engine/scene/ui_pages.h"
 #include "engine/scene/world.h"
 #include "engine/ui/ui.h"
+#include "scroll_bar.h"
 
 namespace engine::ui {
 namespace {
@@ -301,9 +302,19 @@ struct Pass
             return fixed;
         const bool autoX = self.automaticSize == AutoX || self.automaticSize == AutoXY;
         const bool autoY = self.automaticSize == AutoY || self.automaticSize == AutoXY;
+        const Vec2 content = contentExtent(id, mods, fixed, autoX, autoY);
+        if (autoX)
+            fixed.x = content.x;
+        if (autoY)
+            fixed.y = content.y;
+        return fixed;
+    }
 
-        // The content this element has to hold: its text, or the extent of its
-        // children laid out inside it.
+    // The content an element of size `fixed` has to hold, padding included:
+    // its text, or the extent of its children laid out inside it. What an
+    // automatic size is, and what a `ScrollFrame`'s automatic canvas is.
+    [[nodiscard]] Vec2 contentExtent(core::InstanceId id, const Modifiers& mods, Vec2 fixed, bool autoX, bool autoY)
+    {
         Vec2 content = textExtent(world, id, fixed.x);
 
         std::vector<core::InstanceId> children;
@@ -365,12 +376,7 @@ struct Pass
             content.x += resolve(mods.padding->paddingLeft, fixed.x) + resolve(mods.padding->paddingRight, fixed.x);
             content.y += resolve(mods.padding->paddingTop, fixed.y) + resolve(mods.padding->paddingBottom, fixed.y);
         }
-
-        if (autoX)
-            fixed.x = content.x;
-        if (autoY)
-            fixed.y = content.y;
-        return fixed;
+        return content;
     }
 };
 
@@ -394,6 +400,10 @@ void scaleElement(scene::World& world, core::InstanceId id, Vec2 pivot, f32 scal
         list->absoluteContentSize = list->absoluteContentSize * scale;
     if (scene::UIGridLayoutComponent* grid = world.uiGridLayouts().find(id); grid != nullptr)
         grid->absoluteContentSize = grid->absoluteContentSize * scale;
+    if (scene::ScrollFrameComponent* scroll = world.scrollFrames().find(id); scroll != nullptr) {
+        scroll->absoluteCanvasSize = scroll->absoluteCanvasSize * scale;
+        scroll->absoluteWindowSize = scroll->absoluteWindowSize * scale;
+    }
 }
 
 void scaleTree(scene::World& world, core::InstanceId root, Vec2 pivot, f32 scale)
@@ -803,7 +813,23 @@ void place(scene::World& world, Pass& pass, core::InstanceId id, Vec2 parentOrig
     // that scrolls past the end settles at the end on the next layout instead
     // of showing emptiness.
     if (scene::ScrollFrameComponent* scroll = world.scrollFrames().find(id); scroll != nullptr) {
-        const Vec2 canvas = resolve(scroll->canvasSize, size);
+        Vec2 canvas = resolve(scroll->canvasSize, size);
+        // **An automatic canvas holds its contents** (G40): on such an axis it
+        // is the larger of `CanvasSize` and what the children take, measured
+        // the way an automatic size is -- against the frame along the axis
+        // that grows, and against the canvas along the one that does not.
+        if (scroll->automaticCanvasSize != AutoNone) {
+            const bool autoX = scroll->automaticCanvasSize == AutoX || scroll->automaticCanvasSize == AutoXY;
+            const bool autoY = scroll->automaticCanvasSize == AutoY || scroll->automaticCanvasSize == AutoXY;
+            const Vec2 base{autoX ? size.x : std::fmax(canvas.x, size.x), autoY ? size.y : std::fmax(canvas.y, size.y)};
+            const Vec2 contents = pass.contentExtent(id, mods, base, autoX, autoY);
+            if (autoX)
+                canvas.x = std::fmax(canvas.x, contents.x);
+            if (autoY)
+                canvas.y = std::fmax(canvas.y, contents.y);
+        }
+        scroll->absoluteCanvasSize = Vec2{std::fmax(canvas.x, size.x), std::fmax(canvas.y, size.y)};
+        scroll->absoluteWindowSize = size;
         const Vec2 room{std::fmax(0.0f, canvas.x - size.x), std::fmax(0.0f, canvas.y - size.y)};
         scroll->canvasPosition = Vec2{std::clamp(scroll->canvasPosition.x, 0.0f, room.x),
                                       std::clamp(scroll->canvasPosition.y, 0.0f, room.y)};
@@ -816,7 +842,9 @@ void place(scene::World& world, Pass& pass, core::InstanceId id, Vec2 parentOrig
         const Vec2 inner = extentOf(content);
         const Vec2 padded{size.x - inner.x, size.y - inner.y};
         const Vec2 extent{std::fmax(canvas.x, size.x) - padded.x, std::fmax(canvas.y, size.y) - padded.y};
-        content = Rect{content.min - scroll->canvasPosition, content.min - scroll->canvasPosition + extent};
+        // A hand's pull past the end is drawn here and nowhere else.
+        const Vec2 shown = scroll->canvasPosition + scroll->overscroll;
+        content = Rect{content.min - shown, content.min - shown + extent};
     }
 
     std::vector<core::InstanceId> children;
@@ -960,6 +988,76 @@ void advance(scene::World& world, f32 seconds)
             continue;
         world.changes().push(
             scene::Change{scene::ChangeKind::InstanceEvent, id, page->currentPage, world.atoms().intern("Stopped")});
+    }
+
+    // **A list that was thrown glides, and one pulled past its end springs
+    // back** (G40). The glide slows by a constant fraction a second, which is
+    // what makes the distance a flick covers proportional to how fast it was;
+    // reaching an end, an elastic frame hands what speed is left to the
+    // spring, which bounces and settles. The spring is critically damped and
+    // solved exactly rather than stepped, so a long frame cannot make it
+    // overshoot or ring.
+    const f32 dt = std::fmax(0.0f, seconds);
+    std::vector<core::InstanceId> scrolled;
+    world.scrollFrames().forEach([&](core::InstanceId id, scene::ScrollFrameComponent& scroll) {
+        if (scroll.held || dt <= 0.0f)
+            return;
+        const scene::UIObjectComponent* object = world.uiObjects().find(id);
+        if (object == nullptr)
+            return;
+        // Per second: the glide keeps e^-2.5 of its speed, so it travels its
+        // speed over 2.5; the spring settles in about a third of a second.
+        constexpr f32 Friction = 2.5f;
+        constexpr f32 Stiffness = 14.0f;
+        constexpr f32 StopSpeed = 8.0f;
+        constexpr f32 BounceShare = 0.5f;
+        const f32 unit = object->unitScale > 0.0f ? object->unitScale : 1.0f;
+        const Vec2 view = object->absoluteSize * (1.0f / unit);
+        const Vec2 canvas = scroll.absoluteCanvasSize * (1.0f / unit);
+        Vec2 position = scroll.canvasPosition;
+        bool overscrolled = false;
+        for (int axis = 0; axis < 2; ++axis) {
+            const f32 room = std::fmax(0.0f, along(canvas, axis) - along(view, axis));
+            f32& speed = along(scroll.flingVelocity, axis);
+            if (speed != 0.0f) {
+                const f32 target = along(position, axis) + speed * dt;
+                const f32 settled = std::clamp(target, 0.0f, room);
+                along(position, axis) = settled;
+                if (settled != target) {
+                    if (elasticAlong(scroll, axis, room))
+                        along(scroll.overscrollVelocity, axis) = speed * BounceShare;
+                    speed = 0.0f;
+                }
+                speed *= std::exp(-Friction * dt);
+                if (std::fabs(speed) < StopSpeed)
+                    speed = 0.0f;
+            }
+            f32& stretch = along(scroll.overscroll, axis);
+            f32& stretchSpeed = along(scroll.overscrollVelocity, axis);
+            if (stretch != 0.0f || stretchSpeed != 0.0f) {
+                const f32 decay = std::exp(-Stiffness * dt);
+                const f32 lead = stretchSpeed + Stiffness * stretch;
+                stretch = (stretch + lead * dt) * decay;
+                stretchSpeed = (stretchSpeed - Stiffness * lead * dt) * decay;
+                if (std::fabs(stretch) < 0.25f && std::fabs(stretchSpeed) < StopSpeed) {
+                    stretch = 0.0f;
+                    stretchSpeed = 0.0f;
+                }
+                overscrolled = true;
+            }
+        }
+        if (position != scroll.canvasPosition) {
+            scroll.canvasPosition = position;
+            scrolled.push_back(id);
+        }
+        else if (overscrolled) {
+            scene::markUiLayoutDirty(world, id);
+        }
+    });
+    for (const core::InstanceId id : scrolled) {
+        world.changes().push(
+            scene::Change{scene::ChangeKind::PropertyChanged, id, {}, world.atoms().intern("CanvasPosition")});
+        scene::markUiLayoutDirty(world, id);
     }
 }
 

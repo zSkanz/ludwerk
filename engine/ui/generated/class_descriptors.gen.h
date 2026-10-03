@@ -113,6 +113,8 @@ inline constexpr scene::EnumId AntiAliasingModeEnumId = 70;
 inline constexpr scene::EnumId TextureQualityEnumId = 71;
 inline constexpr scene::EnumId WindowModeEnumId = 72;
 inline constexpr scene::EnumId SettingSourceEnumId = 73;
+inline constexpr scene::EnumId ScrollingDirectionEnumId = 74;
+inline constexpr scene::EnumId ElasticBehaviorEnumId = 75;
 
 } // namespace generated
 
@@ -310,6 +312,20 @@ scene::Value getScrollFrameCanvasPosition(const scene::World& world, core::Insta
 bool setScrollFrameCanvasPosition(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getScrollFrameScrollBarThickness(const scene::World& world, core::InstanceId id);
 bool setScrollFrameScrollBarThickness(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getScrollFrameScrollBarImageColor(const scene::World& world, core::InstanceId id);
+bool setScrollFrameScrollBarImageColor(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getScrollFrameScrollBarImageTransparency(const scene::World& world, core::InstanceId id);
+bool setScrollFrameScrollBarImageTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getScrollFrameScrollingEnabled(const scene::World& world, core::InstanceId id);
+bool setScrollFrameScrollingEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getScrollFrameScrollingDirection(const scene::World& world, core::InstanceId id);
+bool setScrollFrameScrollingDirection(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getScrollFrameElasticBehavior(const scene::World& world, core::InstanceId id);
+bool setScrollFrameElasticBehavior(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getScrollFrameAutomaticCanvasSize(const scene::World& world, core::InstanceId id);
+bool setScrollFrameAutomaticCanvasSize(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getScrollFrameAbsoluteCanvasSize(const scene::World& world, core::InstanceId id);
+scene::Value getScrollFrameAbsoluteWindowSize(const scene::World& world, core::InstanceId id);
 void attachScrollFrameComponents(scene::World& world, core::InstanceId id);
 void detachScrollFrameComponents(scene::World& world, core::InstanceId id);
 

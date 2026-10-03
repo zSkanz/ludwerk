@@ -847,6 +847,92 @@ TEST_CASE("a canvas that fits gets no bar at all")
     CHECK(list.quads.empty());
 }
 
+TEST_CASE("G40: the bar is drawn in ScrollBarImageColor, faded by ScrollBarImageTransparency")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("ScrollFrame", screen);
+    fixture.object(frame).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    fixture.object(frame).backgroundTransparency = 1.0f;
+    scene::ScrollFrameComponent* scroll = fixture.world->scrollFrames().find(frame);
+    scroll->canvasSize = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 400.0f}};
+    scroll->scrollBarImageColor = core::Color3{1.0f, 0.0f, 0.0f};
+    scroll->scrollBarImageTransparency = 0.5f;
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() == 2);
+    for (const ui::DrawQuad& quad : list.quads)
+        CHECK(quad.color.r == doctest::Approx(1.0));
+    CHECK(list.quads[0].alpha == doctest::Approx(0.125));
+    CHECK(list.quads[1].alpha == doctest::Approx(0.5));
+
+    // Wholly see-through draws nothing, and still scrolls.
+    scroll->scrollBarImageTransparency = 1.0f;
+    fixture.dirty(screen);
+    fixture.run();
+    ui::DrawList none;
+    ui::buildDrawList(*fixture.world, fixture.service, none);
+    CHECK(none.quads.empty());
+}
+
+TEST_CASE("G40: an automatic canvas holds a list, a grid and padding, and follows what is added")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("ScrollFrame", screen);
+    fixture.object(frame).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 100.0f}};
+    scene::ScrollFrameComponent* scroll = fixture.world->scrollFrames().find(frame);
+    const InstanceId layout = fixture.child("UIListLayout", frame);
+    std::vector<InstanceId> rows;
+    for (int index = 0; index < 10; ++index) {
+        rows.push_back(fixture.child("Frame", frame));
+        fixture.object(rows.back()).size = core::UDim2{core::UDim{1.0f, 0.0f}, core::UDim{0.0f, 40.0f}};
+    }
+    fixture.run();
+    // Not asked: the canvas is the frame, and nothing scrolls.
+    CHECK(scroll->absoluteCanvasSize.y == doctest::Approx(100.0));
+    CHECK(scroll->absoluteWindowSize.y == doctest::Approx(100.0));
+
+    scroll->automaticCanvasSize = 2;
+    fixture.dirty(screen);
+    fixture.run();
+    CHECK(scroll->absoluteCanvasSize.x == doctest::Approx(200.0));
+    CHECK(scroll->absoluteCanvasSize.y == doctest::Approx(400.0));
+    // Scrolled to the end, the last row's bottom is the frame's.
+    scroll->canvasPosition = core::Vec2{0.0f, 1000.0f};
+    fixture.dirty(screen);
+    fixture.run();
+    CHECK(scroll->canvasPosition.y == doctest::Approx(300.0));
+    CHECK(fixture.object(rows.back()).absolutePosition.y + 40.0f == doctest::Approx(100.0));
+
+    // A row added by a script: the canvas grows on the next layout.
+    const InstanceId added = fixture.child("Frame", frame);
+    fixture.object(added).size = core::UDim2{core::UDim{1.0f, 0.0f}, core::UDim{0.0f, 40.0f}};
+    fixture.dirty(screen);
+    fixture.run();
+    CHECK(scroll->absoluteCanvasSize.y == doctest::Approx(440.0));
+
+    // Padding goes around the contents.
+    const InstanceId padding = fixture.child("UIPadding", frame);
+    fixture.world->uiPaddings().find(padding)->paddingTop = core::UDim{0.0f, 10.0f};
+    fixture.world->uiPaddings().find(padding)->paddingBottom = core::UDim{0.0f, 10.0f};
+    fixture.dirty(screen);
+    fixture.run();
+    CHECK(scroll->absoluteCanvasSize.y == doctest::Approx(460.0));
+
+    // A grid: as tall as its rows of cells, which is what it says it takes.
+    REQUIRE_FALSE(fixture.world->setParent(layout, InstanceId{}).has_value());
+    REQUIRE_FALSE(fixture.world->setParent(padding, InstanceId{}).has_value());
+    const InstanceId grid = fixture.child("UIGridLayout", frame);
+    fixture.dirty(screen);
+    fixture.run();
+    const float cells = fixture.world->uiGridLayouts().find(grid)->absoluteContentSize.y;
+    CHECK(cells > 100.0f);
+    CHECK(scroll->absoluteCanvasSize.y == doctest::Approx(static_cast<double>(cells)));
+}
+
 // --- `GuiObject.Rotation` (S7.13) --------------------------------------------
 //
 // **The property was stored, settable and drawn by nothing for the whole of

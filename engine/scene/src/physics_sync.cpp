@@ -368,12 +368,43 @@ void PhysicsSync::syncCollisionGroups()
     }
 }
 
+namespace {
+
+// Instances in index order, then generation: the order `m_constrainedParts`
+// is kept in.
+[[nodiscard]] bool byInstance(core::InstanceId a, core::InstanceId b) noexcept
+{
+    return a.index != b.index ? a.index < b.index : a.generation < b.generation;
+}
+
+} // namespace
+
 void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyComponent& body)
 {
     if (id.index >= m_bodies.size())
         m_bodies.resize(static_cast<usize>(id.index) + 1);
 
     BodyRecord& record = m_bodies[id.index];
+
+    // **A part nothing can meet has no body** (D513). Anchored, it does not
+    // fall; neither colliding, nor queried, nor touched, nothing asks the
+    // solver about it. It was still a body -- a sensor, made kinematic the
+    // moment a script moved it -- so a game drawing its figures from parts paid
+    // the broad phase and the pair caches for every one it moved: 600 of them a
+    // frame cost 15 ms of simulation and overflowed the solver's contact cache.
+    // Now moving one is a transform write. The record is emptied, so the first
+    // tick any of the three is set again makes the body afresh.
+    const bool inert = body.anchored && !body.canCollide && !body.canQuery && !body.canTouch &&
+                       !std::binary_search(m_constrainedParts.begin(), m_constrainedParts.end(), id, byInstance);
+    if (inert) {
+        if (record.generation == id.generation && record.live) {
+            m_backend.destroyBody(m_world, record.handle);
+            --m_bodyCount;
+        }
+        if (record.generation != 0)
+            record = BodyRecord{};
+        return;
+    }
 
     // A script's write, told apart from the mirror's own the same way the
     // transform sync below does it: the component differs from what this mirror
@@ -1848,6 +1879,18 @@ void PhysicsSync::applyScene()
 
     const f32 fixedDt = static_cast<f32>(m_scene.engineState().fixedTimestep);
 
+    // The parts a joint holds, which keep a body whatever else they say: the
+    // joint is between two bodies. Sorted, for the lookup `applyBody` makes.
+    m_constrainedParts.clear();
+    m_scene.constraints().forEach([&](core::InstanceId, const ConstraintComponent& constraint) {
+        for (const core::InstanceId end : {constraint.attachment0, constraint.attachment1}) {
+            const core::InstanceId holder = m_scene.parentOf(end);
+            if (holder.valid())
+                m_constrainedParts.push_back(holder);
+        }
+    });
+    std::sort(m_constrainedParts.begin(), m_constrainedParts.end(), byInstance);
+
     // The pool walk is dense and in slot order, which is a pure function of the
     // operation sequence -- so the order bodies are created in, and therefore
     // the order the backend assigns its own ids in, is deterministic (R10).
@@ -2070,6 +2113,32 @@ void PhysicsSync::driveRagdolls()
         if (mesh == nullptr || m_skeleton->jointCount(meshPart) == 0)
             return;
 
+        // **And every other skinned mesh of its `Model`** (D514): a character
+        // is a body, a shirt and a pair of trousers wearing one skeleton, which
+        // an `AnimationPlayer` on the Model already moves together. The ragdoll
+        // moved only the body, and the shirt stayed in the air at the last pose
+        // a clip had left it in. Each is driven by joint NAME, in its own
+        // space, as a clip is remapped onto it -- and one with an enabled
+        // ragdoll of its own is that ragdoll's.
+        std::vector<core::InstanceId> wearers{meshPart};
+        if (const core::InstanceId model = m_scene.parentOf(meshPart); m_scene.models().find(model) != nullptr) {
+            std::vector<core::InstanceId> inModel;
+            m_scene.collectDescendants(model, inModel);
+            for (const core::InstanceId other : inModel) {
+                if (other == meshPart || m_scene.meshParts().find(other) == nullptr ||
+                    m_skeleton->jointCount(other) == 0)
+                    continue;
+                bool ownRagdoll = false;
+                for (core::InstanceId child = m_scene.firstChild(other); child.valid() && !ownRagdoll;
+                     child = m_scene.nextSibling(child)) {
+                    const RagdollComponent* theirs = m_scene.ragdolls().find(child);
+                    ownRagdoll = theirs != nullptr && theirs->enabled;
+                }
+                if (!ownRagdoll)
+                    wearers.push_back(other);
+            }
+        }
+
         // Every `Bone` under the ragdoll that resolved to a joint. The part it
         // sits on is where the simulation put that limb; the bone says which
         // joint it is. Nothing else is declared -- which is also why a PARTIAL
@@ -2082,29 +2151,38 @@ void PhysicsSync::driveRagdolls()
             if (bone == nullptr || bone->jointIndex < 0)
                 continue;
 
-            // Into the MESH's own space, because that is the space a pose is in.
-            // The bone's world frame is where the limb ended up; dividing out
-            // the mesh part's own transform is what carries it there.
-            const core::CFrameD simulated = core::inverse(mesh->cframe) * bone->worldCFrame;
-
-            // **`Blend` interpolates the POSE, not the solver.** At 0.5 the limb
-            // has fallen exactly as far as it would at 1 and the drawn joint is
-            // carried halfway there, which is what a stumble is: the clip keeps
-            // running and the character sags. Ramping it is what makes going
-            // down something other than a one-frame snap.
-            //
-            // The animated end comes from `jointModel`, which answers for a mesh
-            // in bind pose as well as for one mid-clip -- so a character with
-            // nothing playing blends towards where it is standing rather than
-            // towards nothing.
-            core::CFrameD model = simulated;
-            if (ragdoll.blend < 1.0f) {
-                core::CFrameD animated;
-                if (!m_skeleton->jointModel(meshPart, static_cast<u32>(bone->jointIndex), animated))
+            const std::string_view jointName = m_skeleton->jointName(meshPart, static_cast<u32>(bone->jointIndex));
+            for (const core::InstanceId wearer : wearers) {
+                const PartComponent* worn = m_scene.parts().find(wearer);
+                const i32 joint = wearer == meshPart ? bone->jointIndex : m_skeleton->findJoint(wearer, jointName);
+                if (worn == nullptr || joint < 0)
                     continue;
-                model = core::lerp(animated, simulated, static_cast<f64>(ragdoll.blend));
+
+                // Into the MESH's own space, because that is the space a pose
+                // is in. The bone's world frame is where the limb ended up;
+                // dividing out the mesh part's own transform is what carries it
+                // there.
+                const core::CFrameD simulated = core::inverse(worn->cframe) * bone->worldCFrame;
+
+                // **`Blend` interpolates the POSE, not the solver.** At 0.5 the
+                // limb has fallen exactly as far as it would at 1 and the drawn
+                // joint is carried halfway there, which is what a stumble is:
+                // the clip keeps running and the character sags. Ramping it is
+                // what makes going down something other than a one-frame snap.
+                //
+                // The animated end comes from `jointModel`, which answers for a
+                // mesh in bind pose as well as for one mid-clip -- so a
+                // character with nothing playing blends towards where it is
+                // standing rather than towards nothing.
+                core::CFrameD model = simulated;
+                if (ragdoll.blend < 1.0f) {
+                    core::CFrameD animated;
+                    if (!m_skeleton->jointModel(wearer, static_cast<u32>(joint), animated))
+                        continue;
+                    model = core::lerp(animated, simulated, static_cast<f64>(ragdoll.blend));
+                }
+                m_skeleton->setJointOverride(wearer, static_cast<u32>(joint), model);
             }
-            m_skeleton->setJointOverride(meshPart, static_cast<u32>(bone->jointIndex), model);
         }
     });
 }

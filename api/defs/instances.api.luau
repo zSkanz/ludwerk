@@ -5020,10 +5020,78 @@ local Classes: { Schema.Class } = {
                     .. "region gets none, because a bar for an axis with nowhere to go is a bar that lies. The "
                     .. "thumb is as long a fraction of the track as the view is of the canvas, and never "
                     .. "shorter than the bar is wide -- a thumb of two pixels in a very long canvas is a thumb "
-                    .. "nobody can grab.\n\nBoth parts take their colour from the frame's own "
-                    .. "`BackgroundColor`, at a quarter and three quarters alpha. v1 has no theme, and a "
-                    .. "hard-coded grey would be wrong on half of them.\n\nThe bar is drawn OUTSIDE "
+                    .. "nobody can grab. **The thumb can be dragged**: the canvas follows it, as far along "
+                    .. "the canvas as the thumb is along its track.\n\nThe bar is drawn OUTSIDE "
                     .. "the region's own clip, or it would scroll away with the content it reports on.",
+            },
+            {
+                Name = "ScrollBarImageColor",
+                Type = "Color3",
+                Default = "Color3.new(0.5, 0.5, 0.5)",
+                Doc = "The bar's colour: the thumb in it, and the track under the thumb in it at a quarter "
+                    .. "of the thumb's opacity. A middle grey by default, which reads on a light panel and on "
+                    .. "a dark one.",
+            },
+            {
+                Name = "ScrollBarImageTransparency",
+                Type = "number",
+                Default = "0",
+                Doc = "How see-through the bar is, from 0 (solid) to 1 (gone, while the frame still "
+                    .. "scrolls). Apart from `BackgroundTransparency`: a clear list keeps its bar.",
+            },
+            {
+                Name = "ScrollingEnabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether a hand can scroll it: the wheel, a drag, a fling, the bar and a selection "
+                    .. "moved out of view. A script's `CanvasPosition` writes still move it -- a list that "
+                    .. "scrolls itself to the newest line can still be one nobody else scrolls.",
+            },
+            {
+                Name = "ScrollingDirection",
+                Type = "Enum.ScrollingDirection",
+                Default = "Enum.ScrollingDirection.XY",
+                Doc = "Which axes a hand scrolls along. **A drag in a frame inside another goes to the one "
+                    .. "that scrolls the way the drag started**: a vertical list on a horizontal carousel "
+                    .. "scrolls down when the finger goes down and lets the carousel have a sideways drag, "
+                    .. "and the axis is kept until the finger lifts.",
+            },
+            {
+                Name = "ElasticBehavior",
+                Type = "Enum.ElasticBehavior",
+                Default = "Enum.ElasticBehavior.WhenScrollable",
+                Doc = "Whether a drag past the end gives -- less the further it goes -- and springs back "
+                    .. "when the finger lifts, and a fling that reaches the end bounces. `CanvasPosition` "
+                    .. "never leaves the canvas: the give is drawn, not reported.",
+            },
+            {
+                Name = "AutomaticCanvasSize",
+                Type = "Enum.AutomaticSize",
+                Default = "Enum.AutomaticSize.None",
+                Doc = "Which axes the canvas grows along to hold its contents: a `UIListLayout`'s or a "
+                    .. "`UIGridLayout`'s line, or else the furthest any child reaches, with the frame's "
+                    .. "`UIPadding` around it. On such an axis the canvas is the larger of `CanvasSize` and "
+                    .. "the contents, so a list of rows added by a script scrolls without the script "
+                    .. "measuring them.",
+            },
+            {
+                Name = "AbsoluteCanvasSize",
+                Type = "Vector2",
+                ReadOnly = true,
+                Transient = true,
+                -- What the interface found, not what the world is.
+                HostFact = true,
+                Doc = "How large the canvas is, in pixels, as the last layout found it -- never smaller than "
+                    .. "the frame, and with `AutomaticCanvasSize` taken into account.",
+            },
+            {
+                Name = "AbsoluteWindowSize",
+                Type = "Vector2",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "How much of the canvas shows at once, in pixels, as the last layout found it: the "
+                    .. "frame's own size. `AbsoluteCanvasSize - AbsoluteWindowSize` is how far it can scroll.",
             },
         } :: { Schema.Property },
     },

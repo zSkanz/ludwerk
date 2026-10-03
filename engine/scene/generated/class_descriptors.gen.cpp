@@ -9248,6 +9248,56 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     settingSourceDesc.docKey = {};
     settingSourceDesc.items = settingSourceItems;
     enums.registerEnum(settingSourceDesc);
+
+    // --- ScrollingDirection ---
+    static std::array<EnumItemDesc, 3> scrollingDirectionItems;
+    scrollingDirectionItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("X"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Y"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XY"),
+            .value = 3,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor scrollingDirectionDesc;
+    scrollingDirectionDesc.name = atoms.intern("ScrollingDirection");
+    scrollingDirectionDesc.docKey = {};
+    scrollingDirectionDesc.items = scrollingDirectionItems;
+    enums.registerEnum(scrollingDirectionDesc);
+
+    // --- ElasticBehavior ---
+    static std::array<EnumItemDesc, 3> elasticBehaviorItems;
+    elasticBehaviorItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("WhenScrollable"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Always"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Never"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor elasticBehaviorDesc;
+    elasticBehaviorDesc.name = atoms.intern("ElasticBehavior");
+    elasticBehaviorDesc.docKey = {};
+    elasticBehaviorDesc.items = elasticBehaviorItems;
+    enums.registerEnum(elasticBehaviorDesc);
 }
 
 } // namespace engine::scene::generated

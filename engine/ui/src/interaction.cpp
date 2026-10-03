@@ -18,6 +18,7 @@
 #include "engine/scene/world.h"
 #include "engine/ui/text_edit.h"
 #include "engine/ui/ui.h"
+#include "scroll_bar.h"
 #include "text_field.h"
 
 namespace engine::ui {
@@ -68,11 +69,34 @@ struct InteractionState
     bool dragMoved = false;
 
     // A press on a `ScrollFrame`'s content, which a finger drags to scroll
-    // (D477): the frame, where the pointer was and where its canvas was.
+    // (D477): the innermost frame under it, where the pointer was, and --
+    // once the drag has gone far enough to say which way -- the frame that
+    // scrolls that way, where its canvas was and the axes it moves along (G40).
+    core::InstanceId scrollInner;
     core::InstanceId scrolling;
     Vec2 scrollPointer;
     Vec2 scrollCanvas;
+    bool scrollDecided = false;
     bool scrollMoved = false;
+    bool scrollAxis[2] = {false, false};
+    // Where the pointer was over the last tenth of a second of the drag, which
+    // is how fast it was going when it let go: the fling.
+    std::vector<std::pair<core::f64, Vec2>> scrollSamples;
+
+    // A press on a scroll bar's thumb, which drags it (G40): the frame, the
+    // axis, where the pointer and the canvas were, and how far the canvas goes
+    // for each pixel the thumb does.
+    core::InstanceId thumbFrame;
+    int thumbAxis = 1;
+    Vec2 thumbPointer;
+    Vec2 thumbCanvas;
+    f32 thumbRatio = 0.0f;
+    // The press landed on a bar: it is not a press of what is under it, nor a
+    // drag of it.
+    bool pressSpent = false;
+    // The press caught a list that was still gliding: it may go on to drag
+    // the list, and it presses nothing.
+    bool caughtGlide = false;
 
     // A press on the pages of a `UIPageLayout`: the layout, and where.
     core::InstanceId swiping;
@@ -545,10 +569,11 @@ bool scrollTo(scene::World& world, core::InstanceId id, Vec2 position)
     const scene::UIObjectComponent* object = world.uiObjects().find(id);
     if (scroll == nullptr || object == nullptr)
         return false;
+    // The canvas the last layout settled on -- automatic or not, never smaller
+    // than the frame -- so the hand stops where the bar says the end is.
     const f32 unit = object->unitScale > 0.0f ? object->unitScale : 1.0f;
     const Vec2 view = object->absoluteSize * (1.0f / unit);
-    const Vec2 canvas{scroll->canvasSize.x.scale * view.x + scroll->canvasSize.x.offset,
-                      scroll->canvasSize.y.scale * view.y + scroll->canvasSize.y.offset};
+    const Vec2 canvas = scroll->absoluteCanvasSize * (1.0f / unit);
     const Vec2 room{std::fmax(0.0f, canvas.x - view.x), std::fmax(0.0f, canvas.y - view.y)};
     const Vec2 clamped{std::clamp(position.x, 0.0f, room.x), std::clamp(position.y, 0.0f, room.y)};
     if (clamped == scroll->canvasPosition)
@@ -572,6 +597,132 @@ bool scrollTo(scene::World& world, core::InstanceId id, Vec2 position)
     return {};
 }
 
+// How a `ScrollFrame` is measured for a hand, in its own units: how much of the
+// canvas shows, how far it can scroll each way, and how many pixels a unit is.
+struct ScrollRoom
+{
+    Vec2 view;
+    Vec2 room;
+    f32 unit = 1.0f;
+};
+
+[[nodiscard]] ScrollRoom roomOf(const scene::World& world, core::InstanceId id)
+{
+    ScrollRoom out;
+    const scene::ScrollFrameComponent* scroll = world.scrollFrames().find(id);
+    const scene::UIObjectComponent* object = world.uiObjects().find(id);
+    if (scroll == nullptr || object == nullptr)
+        return out;
+    out.unit = object->unitScale > 0.0f ? object->unitScale : 1.0f;
+    out.view = object->absoluteSize * (1.0f / out.unit);
+    const Vec2 canvas = scroll->absoluteCanvasSize * (1.0f / out.unit);
+    out.room = Vec2{std::fmax(0.0f, canvas.x - out.view.x), std::fmax(0.0f, canvas.y - out.view.y)};
+    return out;
+}
+
+// **A drag that scrolls** (D477, G40): the canvas goes the other way from the
+// pointer, along the axes the drag took, and past either end it gives as far
+// as `ElasticBehavior` lets it -- drawn as overscroll, with `CanvasPosition`
+// stopping at the end.
+void dragScroll(scene::World& world, Vec2 pointer)
+{
+    scene::ScrollFrameComponent* scroll = world.scrollFrames().find(g_state.scrolling);
+    if (scroll == nullptr)
+        return;
+    const ScrollRoom measured = roomOf(world, g_state.scrolling);
+    const Vec2 travelled = (pointer - g_state.scrollPointer) * (1.0f / measured.unit);
+    Vec2 position = scroll->canvasPosition;
+    Vec2 overscroll;
+    for (int axis = 0; axis < 2; ++axis) {
+        if (!g_state.scrollAxis[axis])
+            continue;
+        const f32 target = along(g_state.scrollCanvas, axis) - along(travelled, axis);
+        const f32 end = along(measured.room, axis);
+        const f32 settled = std::clamp(target, 0.0f, end);
+        along(position, axis) = settled;
+        if (elasticAlong(*scroll, axis, end))
+            along(overscroll, axis) = rubberBand(target - settled, along(measured.view, axis));
+    }
+    if (overscroll != scroll->overscroll) {
+        scroll->overscroll = overscroll;
+        scroll->overscrollVelocity = Vec2{};
+        markScreenDirty(world, g_state.scrolling);
+    }
+    (void)scrollTo(world, g_state.scrolling, position);
+}
+
+// Lets go of the frame a finger was scrolling: what it was doing over the last
+// tenth of a second carries on as a fling.
+void endScroll(scene::World& world, Vec2 pointer, core::f64 time)
+{
+    scene::ScrollFrameComponent* scroll = world.scrollFrames().find(g_state.scrolling);
+    if (scroll != nullptr) {
+        scroll->held = false;
+        if (g_state.scrollMoved && !g_state.scrollSamples.empty()) {
+            const auto& [since, from] = g_state.scrollSamples.front();
+            const core::f64 elapsed = time - since;
+            const scene::UIObjectComponent* object = world.uiObjects().find(g_state.scrolling);
+            const f32 unit = object != nullptr && object->unitScale > 0.0f ? object->unitScale : 1.0f;
+            // Less than this, in pixels a second, is a finger that stopped
+            // before it lifted.
+            constexpr f32 FlingLeast = 60.0f;
+            Vec2 velocity;
+            if (elapsed > 0.004) {
+                const Vec2 speed = (pointer - from) * static_cast<f32>(1.0 / elapsed);
+                for (int axis = 0; axis < 2; ++axis) {
+                    if (g_state.scrollAxis[axis] && std::fabs(along(speed, axis)) >= FlingLeast)
+                        along(velocity, axis) = -along(speed, axis) / unit;
+                }
+            }
+            scroll->flingVelocity = velocity;
+        }
+    }
+    g_state.scrollInner = {};
+    g_state.scrolling = {};
+    g_state.scrollDecided = false;
+    g_state.scrollMoved = false;
+    g_state.scrollSamples.clear();
+}
+
+// **A selection moved by a gamepad or the keys is never out of sight** (G40):
+// every scroll frame it is inside scrolls just far enough to show it, the
+// innermost first, and the one outside it then shows where the inner one put
+// it.
+void scrollIntoView(scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* object = world.uiObjects().find(id);
+    if (object == nullptr)
+        return;
+    Rect wanted{object->absolutePosition, object->absolutePosition + object->absoluteSize};
+    for (core::InstanceId frame = scrollFrameOver(world, world.parentOf(id)); frame.valid();
+         frame = scrollFrameOver(world, world.parentOf(frame))) {
+        scene::ScrollFrameComponent* scroll = world.scrollFrames().find(frame);
+        const scene::UIObjectComponent* holder = world.uiObjects().find(frame);
+        if (scroll == nullptr || holder == nullptr || !scroll->scrollingEnabled)
+            continue;
+        const Rect box{holder->absolutePosition, holder->absolutePosition + holder->absoluteSize};
+        const f32 unit = holder->unitScale > 0.0f ? holder->unitScale : 1.0f;
+        Vec2 shift;
+        for (int axis = 0; axis < 2; ++axis) {
+            if (!scrollsAlong(*scroll, axis))
+                continue;
+            const f32 before = along(wanted.min, axis) - along(box.min, axis);
+            const f32 after = along(wanted.max, axis) - along(box.max, axis);
+            // Its start in view first: something longer than the frame shows
+            // where it begins.
+            if (before < 0.0f)
+                along(shift, axis) = before;
+            else if (after > 0.0f)
+                along(shift, axis) = std::fmin(after, before);
+        }
+        const Vec2 was = scroll->canvasPosition;
+        scroll->flingVelocity = Vec2{};
+        (void)scrollTo(world, frame, was + shift * (1.0f / unit));
+        const Vec2 moved = (scroll->canvasPosition - was) * unit;
+        wanted = Rect{wanted.min - moved, wanted.max - moved};
+    }
+}
+
 // Says what `UIService.SelectedObject` is now, to whoever is listening, when
 // it is not what it was: the object that lost it, the one that gained it, and
 // the service.
@@ -587,6 +738,8 @@ void announceSelection(scene::World& world, core::InstanceId uiService)
     fire(world, g_state.selected, "SelectionLost");
     fire(world, selected, "SelectionGained");
     g_state.selected = selected;
+    if (selected.valid())
+        scrollIntoView(world, selected);
     if (uiService.valid() && world.alive(uiService)) {
         world.changes().push(scene::Change{scene::ChangeKind::InstanceEvent, uiService, selected,
                                            world.atoms().intern("SelectionChanged")});
@@ -751,7 +904,7 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         // dragged by a button in its title bar does not also press the button,
         // a list scrolled by a finger does not press the row under it, and a
         // page swiped does not press what is on it.
-        const bool moved = g_state.dragMoved || g_state.scrollMoved;
+        const bool moved = g_state.dragMoved || g_state.scrollMoved || g_state.pressSpent || g_state.caughtGlide;
         bool swiped = false;
         if (g_state.swiping.valid()) {
             if (const scene::UIPageLayoutComponent* pages = world.uiPageLayouts().find(g_state.swiping);
@@ -774,10 +927,15 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         if (over.valid() && over == g_state.pressedOn && !moved && !swiped)
             fire(world, over, "Activated");
         endDrag(world, input.pointer);
+        // Where the finger lifted is the last place it dragged the list to.
+        if (g_state.scrolling.valid())
+            dragScroll(world, input.pointer);
+        endScroll(world, input.pointer, input.time);
         g_state.pressedOn = {};
         g_state.dragging = false;
-        g_state.scrolling = {};
-        g_state.scrollMoved = false;
+        g_state.thumbFrame = {};
+        g_state.pressSpent = false;
+        g_state.caughtGlide = false;
         g_state.swiping = {};
     };
     // **The end of one click and the start of the next in one frame** (D362):
@@ -794,13 +952,77 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         // scroll, inside a `ScrollFrame`; and a page turn, over a
         // `UIPageLayout`'s pages.
         endDrag(world, input.pointer);
+        if (scene::ScrollFrameComponent* held = world.scrollFrames().find(g_state.scrolling); held != nullptr)
+            held->held = false;
+        g_state.scrollInner = {};
         g_state.scrolling = {};
+        g_state.scrollDecided = false;
         g_state.scrollMoved = false;
+        g_state.scrollSamples.clear();
+        g_state.thumbFrame = {};
+        g_state.pressSpent = false;
+        g_state.caughtGlide = false;
         g_state.swiping = {};
-        const auto [dragTarget, dragDetector] = ownerOf(world, over, [&world](core::InstanceId child) {
-            const scene::UIDragDetectorComponent* detector = world.uiDragDetectors().find(child);
-            return detector != nullptr && detector->enabled;
-        });
+
+        // **A press catches a list that is gliding** (G40) -- every one the
+        // press is inside stops where it is, and the press that stopped it
+        // presses nothing, as a finger laid on a spinning wheel does not
+        // also push what is printed on it.
+        for (core::InstanceId frame = scrollFrameOver(world, over); frame.valid();
+             frame = scrollFrameOver(world, world.parentOf(frame))) {
+            scene::ScrollFrameComponent* scroll = world.scrollFrames().find(frame);
+            constexpr f32 Gliding = 120.0f;
+            if (std::fabs(scroll->flingVelocity.x) + std::fabs(scroll->flingVelocity.y) > Gliding)
+                g_state.caughtGlide = true;
+            scroll->flingVelocity = Vec2{};
+        }
+
+        // **A press on a scroll bar** (G40): on the thumb it drags it, and on
+        // the track either side of it the canvas goes a view that way.
+        for (core::InstanceId frame = scrollFrameOver(world, over); frame.valid() && !g_state.thumbFrame.valid();
+             frame = scrollFrameOver(world, world.parentOf(frame))) {
+            const scene::ScrollFrameComponent* scroll = world.scrollFrames().find(frame);
+            const scene::UIObjectComponent* object = world.uiObjects().find(frame);
+            if (scroll == nullptr || object == nullptr || !scroll->scrollingEnabled)
+                continue;
+            const Rect box{object->absolutePosition, object->absolutePosition + object->absoluteSize};
+            const f32 unit = object->unitScale > 0.0f ? object->unitScale : 1.0f;
+            bool taken = false;
+            for (int axis = 1; axis >= 0 && !taken; --axis) {
+                if (!scrollsAlong(*scroll, axis))
+                    continue;
+                const ScrollBarShape shape = scrollBarShape(
+                    box, along(scroll->absoluteCanvasSize, axis), along(object->absoluteSize, axis),
+                    along(scroll->canvasPosition, axis) * unit, scroll->scrollBarThickness * unit, axis == 1);
+                if (!shape.shown || !contains(shape.track, input.pointer))
+                    continue;
+                taken = true;
+                g_state.pressSpent = true;
+                if (contains(shape.thumb, input.pointer)) {
+                    g_state.thumbFrame = frame;
+                    g_state.thumbAxis = axis;
+                    g_state.thumbPointer = input.pointer;
+                    g_state.thumbCanvas = scroll->canvasPosition;
+                    g_state.thumbRatio = shape.travel > 0.0f ? shape.room / shape.travel / unit : 0.0f;
+                }
+                else {
+                    const f32 towards = along(input.pointer, axis) < along(shape.thumb.min, axis) ? -1.0f : 1.0f;
+                    Vec2 position = scroll->canvasPosition;
+                    along(position, axis) += towards * along(object->absoluteSize, axis) / unit;
+                    (void)scrollTo(world, frame, position);
+                }
+            }
+            if (taken)
+                break;
+        }
+
+        const auto [dragTarget, dragDetector] = g_state.pressSpent
+                                                    ? std::pair<core::InstanceId, core::InstanceId>{}
+                                                    : ownerOf(world, over, [&world](core::InstanceId child) {
+                                                          const scene::UIDragDetectorComponent* detector =
+                                                              world.uiDragDetectors().find(child);
+                                                          return detector != nullptr && detector->enabled;
+                                                      });
         if (dragDetector.valid()) {
             const scene::UIObjectComponent* target = world.uiObjects().find(dragTarget);
             scene::UIDragDetectorComponent* detector = world.uiDragDetectors().find(dragDetector);
@@ -816,17 +1038,21 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
             detector->dragUDim2 = {};
             detector->dragRotation = 0.0f;
         }
-        else {
+        else if (!g_state.pressSpent) {
+            // Which frame scrolls is not known until the drag says which way
+            // it is going; the innermost under the press is where to start.
             if (const core::InstanceId frame = scrollFrameOver(world, over); frame.valid()) {
-                g_state.scrolling = frame;
+                g_state.scrollInner = frame;
                 g_state.scrollPointer = input.pointer;
-                g_state.scrollCanvas = world.scrollFrames().find(frame)->canvasPosition;
+                g_state.scrollSamples.emplace_back(input.time, input.pointer);
             }
+            // The pages turn on a swipe no scroll frame took: a sideways
+            // drag on a list that only scrolls down is the pages'.
             const auto [holder, pages] = ownerOf(world, over, [&world](core::InstanceId child) {
                 const scene::UIPageLayoutComponent* layout = world.uiPageLayouts().find(child);
                 return layout != nullptr && layout->touchInputEnabled;
             });
-            if (pages.valid() && !g_state.scrolling.valid()) {
+            if (pages.valid()) {
                 g_state.swiping = pages;
                 g_state.swipePointer = input.pointer;
             }
@@ -912,16 +1138,56 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
 
     // **A list dragged by a finger scrolls** (D477): the content follows the
     // pointer, so the canvas goes the other way.
-    if (g_state.scrolling.valid() && input.pointerHeld && !input.pressed && !g_state.dragging) {
+    if (g_state.scrollInner.valid() && input.pointerHeld && !input.pressed && !g_state.dragging) {
         const Vec2 travelled = input.pointer - g_state.scrollPointer;
-        if (g_state.scrollMoved || std::fabs(travelled.x) + std::fabs(travelled.y) > DragSlop) {
-            const scene::UIObjectComponent* frame = world.uiObjects().find(g_state.scrolling);
-            const f32 unit = frame != nullptr && frame->unitScale > 0.0f ? frame->unitScale : 1.0f;
-            // A press only stops being one when the list actually went
-            // somewhere: a frame with nowhere to scroll still presses its rows.
-            if (scrollTo(world, g_state.scrolling, g_state.scrollCanvas - travelled * (1.0f / unit)))
+        // **Which frame, and which way, is decided once** (G40): by the axis
+        // the drag left the slop along, the innermost frame that scrolls
+        // that way and has somewhere to go -- or gives, when it is elastic
+        // there -- and the axis is kept until the finger lifts. A vertical
+        // list on a sideways carousel scrolls down and lets the carousel
+        // have a sideways drag. A frame with nowhere to go takes nothing, so
+        // a press on it still presses its rows.
+        if (!g_state.scrollDecided && std::fabs(travelled.x) + std::fabs(travelled.y) > DragSlop) {
+            g_state.scrollDecided = true;
+            const int axis = std::fabs(travelled.x) > std::fabs(travelled.y) ? 0 : 1;
+            for (core::InstanceId frame = g_state.scrollInner; frame.valid();
+                 frame = scrollFrameOver(world, world.parentOf(frame))) {
+                scene::ScrollFrameComponent* scroll = world.scrollFrames().find(frame);
+                if (!scroll->scrollingEnabled || !scrollsAlong(*scroll, axis))
+                    continue;
+                const ScrollRoom measured = roomOf(world, frame);
+                if (along(measured.room, axis) <= 0.0f && !elasticAlong(*scroll, axis, along(measured.room, axis)))
+                    continue;
+                // A canvas that moves both ways moves freely under the finger.
+                const int other = 1 - axis;
+                const bool both = scrollsAlong(*scroll, other) && along(measured.room, other) > 0.0f;
+                g_state.scrolling = frame;
+                g_state.scrollCanvas = scroll->canvasPosition;
+                g_state.scrollAxis[axis] = true;
+                g_state.scrollAxis[other] = both;
                 g_state.scrollMoved = true;
+                scroll->held = true;
+                scroll->flingVelocity = Vec2{};
+                break;
+            }
         }
+        if (g_state.scrolling.valid()) {
+            dragScroll(world, input.pointer);
+            g_state.scrollSamples.emplace_back(input.time, input.pointer);
+            constexpr core::f64 FlingWindow = 0.1;
+            while (g_state.scrollSamples.size() > 1 && input.time - g_state.scrollSamples.front().first > FlingWindow)
+                g_state.scrollSamples.erase(g_state.scrollSamples.begin());
+        }
+    }
+
+    // **A scroll bar's thumb, dragged** (G40): the canvas goes as far along
+    // itself as the thumb goes along its track.
+    if (g_state.thumbFrame.valid() && input.pointerHeld && !input.pressed) {
+        Vec2 position = g_state.thumbCanvas;
+        along(position, g_state.thumbAxis) +=
+            (along(input.pointer, g_state.thumbAxis) - along(g_state.thumbPointer, g_state.thumbAxis)) *
+            g_state.thumbRatio;
+        (void)scrollTo(world, g_state.thumbFrame, position);
     }
 
     // **The wheel** (D477, ADR 0128): the scroll frame under the pointer moves
@@ -931,12 +1197,20 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         bool taken = false;
         for (core::InstanceId frame = scrollFrameOver(world, over); frame.valid() && !taken;
              frame = scrollFrameOver(world, world.parentOf(frame))) {
-            const scene::ScrollFrameComponent* scroll = world.scrollFrames().find(frame);
+            scene::ScrollFrameComponent* scroll = world.scrollFrames().find(frame);
+            if (!scroll->scrollingEnabled)
+                continue;
+            // A frame that only scrolls across takes the wheel across: a
+            // carousel under a mouse with one wheel still turns.
+            Vec2 notches{input.wheel.x, -input.wheel.y};
+            if (!scrollsAlong(*scroll, 1))
+                notches = Vec2{notches.x + notches.y, 0.0f};
+            else if (!scrollsAlong(*scroll, 0))
+                notches.x = 0.0f;
+            scroll->flingVelocity = Vec2{};
             // A frame that cannot move that way hands the wheel to the one it
             // is inside -- a list at its end scrolls the page it is on.
-            taken = scrollTo(world, frame,
-                             Vec2{scroll->canvasPosition.x + input.wheel.x * NotchUnits,
-                                  scroll->canvasPosition.y - input.wheel.y * NotchUnits});
+            taken = scrollTo(world, frame, scroll->canvasPosition + notches * NotchUnits);
         }
         if (!taken) {
             const auto [holder, pages] = ownerOf(world, over, [&world](core::InstanceId child) {
@@ -1238,6 +1512,10 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         g_state.focused = {};
     if (!world.alive(g_state.scrolling))
         g_state.scrolling = {};
+    if (!world.alive(g_state.scrollInner))
+        g_state.scrollInner = {};
+    if (!world.alive(g_state.thumbFrame))
+        g_state.thumbFrame = {};
     if (!world.alive(g_state.swiping))
         g_state.swiping = {};
     if (g_state.dragDetector.valid() && (!world.alive(g_state.dragDetector) || !world.alive(g_state.dragTarget)))
