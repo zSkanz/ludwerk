@@ -513,6 +513,24 @@ void setTextInputArea(u32 windowId, i32 x, i32 y, i32 width, i32 height, i32 cur
 // Events SDL reports that the engine does not model yet are dropped here but
 // remain visible through sdl_interop.h, which is how the ImGui backend gets
 // the full stream without the engine pretending to model input it does not.
+//
+// **It comes back while the system holds the window too** (D535). On Windows a
+// title bar held, a border dragged or a window's menu open is a loop the system
+// runs itself, inside the call that asks it for events, until the hand lets go.
+// The pump returns from inside it about sixty times a second, with what the
+// window did meanwhile, so the loop that calls it goes on simulating, sending
+// and drawing; `pumpHeld` says when that is where it came back from.
 [[nodiscard]] std::span<const Event> pumpEvents();
+
+// Whether the last `pumpEvents` came back from inside a loop the system is
+// still running for a held window. False everywhere but Windows: nowhere else
+// does moving a window stop the thread that owns it.
+[[nodiscard]] bool pumpHeld() noexcept;
+
+// **For the tests of that**: holds the window as the system does while its
+// title bar is held -- the same notices to the window, the same loop inside the
+// next `pumpEvents` -- for `milliseconds`, with no hand and no pointer. False
+// where there is no such loop (everywhere but Windows) or no such window.
+bool simulateWindowHold(u32 windowId, u32 milliseconds) noexcept;
 
 } // namespace engine::platform

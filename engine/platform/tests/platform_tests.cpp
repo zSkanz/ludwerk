@@ -23,6 +23,7 @@
 #include "engine/platform/window.h"
 
 #ifdef _WIN32
+#include <SDL3/SDL_hints.h>
 #include <windows.h>
 #endif
 
@@ -1188,3 +1189,65 @@ TEST_CASE("D476: wanting gamepads does not make the first frame later")
     MESSAGE("to the first frame: ", without, " ms without gamepads, ", with, " ms with");
     CHECK(with - without < 10.0);
 }
+
+#ifdef _WIN32
+
+TEST_CASE("D535: a window the system holds still hands the engine its frames")
+{
+    // **A real window**: the loop that held the engine is the system's, inside
+    // a window procedure, and the offscreen driver has neither.
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "windows");
+    const auto error = engine::platform::init({.headless = false, .gamepads = false});
+    if (error.has_value()) {
+        SDL_ResetHint(SDL_HINT_VIDEO_DRIVER);
+        MESSAGE("no window system here: ", error->detail);
+        return;
+    }
+    seedRealCatalog();
+    {
+        EngineError failed;
+        const auto window = engine::platform::createWindow(
+            {.titleKey = ENG_TR("platform.window.title"), .width = 320, .height = 200, .visible = false}, &failed);
+        REQUIRE_MESSAGE(window != nullptr, failed.detail);
+        static_cast<void>(engine::platform::pumpEvents());
+        CHECK_FALSE(engine::platform::pumpHeld());
+
+        {
+            using Clock = std::chrono::steady_clock;
+            const Clock::time_point began = Clock::now();
+            for (int at = 0; at < 2000; ++at)
+                static_cast<void>(engine::platform::pumpEvents());
+            MESSAGE("an idle pump: ", std::chrono::duration<double, std::micro>(Clock::now() - began).count() / 2000.0,
+                    " us");
+        }
+
+        // Held for a second. The loop below is the engine's: a pump, and then
+        // whatever a frame does.
+        REQUIRE(engine::platform::simulateWindowHold(engine::platform::windowId(*window), 1000));
+        using Clock = std::chrono::steady_clock;
+        const Clock::time_point start = Clock::now();
+        Clock::time_point last = start;
+        double longestMs = 0.0;
+        int held = 0;
+        while (Clock::now() - start < std::chrono::milliseconds(1500)) {
+            static_cast<void>(engine::platform::pumpEvents());
+            const Clock::time_point now = Clock::now();
+            longestMs = (std::max)(longestMs, std::chrono::duration<double, std::milli>(now - last).count());
+            last = now;
+            held += engine::platform::pumpHeld() ? 1 : 0;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        MESSAGE("held for a second: ", held, " frames lent, the longest wait for the pump ", longestMs, " ms");
+        // It was one wait of the whole second, and no frame.
+        CHECK(longestMs < 250.0);
+        // Half the simulation's sixty a second at the least, on a loaded machine.
+        CHECK(held >= 30);
+        // And it is over: the pump is the system's queue again.
+        static_cast<void>(engine::platform::pumpEvents());
+        CHECK_FALSE(engine::platform::pumpHeld());
+    }
+    engine::platform::shutdown();
+    SDL_ResetHint(SDL_HINT_VIDEO_DRIVER);
+}
+
+#endif

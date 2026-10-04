@@ -8,6 +8,10 @@
 
 namespace engine::platform {
 
+// The event pump's fiber left where it stands, when it is inside the system's
+// loop for a window that is going (D535; see events.cpp). Nothing otherwise.
+void abandonHeldPump() noexcept;
+
 class Window
 {
 public:
@@ -15,6 +19,7 @@ public:
 
     ~Window()
     {
+        abandonHeldPump();
         if (handle_ != nullptr)
             SDL_DestroyWindow(handle_);
     }

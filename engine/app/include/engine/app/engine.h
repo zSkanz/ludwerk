@@ -58,6 +58,12 @@ struct EngineOptions
     // Zero never does.
     u64 simulateDeviceLossAt = 0;
 
+    // Holds the window on this frame for two seconds, as the system does while
+    // its title bar is held (D535) -- `--simulate-window-hold=N`, for the test
+    // that the loop goes on through it. Zero never does; so does a platform
+    // with no such hold.
+    u64 simulateWindowHoldAt = 0;
+
     // Where compiled surface shaders -- and the ones held back after a lost
     // device -- are kept; empty is `surface-cache` in the user directory.
     // `--surface-cache=DIR`, so a test never touches a person's own.

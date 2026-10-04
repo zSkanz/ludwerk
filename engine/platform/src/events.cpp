@@ -2,6 +2,8 @@
 #include <SDL3/SDL_haptic.h>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_joystick.h>
+#include <SDL3/SDL_properties.h>
+#include <SDL3/SDL_system.h>
 #include <algorithm>
 #include <cstring>
 #include <span>
@@ -11,6 +13,17 @@
 #include "engine/platform/event.h"
 #include "engine/platform/platform.h"
 #include "engine/platform/sdl_interop.h"
+#include "window_impl.h"
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace engine::platform {
 namespace {
@@ -1204,6 +1217,230 @@ bool textInputEnabled(u32 windowId) noexcept
     return window != nullptr && SDL_TextInputActive(window);
 }
 
+namespace {
+
+// One event from the library into this pump's lists.
+void take(const SDL_Event& raw)
+{
+    g_rawEvents.push_back(raw);
+    // **Dropped paths go in a list of their own**, not on an `Event`. An
+    // `Event` is a POD copied for every mouse motion and a string on it
+    // would be an allocation per frame paid for a thing that happens twice
+    // a session. SDL owns `drop.data` until the event is consumed, so the
+    // copy happens here rather than being deferred to whoever reads it.
+    if (raw.type == SDL_EVENT_DROP_FILE && raw.drop.data != nullptr)
+        g_droppedFiles.emplace_back(raw.drop.data);
+    translate(raw, g_events);
+}
+
+// The OS queue drained, and everything the library made of it taken.
+void pollAll()
+{
+    SDL_Event raw;
+    while (SDL_PollEvent(&raw))
+        take(raw);
+}
+
+#ifdef _WIN32
+
+// **A frame lent from inside the system's own loop** (D535).
+//
+// While a window's title bar is held, its border dragged or its menu open,
+// Windows runs a message loop of its own inside the window procedure and does
+// not come back until the hand lets go. The poll above is inside that call, so
+// the engine's main loop stopped for as long as the hold: nothing simulated,
+// nothing sent. A host that moved its window froze the match for everyone in
+// it.
+//
+// The poll therefore runs on a fiber of its own, and the engine's loop stays
+// on the thread's. The library sets the window a timer for as long as the
+// system's loop runs, and shows every message that reaches the window in it
+// to a hook: at each of the timer's, the hook switches back to the engine,
+// which runs a frame as if the pump had returned. The engine's next pump
+// switches back into the hook, which returns, and the system's loop goes on.
+// When the hand lets go the poll finishes where it stood.
+//
+// **A fiber rather than a frame called from the hook**: the frame is the body
+// of a loop that has no such entry, and a pump that is a yield point lends
+// one to every caller of it -- the game, the editor, an import that pumps
+// between files -- without any of them knowing.
+//
+// **The hook rather than the library's redraw event**, which it sends from the
+// same timer: an event is handed to its watchers under the watchers' lock, and
+// a frame run under it holds every other thread that pushes an event for as
+// long as the frame. The hook is called with nothing held.
+//
+// **Nothing outside a hold**: no timer of the engine's own -- one cost fifty
+// microseconds a frame, measured, held or not -- and two switches of a fiber
+// a pump, a fifth of a microsecond.
+void* g_gameFiber = nullptr;
+void* g_pumpFiber = nullptr;
+DWORD g_pumpThread = 0;
+bool g_pumpHeld = false;
+// How many of the system's loops the window is in: a menu opened from a held
+// title bar is two.
+int g_systemLoops = 0;
+
+// What the window procedure and the system's loop inside it stand on: what a
+// thread's own stack is by default.
+constexpr SIZE_T PumpStackBytes = 1024u * 1024u;
+
+// A message that stands for a hand on the title bar (`simulateWindowHold`).
+constexpr UINT HoldMessage = WM_APP + 0x235;
+
+// **What the system does while a title bar is held**, without a hand: it tells
+// the window, runs a message loop of its own inside the call that was asked
+// for one message, and tells the window when it is over. `milliseconds` is for
+// how long.
+void holdTheWindow(HWND window, WPARAM milliseconds)
+{
+    SendMessageW(window, WM_ENTERSIZEMOVE, 0, 0);
+    const ULONGLONG until = GetTickCount64() + milliseconds;
+    while (GetTickCount64() < until) {
+        MSG inner;
+        if (PeekMessageW(&inner, nullptr, 0, 0, PM_REMOVE) != 0) {
+            TranslateMessage(&inner);
+            DispatchMessageW(&inner);
+        }
+        else {
+            (void)MsgWaitForMultipleObjects(0, nullptr, FALSE, 5, QS_ALLINPUT);
+        }
+    }
+    SendMessageW(window, WM_EXITSIZEMOVE, 0, 0);
+}
+
+// Every message the library takes from the thread's queue, and -- while a
+// window is in one of the system's loops -- every message that reaches the
+// window.
+bool SDLCALL watchMessages(void*, MSG* message)
+{
+    switch (message->message) {
+    case HoldMessage:
+        holdTheWindow(message->hwnd, message->wParam);
+        return false;
+    case WM_ENTERSIZEMOVE:
+    case WM_ENTERMENULOOP:
+        g_systemLoops += 1;
+        break;
+    case WM_EXITSIZEMOVE:
+    case WM_EXITMENULOOP:
+        g_systemLoops = g_systemLoops > 0 ? g_systemLoops - 1 : 0;
+        break;
+    case WM_TIMER:
+        // The library's, about sixty-four times a second while the loop runs.
+        // Only where the poll is what the loop is inside of: a loop the
+        // engine's own code runs -- a message box, a file dialog -- has
+        // nothing to lend to.
+        if (g_systemLoops > 0 && g_pumpFiber != nullptr && GetCurrentThreadId() == g_pumpThread &&
+            GetCurrentFiber() == g_pumpFiber) {
+            g_pumpHeld = true;
+            SwitchToFiber(g_gameFiber);
+            // Back: the engine has run its frame and asked for events again.
+        }
+        break;
+    default:
+        break;
+    }
+    return true;
+}
+
+void CALLBACK pumpFiber(void*)
+{
+    for (;;) {
+        pollAll();
+        // A poll that came back is in no loop of the system's, whatever
+        // notice of one ending went missing.
+        g_systemLoops = 0;
+        g_pumpHeld = false;
+        SwitchToFiber(g_gameFiber);
+    }
+}
+
+// True when the pump may run on its fiber: on the thread that first pumped,
+// from the fiber the engine runs on. Anywhere else the poll is made in place,
+// as it always was.
+[[nodiscard]] bool pumpFiberReady() noexcept
+{
+    const DWORD thread = GetCurrentThreadId();
+    if (g_gameFiber == nullptr) {
+        // With the floating-point state kept a fiber each: what a driver sets
+        // inside a window procedure is not the simulation's (R10).
+        g_gameFiber = IsThreadAFiber() ? GetCurrentFiber() : ConvertThreadToFiberEx(nullptr, FIBER_FLAG_FLOAT_SWITCH);
+        if (g_gameFiber == nullptr)
+            return false;
+        g_pumpThread = thread;
+    }
+    if (thread != g_pumpThread || GetCurrentFiber() != g_gameFiber)
+        return false;
+    if (g_pumpFiber == nullptr) {
+        g_pumpFiber = CreateFiberEx(0, PumpStackBytes, FIBER_FLAG_FLOAT_SWITCH, pumpFiber, nullptr);
+        SDL_SetWindowsMessageHook(watchMessages, nullptr);
+    }
+    return g_pumpFiber != nullptr;
+}
+
+// What the window did while it was held -- moved, sized, uncovered -- taken
+// from the library's queue without asking the system for more: the poll that
+// would is the one being held.
+void takeQueued()
+{
+    SDL_Event batch[32];
+    for (;;) {
+        const int count = SDL_PeepEvents(batch, 32, SDL_GETEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST);
+        if (count <= 0)
+            return;
+        for (int at = 0; at < count; ++at)
+            take(batch[at]);
+    }
+}
+
+#endif
+
+} // namespace
+
+bool simulateWindowHold(u32 windowId, u32 milliseconds) noexcept
+{
+#ifdef _WIN32
+    SDL_Window* window = SDL_GetWindowFromID(static_cast<SDL_WindowID>(windowId));
+    if (window == nullptr)
+        return false;
+    const HWND handle = static_cast<HWND>(
+        SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+    if (handle == nullptr)
+        return false;
+    SDL_SetWindowsMessageHook(watchMessages, nullptr);
+    return PostMessageW(handle, HoldMessage, milliseconds, 0) != 0;
+#else
+    (void)windowId;
+    (void)milliseconds;
+    return false;
+#endif
+}
+
+bool pumpHeld() noexcept
+{
+#ifdef _WIN32
+    return g_pumpHeld;
+#else
+    return false;
+#endif
+}
+
+void abandonHeldPump() noexcept
+{
+#ifdef _WIN32
+    // **The poll is inside a loop that will not come back to anything**: the
+    // window it is for is going, or the library is. Its fiber is left where it
+    // stands and never run again -- returning into a window procedure whose
+    // window is gone is the alternative -- and the next pump has a new one.
+    if (!g_pumpHeld || GetCurrentThreadId() != g_pumpThread)
+        return;
+    g_pumpFiber = nullptr;
+    g_pumpHeld = false;
+    g_systemLoops = 0;
+#endif
+}
+
 std::span<const Event> pumpEvents()
 {
     g_rawEvents.clear();
@@ -1218,19 +1455,15 @@ std::span<const Event> pumpEvents()
     // The motors' levels, sent on for another half second (ADR 0131).
     pumpVibration();
 
-    SDL_Event raw;
-    while (SDL_PollEvent(&raw)) {
-        g_rawEvents.push_back(raw);
-        // **Dropped paths go in a list of their own**, not on an `Event`. An
-        // `Event` is a POD copied for every mouse motion and a string on it
-        // would be an allocation per frame paid for a thing that happens twice
-        // a session. SDL owns `drop.data` until the event is consumed, so the
-        // copy happens here rather than being deferred to whoever reads it.
-        if (raw.type == SDL_EVENT_DROP_FILE && raw.drop.data != nullptr)
-            g_droppedFiles.emplace_back(raw.drop.data);
-        translate(raw, g_events);
+#ifdef _WIN32
+    if (pumpFiberReady()) {
+        SwitchToFiber(g_pumpFiber);
+        if (g_pumpHeld)
+            takeQueued();
+        return g_events;
     }
-
+#endif
+    pollAll();
     return g_events;
 }
 

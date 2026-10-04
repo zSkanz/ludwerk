@@ -1171,6 +1171,20 @@ if(ENG_BUILD_TESTS)
         RUN_SERIAL TRUE
         TIMEOUT 240)
 
+    # A window the system holds -- its title bar held, on Windows -- does not
+    # stop the loop (D535): see the driver. Timed, so alone.
+    if(WIN32)
+        add_test(NAME window_hold_gate
+            COMMAND ${CMAKE_COMMAND}
+                -DHOST=$<TARGET_FILE:engine_host>
+                -DSCENE=${CMAKE_SOURCE_DIR}/tests/screenshots/windowhold
+                -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_window_hold_gate.cmake)
+        set_tests_properties(window_hold_gate PROPERTIES
+            SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+            RUN_SERIAL TRUE
+            TIMEOUT 120)
+    endif()
+
     # A decal's three blend modes (ADR 0160): multiplied it darkens, laid over
     # glowing or added it brightens.
     add_test(NAME decal_blend_gate

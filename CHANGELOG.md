@@ -1115,6 +1115,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A window held by its title bar no longer stops the game** (D535). On
+  Windows, holding or dragging a window's title bar, sizing it, or opening its
+  menu stopped the whole main loop until the hand let go -- and a host that
+  moved its window froze the match for everyone in it. The loop now runs
+  through it at about sixty frames a second: simulating, sending and drawing.
 - **Predicted touches on triggers, and replays through them** (D524, D525): a
   character begins and ends touching a part that does not collide -- a jump
   pad, a teleport, a zone -- by standing in it, for `Touched` and for

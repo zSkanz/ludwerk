@@ -6920,6 +6920,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // person has open is looked after below.
         if (options.simulateDeviceLossAt != 0 && frame.index + 1 == options.simulateDeviceLossAt)
             device->simulateLoss();
+        if (options.simulateWindowHoldAt != 0 && frame.index + 1 == options.simulateWindowHoldAt && window != nullptr)
+            (void)platform::simulateWindowHold(platform::windowId(*window), 2000);
         if (device->lost())
             quit = true;
     }

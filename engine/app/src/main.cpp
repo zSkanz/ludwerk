@@ -483,6 +483,14 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             }
             continue;
         }
+        if (arg.starts_with("--simulate-window-hold=")) {
+            if (!numericValue(arg.substr(23), options.simulateWindowHoldAt)) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            continue;
+        }
         if (arg.starts_with("--surface-cache=")) {
             options.surfaceCache = std::filesystem::path(arg.substr(16));
             continue;

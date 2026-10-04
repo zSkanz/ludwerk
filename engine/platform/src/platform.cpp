@@ -30,6 +30,7 @@
 #include "engine/platform/console.h"
 #include "engine/platform/event.h"
 #include "engine/platform/sdl_interop.h"
+#include "window_impl.h"
 
 #if defined(_WIN32)
 // windows.h FIRST: psapi.h declares its functions with the Win32 typedefs and
@@ -252,6 +253,7 @@ void shutdown()
     // at exit, which is `std::terminate` and reads as a crash.
     shutdownIo();
 
+    abandonHeldPump();
     SDL_Quit();
     g_initialized = false;
 }
