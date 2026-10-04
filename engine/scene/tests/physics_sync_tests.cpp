@@ -261,7 +261,7 @@ public:
 
     void destroyCharacter(physics::WorldHandle, physics::CharacterHandle) override { ++charactersDestroyed; }
 
-    void moveCharacter(physics::WorldHandle, physics::CharacterHandle, core::Vec3 velocity, f32) override
+    void moveCharacter(physics::WorldHandle, physics::CharacterHandle, core::Vec3 velocity, f32, bool) override
     {
         moves.push_back(velocity);
     }

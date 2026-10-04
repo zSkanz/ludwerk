@@ -1127,6 +1127,9 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   `Terrain:WaitForMeshAsync` say when ground a script wrote is drawn, and
   `SceneService:HoldLoading` / `ReleaseLoading` keep the curtain up while a
   scene's scripts build its world.
+- A character walking up a slope of terrain stays `Grounded`: it was carried
+  off the crease between two facets and landed a tick later, every few ticks
+  up every hill (D532).
 - A point light wholly to one side of the view -- a lamp on a wall -- lights
   every tile it reaches: its inner edge was projected at its nearest depth
   only, and the wall was lit up to a straight vertical band (D531).

@@ -2335,7 +2335,7 @@ public:
         m_freeCharacters.push_back(handle.index);
     }
 
-    void moveCharacter(CharacterHandle handle, core::Vec3 velocity, f32 fixedDt)
+    void moveCharacter(CharacterHandle handle, core::Vec3 velocity, f32 fixedDt, bool walking)
     {
         CharacterRecord* record = resolve(handle);
         if (record == nullptr) {
@@ -2369,9 +2369,23 @@ public:
         // `ObjectPairFilter` every body pair goes through, against the
         // character's own layer.
         const JPH::RVec3 before = record->character->GetPosition();
+        const bool wasSupported = record->character->IsSupported();
         record->character->ExtendedUpdate(
             fixedDt, toJolt(m_gravity), settings, m_system.GetDefaultBroadPhaseLayerFilter(record->layer),
             m_system.GetDefaultLayerFilter(record->layer), JPH::BodyFilter{}, JPH::ShapeFilter{}, m_temp);
+        // **A walk up a slope stays on it** (D532). The controller sticks to
+        // the floor only when the step did not rise -- and a walk up a slope
+        // rises, following the ground. Over the crease where a slope of
+        // facets turns less steep, the step carried it up off the ground, and
+        // it was in the air for a tick, then landed: `Grounded` flickered and
+        // `Landed` fired, every few ticks up every hill. Walking -- not
+        // jumping, not thrown -- it is put back on what is within a step
+        // below, as it would have been walking down.
+        if (walking && wasSupported && !record->character->IsSupported() && record->stepHeight > 0.0f) {
+            (void)record->character->StickToFloor(
+                JPH::Vec3(0.0f, -record->stepHeight, 0.0f), m_system.GetDefaultBroadPhaseLayerFilter(record->layer),
+                m_system.GetDefaultLayerFilter(record->layer), JPH::BodyFilter{}, JPH::ShapeFilter{}, m_temp);
+        }
         if (fixedDt > 0.0f) {
             const JPH::Vec3 travelled = JPH::Vec3(record->character->GetPosition() - before);
             record->moved = fromJolt(travelled / fixedDt);
@@ -4277,10 +4291,11 @@ public:
         }
     }
 
-    void moveCharacter(WorldHandle handle, CharacterHandle character, core::Vec3 velocity, f32 fixedDt) override
+    void moveCharacter(WorldHandle handle, CharacterHandle character, core::Vec3 velocity, f32 fixedDt,
+                       bool walking = false) override
     {
         if (JoltWorld* world = resolve(handle); world != nullptr) {
-            world->moveCharacter(character, velocity, fixedDt);
+            world->moveCharacter(character, velocity, fixedDt, walking);
         }
     }
 

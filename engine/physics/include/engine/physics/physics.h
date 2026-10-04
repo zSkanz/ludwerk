@@ -261,7 +261,15 @@ public:
     // `velocity` is the character's desired velocity for this step, in world
     // space, gravity included -- the caller owns the movement model and this
     // owns the sweeping. Called once per sim tick per character.
-    virtual void moveCharacter(WorldHandle world, CharacterHandle character, core::Vec3 velocity, f32 fixedDt) = 0;
+    //
+    // **`walking`: it is on the ground and means to stay there** (D532) --
+    // neither jumping nor thrown up. A step that carries it off the ground it
+    // stood on -- over the crease between two facets of a slope it was
+    // climbing -- puts it back down on what is within a step below, as every
+    // engine's walking character does, rather than leaving it in the air for
+    // a tick.
+    virtual void moveCharacter(WorldHandle world, CharacterHandle character, core::Vec3 velocity, f32 fixedDt,
+                               bool walking = false) = 0;
     virtual void setCharacterTransform(WorldHandle world, CharacterHandle character,
                                        const core::CFrameD& transform) = 0;
     // **Moved a little, and still leaning on what it leaned on** (ADR 0133):

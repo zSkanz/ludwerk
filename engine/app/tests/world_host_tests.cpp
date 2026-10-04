@@ -4481,3 +4481,81 @@ TEST_CASE("Terrain:WaitForMeshAsync resumes only once the host says the ground i
     CHECK(attribute("Meshed") == scene::Value{true});
     CHECK_MESSAGE(log.firstError().empty(), log.firstError());
 }
+
+TEST_CASE("D532: a character walking a terrain slope it can walk stays Grounded, and never lands")
+{
+    // Climbing a gentle slope of terrain, a character read Grounded false every
+    // few ticks -- carried up off the crease between two facets -- and fell
+    // back a tick later, firing Landed: a run clip restarted twenty times a
+    // second on a hill. Walking, it is on the ground for every tick of it.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        local ground = Instance.new("Terrain")
+        ground.Parent = workspace
+        -- Rolling hills, nowhere steeper than a third: well under the walkable
+        -- angle, and faceted as every terrain is.
+        local columns = 96
+        local heights = {}
+        for z = 0, columns - 1 do
+            for x = 0, columns - 1 do
+                local wx, wz = x - 48, z - 48
+                table.insert(heights, 4 + 1.6 * math.sin(wx / 6) + 1.2 * math.cos(wz / 7))
+            end
+        end
+        ground:WriteHeights(vector.create(-48, 0, -48), columns, heights)
+        local walker = Instance.new("CharacterBody")
+        walker.Name = "Walker"
+        walker.Position = vector.create(18, 12, 0)
+        walker.WalkSpeed = 10
+        walker.Parent = workspace
+        local ticks, airborne, landed, settled = 0, 0, 0, false
+        walker.Landed:Connect(function()
+            if settled then
+                landed += 1
+            end
+        end)
+        RunService.Heartbeat:Connect(function()
+            ticks += 1
+            -- Round a circle of eighteen metres, along its tangent.
+            local here = walker.Position
+            walker:Move(vector.create(-here.z, 0, here.x))
+            if ticks == 120 then
+                settled = true
+            end
+            if settled and ticks <= 420 and not walker.Grounded then
+                airborne += 1
+            end
+            workspace:SetAttribute("Airborne", airborne)
+            workspace:SetAttribute("Landed", landed)
+            workspace:SetAttribute("Climbed", here.y)
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    scene::World& world = host.world();
+    double lowest = 1e9;
+    double highest = -1e9;
+    for (int tick = 0; tick < 440; ++tick) {
+        host.tick();
+        if (tick > 120) {
+            const scene::Value climbed = world.getAttribute(host.workspace(), world.atoms().intern("Climbed"));
+            if (const double* y = std::get_if<double>(&climbed)) {
+                lowest = std::min(lowest, *y);
+                highest = std::max(highest, *y);
+            }
+        }
+    }
+    // It walked over hills, not round a flat ring.
+    CHECK(highest - lowest > 1.0);
+    const auto count = [&](std::string_view name) {
+        const scene::Value value = world.getAttribute(host.workspace(), world.atoms().intern(name));
+        const double* number = std::get_if<double>(&value);
+        return number != nullptr ? *number : -1.0;
+    };
+    CHECK(count("Airborne") == 0.0);
+    CHECK(count("Landed") == 0.0);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}

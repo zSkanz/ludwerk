@@ -904,9 +904,10 @@ PhysicsSync::CharacterMotion PhysicsSync::stepController(const CharacterRecord& 
     // Not while it is on its way UP: an impulse that lifts a standing
     // character is a launch, and following the ground would cancel it.
     constexpr f32 Level = 1.0e-3f;
-    if (grounded && !command.jump && motion.vertical <= 0.0f && groundNormal.y > Level)
+    const bool walking = grounded && !command.jump && motion.vertical <= 0.0f && groundNormal.y > Level;
+    if (walking)
         velocity.y = -(horizontal.x * groundNormal.x + horizontal.z * groundNormal.z) / groundNormal.y;
-    m_backend.moveCharacter(m_world, record.handle, velocity, command.dt);
+    m_backend.moveCharacter(m_world, record.handle, velocity, command.dt, walking);
     return motion;
 }
 
