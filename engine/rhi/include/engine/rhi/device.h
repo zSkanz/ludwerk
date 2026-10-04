@@ -146,6 +146,11 @@ public:
     // particle be tested against the picture's depth, and a temporal upscaler
     // read the frame; before the buffers a shader reads, in its bindings.
     virtual void bindComputeTextures(u32 firstSlot, std::span<const TextureBinding> bindings) = 0;
+    // **The textures a compute shader loads from, texel by texel** (ADR 0165):
+    // no sampler, so an image of integers can be one. Each was made with
+    // `TextureUsage::ComputeStorageRead`. A slot is counted from the first of
+    // them, whatever the shader samples besides.
+    virtual void bindComputeStorageTextures(u32 firstSlot, std::span<const TextureHandle> textures) = 0;
     virtual void bindComputeUniforms(u32 slot, std::span<const std::byte> data) = 0;
     virtual void dispatch(u32 groupsX, u32 groupsY, u32 groupsZ) = 0;
 

@@ -2092,6 +2092,12 @@
           "Transient": true
         },
         {
+          "Name": "FrameGeneration",
+          "Type": "boolean",
+          "Default": "false",
+          "Transient": true
+        },
+        {
           "Name": "GlobalIllumination",
           "Type": "Enum.GraphicsLevel",
           "Default": "Enum.GraphicsLevel.High",

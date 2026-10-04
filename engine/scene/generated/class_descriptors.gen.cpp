@@ -4785,7 +4785,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(localizationServiceDesc);
 
     // --- GraphicsService ---
-    static std::array<PropertyDesc, 40> graphicsServiceProperties;
+    static std::array<PropertyDesc, 41> graphicsServiceProperties;
     graphicsServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("QualityLevel"),
@@ -5302,6 +5302,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
             .get = native::getGraphicsServiceBackgroundFrameRate,
             .set = native::setGraphicsServiceBackgroundFrameRate,
+        },
+        PropertyDesc{
+            .name = atoms.intern("FrameGeneration"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether a frame is made between every two the world is drawn (ADR 0165): AMD FSR 3's frame generation. Twice the frames are shown for the same drawing, and each drawn frame is shown half a frame later than it would have been, so what the player does is seen that much later -- for a game played against the clock, leave it off. The interface is drawn on every frame shown and is never interpolated. The world's main camera with perspective, on a device with compute shaders, not on Metal; anywhere else the frames are shown as drawn. The display is waited for while it is on, whatever `VSync` says. One of the display's settings: no quality level turns it on, and choosing a level leaves it as it is.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceFrameGeneration,
+            .set = native::setGraphicsServiceFrameGeneration,
         },
         PropertyDesc{
             .name = atoms.intern("Brightness"),

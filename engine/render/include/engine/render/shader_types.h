@@ -501,13 +501,17 @@ struct GpuReprojectUniforms
 static_assert(sizeof(GpuReprojectUniforms) == 144, "GpuReprojectUniforms is a cbuffer layout");
 
 // Vertex `b0 space1`: one moving draw, now jittered, now and a frame ago.
+// The jittered place is the two matrices the depth pass is given, multiplied
+// where it multiplies them: its depth is what this draw is tested against
+// (D548).
 struct GpuMotionUniforms
 {
-    core::Mat4 position;
+    core::Mat4 viewProjection;
+    core::Mat4 model;
     core::Mat4 current;
     core::Mat4 previous;
 };
-static_assert(sizeof(GpuMotionUniforms) == 192, "GpuMotionUniforms is a cbuffer layout");
+static_assert(sizeof(GpuMotionUniforms) == 256, "GpuMotionUniforms is a cbuffer layout");
 
 // Fragment `b0 space3`: the temporal resolve.
 struct GpuTaaUniforms
@@ -552,6 +556,64 @@ struct GpuFsr2RcasConstants
     core::u32 config[4]{};
 };
 static_assert(sizeof(GpuFsr2RcasConstants) == 16, "GpuFsr2RcasConstants is a cbuffer layout");
+
+// Compute `b0 space2`: optical flow's constants (ADR 0165) -- `cbOF` in the
+// callbacks header, field for field.
+struct GpuOpticalFlowConstants
+{
+    core::i32 inputLumaResolution[2]{};
+    core::u32 pyramidLevel = 0;
+    core::u32 pyramidLevelCount = 0;
+    core::u32 frameIndex = 0;
+    core::u32 backbufferTransferFunction = 0;
+    f32 minMaxLuminance[2]{};
+};
+static_assert(sizeof(GpuOpticalFlowConstants) == 32, "GpuOpticalFlowConstants is a cbuffer layout");
+
+// Compute `b0 space2`: frame interpolation's constants (ADR 0165) -- `cbFI`
+// in the callbacks header, field for field, which is
+// `FrameInterpolationConstants` in AMD's own runtime.
+struct GpuFrameInterpolationConstants
+{
+    core::i32 renderSize[2]{};
+    core::i32 displaySize[2]{};
+    f32 displaySizeRcp[2]{};
+    f32 cameraNear = 0.0f;
+    f32 cameraFar = 0.0f;
+    core::i32 upscalerTargetSize[2]{};
+    core::i32 mode = 0;
+    core::i32 reset = 0;
+    f32 deviceToViewDepth[4]{};
+    f32 deltaTime = 0.0f;
+    core::i32 hudLessAttachedFactor = 0;
+    core::i32 distortionFieldSize[2]{1, 1};
+    f32 opticalFlowScale[2]{};
+    core::i32 opticalFlowBlockSize = 8;
+    core::u32 dispatchFlags = 0;
+    core::i32 maxRenderSize[2]{};
+    core::i32 opticalFlowHalfResMode = 0;
+    core::i32 numInstances = 0;
+    core::i32 interpolationRectBase[2]{};
+    core::i32 interpolationRectSize[2]{};
+    f32 debugBarColor[3]{};
+    core::u32 backBufferTransferFunction = 0;
+    f32 minMaxLuminance[2]{};
+    f32 tanHalfFov = 0.0f;
+    core::i32 pad = 0;
+    f32 jitter[2]{};
+    f32 motionVectorScale[2]{};
+};
+static_assert(sizeof(GpuFrameInterpolationConstants) == 176, "GpuFrameInterpolationConstants is a cbuffer layout");
+
+// Compute `b0 space2`: a level of an inpainting pyramid from the one before
+// (`fsr3_fi_pyramid_next.hlsl`).
+struct GpuPyramidConstants
+{
+    core::i32 sourceSize[2]{};
+    core::i32 colours = 0;
+    core::i32 pad = 0;
+};
+static_assert(sizeof(GpuPyramidConstants) == 16, "GpuPyramidConstants is a cbuffer layout");
 
 // Fragment stage, `b0 space3`, for the sky pass. The sky is drawn as a
 // fullscreen triangle before any geometry, so it needs the inverse view

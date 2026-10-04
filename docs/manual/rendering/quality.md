@@ -172,6 +172,51 @@ thinner than a pixel in front of a far background -- a wire or a distant pole
 against the sky -- shimmers as the camera moves, where TAA blurs it steady.
 Below 1 such things are too thin to be drawn at all, by any upscale.
 
+## Frame generation
+
+**`frame_generation = true`**, under `[display]`, shows a frame the engine did
+not draw between every two it did (ADR 0165): AMD FSR 3's frame generation. A game drawn sixty
+times a second is shown a hundred and twenty. The frame between is made from
+the two finished pictures of the world and from what the engine knows of each
+pixel -- how far it moved and how far away it is -- in a few milliseconds of
+GPU, where drawing it would have cost a whole frame.
+
+- **It makes motion smoother, not the game faster.** Nothing is simulated for
+  the made frame, and a drawn frame waits for the made one before it to be
+  shown first: what the player does is seen **half a frame later** than
+  without it, about 9 ms at sixty drawn frames a second. Use it over a base
+  of sixty, where that is not felt and the made frames are close to the drawn
+  ones; under thirty it shows its seams and the wait is 20 ms and more. A
+  game played against the clock leaves it off.
+- **The interface is never interpolated.** It is drawn on every frame shown,
+  made or drawn, as sharp as it always is.
+- **It works with every `anti_aliasing` and `upscaling`.** With FSR 2 it is
+  what AMD calls FSR 3: the world drawn at a fraction of the window, built up
+  to it, and a frame made between.
+- **The display is waited for while it is on**, whatever `vsync` says: that
+  wait is what gives the made frame and the drawn one each its turn on the
+  screen. `max_frame_rate` caps the frames drawn; twice as many are shown.
+- **It is one of the display's settings, not the level's.** No preset turns
+  it on, choosing a level leaves it as it is, and with it on the level still
+  reads as the level. Offer it in your settings screen -- the engine's own
+  does, beside `VSync` -- with a word about the wait.
+
+On a GeForce RTX 4070 Ti SUPER a made frame adds 1.2 ms to a drawn one at
+1920 x 1080, 2.0 at 2560 x 1440 and 4.3 at 3840 x 2160, and its images take
+161 MB, 286 MB and 643 MB -- a third less of each with FSR 2 at 0.67.
+
+**What it gets wrong**: the strip of background a fast thing uncovers is in
+neither drawn frame where the frame between needs it, and is painted from what
+is round it -- a soft fringe a pixel or two wide at the thing's edges, for one
+frame. Flames and glass, which have no motion of their own, are carried by
+what the two pictures look like and can wobble against what is behind them.
+
+**Where no frame is made, frames are shown as drawn**, and the log says so
+once where it is the device: one without compute shaders, **macOS and iOS**
+(Metal), a camera without perspective, a picture of sprites alone, the frame
+after the camera was cut, and behind a loading screen. When a run ends the log
+says how many frames were made.
+
 Two of those are worth a sentence each.
 
 **Low turns down render scale first**, because it is the only dial that reduces
@@ -253,6 +298,7 @@ apply, because they were typed by the same person as the preset.
 --anti-aliasing=off|fxaa|smaa|taa
 --upscaling=none|fsr1|fsr2
 --sharpness=F
+--frame-generation / --no-frame-generation
 --auto-exposure    / --no-auto-exposure
 ```
 

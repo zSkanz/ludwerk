@@ -765,6 +765,16 @@ public:
             stream_ += Line("storageBuffer").num("buffer", static_cast<u64>(buffer.id)).finish();
     }
 
+    void bindComputeStorageTextures(u32 firstSlot, std::span<const TextureHandle> textures) override
+    {
+        stream_ += Line("bindComputeStorageTextures")
+                       .num("firstSlot", static_cast<u64>(firstSlot))
+                       .num("count", static_cast<u64>(textures.size()))
+                       .finish();
+        for (const TextureHandle texture : textures)
+            stream_ += Line("storageTexture").num("texture", static_cast<u64>(texture.id)).finish();
+    }
+
     void bindComputeTextures(u32 firstSlot, std::span<const TextureBinding> bindings) override
     {
         stream_ += Line("bindComputeTextures")

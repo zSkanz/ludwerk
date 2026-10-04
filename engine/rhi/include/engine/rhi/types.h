@@ -113,7 +113,7 @@ enum class TextureFormat : u8
     // One unsigned integer of thirty-two bits (ADR 0164): the one kind of
     // image a compute shader may do an atomic on -- a minimum kept by many
     // threads at once. Never sampled: read through the binding it is written
-    // by.
+    // by, or loaded (`TextureUsage::ComputeStorageRead`).
     R32Uint,
 };
 
@@ -138,6 +138,10 @@ enum class TextureUsage : u32
     // it is of one channel of thirty-two bits: the formats every device lets
     // a shader do both to.
     ComputeStorageReadWrite = 1u << 4,
+    // **Loaded by a compute shader, texel by texel, with no sampler**
+    // (ADR 0165): what an image of integers is read by, which no sampler
+    // reads. Bound by `bindComputeStorageTextures`, after the sampled ones.
+    ComputeStorageRead = 1u << 5,
 };
 
 [[nodiscard]] constexpr TextureUsage operator|(TextureUsage a, TextureUsage b) noexcept

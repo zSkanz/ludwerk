@@ -26,7 +26,8 @@ Interpolants VertexMain(VertexInput input)
 {
     Interpolants output;
     const float4 posed = mul(skinMatrix(uint4(input.Joints), input.Weights), float4(input.Position, 1.0f));
-    output.Position = mul(MotionPosition, posed);
+    // As `shadow_skinned.hlsl` places it, to the bit (D548).
+    output.Position = mul(MotionViewProjection, mul(MotionModel, posed));
     output.Now = mul(MotionCurrent, posed);
     output.Before = mul(MotionPrevious, posed);
     return output;

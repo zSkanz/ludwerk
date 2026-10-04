@@ -113,6 +113,8 @@ std::optional<core::EngineError> ShaderLibrary::load(const std::filesystem::path
                 static_cast<u32>(reflect.root()["readwrite_storage_buffers"].asInteger(0));
             entry.readwriteStorageTextureCount =
                 static_cast<u32>(reflect.root()["readwrite_storage_textures"].asInteger(0));
+            entry.readonlyStorageTextureCount =
+                static_cast<u32>(reflect.root()["readonly_storage_textures"].asInteger(0));
             entry.threadCount[0] = static_cast<u32>(reflect.root()["threadcount_x"].asInteger(1));
             entry.threadCount[1] = static_cast<u32>(reflect.root()["threadcount_y"].asInteger(1));
             entry.threadCount[2] = static_cast<u32>(reflect.root()["threadcount_z"].asInteger(1));
@@ -166,6 +168,7 @@ rhi::ComputePipelineHandle ShaderLibrary::createCompute(rhi::IDevice& device, st
         .code = code,
         .entryPoint = entry->entryPoint,
         .samplerCount = entry->samplerCount,
+        .readonlyStorageTextureCount = entry->readonlyStorageTextureCount,
         .readonlyStorageBufferCount = entry->readonlyStorageBufferCount,
         .readwriteStorageBufferCount = entry->readwriteStorageBufferCount,
         .readwriteStorageTextureCount = entry->readwriteStorageTextureCount,

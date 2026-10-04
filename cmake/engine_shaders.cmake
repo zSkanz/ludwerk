@@ -98,11 +98,27 @@ function(engine_add_shaders target)
     # headers above.
     set(vendor_headers "")
     foreach(vendored IN ITEMS "third_party/smaa" "third_party/fidelityfx_fsr1/ffx-fsr"
-            "third_party/fidelityfx_fsr2/src/ffx-fsr2-api/shaders")
+            "third_party/fidelityfx_fsr2/src/ffx-fsr2-api/shaders"
+            "third_party/fidelityfx_sdk/sdk/include/FidelityFX/gpu/opticalflow"
+            "third_party/fidelityfx_sdk/sdk/include/FidelityFX/gpu/frameinterpolation")
         if(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/${vendored}")
             file(GLOB vendored_files CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/${vendored}/*.h"
                  "${CMAKE_SOURCE_DIR}/${vendored}/*.hlsl")
             list(APPEND vendor_headers ${vendored_files})
+        endif()
+    endforeach()
+    # The core headers those two techniques include, each by its name: the
+    # directory they are in is every FidelityFX technique's upstream, and the
+    # row vendors these of it (ADR 0042).
+    foreach(vendored IN ITEMS "third_party/fidelityfx_sdk/sdk/include/FidelityFX/gpu/ffx_common_types.h"
+            "third_party/fidelityfx_sdk/sdk/include/FidelityFX/gpu/ffx_core.h"
+            "third_party/fidelityfx_sdk/sdk/include/FidelityFX/gpu/ffx_core_cpu.h"
+            "third_party/fidelityfx_sdk/sdk/include/FidelityFX/gpu/ffx_core_gpu_common.h"
+            "third_party/fidelityfx_sdk/sdk/include/FidelityFX/gpu/ffx_core_gpu_common_half.h"
+            "third_party/fidelityfx_sdk/sdk/include/FidelityFX/gpu/ffx_core_hlsl.h"
+            "third_party/fidelityfx_sdk/sdk/include/FidelityFX/gpu/ffx_core_portability.h")
+        if(EXISTS "${CMAKE_SOURCE_DIR}/${vendored}")
+            list(APPEND vendor_headers "${CMAKE_SOURCE_DIR}/${vendored}")
         endif()
     endforeach()
 

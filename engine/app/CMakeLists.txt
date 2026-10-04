@@ -1185,6 +1185,36 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 480)
 
+    # **What a made frame has to be, measured** (ADR 0165): a scene drawn with
+    # frame generation, and drawn again at twice the frames without, so every
+    # made frame has a drawn one to be held against -- see the driver. On
+    # Windows it then runs with a window, whose made frames take another path.
+    add_test(NAME frame_generation_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DIMGCMP=$<TARGET_FILE:imgcmp>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/framegen
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/frame-generation
+            -DWINDOW=$<BOOL:${WIN32}>
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_frame_generation_gate.cmake)
+    set_tests_properties(frame_generation_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 600)
+
+    # A thing that moves has moved over the whole of its face (D548): its
+    # motion is drawn against the depth pass's depth, and must make that depth
+    # to the bit -- see the driver.
+    add_test(NAME motion_whole_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/motionwhole
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/motion-whole
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_motion_whole_gate.cmake)
+    set_tests_properties(motion_whole_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # Particles simulated on the GPU (ADR 0160): they collide with the terrain
     # and with what is seen, and a hundred thousand of them are a frame under
     # a sixtieth of a second -- see the driver.
@@ -1867,7 +1897,7 @@ if(ENG_BUILD_TESTS)
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
         editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived
         decal_blend_gate decal_receives_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d
-        temporal_upscale_gate)
+        temporal_upscale_gate frame_generation_gate motion_whole_gate)
     option(ENG_TEST_GPU_LOCK "Serialise the tests that draw on a real GPU" ${WIN32})
     if(APPLE)
         set(ENG_TEST_GPU_LOCK ON)

@@ -51,13 +51,17 @@ cbuffer GpuReprojectUniforms : register(b0, space3)
 #endif
 
 #if defined(ENG_UNIFORMS_MOTION)
-// `render::GpuMotionUniforms`, 192 bytes, vertex `b0 space1`: one moving
+// `render::GpuMotionUniforms`, 256 bytes, vertex `b0 space1`: one moving
 // draw's place now and a frame ago.
 cbuffer GpuMotionUniforms : register(b0, space1)
 {
-    // Clip from object, as the depth was drawn: jittered.
-    column_major float4x4 MotionPosition;
-    // The same, unjittered, and a frame ago.
+    // Clip from the camera's world, as the depth was drawn -- jittered -- and
+    // that world from the object: **two matrices and not their product**,
+    // because the depth pass multiplies them a vertex at a time, and a
+    // product made on the CPU rounds to another depth (D548).
+    column_major float4x4 MotionViewProjection;
+    column_major float4x4 MotionModel;
+    // Clip from object, unjittered, and a frame ago.
     column_major float4x4 MotionCurrent;
     column_major float4x4 MotionPrevious;
 };

@@ -24,7 +24,11 @@ Interpolants VertexMain(VertexInput input)
 {
     Interpolants output;
     const float4 local = float4(input.Position, 1.0f);
-    output.Position = mul(MotionPosition, local);
+    // The depth pass's own arithmetic (`shadow_depth.hlsl`), so the depth
+    // this is tested against is the depth this makes: any other order is
+    // another rounding, and the pixels that lose keep the camera's motion --
+    // half a moving face of them (D548).
+    output.Position = mul(MotionViewProjection, mul(MotionModel, local));
     output.Now = mul(MotionCurrent, local);
     output.Before = mul(MotionPrevious, local);
     return output;

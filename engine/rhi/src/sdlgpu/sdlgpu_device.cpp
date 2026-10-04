@@ -142,6 +142,7 @@ public:
     void setComputePipeline(ComputePipelineHandle pipeline) override;
     void bindComputeStorageBuffers(u32 firstSlot, std::span<const BufferHandle> buffers) override;
     void bindComputeTextures(u32 firstSlot, std::span<const TextureBinding> bindings) override;
+    void bindComputeStorageTextures(u32 firstSlot, std::span<const TextureHandle> textures) override;
     void bindComputeUniforms(u32 slot, std::span<const std::byte> data) override;
     void dispatch(u32 groupsX, u32 groupsY, u32 groupsZ) override;
 
@@ -504,7 +505,7 @@ public:
             .entrypoint = entryPoint.c_str(),
             .format = toSdl(desc.format),
             .num_samplers = desc.samplerCount,
-            .num_readonly_storage_textures = 0,
+            .num_readonly_storage_textures = desc.readonlyStorageTextureCount,
             .num_readonly_storage_buffers = desc.readonlyStorageBufferCount,
             .num_readwrite_storage_textures = desc.readwriteStorageTextureCount,
             .num_readwrite_storage_buffers = desc.readwriteStorageBufferCount,
@@ -1604,6 +1605,25 @@ void SdlGpuCmdList::bindComputeTextures(u32 firstSlot, std::span<const TextureBi
         native[filled++] = {.texture = texture, .sampler = sampler};
     }
     SDL_BindGPUComputeSamplers(computePass_, firstSlot, native.data(), static_cast<Uint32>(native.size()));
+}
+
+void SdlGpuCmdList::bindComputeStorageTextures(u32 firstSlot, std::span<const TextureHandle> textures)
+{
+    if (computePass_ == nullptr || textures.empty())
+        return;
+    BindList<SDL_GPUTexture*> native(textures.size());
+    for (usize index = 0; index < textures.size(); ++index) {
+        const TextureEntry* entry = device_.texture(textures[index]);
+        // No fallback here, as there is for a sampled one: the fallback is a
+        // colour, and a shader that loads integers from it reads another
+        // kind of image. A stale handle is the binding not made.
+        if (entry == nullptr || entry->texture == nullptr) {
+            device_.noteStaleBinding();
+            return;
+        }
+        native[index] = entry->texture;
+    }
+    SDL_BindGPUComputeStorageTextures(computePass_, firstSlot, native.data(), static_cast<Uint32>(native.size()));
 }
 
 void SdlGpuCmdList::bindComputeUniforms(u32 slot, std::span<const std::byte> data)

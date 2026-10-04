@@ -66,7 +66,9 @@ settings are no one level's:
 is `Ultra` until something is finer.
 
 **The display.** `WindowMode` (`Windowed`, `Borderless`, `Fullscreen`),
-`Resolution`, `Monitor`, `VSync`, `MaxFrameRate` and `BackgroundFrameRate`.
+`Resolution`, `Monitor`, `VSync`, `MaxFrameRate`, `BackgroundFrameRate` and
+`FrameGeneration` -- a frame made between every two drawn, which is
+[its own section](manual:rendering/quality).
 `GetMonitors()` lists the displays as `{ Name, Size, RefreshRate }`,
 `GetSupportedResolutions()` the fullscreen sizes of the one `Monitor` names,
 and `GetRefreshRate()` its rate. A handheld's window is its display and its
@@ -140,6 +142,7 @@ resolution = [1920, 1080]
 vsync = true
 max_frame_rate = 0
 background_frame_rate = 10
+frame_generation = false     # a frame made between every two drawn
 ```
 
 A platform's own table -- `[graphics.android]` -- is read over `[graphics]` on

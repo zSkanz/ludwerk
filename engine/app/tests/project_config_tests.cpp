@@ -354,6 +354,46 @@ TEST_CASE("a project names FSR 2 and a scale down to a third, and a flag names i
     CHECK(app::loadProjectConfig(plain.path, flags).graphics.upscaling == render::UpscalingMode::Fsr2);
 }
 
+TEST_CASE("a project turns frame generation on, a flag says otherwise, and no level does either (ADR 0165)")
+{
+    CHECK_FALSE(app::loadProjectConfig(std::filesystem::path{}, {}).graphics.frameGeneration);
+
+    // The display's, beside the sync it holds on: `[graphics]` is the level's.
+    const ProjectDir project("[project]\nname = \"Made\"\n[display]\nframe_generation = true\n");
+    const app::ProjectConfig made = app::loadProjectConfig(project.path, {});
+    CHECK(made.graphics.frameGeneration);
+    CHECK(app::projectKeyOf(scene::GraphicsSetting::FrameGeneration) == "display.frame_generation");
+    CHECK(made.graphicsModel.source(scene::GraphicsSetting::FrameGeneration) == scene::GraphicsSource::Project);
+    // The level is still the level: it is not one of the things a level says.
+    CHECK(made.graphicsModel.qualityLevel() == made.graphicsModel.preset());
+    const ProjectDir misplaced("[project]\nname = \"Misplaced\"\n[graphics]\nframe_generation = true\n");
+    CHECK_FALSE(app::loadProjectConfig(misplaced.path, {}).graphics.frameGeneration);
+    // And a level from the command line does not take it away, as it takes a
+    // file's refinements of its own level (D052).
+    app::GraphicsOverrides low;
+    low.quality = render::QualityLevel::Low;
+    CHECK(app::loadProjectConfig(project.path, low).graphics.frameGeneration);
+
+    // It costs every input half a frame: a level of quality is not who asks.
+    for (const render::QualityLevel level : {render::QualityLevel::Low, render::QualityLevel::Medium,
+                                             render::QualityLevel::High, render::QualityLevel::Ultra}) {
+        CHECK_FALSE(render::settingsFor(level).frameGeneration);
+        CHECK_FALSE(render::handheldSettings(render::settingsFor(level)).frameGeneration);
+    }
+
+    app::GraphicsOverrides off;
+    off.frameGeneration = false;
+    CHECK_FALSE(app::loadProjectConfig(project.path, off).graphics.frameGeneration);
+    app::GraphicsOverrides on;
+    on.frameGeneration = true;
+    const ProjectDir plain("[project]\nname = \"Plain\"\n");
+    const app::ProjectConfig asked = app::loadProjectConfig(plain.path, on);
+    CHECK(asked.graphics.frameGeneration);
+    // And the model a script reads says the same, and whose word it is.
+    CHECK(asked.graphicsModel.effective(scene::GraphicsSetting::FrameGeneration) == 1.0);
+    CHECK(asked.graphicsModel.source(scene::GraphicsSetting::FrameGeneration) == scene::GraphicsSource::CommandLine);
+}
+
 TEST_CASE("a handheld starts a level lower and renders the world under a cap (ADR 0147, the mobile ledger)")
 {
     // The owner's phone ran the desktop's `High` at every one of its 1440
@@ -488,6 +528,7 @@ void checkSameSettings(const render::GraphicsSettings& left, const render::Graph
     CHECK(left.antiAliasing == right.antiAliasing);
     CHECK(left.upscaling == right.upscaling);
     CHECK(sameMetres(left.sharpness, right.sharpness));
+    CHECK(left.frameGeneration == right.frameGeneration);
     CHECK(left.depthOfField == right.depthOfField);
     CHECK(left.sunRays == right.sunRays);
     CHECK(left.autoExposure == right.autoExposure);
@@ -508,7 +549,8 @@ TEST_CASE("the model's layers resolve to exactly what the loader resolved")
         "[graphics]\nquality = \"ultra\"\nshadow_cascades = 2\ndepth_of_field = false\nsun_rays = false\n"
         "auto_exposure = false\nambient_occlusion = false\nanti_aliasing = \"taa\"\nsharpness = 0.5\n\n"
         "[graphics.android]\nquality = \"low\"\nrender_cap = 600\nupscaling = \"none\"\n",
-        "[graphics]\nshadow_distance = 5\nrender_cap = 100\n\n[display]\nvsync = false\nmax_frame_rate = 90\n",
+        "[graphics]\nshadow_distance = 5\nrender_cap = 100\n\n"
+        "[display]\nvsync = false\nmax_frame_rate = 90\nframe_generation = true\n",
     };
     std::array<app::GraphicsOverrides, 3> overrides;
     overrides[1].quality = render::QualityLevel::Medium;
@@ -518,6 +560,7 @@ TEST_CASE("the model's layers resolve to exactly what the loader resolved")
     overrides[2].antiAliasing = render::AntiAliasingMode::Off;
     overrides[1].upscaling = render::UpscalingMode::Fsr1;
     overrides[1].sharpness = 0.6f;
+    overrides[1].frameGeneration = true;
     overrides[2].vsync = true;
     overrides[2].maxFrameRate = 30;
 

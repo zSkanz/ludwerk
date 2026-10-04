@@ -78,6 +78,7 @@ private:
         u32 readonlyStorageBufferCount = 0;
         u32 readwriteStorageBufferCount = 0;
         u32 readwriteStorageTextureCount = 0;
+        u32 readonlyStorageTextureCount = 0;
         u32 threadCount[3] = {1, 1, 1};
     };
 

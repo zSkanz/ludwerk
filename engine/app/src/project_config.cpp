@@ -159,6 +159,8 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         settings.upscaling = *overrides.upscaling;
     if (overrides.sharpness)
         settings.sharpness = *overrides.sharpness;
+    if (overrides.frameGeneration)
+        settings.frameGeneration = *overrides.frameGeneration;
     if (overrides.autoExposure)
         settings.autoExposure = *overrides.autoExposure;
     if (overrides.contactShadows)
@@ -293,6 +295,8 @@ void seedCommandLine(scene::GraphicsModel& model, const GraphicsOverrides& overr
         say(layer, GraphicsSetting::Upscaling, static_cast<f64>(*overrides.upscaling));
     if (overrides.sharpness)
         say(layer, GraphicsSetting::Sharpness, static_cast<f64>(*overrides.sharpness));
+    if (overrides.frameGeneration)
+        say(layer, GraphicsSetting::FrameGeneration, *overrides.frameGeneration ? 1.0 : 0.0);
     if (overrides.autoExposure)
         say(layer, GraphicsSetting::AutoExposure, *overrides.autoExposure ? 1.0 : 0.0);
     if (overrides.contactShadows)
@@ -455,8 +459,9 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
     settings.antiAliasing =
         static_cast<render::AntiAliasingMode>(std::clamp(static_cast<int>(value(GraphicsSetting::AntiAliasing)), 0, 3));
     settings.upscaling =
-        static_cast<render::UpscalingMode>(std::clamp(static_cast<int>(value(GraphicsSetting::Upscaling)), 0, 1));
+        static_cast<render::UpscalingMode>(std::clamp(static_cast<int>(value(GraphicsSetting::Upscaling)), 0, 2));
     settings.sharpness = static_cast<f32>(value(GraphicsSetting::Sharpness));
+    settings.frameGeneration = value(GraphicsSetting::FrameGeneration) != 0.0;
     settings.autoExposure = value(GraphicsSetting::AutoExposure) != 0.0;
     settings.depthOfField = value(GraphicsSetting::DepthOfField) != 0.0;
     settings.sunRays = value(GraphicsSetting::SunRays) != 0.0;
@@ -665,6 +670,11 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         applyFile(document, "graphics", config.graphics);
         applyFile(document, platform, config.graphics);
     }
+    // **Frame generation is the display's** (ADR 0165), beside the sync it
+    // holds on: no level says it, so a level from the command line does not
+    // take it away either.
+    if (const std::optional<bool> value = document.boolean("display.frame_generation"))
+        config.graphics.frameGeneration = *value;
     applyOverrides(overrides, config.graphics);
     config.graphics = render::clampSettings(config.graphics);
 

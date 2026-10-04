@@ -1535,6 +1535,35 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     core::InstanceId scriptToOpen;
 
     ViewportTarget viewportTarget;
+
+    // **Frame generation** (ADR 0165). The world is drawn into a picture of
+    // its own, two by turns, where it would have drawn the window; the
+    // renderer makes the frame between the last picture and this one; and the
+    // window is shown the made frame, then the drawn one, the interface drawn
+    // on each.
+    struct MadeFrames
+    {
+        rhi::TextureHandle picture[2]{};
+        core::u32 width = 0;
+        core::u32 height = 0;
+        rhi::TextureFormat format = rhi::TextureFormat::Undefined;
+        core::u32 turn = 0;
+        // Whether the other picture holds the frame before this one.
+        bool previous = false;
+        // **The drawn frame, waiting its turn** (a window): the made frame is
+        // shown when the frame is over, and the drawn one half a frame after,
+        // which is when the next frame's drawing begins.
+        rhi::TextureHandle waiting{};
+        core::Vec2 waitingViewport{};
+        // When the made frame was sent, and how long a frame is, smoothed.
+        core::u64 shownNs = 0;
+        core::u64 lastNs = 0;
+        core::u64 periodNs = 0;
+        // How many frames were shown that were never drawn.
+        core::u64 made = 0;
+        // Whether the display is being waited for on its account.
+        bool syncHeld = false;
+    } madeFrames;
     // The editor's icons, built once from `content/icons` on the first frame
     // that has a command list -- uploading a texture is one, so this cannot be
     // done before the loop.
@@ -3054,7 +3083,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // the editor fullscreen or take its frame rate.
                 if (!options.editor) {
                     const FramePacing pacing = pacingOf(live);
-                    if (window != nullptr && device != nullptr && pacing.vsync != livePacing.vsync)
+                    // (Not while frame generation holds the display's sync on:
+                    // it is put back from this setting when that lets go.)
+                    if (window != nullptr && device != nullptr && pacing.vsync != livePacing.vsync &&
+                        !madeFrames.syncHeld)
                         applyVSync(*device, *window, pacing.vsync);
                     livePacing = pacing;
                     const WindowChoice choice = windowChoiceOf(live);
@@ -5685,6 +5717,100 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         }
 
         ENG_PROFILE_NEXT(stretch, "frame.draw");
+        // **The interface, over a finished frame**: in its own pass that
+        // LOADS. A lambda because a made frame and the drawn one after it are
+        // each shown with it (ADR 0165).
+        const auto drawInterface = [&](rhi::ICmdList& list, rhi::TextureHandle onto, core::Vec2 viewport,
+                                       bool groupPictures) {
+            if (!uiRenderer.valid() || uiVertices.empty() || !onto.valid())
+                return;
+            // The groups' pictures first, each in a pass of its own -- once a
+            // frame, whichever picture of it is shown first.
+            if (groupPictures)
+                uiGroupPictures.draw(list, uiRenderer, uiDrawList);
+            const std::array<rhi::ColorAttachment, 1> uiColors{rhi::ColorAttachment{
+                .texture = onto,
+                .loadOp = rhi::LoadOp::Load,
+                .storeOp = rhi::StoreOp::Store,
+            }};
+            list.pushDebugGroup("ui");
+            list.beginRenderPass({.colorAttachments = uiColors, .debugName = "ui"});
+            list.setViewport({.width = viewport.x, .height = viewport.y});
+            uiRenderer.render(list, viewport);
+            list.endRenderPass();
+            list.popDebugGroup();
+        };
+        // **A picture every N frames shown** (`--screenshot-every`): the one
+        // just shown, read back once it has finished, as `<name>-<number><ext>`.
+        const auto pictureEvery = [&](core::u64 shown) -> std::optional<core::EngineError> {
+            if (options.screenshotEvery == 0 || options.screenshotPath.empty() || !offscreen.valid() ||
+                shown % options.screenshotEvery != 0)
+                return std::nullopt;
+            device->waitIdle();
+            std::vector<std::byte> pixels(static_cast<core::usize>(options.width) *
+                                          static_cast<core::usize>(options.height) * 4u);
+            if (!device->readTexture(offscreen, pixels))
+                return core::makeError(ENG_TR("engine.screenshot.err.readback_failed"));
+            const core::u64 number = shown / options.screenshotEvery - 1;
+            char suffix[16]{};
+            (void)std::snprintf(suffix, sizeof(suffix), "-%03llu", static_cast<unsigned long long>(number));
+            std::filesystem::path shot = options.screenshotPath;
+            shot.replace_filename(options.screenshotPath.stem().string() + suffix +
+                                  options.screenshotPath.extension().string());
+            return writePng(shot, pixels, static_cast<core::u32>(options.width),
+                            static_cast<core::u32>(options.height));
+        };
+        // **Made frames are paced by the display** (ADR 0165): a made frame
+        // and the drawn one after it are sent one behind the other, and it is
+        // the display's wait that shows each for its turn. With VSync off the
+        // made one would be on the screen for no time at all -- so while
+        // frames are generated the display is waited for, whatever the
+        // setting says, and the setting is put back when they are not.
+        // Here, before the frame begins: a swapchain is not changed under a
+        // frame that has taken a picture from it.
+        if (!options.headless && !options.editor && window != nullptr) {
+            const bool wanted = renderer != nullptr && renderer->valid() && renderer->settings().frameGeneration;
+            if (wanted && !madeFrames.syncHeld) {
+                if (device->presentMode(*window) != rhi::PresentMode::Vsync)
+                    applyVSync(*device, *window, true);
+                madeFrames.syncHeld = true;
+            }
+            else if (!wanted && madeFrames.syncHeld) {
+                madeFrames.syncHeld = false;
+#if !defined(__ANDROID__)
+                if (!livePacing.vsync)
+                    applyVSync(*device, *window, false);
+#endif
+            }
+        }
+        // **The drawn frame that waited** (ADR 0165), shown now: half a frame
+        // after the made one it follows, with the interface as that frame had
+        // it -- this frame's has not been built yet.
+        if (madeFrames.waiting.valid() && !options.headless) {
+            if (rhi::ICmdList* early = device->beginFrame(); early != nullptr) {
+                const rhi::Swapchain screen = device->acquireSwapchain(*window);
+                if (screen.texture.valid() && screen.width == madeFrames.width && screen.height == madeFrames.height &&
+                    renderer != nullptr) {
+                    // A display that is waited for paces the two by itself.
+                    // One that is not would show the made frame for no time
+                    // at all: the wait is what is left of half a frame.
+                    if (device->presentMode(*window) != rhi::PresentMode::Vsync && madeFrames.periodNs != 0) {
+                        const core::u64 due = madeFrames.shownNs + madeFrames.periodNs / 2;
+                        const core::u64 atNs = platform::nowNs();
+                        if (atNs < due)
+                            platform::sleepNs(std::min<core::u64>(due - atNs, 50'000'000ull));
+                    }
+                    renderer->showPicture(*device, *early, madeFrames.waiting,
+                                          {.color = screen.texture,
+                                           .colorFormat = screen.format,
+                                           .width = screen.width,
+                                           .height = screen.height});
+                    drawInterface(*early, screen.texture, madeFrames.waitingViewport, false);
+                }
+                device->submitAndPresent();
+            }
+            madeFrames.waiting = {};
+        }
         const core::u64 beginWaitNs = platform::nowNs();
         rhi::ICmdList* cmd = nullptr;
         {
@@ -5734,6 +5860,50 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 targetWidth = viewportTarget.width();
                 targetHeight = viewportTarget.height();
             }
+        }
+
+        // **Frame generation** (ADR 0165): the world into a picture of its
+        // own, in the window's format -- what draws over the world is built
+        // against that -- and the window shown it afterwards. Not in the
+        // editor, whose world is a panel; nor under the debug overlay, which
+        // is drawn once a frame and would be on every other frame shown.
+        bool generating = false;
+        if (!options.editor && target.valid() && renderer != nullptr && renderer->valid() &&
+            renderer->settings().frameGeneration && !(overlay.has_value() && overlay->visible())) {
+            if (madeFrames.width != targetWidth || madeFrames.height != targetHeight ||
+                madeFrames.format != targetFormat || !madeFrames.picture[0].valid()) {
+                for (rhi::TextureHandle& picture : madeFrames.picture) {
+                    if (picture.valid())
+                        device->destroy(picture);
+                    picture = device->createTexture({
+                        .format = targetFormat,
+                        .usage = rhi::TextureUsage::ColorTarget | rhi::TextureUsage::Sampled,
+                        .width = targetWidth,
+                        .height = targetHeight,
+                        .debugName = "world-picture",
+                    });
+                }
+                madeFrames.width = targetWidth;
+                madeFrames.height = targetHeight;
+                madeFrames.format = targetFormat;
+                madeFrames.previous = false;
+            }
+            if (madeFrames.picture[0].valid() && madeFrames.picture[1].valid()) {
+                target = madeFrames.picture[madeFrames.turn];
+                generating = true;
+            }
+        }
+        else if (madeFrames.picture[0].valid() || madeFrames.picture[1].valid()) {
+            // The setting is off: the pictures are given back.
+            device->waitIdle();
+            for (rhi::TextureHandle& picture : madeFrames.picture) {
+                if (picture.valid())
+                    device->destroy(picture);
+                picture = {};
+            }
+            madeFrames.width = 0;
+            madeFrames.height = 0;
+            madeFrames.previous = false;
         }
 
         if (target.valid()) {
@@ -6812,29 +6982,60 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 cmd->popDebugGroup();
             }
 
+            // **The frame between this one and the last** (ADR 0165), and
+            // which of the two the window is shown now.
+            bool groupPictures = true;
+            if (generating) {
+                const bool drawn = useRenderer && !curtain.up();
+                const rhi::TextureHandle picture = target;
+                const render::RenderTarget screen{
+                    .color = present, .colorFormat = targetFormat, .width = targetWidth, .height = targetHeight};
+                rhi::TextureHandle between{};
+                if (drawn && renderer->generatesFrames(snapshot)) {
+                    ENG_PROFILE_SCOPE("render.frame_generation");
+                    between = renderer->interpolateFrame(*device, *cmd,
+                                                         madeFrames.previous ? madeFrames.picture[madeFrames.turn ^ 1u]
+                                                                             : rhi::TextureHandle{},
+                                                         picture, targetWidth, targetHeight);
+                }
+                madeFrames.previous = drawn;
+                madeFrames.turn ^= 1u;
+                target = present;
+                if (!between.valid()) {
+                    // Nothing made: the drawn frame, as any frame is shown.
+                    renderer->showPicture(*device, *cmd, picture, screen);
+                }
+                else if (options.headless) {
+                    // **Without a window there is nothing to pace**: the made
+                    // frame, then the drawn one, each a frame shown.
+                    renderer->showPicture(*device, *cmd, between, screen);
+                    drawInterface(*cmd, present, uiViewport, true);
+                    groupPictures = false;
+                    device->submitAndPresent();
+                    ++madeFrames.made;
+                    if (auto shotError = pictureEvery(frame.index + madeFrames.made); shotError.has_value())
+                        return shotError;
+                    cmd = device->beginFrame();
+                    if (cmd == nullptr)
+                        continue;
+                    renderer->showPicture(*device, *cmd, picture, screen);
+                }
+                else {
+                    // The made frame now, and the drawn one when the next
+                    // frame's drawing begins (`madeFrames.waiting`).
+                    renderer->showPicture(*device, *cmd, between, screen);
+                    madeFrames.waiting = picture;
+                    madeFrames.waitingViewport = uiViewport;
+                    ++madeFrames.made;
+                }
+            }
+
             // The UI, in its own pass that LOADS: it is drawn over the finished
             // frame whatever produced it, so a project with no camera still has
             // a menu. Before the debug overlay and after everything else, which
             // is the order api-design.md §2.2 implies -- game UI is part of the
             // game, and the ImGui overlay is on top of the game.
-            if (uiRenderer.valid() && !uiVertices.empty()) {
-                // The groups' pictures first, each in a pass of its own.
-                uiGroupPictures.draw(*cmd, uiRenderer, uiDrawList);
-                const std::array<rhi::ColorAttachment, 1> uiColors{rhi::ColorAttachment{
-                    .texture = target,
-                    .loadOp = rhi::LoadOp::Load,
-                    .storeOp = rhi::StoreOp::Store,
-                }};
-                cmd->pushDebugGroup("ui");
-                cmd->beginRenderPass({.colorAttachments = uiColors, .debugName = "ui"});
-                cmd->setViewport({
-                    .width = static_cast<f32>(targetWidth),
-                    .height = static_cast<f32>(targetHeight),
-                });
-                uiRenderer.render(*cmd, uiViewport);
-                cmd->endRenderPass();
-                cmd->popDebugGroup();
-            }
+            drawInterface(*cmd, target, uiViewport, groupPictures);
 
             // Its own pass, on top of the finished frame, after ours closed and
             // before submit -- the ordering the overlay's contract asks for.
@@ -6916,26 +7117,25 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         }
         phaseWaitMs += msSince(presentNs);
 
-        // **A picture every N frames** (`--screenshot-every`): this frame's,
-        // read back once it has finished, as `<name>-<number><ext>`.
-        if (options.screenshotEvery != 0 && !options.screenshotPath.empty() && offscreen.valid() &&
-            (frame.index + 1) % options.screenshotEvery == 0) {
-            device->waitIdle();
-            std::vector<std::byte> pixels(static_cast<core::usize>(options.width) *
-                                          static_cast<core::usize>(options.height) * 4u);
-            if (!device->readTexture(offscreen, pixels))
-                return core::makeError(ENG_TR("engine.screenshot.err.readback_failed"));
-            const core::u64 number = (frame.index + 1) / options.screenshotEvery - 1;
-            char suffix[16]{};
-            (void)std::snprintf(suffix, sizeof(suffix), "-%03llu", static_cast<unsigned long long>(number));
-            std::filesystem::path shot = options.screenshotPath;
-            shot.replace_filename(options.screenshotPath.stem().string() + suffix +
-                                  options.screenshotPath.extension().string());
-            if (auto writeError = writePng(shot, pixels, static_cast<core::u32>(options.width),
-                                           static_cast<core::u32>(options.height));
-                writeError.has_value())
-                return writeError;
+        // When the made frame was sent, and how long a frame is: what the
+        // drawn frame that waits is timed by (ADR 0165).
+        if (madeFrames.waiting.valid()) {
+            const core::u64 sentNs = platform::nowNs();
+            if (madeFrames.lastNs != 0) {
+                const core::u64 took = sentNs - madeFrames.lastNs;
+                madeFrames.periodNs = madeFrames.periodNs == 0 ? took : (madeFrames.periodNs * 7 + took) / 8;
+            }
+            madeFrames.lastNs = sentNs;
+            madeFrames.shownNs = sentNs;
         }
+        else {
+            madeFrames.lastNs = 0;
+        }
+
+        // A picture every N frames shown (`pictureEvery`): a made frame
+        // counts, and was counted where it was shown.
+        if (auto shotError = pictureEvery(frame.index + 1 + madeFrames.made); shotError.has_value())
+            return shotError;
 
         ENG_PROFILE_NEXT(stretch, "wait.idle");
         // **A process with no window and a real clock sleeps until its next
@@ -7130,6 +7330,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     const std::array<I18nArg, 2> summary{I18nArg{"frames", static_cast<core::i64>(scheduler.totalFrames())},
                                          I18nArg{"ticks", static_cast<core::i64>(scheduler.totalTicks())}};
     core::log(LogLevel::Info, ENG_TR("engine.frame.info.summary"), summary);
+    // And how many more were shown than drawn (ADR 0165): said where there
+    // were any, so a run that asked for frame generation and got none can be
+    // told from one that got it.
+    if (madeFrames.made != 0) {
+        const std::array<I18nArg, 1> made{I18nArg{"made", static_cast<core::i64>(madeFrames.made)}};
+        core::log(LogLevel::Info, ENG_TR("engine.frame.info.made"), made);
+    }
 
     if (options.frameStats && !frameTimesMs.empty()) {
         // The first frames are warm-up -- shader creation, the first mesh load,
@@ -7308,6 +7515,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         previewRenderer->destroy(*device);
     if (offscreen.valid())
         device->destroy(offscreen);
+    for (rhi::TextureHandle& picture : madeFrames.picture) {
+        if (picture.valid())
+            device->destroy(picture);
+        picture = {};
+    }
     if (window != nullptr)
         device->releaseWindow(*window);
 

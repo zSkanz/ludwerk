@@ -23,6 +23,8 @@ describe("GraphicsService", function()
         expect(Graphics.AntiAliasing):ToBe(Enum.AntiAliasingMode.SMAA)
         expect(Graphics.Upscaling):ToBe(Enum.UpscalingMode.None)
         expect(Graphics.Sharpness):ToBe(0.2)
+        -- No level turns frame generation on (ADR 0165).
+        expect(Graphics.FrameGeneration):ToBe(false)
         expect(Graphics.Bloom):ToBe(true)
         expect(Graphics.WindowMode):ToBe(Enum.WindowMode.Windowed)
         expect(Graphics.Resolution):ToBe(Vector2.new(0, 0))
@@ -41,6 +43,13 @@ describe("GraphicsService", function()
         -- FSR 2 is a way to upscale like the others (ADR 0164).
         Graphics.Upscaling = Enum.UpscalingMode.FSR2
         expect(Graphics.Upscaling):ToBe(Enum.UpscalingMode.FSR2)
+        -- A frame made between every two drawn is a game's to ask for
+        -- (ADR 0165), and a flag like the others.
+        Graphics.FrameGeneration = true
+        expect(Graphics.FrameGeneration):ToBe(true)
+        expect(function()
+            (Graphics :: any).FrameGeneration = 1
+        end):ToThrow()
         Graphics.MaxFrameRate = 144
         expect(Graphics.MaxFrameRate):ToBe(144)
         Graphics.FoliageDensity = 2

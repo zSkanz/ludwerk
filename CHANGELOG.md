@@ -200,6 +200,16 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Frame generation** (ADR 0165): `GraphicsService.FrameGeneration`,
+  `frame_generation = true` under `[display]` and `--frame-generation`. A frame is made between
+  every two the world is drawn -- AMD FSR 3's -- so twice the frames are
+  shown for the same drawing. The interface is drawn on every frame shown and
+  is never interpolated. Each drawn frame is shown half a frame later than it
+  would have been, and the display is waited for while it is on. With any
+  anti-aliasing and any upscaling; the world's main camera with perspective,
+  on a device with compute shaders, not on Metal. One of the display's
+  settings: no level turns it on or off.
+
 - **FSR 2** (ADR 0164): `Enum.UpscalingMode.FSR2`, `upscaling = "fsr2"` and
   `--upscaling=fsr2`. The window's picture is built from the frames before
   this one, each drawn a fraction of a pixel off from the last, so what half
@@ -1189,6 +1199,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   A size is now rasterised at the nearest of a few sizes at or above it and
   drawn smaller; text at a whole number of pixels up to 64 is drawn exactly as
   before, and text over 128 pixels is drawn up from 128.
+- **A moving part under TAA and FSR 2 no longer smears in patches** (D548).
+  On about half the face of anything that moved, the temporal pass was told
+  the pixel had moved as the background behind it and looked for it in the
+  last frame in the wrong place. The part's motion is now drawn at exactly
+  the depth the picture's depth pass wrote.
 - **A list that scrolls down no longer grows a bar across its bottom** (D547).
   At some window sizes -- so, often, after a resize -- a `ScrollFrame` with
   nothing to scroll sideways drew a horizontal bar the length of the frame. A

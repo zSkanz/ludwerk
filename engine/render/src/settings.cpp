@@ -196,6 +196,8 @@ std::optional<DebugView> parseDebugView(std::string_view name) noexcept
         return DebugView::Albedo;
     if (name == "material")
         return DebugView::Material;
+    if (name == "motion")
+        return DebugView::Motion;
     return std::nullopt;
 }
 

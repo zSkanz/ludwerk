@@ -77,6 +77,7 @@ namespace engine::scene {
     X(VSync, Flag, 0.0, 1.0, 1.0, false, true)                                                                         \
     X(MaxFrameRate, Whole, 0.0, 1000.0, 0.0, false, true)                                                              \
     X(BackgroundFrameRate, Whole, 0.0, 1000.0, 10.0, false, true)                                                      \
+    X(FrameGeneration, Flag, 0.0, 1.0, 0.0, false, true)                                                               \
     X(Brightness, Number, -1.0, 1.0, 0.0, false, false)
 
 enum class GraphicsSetting : core::u8

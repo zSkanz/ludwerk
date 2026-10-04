@@ -124,6 +124,44 @@ public:
     // Where surface shaders named by URN come from (ADR 0091): the editor's
     // compiler, or a packaged game's pack. Null -- the default -- draws every
     // such surface with the built-in one. Not owned.
+    // **Whether a frame is to be made between this one and the last**
+    // (ADR 0165): the setting, a device that can, and a world it can be made
+    // of. The host then draws the world into a picture of its own -- two, by
+    // turns -- where it would have drawn the window, shows the made frame
+    // first and the drawn one after, and draws the interface on each.
+    [[nodiscard]] virtual bool generatesFrames(const RenderWorld& world) const noexcept
+    {
+        (void)world;
+        return false;
+    }
+    // **The frame between `previous` and `current`**, two pictures of the
+    // world's main view of `width` by `height`, the second the one `render`
+    // has just drawn. Nothing where there is no frame to make: the first
+    // picture after the setting came on or the camera was cut, and a device
+    // that cannot. The picture answered is the renderer's, and is this
+    // frame's until the next call.
+    [[nodiscard]] virtual rhi::TextureHandle interpolateFrame(rhi::IDevice& device, rhi::ICmdList& cmd,
+                                                              rhi::TextureHandle previous, rhi::TextureHandle current,
+                                                              core::u32 width, core::u32 height)
+    {
+        (void)device;
+        (void)cmd;
+        (void)previous;
+        (void)current;
+        (void)width;
+        (void)height;
+        return {};
+    }
+    // **A picture of the world, onto a target of its size** (ADR 0165): how a
+    // frame drawn into a picture, or made between two, reaches the window.
+    virtual void showPicture(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
+                             const RenderTarget& target)
+    {
+        (void)device;
+        (void)cmd;
+        (void)picture;
+        (void)target;
+    }
     virtual void setSurfaceSource(ISurfaceSource* source) { (void)source; }
     [[nodiscard]] virtual const GraphicsSettings& settings() const noexcept = 0;
 

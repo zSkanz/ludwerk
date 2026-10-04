@@ -76,3 +76,19 @@ TEST_CASE("a texture a compute pass writes says so, apart from one it only sampl
     CHECK_FALSE(write.texture.valid());
     CHECK(write.mipLevel == 0u);
 }
+
+TEST_CASE("a texture a compute pass loads without a sampler says so too")
+{
+    // ADR 0165. An image of integers -- a depth kept by an atomic, a vector
+    // packed with its priority -- has no sampler that reads it: the pass after
+    // loads it, and to every backend that is a third kind of binding.
+    constexpr auto loaded = TextureUsage::ComputeStorageReadWrite | TextureUsage::ComputeStorageRead;
+
+    CHECK(hasUsage(loaded, TextureUsage::ComputeStorageRead));
+    CHECK_FALSE(
+        hasUsage(TextureUsage::Sampled | TextureUsage::ComputeStorageReadWrite, TextureUsage::ComputeStorageRead));
+    CHECK_FALSE(hasUsage(TextureUsage::ComputeStorageRead, TextureUsage::Sampled));
+
+    const ComputePipelineDesc pipeline{};
+    CHECK(pipeline.readonlyStorageTextureCount == 0u);
+}

@@ -74,6 +74,9 @@ struct ComputePipelineDesc
     std::span<const std::byte> code{};
     std::string_view entryPoint = "ComputeMain";
     u32 samplerCount = 0;
+    // The textures it loads from with no sampler (ADR 0165), which come after
+    // the sampled ones in its bindings and before the buffers it reads.
+    u32 readonlyStorageTextureCount = 0;
     u32 readonlyStorageBufferCount = 0;
     u32 readwriteStorageBufferCount = 0;
     // The textures it writes (ADR 0164), bound when its pass begins.

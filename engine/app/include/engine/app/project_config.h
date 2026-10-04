@@ -44,6 +44,8 @@ struct GraphicsOverrides
     // `--upscaling=none|fsr1|fsr2` and `--sharpness=X` (ADRs 0158, 0164).
     std::optional<render::UpscalingMode> upscaling;
     std::optional<core::f32> sharpness;
+    // `--frame-generation`, `--no-frame-generation` (ADR 0165).
+    std::optional<bool> frameGeneration;
     std::optional<bool> autoExposure;
     std::optional<bool> contactShadows;
     // `--vsync`, `--no-vsync`, `--max-frame-rate=N`, `--background-frame-rate=N`

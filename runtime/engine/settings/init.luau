@@ -253,6 +253,7 @@ local Rows: { Row } = {
         Desktop = true,
     },
     toggle("VSync", "engine.graphics.setting.vsync", "Display", true),
+    toggle("FrameGeneration", "engine.graphics.setting.frame_generation", "Display"),
     {
         Setting = "MaxFrameRate",
         Page = "Display",

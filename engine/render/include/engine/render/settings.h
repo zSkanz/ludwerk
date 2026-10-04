@@ -81,6 +81,11 @@ enum class UpscalingMode : core::u8
 //              sky black: the corner that weighs most, then the paint, then
 //              the rules, each from half -- what the CPU says is there
 //              (`asset::drawnMaterial`).
+//   Motion     how far each pixel moved since the last frame, over the
+//              finished picture (D548): red and green the motion along x and
+//              y, mid grey for none and a channel's whole range for sixteen
+//              pixels either way, and blue where it moved at all. What the
+//              temporal pass and frame generation are told, seen.
 enum class DebugView : core::u8
 {
     None,
@@ -92,6 +97,7 @@ enum class DebugView : core::u8
     Bend,
     Albedo,
     Material,
+    Motion,
 };
 
 // Whether a debug view draws the sky black, for a check to pass it over.
@@ -170,6 +176,11 @@ struct GraphicsSettings
     // **How much RCAS sharpens**, 0 to 1 (ADR 0158): after FSR 1's upscale,
     // after temporal anti-aliasing, which softens, and inside FSR 2.
     f32 sharpness = 0.2f;
+    // **Whether a frame is made between every two the world is drawn**
+    // (ADR 0165): FSR 3's frame generation. The world's main view alone; the
+    // interface is drawn on every frame shown, made or drawn. Off in every
+    // preset -- it adds a frame's wait to every input.
+    bool frameGeneration = false;
     // Whether a world's `DepthOfFieldEffect` is drawn (ADR 0096). **The machine
     // wins over the world**, as it does for bloom: a scene that asks for focus
     // on a machine that cannot afford it draws sharp. `BlurEffect` and

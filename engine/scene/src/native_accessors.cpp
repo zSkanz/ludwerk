@@ -2293,6 +2293,16 @@ bool setGraphicsServiceDepthOfField(World& world, core::InstanceId, const Value&
     return writeGraphicsFlag(world, GraphicsSetting::DepthOfField, value);
 }
 
+Value getGraphicsServiceFrameGeneration(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::FrameGeneration) != 0.0};
+}
+
+bool setGraphicsServiceFrameGeneration(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsFlag(world, GraphicsSetting::FrameGeneration, value);
+}
+
 Value getGraphicsServiceSunRays(const World& world, core::InstanceId)
 {
     return Value{graphicsValue(world, GraphicsSetting::SunRays) != 0.0};

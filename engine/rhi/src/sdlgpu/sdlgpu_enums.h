@@ -97,6 +97,8 @@ namespace engine::rhi::sdlgpu {
         flags |= SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE;
     if (hasUsage(usage, TextureUsage::ComputeStorageReadWrite))
         flags |= SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE;
+    if (hasUsage(usage, TextureUsage::ComputeStorageRead))
+        flags |= SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ;
     return flags;
 }
 

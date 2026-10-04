@@ -982,6 +982,22 @@ local Classes: { Schema.Class } = {
                 Doc = "The cap while the window is not in front or is minimised; 0 is no throttle.",
             },
             {
+                Name = "FrameGeneration",
+                Type = "boolean",
+                Default = "false",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether a frame is made between every two the world is drawn (ADR 0165): AMD FSR 3's frame "
+                    .. "generation. Twice the frames are shown for the same drawing, and each drawn frame is shown "
+                    .. "half a frame later than it would have been, so what the player does is seen that much "
+                    .. "later -- for a game played against the clock, leave it off. The interface is drawn on "
+                    .. "every frame shown and is never interpolated. The world's main camera with perspective, "
+                    .. "on a device with compute shaders, not on Metal; anywhere else the frames are shown as "
+                    .. "drawn. The display is waited for while it is on, whatever `VSync` says. One of the "
+                    .. "display's settings: no quality level turns it on, and choosing a level leaves it as it is.",
+            },
+            {
                 Name = "Brightness",
                 Type = "number",
                 Default = "0",

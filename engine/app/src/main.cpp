@@ -789,6 +789,11 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             graphics.autoExposure = arg == "--auto-exposure";
             continue;
         }
+        // A frame made between every two drawn (ADR 0165).
+        if (arg == "--frame-generation" || arg == "--no-frame-generation") {
+            graphics.frameGeneration = arg == "--frame-generation";
+            continue;
+        }
 
         if (arg.starts_with("--editor-drive=")) {
             options.editorDrive = std::filesystem::path(arg.substr(15));

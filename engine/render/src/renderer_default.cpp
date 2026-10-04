@@ -107,6 +107,36 @@ constexpr u32 kFsr2AccumulateSharpen = 5;
 constexpr u32 kFsr2Rcas = 6;
 constexpr u32 kFsr2PassCount = 7;
 
+// **Frame generation's passes** (ADR 0165): optical flow's seven, then frame
+// interpolation's eleven, each in the order a frame first runs it.
+constexpr u32 kFgLuma = 0;
+constexpr u32 kFgPyramid = 1;
+constexpr u32 kFgScdHistogram = 2;
+constexpr u32 kFgScdDivergence = 3;
+constexpr u32 kFgSearch = 4;
+constexpr u32 kFgFilter = 5;
+constexpr u32 kFgScale = 6;
+constexpr u32 kFgSetup = 7;
+constexpr u32 kFgPrepare = 8;
+constexpr u32 kFgDepth = 9;
+constexpr u32 kFgGameField = 10;
+constexpr u32 kFgVectorPyramid = 11;
+constexpr u32 kFgPyramidNext = 12;
+constexpr u32 kFgFlowField = 13;
+constexpr u32 kFgDisocclusion = 14;
+constexpr u32 kFgInterpolate = 15;
+constexpr u32 kFgColourPyramid = 16;
+constexpr u32 kFgInpaint = 17;
+constexpr u32 kFgPassCount = 18;
+// Optical flow searches seven sizes of the picture, coarsest first, and finds
+// one motion a block of eight pixels.
+constexpr u32 kFlowLevels = 7;
+constexpr u32 kFlowBlock = 8;
+// The bins of the histograms a cut is found by: 256 to each of nine parts.
+constexpr u32 kFlowHistogramWidth = 256 * 9;
+// The most levels an inpainting pyramid is read to.
+constexpr u32 kMaxPyramidLevels = 11;
+
 // Five levels, halving from half resolution: the coarsest is a thirty-second of
 // the frame, which is where a bloom's tail stops being distinguishable from a
 // flat lift.
@@ -667,6 +697,12 @@ public:
     void setSurfaceSource(ISurfaceSource* source) override { surfaceSource_ = source; }
     [[nodiscard]] const GraphicsSettings& settings() const noexcept override { return settings_; }
     [[nodiscard]] core::Vec2 cameraJitter(const RenderWorld& world, u32 targetWidth, u32 targetHeight) const override;
+    [[nodiscard]] bool generatesFrames(const RenderWorld& world) const noexcept override;
+    void showPicture(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
+                     const RenderTarget& target) override;
+    [[nodiscard]] rhi::TextureHandle interpolateFrame(rhi::IDevice& device, rhi::ICmdList& cmd,
+                                                      rhi::TextureHandle previous, rhi::TextureHandle current,
+                                                      u32 width, u32 height) override;
     // Whether this frame of the main view is a temporal one: the one rule
     // `cameraJitter` and `render` both ask, so a frame is never jittered
     // without the pass that takes the jitter out.
@@ -1328,6 +1364,81 @@ private:
                                                      const RenderTarget& target, rhi::TextureHandle scene);
     // What this frame was, for the next one's motion to be measured against.
     void rememberCamera(const RenderCamera& camera);
+
+    // --- Frame generation (ADR 0165) -------------------------------------------
+    //
+    // **FSR 3's**: AMD's optical flow and frame interpolation, each its
+    // passes compiled from its own headers (`shaders/compute/fsr3_*.hlsl`),
+    // and the images they keep. The main view's alone. Between the picture
+    // of the world the host drew last frame and the one it has just drawn, a
+    // third is made: each pixel carried half its motion -- the game's own,
+    // which the velocity pass measured, and what optical flow found in the
+    // two pictures where the game's says nothing (a shadow, a reflection,
+    // what blends).
+    rhi::ComputePipelineHandle fgPipelines_[kFgPassCount]{};
+    bool fgTried_ = false;
+    // Said once: a device that cannot (`failFrameGeneration`).
+    bool fgFailed_ = false;
+    // What the device is, learnt when the renderer was made.
+    bool fgCompute_ = false;
+    bool fgAtomics_ = false;
+    // Whether this frame's main view is drawn for it, and whether its camera
+    // has nothing before it to have moved from.
+    bool fgNow_ = false;
+    bool motionCut_ = true;
+    // The camera's part of the interpolation's constants, kept by `render`
+    // for `interpolateFrame`, which has no world.
+    GpuFrameInterpolationConstants fgCamera_;
+    // Optical flow: the picture as a luminance at seven sizes, this frame's
+    // and the last one's; the motion found, two of each size because a pass
+    // reads one and writes the other; and the histograms a cut is found by.
+    rhi::TextureHandle fgLuma_[2][kFlowLevels]{};
+    rhi::TextureHandle fgFlow_[2][kFlowLevels]{};
+    rhi::TextureHandle fgScdHistogram_{};
+    rhi::TextureHandle fgScdPrevious_{};
+    rhi::TextureHandle fgScdTemp_{};
+    rhi::TextureHandle fgScdOutput_{};
+    // Interpolation, at the render size: each pixel's motion and depth from
+    // its nearest neighbour, that depth where the pixel was and where it is
+    // half way, the two motion fields as seen from the frame between, and
+    // what that frame cannot take from each of its neighbours.
+    rhi::TextureHandle fgDilatedMotion_{};
+    rhi::TextureHandle fgDilatedDepth_{};
+    rhi::TextureHandle fgPreviousDepth_{};
+    rhi::TextureHandle fgBetweenDepth_{};
+    rhi::TextureHandle fgGameField_[2]{};
+    rhi::TextureHandle fgFlowField_[2]{};
+    rhi::TextureHandle fgDisocclusion_{};
+    // The two pyramids holes are filled from, each an image with every level
+    // and a chain of images a level each (`fsr3_fi_vector_pyramid.hlsl`).
+    rhi::TextureHandle fgVectorPyramid_{};
+    rhi::TextureHandle fgColourPyramid_{};
+    std::vector<rhi::TextureHandle> fgVectorLevels_;
+    std::vector<rhi::TextureHandle> fgColourLevels_;
+    // At the picture's size: the frame between as interpolated, and with its
+    // holes filled.
+    rhi::TextureHandle fgInterpolated_{};
+    rhi::TextureHandle fgOutput_{};
+    // Two counts the passes keep: one unused here, and the frames since a cut.
+    rhi::BufferHandle fgCounters_{};
+    u32 fgRenderWidth_ = 0;
+    u32 fgRenderHeight_ = 0;
+    u32 fgWidth_ = 0;
+    u32 fgHeight_ = 0;
+    u32 fgParity_ = 0;
+    u32 fgFrameIndex_ = 0;
+    bool fgFresh_ = true;
+    [[nodiscard]] bool ensureFrameGeneration(rhi::IDevice& device);
+    [[nodiscard]] bool ensureFrameGenerationImages(rhi::IDevice& device, u32 width, u32 height);
+    void releaseFrameGenerationImages(rhi::IDevice& device);
+    void failFrameGeneration(core::TextKey why);
+    // A picture copied onto a target: into a texture, and into the window.
+    LookPipeline showPicture_;
+    LookPipeline showPictureWindow_;
+    // `--debug-view=motion`: `velocity_` over the finished picture.
+    LookPipeline motionView_;
+    LookPipeline motionViewWindow_;
+    void showMotion(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target);
     [[nodiscard]] bool ensureMotionPipelines(rhi::IDevice& device);
     [[nodiscard]] bool ensureSmaaTables(rhi::IDevice& device, rhi::ICmdList& cmd);
     [[nodiscard]] static bool aaTexture(rhi::IDevice& device, rhi::TextureHandle& slot, u32 width, u32 height,
@@ -1344,7 +1455,7 @@ private:
                         bool upscale, bool sharpen);
 
     // Every look pipeline, for `destroy`.
-    [[nodiscard]] std::array<LookPipeline*, 30> lookPipelines() noexcept
+    [[nodiscard]] std::array<LookPipeline*, 34> lookPipelines() noexcept
     {
         return {&gradedTonemap_,
                 &gradedTonemapWindow_,
@@ -1375,7 +1486,11 @@ private:
                 &rcasWindow_,
                 &taaVelocity_,
                 &taaResolve_,
-                &fsr2ReactivePipeline_};
+                &fsr2ReactivePipeline_,
+                &showPicture_,
+                &showPictureWindow_,
+                &motionView_,
+                &motionViewWindow_};
     }
 
     [[nodiscard]] bool lookTexture(rhi::IDevice& device, rhi::TextureHandle& slot, u32 width, u32 height,
@@ -1399,6 +1514,11 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
 {
     colorFormat_ = colorFormat;
     shaderLibrary_ = &shaders;
+    // What frame generation asks of a device (ADR 0165): compute, and the
+    // atomics on an image its passes keep their fields with -- which Metal's
+    // shading language lacks.
+    fgCompute_ = device.caps().compute;
+    fgAtomics_ = device.caps().shaderFormat != rhi::ShaderFormat::Msl;
 
     core::EngineError error;
     const auto load = [&](std::string_view name, rhi::ShaderStage stage) -> rhi::ShaderHandle {
@@ -2391,6 +2511,14 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     }
     fsr2Tried_ = false;
     fsr2Failed_ = false;
+    releaseFrameGenerationImages(device);
+    for (rhi::ComputePipelineHandle& pipeline : fgPipelines_) {
+        if (pipeline.valid())
+            device.destroy(pipeline);
+        pipeline = {};
+    }
+    fgTried_ = false;
+    fgFailed_ = false;
     for (rhi::BufferHandle* buffer : {&foliageVisible_, &foliageCounters_, &foliageArguments_, &foliageCommands_}) {
         if (buffer->valid())
             device.destroy(*buffer);
@@ -3985,6 +4113,9 @@ void DefaultRenderer::writeVelocity(rhi::IDevice& device, rhi::ICmdList& cmd, co
             placed_.clear();
         }
     }
+    // What frame generation is told (ADR 0165): a frame with no camera before
+    // it has nothing to be the frame between.
+    motionCut_ = !previousCamera_;
     // The last camera, its space moved to this one's origin -- or, with none,
     // this one, which moves nothing.
     const Mat4 previous =
@@ -4067,7 +4198,8 @@ void DefaultRenderer::writeVelocity(rhi::IDevice& device, rhi::ICmdList& cmd, co
             bound = pipeline;
         }
         GpuMotionUniforms motion;
-        motion.position = camera.viewProjection * draw.transform;
+        motion.viewProjection = camera.viewProjection;
+        motion.model = draw.transform;
         motion.current = camera.unjitteredViewProjection * draw.transform;
         motion.previous = previousViewProjection_ * before.transform;
         cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&motion, sizeof(motion)));
@@ -4157,6 +4289,551 @@ void DefaultRenderer::rememberCamera(const RenderCamera& camera)
     placed_.swap(placing_);
     placing_.clear();
     jitterIndex_ += 1;
+}
+
+// --- Frame generation (ADR 0165) -----------------------------------------------
+
+bool DefaultRenderer::generatesFrames(const RenderWorld& world) const noexcept
+{
+    // The main view's, of a world with depth and motion to interpolate by: a
+    // camera with perspective, something behind it, and more than sprites --
+    // FSR 2's reasons (`fsr2Frame`), and the temporal pass's.
+    return settings_.frameGeneration && !fgFailed_ && fgCompute_ && fgAtomics_ && world.camera.valid &&
+           !core::isOrthographic(world.camera.projection) && !world.environment.transparentBackground &&
+           !spritesOnly(world);
+}
+
+void DefaultRenderer::showPicture(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
+                                  const RenderTarget& target)
+{
+    if (!picture.valid() || !target.color.valid())
+        return;
+    // Written in the format of what it writes, as the tonemap is (audit R2).
+    const bool intoWindow = target.colorFormat != kLdrFormat;
+    LookPipeline& slot = intoWindow ? showPictureWindow_ : showPicture_;
+    if (!ensureLookPipeline(device, slot, "look_resample", intoWindow ? target.colorFormat : kLdrFormat))
+        return;
+    // The same size: the nearest texel is the texel.
+    const std::array<rhi::TextureBinding, 1> source{rhi::TextureBinding{picture, pointSampler_}};
+    fullscreenPass(cmd, slot.handle, target.color, target.width, target.height, "show-picture", source, {});
+}
+
+void DefaultRenderer::showMotion(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target)
+{
+    if (!velocity_.valid() || !target.color.valid())
+        return;
+    const bool intoWindow = target.colorFormat != kLdrFormat;
+    LookPipeline& slot = intoWindow ? motionViewWindow_ : motionView_;
+    if (!ensureLookPipeline(device, slot, "motion_view", intoWindow ? target.colorFormat : kLdrFormat))
+        return;
+    const std::array<rhi::TextureBinding, 1> source{rhi::TextureBinding{velocity_, pointSampler_}};
+    fullscreenPass(cmd, slot.handle, target.color, target.width, target.height, "motion-view", source, {});
+}
+
+void DefaultRenderer::failFrameGeneration(core::TextKey why)
+{
+    if (fgFailed_)
+        return;
+    fgFailed_ = true;
+    fgNow_ = false;
+    core::log(core::LogLevel::Warn, why, {});
+}
+
+bool DefaultRenderer::ensureFrameGeneration(rhi::IDevice& device)
+{
+    const auto whole = [this]() {
+        for (const rhi::ComputePipelineHandle& pipeline : fgPipelines_) {
+            if (!pipeline.valid())
+                return false;
+        }
+        return true;
+    };
+    if (fgTried_)
+        return whole();
+    fgTried_ = true;
+    if (shaderLibrary_ == nullptr)
+        return false;
+    static constexpr std::array<const char*, kFgPassCount> Names{
+        "fsr3_of_luma",           "fsr3_of_pyramid",    "fsr3_of_scd_histogram", "fsr3_of_scd_divergence",
+        "fsr3_of_search",         "fsr3_of_filter",     "fsr3_of_scale",         "fsr3_fi_setup",
+        "fsr3_fi_prepare",        "fsr3_fi_depth",      "fsr3_fi_game_field",    "fsr3_fi_vector_pyramid",
+        "fsr3_fi_pyramid_next",   "fsr3_fi_flow_field", "fsr3_fi_disocclusion",  "fsr3_fi_interpolate",
+        "fsr3_fi_colour_pyramid", "fsr3_fi_inpaint",
+    };
+    core::EngineError error;
+    for (u32 pass = 0; pass < kFgPassCount; ++pass) {
+        fgPipelines_[pass] = shaderLibrary_->createCompute(device, Names[pass], &error);
+        if (!fgPipelines_[pass].valid()) {
+            core::logText(core::LogLevel::Warn, error.message);
+            return false;
+        }
+    }
+    return true;
+}
+
+void DefaultRenderer::releaseFrameGenerationImages(rhi::IDevice& device)
+{
+    const auto release = [&device](rhi::TextureHandle& texture) {
+        if (texture.valid())
+            device.destroy(texture);
+        texture = {};
+    };
+    for (auto& family : fgLuma_) {
+        for (rhi::TextureHandle& texture : family)
+            release(texture);
+    }
+    for (auto& family : fgFlow_) {
+        for (rhi::TextureHandle& texture : family)
+            release(texture);
+    }
+    for (rhi::TextureHandle* texture :
+         {&fgScdHistogram_, &fgScdPrevious_, &fgScdTemp_, &fgScdOutput_, &fgDilatedMotion_, &fgDilatedDepth_,
+          &fgPreviousDepth_, &fgBetweenDepth_, &fgGameField_[0], &fgGameField_[1], &fgFlowField_[0], &fgFlowField_[1],
+          &fgDisocclusion_, &fgVectorPyramid_, &fgColourPyramid_, &fgInterpolated_, &fgOutput_})
+        release(*texture);
+    for (rhi::TextureHandle& texture : fgVectorLevels_)
+        release(texture);
+    for (rhi::TextureHandle& texture : fgColourLevels_)
+        release(texture);
+    fgVectorLevels_.clear();
+    fgColourLevels_.clear();
+    if (fgCounters_.valid())
+        device.destroy(fgCounters_);
+    fgCounters_ = {};
+    fgRenderWidth_ = 0;
+    fgRenderHeight_ = 0;
+    fgWidth_ = 0;
+    fgHeight_ = 0;
+    fgFresh_ = true;
+}
+
+bool DefaultRenderer::ensureFrameGenerationImages(rhi::IDevice& device, u32 width, u32 height)
+{
+    const u32 renderWidth = static_cast<u32>(fgCamera_.renderSize[0]);
+    const u32 renderHeight = static_cast<u32>(fgCamera_.renderSize[1]);
+    if (fgOutput_.valid() && fgWidth_ == width && fgHeight_ == height && fgRenderWidth_ == renderWidth &&
+        fgRenderHeight_ == renderHeight)
+        return true;
+    // Another size is another pair of frames: nothing of the old ones is kept.
+    releaseFrameGenerationImages(device);
+    if (renderWidth < 2 || renderHeight < 2 || width < 2 || height < 2)
+        return false;
+    bool made = true;
+    using Usage = rhi::TextureUsage;
+    const auto image = [&](rhi::TextureHandle& slot, u32 imageWidth, u32 imageHeight, rhi::TextureFormat format,
+                           Usage usage, const char* name, u32 mips = 1) {
+        slot = device.createTexture({
+            .format = format,
+            .usage = usage,
+            .width = imageWidth,
+            .height = imageHeight,
+            .mipLevels = mips,
+            .debugName = name,
+        });
+        made = made && slot.valid();
+    };
+    constexpr rhi::TextureFormat Integer = rhi::TextureFormat::R32Uint;
+    // **An image of integers is loaded, not sampled** (`ComputeStorageRead`);
+    // one a pass keeps with an atomic, or reads through the binding it writes
+    // by, is both read and written (`ComputeStorageReadWrite`); and the ones a
+    // new pair of frames starts from nothing are targets too, to be cleared.
+    for (u32 family = 0; family < 2; ++family) {
+        u32 flowWidth = (width + kFlowBlock - 1) / kFlowBlock;
+        u32 flowHeight = (height + kFlowBlock - 1) / kFlowBlock;
+        for (u32 level = 0; level < kFlowLevels; ++level) {
+            image(fgLuma_[family][level], std::max(width >> level, 1u), std::max(height >> level, 1u), Integer,
+                  Usage::ComputeStorageWrite | Usage::ComputeStorageRead | Usage::ColorTarget, "fg-luma");
+            image(fgFlow_[family][level], flowWidth, flowHeight, Integer,
+                  Usage::ComputeStorageReadWrite | Usage::ComputeStorageRead, "fg-flow");
+            flowWidth = (flowWidth + 1) / 2;
+            flowHeight = (flowHeight + 1) / 2;
+        }
+    }
+    image(fgScdHistogram_, kFlowHistogramWidth, 1, Integer, Usage::ComputeStorageReadWrite | Usage::ColorTarget,
+          "fg-scd-histogram");
+    image(fgScdPrevious_, kFlowHistogramWidth, 1, rhi::TextureFormat::R32Float,
+          Usage::ComputeStorageReadWrite | Usage::ColorTarget, "fg-scd-previous");
+    image(fgScdTemp_, 3, 1, Integer, Usage::ComputeStorageReadWrite | Usage::ColorTarget, "fg-scd-temp");
+    image(fgScdOutput_, 3, 1, Integer, Usage::ComputeStorageReadWrite | Usage::ComputeStorageRead | Usage::ColorTarget,
+          "fg-scd-output");
+
+    const Usage sampled = Usage::ComputeStorageWrite | Usage::Sampled;
+    const Usage kept = Usage::ComputeStorageReadWrite | Usage::ComputeStorageRead;
+    image(fgDilatedMotion_, renderWidth, renderHeight, kHdrFormat, sampled, "fg-dilated-motion");
+    image(fgDilatedDepth_, renderWidth, renderHeight, rhi::TextureFormat::R32Float, sampled, "fg-dilated-depth");
+    image(fgPreviousDepth_, renderWidth, renderHeight, Integer, kept, "fg-previous-depth");
+    image(fgBetweenDepth_, renderWidth, renderHeight, Integer, kept, "fg-between-depth");
+    image(fgGameField_[0], renderWidth, renderHeight, Integer, kept, "fg-game-field-x");
+    image(fgGameField_[1], renderWidth, renderHeight, Integer, kept, "fg-game-field-y");
+    image(fgFlowField_[0], renderWidth, renderHeight, Integer, kept, "fg-flow-field-x");
+    image(fgFlowField_[1], renderWidth, renderHeight, Integer, kept, "fg-flow-field-y");
+    image(fgDisocclusion_, renderWidth, renderHeight, kLdrFormat, sampled, "fg-disocclusion");
+    image(fgInterpolated_, width, height, kLdrFormat, sampled, "fg-interpolated");
+    image(fgOutput_, width, height, kLdrFormat, sampled, "fg-output");
+
+    // **A pyramid is half its source at its first level and half again at
+    // each after**, down to the last level with a pixel each way.
+    const auto pyramid = [&](rhi::TextureHandle& whole, std::vector<rhi::TextureHandle>& levels, u32 sourceWidth,
+                             u32 sourceHeight, const char* name) {
+        u32 count = 0;
+        for (u32 levelWidth = sourceWidth / 2, levelHeight = sourceHeight / 2;
+             levelWidth >= 1 && levelHeight >= 1 && count < kMaxPyramidLevels; levelWidth /= 2, levelHeight /= 2)
+            ++count;
+        image(whole, sourceWidth / 2, sourceHeight / 2, kHdrFormat, sampled, name, count);
+        levels.resize(count);
+        for (u32 level = 0; level < count; ++level)
+            image(levels[level], (sourceWidth / 2) >> level, (sourceHeight / 2) >> level, kHdrFormat, sampled, name);
+    };
+    pyramid(fgVectorPyramid_, fgVectorLevels_, renderWidth, renderHeight, "fg-vector-pyramid");
+    pyramid(fgColourPyramid_, fgColourLevels_, width, height, "fg-colour-pyramid");
+
+    fgCounters_ = device.createBuffer({
+        .usage = rhi::BufferUsage::ComputeStorageRead | rhi::BufferUsage::ComputeStorageWrite,
+        .sizeBytes = 2 * sizeof(u32),
+        .debugName = "fg-counters",
+    });
+    made = made && fgCounters_.valid();
+    if (!made) {
+        releaseFrameGenerationImages(device);
+        return false;
+    }
+    fgRenderWidth_ = renderWidth;
+    fgRenderHeight_ = renderHeight;
+    fgWidth_ = width;
+    fgHeight_ = height;
+    fgFresh_ = true;
+    return true;
+}
+
+rhi::TextureHandle DefaultRenderer::interpolateFrame(rhi::IDevice& device, rhi::ICmdList& cmd,
+                                                     rhi::TextureHandle previous, rhi::TextureHandle current, u32 width,
+                                                     u32 height)
+{
+    // The main view's depth and motion are what it interpolates by.
+    useView(0);
+    if (!fgNow_ || fgFailed_ || !velocity_.valid() || !depth_.valid() || !current.valid())
+        return {};
+    if (!ensureFrameGeneration(device) || !ensureFrameGenerationImages(device, width, height)) {
+        failFrameGeneration(ENG_TR("render.warn.frame_generation_unavailable"));
+        return {};
+    }
+    // **Nothing to be the frame between**: new images, a camera with nothing
+    // before it, or no picture before this one. The passes that keep
+    // something from frame to frame still run, so the next frame has it.
+    const bool reset = fgFresh_ || motionCut_ || !previous.valid();
+    fgFresh_ = false;
+
+    const u32 renderWidth = fgRenderWidth_;
+    const u32 renderHeight = fgRenderHeight_;
+    const rhi::SamplerHandle exact = pointSampler_;
+    const rhi::SamplerHandle filtered = environmentSampler_;
+    using Sampled = std::span<const rhi::TextureBinding>;
+    using Loaded = std::span<const rhi::TextureHandle>;
+    using Written = std::span<const rhi::ComputeTextureWrite>;
+    using Buffers = std::span<const rhi::BufferHandle>;
+    const auto run = [&](u32 which, Sampled sampled, Loaded loaded, Written written,
+                         std::span<const std::byte> constants, u32 groupsX, u32 groupsY, u32 groupsZ = 1,
+                         Buffers writtenBuffers = {}, Buffers readBuffers = {}) {
+        cmd.beginComputePass(writtenBuffers, written);
+        cmd.setComputePipeline(fgPipelines_[which]);
+        if (!sampled.empty())
+            cmd.bindComputeTextures(0, sampled);
+        if (!loaded.empty())
+            cmd.bindComputeStorageTextures(0, loaded);
+        if (!readBuffers.empty())
+            cmd.bindComputeStorageBuffers(0, readBuffers);
+        cmd.bindComputeUniforms(0, constants);
+        cmd.dispatch(groupsX, groupsY, groupsZ);
+        cmd.endComputePass();
+    };
+    const auto tiles = [](u32 size, u32 tile) { return (size + tile - 1) / tile; };
+
+    cmd.pushDebugGroup("frame-generation");
+
+    // --- Optical flow, after `dispatch` in AMD's runtime -----------------------
+    if (reset) {
+        const rhi::ColorRgba none{0.0f, 0.0f, 0.0f, 0.0f};
+        for (u32 family = 0; family < 2; ++family) {
+            for (u32 level = 0; level < kFlowLevels; ++level)
+                clearPass(cmd, fgLuma_[family][level], std::max(width >> level, 1u), std::max(height >> level, 1u),
+                          "fg-clear", none);
+        }
+        clearPass(cmd, fgScdHistogram_, kFlowHistogramWidth, 1, "fg-clear", none);
+        clearPass(cmd, fgScdPrevious_, kFlowHistogramWidth, 1, "fg-clear", none);
+        clearPass(cmd, fgScdTemp_, 3, 1, "fg-clear", none);
+        clearPass(cmd, fgScdOutput_, 3, 1, "fg-clear", none);
+    }
+    fgFrameIndex_ = reset ? 0u : fgFrameIndex_ + 1u;
+    GpuOpticalFlowConstants flow;
+    flow.inputLumaResolution[0] = static_cast<core::i32>(width);
+    flow.inputLumaResolution[1] = static_cast<core::i32>(height);
+    flow.pyramidLevelCount = kFlowLevels;
+    flow.frameIndex = fgFrameIndex_;
+    // The picture is as the window shows it: eight bits, already encoded.
+    flow.backbufferTransferFunction = 0;
+    flow.minMaxLuminance[1] = 1.0f;
+    const auto flowBytes = [&flow](u32 level) {
+        flow.pyramidLevel = level;
+        return asBytes(&flow, sizeof(flow));
+    };
+    const u32 now = fgParity_ & 1u;
+    const u32 before = now ^ 1u;
+    const auto lumaWidth = [width](u32 level) { return std::max(width >> level, 1u); };
+    const auto lumaHeight = [height](u32 level) { return std::max(height >> level, 1u); };
+    {
+        // The picture as a luminance, each thread four pixels.
+        const std::array<rhi::TextureBinding, 1> sampled{rhi::TextureBinding{current, exact}};
+        const std::array<rhi::ComputeTextureWrite, 1> written{rhi::ComputeTextureWrite{fgLuma_[now][0]}};
+        run(kFgLuma, sampled, {}, written, flowBytes(0), tiles((width + 1) / 2, 16), tiles((height + 1) / 2, 16));
+    }
+    for (u32 level = 0; level + 1 < kFlowLevels; ++level) {
+        const std::array<rhi::TextureHandle, 1> loaded{fgLuma_[now][level]};
+        const std::array<rhi::ComputeTextureWrite, 1> written{rhi::ComputeTextureWrite{fgLuma_[now][level + 1]}};
+        run(kFgPyramid, {}, loaded, written, flowBytes(level), tiles(lumaWidth(level + 1), 8),
+            tiles(lumaHeight(level + 1), 8));
+    }
+    {
+        // Whether the scene was cut: nine histograms, against the last frame's.
+        const std::array<rhi::TextureHandle, 1> loaded{fgLuma_[now][0]};
+        const std::array<rhi::ComputeTextureWrite, 1> histogram{rhi::ComputeTextureWrite{fgScdHistogram_}};
+        run(kFgScdHistogram, {}, loaded, histogram, flowBytes(0), tiles((width / 4) / 3, 32), 16, 9);
+        const std::array<rhi::ComputeTextureWrite, 4> written{
+            rhi::ComputeTextureWrite{fgScdHistogram_},
+            rhi::ComputeTextureWrite{fgScdPrevious_},
+            rhi::ComputeTextureWrite{fgScdTemp_},
+            rhi::ComputeTextureWrite{fgScdOutput_},
+        };
+        run(kFgScdDivergence, {}, {}, written, flowBytes(0), 9, 3);
+    }
+    {
+        // The size of the motion's image at each level: a block of eight
+        // pixels at the finest, and half as many blocks at each coarser.
+        std::array<u32, kFlowLevels> blocksWide{};
+        std::array<u32, kFlowLevels> blocksHigh{};
+        blocksWide[0] = tiles(width, kFlowBlock);
+        blocksHigh[0] = tiles(height, kFlowBlock);
+        for (u32 level = 1; level < kFlowLevels; ++level) {
+            blocksWide[level] = (blocksWide[level - 1] + 1) / 2;
+            blocksHigh[level] = (blocksHigh[level - 1] + 1) / 2;
+        }
+        // Coarsest first: search, take the middle of each neighbourhood, and
+        // hand the result to the next level as its guess. A level reads one
+        // of the two images of its size and writes the other.
+        for (u32 step = 0; step < kFlowLevels; ++step) {
+            const u32 level = kFlowLevels - 1 - step;
+            const u32 searched = level & 1u;
+            const u32 settled = searched ^ 1u;
+            const std::span<const std::byte> constants = flowBytes(level);
+            {
+                const std::array<rhi::TextureHandle, 2> loaded{fgLuma_[now][level], fgLuma_[before][level]};
+                const std::array<rhi::ComputeTextureWrite, 2> written{
+                    rhi::ComputeTextureWrite{fgFlow_[searched][level]},
+                    rhi::ComputeTextureWrite{fgScdOutput_},
+                };
+                run(kFgSearch, {}, loaded, written, constants, tiles(lumaWidth(level), 16),
+                    tiles(lumaHeight(level), 16));
+            }
+            {
+                const std::array<rhi::TextureHandle, 1> loaded{fgFlow_[searched][level]};
+                const std::array<rhi::ComputeTextureWrite, 1> written{
+                    rhi::ComputeTextureWrite{fgFlow_[settled][level]}};
+                run(kFgFilter, {}, loaded, written, constants, tiles(blocksWide[level], 16),
+                    tiles(blocksHigh[level], 4));
+            }
+            if (level > 0) {
+                const std::array<rhi::TextureHandle, 3> loaded{fgLuma_[now][level], fgLuma_[before][level],
+                                                               fgFlow_[settled][level]};
+                const std::array<rhi::ComputeTextureWrite, 2> written{
+                    rhi::ComputeTextureWrite{fgFlow_[settled][level - 1]},
+                    rhi::ComputeTextureWrite{fgScdOutput_},
+                };
+                run(kFgScale, {}, loaded, written, constants, tiles(blocksWide[level - 1], 4),
+                    tiles(blocksHigh[level - 1], 4));
+            }
+        }
+    }
+    // The finest level's, after its filter: level zero is even, so it settled
+    // in the second of the two.
+    const rhi::TextureHandle motion = fgFlow_[1][0];
+
+    // --- Frame interpolation, after `ffxFrameInterpolationDispatch` ------------
+    GpuFrameInterpolationConstants constants = fgCamera_;
+    constants.displaySize[0] = static_cast<core::i32>(width);
+    constants.displaySize[1] = static_cast<core::i32>(height);
+    constants.displaySizeRcp[0] = 1.0f / static_cast<f32>(width);
+    constants.displaySizeRcp[1] = 1.0f / static_cast<f32>(height);
+    constants.upscalerTargetSize[0] = constants.displaySize[0];
+    constants.upscalerTargetSize[1] = constants.displaySize[1];
+    constants.interpolationRectSize[0] = constants.displaySize[0];
+    constants.interpolationRectSize[1] = constants.displaySize[1];
+    constants.reset = reset ? 1 : 0;
+    // Optical flow's motion is in pixels of the picture.
+    constants.opticalFlowScale[0] = constants.displaySizeRcp[0];
+    constants.opticalFlowScale[1] = constants.displaySizeRcp[1];
+    constants.opticalFlowBlockSize = static_cast<core::i32>(kFlowBlock);
+    constants.minMaxLuminance[1] = 1.0f;
+    // Read by nothing the engine builds: a constant, so a frame's commands
+    // do not depend on the clock.
+    constants.deltaTime = 1000.0f / 60.0f;
+    const std::span<const std::byte> frame = asBytes(&constants, sizeof(constants));
+    const u32 renderX = tiles(renderWidth, 8);
+    const u32 renderY = tiles(renderHeight, 8);
+    const u32 pictureX = tiles(width, 8);
+    const u32 pictureY = tiles(height, 8);
+    {
+        // The fields the passes keep with atomics, emptied; the two depths
+        // set to the furthest there is; the count of frames since a cut.
+        const std::array<rhi::TextureHandle, 1> loaded{fgScdOutput_};
+        const std::array<rhi::ComputeTextureWrite, 7> written{
+            rhi::ComputeTextureWrite{fgGameField_[0]},  rhi::ComputeTextureWrite{fgGameField_[1]},
+            rhi::ComputeTextureWrite{fgFlowField_[0]},  rhi::ComputeTextureWrite{fgFlowField_[1]},
+            rhi::ComputeTextureWrite{fgDisocclusion_},  rhi::ComputeTextureWrite{fgBetweenDepth_},
+            rhi::ComputeTextureWrite{fgPreviousDepth_},
+        };
+        const std::array<rhi::BufferHandle, 1> counters{fgCounters_};
+        run(kFgSetup, {}, loaded, written, frame, renderX, renderY, 1, counters);
+    }
+    {
+        // Each pixel's motion and depth from its nearest neighbour, and that
+        // depth carried to where the pixel was.
+        const std::array<rhi::TextureBinding, 2> sampled{
+            rhi::TextureBinding{velocity_, exact},
+            rhi::TextureBinding{depth_, exact},
+        };
+        const std::array<rhi::ComputeTextureWrite, 3> written{
+            rhi::ComputeTextureWrite{fgPreviousDepth_},
+            rhi::ComputeTextureWrite{fgDilatedMotion_},
+            rhi::ComputeTextureWrite{fgDilatedDepth_},
+        };
+        run(kFgPrepare, sampled, {}, written, frame, renderX, renderY);
+    }
+    rhi::TextureHandle made{};
+    if (!reset) {
+        // A pyramid: its first level from its source, each after from the
+        // level before.
+        const auto pyramid = [&](rhi::TextureHandle whole, const std::vector<rhi::TextureHandle>& levels,
+                                 u32 sourceWidth, u32 sourceHeight, bool colours) {
+            for (u32 level = 1; level < levels.size(); ++level) {
+                GpuPyramidConstants next;
+                next.sourceSize[0] = static_cast<core::i32>((sourceWidth / 2) >> (level - 1));
+                next.sourceSize[1] = static_cast<core::i32>((sourceHeight / 2) >> (level - 1));
+                next.colours = colours ? 1 : 0;
+                const std::array<rhi::TextureBinding, 1> sampled{rhi::TextureBinding{levels[level - 1], exact}};
+                const std::array<rhi::ComputeTextureWrite, 2> written{
+                    rhi::ComputeTextureWrite{levels[level]},
+                    rhi::ComputeTextureWrite{whole, level},
+                };
+                run(kFgPyramidNext, sampled, {}, written, asBytes(&next, sizeof(next)),
+                    tiles(static_cast<u32>(next.sourceSize[0]) / 2, 8),
+                    tiles(static_cast<u32>(next.sourceSize[1]) / 2, 8));
+            }
+        };
+        // No lens distortion: a texel of nothing.
+        const rhi::TextureBinding undistorted{blackPixel_, exact};
+        {
+            // The depth of the frame between.
+            const std::array<rhi::TextureBinding, 3> sampled{
+                rhi::TextureBinding{fgDilatedMotion_, exact},
+                rhi::TextureBinding{fgDilatedDepth_, exact},
+                undistorted,
+            };
+            const std::array<rhi::ComputeTextureWrite, 1> written{rhi::ComputeTextureWrite{fgBetweenDepth_}};
+            run(kFgDepth, sampled, {}, written, frame, renderX, renderY);
+        }
+        {
+            // The game's motion, as seen from the frame between.
+            const std::array<rhi::TextureBinding, 5> sampled{
+                rhi::TextureBinding{fgDilatedMotion_, exact},
+                rhi::TextureBinding{fgDilatedDepth_, exact},
+                rhi::TextureBinding{previous, filtered},
+                rhi::TextureBinding{current, filtered},
+                undistorted,
+            };
+            const std::array<rhi::ComputeTextureWrite, 2> written{
+                rhi::ComputeTextureWrite{fgGameField_[0]},
+                rhi::ComputeTextureWrite{fgGameField_[1]},
+            };
+            run(kFgGameField, sampled, {}, written, frame, renderX, renderY);
+        }
+        if (!fgVectorLevels_.empty()) {
+            // And that field at every coarser size, for the places no vector
+            // reached.
+            const std::array<rhi::TextureHandle, 2> loaded{fgGameField_[0], fgGameField_[1]};
+            const std::array<rhi::ComputeTextureWrite, 2> written{
+                rhi::ComputeTextureWrite{fgVectorLevels_[0]},
+                rhi::ComputeTextureWrite{fgVectorPyramid_, 0},
+            };
+            run(kFgVectorPyramid, {}, loaded, written, frame, tiles(renderWidth / 2, 8), tiles(renderHeight / 2, 8));
+            pyramid(fgVectorPyramid_, fgVectorLevels_, renderWidth, renderHeight, false);
+        }
+        {
+            // Optical flow's motion, as seen from the frame between.
+            const std::array<rhi::TextureBinding, 2> sampled{
+                rhi::TextureBinding{previous, filtered},
+                rhi::TextureBinding{current, filtered},
+            };
+            const std::array<rhi::TextureHandle, 1> loaded{motion};
+            const std::array<rhi::ComputeTextureWrite, 2> written{
+                rhi::ComputeTextureWrite{fgFlowField_[0]},
+                rhi::ComputeTextureWrite{fgFlowField_[1]},
+            };
+            run(kFgFlowField, sampled, loaded, written, frame, tiles(width / kFlowBlock, 8),
+                tiles(height / kFlowBlock, 8));
+        }
+        {
+            // What the frame between cannot take from each of its neighbours.
+            const std::array<rhi::TextureBinding, 3> sampled{
+                rhi::TextureBinding{fgDilatedDepth_, exact},
+                rhi::TextureBinding{fgVectorPyramid_, exact},
+                undistorted,
+            };
+            const std::array<rhi::TextureHandle, 4> loaded{fgGameField_[0], fgGameField_[1], fgPreviousDepth_,
+                                                           fgBetweenDepth_};
+            const std::array<rhi::ComputeTextureWrite, 1> written{rhi::ComputeTextureWrite{fgDisocclusion_}};
+            run(kFgDisocclusion, sampled, loaded, written, frame, renderX, renderY);
+        }
+        {
+            // The frame between.
+            const std::array<rhi::TextureBinding, 4> sampled{
+                rhi::TextureBinding{previous, filtered},
+                rhi::TextureBinding{current, filtered},
+                rhi::TextureBinding{fgDisocclusion_, filtered},
+                rhi::TextureBinding{fgVectorPyramid_, exact},
+            };
+            const std::array<rhi::TextureHandle, 4> loaded{fgGameField_[0], fgGameField_[1], fgFlowField_[0],
+                                                           fgFlowField_[1]};
+            const std::array<rhi::ComputeTextureWrite, 1> written{rhi::ComputeTextureWrite{fgInterpolated_}};
+            const std::array<rhi::BufferHandle, 1> counters{fgCounters_};
+            run(kFgInterpolate, sampled, loaded, written, frame, pictureX, pictureY, 1, {}, counters);
+        }
+        if (!fgColourLevels_.empty()) {
+            // It at every coarser size, for its holes.
+            const std::array<rhi::TextureBinding, 1> sampled{rhi::TextureBinding{fgInterpolated_, exact}};
+            const std::array<rhi::ComputeTextureWrite, 2> written{
+                rhi::ComputeTextureWrite{fgColourLevels_[0]},
+                rhi::ComputeTextureWrite{fgColourPyramid_, 0},
+            };
+            run(kFgColourPyramid, sampled, {}, written, frame, tiles(width / 2, 8), tiles(height / 2, 8));
+            pyramid(fgColourPyramid_, fgColourLevels_, width, height, true);
+        }
+        {
+            // The holes filled. The picture has no interface on it, so "the
+            // picture as presented" is the picture.
+            const std::array<rhi::TextureBinding, 4> sampled{
+                rhi::TextureBinding{fgColourPyramid_, exact},
+                rhi::TextureBinding{current, exact},
+                rhi::TextureBinding{current, exact},
+                rhi::TextureBinding{fgInterpolated_, exact},
+            };
+            const std::array<rhi::TextureHandle, 1> loaded{fgScdOutput_};
+            const std::array<rhi::ComputeTextureWrite, 1> written{rhi::ComputeTextureWrite{fgOutput_}};
+            run(kFgInpaint, sampled, loaded, written, frame, pictureX, pictureY);
+        }
+        made = fgOutput_;
+    }
+    cmd.popDebugGroup();
+    fgParity_ = before;
+    return made;
 }
 
 // --- The temporal upscaler (ADR 0164) ------------------------------------------
@@ -6434,10 +7111,50 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // whenever it changes and keeps no history, and smooths by SMAA -- and
     // see `temporalFrame` for the rest.
     temporalNow_ = activeView_ == 0 && temporalFrame(world);
-    if (!temporalNow_) {
+    // **And whether a frame is made between this one and the last** (ADR
+    // 0165), which needs each pixel's motion as the temporal pass does,
+    // whatever smooths the frame.
+    if (activeView_ == 0) {
+        fgNow_ = generatesFrames(world);
+        if (settings_.frameGeneration && !fgFailed_) {
+            if (!fgCompute_)
+                failFrameGeneration(ENG_TR("render.warn.frame_generation_unavailable"));
+            else if (!fgAtomics_)
+                failFrameGeneration(ENG_TR("render.warn.frame_generation_metal"));
+        }
+        if (!fgNow_ && fgOutput_.valid())
+            releaseFrameGenerationImages(device);
+    }
+    // The instrument that shows each pixel's motion asks for it written, as
+    // the two that read it do.
+    const bool motionShown = activeView_ == 0 && settings_.debugView == DebugView::Motion && world.camera.valid;
+    const bool motionNow = temporalNow_ || (fgNow_ && activeView_ == 0) || motionShown;
+    if (!temporalNow_)
         historyValid_ = false;
+    if (!motionNow) {
         previousCamera_ = false;
         placed_.clear();
+    }
+    if (fgNow_ && activeView_ == 0) {
+        // The camera's part of the interpolation's constants, as FSR 2's are
+        // read out of the projection (`upscaleTemporal`).
+        const RenderCamera& camera = world.camera;
+        fgCamera_ = GpuFrameInterpolationConstants{};
+        fgCamera_.renderSize[0] = static_cast<core::i32>(renderWidth_);
+        fgCamera_.renderSize[1] = static_cast<core::i32>(renderHeight_);
+        fgCamera_.maxRenderSize[0] = fgCamera_.renderSize[0];
+        fgCamera_.maxRenderSize[1] = fgCamera_.renderSize[1];
+        fgCamera_.cameraNear = camera.nearPlane;
+        fgCamera_.cameraFar = camera.farPlane;
+        fgCamera_.deviceToViewDepth[0] = -camera.projection.m[2][2];
+        fgCamera_.deviceToViewDepth[1] = camera.projection.m[3][2];
+        fgCamera_.deviceToViewDepth[2] = 1.0f / camera.projection.m[0][0];
+        fgCamera_.deviceToViewDepth[3] = 1.0f / camera.projection.m[1][1];
+        fgCamera_.tanHalfFov = 1.0f / camera.projection.m[0][0];
+        fgCamera_.jitter[0] = camera.jitter.x * 0.5f * static_cast<f32>(renderWidth_);
+        fgCamera_.jitter[1] = -camera.jitter.y * 0.5f * static_cast<f32>(renderHeight_);
+        fgCamera_.motionVectorScale[0] = -1.0f;
+        fgCamera_.motionVectorScale[1] = -1.0f;
     }
     // **And the upscaler's, where the setting asks for it and the device made
     // its passes** (ADR 0164). One that cannot says so once, and the frame is
@@ -7024,7 +7741,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
 
     // **How far each pixel moved**, for the temporal pass (ADR 0158): from the
     // depth just drawn, and what moved by itself over it.
-    if (temporalNow_) {
+    if (motionNow) {
         ENG_PROFILE_NEXT(passes, "render.velocity");
         writeVelocity(device, cmd, world, meshes);
     }
@@ -7920,6 +8637,11 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             sceneColor = resolveTemporal(device, cmd, world, sceneColor);
         }
     }
+    else if (motionNow) {
+        // No temporal pass to remember what this frame was: frame generation
+        // measures the next one's motion against it all the same.
+        rememberCamera(world.camera);
+    }
 
     // --- Automatic exposure -------------------------------------------------
     ENG_PROFILE_NEXT(passes, "render.exposure");
@@ -8156,6 +8878,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // The spatial pass, the upscale and the sharpening (`resolvePicture`).
     if (resolve)
         resolvePicture(device, cmd, target, spatial, upscale, sharpen);
+    if (motionShown)
+        showMotion(device, cmd, target);
 
     // A game's highlights (ADR 0129), over the finished image and under the
     // editor's own mark.

@@ -202,7 +202,7 @@ engine-host [script.luau | project-dir]
    --shadow-resolution=N --shadow-cascades=N --shadow-distance=F
    --light-budget=N --[no-]bloom --[no-]ambient-occlusion
    --[no-]contact-shadows --[no-]anti-aliasing --anti-aliasing=MODE --upscaling=MODE
-   --sharpness=F --[no-]auto-exposure]
+   --sharpness=F --[no-]frame-generation --[no-]auto-exposure]
   [--screenshot-every=N --debug-view=VIEW --terrain-detail=full|distance
    --no-instancing]
   [--pace=HZ]
@@ -225,8 +225,12 @@ engine-host [script.luau | project-dir]
   black -- `imgshadow` counts faces to the sun either shadow darkens),
   `occlusion`, `bend` (what the shading does to the mesh's normal, four
   times over, the sky black -- `imgsteps` counts where it jumps), `albedo`
-  (the colour the ground is lit as) or `material` (the layer each pixel is
-  drawn as, a colour a layer).
+  (the colour the ground is lit as), `material` (the layer each pixel is
+  drawn as, a colour a layer) or `motion` (over the finished picture, how far
+  each pixel moved since the last frame: red and green along x and y, mid
+  grey for none and a channel's whole range for sixteen pixels either way,
+  blue where it moved at all -- what the temporal pass and frame generation
+  are told).
 - `--terrain-detail=full` draws every terrain at its finest level whatever the
   distance: the shape as it was sculpted, which a coarse level is held
   against.

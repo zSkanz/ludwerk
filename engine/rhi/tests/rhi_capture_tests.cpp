@@ -231,3 +231,40 @@ TEST_CASE("a compute pass says which textures it writes, and one that writes non
     CHECK(plain.find("writtenTexture") == std::string::npos);
     CHECK(textured.find(R"({"op":"writtenTexture","texture":1,"mip":1})") != std::string::npos);
 }
+
+TEST_CASE("the textures a compute pass loads are recorded, each by its handle")
+{
+    // ADR 0165: bound after the pass begins, like the sampled ones, and a
+    // stream with none of them has no line for one.
+    const auto device = createCaptureDevice({.backend = BackendId::Capture});
+    REQUIRE(device != nullptr);
+    const BufferHandle written = device->createBuffer({.usage = BufferUsage::Vertex, .sizeBytes = 64});
+    const TextureHandle first = device->createTexture({
+        .format = TextureFormat::R32Uint,
+        .usage = TextureUsage::ComputeStorageReadWrite | TextureUsage::ComputeStorageRead,
+        .width = 8,
+        .height = 8,
+    });
+    const TextureHandle second = device->createTexture({
+        .format = TextureFormat::R32Uint,
+        .usage = TextureUsage::ComputeStorageReadWrite | TextureUsage::ComputeStorageRead,
+        .width = 8,
+        .height = 8,
+    });
+    const std::array<BufferHandle, 1> buffers{written};
+    const std::array<TextureHandle, 2> loaded{first, second};
+    ICmdList* cmd = device->beginFrame();
+    cmd->beginComputePass(buffers);
+    cmd->bindComputeStorageTextures(2, loaded);
+    cmd->dispatch(1, 1, 1);
+    cmd->endComputePass();
+    device->submitAndPresent();
+    const std::string stream = captureStream(*device);
+
+    CHECK(stream.find(R"({"op":"bindComputeStorageTextures","firstSlot":2,"count":2})") != std::string::npos);
+    const std::string one = R"({"op":"storageTexture","texture":)" + std::to_string(first.id) + "}";
+    const std::string two = R"({"op":"storageTexture","texture":)" + std::to_string(second.id) + "}";
+    const auto at = stream.find(one);
+    REQUIRE(at != std::string::npos);
+    CHECK(stream.find(two, at) != std::string::npos);
+}
