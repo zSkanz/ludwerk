@@ -1165,9 +1165,11 @@ if(ENG_BUILD_TESTS)
             -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/flicker
             -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/anti-aliasing-flicker
             -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_flicker_gate.cmake)
+    # Four runs of the host on whatever device there is; a software one takes
+    # two to three minutes for them, and a busy runner longer.
     set_tests_properties(anti_aliasing_flicker PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
-        TIMEOUT 240)
+        TIMEOUT 480)
 
     # Particles simulated on the GPU (ADR 0160): they collide with the terrain
     # and with what is seen, and a hundred thousand of them are a frame under

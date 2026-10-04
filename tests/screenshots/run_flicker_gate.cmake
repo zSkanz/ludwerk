@@ -19,8 +19,12 @@
 #         -DOUTPUT=<dir> -P run_flicker_gate.cmake
 
 set(ENG_NO_DEVICE_EXIT_CODE 4)
-# Frames drawn, and the last of them measured: the history has settled by then.
-set(FRAMES 72)
+# Frames drawn, and the last of them measured: twenty-four frames before
+# those, for the history to settle. Forty-eight in all and not seventy-two: on
+# a software device (CI's Windows runner) a frame and its picture are most of
+# a second, four modes are drawn, and the run was 150 to 240 s against a
+# limit of 240 -- and the thresholds below hold the same with either.
+set(FRAMES 48)
 set(MEASURED 24)
 
 foreach(required HOST FLICKER SCRIPT OUTPUT)
