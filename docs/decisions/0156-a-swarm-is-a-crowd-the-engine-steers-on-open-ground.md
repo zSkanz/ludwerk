@@ -95,3 +95,28 @@ call per agent per frame.
   field.
 - Agents are not replicated as agents: a networked game moves their bodies,
   which replicate as parts do, or runs the swarm where it is seen.
+
+## Amendment, 2026-10-03: a horde shared by a match
+
+The horde test game became a match: a host and friends who join by address.
+The host simulates the horde and the players draw it from compact snapshots.
+That needed two things of a swarm.
+
+1. **Every player at once.** `Swarm:SetTargets({ vector })`: each agent walks
+   at the nearest of the targets, the first of two as near. Its `NearDistance`
+   and `FarDistance` are measured to that one. An agent near any player thinks
+   every tick, and one far from all of them every fourth. The targets are
+   called again as the players move. An empty table returns to `Target`
+   alone, the single-target path as it was.
+2. **Agents with no body.** `Swarm:AddAgentAt(position, settings)` adds a row
+   the swarm steps with nothing to place, read back through `GetPositions` and
+   `GetAgentPosition`. A body under `ServerStorage` would work too, since what
+   is under it never replicates. But it would be a part written every tick
+   for nobody to see. Unity's ECS crowds and Unreal's Mass entities are rows
+   for the same reason: the simulation does not need an object to draw.
+
+Tests: two agents each walk at their nearest of two targets; an agent ten
+metres from one target and two hundred from the other thinks every tick; an
+agent with no body walks as one with a body does. From a script, one swarm
+chases two targets with body-less agents.
+

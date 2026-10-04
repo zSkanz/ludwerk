@@ -237,3 +237,49 @@ TEST_CASE("ADR 0156: two runs of one crowd end in the same place")
     };
     CHECK(run() == run());
 }
+
+TEST_CASE("ADR 0156 amended: with several targets each agent walks at the nearest, and thinks as often as it is near")
+{
+    Rig rig;
+    rig.swarm().target = core::DVec3{0.0, 0.0, 100.0};
+    rig.swarm().targets = {core::DVec3{-20.0, 0.0, 0.0}, core::DVec3{20.0, 0.0, 0.0}};
+    const u32 west = rig.agent(core::DVec3{-5.0, 0.0, 0.0});
+    const u32 east = rig.agent(core::DVec3{5.0, 0.0, 0.0});
+    rig.ticks(60);
+    // Each a metre a quarter-second towards its own -- not at `target`.
+    CHECK(rig.at(west).position.x == doctest::Approx(-9.0).epsilon(0.01));
+    CHECK(rig.at(east).position.x == doctest::Approx(9.0).epsilon(0.01));
+    CHECK(std::abs(rig.at(west).position.z) < 1e-9);
+
+    // Near one of them, an agent far from the other thinks every tick.
+    Rig far;
+    far.swarm().target = core::DVec3{0.0, 0.0, 0.0};
+    far.swarm().targets = {core::DVec3{0.0, 0.0, 0.0}, core::DVec3{200.0, 0.0, 0.0}};
+    const u32 walker = far.agent(core::DVec3{190.0, 0.0, 0.0});
+    far.ticks(1);
+    // One tick's walk, not none and not four ticks' at once.
+    CHECK(far.at(walker).position.x == doctest::Approx(190.0 + 4.0 / 60.0).epsilon(1e-6));
+
+    // None given again: `target` alone.
+    rig.swarm().targets.clear();
+    const core::DVec3 before = rig.at(east).position;
+    rig.ticks(30);
+    CHECK(rig.at(east).position.z > before.z);
+}
+
+TEST_CASE("ADR 0156 amended: an agent with no body is stepped like any other, and found where it went")
+{
+    // The same walk from the same place, once with a body and once without.
+    Rig rig;
+    rig.swarm().target = core::DVec3{10.0, 0.0, 0.0};
+    const u32 bare = addSwarmAgent(rig.swarm(), core::InstanceId{}, core::DVec3{0.0, 0.0, 0.0}, {});
+    Rig other;
+    other.swarm().target = core::DVec3{10.0, 0.0, 0.0};
+    const u32 bodied = other.agent(core::DVec3{0.0, 0.0, 0.0});
+    rig.ticks(60);
+    other.ticks(60);
+    CHECK(rig.at(bare).position.x == doctest::Approx(4.0).epsilon(0.01));
+    CHECK(rig.at(bare).position.x == other.at(bodied).position.x);
+    CHECK(rig.at(bare).position.z == other.at(bodied).position.z);
+    CHECK_FALSE(rig.at(bare).body.valid());
+}

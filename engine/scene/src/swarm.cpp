@@ -136,8 +136,6 @@ void stepSwarm(World& world, const PhysicsSync* physics, SwarmComponent& swarm, 
         }
     }
 
-    const f64 tx = swarm.target.x;
-    const f64 tz = swarm.target.z;
     for (usize slot = 0; slot < count; ++slot) {
         SwarmAgent& agent = swarm.agents[slot];
         if (!agent.alive)
@@ -145,6 +143,23 @@ void stepSwarm(World& world, const PhysicsSync* physics, SwarmComponent& swarm, 
         const f64 x = agent.position.x;
         const f64 y = agent.position.y;
         const f64 z = agent.position.z;
+        // **Its target: the nearest** of `targets`, the first of two as near
+        // (ADR 0156, amended) -- or `target`, with none.
+        f64 tx = swarm.target.x;
+        f64 tz = swarm.target.z;
+        if (!swarm.targets.empty()) {
+            f64 best = 1.0e300;
+            for (const core::DVec3& candidate : swarm.targets) {
+                const f64 cx = candidate.x - x;
+                const f64 cz = candidate.z - z;
+                const f64 near = cx * cx + cz * cz;
+                if (near < best) {
+                    best = near;
+                    tx = candidate.x;
+                    tz = candidate.z;
+                }
+            }
+        }
         const f64 dx = tx - x;
         const f64 dz = tz - z;
         const f64 distance = std::sqrt(dx * dx + dz * dz);

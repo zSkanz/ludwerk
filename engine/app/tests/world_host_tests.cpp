@@ -4559,3 +4559,47 @@ TEST_CASE("D532: a character walking a terrain slope it can walk stays Grounded,
     CHECK(count("Landed") == 0.0);
     CHECK_MESSAGE(log.firstError().empty(), log.firstError());
 }
+
+TEST_CASE("Swarm:SetTargets and AddAgentAt: every player is chased by the agents nearest them, and a server keeps "
+          "agents with no body")
+{
+    // ADR 0156, amended for a horde shared by a match: one swarm, its agents
+    // each after the nearest player, simulated as rows with nothing drawn.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local swarm = Instance.new("Swarm")
+        swarm.Parent = workspace
+        swarm.Target = vector.create(0, 0, 500)
+        swarm:SetTargets({ vector.create(-30, 0, 0), vector.create(30, 0, 0) })
+        local west = swarm:AddAgentAt(vector.create(-4, 0, 0))
+        local east = swarm:AddAgentAt(vector.create(4, 0, 0), { Speed = 8 })
+        local ticks = 0
+        game:GetService("RunService").Heartbeat:Connect(function()
+            ticks += 1
+            if ticks == 60 then
+                local w = swarm:GetAgentPosition(west)
+                local e = swarm:GetAgentPosition(east)
+                workspace:SetAttribute("West", w.x)
+                workspace:SetAttribute("East", e.x)
+                workspace:SetAttribute("Count", #swarm:GetPositions())
+            end
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 62; ++tick)
+        host.tick();
+    scene::World& world = host.world();
+    const auto number = [&](std::string_view name) {
+        const scene::Value value = world.getAttribute(host.workspace(), world.atoms().intern(name));
+        const double* found = std::get_if<double>(&value);
+        return found != nullptr ? *found : 0.0;
+    };
+    // West walked west at four metres a second, east east at eight.
+    CHECK(number("West") < -6.0);
+    CHECK(number("East") > 9.0);
+    CHECK(number("Count") > 0.0);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}

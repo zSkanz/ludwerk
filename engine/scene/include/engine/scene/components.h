@@ -1368,6 +1368,10 @@ struct SwarmObstacle
 struct SwarmComponent
 {
     core::DVec3 target{};
+    // **Every player at once** (ADR 0156, amended): each agent walks at the
+    // nearest of these, and thinks as often as that one is near. Empty, every
+    // agent walks at `target`, as it always did.
+    std::vector<core::DVec3> targets;
     bool enabled = true;
     f32 cellSize = 1.5f;
     u32 maxNeighbours = 14;

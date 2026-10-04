@@ -1103,17 +1103,14 @@ int methodApplyImpulse(lua_State* L)
 }
 
 // `AddAgent(body, settings?)`: an agent standing where the body is.
-int methodSwarmAddAgent(lua_State* L)
+// An agent's settings, from the table at `index` -- `AddAgent`'s and
+// `AddAgentAt`'s alike.
+[[nodiscard]] scene::SwarmAgentSettings swarmSettingsAt(lua_State* L, int index)
 {
-    scene::SwarmComponent& swarm = swarmOf(L);
-    const core::InstanceId body = checkInstance(L, 2);
-    const scene::PartComponent* part = world(L).parts().find(body);
-    if (part == nullptr)
-        raise(L, ENG_TR("script.err.swarm_body_not_part"));
     scene::SwarmAgentSettings settings;
-    if (lua_istable(L, 3)) {
-        const auto number = [L](const char* name, f32& out) {
-            lua_getfield(L, 3, name);
+    if (lua_istable(L, index)) {
+        const auto number = [L, index](const char* name, f32& out) {
+            lua_getfield(L, index, name);
             if (lua_isnumber(L, -1)) {
                 const double value = lua_tonumber(L, -1);
                 if (!std::isfinite(value))
@@ -1122,8 +1119,8 @@ int methodSwarmAddAgent(lua_State* L)
             }
             lua_pop(L, 1);
         };
-        const auto flag = [L](const char* name, bool& out) {
-            lua_getfield(L, 3, name);
+        const auto flag = [L, index](const char* name, bool& out) {
+            lua_getfield(L, index, name);
             if (lua_isboolean(L, -1))
                 out = lua_toboolean(L, -1) != 0;
             lua_pop(L, 1);
@@ -1135,10 +1132,56 @@ int methodSwarmAddAgent(lua_State* L)
         flag("Floats", settings.floats);
         flag("Climbs", settings.climbs);
     }
+    return settings;
+}
+
+int methodSwarmAddAgent(lua_State* L)
+{
+    scene::SwarmComponent& swarm = swarmOf(L);
+    const core::InstanceId body = checkInstance(L, 2);
+    const scene::PartComponent* part = world(L).parts().find(body);
+    if (part == nullptr)
+        raise(L, ENG_TR("script.err.swarm_body_not_part"));
+    const scene::SwarmAgentSettings settings = swarmSettingsAt(L, 3);
     // It starts where its body stands. The swarm places the body by its
     // `CFrame`, so the body's origin is the agent's feet.
     lua_pushnumber(L, static_cast<double>(scene::addSwarmAgent(swarm, body, part->cframe.position, settings)));
     return 1;
+}
+
+// **An agent with no body** (ADR 0156, amended): a row and nothing drawn --
+// what a server simulating a horde its players draw from snapshots keeps.
+int methodSwarmAddAgentAt(lua_State* L)
+{
+    scene::SwarmComponent& swarm = swarmOf(L);
+    const core::Vec3 position = checkVector3(L, 2);
+    if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
+        raise(L, ENG_TR("script.err.not_finite"));
+    const scene::SwarmAgentSettings settings = swarmSettingsAt(L, 3);
+    lua_pushnumber(
+        L, static_cast<double>(scene::addSwarmAgent(swarm, core::InstanceId{}, core::toDVec3(position), settings)));
+    return 1;
+}
+
+// **Each agent walks at the nearest of these** (ADR 0156, amended); an empty
+// table is `Target` alone again.
+int methodSwarmSetTargets(lua_State* L)
+{
+    scene::SwarmComponent& swarm = swarmOf(L);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    std::vector<core::DVec3> targets;
+    const int count = lua_objlen(L, 2);
+    targets.reserve(static_cast<usize>(count));
+    for (int at = 1; at <= count; ++at) {
+        lua_rawgeti(L, 2, at);
+        const core::Vec3 point = checkVector3(L, -1);
+        lua_pop(L, 1);
+        if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
+            raise(L, ENG_TR("script.err.not_finite"));
+        targets.push_back(core::toDVec3(point));
+    }
+    swarm.targets = std::move(targets);
+    return 0;
 }
 
 int methodSwarmRemoveAgent(lua_State* L)
@@ -2909,6 +2952,8 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"BasePart", "BindToPredictedTouch", partBindToPredictedTouch},
     {"BasePart", "UnbindFromPredictedTouch", partUnbindFromPredictedTouch},
     {"Swarm", "AddAgent", methodSwarmAddAgent},
+    {"Swarm", "AddAgentAt", methodSwarmAddAgentAt},
+    {"Swarm", "SetTargets", methodSwarmSetTargets},
     {"Swarm", "RemoveAgent", methodSwarmRemoveAgent},
     {"Swarm", "SetAgentSpeed", methodSwarmSetAgentSpeed},
     {"Swarm", "SetAgentPosition", methodSwarmSetAgentPosition},

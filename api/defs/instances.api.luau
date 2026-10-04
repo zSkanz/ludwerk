@@ -7141,7 +7141,7 @@ local Classes: { Schema.Class } = {
             {
                 Name = "Target",
                 Type = "vector",
-                Doc = "Where every agent walks.",
+                Doc = "Where every agent walks, while `SetTargets` has given it none.",
             },
             {
                 Name = "Enabled",
@@ -7207,11 +7207,37 @@ local Classes: { Schema.Class } = {
                     },
                 },
                 Returns = { "number" },
-                Doc = "Adds an agent standing where `body` is, and returns its number. `Radius` (0.5), "
+                Doc = "Adds an agent standing where `body` is, and returns its number. For an agent with no "
+                    .. "body, see `AddAgentAt`. `Radius` (0.5), "
                     .. "`Height` (1) and `Speed` (4, metres a second) say what it is; `Floats` keeps it "
                     .. "`FloatHeight` (1) over the ground and out of the crowd's pushing; `Climbs` (true) lets "
                     .. "it climb the one in its way. The number is the agent's while it lives, and is given to "
                     .. "the next agent after it is removed.",
+            },
+            {
+                Name = "AddAgentAt",
+                Parameters = {
+                    { Name = "position", Type = "vector" },
+                    {
+                        Name = "settings",
+                        Type = "{ Radius: number?, Height: number?, Speed: number?, Floats: boolean?, "
+                            .. "FloatHeight: number?, Climbs: boolean? }?",
+                    },
+                },
+                Returns = { "number" },
+                Doc = "Adds an agent with no body, its feet at `position`, and returns its number: a row the "
+                    .. "swarm steps and nothing drawn. What a server keeps when it simulates a horde for "
+                    .. "players who draw it themselves -- read the agents with `GetPositions` and send what "
+                    .. "they need. The settings are `AddAgent`'s.",
+            },
+            {
+                Name = "SetTargets",
+                Parameters = { { Name = "targets", Type = "{ vector }" } },
+                Returns = {},
+                Doc = "Where the agents walk when there is more than one place to go -- every player of a "
+                    .. "match: each agent walks at the nearest of them, and thinks as often as that one is "
+                    .. "near (`NearDistance`, `FarDistance`). Called again whenever they move. An empty table "
+                    .. "is `Target` alone again.",
             },
             {
                 Name = "RemoveAgent",

@@ -4107,3 +4107,50 @@ TEST_CASE("a block world's types and blocks reach a replica, and a block broken 
     CHECK(seen->grid.get(5, 2, 5) == asset::AirBlock);
     CHECK(seen->grid.digest() == voxels->grid.digest());
 }
+
+TEST_CASE(
+    "D533: ground the server rewrites whole reaches a joined replica as the server has it, over the real transport")
+{
+    // The horde test game in a match: the host lays a 240-metre heightmap and
+    // paints it, a friend joins and has it; the host writes the next stage
+    // over the same ground -- and the friend had neither, metres off, and its
+    // character collided with ground the host did not have. Sixty-four of
+    // those chunks were a megabyte and over, more than the host's own ceiling
+    // on a message: ENet refused the send, and the edit was gone.
+    EnetMatch match(47942);
+    const core::InstanceId ground = makeTerrain(match.server);
+    match.server.world.terrains().find(ground)->field =
+        asset::TerrainField(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -8.0f, .maxHeight = 64.0f});
+    // Ground as busy as a painted world: a height and a material a column,
+    // neither smooth, so every chunk is as large as a chunk gets.
+    const auto stage = [&](core::u32 seed) {
+        constexpr core::u32 Columns = 240;
+        std::vector<float> heights(static_cast<std::size_t>(Columns) * Columns);
+        std::vector<core::u8> materials(heights.size());
+        core::u32 state = seed * 2654435761u + 1u;
+        const auto next = [&state] {
+            state = state * 1664525u + 1013904223u;
+            return state >> 8;
+        };
+        for (std::size_t at = 0; at < heights.size(); ++at) {
+            heights[at] = static_cast<float>(4.0 + static_cast<double>(next() % 2000) / 100.0);
+            materials[at] = static_cast<core::u8>(1 + next() % 4);
+        }
+        scene::TerrainComponent* writing = match.server.world.terrains().find(ground);
+        (void)asset::writeHeights(writing->field, -120, -120, Columns, heights, materials);
+        writing->fieldRevision += 1;
+    };
+    const auto agreed = [&] {
+        const core::InstanceId copy = terrainIn(match.client.world, match.client.workspace);
+        return copy.valid() && match.client.world.terrains().find(copy)->field.digest() ==
+                                   match.server.world.terrains().find(ground)->field.digest();
+    };
+    stage(1);
+    REQUIRE(stepUntil(match, 20.0, agreed) >= 0.0);
+    // The next stage, and the one after, over the same ground.
+    stage(2);
+    CHECK(stepUntil(match, 20.0, agreed) >= 0.0);
+    stage(3);
+    CHECK(stepUntil(match, 20.0, agreed) >= 0.0);
+    CHECK(match.authority->stats().sendFailures == 0);
+}

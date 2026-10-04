@@ -3781,7 +3781,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "Where every agent walks.",
+            .doc = "Where every agent walks, while `SetTargets` has given it none.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
             .get = native::getSwarmTarget,
             .set = native::setSwarmTarget,
@@ -3875,13 +3875,25 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setSwarmFarDistance,
         },
     }};
-    static std::array<MethodDesc, 11> swarmMethods;
+    static std::array<MethodDesc, 13> swarmMethods;
     swarmMethods = {{
         MethodDesc{
             .name = atoms.intern("AddAgent"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Adds an agent standing where `body` is, and returns its number. `Radius` (0.5), `Height` (1) and `Speed` (4, metres a second) say what it is; `Floats` keeps it `FloatHeight` (1) over the ground and out of the crowd's pushing; `Climbs` (true) lets it climb the one in its way. The number is the agent's while it lives, and is given to the next agent after it is removed.",
+            .doc = "Adds an agent standing where `body` is, and returns its number. For an agent with no body, see `AddAgentAt`. `Radius` (0.5), `Height` (1) and `Speed` (4, metres a second) say what it is; `Floats` keeps it `FloatHeight` (1) over the ground and out of the crowd's pushing; `Climbs` (true) lets it climb the one in its way. The number is the agent's while it lives, and is given to the next agent after it is removed.",
+        },
+        MethodDesc{
+            .name = atoms.intern("AddAgentAt"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Adds an agent with no body, its feet at `position`, and returns its number: a row the swarm steps and nothing drawn. What a server keeps when it simulates a horde for players who draw it themselves -- read the agents with `GetPositions` and send what they need. The settings are `AddAgent`'s.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SetTargets"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Where the agents walk when there is more than one place to go -- every player of a match: each agent walks at the nearest of them, and thinks as often as that one is near (`NearDistance`, `FarDistance`). Called again whenever they move. An empty table is `Target` alone again.",
         },
         MethodDesc{
             .name = atoms.intern("RemoveAgent"),

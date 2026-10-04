@@ -492,6 +492,12 @@ there is there when the game starts.
 | `ServerStorage` | The authority only. A replica empties it when it joins. |
 | `ServerScriptService`, `GlobalScriptService.Server` | The authority only, like `ServerStorage`: code, not things. |
 
+**A crowd the server simulates** -- a horde every player sees -- is a `Swarm`
+whose agents have no body (`Swarm:AddAgentAt`), each after the nearest player
+(`Swarm:SetTargets`). The server sends the positions it reads from
+`GetPositions`, and each machine draws them. A body under `ServerStorage`
+never replicates either, but it is a part moved every tick for nobody.
+
 A template comes into the world by being cloned into `Workspace`:
 
 ```luau

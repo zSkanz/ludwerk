@@ -552,6 +552,14 @@ bool sendBytes(net::ITransport& transport, net::PeerId peer, const std::vector<u
 {
     if (transport.send(peer, bytes, delivery, channel).has_value()) {
         stats.sendFailures += 1;
+        // **A reliable message refused is said** (D533): it is not sent again,
+        // and what it carried -- an edit to the ground -- was lost without a
+        // word while a replica drifted from the authority.
+        if (delivery == net::Delivery::Reliable) {
+            const core::I18nArg args[] = {{"bytes", static_cast<core::i64>(bytes.size())},
+                                          {"type", static_cast<core::i64>(bytes.empty() ? 0 : bytes[0])}};
+            core::log(core::LogLevel::Warn, ENG_TR("net.warn.reliable_refused"), args);
+        }
         return false;
     }
     stats.bytesSent += bytes.size();
@@ -819,6 +827,13 @@ void AuthoritySession::diffAttributes(const scene::World& world, InstanceId root
 namespace {
 
 constexpr usize GroundChunksPerMessage = 64;
+// **And at most this many bytes** (D533): a whole heightmap rewritten, painted
+// a column at a time, made sixty-four chunks of more than a megabyte -- past
+// the host's own ceiling on a message (`MaxAuthorityMessageBytes`), which ENet
+// holds what it sends to as well as what it takes. The send was refused, the
+// edit never reached a replica, and its player walked on ground the host did
+// not have. A chunk larger than this alone still goes, in a message of its own.
+constexpr usize GroundMessageBytes = 256u * 1024u;
 // The longest code a block chunk can have: a run for every block.
 constexpr usize MaxVoxelChunkCode = static_cast<usize>(asset::VoxelChunkVolume) * 4;
 
@@ -908,12 +923,41 @@ void writeKey(Writer& out, core::i32 x, core::i32 y, core::i32 z)
     out.u32v(static_cast<u32>(z));
 }
 
+// The chunks each message holds, as runs of their encoded `sizes`: at most
+// `GroundChunksPerMessage` of them and, past the first, at most
+// `GroundMessageBytes`.
+[[nodiscard]] std::vector<std::pair<usize, usize>> groundRuns(const std::vector<usize>& sizes)
+{
+    std::vector<std::pair<usize, usize>> runs;
+    usize first = 0;
+    usize bytes = 0;
+    for (usize at = 0; at < sizes.size(); ++at) {
+        // Its key and its length, and its code.
+        const usize cost = 16u + sizes[at];
+        if (at > first && (at - first == GroundChunksPerMessage || bytes + cost > GroundMessageBytes)) {
+            runs.emplace_back(first, at);
+            first = at;
+            bytes = 0;
+        }
+        bytes += cost;
+    }
+    if (first < sizes.size())
+        runs.emplace_back(first, sizes.size());
+    return runs;
+}
+
 [[nodiscard]] std::vector<std::vector<u8>> terrainChunkMessages(const asset::FieldSettings& settings,
                                                                 const std::vector<asset::TerrainField::Entry>& chunks)
 {
+    std::vector<std::vector<std::byte>> codes(chunks.size());
+    std::vector<usize> sizes(chunks.size(), 0);
+    for (usize at = 0; at < chunks.size(); ++at) {
+        if (chunks[at].second != nullptr)
+            codes[at] = asset::encodeTerrainChunk(*chunks[at].second);
+        sizes[at] = codes[at].size();
+    }
     std::vector<std::vector<u8>> messages;
-    for (usize first = 0; first < chunks.size(); first += GroundChunksPerMessage) {
-        const usize last = std::min(chunks.size(), first + GroundChunksPerMessage);
+    for (const auto& [first, last] : groundRuns(sizes)) {
         Writer out;
         out.u8v(static_cast<u8>(MessageType::TerrainChunks));
         writeF32(out, settings.voxelSize);
@@ -921,15 +965,10 @@ void writeKey(Writer& out, core::i32 x, core::i32 y, core::i32 z)
         writeF32(out, settings.maxHeight);
         out.u16v(static_cast<u16>(last - first));
         for (usize at = first; at < last; ++at) {
-            const auto& [key, chunk] = chunks[at];
+            const asset::ChunkKey& key = chunks[at].first;
             writeKey(out, key.x, key.y, key.z);
-            if (chunk == nullptr) {
-                out.u32v(0);
-                continue;
-            }
-            const std::vector<std::byte> code = asset::encodeTerrainChunk(*chunk);
-            out.u32v(static_cast<u32>(code.size()));
-            for (const std::byte byte : code)
+            out.u32v(static_cast<u32>(codes[at].size()));
+            for (const std::byte byte : codes[at])
                 out.u8v(static_cast<u8>(byte));
         }
         messages.push_back(std::move(out.bytes));
@@ -940,23 +979,24 @@ void writeKey(Writer& out, core::i32 x, core::i32 y, core::i32 z)
 [[nodiscard]] std::vector<std::vector<u8>> voxelChunkMessages(f32 blockSize,
                                                               const std::vector<asset::VoxelGrid::Entry>& chunks)
 {
+    std::vector<std::vector<core::u8>> codes(chunks.size());
+    std::vector<usize> sizes(chunks.size(), 0);
+    for (usize at = 0; at < chunks.size(); ++at) {
+        if (chunks[at].second != nullptr)
+            codes[at] = asset::encodeVoxelChunk(*chunks[at].second);
+        sizes[at] = codes[at].size();
+    }
     std::vector<std::vector<u8>> messages;
-    for (usize first = 0; first < chunks.size(); first += GroundChunksPerMessage) {
-        const usize last = std::min(chunks.size(), first + GroundChunksPerMessage);
+    for (const auto& [first, last] : groundRuns(sizes)) {
         Writer out;
         out.u8v(static_cast<u8>(MessageType::VoxelChunks));
         writeF32(out, blockSize);
         out.u16v(static_cast<u16>(last - first));
         for (usize at = first; at < last; ++at) {
-            const auto& [key, chunk] = chunks[at];
+            const auto& key = chunks[at].first;
             writeKey(out, key.x, key.y, key.z);
-            if (chunk == nullptr) {
-                out.u32v(0);
-                continue;
-            }
-            const std::vector<core::u8> code = asset::encodeVoxelChunk(*chunk);
-            out.u32v(static_cast<u32>(code.size()));
-            for (const core::u8 byte : code)
+            out.u32v(static_cast<u32>(codes[at].size()));
+            for (const core::u8 byte : codes[at])
                 out.u8v(byte);
         }
         messages.push_back(std::move(out.bytes));

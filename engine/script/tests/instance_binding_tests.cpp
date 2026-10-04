@@ -580,7 +580,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // `UnbindFromPredictedStep`, and `BasePart`'s `BindToPredictedTouch` and
     // `UnbindFromPredictedTouch` (G37). 235: `Terrain`'s `IsMeshed` and
     // `WaitForMeshAsync`, and `SceneService`'s `HoldLoading` and
-    // `ReleaseLoading` (ADR 0159).
+    // `ReleaseLoading` (ADR 0159). 237: `Swarm`'s `AddAgentAt` and
+    // `SetTargets` (ADR 0156, amended).
     // This number is what makes a
     // DECLARED-but-unbound method impossible to ship: the IDL would count it and the binding table would not, which is
     // `Inert` for a method.
@@ -588,8 +589,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // **It earned its keep at F1.** Five methods were declared in the IDL in one
     // commit and this failed on the next build, before anything could reach a
     // script and find a name that answered nothing.
-    CHECK(coverage.declared == 235);
-    CHECK(coverage.bound == 235);
+    CHECK(coverage.declared == 237);
+    CHECK(coverage.bound == 237);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

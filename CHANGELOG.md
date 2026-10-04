@@ -1120,6 +1120,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 - A snapshot no longer writes the authority's older velocity over the
   replica's own predicted character: a predicted step that read the body's
   speed was corrected on every fall (D530).
+- Ground rewritten by the host in a match reaches every replica: an edit's
+  message of more than a megabyte was refused by the transport and lost, and a
+  friend played on ground the host did not have. Ground messages are now at
+  most 256 KiB, and a refused reliable message is said in the log (D533).
+- **A horde for a match** (ADR 0156, amended): `Swarm:SetTargets` sends each
+  agent after the nearest of several targets -- every player -- and
+  `Swarm:AddAgentAt` adds an agent with no body, for a server that simulates a
+  horde its players draw.
 - **A scene is shown once it has arrived** (ADR 0159). The loading curtain is
   raised for every scene, not only the first, and lifts once the meshes and
   pictures are in, the ground round the camera is meshed and no script holds

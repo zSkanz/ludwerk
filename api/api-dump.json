@@ -5964,6 +5964,20 @@
           "Returns": ["number"]
         },
         {
+          "Name": "AddAgentAt",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            },
+            {
+              "Name": "settings",
+              "Type": "{ Radius: number?, Height: number?, Speed: number?, Floats: boolean?, FloatHeight: number?, Climbs: boolean? }?"
+            }
+          ],
+          "Returns": ["number"]
+        },
+        {
           "Name": "AddObstacle",
           "Parameters": [
             {
@@ -6072,6 +6086,16 @@
             {
               "Name": "speed",
               "Type": "number"
+            }
+          ],
+          "Returns": []
+        },
+        {
+          "Name": "SetTargets",
+          "Parameters": [
+            {
+              "Name": "targets",
+              "Type": "{ vector }"
             }
           ],
           "Returns": []

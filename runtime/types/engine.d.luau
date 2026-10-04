@@ -3506,7 +3506,7 @@ declare extern type NavigationLink extends Instance with
 end
 
 declare extern type Swarm extends Instance with
-    --- Where every agent walks.
+    --- Where every agent walks, while `SetTargets` has given it none.
     Target: vector
     --- Whether it steps. Off, its agents stand where they are.
     Enabled: boolean
@@ -3526,11 +3526,21 @@ declare extern type Swarm extends Instance with
     NearDistance: number
     --- Past this far, every fourth.
     FarDistance: number
-    --- Adds an agent standing where `body` is, and returns its number. `Radius` (0.5), `Height` (1) and
-    --- `Speed` (4, metres a second) say what it is; `Floats` keeps it `FloatHeight` (1) over the ground
-    --- and out of the crowd's pushing; `Climbs` (true) lets it climb the one in its way. The number is
-    --- the agent's while it lives, and is given to the next agent after it is removed.
+    --- Adds an agent standing where `body` is, and returns its number. For an agent with no body, see
+    --- `AddAgentAt`. `Radius` (0.5), `Height` (1) and `Speed` (4, metres a second) say what it is;
+    --- `Floats` keeps it `FloatHeight` (1) over the ground and out of the crowd's pushing; `Climbs`
+    --- (true) lets it climb the one in its way. The number is the agent's while it lives, and is given
+    --- to the next agent after it is removed.
     function AddAgent(self, body: BasePart, settings: { Radius: number?, Height: number?, Speed: number?, Floats: boolean?, FloatHeight: number?, Climbs: boolean? }?): number
+    --- Adds an agent with no body, its feet at `position`, and returns its number: a row the swarm
+    --- steps and nothing drawn. What a server keeps when it simulates a horde for players who draw it
+    --- themselves -- read the agents with `GetPositions` and send what they need. The settings are
+    --- `AddAgent`'s.
+    function AddAgentAt(self, position: vector, settings: { Radius: number?, Height: number?, Speed: number?, Floats: boolean?, FloatHeight: number?, Climbs: boolean? }?): number
+    --- Where the agents walk when there is more than one place to go -- every player of a match: each
+    --- agent walks at the nearest of them, and thinks as often as that one is near (`NearDistance`,
+    --- `FarDistance`). Called again whenever they move. An empty table is `Target` alone again.
+    function SetTargets(self, targets: { vector }): ()
     --- Stops moving an agent and forgets it. Its body stays where it was.
     function RemoveAgent(self, agent: number): ()
     --- How fast it walks, in metres a second. Zero holds it where it stands, still pushed.

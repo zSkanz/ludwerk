@@ -372,6 +372,7 @@
   "net.info.server_gone": "The server is gone.",
   "net.err.join_failed": "Could not join {address}: nothing answered there.",
   "net.err.refused_full": "The server is full.",
+  "net.warn.reliable_refused": "A reliable message of {bytes} bytes (type {type}) could not be sent and is lost: the peer will not hear what it carried.",
   "net.warn.peer_flooding": "Player {user} kept sending past what a game sends for five seconds, and was let go.",
   "net.err.refused_version": "The server runs another version of the game.",
   "net.err.bad_address": "\"{address}\" is not an address to join: write it as host or host:port.",
