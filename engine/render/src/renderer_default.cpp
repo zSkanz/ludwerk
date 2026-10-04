@@ -501,6 +501,14 @@ struct ViewState
 {
     rhi::TextureHandle hdr_{};
     rhi::TextureHandle depth_{};
+    // **The depth of what no decal paints** (`BasePart.ReceivesDecals`): the
+    // parts with it off, drawn alone, on a frame that has both a decal and one
+    // of them in view. A decal's pixel is left alone where this and the
+    // scene's depth are the same surface. Made the first frame it is needed.
+    rhi::TextureHandle decalMask_{};
+    // Set while that mask is being drawn: `drawGeometry` takes only the parts
+    // that receive none.
+    bool decalMaskPass_ = false;
     // Tonemapped and sRGB-encoded, so the anti-aliasing resolve has an image to
     // find edges in. FXAA works on perceptual luminance, which is what makes it
     // a post-tonemap pass rather than a pre-tonemap one.
@@ -1955,8 +1963,8 @@ void DefaultRenderer::releaseActiveView(rhi::IDevice& device)
         texture = {};
     };
     for (rhi::TextureHandle* texture :
-         {&hdr_, &depth_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_, &spriteMask_, &luminance64_,
-          &luminance8_, &exposure_[0], &exposure_[1], &environmentMap_})
+         {&hdr_, &depth_, &decalMask_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_, &spriteMask_,
+          &luminance64_, &luminance8_, &exposure_[0], &exposure_[1], &environmentMap_})
         release(*texture);
     for (rhi::TextureHandle& level : bloom_)
         release(level);
@@ -1997,8 +2005,9 @@ std::optional<core::EngineError> DefaultRenderer::ensureTargets(rhi::IDevice& de
     // place the settings' render scale is applied, so that nothing downstream
     // has to remember to.
 
-    for (rhi::TextureHandle* texture : {&hdr_, &depth_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_,
-                                        &spriteMask_, &luminance64_, &luminance8_, &exposure_[0], &exposure_[1]}) {
+    for (rhi::TextureHandle* texture :
+         {&hdr_, &depth_, &decalMask_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_, &spriteMask_,
+          &luminance64_, &luminance8_, &exposure_[0], &exposure_[1]}) {
         if (texture->valid())
             device.destroy(*texture);
         *texture = {};
@@ -2179,30 +2188,12 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
             device.destroy(*pipeline);
         *pipeline = {};
     }
-    for (rhi::TextureHandle* texture : {&hdr_,
-                                        &depth_,
-                                        &ldr_,
-                                        &occlusion_,
-                                        &occlusionBlur_,
-                                        &contact_,
-                                        &outlineMask_,
-                                        &spriteMask_,
-                                        &luminance64_,
-                                        &luminance8_,
-                                        &exposure_[0],
-                                        &exposure_[1],
-                                        &shadowMap_,
-                                        &localShadowMap_,
-                                        &whitePixel_,
-                                        &flatNormalPixel_,
-                                        &blackPixel_,
-                                        &whiteArray_,
-                                        &flatNormalArray_,
-                                        &environmentMap_,
-                                        &brdfLut_,
-                                        &clusterGrid_,
-                                        &lightIndices_,
-                                        &lightData_}) {
+    for (rhi::TextureHandle* texture :
+         {&hdr_,         &depth_,           &decalMask_,      &ldr_,         &occlusion_,       &occlusionBlur_,
+          &contact_,     &outlineMask_,     &spriteMask_,     &luminance64_, &luminance8_,      &exposure_[0],
+          &exposure_[1], &shadowMap_,       &localShadowMap_, &whitePixel_,  &flatNormalPixel_, &blackPixel_,
+          &whiteArray_,  &flatNormalArray_, &environmentMap_, &brdfLut_,     &clusterGrid_,     &lightIndices_,
+          &lightData_}) {
         if (texture->valid())
             device.destroy(*texture);
         *texture = {};
@@ -2857,6 +2848,10 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             // casts and one that does not are two runs (`BasePart.CastShadow`).
             if (next.castShadow != first.castShadow)
                 break;
+            // And into the decals' mask whole or not at all
+            // (`BasePart.ReceivesDecals`).
+            if (next.receivesDecals != first.receivesDecals)
+                break;
             // A surface's colour is in its block, not in the instance's tint:
             // one material per run.
             const bool surfaced = first.material < materialSurface_.size() && materialSurface_[first.material] != 0;
@@ -3093,7 +3088,13 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // And what is see-through casts none (`castsShadow`).
         if (selection == Selection::Shadow && !castsShadow(draw))
             continue;
-        if (selection == Selection::Prepass && draw.cutout)
+        // **The decals' mask is the parts that receive none, and all of each**
+        // (`BasePart.ReceivesDecals`): a cutout's holes are in its depth here
+        // and not in the scene's, so a decal still lands on what shows through
+        // them.
+        if (decalMaskPass_ && draw.receivesDecals)
+            continue;
+        if (selection == Selection::Prepass && draw.cutout && !decalMaskPass_)
             continue;
         if ((selection == Selection::Opaque || selection == Selection::Prepass) && draw.transparent)
             continue;
@@ -3160,7 +3161,8 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // A masked surface cuts itself in its fragment, which its depth pass
         // does not run: left in the prepass, its holes would show whatever the
         // prepass depth hid -- the sky -- instead of what is behind them.
-        if (selection == Selection::Prepass && surface != nullptr && world.materials[draw.material].masked)
+        if (selection == Selection::Prepass && surface != nullptr && world.materials[draw.material].masked &&
+            !decalMaskPass_)
             continue;
         const rhi::PipelineHandle surfacePipeline =
             surface == nullptr                    ? rhi::PipelineHandle{}
@@ -6819,6 +6821,48 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // other frame's command stream is what it always was.
         if (!world.decals.empty() && ensureDecals(device)) {
             cmd.endRenderPass();
+            // **What no decal paints** (`BasePart.ReceivesDecals`): a decal is
+            // projected onto the depth the picture holds, which is of
+            // everything, and the frozen RHI has no stencil to mark a part
+            // out with. So the parts that receive none are drawn again, alone,
+            // into a depth of their own -- only on a frame that has both a
+            // decal and one of them in view -- and a decal's pixel is left
+            // alone where the two depths are the same surface.
+            bool masked = false;
+            for (const DrawItem& draw : world.draws) {
+                if (!draw.receivesDecals && !draw.transparent && draw.inCameraFrustum) {
+                    masked = true;
+                    break;
+                }
+            }
+            if (masked && !decalMask_.valid()) {
+                decalMask_ = device.createTexture({
+                    .format = kDepthFormat,
+                    .usage = rhi::TextureUsage::DepthStencilTarget | rhi::TextureUsage::Sampled,
+                    .width = renderWidth_,
+                    .height = renderHeight_,
+                    .debugName = "decal-mask",
+                });
+            }
+            masked = masked && decalMask_.valid();
+            if (masked) {
+                cmd.beginRenderPass({
+                    .colorAttachments = {},
+                    .depthStencil = {.texture = decalMask_,
+                                     .loadOp = rhi::LoadOp::Clear,
+                                     .storeOp = rhi::StoreOp::Store},
+                    .debugName = "decal-mask",
+                });
+                cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
+                cmd.setScissor(
+                    {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
+                cmd.setPipeline(depthPrepassPipeline_);
+                decalMaskPass_ = true;
+                drawGeometry(cmd, world, meshes, world.camera.viewProjection, depthPrepassPipeline_,
+                             depthPrepassSkinnedPipeline_, Selection::Prepass);
+                decalMaskPass_ = false;
+                cmd.endRenderPass();
+            }
             const std::array<rhi::ColorAttachment, 1> decalTarget{rhi::ColorAttachment{
                 .texture = hdr_,
                 .loadOp = rhi::LoadOp::Load,
@@ -6866,11 +6910,15 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 fragment.axis[0] = decal.axis.x;
                 fragment.axis[1] = decal.axis.y;
                 fragment.axis[2] = decal.axis.z;
+                fragment.axis[3] = masked ? 1.0f : 0.0f;
                 cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&vertex, sizeof(vertex)));
                 cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&fragment, sizeof(fragment)));
-                const std::array<rhi::TextureBinding, 2> textures{
+                // The mask where there is one; the depth again where there is
+                // none, bound and not read.
+                const std::array<rhi::TextureBinding, 3> textures{
                     rhi::TextureBinding{decal.texture.valid() ? decal.texture : whitePixel_, linearSampler_},
                     rhi::TextureBinding{depth_, pointSampler_},
+                    rhi::TextureBinding{masked ? decalMask_ : depth_, pointSampler_},
                 };
                 cmd.bindTextures(rhi::ShaderStage::Fragment, 0, textures);
                 cmd.draw(36, 1, 0, 0);

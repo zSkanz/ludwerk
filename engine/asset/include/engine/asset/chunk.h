@@ -150,6 +150,8 @@ struct ChunkInstance
     // `BasePart.CastShadow`. Stored as its absence, so a chunk baked before
     // the property existed reads as casting.
     bool castShadow = true;
+    // `BasePart.ReceivesDecals`, stored the same way.
+    bool receivesDecals = true;
 
     core::CFrameD cframe;
     core::Vec3 size{1.0f, 1.0f, 1.0f};

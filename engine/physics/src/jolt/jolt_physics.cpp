@@ -629,7 +629,15 @@ struct CharacterRecord
     // what it was ASKED for, and a character walking into a wall for twenty
     // seconds reported six metres a second the whole time.
     core::Vec3 moved{};
+    // **Its stand-in** (`setCharacterStandIn`, ADR 0163): a kinematic copy of
+    // its capsule where other characters are to meet it. While there is one,
+    // the character's own inner body does not stand in a character's way.
+    JPH::BodyID standIn;
 };
+
+// What a stand-in's body carries where a body carries its handle: no record,
+// so no query sees it, and the contact listener knows it by this.
+inline constexpr u64 kStandInUserData = ~u64{0};
 
 // A kinematic body's target for this tick, waiting for the delta that turns it
 // into a velocity. See `setBodyTransform`.
@@ -1105,6 +1113,11 @@ public:
     JPH::ValidateResult OnContactValidate(const JPH::Body& first, const JPH::Body& second, JPH::RVec3Arg,
                                           const JPH::CollideShapeResult& hit) override
     {
+        // **A character's stand-in is for characters alone** (ADR 0163): the
+        // character it stands in for is already in the world, where it is
+        // drawn, and a crate must not be pushed by both.
+        if (first.GetUserData() == kStandInUserData || second.GetUserData() == kStandInUserData)
+            return JPH::ValidateResult::RejectAllContactsForThisBodyPair;
         {
             const std::lock_guard<std::mutex> guard(m_mutex);
             if (!m_excluded.empty()) {
@@ -2330,9 +2343,45 @@ public:
             return;
         }
         forgetCharacterPairs(packHandle(handle));
+        removeStandIn(*record);
         record->character = nullptr;
         record->alive = false;
         m_freeCharacters.push_back(handle.index);
+    }
+
+    void setCharacterStandIn(CharacterHandle handle, const core::CFrameD* where)
+    {
+        CharacterRecord* record = resolve(handle);
+        if (record == nullptr || record->character == nullptr)
+            return;
+        if (where == nullptr) {
+            removeStandIn(*record);
+            return;
+        }
+        JPH::BodyInterface& bodies = m_system.GetBodyInterface();
+        if (record->standIn.IsInvalid()) {
+            // The character's own capsule, on the layer its inner body is on,
+            // so the groups that decide who meets the character decide who
+            // meets this. Kinematic and never moved by velocity: it is put.
+            JPH::BodyCreationSettings settings(record->character->GetShape(), toLocal(where->position),
+                                               toJolt(where->rotation), JPH::EMotionType::Kinematic, record->layer);
+            settings.mUserData = kStandInUserData;
+            settings.mAllowSleeping = false;
+            record->standIn = bodies.CreateAndAddBody(settings, JPH::EActivation::DontActivate);
+            return;
+        }
+        bodies.SetPositionAndRotation(record->standIn, toLocal(where->position), toJolt(where->rotation),
+                                      JPH::EActivation::DontActivate);
+    }
+
+    void removeStandIn(CharacterRecord& record)
+    {
+        if (record.standIn.IsInvalid())
+            return;
+        JPH::BodyInterface& bodies = m_system.GetBodyInterface();
+        bodies.RemoveBody(record.standIn);
+        bodies.DestroyBody(record.standIn);
+        record.standIn = JPH::BodyID();
     }
 
     void moveCharacter(CharacterHandle handle, core::Vec3 velocity, f32 fixedDt, bool walking)
@@ -3651,7 +3700,8 @@ private:
     {
         for (usize slot = 0; slot < m_characters.size(); ++slot) {
             const CharacterRecord& record = m_characters[slot];
-            if (record.alive && record.character != nullptr && record.character->GetInnerBodyID() == id)
+            if (record.alive && record.character != nullptr &&
+                (record.character->GetInnerBodyID() == id || (!record.standIn.IsInvalid() && record.standIn == id)))
                 return CharacterHandle{static_cast<u32>(slot), record.generation};
         }
         return CharacterHandle{};
@@ -3803,6 +3853,17 @@ private:
                 if (touched != nullptr && onBand(*touched, contact.mSubShapeIDB))
                     return false;
             }
+            // **A character that has a stand-in is met there, and not where it
+            // is** (ADR 0163): its own inner body is no obstacle.
+            if (!contact.mBodyB.IsInvalid() && contact.mUserData != kStandInUserData) {
+                for (const CharacterRecord& other : m_world.m_characters) {
+                    if (other.alive && other.character != nullptr && !other.standIn.IsInvalid() &&
+                        other.character->GetInnerBodyID() == contact.mBodyB)
+                        return false;
+                }
+            }
+            if (contact.mUserData == kStandInUserData)
+                return true;
             const BodyRecord* body = m_world.resolve(unpackHandle(contact.mUserData));
             if (body == nullptr || !body->passableForCharacters)
                 return true;
@@ -4310,6 +4371,13 @@ public:
     {
         if (JoltWorld* world = resolve(handle); world != nullptr) {
             world->nudgeCharacter(character, transform);
+        }
+    }
+
+    void setCharacterStandIn(WorldHandle handle, CharacterHandle character, const core::CFrameD* where) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr) {
+            world->setCharacterStandIn(character, where);
         }
     }
 

@@ -520,6 +520,63 @@ TEST_CASE("two characters cannot walk through each other")
     CHECK(gap > 1.8);
 }
 
+TEST_CASE("a character with a stand-in is met where the stand-in is, and not where it is")
+{
+    // ADR 0163: a replica draws another player's character in the past, and
+    // its own, stepped ahead, has to meet it where the authority will have it.
+    Fixture fixture;
+    fixture.spawn(floorDesc());
+
+    CharacterDesc walker;
+    walker.transform.position = core::DVec3{-6.0, 2.5, 0.0};
+    walker.userData = 10;
+    CharacterDesc other;
+    other.transform.position = core::DVec3{0.0, 2.5, 0.0};
+    other.userData = 11;
+    const CharacterHandle a = fixture.physics->createCharacter(fixture.world, walker);
+    const CharacterHandle b = fixture.physics->createCharacter(fixture.world, other);
+    REQUIRE(a.valid());
+    REQUIRE(b.valid());
+    // Settled on the floor.
+    for (int i = 0; i < 30; ++i) {
+        fixture.physics->moveCharacter(fixture.world, a, core::Vec3{0.0f, -2.0f, 0.0f}, kFixedDt);
+        fixture.physics->step(fixture.world, kFixedDt);
+    }
+
+    // The other is drawn at x = 0 and expected at x = 6: the walker passes
+    // the one and is stopped by the other, a character's width short of it.
+    core::CFrameD expected = fixture.physics->characterState(fixture.world, b).transform;
+    expected.position.x = 6.0;
+    fixture.physics->setCharacterStandIn(fixture.world, b, &expected);
+    for (int i = 0; i < 420; ++i) {
+        fixture.physics->moveCharacter(fixture.world, a, core::Vec3{2.0f, -2.0f, 0.0f}, kFixedDt);
+        fixture.physics->step(fixture.world, kFixedDt);
+    }
+    const f64 stopped = fixture.physics->characterState(fixture.world, a).transform.position.x;
+    MESSAGE("walked through where it is drawn and stopped at x = ", stopped);
+    CHECK(stopped > 3.0);
+    CHECK(stopped < 4.3);
+
+    // No query sees the stand-in: a ray down onto it reaches the floor.
+    RayD ray;
+    ray.origin = core::DVec3{6.0, 20.0, 0.0};
+    ray.direction = core::Vec3{0.0f, -40.0f, 0.0f};
+    RayHit hit;
+    REQUIRE(fixture.physics->raycast(fixture.world, ray, QueryFilter{}, hit));
+    CHECK(hit.position.y < 1.0);
+
+    // Without it, the character is where it is again: the walker, sent back,
+    // is stopped by it.
+    fixture.physics->setCharacterStandIn(fixture.world, b, nullptr);
+    for (int i = 0; i < 420; ++i) {
+        fixture.physics->moveCharacter(fixture.world, a, core::Vec3{-2.0f, -2.0f, 0.0f}, kFixedDt);
+        fixture.physics->step(fixture.world, kFixedDt);
+    }
+    const f64 back = fixture.physics->characterState(fixture.world, a).transform.position.x;
+    CHECK(back > 1.8);
+    CHECK(back < 2.4);
+}
+
 TEST_CASE("a character touches the wall it walks into, and the floor it stands on")
 {
     // D028: a `CharacterBody` is a `BasePart` and a script expects `Touched`

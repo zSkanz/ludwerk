@@ -318,6 +318,31 @@ describe("surface shader parameters", function()
     end)
 end)
 
+describe("BasePart.ReceivesDecals", function()
+    it("is on for every kind of part until a game says otherwise", function()
+        local part = Instance.new("Part")
+        local mesh = Instance.new("MeshPart")
+        local body = Instance.new("CharacterBody")
+        expect(part.ReceivesDecals):ToBe(true)
+        expect(mesh.ReceivesDecals):ToBe(true)
+        expect(body.ReceivesDecals):ToBe(true)
+        body.ReceivesDecals = false
+        expect(body.ReceivesDecals):ToBe(false)
+        -- It is not what the part casts, and not whether it is drawn.
+        expect(body.CastShadow):ToBe(true)
+        -- A copy keeps it, as it keeps everything a part is.
+        local copy = body:Clone() :: CharacterBody
+        expect(copy.ReceivesDecals):ToBe(false)
+        expect(function()
+            (part :: any).ReceivesDecals = 1
+        end):ToThrow()
+        part:Destroy()
+        mesh:Destroy()
+        body:Destroy()
+        copy:Destroy()
+    end)
+end)
+
 describe("BasePart.CastShadow", function()
     it("is on for every kind of part until a game says otherwise", function()
         local part = Instance.new("Part")

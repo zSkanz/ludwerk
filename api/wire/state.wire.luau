@@ -187,6 +187,15 @@ local BasePartFields: { Schema.Field } = {
             .. "did not have it drew a shadow under every effect the authority had asked to cast none.",
     },
     {
+        Name = "ReceivesDecals",
+        Id = 19,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "parts",
+        Doc = "Whether a decal paints the part (protocol 39). A look, like `CastShadow`: a replica that did "
+            .. "not have it drew the scorch mark over the character the authority kept clean.",
+    },
+    {
         Name = "CollisionGroup",
         Id = 18,
         Encoding = "NameAtom",

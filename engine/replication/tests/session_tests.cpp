@@ -1632,6 +1632,26 @@ TEST_CASE("a replica's message reaches the authority from its own player, and an
     CHECK(match.replica->checksumFailures() == 0);
 }
 
+TEST_CASE("BasePart.ReceivesDecals reaches a replica, and a change to it does")
+{
+    PlayedMatch match;
+    const core::InstanceId hero = match.part("Hero", core::DVec3{0.0, 1.0, 0.0});
+    const core::InstanceId crate = match.part("Crate", core::DVec3{4.0, 1.0, 0.0});
+    match.server.world.parts().find(hero)->receivesDecals = false;
+    match.run(3);
+    REQUIRE(match.copyOf(hero).valid());
+    REQUIRE(match.copyOf(crate).valid());
+    CHECK_FALSE(match.client.world.parts().find(match.copyOf(hero))->receivesDecals);
+    CHECK(match.client.world.parts().find(match.copyOf(crate))->receivesDecals);
+
+    match.server.world.parts().find(crate)->receivesDecals = false;
+    match.server.world.parts().find(hero)->receivesDecals = true;
+    match.run(3);
+    CHECK(match.client.world.parts().find(match.copyOf(hero))->receivesDecals);
+    CHECK_FALSE(match.client.world.parts().find(match.copyOf(crate))->receivesDecals);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
 TEST_CASE("BasePart.CastShadow reaches a replica, and a change to it does")
 {
     PlayedMatch match;
@@ -4760,4 +4780,64 @@ TEST_CASE("D545: a part's collision group, and the table of groups, reach a repl
     match.run(6);
     CHECK_FALSE(there.collidable(wallThere, wallThere));
     CHECK_FALSE(there.collidable(local, scene::CollisionGroups::kDefault));
+}
+
+TEST_CASE("ADR 0163: a replica expects another player's character ahead of where it draws it")
+{
+    // Another player's character is drawn a few ticks in the past, between two
+    // snapshots. This machine's own character is stepped ahead of the
+    // authority and collided with it there -- where it was -- and was stopped
+    // by a player who, for the authority, had already moved on: a correction a
+    // snapshot for as long as two of them ran side by side.
+    PlayedMatch match;
+    const core::InstanceId runner =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("CharacterBody")));
+    const core::InstanceId idler =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("CharacterBody")));
+    REQUIRE(runner.valid());
+    REQUIRE(idler.valid());
+    match.server.world.setName(runner, match.server.atoms.intern("Runner"));
+    match.server.world.setName(idler, match.server.atoms.intern("Idler"));
+    REQUIRE_FALSE(match.server.world.setParent(runner, match.server.workspace).has_value());
+    REQUIRE_FALSE(match.server.world.setParent(idler, match.server.workspace).has_value());
+    match.server.world.parts().find(idler)->cframe.position = core::DVec3{0.0, 2.0, 9.0};
+
+    // A sixth of a metre a tick along x, and a hop that is not carried on.
+    const double pace = 10.0 / 60.0;
+    for (int tick = 0; tick < 40; ++tick) {
+        match.server.world.parts().find(runner)->cframe.position =
+            core::DVec3{pace * static_cast<double>(tick), 2.0 + 0.05 * static_cast<double>(tick), -3.0};
+        match.step();
+    }
+    const core::InstanceId there = match.copyOf(runner);
+    const core::InstanceId still = match.copyOf(idler);
+    REQUIRE(there.valid());
+    REQUIRE(still.valid());
+    const scene::CharacterBodyComponent* moving = match.client.world.characterBodies().find(there);
+    const scene::CharacterBodyComponent* waiting = match.client.world.characterBodies().find(still);
+    REQUIRE(moving != nullptr);
+    REQUIRE(waiting != nullptr);
+    REQUIRE(moving->collisionLeadSet);
+    REQUIRE(waiting->collisionLeadSet);
+
+    // Drawn behind the newest snapshot, expected at it or past it: the lead is
+    // forward along the way it runs, by no more than the delay it is drawn
+    // with and the ticks a guess may carry it.
+    const double drawn = match.client.world.parts().find(there)->cframe.position.x;
+    const double newest = match.server.world.parts().find(runner)->cframe.position.x;
+    CHECK(drawn < newest);
+    const double expected = drawn + static_cast<double>(moving->collisionLead.x);
+    MESSAGE("drawn at ", drawn, ", the authority has it at ", newest, ", expected at ", expected);
+    CHECK(expected >= newest - 2.0 * pace);
+    CHECK(expected <= newest + pace * static_cast<double>(MaxCollisionLeadTicks + 2));
+    CHECK(static_cast<double>(moving->collisionLead.z) == doctest::Approx(0.0).epsilon(0.001));
+    // Up and down it is where the newest snapshot has it: nothing carried on.
+    const double height =
+        match.client.world.parts().find(there)->cframe.position.y + static_cast<double>(moving->collisionLead.y);
+    CHECK(height <= match.server.world.parts().find(runner)->cframe.position.y + 0.001);
+
+    // One that stands still is expected where it is drawn.
+    CHECK(static_cast<double>(waiting->collisionLead.x) == doctest::Approx(0.0));
+    CHECK(static_cast<double>(waiting->collisionLead.y) == doctest::Approx(0.0));
+    CHECK(static_cast<double>(waiting->collisionLead.z) == doctest::Approx(0.0));
 }

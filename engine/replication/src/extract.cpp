@@ -397,6 +397,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setBool(out, part->castShadow);
             return true;
         }
+        if (field.name == "ReceivesDecals") {
+            setBool(out, part->receivesDecals);
+            return true;
+        }
         // **What the part wears** (ADR 0090): the material by name, the part's
         // overrides, and -- when it wears a runtime copy -- the copy's number,
         // what it changed and the maps it names.
@@ -1636,6 +1640,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "CastShadow") {
             part->castShadow = asBool(value);
+            return true;
+        }
+        if (field.name == "ReceivesDecals") {
+            part->receivesDecals = asBool(value);
             return true;
         }
         // The name arrives as this machine's own atom (the session translated

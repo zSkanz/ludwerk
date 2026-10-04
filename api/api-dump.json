@@ -431,6 +431,11 @@
           "Type": "vector"
         },
         {
+          "Name": "ReceivesDecals",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
           "Name": "Restitution",
           "Type": "number",
           "Default": "0"

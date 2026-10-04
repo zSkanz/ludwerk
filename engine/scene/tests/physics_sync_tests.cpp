@@ -11,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <doctest/doctest.h>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -271,6 +272,11 @@ public:
         characterTransforms.push_back(transform);
     }
     void nudgeCharacter(physics::WorldHandle, physics::CharacterHandle, const core::CFrameD&) override {}
+    void setCharacterStandIn(physics::WorldHandle, physics::CharacterHandle, const core::CFrameD* where) override
+    {
+        standIns.push_back(where != nullptr ? std::optional<core::CFrameD>(*where) : std::nullopt);
+    }
+    std::vector<std::optional<core::CFrameD>> standIns;
 
     [[nodiscard]] physics::CharacterState characterState(physics::WorldHandle, physics::CharacterHandle) const override
     {
@@ -2493,4 +2499,53 @@ TEST_CASE("D439, D440: a walk is WalkSpeed across the ground, up a slope and dow
     CHECK(flat(walk(core::Vec3{5.0f, 0.0f, 0.0f}, core::Vec3{0.0f, 1.0f, 0.0f})) == doctest::Approx(6.0));
     // Less than all of it walks slower: an analog stick pushed a little.
     CHECK(flat(walk(core::Vec3{0.3f, 0.0f, 0.0f}, core::Vec3{0.0f, 1.0f, 0.0f})) == doctest::Approx(1.8));
+}
+
+TEST_CASE("ADR 0163: on a replica, another player's character is met where its session expects it")
+{
+    Mirror mirror;
+    mirror.fixture.world.engineState().networkTopology = NetworkTopology::Replica;
+    const core::InstanceId other = mirror.part("Other", {4.0, 3.0, 0.0});
+    mirror.fixture.world.parts().find(other)->size = core::Vec3{1.0f, 2.0f, 1.0f};
+    mirror.fixture.world.characterBodies().add(other, CharacterBodyComponent{});
+    mirror.backend.characterAnswer.transform.position = core::DVec3{4.0, 3.0, 0.0};
+    mirror.step();
+    // Nobody has said where it is expected: an ordinary character.
+    CHECK(mirror.backend.standIns.empty());
+
+    // A metre and a half on from where it is drawn.
+    CharacterBodyComponent* remote = mirror.fixture.world.characterBodies().find(other);
+    REQUIRE(remote != nullptr);
+    remote->collisionLead = core::Vec3{1.5f, 0.0f, -0.5f};
+    remote->collisionLeadSet = true;
+    mirror.step();
+    REQUIRE_FALSE(mirror.backend.standIns.empty());
+    REQUIRE(mirror.backend.standIns.back().has_value());
+    CHECK(mirror.backend.standIns.back()->position.x == doctest::Approx(5.5));
+    CHECK(mirror.backend.standIns.back()->position.y == doctest::Approx(3.0));
+    CHECK(mirror.backend.standIns.back()->position.z == doctest::Approx(-0.5));
+
+    // And taken back when the session stops saying.
+    remote->collisionLeadSet = false;
+    mirror.step();
+    CHECK_FALSE(mirror.backend.standIns.back().has_value());
+    const std::size_t calls = mirror.backend.standIns.size();
+    mirror.step();
+    CHECK(mirror.backend.standIns.size() == calls);
+}
+
+TEST_CASE("ADR 0163: an authority's characters are met where they are")
+{
+    Mirror mirror;
+    const core::InstanceId walker = mirror.part("Walker", {0.0, 3.0, 0.0});
+    mirror.fixture.world.parts().find(walker)->size = core::Vec3{1.0f, 2.0f, 1.0f};
+    CharacterBodyComponent body;
+    // A stray word from nowhere: an authority has no session to say it.
+    body.collisionLead = core::Vec3{9.0f, 0.0f, 0.0f};
+    body.collisionLeadSet = true;
+    mirror.fixture.world.characterBodies().add(walker, body);
+    mirror.backend.characterAnswer.transform.position = core::DVec3{0.0, 3.0, 0.0};
+    mirror.step();
+    mirror.step();
+    CHECK(mirror.backend.standIns.empty());
 }

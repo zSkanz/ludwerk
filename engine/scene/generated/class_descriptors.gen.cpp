@@ -467,7 +467,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(moduleScriptDesc);
 
     // --- BasePart ---
-    static std::array<PropertyDesc, 23> basePartProperties;
+    static std::array<PropertyDesc, 24> basePartProperties;
     basePartProperties = {{
         PropertyDesc{
             .name = atoms.intern("CFrame"),
@@ -545,6 +545,17 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getBasePartCastShadow,
             .set = native::setBasePartCastShadow,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ReceivesDecals"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether a `Decal` paints this part. A decal projects onto everything inside its box; off, the part is left as it is by every one of them -- a character standing on a scorch mark, an enemy inside a warning ring on the ground, a door a puddle would otherwise climb. It changes only what is painted ON the part: the decal still paints the ground round it and under it. Terrain always receives.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getBasePartReceivesDecals,
+            .set = native::setBasePartReceivesDecals,
         },
         PropertyDesc{
             .name = atoms.intern("Anchored"),

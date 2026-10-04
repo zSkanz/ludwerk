@@ -27,6 +27,7 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   its stamp's is removed: the child is the copy's own, or the stamp's child is
   disabled in it, and the copy keeps following its stamp. A stamp may hold
   copies of other stamps; one that holds a copy of itself is refused.
+- **The wire is protocol 39**: `BasePart.ReceivesDecals` travels with a part.
 - **The wire is protocol 38** (ADR 0161): the channel and the two messages of
   `UnreliableRemoteEvent`. A client and a server of different builds refuse
   each other, and say so.
@@ -194,6 +195,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`BasePart.ReceivesDecals`** (ADR 0160, amended): off, no decal paints the
+  part -- a character standing on a scorch mark, an enemy inside a warning
+  ring. The decal still paints the ground round it and under it. On by
+  default, on every kind of part; terrain always receives.
 - **`--net-log-corrections`**: a client says, for every correction of its
   predicted character, how far and which way it was off, whether it was turned,
   the part it pushed and the predicted attributes that differ. The multiplayer
@@ -978,6 +983,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **Another player's character is met where the server has it** (ADR 0163).
+  On a client, a character collided with other players' characters where they
+  are drawn, a little in the past: running beside another player, it was
+  stopped by somebody who was not there and corrected at every snapshot. It
+  now meets them where the server is expected to have them. They are still
+  drawn, and found by a raycast, where they were. Nothing to change in a game.
 - **A quality level sets how much foliage is drawn** (ADR 0147): half at low,
   three quarters at medium, all of it from high. A project at low or medium,
   and every handheld -- which starts at medium -- draws less than it did;
@@ -1163,6 +1174,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   A size is now rasterised at the nearest of a few sizes at or above it and
   drawn smaller; text at a whole number of pixels up to 64 is drawn exactly as
   before, and text over 128 pixels is drawn up from 128.
+- **A list that scrolls down no longer grows a bar across its bottom** (D547).
+  At some window sizes -- so, often, after a resize -- a `ScrollFrame` with
+  nothing to scroll sideways drew a horizontal bar the length of the frame. A
+  bar is also drawn only along an axis `ScrollingDirection` lets a hand scroll.
 - **Ogg Vorbis plays** (D546). A `.ogg` as `Sound.Content` played the
   placeholder tone and said it could not be decoded, though the manual named
   the format: no Vorbis decoder was compiled in. It decodes now, streams when

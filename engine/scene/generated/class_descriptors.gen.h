@@ -185,6 +185,8 @@ Value getBasePartMaterialParameters(const World& world, core::InstanceId id);
 bool setBasePartMaterialParameters(World& world, core::InstanceId id, const Value& value);
 Value getBasePartCastShadow(const World& world, core::InstanceId id);
 bool setBasePartCastShadow(World& world, core::InstanceId id, const Value& value);
+Value getBasePartReceivesDecals(const World& world, core::InstanceId id);
+bool setBasePartReceivesDecals(World& world, core::InstanceId id, const Value& value);
 Value getBasePartAnchored(const World& world, core::InstanceId id);
 bool setBasePartAnchored(World& world, core::InstanceId id, const Value& value);
 Value getBasePartCanCollide(const World& world, core::InstanceId id);

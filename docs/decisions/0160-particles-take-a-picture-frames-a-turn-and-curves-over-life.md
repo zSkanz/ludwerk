@@ -261,6 +261,36 @@ hundred thousand particles alive, falling and bouncing on flat terrain:
   - `decal_blend_gate`: on dark ground a multiplied decal stays dark, a laid
     one shows its colour, an added one is brighter than both.
 
+## Amendment, 2026-10-04: `BasePart.ReceivesDecals`
+
+A decal is projected onto the picture's depth, which is of everything in its
+box. A game's first marks on the ground -- a scorch, a warning ring -- were
+drawn across the characters standing on them.
+
+- **A part says it receives none**: `BasePart.ReceivesDecals`, on by default,
+  on `Part`, `MeshPart` and `CharacterBody`; replicated (field 19, protocol
+  39) and kept in a partitioned scene's chunks. Terrain, blocks and foliage
+  always receive.
+- **By a mask and not a stencil.** Every engine that has this marks the
+  receivers in a stencil or a G-buffer channel while it draws them. The frozen
+  RHI has neither, and adding stencil to it is every backend and every depth
+  target for one bit. So the parts that receive none are drawn again, depth
+  only, into a target of their own, and a decal's pixel is discarded where
+  that depth and the picture's are the same surface. A part in front of one
+  of them, or the ground seen through a cutout's holes, is nearer or further
+  and is painted.
+- **Paid only where it is used**: the mask is drawn on a frame that has both
+  a decal and such a part in view, and made the first time it is needed. A
+  run of instances is all receivers or all not, as it is all casters or all
+  not.
+- **What it does not do**: a see-through part is not in the picture's depth,
+  so no decal painted it before and none does now.
+- Tests: `decal_receives_gate` (two pictures of one scene, before a decal and
+  after: the part that receives none is the same pixels in both, the part
+  beside it and the floor are darker); `render_world_tests.cpp`,
+  `session_tests.cpp`, `chunk_tests.cpp` and
+  `tests/conformance/world/material.spec.luau` for the property.
+
 ## Not decided here
 
 - **A sort for GPU particles.** Unity's VFX Graph has one as an option. It

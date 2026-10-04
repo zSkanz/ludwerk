@@ -1283,6 +1283,22 @@ bool setBasePartCastShadow(World& world, core::InstanceId id, const Value& value
     return true;
 }
 
+Value getBasePartReceivesDecals(const World& world, core::InstanceId id)
+{
+    const PartComponent* part = readPart(world, id);
+    return part == nullptr ? Value{} : Value{part->receivesDecals};
+}
+
+bool setBasePartReceivesDecals(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    PartComponent* part = writePart(world, id);
+    if (flag == nullptr || part == nullptr)
+        return false;
+    part->receivesDecals = *flag;
+    return true;
+}
+
 Value getBasePartMaterial(const World& world, core::InstanceId id)
 {
     const PartComponent* part = readPart(world, id);

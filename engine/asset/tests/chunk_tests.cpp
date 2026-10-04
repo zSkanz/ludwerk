@@ -293,6 +293,7 @@ TEST_CASE("a group, its members and their tags survive the format")
     pier.canCollide = false;
     pier.canQuery = false;
     pier.castShadow = false;
+    pier.receivesDecals = false;
     pier.friction = 0.05f;
     pier.restitution = 0.9f;
     pier.density = 3.5f;
@@ -314,8 +315,11 @@ TEST_CASE("a group, its members and their tags survive the format")
     CHECK(back.canCollide == false);
     CHECK(back.canQuery == false);
     CHECK(back.castShadow == false);
-    // And a record that says nothing casts, as every one written before did.
+    CHECK(back.receivesDecals == false);
+    // And a record that says nothing casts, as every one written before did
+    // -- and is painted by a decal, as every one was.
     CHECK(ChunkInstance{}.castShadow);
+    CHECK(ChunkInstance{}.receivesDecals);
     // Compared EXACTLY rather than approximately, because the format's job is
     // to give back the same bits: a tolerance here would pass a writer that
     // truncated a float on its way to disk.

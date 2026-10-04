@@ -532,6 +532,16 @@ local Classes: { Schema.Class } = {
                     .. "draws nothing at all.",
             },
             {
+                Name = "ReceivesDecals",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether a `Decal` paints this part. A decal projects onto everything inside its box; "
+                    .. "off, the part is left as it is by every one of them -- a character standing on a "
+                    .. "scorch mark, an enemy inside a warning ring on the ground, a door a puddle would "
+                    .. "otherwise climb. It changes only what is painted ON the part: the decal still paints "
+                    .. "the ground round it and under it. Terrain always receives.",
+            },
+            {
                 Name = "Anchored",
                 Type = "boolean",
                 Default = "false",

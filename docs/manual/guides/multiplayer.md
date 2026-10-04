@@ -140,11 +140,14 @@ one of a few things, and the line says which:
   something else. The client learns of it a few ticks after the server acted on
   it, and is put right once when it begins and once when it ends. That is the
   cost of a server-decided stop; make it rare, or keep it out of the step.
-- **Only metres, every snapshot, while two players run side by side**: another
-  player's character is drawn a little in the past, and a predicted character
-  collides with it where it is drawn, not where the server has it. Characters
-  that need not block each other -- a team in a co-op game -- go in a collision
-  group that does not collide with itself, and are never corrected for it:
+- **Only centimetres, now and then, while two players run side by side**:
+  another player's character is drawn a little in the past, and yours meets
+  it where the server is expected to have it -- its last known place carried
+  on by its motion -- which is a guess, off by a little when the other turns.
+  Two players pushing into each other are corrected more: what each does next
+  is the other's input. Characters that need not block each other -- a team in
+  a co-op game -- go in a collision group that does not collide with itself,
+  and are never corrected for it:
 
   ```luau
   PhysicsService:RegisterCollisionGroup("Heroes")

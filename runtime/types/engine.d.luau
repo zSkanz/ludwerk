@@ -1130,6 +1130,12 @@ declare extern type BasePart extends PVInstance with
     --- still lit, and still receives the shadows of others. A part that is see-through casts none
     --- whatever this says, and a hidden one draws nothing at all.
     CastShadow: boolean
+    --- Whether a `Decal` paints this part. A decal projects onto everything inside its box; off, the
+    --- part is left as it is by every one of them -- a character standing on a scorch mark, an enemy
+    --- inside a warning ring on the ground, a door a puddle would otherwise climb. It changes only what
+    --- is painted ON the part: the decal still paints the ground round it and under it. Terrain always
+    --- receives.
+    ReceivesDecals: boolean
     --- Whether the simulation moves this part. An anchored part is immovable scenery that other parts
     --- collide with and gravity ignores -- not a very heavy part, a different kind of body -- so
     --- writing this rebuilds it in the simulation and keeps its transform.

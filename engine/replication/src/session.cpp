@@ -4116,6 +4116,40 @@ void ReplicaSession::interpolate(scene::World& world)
             local != m_locals.end() && world.alive(local->second) ? world.parts().find(local->second) : nullptr;
         if (part == nullptr)
             continue;
+        // **And where this machine's own character is to meet it** (ADR 0163),
+        // once it is drawn: a character somebody else plays is drawn in the
+        // past, and this machine's own is stepped ahead of the authority by as
+        // many ticks as it has intents unanswered. The authority will have
+        // applied the tick being predicted now that many ticks after the
+        // newest snapshot -- so that is how far past its newest place the
+        // other is expected, carried on by the way it was last going. Across
+        // the ground only: a jump guessed forward is a head in the ceiling.
+        const auto expect = [&]() {
+            scene::CharacterBodyComponent* remote = world.characterBodies().find(local->second);
+            if (remote == nullptr)
+                return;
+            const Sample& newest = samples.back();
+            core::DVec3 expected = newest.cframe.position;
+            const u64 now = world.engineState().tick;
+            const u64 lead =
+                m_ackedIntent != 0 && now > m_ackedIntent ? std::min(now - m_ackedIntent, MaxCollisionLeadTicks) : 0;
+            if (samples.size() >= 2 && lead != 0) {
+                const Sample& prior = samples[samples.size() - 2];
+                if (newest.tick > prior.tick) {
+                    const f64 ticks = static_cast<f64>(newest.tick - prior.tick);
+                    const core::DVec3 went = newest.cframe.position - prior.cframe.position;
+                    const f64 most = TeleportMetresPerTick * ticks;
+                    if (went.x * went.x + went.y * went.y + went.z * went.z <= most * most) {
+                        expected.x += went.x / ticks * static_cast<f64>(lead);
+                        expected.z += went.z / ticks * static_cast<f64>(lead);
+                    }
+                }
+            }
+            const core::DVec3 apart = expected - part->cframe.position;
+            remote->collisionLead =
+                core::Vec3{static_cast<f32>(apart.x), static_cast<f32>(apart.y), static_cast<f32>(apart.z)};
+            remote->collisionLeadSet = true;
+        };
         // Past the newest sample, the newest: extrapolating a part the authority
         // has stopped talking about would put it where it is not.
         const Sample* before = &samples.front();
@@ -4128,6 +4162,7 @@ void ReplicaSession::interpolate(scene::World& world)
         }
         if (after == nullptr || target <= before->tick || after->tick <= before->tick) {
             part->cframe = target < samples.front().tick ? samples.front().cframe : before->cframe;
+            expect();
             continue;
         }
         // A teleport is a step at its tick, not a slide across the map (NA15).
@@ -4135,10 +4170,12 @@ void ReplicaSession::interpolate(scene::World& world)
         const f64 reach = TeleportMetresPerTick * static_cast<f64>(after->tick - before->tick);
         if (moved.x * moved.x + moved.y * moved.y + moved.z * moved.z > reach * reach) {
             part->cframe = before->cframe;
+            expect();
             continue;
         }
         const f64 alpha = static_cast<f64>(target - before->tick) / static_cast<f64>(after->tick - before->tick);
         part->cframe = core::lerp(before->cframe, after->cframe, alpha);
+        expect();
     }
 
     // **Sprites the same way** (ADR 0103), by the same rules: past the newest

@@ -278,6 +278,14 @@ public:
     // controller whose contacts are found afresh at a crate's edge steps
     // otherwise than the authority's, which kept its own.
     virtual void nudgeCharacter(WorldHandle world, CharacterHandle character, const core::CFrameD& transform) = 0;
+    // **Where other characters meet this one, when that is not where it is**
+    // (ADR 0163). A replica draws another player's character a little in the
+    // past, and its own character, stepped ahead of the authority, has to meet
+    // it where the authority will have it. With `where`, the character stops
+    // standing in other characters' way where it is, and a copy of its capsule
+    // stands at `where` instead -- which characters collide with, bodies do
+    // not, and no query sees. With null it is an ordinary character again.
+    virtual void setCharacterStandIn(WorldHandle world, CharacterHandle character, const core::CFrameD* where) = 0;
     [[nodiscard]] virtual CharacterState characterState(WorldHandle world, CharacterHandle character) const = 0;
 
     // --- Collision groups ----------------------------------------------------

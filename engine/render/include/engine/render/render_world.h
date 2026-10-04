@@ -303,6 +303,9 @@ struct DrawItem
     // `BasePart.CastShadow`: false for a part its game asked to cast none.
     // True for everything that is not a part -- the ground, the blocks, a rope.
     bool castShadow = true;
+    // `BasePart.ReceivesDecals`: false for a part no decal paints. True for
+    // everything that is not a part: the ground always receives.
+    bool receivesDecals = true;
     // The draw's world bounds as a sphere, in the snapshot's camera-relative
     // space. A sphere rather than the box it came from, because every consumer
     // is a distance test: the shadow pass rejects a caster against a cascade's

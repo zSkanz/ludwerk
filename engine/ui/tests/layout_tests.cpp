@@ -1241,3 +1241,74 @@ TEST_CASE("D437: a ScreenGui with a reference height is laid out in its units an
     CHECK(fixture.object(button).absoluteSize.x == doctest::Approx(100.0));
     CHECK(fixture.object(button).unitScale == doctest::Approx(0.5));
 }
+
+TEST_CASE("D547: a list that scrolls down has no bar across its bottom, at any window size")
+{
+    // **Reported from play**: a settings list -- `ScrollingDirection` Y, an
+    // automatic canvas, under a `ScreenGui` drawn for a reference height --
+    // grew a horizontal bar along its bottom after the window was made larger,
+    // its thumb nearly the whole track.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    scene::ScreenGuiComponent* gui = fixture.world->screenGuis().find(screen);
+    REQUIRE(gui != nullptr);
+    gui->referenceHeight = 720.0f;
+
+    const InstanceId panel = fixture.child("Frame", screen);
+    fixture.object(panel).position = core::UDim2{core::UDim{0.31f, 17.0f}, core::UDim{0.12f, 9.0f}};
+    fixture.object(panel).size = core::UDim2{core::UDim{0.43f, 0.0f}, core::UDim{0.7f, 0.0f}};
+    fixture.object(panel).backgroundTransparency = 1.0f;
+
+    const InstanceId frame = fixture.child("ScrollFrame", panel);
+    fixture.object(frame).position = core::UDim2{core::UDim{0.0f, 13.0f}, core::UDim{0.0f, 7.0f}};
+    fixture.object(frame).size = core::UDim2{core::UDim{1.0f, -26.0f}, core::UDim{1.0f, -14.0f}};
+    fixture.object(frame).backgroundTransparency = 1.0f;
+    scene::ScrollFrameComponent* scroll = fixture.world->scrollFrames().find(frame);
+    REQUIRE(scroll != nullptr);
+    scroll->scrollingDirection = 2;  // Y
+    scroll->automaticCanvasSize = 2; // Y
+    scroll->canvasSize = core::UDim2{core::UDim{0.0f, 0.0f}, core::UDim{0.0f, 300.0f}};
+    scroll->scrollBarThickness = 8.0f;
+
+    (void)fixture.child("UIListLayout", frame);
+    for (int row = 0; row < 24; ++row) {
+        const InstanceId line = fixture.child("Frame", frame);
+        fixture.object(line).size = core::UDim2{core::UDim{1.0f, 0.0f}, core::UDim{0.0f, 44.0f}};
+        fixture.object(line).backgroundTransparency = 1.0f;
+    }
+
+    int shown = 0;
+    int sizes = 0;
+    // The window made larger a step at a time, as a hand drags its corner.
+    for (float height = 720.0f; height <= 1440.0f; height += 7.0f) {
+        const core::Vec2 window{std::floor(height * 16.0f / 9.0f) + 3.0f, height};
+        gui->layoutDirty = true;
+        ui::layout(*fixture.world, fixture.service, window);
+        ui::DrawList list;
+        ui::buildDrawList(*fixture.world, fixture.service, list);
+        sizes += 1;
+        // The rows and the panel draw nothing: what is drawn is the bar down
+        // the side, its track and its thumb.
+        if (list.quads.size() != 2) {
+            shown += 1;
+            CAPTURE(height);
+            CAPTURE(list.quads.size());
+            CAPTURE(scroll->absoluteCanvasSize.x);
+            CAPTURE(scroll->absoluteWindowSize.x);
+            CHECK(list.quads.size() == 2);
+        }
+        // Along the axis it does not scroll, the canvas is the view.
+        CHECK(scroll->absoluteCanvasSize.x == scroll->absoluteWindowSize.x);
+    }
+    MESSAGE("a bar across the bottom at ", shown, " of ", sizes, " window sizes");
+    CHECK(shown == 0);
+
+    // And a canvas wider than the view shows no bar along an axis no hand
+    // scrolls: `ScrollingDirection` says which bars there are.
+    scroll->canvasSize = core::UDim2{core::UDim{2.0f, 0.0f}, core::UDim{0.0f, 300.0f}};
+    gui->layoutDirty = true;
+    ui::layout(*fixture.world, fixture.service, core::Vec2{1280.0f, 720.0f});
+    ui::DrawList wide;
+    ui::buildDrawList(*fixture.world, fixture.service, wide);
+    CHECK(wide.quads.size() == 2);
+}

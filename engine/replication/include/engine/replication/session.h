@@ -243,6 +243,10 @@ inline constexpr usize MaxReplicaSnapshotBytes = 64u * 1024u * 1024u;
 // step at its tick rather than a slide across the map. Two metres a tick is
 // 120 m/s -- faster than anything a game walks, drives or flies on purpose.
 inline constexpr core::f64 TeleportMetresPerTick = 2.0;
+// **The furthest ahead another player's character is expected** (ADR 0163),
+// in ticks: a quarter of a second. Past that a guess at where somebody will be
+// is worse than where they were last seen going.
+inline constexpr u64 MaxCollisionLeadTicks = 15;
 // The most the adaptive interpolation delay adds over what it was set to.
 inline constexpr u32 MaxAddedInterpolationDelay = 20;
 // Connections one address may hold on an authority: a household behind one

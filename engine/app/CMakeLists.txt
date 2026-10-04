@@ -1227,6 +1227,19 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # `BasePart.ReceivesDecals`: a part with it off is left as it was by a
+    # decal that paints the floor under it and the part beside it.
+    add_test(NAME decal_receives_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/decalreceives
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/decal-receives
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_decal_receives_gate.cmake)
+    set_tests_properties(decal_receives_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # **What the anti-aliasing and the upscale leave alone** (ADR 0158): the
     # screen's UI, a picture of sprites alone, and pixel art among 3D surfaces
     # -- see the driver for each claim.
@@ -1839,7 +1852,7 @@ if(ENG_BUILD_TESTS)
         terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
         editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived
-        decal_blend_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d)
+        decal_blend_gate decal_receives_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d)
     option(ENG_TEST_GPU_LOCK "Serialise the tests that draw on a real GPU" ${WIN32})
     if(APPLE)
         set(ENG_TEST_GPU_LOCK ON)

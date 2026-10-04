@@ -338,6 +338,8 @@ private:
         // On a replica, a character somebody else plays: it follows the
         // authority's snapshots and is not simulated here (ADR 0076).
         bool follower = false;
+        // Whether the backend holds a stand-in for it (ADR 0163).
+        bool standIn = false;
         // What the last step that moved it was told, for `lastCommand`.
         std::optional<CharacterCommand> last;
         // **Its player's input at its last predicted step** (G37): the tick,

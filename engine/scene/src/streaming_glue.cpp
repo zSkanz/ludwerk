@@ -138,6 +138,7 @@ core::f64 StreamingGlue::materialize(asset::ChunkId id, const asset::Chunk& chun
                 (void)asset::setOverride(part->materialParameters, asset::MaterialField::Transparency, values);
             part->shape = static_cast<core::i32>(source.shape);
             part->castShadow = source.castShadow;
+            part->receivesDecals = source.receivesDecals;
         }
         if (isMesh) {
             if (MeshPartComponent* mesh = m_world.meshParts().find(id2); mesh != nullptr) {

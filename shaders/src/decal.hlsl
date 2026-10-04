@@ -29,6 +29,7 @@ cbuffer GpuDecalFragment : register(b0, space3)
     // xy: 1 / render size; z: 1 when there is an image.
     float4 DecalParams;
     // The box's projection axis in world space, for the grazing-angle fade.
+    // w: 1 when `MaskTexture` holds the depth of the parts no decal paints.
     float4 DecalAxis;
     // rgb: the light an Alpha decal is lit by; a: its glow (ADR 0160).
     float4 DecalLight;
@@ -38,6 +39,12 @@ Texture2D DecalTexture : register(t0, space2);
 SamplerState DecalSampler : register(s0, space2);
 Texture2D<float> DepthTexture : register(t1, space2);
 SamplerState DepthSampler : register(s1, space2);
+// **The depth of the parts that receive no decal** (`BasePart.ReceivesDecals`),
+// drawn alone. Where it is the depth of the picture, what is seen there is one
+// of them, and the decal leaves it as it is; where the picture is nearer or
+// further, something else is seen and is painted.
+Texture2D<float> MaskTexture : register(t2, space2);
+SamplerState MaskSampler : register(s2, space2);
 
 struct Interpolants
 {
@@ -70,6 +77,11 @@ float4 FragmentMain(Interpolants input, bool isFront : SV_IsFrontFace) : SV_Targ
     const float depth = DepthTexture.SampleLevel(DepthSampler, uv, 0.0f);
     // The sky: nothing there to paint.
     if (depth >= 1.0f)
+        discard;
+    // A part that receives none. The two depths are of one surface drawn
+    // twice with the same vertices, so they agree to the last bits; the slack
+    // is for a cutout, whose depth the picture took from another shader.
+    if (DecalAxis.w > 0.5f && abs(MaskTexture.SampleLevel(MaskSampler, uv, 0.0f) - depth) <= 2.0e-6f)
         discard;
 
     // Back to a position, and into the box.

@@ -665,6 +665,7 @@ Leaf Partitioner::readLeaf(std::string_view node)
         leaf.record.transparency = overrides.has(asset::MaterialField::Transparency) ? overrides.transparency : 0.0f;
         leaf.record.shape = static_cast<core::u8>(part->shape);
         leaf.record.castShadow = part->castShadow;
+        leaf.record.receivesDecals = part->receivesDecals;
         leaf.box = boxOf(part->cframe, part->size);
     }
     if (const RigidBodyComponent* body = m_scratch.world().rigidBodies().find(id); body != nullptr) {

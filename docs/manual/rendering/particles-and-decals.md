@@ -278,8 +278,29 @@ ring.CFrame = CFrame.lookAt(where, where + vector.create(0, 1, 0))
 ring.Parent = workspace
 ```
 
+### What a decal does not paint: `ReceivesDecals`
+
+A decal paints everything inside its box. A scorch mark under a fight would
+climb the legs of whoever stands on it, and a warning ring on the ground would
+be drawn across the enemy inside it. A part says it is not to be painted:
+
+```luau
+character.ReceivesDecals = false   -- on the character's parts, or its mesh
+```
+
+The decal still paints the ground round the part and under it; only the part
+itself is left as it is. It is a property of every kind of part -- `Part`,
+`MeshPart`, `CharacterBody` -- on by default, and terrain always receives.
+Turn it off for what moves over marks rather than for the marks: characters,
+enemies, pickups, doors.
+
+It costs something only where it is used: on a frame that has both a decal
+and a part that receives none in view, those parts are drawn once more, depth
+only.
+
 Both decals and particle emitters replicate: on every machine of a match, the
-same emitters run and the same marks are painted.
+same emitters run and the same marks are painted -- and `ReceivesDecals` with
+them.
 
 ## Where to look next
 

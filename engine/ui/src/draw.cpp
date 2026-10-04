@@ -709,15 +709,29 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out, const Re
         // clipped by that clip would scroll away with the content it reports on.
         // The canvas the layout settled on is in pixels, like the box; its
         // position and the bar's thickness are in the tree's units.
+        //
+        // **The view is the one the layout settled on, not the box measured
+        // again** (D547). The canvas is never smaller than the view, and where
+        // there is nothing to scroll the layout makes them the same number.
+        // The box's far edge less its near one is that number rounded twice
+        // more -- a hair smaller at some window sizes, at others not -- and a
+        // canvas a hair wider than its view is a bar the length of the frame:
+        // a list that scrolls down grew one across its bottom when its window
+        // was resized. **And an axis no hand scrolls has no bar**
+        // (`ScrollingDirection`), whatever the canvas says.
         const f32 unit = self->unitScale;
-        const core::Vec2 size{box.max.x - box.min.x, box.max.y - box.min.y};
+        const core::Vec2 size = scroll->absoluteWindowSize;
         const core::Vec2 canvas = scroll->absoluteCanvasSize;
         const f32 thickness = scroll->scrollBarThickness * unit;
         const f32 alpha = 1.0f - std::clamp(scroll->scrollBarImageTransparency, 0.0f, 1.0f);
-        appendScrollBar(scrollBarShape(box, canvas.y, size.y, scroll->canvasPosition.y * unit, thickness, true),
-                        thickness, scroll->scrollBarImageColor, alpha, entry.scissor, out.quads);
-        appendScrollBar(scrollBarShape(box, canvas.x, size.x, scroll->canvasPosition.x * unit, thickness, false),
-                        thickness, scroll->scrollBarImageColor, alpha, entry.scissor, out.quads);
+        if (scrollsAlong(*scroll, 1)) {
+            appendScrollBar(scrollBarShape(box, canvas.y, size.y, scroll->canvasPosition.y * unit, thickness, true),
+                            thickness, scroll->scrollBarImageColor, alpha, entry.scissor, out.quads);
+        }
+        if (scrollsAlong(*scroll, 0)) {
+            appendScrollBar(scrollBarShape(box, canvas.x, size.x, scroll->canvasPosition.x * unit, thickness, false),
+                            thickness, scroll->scrollBarImageColor, alpha, entry.scissor, out.quads);
+        }
     }
 
     if (const scene::ImageLabelComponent* image = world.imageLabels().find(entry.id); image != nullptr) {

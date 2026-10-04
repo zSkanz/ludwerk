@@ -94,6 +94,9 @@ struct PartComponent
     // `BasePart.CastShadow`: whether the part is drawn into the shadow maps --
     // the sun's and the lamps'. On for everything until a game says otherwise.
     bool castShadow = true;
+    // `BasePart.ReceivesDecals`: whether a decal paints it. On until a game
+    // says otherwise.
+    bool receivesDecals = true;
 };
 
 // `MeshPart`'s geometry. The renderer resolves the URN to a loaded mesh and
@@ -270,6 +273,16 @@ struct CharacterBodyComponent
     // What the last step moved it as: 0 on foot or falling, 2 swimming,
     // 3 flying -- `Enum.CharacterState`'s values, which `state` then reports.
     i32 mode = 0;
+
+    // **Where the authority is expected to have it, less where it is drawn**
+    // (ADR 0163). A replica draws another player's character a little in the
+    // past and steps its own ahead of the authority: what its own character
+    // collides with is this character this far from where it is drawn. Set by
+    // a replica's session for a character somebody else plays; unset
+    // everywhere else, and no part of the world's hash -- it is one machine's
+    // guess, and the authority has none.
+    core::Vec3 collisionLead{0.0f, 0.0f, 0.0f};
+    bool collisionLeadSet = false;
 };
 
 // `Weld` and `WeldConstraint` (M5, added to the milestone by human decision).

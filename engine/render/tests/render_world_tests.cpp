@@ -1094,6 +1094,36 @@ TEST_CASE("a Part with no material draws its Color override, exactly as BasePart
     CHECK(nearF(snapshot.materials[0].uniforms.metallicRoughnessNormalCutoff[1], 0.7f));
 }
 
+TEST_CASE("BasePart.ReceivesDecals: a part asked to take none is drawn as it was, and says so to the renderer")
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const core::InstanceId workspace = fixture.world.create(fixture.workspaceClass);
+    (void)fixture.cameraLookingDownNegativeZ(workspace);
+    render::MeshLibrary meshes;
+    registerBlock(fixture, meshes);
+
+    const core::InstanceId floor = blockAt(fixture, workspace);
+    const core::InstanceId hero = blockAt(fixture, workspace);
+    // On until a game says otherwise.
+    CHECK(fixture.world.parts().find(floor)->receivesDecals);
+    fixture.world.parts().find(hero)->receivesDecals = false;
+
+    render::RenderWorld snapshot;
+    render::extract(fixture.world, workspace, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+    REQUIRE(snapshot.draws.size() == 2);
+    int receiving = 0;
+    for (const render::DrawItem& draw : snapshot.draws) {
+        // Still drawn, still casting: only what is painted on it changes.
+        CHECK(draw.inCameraFrustum);
+        CHECK(render::castsShadow(draw));
+        receiving += draw.receivesDecals ? 1 : 0;
+    }
+    CHECK(receiving == 1);
+    // What is not a part receives: the default of a draw.
+    CHECK(render::DrawItem{}.receivesDecals);
+}
+
 TEST_CASE("BasePart.CastShadow: a part asked to cast none is drawn as it was, and casts none")
 {
     Fixture fixture;

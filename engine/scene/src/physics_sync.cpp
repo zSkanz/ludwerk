@@ -710,8 +710,28 @@ void PhysicsSync::applyCharacter(core::InstanceId id, PartComponent& part, Rigid
             record.follower = true;
             character.moveDirection = core::Vec3{};
             character.jumpRequested = false;
+            // **Met where the authority will have it** (ADR 0163): it is
+            // drawn in the past, and this machine's own character is stepped
+            // ahead. The session says how far apart the two are.
+            if (character.collisionLeadSet) {
+                core::CFrameD expected = part.cframe;
+                expected.position.x += static_cast<f64>(character.collisionLead.x);
+                expected.position.y += static_cast<f64>(character.collisionLead.y);
+                expected.position.z += static_cast<f64>(character.collisionLead.z);
+                m_backend.setCharacterStandIn(m_world, record.handle, &expected);
+                record.standIn = true;
+            }
+            else if (record.standIn) {
+                m_backend.setCharacterStandIn(m_world, record.handle, nullptr);
+                record.standIn = false;
+            }
             return;
         }
+    }
+    // Its own, or anybody's on the authority: where it is is where it is met.
+    if (record.standIn) {
+        m_backend.setCharacterStandIn(m_world, record.handle, nullptr);
+        record.standIn = false;
     }
 
     const physics::CharacterState state = m_backend.characterState(m_world, record.handle);
