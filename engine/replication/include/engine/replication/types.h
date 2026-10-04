@@ -210,6 +210,13 @@ struct Stats
     u64 messagesSent = 0;
     u64 messagesReceived = 0;
     u64 messagesDropped = 0;
+    // `UnreliableRemoteEvent` messages (ADR 0161), counted apart: sent, taken
+    // in, and what this machine refused or dropped itself -- an event the
+    // peer has not got, a flood, a message older than the last. What the
+    // network lost is not known to either end.
+    u64 unreliableSent = 0;
+    u64 unreliableReceived = 0;
+    u64 unreliableDropped = 0;
     // Messages the transport refused to send -- too large, its queue full, a
     // peer gone (NA1). Before, they were counted as sent.
     u64 sendFailures = 0;

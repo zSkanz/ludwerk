@@ -1232,6 +1232,22 @@ bool setBasePartSize(World& world, core::InstanceId id, const Value& value)
     return true;
 }
 
+Value getBasePartCastShadow(const World& world, core::InstanceId id)
+{
+    const PartComponent* part = readPart(world, id);
+    return part == nullptr ? Value{} : Value{part->castShadow};
+}
+
+bool setBasePartCastShadow(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    PartComponent* part = writePart(world, id);
+    if (flag == nullptr || part == nullptr)
+        return false;
+    part->castShadow = *flag;
+    return true;
+}
+
 Value getBasePartMaterial(const World& world, core::InstanceId id)
 {
     const PartComponent* part = readPart(world, id);

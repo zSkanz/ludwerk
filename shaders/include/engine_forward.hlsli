@@ -174,6 +174,22 @@ float4 clusterFetch4(Texture2D texture, SamplerState pointSampler, uint x, uint 
 // not the frame's total -- is what a fragment pays for, and it is the whole
 // point of clustering: M4 iterated eight unculled lights on every pixel of every
 // draw whether they reached it or not.
+// **How far in front of the camera a fragment is** (D536): what the shadow
+// cascades and the light clusters are stated in.
+//
+// The vertex stage hands over the clip position's w, which under a perspective
+// projection is exactly that. Under an orthographic one it is 1 for every
+// fragment: each chose the first cascade -- a few metres round the camera --
+// so a camera looking down from twenty metres saw no shadow of the sun
+// anywhere, and every light's cluster was the nearest slice's. There the
+// distance is the fragment's place along the camera's forward axis, which the
+// frame carries for it; the place is relative to the camera already.
+float viewDepthOf(float3 shadingPosition, float interpolated)
+{
+    const float3 forward = LightCountUnused.yzw;
+    return dot(forward, forward) > 0.0f ? dot(shadingPosition, forward) : interpolated;
+}
+
 float3 evaluateClusteredLights(Surface surface, float2 pixel, float viewDepth)
 {
     if (LightCountUnused.x <= 0.0f)
@@ -284,6 +300,7 @@ float3x3 tangentFrame(float3 normal, float4 tangent)
 // cave -- passes anything but one.
 float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, float viewDepth, float2 pixel, float sky)
 {
+    viewDepth = viewDepthOf(shadingPosition, viewDepth);
     const float3 sunDirection = normalize(SunDirectionBrightness.xyz);
     const float sunNol = saturate(dot(normal, sunDirection));
     const float shadow =

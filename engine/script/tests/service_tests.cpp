@@ -712,6 +712,49 @@ TEST_CASE("RemoteEvent on a replica: FireServer goes out, and speaking to client
     CHECK(fixture.world->engineState().remoteOutbox.size() == 1);
 }
 
+TEST_CASE("N10: an UnreliableRemoteEvent's message is marked as one, and limited to sixteen kibibytes")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Replica;
+    CHECK(fixture.failure(R"(
+        local fast = Instance.new("UnreliableRemoteEvent")
+        fast.Name = "Aim"
+        fast.Parent = workspace
+        fast:FireServer(vector.create(1, 2, 3))
+        local sure = Instance.new("RemoteEvent")
+        sure.Name = "Bought"
+        sure.Parent = workspace
+        sure:FireServer("sword")
+    )") == "");
+    // The session reads the kind from the message, and sends each its way.
+    REQUIRE(fixture.world->engineState().remoteOutbox.size() == 2);
+    CHECK(fixture.world->engineState().remoteOutbox[0].unreliable);
+    CHECK(fixture.world->engineState().remoteOutbox[0].toServer);
+    CHECK_FALSE(fixture.world->engineState().remoteOutbox[1].unreliable);
+
+    // **Sixteen kibibytes, and its own error**: a reliable event carries four
+    // times that, and the same string through it is taken.
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Aim"):FireServer(string.rep("x", 17000)))",
+                         "net.err.unreliable_too_large"));
+    CHECK(fixture.failure(R"(workspace:FindFirstChild("Bought"):FireServer(string.rep("x", 17000)))") == "");
+    CHECK(fixture.failure(R"(workspace:FindFirstChild("Aim"):FireServer(string.rep("x", 15000)))") == "");
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Aim"):FireServer(table.create(5000, "abcd")))",
+                         "net.err.unreliable_too_large"));
+    REQUIRE(fixture.world->engineState().remoteOutbox.size() == 4);
+    CHECK(fixture.world->engineState().remoteOutbox[3].unreliable);
+
+    // A buffer is under the same limit, and is never a table's key.
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Aim"):FireServer(buffer.create(17000)))",
+                         "net.err.unreliable_too_large"));
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Aim"):FireServer({ [buffer.create(4)] = 1 }))",
+                         "net.err.remote_key"));
+
+    // Only the authority speaks to clients, on either kind.
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Aim"):FireAllClients("no"))", "net.err.remote_authority_only"));
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Aim"):FireClient(workspace, "no"))",
+                         "net.err.remote_authority_only"));
+}
+
 TEST_CASE("RemoteEvent on a dedicated server: nobody to send as, and every message goes out")
 {
     Fixture fixture;

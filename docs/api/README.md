@@ -158,6 +158,7 @@ guided tour.
 | [`UISizeConstraint`](uisizeconstraint.md) | [`Instance`](instance.md) | Keeps its parent between two sizes (ADR 0128): a panel that is a third of the window and never under 240 units wide. |
 | [`UIStroke`](uistroke.md) | [`Instance`](instance.md) | An outline on its parent's text or border (ADR 0110). |
 | [`UITextSizeConstraint`](uitextsizeconstraint.md) | [`Instance`](instance.md) | Keeps scaled text between two sizes (ADR 0128): a `TextScaled` label that never falls under what can be read nor grows past what looks right. |
+| [`UnreliableRemoteEvent`](unreliableremoteevent.md) | [`Instance`](instance.md) | A `RemoteEvent` for what a game sends many times a second and replaces each time (ADR 0161): where a horde stands, where a player aims, a boss's health. |
 | [`VectorForce`](vectorforce.md) | [`Constraint`](constraint.md) | A constant force on the part its `Attachment0` is on: a thruster, wind on one thing, lift. |
 | [`ViewportFrame`](viewportframe.md) | [`UIObject`](uiobject.md) | A UI element that draws the parts and models inside it (ADR 0107): an item turning in an inventory slot, a character preview, a 3D icon. |
 | [`Water`](water.md) | [`Instance`](instance.md) | Water (ADR 0118): a sea, a lake or a river, drawn and floated from **one wave definition** -- its `WaterWave` children -- evaluated the same on the CPU for the simulation and on the GPU for the picture. |

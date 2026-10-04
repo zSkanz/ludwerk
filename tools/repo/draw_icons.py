@@ -619,6 +619,9 @@ def draw_icon(group, name):
         i.line((6,21),(6,3)).line((6,4),(19,4),(15.5,8.5),(19,13),(6,13),closed=True)
     elif name == "TeamService":
         i.circle(8,8,3).arc(8,20,6,180,360).circle(16,8,3).arc(16,20,6,180,360).line((2,20),(22,20))
+    elif name == "UnreliableRemoteEvent":
+        # A RemoteEvent whose arrow is broken: sent once, and it may not arrive.
+        i.rect(2,6,6,12,1).rect(16,6,6,12,1).line((8,12),(9.5,12)).line((11.5,12),(13,12)).line((13,9),(16,12),(13,15))
     elif name in ("RemoteEvent", "RemoteFunction"):
         i.rect(2,6,6,12,1).rect(16,6,6,12,1).line((8,10),(16,10)).line((12,7),(16,10),(12,13))
         if name == "RemoteFunction": i.line((16,16),(8,16)).line((11,13),(8,16),(11,19))

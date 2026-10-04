@@ -871,7 +871,7 @@ TEST_CASE("a join waits by the clock, not by frames, and one from the command li
     auto wire = net::createMemoryNetwork();
     // Something listening that never welcomes: a server still starting.
     auto silent = net::createMemoryTransport(wire);
-    REQUIRE_FALSE(silent->open(net::TransportConfig{.port = 47990, .maxPeers = 4, .channels = 4}).has_value());
+    REQUIRE_FALSE(silent->open(net::TransportConfig{.port = 47990, .maxPeers = 4, .channels = 5}).has_value());
 
     Machine client;
     client.project.write("src/client/join.luau", R"(

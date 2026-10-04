@@ -1557,7 +1557,8 @@ local Classes: { Schema.Class } = {
                         .. "InputBufferDepth: number, "
                         .. "InputStarvations: number, InputReanchors: number, InterpolationDelay: number, "
                         .. "PredictedParts: number, ResimulationsPerSecond: number, "
-                        .. "ResimulatedTicksPerSecond: number, ResimulationTime: number }",
+                        .. "ResimulatedTicksPerSecond: number, ResimulationTime: number, "
+                        .. "UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number }",
                 },
                 ThreadSafety = "Unsafe",
                 Doc = "**How the connection is doing**, for a game that shows a connection-quality mark: the "
@@ -1653,7 +1654,7 @@ local Classes: { Schema.Class } = {
             .. "like any instance; a replica finds it with `WaitForChild`.\n\n"
             .. "**A client says what it did, never what happened**: the authority learns who sent a "
             .. "message from the connection, not from anything in it, so one client cannot speak for "
-            .. "another. What travels is values -- nil, booleans, numbers, strings, vectors, `Color3`, "
+            .. "another. What travels is values -- nil, booleans, numbers, strings, buffers, vectors, `Color3`, "
             .. "`CFrame`, `Vector2`, `UDim`, `UDim2`, enum items, instances and tables of them, eight deep "
             .. "-- and an instance arrives as the receiver's own copy, or "
             .. "nil where the receiver does not have it. A function, a thread or a table that refers to "
@@ -1701,6 +1702,68 @@ local Classes: { Schema.Class } = {
                 Parameters = { { Name = "arguments", Type = "...any" } },
                 Doc = "Fires on a player's machine when the authority calls `FireClient` for this player or "
                     .. "`FireAllClients`.",
+            },
+        } :: { Schema.Event },
+    },
+    {
+        Name = "UnreliableRemoteEvent",
+        Extends = "Instance",
+        Module = "scene",
+        Doc = "A `RemoteEvent` for what a game sends many times a second and replaces each time "
+            .. "(ADR 0161): where a horde stands, where a player aims, a boss's health. **A message is "
+            .. "sent once and may never arrive.** It is not sent again when the network loses it, so a "
+            .. "lost one holds nothing else up -- a reliable message that is lost makes every reliable "
+            .. "message behind it wait.\n\n"
+            .. "**The newest wins**: a message that arrives after a later one is dropped rather than "
+            .. "delivered late, across every unreliable event of the game. What a script hears is never "
+            .. "older than what it heard before, and that is the only order there is.\n\n"
+            .. "**Nothing is kept for later**: a message to a machine that does not have the event yet, "
+            .. "or that nobody is listening for, is dropped.\n\n"
+            .. "**At most 16 KiB of arguments**, refused at the call past that. A message larger than "
+            .. "about 1 KB travels in pieces and is lost whole when any one is, so the larger it is the "
+            .. "more often it is lost: send small, or in parts that each stand alone.\n\n"
+            .. "Everything else is `RemoteEvent`'s: the values that travel, who may call what, and a "
+            .. "sender the authority learns from the connection. Never use it for what must arrive.",
+        Methods = {
+            {
+                Name = "FireServer",
+                Parameters = { { Name = "arguments", Type = "...any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Sends the arguments to the authority once, where `ServerReceived` fires with this "
+                    .. "machine's player first -- if it arrives. On an authority with a player of its own it "
+                    .. "is delivered there directly; a dedicated server has no player to send as, and "
+                    .. "refuses.",
+            },
+            {
+                Name = "FireClient",
+                Parameters = { { Name = "player", Type = "Player" }, { Name = "arguments", Type = "...any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Sends the arguments to one player's machine once, where `ClientReceived` fires if "
+                    .. "it arrives. Only the authority speaks to clients: a replica calling this is refused.",
+            },
+            {
+                Name = "FireAllClients",
+                Parameters = { { Name = "arguments", Type = "...any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Sends the arguments to every player's machine once, a host's own included. Only the "
+                    .. "authority speaks to clients: a replica calling this is refused.",
+            },
+        } :: { Schema.Method },
+        Events = {
+            {
+                Name = "ServerReceived",
+                Parameters = { { Name = "player", Type = "Player" }, { Name = "arguments", Type = "...any" } },
+                Doc = "Fires on the authority when a player's machine's `FireServer` arrives, with the "
+                    .. "player who sent it first. Trust nothing else in it.",
+            },
+            {
+                Name = "ClientReceived",
+                Parameters = { { Name = "arguments", Type = "...any" } },
+                Doc = "Fires on a player's machine when the authority's `FireClient` for this player, or "
+                    .. "its `FireAllClients`, arrives.",
             },
         } :: { Schema.Event },
     },

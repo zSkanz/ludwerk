@@ -521,6 +521,17 @@ local Classes: { Schema.Class } = {
                     .. "only that every entry is a parameter with a value of its kind.",
             },
             {
+                Name = "CastShadow",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether the part casts a shadow -- into the sun's shadow and every lamp's. Off for what "
+                    .. "is light or has no weight in the scene: a muzzle flash, a blade's trail, a pickup's "
+                    .. "glow, a ring on the ground under a boss. It changes only what the part casts: a part "
+                    .. "with this off is still drawn, still lit, and still receives the shadows of others.\n\n"
+                    .. "A part that is see-through casts none whatever this says, and a hidden one "
+                    .. "draws nothing at all.",
+            },
+            {
                 Name = "Anchored",
                 Type = "boolean",
                 Default = "false",

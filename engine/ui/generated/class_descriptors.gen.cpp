@@ -22,6 +22,13 @@
 #include "engine/scene/class_registry.h"
 #include "engine/scene/value.h"
 
+// **Not optimised by MSVC.** The functions below are thousands of statements
+// each, run once at start; its optimiser took ten minutes over the largest of
+// these files, and nothing a frame runs is in them.
+#if defined(_MSC_VER) && !defined(__clang__)
+#pragma optimize("", off)
+#endif
+
 namespace engine::ui::generated
 {
 

@@ -102,7 +102,8 @@ its own, so a window in the background reads the same ping as one in front --
 how many times this machine's own character was corrected (`Corrections`, and
 `CorrectionsPerSecond`), how far in the past the others are drawn
 (`InterpolationDelay`, in milliseconds: it grows with a jittery link and comes
-back when the link does), and the authority's queue of this player's input.
+back when the link does), the authority's queue of this player's input, and
+the unreliable messages this machine sent, took in and dropped.
 
 **A worse network, on purpose.** To see a game the way a player far away does:
 
@@ -432,7 +433,7 @@ call is delivered here as it would be across a network.
 
 A message carries values:
 
-- nil, booleans, numbers, strings and vectors;
+- nil, booleans, numbers, strings, buffers and vectors;
 - `Color3`, `CFrame`, `Vector2`, `UDim`, `UDim2` and enum items (an item of an
   enum the receiver's build does not have arrives as nil);
 - instances, each arriving as the receiver's own copy, or nil where the
@@ -441,8 +442,18 @@ A message carries values:
 
 A function, a thread, a table that contains itself, or more than 64 KiB is
 refused at the call that tried to send it. Messages are reliable and arrive in
-order, at the start of the receiver's next tick. An authority takes at most
-256 from one player a tick.
+order, at the start of the receiver's next tick. An authority takes a burst of
+1024 messages and a megabyte from one player, and 64 messages and 64 KiB a
+tick after that; what a client sends past it is dropped.
+
+**A message over 64 KiB is refused, not split** (`net.err.remote_too_large`,
+raised at the call). The engine does not cut one into pieces behind a script's
+back, because a megabyte sent reliably holds every other reliable message of
+the game behind it until the last piece is acknowledged. Send it as several
+messages that each mean something -- a level a row at a time, an inventory a
+page at a time -- or, when it is state that is replaced many times a second,
+on an `UnreliableRemoteEvent`, below. State every machine should simply have
+is an attribute or an instance, not a message.
 
 **A call that arrives before anybody listens is kept for the first who
 does.** A scene's client and server scripts start in the same tick, so a client
@@ -452,6 +463,56 @@ and the first `Connect` to `ServerReceived` -- or `ClientReceived`, the other
 way -- is handed them all. Up to 256 a remote each way; past that the calls
 are dropped and the remote says so once in the log. There is nothing to do
 about it in game code, and no "ready" flag to keep.
+
+## Messages that may be lost: `UnreliableRemoteEvent`
+
+A `RemoteEvent` always arrives, and that has a price: when the network loses
+one, it is sent again, and **every reliable message behind it waits** -- the
+spawns, the roster and every other event of the game. For "I bought the sword"
+that is right. For where a horde stands, sent fifteen times a second and
+replaced each time, it is wrong: by the time the lost one is sent again, a
+newer one has made it worthless, and it held everything else up for nothing.
+
+An `UnreliableRemoteEvent` is the same thing with the other contract:
+
+```luau
+--!strict
+local positions: UnreliableRemoteEvent = workspace:WaitForChild("HordePositions") :: UnreliableRemoteEvent
+
+-- On the server, fifteen times a second:
+positions:FireAllClients(packed)
+
+-- On a client:
+positions.ClientReceived:Connect(function(packed: buffer)   -- bytes the game packed itself
+    apply(packed)   -- the newest there is
+end)
+```
+
+| | `RemoteEvent` | `UnreliableRemoteEvent` |
+|---|---|---|
+| Arrives | Always | Maybe: it is sent once |
+| When one is lost | Sent again; everything reliable behind it waits | Nothing waits; the next one replaces it |
+| Order | The order sent | Never older than the last one heard, across every unreliable event; nothing more |
+| At most | 64 KiB | 16 KiB |
+| Fired before the other side has the event, or listens | Kept, and delivered when it can be | Dropped |
+| Use it for | What happened: a purchase, a round starting, a chat line | What is, right now: positions, aim, a health bar |
+
+**The larger it is, the more often it is lost.** Past about a kilobyte a
+message travels in pieces, and it is lost whole when any one piece is. On a
+link losing 2% of its packets, a 1 KB message arrives 98 times in 100, a 5 KB
+one about 90, and a 15 KB one about 75. So send small: only what changed, or
+the world in slices that each stand alone -- a slice that is lost is one
+fifteenth of a second late for a part of the horde, not for all of it.
+
+**Never for what must arrive.** A kill, a pickup, a score: those are
+`RemoteEvent`s, or attributes. `NetworkService:GetStats()` counts
+`UnreliableSent`, `UnreliableReceived` and `UnreliableDropped` -- what this
+machine sent, took in, and dropped itself (an event the other side did not
+have yet, a flood, one older than the last). What the network lost between is
+`Loss`.
+
+Solo and on a host's own machine nothing is lost, since there is no wire to
+cross: the same script runs everywhere.
 
 ## Questions: `RemoteFunction`
 

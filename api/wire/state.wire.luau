@@ -177,6 +177,15 @@ local BasePartFields: { Schema.Field } = {
         Component = "rigidBodies",
         Doc = "How fast it turns, for the same reason (protocol 23).",
     },
+    {
+        Name = "CastShadow",
+        Id = 17,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "parts",
+        Doc = "Whether the part casts a shadow (protocol 38). A look, like what it wears: a replica that "
+            .. "did not have it drew a shadow under every effect the authority had asked to cast none.",
+    },
 }
 
 --- What a `Part` is beyond a base part (protocol 30, D424): its shape. On
@@ -2500,6 +2509,13 @@ local Classes: { Schema.Class } = {
         Fields = NoFields,
     },
     {
+        Name = "UnreliableRemoteEvent",
+        Doc = "Replicated for the reason `RemoteEvent` is (ADR 0161, protocol 38): its network id is "
+            .. "the address an `UnreliableToAuthority` or `UnreliableToReplica` names. No fields of its "
+            .. "own.",
+        Fields = NoFields,
+    },
+    {
         Name = "ReplicatedStorage",
         Service = true,
         Contents = true,
@@ -2998,6 +3014,15 @@ local Channels: { Schema.Channel } = {
             .. "since protocol 1 so its arrival shifted nothing. Unreliable and sequenced for the reason "
             .. "the State channel is: a lost state is superseded by the next tick's, and an old one "
             .. "arriving late would move a part backwards.",
+    },
+    {
+        Name = "Remote",
+        Id = 4,
+        Delivery = "UnreliableSequenced",
+        Doc = "What a script sends through an `UnreliableRemoteEvent` (ADR 0161, protocol 38): sent "
+            .. "once and never again, so a lost one holds nothing up, and sequenced so one that arrives "
+            .. "after a later one is dropped. Its own channel: the sequence it shares is only its own, "
+            .. "and a game's messages cannot make a snapshot late.",
     },
 }
 
@@ -3802,6 +3827,66 @@ local Messages: { Schema.Message } = {
         Doc = "Why the authority will not take this replica (protocol 33, NA8), sent before it lets the "
             .. "connection go. Before it, a full server or one of another version answered nothing, and "
             .. "the player waited out the join's timeout with no reason.",
+    },
+    {
+        Name = "UnreliableToAuthority",
+        Id = 25,
+        Channel = "Remote",
+        Direction = "ToAuthority",
+        Layout = {
+            {
+                Name = "sequence",
+                Type = "u16",
+                Doc = "Counts up by one for every unreliable message this connection sends, and wraps. "
+                    .. "One that is not newer than the last taken is dropped.",
+            },
+            { Name = "remote", Type = "u32", Doc = "The network id of the `UnreliableRemoteEvent`." },
+            { Name = "refCount", Type = "u16" },
+            {
+                Name = "refs",
+                Type = "repeat",
+                Count = "refCount",
+                Doc = "The instances the arguments name, by position.",
+                Each = {
+                    { Name = "netId", Type = "u32", Doc = "0 for an instance the sender has no id for." },
+                },
+            },
+            { Name = "size", Type = "u32", Doc = "The byte length of what follows, at most 16384." },
+            { Name = "arguments", Type = "arguments", Doc = 'See "Arguments".' },
+        },
+        Doc = "`UnreliableRemoteEvent:FireServer` (protocol 38, ADR 0161): a message sent once. The "
+            .. "sender is the connection's player, never anything the message says, and it is taken "
+            .. "from the same budgets a `RemoteToAuthority` is.",
+    },
+    {
+        Name = "UnreliableToReplica",
+        Id = 26,
+        Channel = "Remote",
+        Direction = "ToReplica",
+        Layout = {
+            {
+                Name = "sequence",
+                Type = "u16",
+                Doc = "Counts up by one for every unreliable message the authority sends this replica, "
+                    .. "and wraps. One that is not newer than the last taken is dropped.",
+            },
+            { Name = "remote", Type = "u32", Doc = "The network id of the `UnreliableRemoteEvent`." },
+            { Name = "refCount", Type = "u16" },
+            {
+                Name = "refs",
+                Type = "repeat",
+                Count = "refCount",
+                Doc = "The instances the arguments name, by position.",
+                Each = {
+                    { Name = "netId", Type = "u32", Doc = "0 for an instance the sender has no id for." },
+                },
+            },
+            { Name = "size", Type = "u32", Doc = "The byte length of what follows, at most 16384." },
+            { Name = "arguments", Type = "arguments", Doc = 'See "Arguments".' },
+        },
+        Doc = "`UnreliableRemoteEvent:FireClient` and `FireAllClients`, laid out as "
+            .. "`UnreliableToAuthority` is. Never held: a replica that does not have the event yet is "
+            .. "sent nothing.",
     },
 }
 

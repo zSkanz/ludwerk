@@ -7,7 +7,7 @@
 
 A message a game sends between machines (ADR 0077): "I bought the sword" from a client to the server, "the round starts" from the server to everyone. Create it on the authority under `Workspace` -- in a `Folder`, if you like -- and it reaches every replica like any instance; a replica finds it with `WaitForChild`.
 
-**A client says what it did, never what happened**: the authority learns who sent a message from the connection, not from anything in it, so one client cannot speak for another. What travels is values -- nil, booleans, numbers, strings, vectors, `Color3`, `CFrame`, `Vector2`, `UDim`, `UDim2`, enum items, instances and tables of them, eight deep -- and an instance arrives as the receiver's own copy, or nil where the receiver does not have it. A function, a thread or a table that refers to itself is refused at the call, and so is a message larger than 64 KiB.
+**A client says what it did, never what happened**: the authority learns who sent a message from the connection, not from anything in it, so one client cannot speak for another. What travels is values -- nil, booleans, numbers, strings, buffers, vectors, `Color3`, `CFrame`, `Vector2`, `UDim`, `UDim2`, enum items, instances and tables of them, eight deep -- and an instance arrives as the receiver's own copy, or nil where the receiver does not have it. A function, a thread or a table that refers to itself is refused at the call, and so is a message larger than 64 KiB.
 
 **One script runs solo, hosting and networked.** On an authority, `FireServer` reaches its own `ServerReceived` from its local player, and a host's messages to its own player reach its own `ClientReceived`. Messages are reliable, and delivered as deferred signals at the start of the tick after they arrive.
 

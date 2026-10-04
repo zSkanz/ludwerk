@@ -67,6 +67,7 @@ constexpr u8 ControlChannel = 0;
 constexpr u8 StateChannel = 1;
 constexpr u8 IntentChannel = 2;
 constexpr u8 OwnershipChannel = 3;
+constexpr u8 RemoteChannel = 4;
 
 // A snapshot record whose fields are the whole set rather than a diff.
 constexpr u8 FullRecord = 1;
@@ -619,6 +620,65 @@ struct RemoteOnWire
     out.payload = in.bytes().subspan(in.at(), size);
     in.at() += size;
     return true;
+}
+
+// **An `UnreliableRemoteEvent` message on the wire** (ADR 0161): its number
+// for the connection, the event's network id, the network ids of the instances
+// its arguments name, and the payload as the script module wrote it.
+void writeUnreliable(Writer& out, MessageType type, u16 sequence, u32 remote, const scene::RemoteMessage& message,
+                     std::span<const u32> refs)
+{
+    const std::span<const u8> payload = message.payload;
+    out.u8v(static_cast<u8>(type));
+    out.u16v(sequence);
+    out.u32v(remote);
+    out.u16v(static_cast<u16>(refs.size()));
+    for (const u32 ref : refs)
+        out.u32v(ref);
+    out.u32v(static_cast<u32>(payload.size()));
+    out.bytes.insert(out.bytes.end(), payload.begin(), payload.end());
+}
+
+struct UnreliableOnWire
+{
+    u16 sequence = 0;
+    u32 remote = 0;
+    std::vector<u32> refs;
+    std::span<const u8> payload;
+};
+
+// Reads one, the type byte already consumed, as `readRemote` does.
+[[nodiscard]] bool readUnreliable(Reader& in, UnreliableOnWire& out)
+{
+    out.sequence = in.u16v();
+    out.remote = in.u32v();
+    const u16 count = in.u16v();
+    if (!in.ok() || count > MaxRemoteRefs || in.remaining() < static_cast<usize>(count) * 4u)
+        return false;
+    out.refs.reserve(count);
+    for (u16 at = 0; at < count && in.ok(); ++at)
+        out.refs.push_back(in.u32v());
+    const u32 size = in.u32v();
+    if (!in.ok() || size > MaxUnreliableWirePayload || in.bytes().size() - in.at() != size)
+        return false;
+    out.payload = in.bytes().subspan(in.at(), size);
+    in.at() += size;
+    return true;
+}
+
+// Whether a message numbered `sequence` is newer than the last one taken, the
+// numbers wrapping: the newest wins, and one that arrives after it is dropped.
+[[nodiscard]] bool newerUnreliable(u16 sequence, u16 last, bool heard) noexcept
+{
+    return !heard || static_cast<core::i16>(static_cast<u16>(sequence - last)) > 0;
+}
+
+[[nodiscard]] bool isClass(const scene::World& world, InstanceId id, std::string_view name)
+{
+    if (!world.alive(id))
+        return false;
+    const scene::ClassDescriptor* descriptor = world.classes().find(world.classOf(id));
+    return descriptor != nullptr && world.atoms().text(descriptor->name) == name;
 }
 
 // Whether `id` is what a message with this call number may name: a
@@ -1335,6 +1395,37 @@ void AuthoritySession::sendMessages(scene::World& world)
         if (message.toServer)
             continue; // an authority's own FireServer never left it
         const NetId remote = netIdOf(message.remote);
+        if (message.unreliable) {
+            // **Sent once or not at all** (ADR 0161): an event with no
+            // network id yet, or one a peer has not been told of, is not
+            // waited for -- the next message is on its way.
+            if (!remote.valid()) {
+                m_stats.unreliableDropped += 1;
+                continue;
+            }
+            std::vector<u32> named;
+            named.reserve(message.refs.size());
+            for (const InstanceId ref : message.refs)
+                named.push_back(netIdOf(ref).value);
+            for (Peer& peer : m_peers) {
+                if (!peer.welcomed || (message.userId != 0 && peer.userId != message.userId))
+                    continue;
+                if (!std::binary_search(peer.known.begin(), peer.known.end(), remote.value)) {
+                    m_stats.unreliableDropped += 1;
+                    continue;
+                }
+                Writer out;
+                peer.unreliableOut = static_cast<u16>(peer.unreliableOut + 1);
+                writeUnreliable(out, MessageType::UnreliableToReplica, peer.unreliableOut, remote.value, message,
+                                named);
+                if (sendBytes(m_transport, peer.id, out.bytes, net::Delivery::UnreliableSequenced, RemoteChannel,
+                              m_stats))
+                    m_stats.unreliableSent += 1;
+                else
+                    m_stats.unreliableDropped += 1;
+            }
+            continue;
+        }
         if (!remote.valid()) {
             // Created since the last capture: no network id yet. It waits for
             // the next send that captures, a few ticks at most.
@@ -1730,6 +1821,53 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     record.body->linearVelocity = core::sanitize(record.speed, MaxOwnedSpeed);
                     record.body->angularVelocity = core::sanitize(record.spin, core::MaxSpeed);
                 }
+                break;
+            }
+            if (event.channel == RemoteChannel && type == MessageType::UnreliableToAuthority && peer->welcomed &&
+                peer->player.valid()) {
+                // **From the same budgets a reliable one is** (ADR 0161): a
+                // client is not trusted to be polite on either channel.
+                if (peer->messageBudget == 0) {
+                    m_stats.unreliableDropped += 1;
+                    peer->floodedThisTick = true;
+                    break;
+                }
+                peer->messageBudget -= 1;
+                peer->messagesThisTick += 1;
+                UnreliableOnWire wire;
+                if (!readUnreliable(reader, wire)) {
+                    m_stats.unreliableDropped += 1;
+                    break;
+                }
+                if (event.payload.size() > peer->byteBudget) {
+                    m_stats.unreliableDropped += 1;
+                    peer->floodedThisTick = true;
+                    break;
+                }
+                peer->byteBudget -= event.payload.size();
+                peer->remoteBytesThisTick += event.payload.size();
+                // The newest wins: one that arrives after a later one is dropped.
+                if (!newerUnreliable(wire.sequence, peer->unreliableIn, peer->unreliableHeard)) {
+                    m_stats.unreliableDropped += 1;
+                    break;
+                }
+                peer->unreliableIn = wire.sequence;
+                peer->unreliableHeard = true;
+                const InstanceId remote = instanceOfNet(world, wire.remote);
+                if (!isClass(world, remote, "UnreliableRemoteEvent")) {
+                    m_stats.unreliableDropped += 1;
+                    break;
+                }
+                scene::RemoteMessage message;
+                message.remote = remote;
+                message.toServer = true;
+                message.unreliable = true;
+                message.player = peer->player;
+                message.payload.assign(wire.payload.begin(), wire.payload.end());
+                for (const u32 ref : wire.refs)
+                    message.refs.push_back(ref != 0 ? instanceOfNet(world, ref) : InstanceId{});
+                world.engineState().remoteInbox.push_back(std::move(message));
+                m_stats.unreliableReceived += 1;
                 break;
             }
             if (event.channel != ControlChannel)
@@ -2826,6 +2964,10 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
                 ++m_freshJoins;
             m_joinedBefore = true;
             m_welcomed = true;
+            // A new connection counts its unreliable messages from the start.
+            m_unreliableOut = 0;
+            m_unreliableIn = 0;
+            m_unreliableHeard = false;
             m_playerId = player;
             m_token = token;
             // The player at this machine takes the number the authority gave
@@ -2885,6 +3027,12 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             break;
         case MessageType::Attributes:
             onAttributes(world, root, event.payload);
+            break;
+        case MessageType::UnreliableToReplica:
+            if (++remotesThisTick > MaxReplicaRemotesPerTick)
+                m_stats.unreliableDropped += 1;
+            else
+                onUnreliable(world, event.payload);
             break;
         case MessageType::RemoteToReplica: {
             Reader reader(event.payload);
@@ -3077,6 +3225,35 @@ void ReplicaSession::decayVisualOffset() noexcept
         m_visualOffset = core::DVec3{};
 }
 
+void ReplicaSession::onUnreliable(scene::World& world, std::span<const u8> payload)
+{
+    Reader reader(payload);
+    (void)reader.u8v();
+    UnreliableOnWire wire;
+    if (!readUnreliable(reader, wire) || !newerUnreliable(wire.sequence, m_unreliableIn, m_unreliableHeard)) {
+        m_stats.unreliableDropped += 1;
+        return;
+    }
+    m_unreliableIn = wire.sequence;
+    m_unreliableHeard = true;
+    const auto local = m_locals.find(wire.remote);
+    if (local == m_locals.end() || !isClass(world, local->second, "UnreliableRemoteEvent")) {
+        m_stats.unreliableDropped += 1;
+        return;
+    }
+    scene::RemoteMessage message;
+    message.remote = local->second;
+    message.unreliable = true;
+    message.payload.assign(wire.payload.begin(), wire.payload.end());
+    // An instance this machine was never sent arrives as nil.
+    for (const u32 ref : wire.refs) {
+        const auto found = m_locals.find(ref);
+        message.refs.push_back(found != m_locals.end() ? found->second : InstanceId{});
+    }
+    world.engineState().remoteInbox.push_back(std::move(message));
+    m_stats.unreliableReceived += 1;
+}
+
 void ReplicaSession::sendMessages(scene::World& world)
 {
     std::vector<scene::RemoteMessage> outbox;
@@ -3092,6 +3269,28 @@ void ReplicaSession::sendMessages(scene::World& world)
     for (scene::RemoteMessage& message : outbox) {
         if (!message.toServer)
             continue;
+        if (message.unreliable) {
+            // Sent once or not at all (ADR 0161): nothing waits for a welcome
+            // or for an event the authority does not know.
+            const u32 named = m_welcomed ? netIdOf(message.remote) : 0;
+            if (named == 0) {
+                m_stats.unreliableDropped += 1;
+                continue;
+            }
+            std::vector<u32> refs;
+            refs.reserve(message.refs.size());
+            for (const InstanceId ref : message.refs)
+                refs.push_back(netIdOf(ref));
+            Writer out;
+            m_unreliableOut = static_cast<u16>(m_unreliableOut + 1);
+            writeUnreliable(out, MessageType::UnreliableToAuthority, m_unreliableOut, named, message, refs);
+            if (sendBytes(m_transport, m_authority, out.bytes, net::Delivery::UnreliableSequenced, RemoteChannel,
+                          m_stats))
+                m_stats.unreliableSent += 1;
+            else
+                m_stats.unreliableDropped += 1;
+            continue;
+        }
         // Not welcomed yet: nobody to send to, for a moment.
         if (!m_welcomed) {
             if (++message.held <= MaxRemoteHeldSends)

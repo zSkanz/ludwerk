@@ -292,6 +292,7 @@ TEST_CASE("a group, its members and their tags survive the format")
     pier.tagCount = 1;
     pier.canCollide = false;
     pier.canQuery = false;
+    pier.castShadow = false;
     pier.friction = 0.05f;
     pier.restitution = 0.9f;
     pier.density = 3.5f;
@@ -312,6 +313,9 @@ TEST_CASE("a group, its members and their tags survive the format")
     CHECK(decoded.stringAt(decoded.tagRefs[back.firstTag]) == "Landmark");
     CHECK(back.canCollide == false);
     CHECK(back.canQuery == false);
+    CHECK(back.castShadow == false);
+    // And a record that says nothing casts, as every one written before did.
+    CHECK(ChunkInstance{}.castShadow);
     // Compared EXACTLY rather than approximately, because the format's job is
     // to give back the same bits: a tolerance here would pass a writer that
     // truncated a float on its way to disk.

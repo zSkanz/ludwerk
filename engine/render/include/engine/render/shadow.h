@@ -178,6 +178,33 @@ inline constexpr f32 kShadowFilterMaxTexels = 6.0f;
 // and no speckle on the lit faces.
 inline constexpr f32 kShadowNormalOffsetTexels = 1.5f;
 
+// **Whether a caster reaches what a cascade covers** (D537).
+//
+// A cascade covers a sphere of what the camera sees, and its map is drawn from
+// the sun's side of it. A caster casts into the sphere from anywhere between
+// it and the sun -- a tower beside the camera onto ground a hundred metres off
+// at a low sun, a slab three metres over a floor the far cascade covers. The
+// test was the sphere alone, so such a caster was dropped from that cascade's
+// map and its shadow stopped where the cascade began.
+//
+// `sweep` is from the sphere's centre towards the sun, as far as the map's
+// depth reaches: the caster is kept when it touches the sphere anywhere along
+// it. Zero is the sphere itself, which is the whole of a lamp's reach.
+[[nodiscard]] constexpr bool casterReaches(const core::Vec3& cullCentre, f32 cullRadius, const core::Vec3& sweep,
+                                           const core::Vec3& casterCentre, f32 casterRadius) noexcept
+{
+    const core::Vec3 offset = casterCentre - cullCentre;
+    const f32 length = core::dot(sweep, sweep);
+    f32 along = 0.0f;
+    if (length > 0.0f) {
+        along = core::dot(offset, sweep) / length;
+        along = along < 0.0f ? 0.0f : (along > 1.0f ? 1.0f : along);
+    }
+    const core::Vec3 nearest = offset - sweep * along;
+    const f32 reach = cullRadius + casterRadius;
+    return core::dot(nearest, nearest) <= reach * reach;
+}
+
 // The residual depth bias, in METRES rather than in depth units. Depth units
 // mean different things in different cascades, because `kShadowCasterMargin`
 // makes each cascade's depth range depend on its radius -- a constant in that

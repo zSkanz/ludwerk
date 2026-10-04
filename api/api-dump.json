@@ -376,6 +376,11 @@
           "Default": "true"
         },
         {
+          "Name": "CastShadow",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
           "Name": "CollisionGroup",
           "Type": "string",
           "Default": "\"Default\""
@@ -3887,7 +3892,7 @@
         {
           "Name": "GetStats",
           "Parameters": [],
-          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number }"],
+          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number }"],
           "ThreadSafety": "Unsafe"
         },
         {
@@ -7985,6 +7990,75 @@
       ],
       "Methods": [],
       "Events": []
+    },
+    {
+      "Name": "UnreliableRemoteEvent",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "FireAllClients",
+          "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FireClient",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FireServer",
+          "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "ClientReceived",
+          "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ]
+        },
+        {
+          "Name": "ServerReceived",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ]
+        }
+      ]
     },
     {
       "Name": "VectorForce",

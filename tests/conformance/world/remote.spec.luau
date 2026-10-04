@@ -121,6 +121,104 @@ describe("remote events", function()
     end)
 end)
 
+describe("unreliable remote events", function()
+    it("delivers to this machine's own listeners, as a reliable event does", function()
+        local fast = Instance.new("UnreliableRemoteEvent")
+        fast.Parent = workspace
+        local from: any = nil
+        local up: { any } = {}
+        local down: { any } = {}
+        fast.ServerReceived:Connect(function(player, where, health)
+            from = player
+            up = { where, health }
+        end)
+        fast.ClientReceived:Connect(function(text)
+            table.insert(down, text)
+        end)
+        fast:FireServer(vector.create(4, 5, 6), 80)
+        fast:FireClient(NetworkService.LocalPlayer :: Player, "just you")
+        fast:FireAllClients("everyone")
+        step(2)
+        -- No wire to cross, so nothing is lost: one script runs solo and in a match.
+        expect(from):ToBe(NetworkService.LocalPlayer)
+        expect(up[1]):ToBe(vector.create(4, 5, 6))
+        expect(up[2]):ToBe(80)
+        expect(#down):ToBe(2)
+        expect(down[1]):ToBe("just you")
+        expect(down[2]):ToBe("everyone")
+        fast:Destroy()
+    end)
+
+    it("carries a buffer, byte for byte", function()
+        local fast = Instance.new("UnreliableRemoteEvent")
+        fast.Parent = workspace
+        local packed = buffer.create(12)
+        buffer.writeu16(packed, 0, 513)
+        buffer.writef32(packed, 2, 1.5)
+        buffer.writei8(packed, 11, -7)
+        local got: buffer? = nil
+        local inside: buffer? = nil
+        fast.ClientReceived:Connect(function(bytes: buffer, more: { part: buffer })
+            got = bytes
+            inside = more.part
+        end)
+        fast:FireAllClients(packed, { part = buffer.create(3) })
+        step(2)
+        expect(got ~= nil):ToBe(true)
+        if got and inside then
+            -- A copy, as every value that crosses is.
+            expect(got ~= packed):ToBe(true)
+            expect(buffer.len(got)):ToBe(12)
+            expect(buffer.readu16(got, 0)):ToBe(513)
+            expect(buffer.readf32(got, 2)):ToBe(1.5)
+            expect(buffer.readi8(got, 11)):ToBe(-7)
+            expect(buffer.len(inside)):ToBe(3)
+        end
+        fast:Destroy()
+    end)
+
+    it("keeps nothing for a listener that connects later", function()
+        local fast = Instance.new("UnreliableRemoteEvent")
+        fast.Parent = workspace
+        fast:FireAllClients("too early")
+        step(2)
+        local heard: { string } = {}
+        fast.ClientReceived:Connect(function(text)
+            table.insert(heard, text)
+        end)
+        step(2)
+        -- A reliable event keeps the call for its first listener; this one is gone.
+        expect(#heard):ToBe(0)
+        fast:FireAllClients("now")
+        step(2)
+        expect(#heard):ToBe(1)
+        expect(heard[1]):ToBe("now")
+        fast:Destroy()
+    end)
+
+    it("refuses a message over sixteen kibibytes, and what cannot travel", function()
+        local fast = Instance.new("UnreliableRemoteEvent")
+        fast.Parent = workspace
+        local anyFast = fast :: any
+        expect(function()
+            anyFast:FireServer(string.rep("x", 17000))
+        end):ToThrow()
+        expect(function()
+            anyFast:FireServer(function() end)
+        end):ToThrow()
+        -- Under the limit it goes.
+        anyFast:FireServer(string.rep("x", 15000))
+        fast:Destroy()
+    end)
+
+    it("counts what it sends in GetStats", function()
+        local stats = NetworkService:GetStats()
+        expect(type(stats.UnreliableSent)):ToBe("number")
+        expect(type(stats.UnreliableReceived)):ToBe("number")
+        expect(type(stats.UnreliableDropped)):ToBe("number")
+    end)
+end)
+
 describe("remote functions", function()
     it("answers InvokeServerAsync with what OnServerInvoke returned, as the local player", function()
         local remote = Instance.new("RemoteFunction")

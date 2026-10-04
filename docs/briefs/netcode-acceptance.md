@@ -110,9 +110,14 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## F -- unreliable remote events (N10, an amendment to ADR 0077)
 
-- [ ] A class beside `RemoteEvent` with its surface, its own channel without
+- [x] A class beside `RemoteEvent` with its surface, its own channel without
   retransmission, never fragmented on the reliable path, counted in
-  `GetStats()`; a spec over a lossy transport.
+  `GetStats()`; a spec over a lossy transport. **ADR 0161**:
+  `UnreliableRemoteEvent`, channel 4 (unreliable, sequenced), messages 25 and
+  26, protocol 38; sent once and never held, the newest wins, at most 16 KiB.
+  Over a link that loses a third and reorders a fifth, the unreliable messages
+  that arrive are whole and never older than the last, and every reliable one
+  arrives in order; a 15 KB message crosses the real transport in fragments.
 
 ## G -- lag compensation for hits (an amendment to ADRs 0076 and 0133)
 

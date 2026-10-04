@@ -300,6 +300,9 @@ struct DrawItem
     // a submission that re-derived the answer could disagree with the order it
     // is walking.
     bool transparent = false;
+    // `BasePart.CastShadow`: false for a part its game asked to cast none.
+    // True for everything that is not a part -- the ground, the blocks, a rope.
+    bool castShadow = true;
     // The draw's world bounds as a sphere, in the snapshot's camera-relative
     // space. A sphere rather than the box it came from, because every consumer
     // is a distance test: the shadow pass rejects a caster against a cascade's
@@ -367,9 +370,13 @@ struct DrawItem
 // nearly hidden should not darken the ground like a block either. What blends
 // casts none, which is the default of the engines this follows; a coloured
 // shadow through glass is a feature of its own.
+//
+// **And what its game switched off** (`BasePart.CastShadow`): a muzzle flash,
+// a blade's trail, a ring on the ground -- solid, lit, and not a thing that
+// has a shadow.
 [[nodiscard]] constexpr bool castsShadow(const DrawItem& draw) noexcept
 {
-    return !draw.transparent;
+    return !draw.transparent && draw.castShadow;
 }
 
 // One terrain, as the renderer needs it beyond its meshes: the palette its

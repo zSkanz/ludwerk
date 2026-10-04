@@ -485,3 +485,31 @@ TEST_CASE("the penumbra is the engine's radius at the default softness and a qua
     CHECK(nearly(render::shadowPenumbra(1.0f), 0.25f));
     CHECK(render::shadowPenumbra(0.0f) == 0.0f);
 }
+
+TEST_CASE("D537: a caster between a cascade's sphere and the sun reaches it, and one behind it does not")
+{
+    using engine::core::Vec3;
+    // A cascade's sphere of ten metres at the origin, under a sun straight up,
+    // its map reaching thirty-five metres above the centre.
+    const Vec3 centre{0.0f, 0.0f, 0.0f};
+    const float radius = 10.0f;
+    const Vec3 sweep{0.0f, 35.0f, 0.0f};
+
+    // Inside the sphere: it always did.
+    CHECK(engine::render::casterReaches(centre, radius, sweep, Vec3{3.0f, 2.0f, 0.0f}, 1.0f));
+    // **Above the sphere, between it and the sun**: a slab over ground the
+    // cascade covers. The sphere alone dropped it, and its shadow with it.
+    CHECK(engine::render::casterReaches(centre, radius, sweep, Vec3{3.0f, 20.0f, 0.0f}, 1.0f));
+    CHECK_FALSE(engine::render::casterReaches(centre, radius, Vec3{}, Vec3{3.0f, 20.0f, 0.0f}, 1.0f));
+    // As far as the map's depth, and its own radius past it.
+    CHECK(engine::render::casterReaches(centre, radius, sweep, Vec3{0.0f, 45.5f, 0.0f}, 1.0f));
+    CHECK_FALSE(engine::render::casterReaches(centre, radius, sweep, Vec3{0.0f, 47.0f, 0.0f}, 1.0f));
+    // Beside the column the sun's light comes down: nothing of it lands inside.
+    CHECK_FALSE(engine::render::casterReaches(centre, radius, sweep, Vec3{12.0f, 20.0f, 0.0f}, 1.0f));
+    CHECK(engine::render::casterReaches(centre, radius, sweep, Vec3{10.5f, 20.0f, 0.0f}, 1.0f));
+    // Behind the sphere, away from the sun: its shadow falls further away still.
+    CHECK_FALSE(engine::render::casterReaches(centre, radius, sweep, Vec3{0.0f, -12.0f, 0.0f}, 1.0f));
+    // A lamp's cull has no sweep: a sphere, as before.
+    CHECK(engine::render::casterReaches(centre, radius, Vec3{}, Vec3{0.0f, 10.5f, 0.0f}, 1.0f));
+    CHECK_FALSE(engine::render::casterReaches(centre, radius, Vec3{}, Vec3{0.0f, 11.5f, 0.0f}, 1.0f));
+}

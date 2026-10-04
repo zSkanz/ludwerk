@@ -1224,6 +1224,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 .voxelBlock = false,
             });
             out.draws.back().motionKey = motionKeyOf(id);
+            out.draws.back().castShadow = part->castShadow;
         }
     });
 
@@ -1820,6 +1821,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             .voxelBlock = false,
         });
         out.draws.back().motionKey = motionKeyOf(id);
+        out.draws.back().castShadow = part.castShadow;
     });
 
     // --- Ropes, rods and springs (ADR 0127) -----------------------------------

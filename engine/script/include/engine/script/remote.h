@@ -23,6 +23,9 @@ namespace engine::script {
 
 // The largest payload one message may carry, and how deep its tables may nest.
 inline constexpr core::usize MaxRemotePayload = 64u * 1024u;
+// And one an `UnreliableRemoteEvent` may (ADR 0161): past a packet the
+// transport sends a message in fragments, and it is lost whole when one is.
+inline constexpr core::usize MaxUnreliableRemotePayload = 16u * 1024u;
 inline constexpr int MaxRemoteDepth = 8;
 // How many values one call may carry: the count is a byte on the wire.
 inline constexpr int MaxRemoteArguments = 255;
@@ -31,9 +34,10 @@ inline constexpr int MaxRemoteArguments = 255;
 // travel with a keyed error at the call**, so the mistake is reported where it
 // was made: a function, a thread, a userdata that is not an instance, a table
 // nested past `MaxRemoteDepth` or containing itself, or a payload past
-// `MaxRemotePayload`.
+// `MaxRemotePayload` -- `MaxUnreliableRemotePayload` for an unreliable event,
+// with an error that says which.
 void encodeRemoteArguments(lua_State* L, int first, int count, std::vector<core::u8>& payload,
-                           std::vector<core::InstanceId>& refs);
+                           std::vector<core::InstanceId>& refs, bool unreliable = false);
 
 // Pushes the values a payload holds and answers how many, or -1 -- with nothing
 // pushed -- when the payload is malformed: it came off the network, and a

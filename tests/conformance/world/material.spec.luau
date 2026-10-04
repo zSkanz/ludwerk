@@ -318,6 +318,26 @@ describe("surface shader parameters", function()
     end)
 end)
 
+describe("BasePart.CastShadow", function()
+    it("is on for every kind of part until a game says otherwise", function()
+        local part = Instance.new("Part")
+        local mesh = Instance.new("MeshPart")
+        expect(part.CastShadow):ToBe(true)
+        expect(mesh.CastShadow):ToBe(true)
+        part.CastShadow = false
+        expect(part.CastShadow):ToBe(false)
+        -- A copy keeps it, as it keeps everything a part is.
+        local copy = part:Clone() :: Part
+        expect(copy.CastShadow):ToBe(false)
+        expect(function()
+            (part :: any).CastShadow = "no"
+        end):ToThrow()
+        part:Destroy()
+        mesh:Destroy()
+        copy:Destroy()
+    end)
+end)
+
 describe("a part's own surface shader parameters", function()
     it("set, read and clear a parameter the material lets a part change", function()
         local wave = part()

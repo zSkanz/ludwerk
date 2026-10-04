@@ -1171,6 +1171,19 @@ if(ENG_BUILD_TESTS)
         RUN_SERIAL TRUE
         TIMEOUT 240)
 
+    # `BasePart.CastShadow` under the sun and under a lamp, and the sun's
+    # shadow under an orthographic camera at all (D536): see the driver.
+    add_test(NAME cast_shadow_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/castshadow
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/cast-shadow
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_cast_shadow_gate.cmake)
+    set_tests_properties(cast_shadow_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # A window the system holds -- its title bar held, on Windows -- does not
     # stop the loop (D535): see the driver. Timed, so alone.
     if(WIN32)
@@ -1809,7 +1822,8 @@ if(ENG_BUILD_TESTS)
         terrain_gallery_holes terrain_shadow_acne mesh_shadow_acne skinned_crowd_runs
         terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
-        editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived)
+        editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived
+        decal_blend_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d)
     option(ENG_TEST_GPU_LOCK "Serialise the tests that draw on a real GPU" ${WIN32})
     if(APPLE)
         set(ENG_TEST_GPU_LOCK ON)

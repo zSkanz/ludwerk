@@ -1,7 +1,7 @@
 # icons/ — the editor's icon themes
 
-> **Current artwork: Orbit (updated 2026-10-03).** All 273 IDs resolve to
-> 252 geometric drawings. Includes the new UIGradient/UIStroke designs and
+> **Current artwork: Orbit (updated 2026-10-03).** All 274 IDs resolve to
+> 253 geometric drawings. Includes the new UIGradient/UIStroke designs and
 > reserved artwork for saves, foliage, water, editable media, video, actors,
 > and the planned Toolkit (ADRs 0126?0132).
 > See [the style and exact prompt](../art/editor-icons/orbit/STYLE.md) and

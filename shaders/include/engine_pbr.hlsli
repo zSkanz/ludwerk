@@ -102,7 +102,9 @@ cbuffer GpuFrameUniforms : register(b0, space3)
     // off, which zeroes the fog factor without the shader testing for it.
     float4 FogRange;
     // x is how many lights the frame carries at all; a scene with none skips the
-    // cluster lookup entirely.
+    // cluster lookup entirely. yzw is the camera's forward axis under an
+    // ORTHOGRAPHIC projection, and zero under a perspective one (D536): see
+    // `viewDepthOf`.
     float4 LightCountUnused;
     // x how many mip levels the prefiltered environment has, y how strongly it
     // contributes, z and w unused.

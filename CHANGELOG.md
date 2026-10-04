@@ -27,6 +27,9 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   its stamp's is removed: the child is the copy's own, or the stamp's child is
   disabled in it, and the copy keeps following its stamp. A stamp may hold
   copies of other stamps; one that holds a copy of itself is refused.
+- **The wire is protocol 38** (ADR 0161): the channel and the two messages of
+  `UnreliableRemoteEvent`. A client and a server of different builds refuse
+  each other, and say so.
 - **The wire is protocol 36**: a client and a server of different builds refuse
   each other -- and now say so (`JoinFailed`, "another version of the game").
 - **Teams are withdrawn** (ADR 0099, amended by the owner): `TeamService`,
@@ -191,6 +194,19 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`BasePart.CastShadow`**: whether a part casts a shadow, into the sun's and
+  every lamp's -- on by default, off for what is light or an effect. It
+  replicates, a streamed world's records keep it, and it is under Appearance
+  in the editor.
+- **Remote messages carry buffers**: a `buffer` is a value a `RemoteEvent`, an
+  `UnreliableRemoteEvent` and a `RemoteFunction` take, byte for byte.
+- **`UnreliableRemoteEvent`** (ADR 0161): a `RemoteEvent` for what a game sends
+  many times a second and replaces each time. A message is sent once and never
+  again, so a lost one holds nothing else up; one that arrives after a later
+  one is dropped; nothing is kept for an event the other side has not got or
+  is not listening for; at most 16 KiB, refused at the call past it
+  (`net.err.unreliable_too_large`). `NetworkService:GetStats()` gains
+  `UnreliableSent`, `UnreliableReceived` and `UnreliableDropped`.
 - **Particles take a picture, land, and run on the GPU** (ADR 0160).
   `ParticleEmitter` gains:
   - `Texture`, and a flipbook over it (`FlipbookColumns`, `FlipbookRows`,
@@ -1115,6 +1131,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **The sun's shadows under an orthographic camera** (D536). A camera looking
+  down from more than about fifteen metres -- a strategy game's, a map's -- drew
+  no shadow of the sun at all, and chose every lamp from the nearest slice of
+  the light grid: a fragment's distance was read from a value that is 1 under
+  an orthographic projection.
+- **A shadow no longer stops where a cascade begins** (D537). What stood
+  between a shadow cascade and the sun, outside the cascade's own sphere --
+  a tower beside the camera, at a low sun, onto ground far away -- was left
+  out of that cascade's map. Casters are now kept along the sun's light.
 - **A window held by its title bar no longer stops the game** (D535). On
   Windows, holding or dragging a window's title bar, sizing it, or opening its
   menu stopped the whole main loop until the hand let go -- and a host that

@@ -553,6 +553,17 @@ local function generate(target: Module)
     emit(`#include "engine/scene/class_registry.h"`)
     emit(`#include "engine/scene/value.h"`)
     emit("")
+    -- **Measured, 2026-10-04**: MSVC at /O2 spent ten minutes of one core on
+    -- the scene module's file -- two functions of thousands of statements
+    -- each -- in every profile of every build, with every target behind it
+    -- waiting. They run once, at start.
+    emit("// **Not optimised by MSVC.** The functions below are thousands of statements")
+    emit("// each, run once at start; its optimiser took ten minutes over the largest of")
+    emit("// these files, and nothing a frame runs is in them.")
+    emit("#if defined(_MSC_VER) && !defined(__clang__)")
+    emit('#pragma optimize("", off)')
+    emit("#endif")
+    emit("")
     emit(`namespace engine::{target.Name}::generated`)
     emit("{")
     emit("")

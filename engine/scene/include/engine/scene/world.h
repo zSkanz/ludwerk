@@ -202,6 +202,9 @@ struct RemoteMessage
     u32 call = 0;
     bool reply = false;
     bool failed = false;
+    // From an `UnreliableRemoteEvent` (ADR 0161): sent once, on a channel
+    // that is never sent again, and never held for anything.
+    bool unreliable = false;
     // How many sends it has waited through for its event to reach the network:
     // an event created since the authority last captured has no network id
     // yet, and a replica not yet welcomed has nobody to send to.
@@ -388,6 +391,12 @@ struct EngineState
         f64 resimulationsPerSecond = 0.0;
         f64 resimulatedTicksPerSecond = 0.0;
         f64 resimulationMs = 0.0;
+        // `UnreliableRemoteEvent` messages (ADR 0161): what this machine sent,
+        // took in, and refused or dropped itself. What the network lost in
+        // between is the loss above.
+        u64 unreliableSent = 0;
+        u64 unreliableReceived = 0;
+        u64 unreliableDropped = 0;
     };
     NetworkStats networkStats;
 

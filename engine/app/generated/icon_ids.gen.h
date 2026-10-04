@@ -263,6 +263,7 @@ inline constexpr std::string_view ClassUISizeConstraint = "class.UISizeConstrain
 inline constexpr std::string_view ClassUIStroke = "class.UIStroke";
 inline constexpr std::string_view ClassUITextSizeConstraint = "class.UITextSizeConstraint";
 inline constexpr std::string_view ClassUnionOperation = "class.UnionOperation";
+inline constexpr std::string_view ClassUnreliableRemoteEvent = "class.UnreliableRemoteEvent";
 inline constexpr std::string_view ClassVectorForce = "class.VectorForce";
 inline constexpr std::string_view ClassVideoPlayer = "class.VideoPlayer";
 inline constexpr std::string_view ClassViewportFrame = "class.ViewportFrame";

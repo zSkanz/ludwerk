@@ -1121,6 +1121,12 @@ declare extern type BasePart extends PVInstance with
     --- property replaces the whole set and checks only that every entry is a parameter with a value of
     --- its kind.
     MaterialParameters: MaterialParameters
+    --- Whether the part casts a shadow -- into the sun's shadow and every lamp's. Off for what is light
+    --- or has no weight in the scene: a muzzle flash, a blade's trail, a pickup's glow, a ring on the
+    --- ground under a boss. It changes only what the part casts: a part with this off is still drawn,
+    --- still lit, and still receives the shadows of others. A part that is see-through casts none
+    --- whatever this says, and a hidden one draws nothing at all.
+    CastShadow: boolean
     --- Whether the simulation moves this part. An anchored part is immovable scenery that other parts
     --- collide with and gravity ignores -- not a very heavy part, a different kind of body -- so
     --- writing this rebuilds it in the simulation and keeps its transform.
@@ -4362,7 +4368,7 @@ declare extern type NetworkService extends Instance with
     --- stepped them again and the ticks it stepped, and what one took on average in milliseconds
     --- (`ResimulationTime`). On an authority, the worst peer's link and the deepest queue. All zero
     --- solo.
-    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number }
+    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number }
     --- Connects to a server at `address` (`host` or `host:port`), or to `[network] server` from
     --- `project.toml` with none. **Joining replaces this machine's scene with the server's**: what it
     --- replicates arrives, and server code stops, since this machine no longer decides the world.
@@ -4393,6 +4399,25 @@ declare extern type RemoteEvent extends Instance with
     function FireClient(self, player: Player, ...: any): ()
     --- Sends the arguments to every player's machine, a host's own included. Only the authority speaks
     --- to clients: a replica calling this is refused.
+    function FireAllClients(self, ...: any): ()
+end
+
+declare extern type UnreliableRemoteEvent extends Instance with
+    --- Fires on the authority when a player's machine's `FireServer` arrives, with the player who sent
+    --- it first. Trust nothing else in it.
+    read ServerReceived: Signal<(Player, ...any)>
+    --- Fires on a player's machine when the authority's `FireClient` for this player, or its
+    --- `FireAllClients`, arrives.
+    read ClientReceived: Signal<...any>
+    --- Sends the arguments to the authority once, where `ServerReceived` fires with this machine's
+    --- player first -- if it arrives. On an authority with a player of its own it is delivered there
+    --- directly; a dedicated server has no player to send as, and refuses.
+    function FireServer(self, ...: any): ()
+    --- Sends the arguments to one player's machine once, where `ClientReceived` fires if it arrives.
+    --- Only the authority speaks to clients: a replica calling this is refused.
+    function FireClient(self, player: Player, ...: any): ()
+    --- Sends the arguments to every player's machine once, a host's own included. Only the authority
+    --- speaks to clients: a replica calling this is refused.
     function FireAllClients(self, ...: any): ()
 end
 
@@ -6074,6 +6099,7 @@ declare Instance: {
         & (("WaterWave") -> WaterWave)
         & (("WaterPoint") -> WaterPoint)
         & (("RemoteEvent") -> RemoteEvent)
+        & (("UnreliableRemoteEvent") -> UnreliableRemoteEvent)
         & (("RemoteFunction") -> RemoteFunction),
     stamp: (name: string, linked: boolean?, parameters: { [string]: string | number | boolean | vector | Color3 }?) -> Instance,
 }

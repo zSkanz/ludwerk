@@ -1346,6 +1346,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     const rhi::DeviceResult device = createDevice({.backend = options.backend, .debug = gpuDebug}, &error);
     if (device == nullptr)
         return error;
+    // **What draws, said once** -- a card, or a software rasteriser standing in
+    // for one: what tells a slow frame from a frame the CPU drew, in a report
+    // and in a test that holds a time. A device with no name says nothing.
+    if (const std::string_view adapter = device->adapterName(); !adapter.empty()) {
+        const std::array<I18nArg, 2> adapterArgs{I18nArg{"adapter", adapter}, I18nArg{"driver", device->driverName()}};
+        core::log(LogLevel::Info, ENG_TR("engine.info.graphics_adapter"), adapterArgs);
+    }
 
     if (!options.headless) {
         const std::array<I18nArg, 1> titleArgs{I18nArg{"version", ENG_VERSION_STRING}};

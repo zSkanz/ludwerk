@@ -34,6 +34,8 @@ constexpr usize TagRefBytes = 4;
 constexpr u32 FlagAnchored = 1u << 0;
 constexpr u32 FlagCanCollide = 1u << 1;
 constexpr u32 FlagCanQuery = 1u << 2;
+// Set for a part that casts NO shadow: a record from before the bit casts one.
+constexpr u32 FlagNoShadow = 1u << 3;
 
 void writeU32(std::vector<std::byte>& out, u32 value)
 {
@@ -193,7 +195,7 @@ std::vector<std::byte> encodeChunk(const Chunk& chunk)
         writeU32(out, instance.shape);
         writeU32(out, instance.collisionFidelity);
         writeU32(out, (instance.anchored ? FlagAnchored : 0u) | (instance.canCollide ? FlagCanCollide : 0u) |
-                          (instance.canQuery ? FlagCanQuery : 0u));
+                          (instance.canQuery ? FlagCanQuery : 0u) | (instance.castShadow ? 0u : FlagNoShadow));
         writeU32(out, instance.name);
         writeU32(out, instance.meshContent);
         writeU32(out, instance.collisionGroup);
@@ -302,6 +304,7 @@ std::optional<core::EngineError> decodeChunk(std::span<const std::byte> bytes, C
         instance.anchored = (flags & FlagAnchored) != 0;
         instance.canCollide = (flags & FlagCanCollide) != 0;
         instance.canQuery = (flags & FlagCanQuery) != 0;
+        instance.castShadow = (flags & FlagNoShadow) == 0;
         instance.name = reader.u32v();
         instance.meshContent = reader.u32v();
         instance.collisionGroup = reader.u32v();

@@ -97,8 +97,8 @@ struct Match
         serverTransport = loss != nullptr ? net::createLossyTransport(net::createMemoryTransport(network), *loss)
                                           : net::createMemoryTransport(network);
         REQUIRE_FALSE(
-            serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 4}).has_value());
-        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+            serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
+        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
         net::PeerId toServer;
         REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
         authority.emplace(*serverTransport);
@@ -236,8 +236,8 @@ TEST_CASE("a peer speaking another protocol is refused before anything is parsed
     auto network = net::createMemoryNetwork();
     auto serverTransport = net::createMemoryTransport(network);
     auto rogue = net::createMemoryTransport(network);
-    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 4}).has_value());
-    REQUIRE_FALSE(rogue->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
+    REQUIRE_FALSE(rogue->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
     net::PeerId toServer;
     REQUIRE_FALSE(rogue->connect("memory", Port, toServer).has_value());
 
@@ -449,8 +449,8 @@ TEST_CASE("a joined replica is a player on the authority, and what it does arriv
     auto network = net::createMemoryNetwork();
     auto serverTransport = net::createMemoryTransport(network);
     auto clientTransport = net::createMemoryTransport(network);
-    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 4}).has_value());
-    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
+    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
     net::PeerId toServer;
     REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
 
@@ -527,8 +527,8 @@ TEST_CASE("a character's transform replicates, because a CharacterBody carries B
     auto network = net::createMemoryNetwork();
     auto serverTransport = net::createMemoryTransport(network);
     auto clientTransport = net::createMemoryTransport(network);
-    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 4}).has_value());
-    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
+    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
     net::PeerId toServer;
     REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
 
@@ -657,8 +657,8 @@ struct PlayedMatch
             clientTransport = std::move(wrapped);
         }
         REQUIRE_FALSE(
-            serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 4}).has_value());
-        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+            serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
+        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
         REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
         host = scene::createPlayer(server.world, server.network, 1, true);
         me = scene::createPlayer(client.world, client.network, 0, true);
@@ -856,7 +856,7 @@ TEST_CASE("a connection still holding a player who is back already is let go")
     REQUIRE(token.valid());
 
     auto otherTransport = net::createMemoryTransport(match.network);
-    REQUIRE_FALSE(otherTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+    REQUIRE_FALSE(otherTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
     net::PeerId toServer;
     REQUIRE_FALSE(otherTransport->connect("memory", Port, toServer).has_value());
     RealSide other;
@@ -1631,6 +1631,26 @@ TEST_CASE("a replica's message reaches the authority from its own player, and an
     CHECK(match.replica->checksumFailures() == 0);
 }
 
+TEST_CASE("BasePart.CastShadow reaches a replica, and a change to it does")
+{
+    PlayedMatch match;
+    const core::InstanceId flash = match.part("Flash", core::DVec3{0.0, 1.0, 0.0});
+    const core::InstanceId crate = match.part("Crate", core::DVec3{4.0, 1.0, 0.0});
+    match.server.world.parts().find(flash)->castShadow = false;
+    match.run(3);
+    REQUIRE(match.copyOf(flash).valid());
+    REQUIRE(match.copyOf(crate).valid());
+    CHECK_FALSE(match.client.world.parts().find(match.copyOf(flash))->castShadow);
+    CHECK(match.client.world.parts().find(match.copyOf(crate))->castShadow);
+
+    match.server.world.parts().find(crate)->castShadow = false;
+    match.server.world.parts().find(flash)->castShadow = true;
+    match.run(3);
+    CHECK(match.client.world.parts().find(match.copyOf(flash))->castShadow);
+    CHECK_FALSE(match.client.world.parts().find(match.copyOf(crate))->castShadow);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
 TEST_CASE("an event created and fired in one tick is never named before the replica has it")
 {
     PlayedMatch match;
@@ -1647,6 +1667,202 @@ TEST_CASE("an event created and fired in one tick is never named before the repl
     const std::vector<scene::RemoteMessage>& received = match.client.world.engineState().remoteInbox;
     REQUIRE(received.size() == 1);
     CHECK(received[0].remote == match.copyOf(remote));
+}
+
+namespace {
+
+// An event of `className` under the server's workspace.
+[[nodiscard]] core::InstanceId eventOf(PlayedMatch& match, std::string_view className)
+{
+    const core::InstanceId event =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern(className)));
+    REQUIRE(event.valid());
+    REQUIRE_FALSE(match.server.world.setParent(event, match.server.workspace).has_value());
+    return event;
+}
+
+// A message carrying a number: the count byte the script module writes, then
+// the number in two bytes.
+[[nodiscard]] scene::RemoteMessage numbered(core::InstanceId remote, core::u16 number, bool unreliable)
+{
+    scene::RemoteMessage message;
+    message.remote = remote;
+    message.unreliable = unreliable;
+    message.payload = {1, static_cast<core::u8>(number & 0xff), static_cast<core::u8>(number >> 8)};
+    return message;
+}
+
+[[nodiscard]] core::u16 numberOf(const scene::RemoteMessage& message)
+{
+    REQUIRE(message.payload.size() == 3);
+    return static_cast<core::u16>(message.payload[1] | (message.payload[2] << 8));
+}
+
+// The numbers `inbox` holds for `remote`, in the order they arrived.
+[[nodiscard]] std::vector<core::u16> numbersFor(const std::vector<scene::RemoteMessage>& inbox, core::InstanceId remote)
+{
+    std::vector<core::u16> numbers;
+    for (const scene::RemoteMessage& message : inbox) {
+        if (message.remote == remote)
+            numbers.push_back(numberOf(message));
+    }
+    return numbers;
+}
+
+} // namespace
+
+TEST_CASE("N10: over a link that loses a third, unreliable messages arrive whole, in order and not all; reliable "
+          "ones all arrive")
+{
+    const net::LossConfig loss{.seed = 11, .dropPerMille = 330, .reorderPerMille = 200};
+    PlayedMatch match(&loss, &loss);
+    const core::InstanceId fast = eventOf(match, "UnreliableRemoteEvent");
+    const core::InstanceId sure = eventOf(match, "RemoteEvent");
+    match.run(60);
+    const core::InstanceId fastHere = match.copyOf(fast);
+    const core::InstanceId sureHere = match.copyOf(sure);
+    REQUIRE(fastHere.valid());
+    REQUIRE(sureHere.valid());
+    match.server.world.engineState().remoteInbox.clear();
+    match.client.world.engineState().remoteInbox.clear();
+
+    constexpr core::u16 Sent = 300;
+    for (core::u16 at = 1; at <= Sent; ++at) {
+        // Down to the replica, and up from it: one unreliable a tick, and a
+        // reliable one every tenth.
+        match.server.world.engineState().remoteOutbox.push_back(numbered(fast, at, true));
+        scene::RemoteMessage up = numbered(fastHere, at, true);
+        up.toServer = true;
+        match.client.world.engineState().remoteOutbox.push_back(up);
+        if (at % 10 == 0) {
+            match.server.world.engineState().remoteOutbox.push_back(numbered(sure, at / 10, false));
+            scene::RemoteMessage sureUp = numbered(sureHere, at / 10, false);
+            sureUp.toServer = true;
+            match.client.world.engineState().remoteOutbox.push_back(sureUp);
+        }
+        match.step();
+    }
+    match.run(120);
+
+    const auto check = [&](const std::vector<scene::RemoteMessage>& inbox, core::InstanceId unreliable,
+                           core::InstanceId reliable) {
+        const std::vector<core::u16> fastNumbers = numbersFor(inbox, unreliable);
+        CAPTURE(fastNumbers.size());
+        // Not all: a third is lost, and what arrived after a later one too.
+        CHECK(fastNumbers.size() < Sent);
+        CHECK(fastNumbers.size() > Sent / 4);
+        // **Never older than the last**: the newest wins.
+        CHECK(std::adjacent_find(fastNumbers.begin(), fastNumbers.end(), std::greater_equal<>()) == fastNumbers.end());
+        for (const scene::RemoteMessage& message : inbox) {
+            if (message.remote == unreliable)
+                CHECK(message.unreliable);
+        }
+        // And every reliable one, in the order it was sent.
+        const std::vector<core::u16> sureNumbers = numbersFor(inbox, reliable);
+        REQUIRE(sureNumbers.size() == Sent / 10);
+        for (core::u16 at = 0; at < Sent / 10; ++at)
+            CHECK(sureNumbers[at] == at + 1);
+    };
+    check(match.client.world.engineState().remoteInbox, fastHere, sureHere);
+    check(match.server.world.engineState().remoteInbox, fast, sure);
+
+    const Stats down = match.authority->stats();
+    const Stats up = match.replica->stats();
+    CHECK(down.unreliableSent == Sent);
+    CHECK(up.unreliableSent == Sent);
+    CHECK(up.unreliableReceived == numbersFor(match.client.world.engineState().remoteInbox, fastHere).size());
+    CHECK(down.unreliableReceived == numbersFor(match.server.world.engineState().remoteInbox, fast).size());
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("N10: an unreliable message is sent once or not at all -- never held for an event the network has not got")
+{
+    PlayedMatch match;
+    match.run(3);
+    // An event the network does not have: made, and not yet anywhere a
+    // replica is sent. A reliable message waits for it; this one does not.
+    const core::InstanceId fast =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("UnreliableRemoteEvent")));
+    REQUIRE(fast.valid());
+    match.server.world.engineState().remoteOutbox.push_back(numbered(fast, 1, true));
+    match.run(2);
+    CHECK(match.authority->stats().unreliableDropped == 1);
+    CHECK(match.authority->stats().unreliableSent == 0);
+    CHECK(match.server.world.engineState().remoteOutbox.empty());
+
+    // Put in the world and fired in one tick: it goes behind its own spawn.
+    REQUIRE_FALSE(match.server.world.setParent(fast, match.server.workspace).has_value());
+    match.server.world.engineState().remoteOutbox.push_back(numbered(fast, 2, true));
+    match.run(2);
+    REQUIRE(match.copyOf(fast).valid());
+    REQUIRE(match.client.world.engineState().remoteInbox.size() == 1);
+    CHECK(numberOf(match.client.world.engineState().remoteInbox[0]) == 2);
+    CHECK(match.client.world.engineState().remoteInbox[0].unreliable);
+    CHECK(match.client.world.engineState().remoteInbox[0].remote == match.copyOf(fast));
+
+    // To one player and not another.
+    match.client.world.engineState().remoteInbox.clear();
+    scene::RemoteMessage other = numbered(fast, 3, true);
+    other.userId = 99;
+    match.server.world.engineState().remoteOutbox.push_back(other);
+    match.run(2);
+    CHECK(match.client.world.engineState().remoteInbox.empty());
+
+    // An event a replica made itself is nobody's but its own.
+    const core::InstanceId mine =
+        match.client.world.create(match.client.classes.findId(match.client.atoms.intern("UnreliableRemoteEvent")));
+    REQUIRE(mine.valid());
+    scene::RemoteMessage up = numbered(mine, 4, true);
+    up.toServer = true;
+    match.client.world.engineState().remoteOutbox.push_back(up);
+    match.run(2);
+    CHECK(match.replica->stats().unreliableDropped == 1);
+    CHECK(match.client.world.engineState().remoteOutbox.empty());
+    CHECK(match.server.world.engineState().remoteInbox.empty());
+}
+
+TEST_CASE("N10: the kind is the event's -- and a client's unreliable flood is cut by the same budget")
+{
+    PlayedMatch match;
+    const core::InstanceId fast = eventOf(match, "UnreliableRemoteEvent");
+    const core::InstanceId sure = eventOf(match, "RemoteEvent");
+    match.run(3);
+    const core::InstanceId fastHere = match.copyOf(fast);
+    const core::InstanceId sureHere = match.copyOf(sure);
+    REQUIRE(fastHere.valid());
+    REQUIRE(sureHere.valid());
+
+    // An unreliable message naming a reliable event, and a reliable one naming
+    // an unreliable event: a client does not choose how an event is sent.
+    scene::RemoteMessage wrongFast = numbered(sureHere, 1, true);
+    wrongFast.toServer = true;
+    scene::RemoteMessage wrongSure = numbered(fastHere, 1, false);
+    wrongSure.toServer = true;
+    match.client.world.engineState().remoteOutbox.push_back(wrongFast);
+    match.client.world.engineState().remoteOutbox.push_back(wrongSure);
+    match.run(2);
+    CHECK(match.server.world.engineState().remoteInbox.empty());
+    CHECK(match.authority->stats().unreliableDropped == 1);
+    CHECK(match.authority->stats().messagesDropped == 1);
+
+    // The sender is the connection's player.
+    scene::RemoteMessage up = numbered(fastHere, 7, true);
+    up.toServer = true;
+    match.client.world.engineState().remoteOutbox.push_back(up);
+    match.run(2);
+    REQUIRE(match.server.world.engineState().remoteInbox.size() == 1);
+    CHECK(match.server.world.engineState().remoteInbox[0].player == match.remote());
+    CHECK(match.server.world.engineState().remoteInbox[0].toServer);
+    match.server.world.engineState().remoteInbox.clear();
+
+    // Past the budget, the rest is dropped.
+    match.run(30);
+    const core::u64 droppedBefore = match.authority->stats().unreliableDropped;
+    for (core::u32 at = 0; at < RemoteMessageBurst + 44; ++at)
+        match.client.world.engineState().remoteOutbox.push_back(up);
+    match.run(2);
+    CHECK(match.server.world.engineState().remoteInbox.size() == RemoteMessageBurst);
+    CHECK(match.authority->stats().unreliableDropped == droppedBefore + 44);
 }
 
 TEST_CASE("a question reaches the authority with its number, and its answer reaches only the asker")
@@ -2143,7 +2359,7 @@ TEST_CASE("D457: a client that joins late has the attributes as they stand, of t
     seedCatalog();
     auto network = net::createMemoryNetwork();
     auto serverTransport = net::createMemoryTransport(network);
-    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 4}).has_value());
+    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
 
     RealSide server;
     const core::InstanceId crate = server.world.create(server.classes.findId(server.atoms.intern("Part")));
@@ -2162,7 +2378,7 @@ TEST_CASE("D457: a client that joins late has the attributes as they stand, of t
 
     // And then somebody joins.
     auto clientTransport = net::createMemoryTransport(network);
-    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
     net::PeerId toServer;
     REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
     RealSide client;
@@ -2447,8 +2663,8 @@ struct FakeAuthority
     FakeAuthority()
     {
         seedCatalog();
-        REQUIRE_FALSE(server->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 4}).has_value());
-        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+        REQUIRE_FALSE(server->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
+        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
         net::PeerId toServer;
         REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
         replica.emplace(*clientTransport, toServer);
@@ -2591,7 +2807,7 @@ TEST_CASE("a connection that never says hello is let go, and a message naming to
 {
     PlayedMatch match;
     auto silent = net::createMemoryTransport(match.network);
-    REQUIRE_FALSE(silent->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+    REQUIRE_FALSE(silent->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
     net::PeerId toServer;
     REQUIRE_FALSE(silent->connect("memory", Port, toServer).has_value());
     match.authority->receive(match.server.world, match.server.workspace);
@@ -3572,12 +3788,12 @@ struct EnetMatch
         REQUIRE_FALSE(serverTransport
                           ->open(net::TransportConfig{.port = port,
                                                       .maxPeers = 4,
-                                                      .channels = 4,
+                                                      .channels = 5,
                                                       .timeoutMs = 10000,
                                                       .maxMessageBytes = MaxAuthorityMessageBytes,
                                                       .maxPeersPerAddress = MaxPeersPerAddress})
                           .has_value());
-        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
         REQUIRE_FALSE(clientTransport->connect("127.0.0.1", port, toServer).has_value());
         host = scene::createPlayer(server.world, server.network, 1, true);
         me = scene::createPlayer(client.world, client.network, 0, true);
@@ -3627,6 +3843,41 @@ double stepUntil(EnetMatch& match, double seconds, Done done)
 }
 
 } // namespace
+
+TEST_CASE("N10: a fifteen-kilobyte unreliable message crosses the real transport whole, both ways")
+{
+    // Past a packet the transport sends it in fragments, on the channel that
+    // is never sent again: thirteen of them here, and all arrive on a link
+    // that loses nothing.
+    EnetMatch match(47943);
+    const core::InstanceId fast =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("UnreliableRemoteEvent")));
+    REQUIRE(fast.valid());
+    REQUIRE_FALSE(match.server.world.setParent(fast, match.server.workspace).has_value());
+    const auto copy = [&] { return match.replica->localOf(match.authority->netIdOf(fast)); };
+    REQUIRE(stepUntil(match, 5.0, [&] { return copy().valid(); }) >= 0.0);
+
+    scene::RemoteMessage large;
+    large.remote = fast;
+    large.unreliable = true;
+    large.payload.resize(15u * 1024u);
+    for (usize at = 0; at < large.payload.size(); ++at)
+        large.payload[at] = static_cast<core::u8>(at * 31u + 7u);
+    scene::RemoteMessage up = large;
+    up.remote = copy();
+    up.toServer = true;
+    match.server.world.engineState().remoteOutbox.push_back(large);
+    match.client.world.engineState().remoteOutbox.push_back(up);
+    const double took = stepUntil(match, 5.0, [&] {
+        return !match.client.world.engineState().remoteInbox.empty() &&
+               !match.server.world.engineState().remoteInbox.empty();
+    });
+    REQUIRE(took >= 0.0);
+    CHECK(match.client.world.engineState().remoteInbox[0].payload == large.payload);
+    CHECK(match.server.world.engineState().remoteInbox[0].payload == large.payload);
+    CHECK(match.authority->stats().sendFailures == 0);
+    CHECK(match.replica->stats().sendFailures == 0);
+}
 
 TEST_CASE("NA1: a world of ten thousand parts is joined in seconds, over the real transport")
 {

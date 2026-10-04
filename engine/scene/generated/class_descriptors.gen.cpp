@@ -22,6 +22,13 @@
 #include "engine/scene/class_registry.h"
 #include "engine/scene/value.h"
 
+// **Not optimised by MSVC.** The functions below are thousands of statements
+// each, run once at start; its optimiser took ten minutes over the largest of
+// these files, and nothing a frame runs is in them.
+#if defined(_MSC_VER) && !defined(__clang__)
+#pragma optimize("", off)
+#endif
+
 namespace engine::scene::generated
 {
 
@@ -460,7 +467,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(moduleScriptDesc);
 
     // --- BasePart ---
-    static std::array<PropertyDesc, 22> basePartProperties;
+    static std::array<PropertyDesc, 23> basePartProperties;
     basePartProperties = {{
         PropertyDesc{
             .name = atoms.intern("CFrame"),
@@ -527,6 +534,17 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_material_parameters"),
             .get = native::getBasePartMaterialParameters,
             .set = native::setBasePartMaterialParameters,
+        },
+        PropertyDesc{
+            .name = atoms.intern("CastShadow"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the part casts a shadow -- into the sun's shadow and every lamp's. Off for what is light or has no weight in the scene: a muzzle flash, a blade's trail, a pickup's glow, a ring on the ground under a boss. It changes only what the part casts: a part with this off is still drawn, still lit, and still receives the shadows of others.\012\012A part that is see-through casts none whatever this says, and a hidden one draws nothing at all.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getBasePartCastShadow,
+            .set = native::setBasePartCastShadow,
         },
         PropertyDesc{
             .name = atoms.intern("Anchored"),
@@ -5742,10 +5760,55 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     remoteEventDesc.super = instanceClass;
     remoteEventDesc.flags = ClassFlags::None;
     remoteEventDesc.defaultName = atoms.intern("RemoteEvent");
-    remoteEventDesc.doc = "A message a game sends between machines (ADR 0077): \"I bought the sword\" from a client to the server, \"the round starts\" from the server to everyone. Create it on the authority under `Workspace` -- in a `Folder`, if you like -- and it reaches every replica like any instance; a replica finds it with `WaitForChild`.\012\012**A client says what it did, never what happened**: the authority learns who sent a message from the connection, not from anything in it, so one client cannot speak for another. What travels is values -- nil, booleans, numbers, strings, vectors, `Color3`, `CFrame`, `Vector2`, `UDim`, `UDim2`, enum items, instances and tables of them, eight deep -- and an instance arrives as the receiver's own copy, or nil where the receiver does not have it. A function, a thread or a table that refers to itself is refused at the call, and so is a message larger than 64 KiB.\012\012**One script runs solo, hosting and networked.** On an authority, `FireServer` reaches its own `ServerReceived` from its local player, and a host's messages to its own player reach its own `ClientReceived`. Messages are reliable, and delivered as deferred signals at the start of the tick after they arrive.";
+    remoteEventDesc.doc = "A message a game sends between machines (ADR 0077): \"I bought the sword\" from a client to the server, \"the round starts\" from the server to everyone. Create it on the authority under `Workspace` -- in a `Folder`, if you like -- and it reaches every replica like any instance; a replica finds it with `WaitForChild`.\012\012**A client says what it did, never what happened**: the authority learns who sent a message from the connection, not from anything in it, so one client cannot speak for another. What travels is values -- nil, booleans, numbers, strings, buffers, vectors, `Color3`, `CFrame`, `Vector2`, `UDim`, `UDim2`, enum items, instances and tables of them, eight deep -- and an instance arrives as the receiver's own copy, or nil where the receiver does not have it. A function, a thread or a table that refers to itself is refused at the call, and so is a message larger than 64 KiB.\012\012**One script runs solo, hosting and networked.** On an authority, `FireServer` reaches its own `ServerReceived` from its local player, and a host's messages to its own player reach its own `ClientReceived`. Messages are reliable, and delivered as deferred signals at the start of the tick after they arrive.";
     remoteEventDesc.methods = remoteEventMethods;
     remoteEventDesc.events = remoteEventEvents;
     classes.registerClass(remoteEventDesc);
+
+    // --- UnreliableRemoteEvent ---
+    static std::array<MethodDesc, 3> unreliableRemoteEventMethods;
+    unreliableRemoteEventMethods = {{
+        MethodDesc{
+            .name = atoms.intern("FireServer"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sends the arguments to the authority once, where `ServerReceived` fires with this machine's player first -- if it arrives. On an authority with a player of its own it is delivered there directly; a dedicated server has no player to send as, and refuses.",
+        },
+        MethodDesc{
+            .name = atoms.intern("FireClient"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sends the arguments to one player's machine once, where `ClientReceived` fires if it arrives. Only the authority speaks to clients: a replica calling this is refused.",
+        },
+        MethodDesc{
+            .name = atoms.intern("FireAllClients"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sends the arguments to every player's machine once, a host's own included. Only the authority speaks to clients: a replica calling this is refused.",
+        },
+    }};
+    static std::array<EventDesc, 2> unreliableRemoteEventEvents;
+    unreliableRemoteEventEvents = {{
+        EventDesc{
+            .name = atoms.intern("ServerReceived"),
+            .slot = 7,
+            .doc = "Fires on the authority when a player's machine's `FireServer` arrives, with the player who sent it first. Trust nothing else in it.",
+        },
+        EventDesc{
+            .name = atoms.intern("ClientReceived"),
+            .slot = 8,
+            .doc = "Fires on a player's machine when the authority's `FireClient` for this player, or its `FireAllClients`, arrives.",
+        },
+    }};
+    ClassDescriptor unreliableRemoteEventDesc;
+    unreliableRemoteEventDesc.name = atoms.intern("UnreliableRemoteEvent");
+    unreliableRemoteEventDesc.super = instanceClass;
+    unreliableRemoteEventDesc.flags = ClassFlags::None;
+    unreliableRemoteEventDesc.defaultName = atoms.intern("UnreliableRemoteEvent");
+    unreliableRemoteEventDesc.doc = "A `RemoteEvent` for what a game sends many times a second and replaces each time (ADR 0161): where a horde stands, where a player aims, a boss's health. **A message is sent once and may never arrive.** It is not sent again when the network loses it, so a lost one holds nothing else up -- a reliable message that is lost makes every reliable message behind it wait.\012\012**The newest wins**: a message that arrives after a later one is dropped rather than delivered late, across every unreliable event of the game. What a script hears is never older than what it heard before, and that is the only order there is.\012\012**Nothing is kept for later**: a message to a machine that does not have the event yet, or that nobody is listening for, is dropped.\012\012**At most 16 KiB of arguments**, refused at the call past that. A message larger than about 1 KB travels in pieces and is lost whole when any one is, so the larger it is the more often it is lost: send small, or in parts that each stand alone.\012\012Everything else is `RemoteEvent`'s: the values that travel, who may call what, and a sender the authority learns from the connection. Never use it for what must arrive.";
+    unreliableRemoteEventDesc.methods = unreliableRemoteEventMethods;
+    unreliableRemoteEventDesc.events = unreliableRemoteEventEvents;
+    classes.registerClass(unreliableRemoteEventDesc);
 
     // --- RemoteFunction ---
     static std::array<MethodDesc, 1> remoteFunctionMethods;

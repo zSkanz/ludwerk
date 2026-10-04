@@ -50,6 +50,9 @@ enum class Tag : u8
     UDim = 11,
     UDim2 = 12,
     EnumItem = 13,
+    // Bytes a game packed itself (ADR 0161, protocol 38): what a snapshot
+    // sent many times a second is, without a copy into a string first.
+    Buffer = 14,
 };
 
 [[nodiscard]] World& world(lua_State* L) noexcept
@@ -80,13 +83,20 @@ struct Encoder
     lua_State* L;
     std::vector<u8>& out;
     std::vector<core::InstanceId>& refs;
+    // An `UnreliableRemoteEvent`'s message: the smaller limit, and its error.
+    bool unreliable = false;
+
+    [[noreturn]] void tooLarge() const
+    {
+        const usize limit = unreliable ? MaxUnreliableRemotePayload : MaxRemotePayload;
+        const core::I18nArg args[] = {{"limit", static_cast<core::i64>(limit)}};
+        raise(L, unreliable ? ENG_TR("net.err.unreliable_too_large") : ENG_TR("net.err.remote_too_large"), args);
+    }
 
     void checkSize() const
     {
-        if (out.size() > MaxRemotePayload) {
-            const core::I18nArg args[] = {{"limit", static_cast<core::i64>(MaxRemotePayload)}};
-            raise(L, ENG_TR("net.err.remote_too_large"), args);
-        }
+        if (out.size() > (unreliable ? MaxUnreliableRemotePayload : MaxRemotePayload))
+            tooLarge();
     }
 
     void value(int index, int depth, bool key)
@@ -108,13 +118,23 @@ struct Encoder
         case LUA_TSTRING: {
             usize length = 0;
             const char* text = lua_tolstring(L, index, &length);
-            if (length > MaxRemotePayload) {
-                const core::I18nArg args[] = {{"limit", static_cast<core::i64>(MaxRemotePayload)}};
-                raise(L, ENG_TR("net.err.remote_too_large"), args);
-            }
+            if (length > (unreliable ? MaxUnreliableRemotePayload : MaxRemotePayload))
+                tooLarge();
             out.push_back(static_cast<u8>(Tag::String));
             putU32(out, static_cast<u32>(length));
             out.insert(out.end(), reinterpret_cast<const u8*>(text), reinterpret_cast<const u8*>(text) + length);
+            break;
+        }
+        case LUA_TBUFFER: {
+            if (key)
+                refuseKey(index);
+            usize length = 0;
+            const void* data = lua_tobuffer(L, index, &length);
+            if (length > (unreliable ? MaxUnreliableRemotePayload : MaxRemotePayload))
+                tooLarge();
+            out.push_back(static_cast<u8>(Tag::Buffer));
+            putU32(out, static_cast<u32>(length));
+            out.insert(out.end(), static_cast<const u8*>(data), static_cast<const u8*>(data) + length);
             break;
         }
         case LUA_TVECTOR: {
@@ -330,6 +350,16 @@ struct Decoder
             at += static_cast<usize>(length);
             return true;
         }
+        case Tag::Buffer: {
+            core::u64 length = 0;
+            if (!read(4, length) || bytes.size() - at < length)
+                return false;
+            void* data = lua_newbuffer(L, static_cast<usize>(length));
+            if (length != 0)
+                std::memcpy(data, bytes.data() + at, static_cast<usize>(length));
+            at += static_cast<usize>(length);
+            return true;
+        }
         case Tag::Vector: {
             std::array<float, 3> axes{};
             for (float& axis : axes) {
@@ -458,14 +488,15 @@ struct Decoder
     raise(L, ENG_TR("net.err.remote_authority_only"), args);
 }
 
-int remoteFireServer(lua_State* L)
+int fireServer(lua_State* L, bool unreliable)
 {
     const core::InstanceId remote = checkInstance(L, 1);
     World& w = world(L);
     scene::RemoteMessage message;
     message.remote = remote;
     message.toServer = true;
-    encodeRemoteArguments(L, 2, lua_gettop(L) - 1, message.payload, message.refs);
+    message.unreliable = unreliable;
+    encodeRemoteArguments(L, 2, lua_gettop(L) - 1, message.payload, message.refs, unreliable);
     if (onReplica(w)) {
         w.engineState().remoteOutbox.push_back(std::move(message));
         return 0;
@@ -480,7 +511,17 @@ int remoteFireServer(lua_State* L)
     return 0;
 }
 
-int remoteFireClient(lua_State* L)
+int remoteFireServer(lua_State* L)
+{
+    return fireServer(L, false);
+}
+
+int unreliableFireServer(lua_State* L)
+{
+    return fireServer(L, true);
+}
+
+int fireClient(lua_State* L, bool unreliable)
 {
     const core::InstanceId remote = checkInstance(L, 1);
     World& w = world(L);
@@ -492,7 +533,8 @@ int remoteFireClient(lua_State* L)
         raise(L, ENG_TR("net.err.remote_not_player"));
     scene::RemoteMessage message;
     message.remote = remote;
-    encodeRemoteArguments(L, 3, lua_gettop(L) - 2, message.payload, message.refs);
+    message.unreliable = unreliable;
+    encodeRemoteArguments(L, 3, lua_gettop(L) - 2, message.payload, message.refs, unreliable);
     if (who->local) {
         w.engineState().remoteInbox.push_back(std::move(message));
         return 0;
@@ -504,7 +546,17 @@ int remoteFireClient(lua_State* L)
     return 0;
 }
 
-int remoteFireAllClients(lua_State* L)
+int remoteFireClient(lua_State* L)
+{
+    return fireClient(L, false);
+}
+
+int unreliableFireClient(lua_State* L)
+{
+    return fireClient(L, true);
+}
+
+int fireAllClients(lua_State* L, bool unreliable)
 {
     const core::InstanceId remote = checkInstance(L, 1);
     World& w = world(L);
@@ -512,13 +564,24 @@ int remoteFireAllClients(lua_State* L)
         refuseOnReplica(L, "FireAllClients");
     scene::RemoteMessage message;
     message.remote = remote;
-    encodeRemoteArguments(L, 2, lua_gettop(L) - 1, message.payload, message.refs);
+    message.unreliable = unreliable;
+    encodeRemoteArguments(L, 2, lua_gettop(L) - 1, message.payload, message.refs, unreliable);
     // A host's own player is a client too; a dedicated server has none.
     if (scene::localPlayerOf(w).valid())
         w.engineState().remoteInbox.push_back(message);
     if (networked(w))
         w.engineState().remoteOutbox.push_back(std::move(message));
     return 0;
+}
+
+int remoteFireAllClients(lua_State* L)
+{
+    return fireAllClients(L, false);
+}
+
+int unreliableFireAllClients(lua_State* L)
+{
+    return fireAllClients(L, true);
 }
 
 // --- RemoteFunction (ADR 0079) -------------------------------------------------
@@ -770,13 +833,16 @@ constexpr InstanceMethodBinding RemoteMethods[] = {
     {"RemoteEvent", "FireServer", remoteFireServer},
     {"RemoteEvent", "FireClient", remoteFireClient},
     {"RemoteEvent", "FireAllClients", remoteFireAllClients},
+    {"UnreliableRemoteEvent", "FireServer", unreliableFireServer},
+    {"UnreliableRemoteEvent", "FireClient", unreliableFireClient},
+    {"UnreliableRemoteEvent", "FireAllClients", unreliableFireAllClients},
     {"RemoteFunction", "InvokeServerAsync", remoteInvokeServer},
 };
 
 } // namespace
 
 void encodeRemoteArguments(lua_State* L, int first, int count, std::vector<u8>& payload,
-                           std::vector<core::InstanceId>& refs)
+                           std::vector<core::InstanceId>& refs, bool unreliable)
 {
     if (count > MaxRemoteArguments) {
         const core::I18nArg args[] = {{"count", static_cast<core::i64>(count)},
@@ -786,7 +852,7 @@ void encodeRemoteArguments(lua_State* L, int first, int count, std::vector<u8>& 
     payload.clear();
     refs.clear();
     payload.push_back(static_cast<u8>(std::max(count, 0)));
-    Encoder encoder{L, payload, refs};
+    Encoder encoder{L, payload, refs, unreliable};
     for (int at = 0; at < count; ++at)
         encoder.value(first + at, 0, false);
 }
@@ -892,6 +958,10 @@ void fireRemoteMessages(lua_State* L)
         // second. Kept in order, both ways, up to a bound; past it the call
         // is dropped, and the remote says so once.
         if (!instanceEventHeard(L, message.remote, event->slot)) {
+            // An unreliable one waits for nobody (ADR 0161): the next is on
+            // its way, and one kept would be delivered stale.
+            if (message.unreliable)
+                continue;
             const auto waiting = static_cast<usize>(std::count_if(
                 state.heldRemoteCalls.begin(), state.heldRemoteCalls.end(), [&](const scene::RemoteMessage& held) {
                     return held.remote == message.remote && held.toServer == message.toServer;

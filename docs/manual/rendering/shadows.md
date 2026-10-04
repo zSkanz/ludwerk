@@ -32,6 +32,30 @@ Lighting.GeographicLatitude = 45
 A low sun gives long shadows and a hard test of the shadow map; a sun overhead
 gives short ones and hides most of what a cascade split does.
 
+## What casts: `CastShadow`
+
+Every part casts a shadow -- a `Part`, a `MeshPart`, a character -- until it is
+told not to:
+
+```luau
+local flash = Instance.new("Part")
+flash.CastShadow = false   -- still drawn, still lit; it has no shadow
+```
+
+| What it is | `CastShadow` |
+|---|---|
+| Something with weight in the scene: a wall, a crate, a character | `true`, the default |
+| Light, or an effect: a muzzle flash, a blade's trail, a pickup's glow, a ring on the ground under a boss | `false` |
+
+It is read by the sun's shadow and by every lamp's, it replicates like any
+part of a part's look, and it changes only what the part **casts**: a part
+with it off still receives the shadows of others.
+
+A part that is see-through (`Transparency` above 0) casts no shadow whatever
+this says, and a hidden one draws nothing at all. Turn `CastShadow` off rather
+than fading a part by a few percent to lose its shadow: a faded part is drawn
+in the blended pass, sorted every frame, and does not batch.
+
 ## What the project controls
 
 Three dials, in `project.toml` under `[graphics]` and on the host's own command
@@ -72,8 +96,9 @@ the shadow crawling as the camera moves.
 
 ## Two honest gaps
 
-- **A transparent part casts a full shadow.** The shadow pass draws everything;
-  a half-transparent pane occludes completely.
+- **A see-through part casts no shadow at all.** A pane of glass does not
+  darken or tint what is behind it; a part is either solid and casts, or
+  blends and does not.
 - **An alpha-masked mesh material writes depth where its own fragments would
   have been discarded**, so a cut-out quad on a mesh casts the shadow of the
   whole quad. Blocks are the exception: a `Cutout` block type's shadow is drawn

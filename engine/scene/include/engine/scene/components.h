@@ -91,6 +91,9 @@ struct PartComponent
     // `Enum.PartShape`'s value. Stored as the raw item value rather than as an
     // enum class so that the generated accessor needs no per-enum C++ type.
     i32 shape = 0;
+    // `BasePart.CastShadow`: whether the part is drawn into the shadow maps --
+    // the sun's and the lamps'. On for everything until a game says otherwise.
+    bool castShadow = true;
 };
 
 // `MeshPart`'s geometry. The renderer resolves the URN to a loaded mesh and

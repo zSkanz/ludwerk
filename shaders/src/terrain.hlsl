@@ -172,7 +172,8 @@ float4 terrainDebugColor(TerrainInterpolants input, float3 normal)
         const float3 sunDirection = normalize(SunDirectionBrightness.xyz);
         const float sunNol = saturate(dot(normal, sunDirection));
         const float shadow = sampleSunShadow(ShadowMap, ShadowSampler, input.ShadingPosition, normal, sunNol,
-                                             input.ViewDepth, input.Position.xy);
+                                             viewDepthOf(input.ShadingPosition, input.ViewDepth),
+                                             input.Position.xy);
         const float contact =
             ContactShadowTexture.SampleLevel(ContactShadowSampler, input.Position.xy * ViewportParams.zw, 0.0f);
         // The map in red, the contact mask in green: yellow is lit by both.
@@ -526,7 +527,7 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     const float4 debugColor = terrainDebugColor(input, normal);
     if (debugColor.a >= 0.0f)
         return debugColor;
-    s_viewDepth = input.ViewDepth;
+    s_viewDepth = viewDepthOf(input.ShadingPosition, input.ViewDepth);
     const float3 dx = ddx(input.Ground);
     const float3 dy = ddy(input.Ground);
     float3 planes = abs(normal);

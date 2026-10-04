@@ -87,6 +87,9 @@ inline constexpr core::f64 MaxOwnedMetresPerTick = 2.0;
 inline constexpr u16 MaxRemoteHeldSends = 300;
 // The script module's own payload ceiling, plus the few bytes of its header.
 inline constexpr usize MaxRemoteWirePayload = 64u * 1024u + 16u;
+// An `UnreliableRemoteEvent`'s (ADR 0161): what the script module lets one
+// carry, and its count byte.
+inline constexpr usize MaxUnreliableWirePayload = 16u * 1024u + 16u;
 
 // **What one peer may cost an authority in one tick** (audit N1's review). A
 // client is not trusted to send one intent and one owned state a tick, or a
@@ -442,6 +445,11 @@ private:
         std::deque<Held> held;
         usize heldBytes = 0;
         u64 flushes = 0;
+        // Unreliable messages (ADR 0161): the number the next one to this
+        // peer carries, and the last one taken from it.
+        u16 unreliableOut = 0;
+        u16 unreliableIn = 0;
+        bool unreliableHeard = false;
     };
 
     // One captured instance, in the walk's pre-order: its id, which instance
@@ -710,6 +718,8 @@ private:
     void onVoxelTypes(scene::World& world, std::span<const u8> bytes);
     void onSceneChange(scene::World& world, std::span<const u8> bytes);
     void onAttributes(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
+    // An `UnreliableRemoteEvent` message (ADR 0161), into the world's inbox.
+    void onUnreliable(scene::World& world, std::span<const u8> payload);
     void sendOwned(const scene::World& world, u64 tick);
     void reconcile(scene::World& world, core::InstanceId character, const scene::CharacterReplayStart& authority);
     // The same for a character on the plane (D434): where the authority has
@@ -723,6 +733,11 @@ private:
     net::PeerId m_authority;
     bool m_connected = false;
     bool m_welcomed = false;
+    // Unreliable messages (ADR 0161): the number the next one sent carries,
+    // and the last one taken.
+    u16 m_unreliableOut = 0;
+    u16 m_unreliableIn = 0;
+    bool m_unreliableHeard = false;
     bool m_lost = false;
     // Welcomed at least once on any connection, so the next welcome is a rejoin.
     bool m_joinedBefore = false;

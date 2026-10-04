@@ -699,6 +699,9 @@ private:
     {
         Vec3 centre;
         f32 radius = 0.0f;
+        // From the centre towards the light, as far as its map's depth reaches
+        // (`casterReaches`, D537). Zero for a lamp: its sphere is its reach.
+        Vec3 sweep{};
     };
 
     void drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world, const MeshCache& meshes, const Mat4& viewProjection,
@@ -2850,6 +2853,10 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             if (!instanceable(next) || !(next.mesh == first.mesh) || next.section != first.section ||
                 world.familyOf(next.material) != world.familyOf(first.material) || (next.boneCount > 0) != skinned)
                 break;
+            // A run is drawn into a shadow map whole or not at all: one that
+            // casts and one that does not are two runs (`BasePart.CastShadow`).
+            if (next.castShadow != first.castShadow)
+                break;
             // A surface's colour is in its block, not in the instance's tint:
             // one material per run.
             const bool surfaced = first.material < materialSurface_.size() && materialSurface_[first.material] != 0;
@@ -3101,9 +3108,7 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         if (cull != nullptr) {
             const Vec3 centre = batch != nullptr ? batch->boundsCenter : draw.boundsCenter;
             const f32 radius = batch != nullptr ? batch->boundsRadius : draw.boundsRadius;
-            const Vec3 offset = centre - cull->centre;
-            const f32 reach = cull->radius + radius;
-            if (core::dot(offset, offset) > reach * reach)
+            if (!casterReaches(cull->centre, cull->radius, cull->sweep, centre, radius))
                 continue;
         }
 
@@ -6326,9 +6331,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // atlas rather than an array. Runs even with no draws, so the map is cleared
     // rather than carrying last frame's depths into a frame that samples it.
     //
-    // Each cascade also culls against its OWN sphere. Without that, four
-    // cascades cost four times the submission, which is the exact price the
-    // instanced path elsewhere in this milestone exists to remove.
+    // Each cascade also culls against its OWN sphere, swept towards the sun.
+    // Without that, four cascades cost four times the submission, which is the
+    // exact price the instanced path elsewhere in this milestone exists to
+    // remove.
     cmd.pushDebugGroup("shadow");
     cmd.beginRenderPass({
         .colorAttachments = {},
@@ -6369,7 +6375,11 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             // culled because its centre was outside would leave those taps
             // reading empty depth.
             const f32 filterReach = cascades.texelWorld[index] * kShadowFilterMaxTexels;
-            const CullSphere cull{cascades.cullCentre[index], cascades.cullRadius[index] + filterReach};
+            // And swept towards the sun as far as the map's depth goes (D537):
+            // what stands between the sphere and the sun casts into it.
+            const CullSphere cull{cascades.cullCentre[index], cascades.cullRadius[index] + filterReach,
+                                  core::normalize(fit.sunDirection) *
+                                      (cascades.cullRadius[index] + kShadowCasterMargin)};
             // **The terrain has no far side to store.** Every mesh here culls
             // its front faces, so the depth in the map is the back of a solid
             // and a lit surface never shadows itself (D051). The ground is one
@@ -6777,6 +6787,17 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // The lights themselves are in the tables uploaded above; what the block
         // carries is how to find them.
         frame.lightCountUnused[0] = static_cast<f32>(clusters_.lightCount);
+        // **The camera's forward axis, under an orthographic projection** (D536):
+        // a fragment's distance in front of the camera is what the cascades and
+        // the clusters are stated in, and there the clip position's w -- which
+        // the vertex stages hand over for it -- is 1 for every fragment.
+        if (core::isOrthographic(world.camera.projection)) {
+            const Vec3 forward =
+                core::normalize(core::transformDirection(core::inverse(world.camera.view), Vec3{0.0f, 0.0f, -1.0f}));
+            frame.lightCountUnused[1] = forward.x;
+            frame.lightCountUnused[2] = forward.y;
+            frame.lightCountUnused[3] = forward.z;
+        }
         frame.clusterParams[0] = clusters_.sliceScale;
         frame.clusterParams[1] = clusters_.sliceBias;
         frame.viewportParams[0] = static_cast<f32>(renderWidth_);

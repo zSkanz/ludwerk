@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 37;
+inline constexpr u32 ProtocolVersion = 38;
 
 // How a field's bytes are laid down. Every one is fixed-width and
 // little-endian, with no variable-length forms and no nesting -- a wire format
@@ -128,6 +128,7 @@ inline constexpr FieldDesc BasePartFields[] = {
     {"MaterialCloneEmissiveMap", 14, Encoding::NameAtom, Source::Component, "parts"},
     {"LinearVelocity", 15, Encoding::Vector3, Source::Component, "rigidBodies"},
     {"AngularVelocity", 16, Encoding::Vector3, Source::Component, "rigidBodies"},
+    {"CastShadow", 17, Encoding::Bool, Source::Component, "parts"},
 };
 
 inline constexpr FieldDesc PartFields[] = {
@@ -510,6 +511,7 @@ inline constexpr ClassDesc Classes[] = {
     {"ParticleEmitter", ParticleEmitterFields, -1, false, false},
     {"Folder", {}, -1, false, false},
     {"RemoteEvent", {}, -1, false, false},
+    {"UnreliableRemoteEvent", {}, -1, false, false},
     {"ReplicatedStorage", {}, -1, true, true},
     {"RemoteFunction", {}, -1, false, false},
     {"Part2D", Part2DFields, -1, false, false},
@@ -528,19 +530,19 @@ inline constexpr ClassDesc Classes[] = {
     {"Workspace", WorkspaceFields, -1, true, false},
     {"Attachment", AttachmentFields, -1, false, false},
     {"Constraint", ConstraintFields, -1, false, false},
-    {"BallSocketConstraint", BallSocketConstraintFields, 27, false, false},
-    {"HingeConstraint", HingeConstraintFields, 27, false, false},
-    {"FixedConstraint", {}, 27, false, false},
-    {"PrismaticConstraint", PrismaticConstraintFields, 27, false, false},
-    {"RopeConstraint", RopeConstraintFields, 27, false, false},
-    {"RodConstraint", RodConstraintFields, 27, false, false},
-    {"SpringConstraint", SpringConstraintFields, 27, false, false},
-    {"LinearVelocity", LinearVelocityFields, 27, false, false},
-    {"AngularVelocity", AngularVelocityFields, 27, false, false},
-    {"AlignPosition", AlignPositionFields, 27, false, false},
-    {"AlignOrientation", AlignOrientationFields, 27, false, false},
-    {"VectorForce", VectorForceFields, 27, false, false},
-    {"Torque", TorqueFields, 27, false, false},
+    {"BallSocketConstraint", BallSocketConstraintFields, 28, false, false},
+    {"HingeConstraint", HingeConstraintFields, 28, false, false},
+    {"FixedConstraint", {}, 28, false, false},
+    {"PrismaticConstraint", PrismaticConstraintFields, 28, false, false},
+    {"RopeConstraint", RopeConstraintFields, 28, false, false},
+    {"RodConstraint", RodConstraintFields, 28, false, false},
+    {"SpringConstraint", SpringConstraintFields, 28, false, false},
+    {"LinearVelocity", LinearVelocityFields, 28, false, false},
+    {"AngularVelocity", AngularVelocityFields, 28, false, false},
+    {"AlignPosition", AlignPositionFields, 28, false, false},
+    {"AlignOrientation", AlignOrientationFields, 28, false, false},
+    {"VectorForce", VectorForceFields, 28, false, false},
+    {"Torque", TorqueFields, 28, false, false},
     {"Weld", WeldFields, -1, false, false},
     {"WeldConstraint", WeldConstraintFields, -1, false, false},
     {"NoCollisionConstraint", NoCollisionConstraintFields, -1, false, false},
@@ -637,6 +639,7 @@ inline constexpr ChannelDesc Channels[] = {
     {"State", 1, Delivery::UnreliableSequenced},
     {"Intent", 2, Delivery::UnreliableSequenced},
     {"Ownership", 3, Delivery::UnreliableSequenced},
+    {"Remote", 4, Delivery::UnreliableSequenced},
 };
 
 // The message types. An enum rather than bare numbers, so a switch over them
@@ -666,6 +669,8 @@ enum class MessageType : u8
     VoxelTypes = 20,
     SnapshotPart = 22,
     Refused = 23,
+    UnreliableToAuthority = 25,
+    UnreliableToReplica = 26,
 };
 
 // Which direction a message may travel. A server that accepted a
@@ -709,6 +714,8 @@ inline constexpr MessageDesc Messages[] = {
     {"VoxelTypes", MessageType::VoxelTypes, 0, Direction::ToReplica},
     {"SnapshotPart", MessageType::SnapshotPart, 0, Direction::ToReplica},
     {"Refused", MessageType::Refused, 0, Direction::ToReplica},
+    {"UnreliableToAuthority", MessageType::UnreliableToAuthority, 4, Direction::ToAuthority},
+    {"UnreliableToReplica", MessageType::UnreliableToReplica, 4, Direction::ToReplica},
 };
 
 } // namespace engine::replication::generated

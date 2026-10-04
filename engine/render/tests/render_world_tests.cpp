@@ -1094,6 +1094,38 @@ TEST_CASE("a Part with no material draws its Color override, exactly as BasePart
     CHECK(nearF(snapshot.materials[0].uniforms.metallicRoughnessNormalCutoff[1], 0.7f));
 }
 
+TEST_CASE("BasePart.CastShadow: a part asked to cast none is drawn as it was, and casts none")
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const core::InstanceId workspace = fixture.world.create(fixture.workspaceClass);
+    (void)fixture.cameraLookingDownNegativeZ(workspace);
+    render::MeshLibrary meshes;
+    registerBlock(fixture, meshes);
+
+    const core::InstanceId casts = blockAt(fixture, workspace);
+    const core::InstanceId flash = blockAt(fixture, workspace);
+    // On until a game says otherwise.
+    CHECK(fixture.world.parts().find(casts)->castShadow);
+    fixture.world.parts().find(flash)->castShadow = false;
+
+    render::RenderWorld snapshot;
+    render::extract(fixture.world, workspace, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+
+    // Both are drawn, solid: the property takes away what a part casts and
+    // nothing else.
+    REQUIRE(snapshot.draws.size() == 2);
+    int casting = 0;
+    for (const render::DrawItem& draw : snapshot.draws) {
+        CHECK_FALSE(draw.transparent);
+        CHECK(draw.inCameraFrustum);
+        casting += render::castsShadow(draw) ? 1 : 0;
+    }
+    CHECK(casting == 1);
+    // What is not a part casts: the default of a draw.
+    CHECK(render::castsShadow(render::DrawItem{}));
+}
+
 TEST_CASE("D423: a plain part faded past a half is still drawn -- its block has no alpha cutoff")
 {
     // Six panes of glass at 0.25 to 0.9: two blended, one was stripes and

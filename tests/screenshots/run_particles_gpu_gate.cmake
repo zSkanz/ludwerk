@@ -66,7 +66,14 @@ if(NOT probe_result EQUAL 0)
     message(FATAL_ERROR "particles on the GPU: a probe disagreed (see above); the frame is ${OUTPUT}")
 endif()
 
-# A hundred thousand, timed in a window: what a player's machine draws.
+# A hundred thousand, timed in a window: what a player's machine draws. Not
+# where the CPU draws -- decided from the first run, before a software
+# rasteriser is asked for six hundred frames of them: on a runner's WARP that
+# alone ran past the test's whole time.
+if(host_output MATCHES "Drawing on [^\n]*(llvmpipe|lavapipe|SwiftShader|softpipe|Basic Render Driver|WARP)")
+    message("a hundred thousand sparks: drawn by a software rasteriser here; the time is not held")
+    return()
+endif()
 execute_process(
     # No cap, and none for a window nobody is looking at: a test's window is
     # opened behind whatever started it, and ten frames a second is what an
@@ -79,11 +86,6 @@ execute_process(
 if(NOT timed_result EQUAL 0)
     message("${timed_output}")
     message(FATAL_ERROR "particles on the GPU: the timed run exited ${timed_result}")
-endif()
-# The adapter, as the host says it where it says how the window presents.
-if(timed_output MATCHES "llvmpipe|lavapipe|SwiftShader|softpipe|Basic Render Driver|WARP")
-    message("a hundred thousand sparks: drawn by a software rasteriser here; the time is not held")
-    return()
 endif()
 string(REGEX MATCH "median ([0-9.]+) ms" found "${timed_output}")
 if(found STREQUAL "")
