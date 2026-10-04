@@ -191,6 +191,30 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Particles take a picture, land, and run on the GPU** (ADR 0160).
+  `ParticleEmitter` gains:
+  - `Texture`, and a flipbook over it (`FlipbookColumns`, `FlipbookRows`,
+    `FlipbookFramerate`, `FlipbookMode` -- `Enum.ParticleFlipbookMode` Loop,
+    OverLife, Random);
+  - `Rotation`, `RotationSpread`, `RotationSpeed`, `RotationSpeedSpread`;
+  - `ColorOverLife`, `SizeOverLife` and `TransparencyOverLife`, curves that
+    multiply the start and end values;
+  - `Collision` (`Enum.ParticleCollision` None, SceneDepth, Terrain, Both),
+    `CollisionResponse` (`Enum.ParticleCollisionResponse` Bounce, Stick,
+    Kill), `Bounce`, `Friction` and `CollisionRadius`;
+  - `Simulation` (`Enum.ParticleSimulation` Cpu, Gpu): on the GPU an emitter
+    carries up to 262 144 particles, born, moved and collided in a compute
+    shader -- a hundred thousand bouncing on the ground in a little over a
+    millisecond a frame. They are drawn in no order among themselves, collide
+    with what is on the screen and with the ground round the camera, and run
+    on the CPU on a machine with no compute shaders.
+
+  Every default is what an emitter did before: no picture, no turn, no
+  collision, on the CPU.
+- **Decals lay over and glow** (ADR 0160): `Decal.BlendMode`
+  (`Enum.DecalBlendMode` Multiply, Alpha, Additive) and `Decal.Emissive`. A
+  decal could only darken; now it can be a painted marking that reads on dark
+  ground, or a ring of light.
 - **`NetworkService:GetLocalAddresses()` and `NetworkService.Port`** (G41):
   this machine's addresses on its networks, best first -- the private ones,
   the default route's first, never loopback, link-local or a virtual adapter

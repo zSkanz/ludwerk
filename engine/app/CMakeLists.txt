@@ -1155,6 +1155,35 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 240)
 
+    # Particles simulated on the GPU (ADR 0160): they collide with the terrain
+    # and with what is seen, and a hundred thousand of them are a frame under
+    # a sixtieth of a second -- see the driver.
+    add_test(NAME particles_gpu_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCENE=${CMAKE_SOURCE_DIR}/tests/screenshots/particlesgpu
+            -DMANY=${CMAKE_SOURCE_DIR}/tests/screenshots/particlesgpumany
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/particles-gpu.png
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_particles_gpu_gate.cmake)
+    set_tests_properties(particles_gpu_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        RUN_SERIAL TRUE
+        TIMEOUT 240)
+
+    # A decal's three blend modes (ADR 0160): multiplied it darkens, laid over
+    # glowing or added it brightens.
+    add_test(NAME decal_blend_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/decalblend
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/decal-blend.png
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_decal_blend_gate.cmake)
+    set_tests_properties(decal_blend_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # **What the anti-aliasing and the upscale leave alone** (ADR 0158): the
     # screen's UI, a picture of sprites alone, and pixel art among 3D surfaces
     # -- see the driver for each claim.

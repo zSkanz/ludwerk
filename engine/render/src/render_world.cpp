@@ -1530,6 +1530,8 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         drawn.color = decal.color;
         drawn.opacity = 1.0f - decal.transparency;
         drawn.axis = core::transformDirection(drawn.boxToWorld, Vec3{0.0f, 0.0f, 1.0f});
+        drawn.blendMode = decal.blendMode;
+        drawn.emissive = decal.emissive;
         out.decals.push_back(drawn);
     });
 

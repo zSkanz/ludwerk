@@ -489,6 +489,9 @@ struct RenderDecal
     f32 opacity = 1.0f;
     // The projection axis in camera-relative world space.
     Vec3 axis{0.0f, 0.0f, 1.0f};
+    // `Enum.DecalBlendMode`, and its glow (ADR 0160).
+    core::i32 blendMode = 0;
+    f32 emissive = 0.0f;
 };
 
 // One `Highlight` as drawn (ADR 0129): the colours over the shape and round
@@ -543,6 +546,76 @@ struct RenderParticle
     core::i32 shape = 0;
     // From the camera, for the back-to-front sort.
     f32 distance = 0.0f;
+    // **Its picture** (ADR 0160): invalid draws `shape`. The frame of a
+    // flipbook it shows, as left, top, right, bottom in texture space.
+    rhi::TextureHandle texture;
+    f32 uv[4]{0.0f, 0.0f, 1.0f, 1.0f};
+    // Radians, turned in the plane facing the camera.
+    f32 rotation = 0.0f;
+};
+
+// **An emitter simulated on the GPU, as this frame asks it** (ADR 0160): no
+// particles -- they live in a buffer the renderer keeps -- only what the
+// compute shader needs to give birth to this frame's and step the rest, and
+// what the draw needs to shade them.
+struct RenderGpuEmitter
+{
+    core::InstanceId id;
+    // Which update of the particle system this is: an emitter is stepped once
+    // for each, however many views draw it.
+    core::u64 serial = 0;
+    // Where particles are born, in the world, and the box they are born in.
+    core::CFrameD frame;
+    Vec3 extent;
+    // How many are born this frame, and how many the buffer must hold.
+    core::u32 spawn = 0;
+    core::u32 capacity = 0;
+    core::u32 seed = 0;
+    // Seconds this step covers.
+    f32 step = 0.0f;
+    f32 speed = 0.0f;
+    // Radians, here and for the turn below.
+    f32 spread = 0.0f;
+    f32 lifetime = 0.0f;
+    f32 drag = 0.0f;
+    Vec3 acceleration;
+    Vec3 wind;
+    f32 rotation = 0.0f;
+    f32 rotationSpread = 0.0f;
+    f32 spin = 0.0f;
+    f32 spinSpread = 0.0f;
+    // `Enum.ParticleCollision` and `Enum.ParticleCollisionResponse`.
+    core::i32 collision = 0;
+    core::i32 response = 0;
+    f32 bounce = 0.0f;
+    f32 friction = 0.0f;
+    f32 radius = 0.0f;
+    f32 restSpeed = 0.0f;
+    // How it is drawn: as a CPU particle is.
+    f32 emission = 0.0f;
+    core::i32 shape = 0;
+    rhi::TextureHandle texture;
+    core::u32 columns = 1;
+    core::u32 rows = 1;
+    core::i32 flipbookMode = 0;
+    f32 framerate = 0.0f;
+    // Its colour and opacity, and its size, at sixteen places along its life:
+    // the start and end values and the curves over life, already multiplied.
+    f32 colorOverLife[16][4]{};
+    f32 sizeOverLife[16]{};
+};
+
+// **The ground's heights round the camera** (ADR 0160), for particles on the
+// GPU that collide with the terrain: a square of `side` metres from `corner`
+// (x and z), `cells` heights a side in world metres, row after row along +z.
+// Remade as the camera moves; `revision` says when.
+struct RenderParticleGround
+{
+    DVec3 corner;
+    f32 side = 0.0f;
+    core::u32 cells = 0;
+    core::u32 revision = 0;
+    std::vector<f32> heights;
 };
 
 // One sprite as drawn (the 2D layer): a `Part2D`, or one tile of a `Tilemap2D`.
@@ -694,6 +767,10 @@ struct RenderWorld
     // appended by `ParticleSystem::append` after the extract, because they are
     // simulated on the frame and are not in the world the extract reads.
     std::vector<RenderParticle> particles;
+    // The emitters simulated on the GPU (ADR 0160), and the ground they may
+    // collide with -- the particle system's own, or null for none.
+    std::vector<RenderGpuEmitter> gpuEmitters;
+    const RenderParticleGround* particleGround = nullptr;
     // This frame's beams and trails (ADR 0129), as triangles: appended by
     // `RibbonSystem::append` after the extract, back to front, in runs of one
     // texture.
@@ -756,6 +833,8 @@ struct RenderWorld
         terrains.clear();
         foliageRuns.clear();
         foliageBuckets.clear();
+        gpuEmitters.clear();
+        particleGround = nullptr;
         foliageDensity = 1.0f;
         foliageShadowDistance = 30.0f;
         voxelColors.clear();

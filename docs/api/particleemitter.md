@@ -16,21 +16,39 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `Acceleration` | `vector` | `vector.create(0, 0, 0)` | read/write | Metres a second squared in world space, for the whole of each particle's life. `vector.create(0, -9.81, 0)` is gravity; a small upward one is heat. |
+| `Bounce` | `number` | `0.5` | read/write | How much of its speed into a surface comes back out of it: 0 lands dead, 1 loses nothing. A bounce too slow to see comes to rest. |
 | `Brightness` | `number` | `1` | read/write | A multiplier on the colour, unclamped: above one is what makes a spark bloom. |
+| `Collision` | `Enum.ParticleCollision` | `Enum.ParticleCollision.None` | read/write | What its particles meet: nothing, what is seen, the terrain, or both. |
+| `CollisionRadius` | `number` | `0` | read/write | How far from its middle a particle touches, in metres. 0 is half its size. |
+| `CollisionResponse` | `Enum.ParticleCollisionResponse` | `Enum.ParticleCollisionResponse.Bounce` | read/write | What a particle does where it meets something: bounces, sticks or dies. |
 | `Color` | `Color3` | `Color3.new(1, 1, 1)` | read/write | The colour at birth. |
 | `ColorEnd` | `Color3` | `Color3.new(1, 1, 1)` | read/write | The colour at death; life interpolates between the two. |
+| `ColorOverLife` | `ColorSequence` | `ColorSequence.new(Color3.new(1, 1, 1))` | read/write | A colour across a particle's life, from birth at 0 to death at 1, multiplying what `Color` and `ColorEnd` make of it. White changes nothing. |
 | `Drag` | `number` | `0` | read/write | The fraction of its velocity a particle loses each second: smoke slows, sparks do not. |
 | `Enabled` | `boolean` | `true` | read/write | Whether it emits continuously. `Emit` works either way: a burst is a separate thing from a stream. |
+| `FlipbookColumns` | `number` | `1` | read/write | How many frames across `Texture` holds, 1 to 16. Read left to right, then top to bottom. |
+| `FlipbookFramerate` | `number` | `12` | read/write | Frames a second, for `FlipbookMode` Loop. |
+| `FlipbookMode` | `Enum.ParticleFlipbookMode` | `Enum.ParticleFlipbookMode.Loop` | read/write | How a particle steps through the frames: on a loop, once over its life, or a still frame of its own. |
+| `FlipbookRows` | `number` | `1` | read/write | How many rows of frames `Texture` holds, 1 to 16. |
+| `Friction` | `number` | `0.2` | read/write | How much of its speed along a surface each touch takes: 0 slides for ever, 1 stops where it lands. |
 | `Lifetime` | `number` | `2` | read/write | Seconds each particle lives before it is gone. |
 | `LightEmission` | `number` | `0` | read/write | 0 blends a particle over what is behind it, 1 ADDS its light to it -- fire, sparks, magic -- and between is both. Additive particles never darken anything, which is the point. |
 | `Rate` | `number` | `20` | read/write | Particles a second while enabled. |
-| `Shape` | `Enum.ParticleShape` | `Enum.ParticleShape.Soft` | read/write | What one particle looks like. |
+| `Rotation` | `number` | `0` | read/write | Degrees a particle is turned at birth, in the plane facing the camera. |
+| `RotationSpeed` | `number` | `0` | read/write | Degrees a second a particle turns. Negative turns the other way. |
+| `RotationSpeedSpread` | `number` | `0` | read/write | Degrees a second either way of `RotationSpeed`, at random for each particle. |
+| `RotationSpread` | `number` | `0` | read/write | Degrees either way of `Rotation` a particle is born at, at random: 180 is any way up. |
+| `Shape` | `Enum.ParticleShape` | `Enum.ParticleShape.Soft` | read/write | What one particle looks like when it has no `Texture`. |
+| `Simulation` | `Enum.ParticleSimulation` | `Enum.ParticleSimulation.Cpu` | read/write | Where its particles are simulated: on the CPU, or on the GPU, which carries a hundred thousand where the CPU carries a few thousand. A machine with no compute shaders simulates on the CPU whatever this says, and says so once in the log. |
 | `Size` | `number` | `0.5` | read/write | The width in metres at birth. |
 | `SizeEnd` | `number` | `0.5` | read/write | The width in metres at death. |
+| `SizeOverLife` | `NumberSequence` | `NumberSequence.new(1)` | read/write | A scale across a particle's life, multiplying what `Size` and `SizeEnd` make of it: a puff that swells and shrinks is a curve that rises and falls. One changes nothing. |
 | `Speed` | `number` | `4` | read/write | Metres a second at birth, along the emitter's up direction. |
 | `SpreadAngle` | `number` | `15` | read/write | How far, in degrees, a particle's direction may stray from straight up: 0 is a jet, 180 a sphere. |
+| `Texture` | `Content` | — | read/write | The picture each particle is drawn as, facing the camera: its colour times the particle's, its alpha the particle's outline. None draws `Shape`. With `FlipbookColumns` and `FlipbookRows` above one it is a grid of frames (ADR 0160). |
 | `Transparency` | `number` | `0` | read/write | 0 opaque to 1 invisible, at birth. |
 | `TransparencyEnd` | `number` | `1` | read/write | At death. The default fades each particle out as it dies. |
+| `TransparencyOverLife` | `NumberSequence` | `NumberSequence.new(0)` | read/write | A transparency across a particle's life, laid over `Transparency` and `TransparencyEnd` as one see-through layer over another: a fade in and out is a curve from 1 down to 0 and back. Zero changes nothing. |
 | `WindAffectsDrift` | `boolean` | `false` | read/write | Whether the workspace's wind carries the particles: the wind where each one is is added to how it moves. Off by default, so an effect made before the wind looks as it did. |
 
 ## Methods

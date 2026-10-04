@@ -261,6 +261,21 @@ end
 declare extern type EnumAnimationCullingMode extends EnumItem with
 end
 
+declare extern type EnumParticleCollision extends EnumItem with
+end
+
+declare extern type EnumParticleCollisionResponse extends EnumItem with
+end
+
+declare extern type EnumParticleSimulation extends EnumItem with
+end
+
+declare extern type EnumDecalBlendMode extends EnumItem with
+end
+
+declare extern type EnumParticleFlipbookMode extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -2045,6 +2060,11 @@ declare extern type Decal extends Instance with
     Color: Color3
     --- 0 paints the image as it is; 1 paints nothing.
     Transparency: number
+    --- How the image meets the surface: multiplied into it, laid over it, or added to it.
+    BlendMode: EnumDecalBlendMode
+    --- How brightly the image glows of its own, over what lights it: 0 none, above 1 enough to bloom.
+    --- Read by `Alpha` and `Additive`; a multiplied decal has no light to give.
+    Emissive: number
 end
 
 declare extern type CameraTexture extends Instance with
@@ -2145,8 +2165,55 @@ declare extern type ParticleEmitter extends Instance with
     LightEmission: number
     --- A multiplier on the colour, unclamped: above one is what makes a spark bloom.
     Brightness: number
-    --- What one particle looks like.
+    --- What one particle looks like when it has no `Texture`.
     Shape: EnumParticleShape
+    --- The picture each particle is drawn as, facing the camera: its colour times the particle's, its
+    --- alpha the particle's outline. None draws `Shape`. With `FlipbookColumns` and `FlipbookRows`
+    --- above one it is a grid of frames (ADR 0160).
+    Texture: Content
+    --- How many frames across `Texture` holds, 1 to 16. Read left to right, then top to bottom.
+    FlipbookColumns: number
+    --- How many rows of frames `Texture` holds, 1 to 16.
+    FlipbookRows: number
+    --- Frames a second, for `FlipbookMode` Loop.
+    FlipbookFramerate: number
+    --- How a particle steps through the frames: on a loop, once over its life, or a still frame of its
+    --- own.
+    FlipbookMode: EnumParticleFlipbookMode
+    --- Degrees a particle is turned at birth, in the plane facing the camera.
+    Rotation: number
+    --- Degrees either way of `Rotation` a particle is born at, at random: 180 is any way up.
+    RotationSpread: number
+    --- Degrees a second a particle turns. Negative turns the other way.
+    RotationSpeed: number
+    --- Degrees a second either way of `RotationSpeed`, at random for each particle.
+    RotationSpeedSpread: number
+    --- A colour across a particle's life, from birth at 0 to death at 1, multiplying what `Color` and
+    --- `ColorEnd` make of it. White changes nothing.
+    ColorOverLife: ColorSequence
+    --- A scale across a particle's life, multiplying what `Size` and `SizeEnd` make of it: a puff that
+    --- swells and shrinks is a curve that rises and falls. One changes nothing.
+    SizeOverLife: NumberSequence
+    --- A transparency across a particle's life, laid over `Transparency` and `TransparencyEnd` as one
+    --- see-through layer over another: a fade in and out is a curve from 1 down to 0 and back. Zero
+    --- changes nothing.
+    TransparencyOverLife: NumberSequence
+    --- What its particles meet: nothing, what is seen, the terrain, or both.
+    Collision: EnumParticleCollision
+    --- What a particle does where it meets something: bounces, sticks or dies.
+    CollisionResponse: EnumParticleCollisionResponse
+    --- How much of its speed into a surface comes back out of it: 0 lands dead, 1 loses nothing. A
+    --- bounce too slow to see comes to rest.
+    Bounce: number
+    --- How much of its speed along a surface each touch takes: 0 slides for ever, 1 stops where it
+    --- lands.
+    Friction: number
+    --- How far from its middle a particle touches, in metres. 0 is half its size.
+    CollisionRadius: number
+    --- Where its particles are simulated: on the CPU, or on the GPU, which carries a hundred thousand
+    --- where the CPU carries a few thousand. A machine with no compute shaders simulates on the CPU
+    --- whatever this says, and says so once in the log.
+    Simulation: EnumParticleSimulation
     --- Emits `count` particles at once, whether or not the emitter is enabled: an explosion is a burst,
     --- not a stream. At most 1,000 a call.
     function Emit(self, count: number): ()
@@ -5626,6 +5693,36 @@ declare Enum: {
         Automatic: EnumAnimationCullingMode,
         AlwaysAnimate: EnumAnimationCullingMode,
         GetEnumItems: (self: any) -> { EnumAnimationCullingMode },
+    },
+    ParticleCollision: {
+        None: EnumParticleCollision,
+        SceneDepth: EnumParticleCollision,
+        Terrain: EnumParticleCollision,
+        Both: EnumParticleCollision,
+        GetEnumItems: (self: any) -> { EnumParticleCollision },
+    },
+    ParticleCollisionResponse: {
+        Bounce: EnumParticleCollisionResponse,
+        Stick: EnumParticleCollisionResponse,
+        Kill: EnumParticleCollisionResponse,
+        GetEnumItems: (self: any) -> { EnumParticleCollisionResponse },
+    },
+    ParticleSimulation: {
+        Cpu: EnumParticleSimulation,
+        Gpu: EnumParticleSimulation,
+        GetEnumItems: (self: any) -> { EnumParticleSimulation },
+    },
+    DecalBlendMode: {
+        Multiply: EnumDecalBlendMode,
+        Alpha: EnumDecalBlendMode,
+        Additive: EnumDecalBlendMode,
+        GetEnumItems: (self: any) -> { EnumDecalBlendMode },
+    },
+    ParticleFlipbookMode: {
+        Loop: EnumParticleFlipbookMode,
+        OverLife: EnumParticleFlipbookMode,
+        Random: EnumParticleFlipbookMode,
+        GetEnumItems: (self: any) -> { EnumParticleFlipbookMode },
     },
 }
 

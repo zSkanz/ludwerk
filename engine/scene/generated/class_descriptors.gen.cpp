@@ -9633,6 +9633,131 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     animationCullingModeDesc.docKey = {};
     animationCullingModeDesc.items = animationCullingModeItems;
     enums.registerEnum(animationCullingModeDesc);
+
+    // --- ParticleCollision ---
+    static std::array<EnumItemDesc, 4> particleCollisionItems;
+    particleCollisionItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("None"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("SceneDepth"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Terrain"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Both"),
+            .value = 3,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor particleCollisionDesc;
+    particleCollisionDesc.name = atoms.intern("ParticleCollision");
+    particleCollisionDesc.docKey = {};
+    particleCollisionDesc.items = particleCollisionItems;
+    enums.registerEnum(particleCollisionDesc);
+
+    // --- ParticleCollisionResponse ---
+    static std::array<EnumItemDesc, 3> particleCollisionResponseItems;
+    particleCollisionResponseItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Bounce"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Stick"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Kill"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor particleCollisionResponseDesc;
+    particleCollisionResponseDesc.name = atoms.intern("ParticleCollisionResponse");
+    particleCollisionResponseDesc.docKey = {};
+    particleCollisionResponseDesc.items = particleCollisionResponseItems;
+    enums.registerEnum(particleCollisionResponseDesc);
+
+    // --- ParticleSimulation ---
+    static std::array<EnumItemDesc, 2> particleSimulationItems;
+    particleSimulationItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Cpu"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Gpu"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor particleSimulationDesc;
+    particleSimulationDesc.name = atoms.intern("ParticleSimulation");
+    particleSimulationDesc.docKey = {};
+    particleSimulationDesc.items = particleSimulationItems;
+    enums.registerEnum(particleSimulationDesc);
+
+    // --- DecalBlendMode ---
+    static std::array<EnumItemDesc, 3> decalBlendModeItems;
+    decalBlendModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Multiply"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Alpha"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Additive"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor decalBlendModeDesc;
+    decalBlendModeDesc.name = atoms.intern("DecalBlendMode");
+    decalBlendModeDesc.docKey = {};
+    decalBlendModeDesc.items = decalBlendModeItems;
+    enums.registerEnum(decalBlendModeDesc);
+
+    // --- ParticleFlipbookMode ---
+    static std::array<EnumItemDesc, 3> particleFlipbookModeItems;
+    particleFlipbookModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Loop"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("OverLife"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Random"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor particleFlipbookModeDesc;
+    particleFlipbookModeDesc.name = atoms.intern("ParticleFlipbookMode");
+    particleFlipbookModeDesc.docKey = {};
+    particleFlipbookModeDesc.items = particleFlipbookModeItems;
+    enums.registerEnum(particleFlipbookModeDesc);
 }
 
 } // namespace engine::scene::generated

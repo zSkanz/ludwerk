@@ -49,6 +49,7 @@ public:
     void endComputePass() override {}
     void setComputePipeline(ComputePipelineHandle) override {}
     void bindComputeStorageBuffers(u32, std::span<const BufferHandle>) override {}
+    void bindComputeTextures(u32, std::span<const TextureBinding>) override {}
     void bindComputeUniforms(u32, std::span<const std::byte>) override {}
     void dispatch(u32, u32, u32) override {}
 

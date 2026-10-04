@@ -2906,6 +2906,20 @@ local Classes: { Schema.Class } = {
                 ErrorKey = "scene.err.number_zero_to_one",
                 Doc = "0 paints the image as it is; 1 paints nothing.",
             },
+            {
+                Name = "BlendMode",
+                Type = "Enum.DecalBlendMode",
+                Default = "Enum.DecalBlendMode.Multiply",
+                Doc = "How the image meets the surface: multiplied into it, laid over it, or added to it.",
+            },
+            {
+                Name = "Emissive",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How brightly the image glows of its own, over what lights it: 0 none, above 1 enough "
+                    .. "to bloom. Read by `Alpha` and `Additive`; a multiplied decal has no light to give.",
+            },
         },
     },
     {
@@ -3214,7 +3228,134 @@ local Classes: { Schema.Class } = {
                 Name = "Shape",
                 Type = "Enum.ParticleShape",
                 Default = "Enum.ParticleShape.Soft",
-                Doc = "What one particle looks like.",
+                Doc = "What one particle looks like when it has no `Texture`.",
+            },
+            {
+                Name = "Texture",
+                Type = "Content",
+                ContentKind = "Texture",
+                Doc = "The picture each particle is drawn as, facing the camera: its colour times the "
+                    .. "particle's, its alpha the particle's outline. None draws `Shape`. With "
+                    .. "`FlipbookColumns` and `FlipbookRows` above one it is a grid of frames (ADR 0160).",
+            },
+            {
+                Name = "FlipbookColumns",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.whole_number_at_least_one",
+                Doc = "How many frames across `Texture` holds, 1 to 16. Read left to right, then top to bottom.",
+            },
+            {
+                Name = "FlipbookRows",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.whole_number_at_least_one",
+                Doc = "How many rows of frames `Texture` holds, 1 to 16.",
+            },
+            {
+                Name = "FlipbookFramerate",
+                Type = "number",
+                Default = "12",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Frames a second, for `FlipbookMode` Loop.",
+            },
+            {
+                Name = "FlipbookMode",
+                Type = "Enum.ParticleFlipbookMode",
+                Default = "Enum.ParticleFlipbookMode.Loop",
+                Doc = "How a particle steps through the frames: on a loop, once over its life, or a still "
+                    .. "frame of its own.",
+            },
+            {
+                Name = "Rotation",
+                Type = "number",
+                Default = "0",
+                Doc = "Degrees a particle is turned at birth, in the plane facing the camera.",
+            },
+            {
+                Name = "RotationSpread",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Degrees either way of `Rotation` a particle is born at, at random: 180 is any way up.",
+            },
+            {
+                Name = "RotationSpeed",
+                Type = "number",
+                Default = "0",
+                Doc = "Degrees a second a particle turns. Negative turns the other way.",
+            },
+            {
+                Name = "RotationSpeedSpread",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Degrees a second either way of `RotationSpeed`, at random for each particle.",
+            },
+            {
+                Name = "ColorOverLife",
+                Type = "ColorSequence",
+                Default = "ColorSequence.new(Color3.new(1, 1, 1))",
+                Doc = "A colour across a particle's life, from birth at 0 to death at 1, multiplying what "
+                    .. "`Color` and `ColorEnd` make of it. White changes nothing.",
+            },
+            {
+                Name = "SizeOverLife",
+                Type = "NumberSequence",
+                Default = "NumberSequence.new(1)",
+                Doc = "A scale across a particle's life, multiplying what `Size` and `SizeEnd` make of it: a "
+                    .. "puff that swells and shrinks is a curve that rises and falls. One changes nothing.",
+            },
+            {
+                Name = "TransparencyOverLife",
+                Type = "NumberSequence",
+                Default = "NumberSequence.new(0)",
+                Doc = "A transparency across a particle's life, laid over `Transparency` and "
+                    .. "`TransparencyEnd` as one see-through layer over another: a fade in and out is a "
+                    .. "curve from 1 down to 0 and back. Zero changes nothing.",
+            },
+            {
+                Name = "Collision",
+                Type = "Enum.ParticleCollision",
+                Default = "Enum.ParticleCollision.None",
+                Doc = "What its particles meet: nothing, what is seen, the terrain, or both.",
+            },
+            {
+                Name = "CollisionResponse",
+                Type = "Enum.ParticleCollisionResponse",
+                Default = "Enum.ParticleCollisionResponse.Bounce",
+                Doc = "What a particle does where it meets something: bounces, sticks or dies.",
+            },
+            {
+                Name = "Bounce",
+                Type = "number",
+                Default = "0.5",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How much of its speed into a surface comes back out of it: 0 lands dead, 1 loses "
+                    .. "nothing. A bounce too slow to see comes to rest.",
+            },
+            {
+                Name = "Friction",
+                Type = "number",
+                Default = "0.2",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How much of its speed along a surface each touch takes: 0 slides for ever, 1 stops "
+                    .. "where it lands.",
+            },
+            {
+                Name = "CollisionRadius",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How far from its middle a particle touches, in metres. 0 is half its size.",
+            },
+            {
+                Name = "Simulation",
+                Type = "Enum.ParticleSimulation",
+                Default = "Enum.ParticleSimulation.Cpu",
+                Doc = "Where its particles are simulated: on the CPU, or on the GPU, which carries a hundred "
+                    .. "thousand where the CPU carries a few thousand. A machine with no compute shaders "
+                    .. "simulates on the CPU whatever this says, and says so once in the log.",
             },
         },
         Methods = {

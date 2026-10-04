@@ -128,8 +128,9 @@ constexpr f64 CurtainGroundMetres = 96.0;
 namespace {
 
 // **A window's sync, applied and said** (D528): which present mode the device
-// granted and on which driver, once each time it is set -- a frame rate held
-// to the display with VSync off is answered from the log, not guessed at.
+// granted, on which driver and which adapter, once each time it is set -- a
+// frame rate held to the display with VSync off, or one drawn by a software
+// rasteriser, is answered from the log, not guessed at.
 void applyVSync(rhi::IDevice& device, platform::Window& window, bool on)
 {
     (void)device.setVSync(window, on);
@@ -138,8 +139,11 @@ void applyVSync(rhi::IDevice& device, platform::Window& window, bool on)
                                   : mode == rhi::PresentMode::Mailbox ? "mailbox"
                                   : mode == rhi::PresentMode::Vsync   ? "vsync"
                                                                       : "none";
-    const std::array<core::I18nArg, 3> args{core::I18nArg{"mode", name}, core::I18nArg{"driver", device.driverName()},
-                                            core::I18nArg{"asked", std::string_view{on ? "on" : "off"}}};
+    const std::string_view adapter = device.adapterName();
+    const std::array<core::I18nArg, 4> args{
+        core::I18nArg{"mode", name}, core::I18nArg{"driver", device.driverName()},
+        core::I18nArg{"adapter", adapter.empty() ? std::string_view{"unnamed"} : adapter},
+        core::I18nArg{"asked", std::string_view{on ? "on" : "off"}}};
     core::log(core::LogLevel::Info, ENG_TR("engine.info.present_mode"), args);
 }
 
@@ -6017,9 +6021,26 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // own length -- which a headless run fixes at one tick, so a golden
             // with sparks in it is still one picture -- and appended for the
             // same root the extract drew.
+            // **Simulated on the GPU where the device can** (ADR 0160).
+            particles.setGpuSimulation(renderer != nullptr && renderer->valid() && device != nullptr &&
+                                       device->caps().compute);
+            // **What a particle that collides meets among the parts** (ADR
+            // 0160): a ray into the physics world, which this frame only reads.
+            particles.setRaycast([&host](core::DVec3 from, core::Vec3 delta, core::DVec3& hit, core::Vec3& normal) {
+                const scene::PhysicsSync* physics = host->physics();
+                if (physics == nullptr)
+                    return false;
+                physics::RayHit found;
+                if (!physics->backend().raycast(physics->worldHandle(), physics::RayD{from, delta},
+                                                physics::QueryFilter{}, found))
+                    return false;
+                hit = found.position;
+                normal = found.normal;
+                return true;
+            });
             particles.update(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
                              frame.renderDt, &framePoses);
-            particles.append(snapshot);
+            particles.append(snapshot, &textureLibrary);
             // **Beams and trails** (ADR 0129), on the same clock and for the
             // same root: a trail gains a piece where its ends are drawn.
             ribbons.update(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
@@ -6653,7 +6674,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                     terrainNodes);
                     host->reportSeenSkins(viewSnapshot.seenSkins, false);
                     terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot, &textureLibrary);
-                    particles.append(viewSnapshot);
+                    particles.append(viewSnapshot, &textureLibrary);
                     // Built again for this view: a ribbon that faces the
                     // camera faces THIS one.
                     ribbons.append(world, host->workspace(), viewSnapshot, &textureLibrary, &framePoses);

@@ -17,8 +17,10 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
+| `BlendMode` | `Enum.DecalBlendMode` | `Enum.DecalBlendMode.Multiply` | read/write | How the image meets the surface: multiplied into it, laid over it, or added to it. |
 | `CFrame` | `CFrame` | — | read/write | Where the box is -- relative to the parent part when there is one. The image lies in the box's right and up, and is projected along its look direction. |
 | `Color` | `Color3` | `Color3.new(1, 1, 1)` | read/write | Multiplies the image. |
+| `Emissive` | `number` | `0` | read/write | How brightly the image glows of its own, over what lights it: 0 none, above 1 enough to bloom. Read by `Alpha` and `Additive`; a multiplied decal has no light to give. |
 | `Size` | `vector` | `vector.create(2, 2, 1)` | read/write | Width, height and depth of the box, in metres. Only what is inside it is painted, so a shallow box paints one wall and a deep one reaches round a corner. |
 | `Texture` | `Content` | — | read/write | The image. Its alpha is how much of it lands; none paints `Color` alone. |
 | `Transparency` | `number` | `0` | read/write | 0 paints the image as it is; 1 paints nothing. |

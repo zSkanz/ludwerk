@@ -582,6 +582,9 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
     });
     // Decal images (F2): colours, like base colours.
     world.decals().forEach([&](core::InstanceId, const scene::DecalComponent& decal) { load(decal.texture, true); });
+    // A particle's picture (ADR 0160), the same.
+    world.particleEmitters().forEach(
+        [&](core::InstanceId, const scene::ParticleEmitterComponent& emitter) { load(emitter.texture, true); });
     // The 2D layer's pictures: a sprite's image and a tilemap's tileset.
     world.parts2d().forEach([&](core::InstanceId, const scene::Part2DComponent& part) { load(part.image, true); });
     world.tilemaps2d().forEach(

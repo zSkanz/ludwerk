@@ -20,6 +20,11 @@
 //   an image the same size: what says one part of two frames is the same
 //   while the rest of them is not.
 //
+// And one about two points: `x,y>x2,y2` -- the first is brighter than the
+// second by more than the tolerance (the sum of its channels); `x,y<x2,y2`
+// darker. What says a thing brightens or darkens what it lands on, whatever
+// the light and the tone curve make of the colours themselves.
+//
 // Developer-facing English, like `imgcmp` beside it (R3 governs the engine and
 // games, not a repo tool).
 
@@ -37,7 +42,8 @@ namespace {
 
 constexpr std::string_view kUsage =
     "usage: imgprobe <image.png> [--tolerance=N] [--against=<image.png>]\n"
-    "                <x,y=r,g,b | x,y!=r,g,b | x0,y0:x1,y1~r,g,b/r,g,b/... | x0,y0:x1,y1==> [...]\n"
+    "                <x,y=r,g,b | x,y!=r,g,b | x0,y0:x1,y1~r,g,b/r,g,b/... | x0,y0:x1,y1== |\n"
+    "                 x,y>x2,y2 | x,y<x2,y2> [...]\n"
     "  x and y are fractions of the image; r, g and b are 0-255.\n";
 
 struct Probe
@@ -46,6 +52,17 @@ struct Probe
     double y = 0.0;
     int rgb[3]{};
     bool negate = false;
+    std::string text;
+};
+
+// One point brighter or darker than another.
+struct Comparison
+{
+    double x = 0.0;
+    double y = 0.0;
+    double otherX = 0.0;
+    double otherY = 0.0;
+    bool brighter = true;
     std::string text;
 };
 
@@ -83,6 +100,26 @@ struct Region
         }
     }
     return *cursor == '\0';
+}
+
+[[nodiscard]] bool parseComparison(std::string_view text, Comparison& out)
+{
+    out.text = std::string(text);
+    const std::size_t split = text.find_first_of("<>");
+    if (split == std::string_view::npos || split == 0)
+        return false;
+    out.brighter = text[split] == '>';
+    double first[2]{};
+    double second[2]{};
+    if (!readNumbers(std::string(text.substr(0, split)), first, 2) ||
+        !readNumbers(std::string(text.substr(split + 1)), second, 2))
+        return false;
+    out.x = first[0];
+    out.y = first[1];
+    out.otherX = second[0];
+    out.otherY = second[1];
+    const auto inside = [](double value) { return value >= 0.0 && value <= 1.0; };
+    return inside(out.x) && inside(out.y) && inside(out.otherX) && inside(out.otherY);
 }
 
 [[nodiscard]] bool parseRegion(std::string_view text, Region& out)
@@ -163,6 +200,7 @@ int main(int argc, char** argv)
     std::string against;
     std::vector<Probe> probes;
     std::vector<Region> regions;
+    std::vector<Comparison> comparisons;
     for (std::size_t index = 1; index < args.size(); ++index) {
         const std::string_view arg = args[index];
         if (arg.starts_with("--tolerance=")) {
@@ -171,6 +209,16 @@ int main(int argc, char** argv)
         }
         if (arg.starts_with("--against=")) {
             against = std::string(arg.substr(10));
+            continue;
+        }
+        if (arg.find_first_of("<>") != std::string_view::npos) {
+            Comparison comparison;
+            if (!parseComparison(arg, comparison)) {
+                std::fprintf(stderr, "imgprobe: cannot read the comparison \"%s\"\n%s", std::string(arg).c_str(),
+                             kUsage.data());
+                return 2;
+            }
+            comparisons.push_back(std::move(comparison));
             continue;
         }
         if (arg.find(':') != std::string_view::npos) {
@@ -213,6 +261,24 @@ int main(int argc, char** argv)
         const bool ok = probe.negate ? !within : within;
         std::printf("%s %s: (%d, %d) is %d,%d,%d\n", ok ? "ok  " : "FAIL", probe.text.c_str(), px, py, pixel[0],
                     pixel[1], pixel[2]);
+        if (!ok)
+            ++failed;
+    }
+
+    for (const Comparison& comparison : comparisons) {
+        const auto sumAt = [&image](double x, double y) {
+            const int px = std::min(static_cast<int>(x * image.width), image.width - 1);
+            const int py = std::min(static_cast<int>(y * image.height), image.height - 1);
+            const std::uint8_t* pixel =
+                image.rgba.data() +
+                (static_cast<std::size_t>(py) * static_cast<std::size_t>(image.width) + static_cast<std::size_t>(px)) *
+                    4u;
+            return static_cast<int>(pixel[0]) + static_cast<int>(pixel[1]) + static_cast<int>(pixel[2]);
+        };
+        const int first = sumAt(comparison.x, comparison.y);
+        const int second = sumAt(comparison.otherX, comparison.otherY);
+        const bool ok = comparison.brighter ? first > second + tolerance : first + tolerance < second;
+        std::printf("%s %s: %d against %d\n", ok ? "ok  " : "FAIL", comparison.text.c_str(), first, second);
         if (!ok)
             ++failed;
     }

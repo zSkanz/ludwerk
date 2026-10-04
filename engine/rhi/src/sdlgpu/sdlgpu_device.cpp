@@ -140,6 +140,7 @@ public:
     void endComputePass() override;
     void setComputePipeline(ComputePipelineHandle pipeline) override;
     void bindComputeStorageBuffers(u32 firstSlot, std::span<const BufferHandle> buffers) override;
+    void bindComputeTextures(u32 firstSlot, std::span<const TextureBinding> bindings) override;
     void bindComputeUniforms(u32 slot, std::span<const std::byte> data) override;
     void dispatch(u32 groupsX, u32 groupsY, u32 groupsZ) override;
 
@@ -350,6 +351,17 @@ public:
     [[nodiscard]] std::string_view driverName() const noexcept override
     {
         const char* name = device_ != nullptr ? SDL_GetGPUDeviceDriver(device_) : nullptr;
+        return name != nullptr ? std::string_view{name} : std::string_view{};
+    }
+
+    [[nodiscard]] std::string_view adapterName() const noexcept override
+    {
+        if (device_ == nullptr)
+            return {};
+        // The property set is the device's own, and the string lives as long
+        // as it does.
+        const char* name =
+            SDL_GetStringProperty(SDL_GetGPUDeviceProperties(device_), SDL_PROP_GPU_DEVICE_NAME_STRING, nullptr);
         return name != nullptr ? std::string_view{name} : std::string_view{};
     }
 
@@ -1546,6 +1558,32 @@ void SdlGpuCmdList::bindComputeStorageBuffers(u32 firstSlot, std::span<const Buf
     for (usize index = 0; index < buffers.size(); ++index)
         native[index] = device_.buffer(buffers[index]);
     SDL_BindGPUComputeStorageBuffers(computePass_, firstSlot, native.data(), static_cast<Uint32>(native.size()));
+}
+
+void SdlGpuCmdList::bindComputeTextures(u32 firstSlot, std::span<const TextureBinding> bindings)
+{
+    if (computePass_ == nullptr || bindings.empty())
+        return;
+    BindList<SDL_GPUTextureSamplerBinding> native(bindings.size());
+    usize filled = 0;
+    for (const TextureBinding& binding : bindings) {
+        const TextureEntry* entry = device_.texture(binding.texture);
+        SDL_GPUTexture* texture = entry != nullptr ? entry->texture : nullptr;
+        SDL_GPUSampler* sampler = device_.sampler(binding.sampler);
+        // As a fragment stage's: a stale handle is noted and the fallback
+        // bound, so a pass never runs with a slot empty.
+        if (texture == nullptr || sampler == nullptr) {
+            device_.noteStaleBinding();
+            if (texture == nullptr)
+                texture = device_.fallbackTexture();
+            if (sampler == nullptr)
+                sampler = device_.fallbackSampler();
+            if (texture == nullptr || sampler == nullptr)
+                return;
+        }
+        native[filled++] = {.texture = texture, .sampler = sampler};
+    }
+    SDL_BindGPUComputeSamplers(computePass_, firstSlot, native.data(), static_cast<Uint32>(native.size()));
 }
 
 void SdlGpuCmdList::bindComputeUniforms(u32 slot, std::span<const std::byte> data)

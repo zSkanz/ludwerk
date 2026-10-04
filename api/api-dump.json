@@ -1685,6 +1685,11 @@
       "Tags": [],
       "Properties": [
         {
+          "Name": "BlendMode",
+          "Type": "Enum.DecalBlendMode",
+          "Default": "Enum.DecalBlendMode.Multiply"
+        },
+        {
           "Name": "CFrame",
           "Type": "CFrame"
         },
@@ -1692,6 +1697,11 @@
           "Name": "Color",
           "Type": "Color3",
           "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "Emissive",
+          "Type": "number",
+          "Default": "0"
         },
         {
           "Name": "Size",
@@ -4180,9 +4190,29 @@
           "Default": "vector.create(0, 0, 0)"
         },
         {
+          "Name": "Bounce",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
           "Name": "Brightness",
           "Type": "number",
           "Default": "1"
+        },
+        {
+          "Name": "Collision",
+          "Type": "Enum.ParticleCollision",
+          "Default": "Enum.ParticleCollision.None"
+        },
+        {
+          "Name": "CollisionRadius",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "CollisionResponse",
+          "Type": "Enum.ParticleCollisionResponse",
+          "Default": "Enum.ParticleCollisionResponse.Bounce"
         },
         {
           "Name": "Color",
@@ -4195,6 +4225,11 @@
           "Default": "Color3.new(1, 1, 1)"
         },
         {
+          "Name": "ColorOverLife",
+          "Type": "ColorSequence",
+          "Default": "ColorSequence.new(Color3.new(1, 1, 1))"
+        },
+        {
           "Name": "Drag",
           "Type": "number",
           "Default": "0"
@@ -4203,6 +4238,31 @@
           "Name": "Enabled",
           "Type": "boolean",
           "Default": "true"
+        },
+        {
+          "Name": "FlipbookColumns",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "FlipbookFramerate",
+          "Type": "number",
+          "Default": "12"
+        },
+        {
+          "Name": "FlipbookMode",
+          "Type": "Enum.ParticleFlipbookMode",
+          "Default": "Enum.ParticleFlipbookMode.Loop"
+        },
+        {
+          "Name": "FlipbookRows",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Friction",
+          "Type": "number",
+          "Default": "0.2"
         },
         {
           "Name": "Lifetime",
@@ -4220,9 +4280,34 @@
           "Default": "20"
         },
         {
+          "Name": "Rotation",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "RotationSpeed",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "RotationSpeedSpread",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "RotationSpread",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
           "Name": "Shape",
           "Type": "Enum.ParticleShape",
           "Default": "Enum.ParticleShape.Soft"
+        },
+        {
+          "Name": "Simulation",
+          "Type": "Enum.ParticleSimulation",
+          "Default": "Enum.ParticleSimulation.Cpu"
         },
         {
           "Name": "Size",
@@ -4235,6 +4320,11 @@
           "Default": "0.5"
         },
         {
+          "Name": "SizeOverLife",
+          "Type": "NumberSequence",
+          "Default": "NumberSequence.new(1)"
+        },
+        {
           "Name": "Speed",
           "Type": "number",
           "Default": "4"
@@ -4245,6 +4335,10 @@
           "Default": "15"
         },
         {
+          "Name": "Texture",
+          "Type": "Content"
+        },
+        {
           "Name": "Transparency",
           "Type": "number",
           "Default": "0"
@@ -4253,6 +4347,11 @@
           "Name": "TransparencyEnd",
           "Type": "number",
           "Default": "1"
+        },
+        {
+          "Name": "TransparencyOverLife",
+          "Type": "NumberSequence",
+          "Default": "NumberSequence.new(0)"
         },
         {
           "Name": "WindAffectsDrift",
@@ -11719,6 +11818,23 @@
       ]
     },
     {
+      "Name": "DecalBlendMode",
+      "Items": [
+        {
+          "Name": "Additive",
+          "Value": 2
+        },
+        {
+          "Name": "Alpha",
+          "Value": 1
+        },
+        {
+          "Name": "Multiply",
+          "Value": 0
+        }
+      ]
+    },
+    {
       "Name": "DominantAxis",
       "Items": [
         {
@@ -12864,6 +12980,61 @@
       ]
     },
     {
+      "Name": "ParticleCollision",
+      "Items": [
+        {
+          "Name": "Both",
+          "Value": 3
+        },
+        {
+          "Name": "None",
+          "Value": 0
+        },
+        {
+          "Name": "SceneDepth",
+          "Value": 1
+        },
+        {
+          "Name": "Terrain",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "ParticleCollisionResponse",
+      "Items": [
+        {
+          "Name": "Bounce",
+          "Value": 0
+        },
+        {
+          "Name": "Kill",
+          "Value": 2
+        },
+        {
+          "Name": "Stick",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "ParticleFlipbookMode",
+      "Items": [
+        {
+          "Name": "Loop",
+          "Value": 0
+        },
+        {
+          "Name": "OverLife",
+          "Value": 1
+        },
+        {
+          "Name": "Random",
+          "Value": 2
+        }
+      ]
+    },
+    {
       "Name": "ParticleShape",
       "Items": [
         {
@@ -12877,6 +13048,19 @@
         {
           "Name": "Square",
           "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "ParticleSimulation",
+      "Items": [
+        {
+          "Name": "Cpu",
+          "Value": 0
+        },
+        {
+          "Name": "Gpu",
+          "Value": 1
         }
       ]
     },

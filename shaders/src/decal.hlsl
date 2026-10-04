@@ -30,6 +30,8 @@ cbuffer GpuDecalFragment : register(b0, space3)
     float4 DecalParams;
     // The box's projection axis in world space, for the grazing-angle fade.
     float4 DecalAxis;
+    // rgb: the light an Alpha decal is lit by; a: its glow (ADR 0160).
+    float4 DecalLight;
 };
 
 Texture2D DecalTexture : register(t0, space2);
@@ -89,6 +91,18 @@ float4 FragmentMain(Interpolants input, bool isFront : SV_IsFrontFace) : SV_Targ
         image = DecalTexture.Sample(DecalSampler, float2(local.x + 0.5f, 0.5f - local.y));
 
     const float amount = saturate(image.a * DecalColor.a * fade);
+    const float3 colour = image.rgb * DecalColor.rgb;
+    // **Laid over, or added** (ADR 0160) -- what a multiply cannot do, which
+    // is brighten: a red warning multiplied onto grass is brown.
+    if (DecalParams.w > 1.5f) {
+        // Additive: the picture's light, once and as much again as it glows.
+        return float4(colour * (1.0f + DecalLight.a) * amount, 0.0f);
+    }
+    if (DecalParams.w > 0.5f) {
+        // Alpha, premultiplied: lit as the surface under it is lit, and
+        // glowing on top of that.
+        return float4((colour * DecalLight.rgb + colour * DecalLight.a) * amount, amount);
+    }
     // Multiplied by the blend into what is there: one where nothing lands.
-    return float4(lerp(float3(1.0f, 1.0f, 1.0f), image.rgb * DecalColor.rgb, amount), 1.0f);
+    return float4(lerp(float3(1.0f, 1.0f, 1.0f), colour, amount), 1.0f);
 }

@@ -117,6 +117,11 @@ inline constexpr scene::EnumId SettingSourceEnumId = 74;
 inline constexpr scene::EnumId ScrollingDirectionEnumId = 75;
 inline constexpr scene::EnumId ElasticBehaviorEnumId = 76;
 inline constexpr scene::EnumId AnimationCullingModeEnumId = 77;
+inline constexpr scene::EnumId ParticleCollisionEnumId = 78;
+inline constexpr scene::EnumId ParticleCollisionResponseEnumId = 79;
+inline constexpr scene::EnumId ParticleSimulationEnumId = 80;
+inline constexpr scene::EnumId DecalBlendModeEnumId = 81;
+inline constexpr scene::EnumId ParticleFlipbookModeEnumId = 82;
 
 } // namespace generated
 

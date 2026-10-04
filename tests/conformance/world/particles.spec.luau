@@ -84,6 +84,96 @@ describe("ParticleEmitter", function()
     end)
 end)
 
+describe("ParticleEmitter's picture (ADR 0160)", function()
+    it("takes a texture, a flipbook, a turn and curves over life, and starts with none of them", function()
+        local emitter = Instance.new("ParticleEmitter")
+        expect(emitter.Texture):ToBe("")
+        expect(emitter.FlipbookColumns):ToBe(1)
+        expect(emitter.FlipbookRows):ToBe(1)
+        expect(emitter.FlipbookFramerate):ToBe(12)
+        expect(emitter.FlipbookMode):ToBe(Enum.ParticleFlipbookMode.Loop)
+        expect(emitter.Rotation):ToBe(0)
+        expect(emitter.RotationSpread):ToBe(0)
+        expect(emitter.RotationSpeed):ToBe(0)
+        expect(emitter.RotationSpeedSpread):ToBe(0)
+        expect(emitter.SizeOverLife.Keypoints[1].Value):ToBe(1)
+        expect(emitter.TransparencyOverLife.Keypoints[1].Value):ToBe(0)
+
+        emitter.Texture = "asset://textures/fire.png"
+        emitter.FlipbookColumns = 4
+        emitter.FlipbookRows = 4
+        emitter.FlipbookMode = Enum.ParticleFlipbookMode.OverLife
+        emitter.Rotation = 45
+        emitter.RotationSpeed = -90
+        emitter.SizeOverLife = NumberSequence.new(0, 2)
+        emitter.ColorOverLife = ColorSequence.new(Color3.new(1, 1, 0), Color3.new(1, 0, 0))
+        expect(emitter.Texture):ToBe("asset://textures/fire.png")
+        expect(emitter.FlipbookColumns):ToBe(4)
+        expect(emitter.FlipbookMode):ToBe(Enum.ParticleFlipbookMode.OverLife)
+        expect(emitter.RotationSpeed):ToBe(-90)
+        expect(emitter.SizeOverLife.Keypoints[2].Value):ToBe(2)
+        emitter:Destroy()
+    end)
+
+    it("meets nothing unless told to, and bounces by default where it does", function()
+        local emitter = Instance.new("ParticleEmitter")
+        expect(emitter.Collision):ToBe(Enum.ParticleCollision.None)
+        expect(emitter.CollisionResponse):ToBe(Enum.ParticleCollisionResponse.Bounce)
+        expect(emitter.Bounce):ToBe(0.5)
+        expect(emitter.CollisionRadius):ToBe(0)
+        expect(emitter.Simulation):ToBe(Enum.ParticleSimulation.Cpu)
+        emitter.Collision = Enum.ParticleCollision.Both
+        emitter.CollisionResponse = Enum.ParticleCollisionResponse.Kill
+        emitter.Simulation = Enum.ParticleSimulation.Gpu
+        emitter.Bounce = 1
+        expect(emitter.Collision):ToBe(Enum.ParticleCollision.Both)
+        expect(emitter.Simulation):ToBe(Enum.ParticleSimulation.Gpu)
+        expect(function()
+            (emitter :: any).Bounce = 1.5
+        end):ToThrow()
+        expect(function()
+            (emitter :: any).Friction = -0.1
+        end):ToThrow()
+        emitter:Destroy()
+    end)
+
+    it("refuses a flipbook past sixteen a side, a fraction of a frame, and a negative spread", function()
+        local emitter = Instance.new("ParticleEmitter") :: any
+        expect(function()
+            emitter.FlipbookColumns = 17
+        end):ToThrow()
+        expect(function()
+            emitter.FlipbookRows = 2.5
+        end):ToThrow()
+        expect(function()
+            emitter.FlipbookColumns = 0
+        end):ToThrow()
+        expect(function()
+            emitter.RotationSpread = -1
+        end):ToThrow()
+        expect(function()
+            emitter.FlipbookFramerate = -1
+        end):ToThrow()
+        emitter:Destroy()
+    end)
+end)
+
+describe("Decal's blend (ADR 0160)", function()
+    it("multiplies unless told to lay over or add, and glows by its Emissive", function()
+        local decal = Instance.new("Decal")
+        expect(decal.BlendMode):ToBe(Enum.DecalBlendMode.Multiply)
+        expect(decal.Emissive):ToBe(0)
+        decal.BlendMode = Enum.DecalBlendMode.Additive
+        decal.Emissive = 2
+        expect(decal.BlendMode):ToBe(Enum.DecalBlendMode.Additive)
+        expect(decal.Emissive):ToBe(2)
+        expect(function()
+            (decal :: any).Emissive = -1
+        end):ToThrow()
+        decal:Destroy()
+    end)
+end)
+
 describe("Decal", function()
     it("is a box with an image, placed like a raycast hit", function()
         local decal = Instance.new("Decal")

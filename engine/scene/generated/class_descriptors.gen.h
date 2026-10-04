@@ -115,6 +115,11 @@ inline constexpr EnumId SettingSourceEnumId = 74;
 inline constexpr EnumId ScrollingDirectionEnumId = 75;
 inline constexpr EnumId ElasticBehaviorEnumId = 76;
 inline constexpr EnumId AnimationCullingModeEnumId = 77;
+inline constexpr EnumId ParticleCollisionEnumId = 78;
+inline constexpr EnumId ParticleCollisionResponseEnumId = 79;
+inline constexpr EnumId ParticleSimulationEnumId = 80;
+inline constexpr EnumId DecalBlendModeEnumId = 81;
+inline constexpr EnumId ParticleFlipbookModeEnumId = 82;
 
 } // namespace generated
 

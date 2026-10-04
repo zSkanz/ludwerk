@@ -616,6 +616,44 @@ struct ParticleEmitterComponent
     bool windAffectsDrift = false;
     // Every particle `Emit` has asked for since the emitter existed.
     u64 emitted = 0;
+
+    // **A picture, and its frames** (ADR 0160): none draws `shape`. A grid of
+    // `flipbookColumns` by `flipbookRows` frames, read left to right and top
+    // to bottom; `Enum.ParticleFlipbookMode` 0 Loop at `flipbookFramerate`,
+    // 1 OverLife -- every frame once across a particle's life -- 2 Random, one
+    // still frame each.
+    core::NameAtom texture;
+    i32 flipbookRows = 1;
+    i32 flipbookColumns = 1;
+    f32 flipbookFramerate = 12.0f;
+    i32 flipbookMode = 0;
+    // Degrees at birth, give or take `rotationSpread`, and degrees a second,
+    // give or take `rotationSpeedSpread`.
+    f32 rotation = 0.0f;
+    f32 rotationSpread = 0.0f;
+    f32 rotationSpeed = 0.0f;
+    f32 rotationSpeedSpread = 0.0f;
+    // **Over a particle's life**, multiplying what the start and end values
+    // make of it: a colour, a size, and a transparency combined as two layers
+    // of see-through are.
+    core::ColorSequence colorOverLife;
+    core::NumberSequence sizeOverLife{{core::NumberKeypoint{0.0f, 1.0f, 0.0f}, core::NumberKeypoint{1.0f, 1.0f, 0.0f}}};
+    core::NumberSequence transparencyOverLife;
+
+    // **What a particle meets** (ADR 0160): `Enum.ParticleCollision` 0 None,
+    // 1 SceneDepth -- what is drawn, or on the CPU the parts a ray finds --
+    // 2 Terrain, the ground whether or not it is in view, 3 Both. And what it
+    // does about it: `Enum.ParticleCollisionResponse` 0 Bounce, 1 Stick, 2 Kill.
+    i32 collision = 0;
+    i32 collisionResponse = 0;
+    // How much of its speed into a surface comes back out of it, and how much
+    // of its speed along one a touch takes away, each 0 to 1.
+    f32 bounce = 0.5f;
+    f32 friction = 0.2f;
+    // How far from its middle it touches, in metres; 0 is half its size.
+    f32 collisionRadius = 0.0f;
+    // `Enum.ParticleSimulation`: 0 on the CPU, 1 on the GPU where it can be.
+    i32 simulation = 0;
 };
 
 // `Decal` (F2): an image projected onto whatever is inside a box.
@@ -632,6 +670,11 @@ struct DecalComponent
     // Multiplies the image.
     core::Color3 color{1.0f, 1.0f, 1.0f};
     f32 transparency = 0.0f;
+    // `Enum.DecalBlendMode` (ADR 0160): 0 Multiply, which darkens and tints;
+    // 1 Alpha, the image laid over the surface and lit as it is; 2 Additive,
+    // the image's light added. And how brightly it glows, over and above.
+    i32 blendMode = 0;
+    f32 emissive = 0.0f;
 };
 
 // --- ADR 0129: Highlight, Beam and Trail ----------------------------------------

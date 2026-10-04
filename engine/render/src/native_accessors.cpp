@@ -743,6 +743,40 @@ bool setDecalTransparency(scene::World& world, core::InstanceId id, const Value&
     return true;
 }
 
+Value getDecalBlendMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::DecalComponent* decal = world.decals().find(id);
+    return decal == nullptr ? Value{} : Value{scene::EnumValue{generated::DecalBlendModeEnumId, decal->blendMode}};
+}
+
+bool setDecalBlendMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    scene::DecalComponent* decal = world.decals().find(id);
+    if (item == nullptr || decal == nullptr || item->enumId != generated::DecalBlendModeEnumId)
+        return false;
+    if (world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    decal->blendMode = item->value;
+    return true;
+}
+
+Value getDecalEmissive(const scene::World& world, core::InstanceId id)
+{
+    const scene::DecalComponent* decal = world.decals().find(id);
+    return decal == nullptr ? Value{} : Value{static_cast<f64>(decal->emissive)};
+}
+
+bool setDecalEmissive(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::DecalComponent* decal = world.decals().find(id);
+    f32 next = 0.0f;
+    if (decal == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    decal->emissive = next;
+    return true;
+}
+
 // --- ParticleEmitter (F2) ------------------------------------------------------
 //
 // Every number is refused when negative, and the three that are fractions --
@@ -807,6 +841,315 @@ bool setParticleEmitterShape(scene::World& world, core::InstanceId id, const Val
     if (world.enums().findValue(item->enumId, item->value) == nullptr)
         return false;
     emitter->shape = item->value;
+    return true;
+}
+
+// --- A particle's picture, its frames, its turn and its curves (ADR 0160) ------
+
+Value getParticleEmitterTexture(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{std::string(world.atoms().text(emitter->texture))};
+}
+
+bool setParticleEmitterTexture(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    if (text == nullptr || emitter == nullptr)
+        return false;
+    emitter->texture = world.atoms().intern(*text);
+    return true;
+}
+
+Value getParticleEmitterFlipbookColumns(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{static_cast<f64>(emitter->flipbookColumns)};
+}
+
+bool setParticleEmitterFlipbookColumns(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    f32 next = 0.0f;
+    // One to sixteen frames a side (ADR 0160): a grid finer than that is a
+    // picture nobody could draw the frames of.
+    if (emitter == nullptr || !takeFinite(value, next) || next < 1.0f || next > 16.0f || next != std::floor(next))
+        return false;
+    emitter->flipbookColumns = static_cast<core::i32>(next);
+    return true;
+}
+
+Value getParticleEmitterFlipbookRows(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{static_cast<f64>(emitter->flipbookRows)};
+}
+
+bool setParticleEmitterFlipbookRows(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    f32 next = 0.0f;
+    // One to sixteen frames a side (ADR 0160): a grid finer than that is a
+    // picture nobody could draw the frames of.
+    if (emitter == nullptr || !takeFinite(value, next) || next < 1.0f || next > 16.0f || next != std::floor(next))
+        return false;
+    emitter->flipbookRows = static_cast<core::i32>(next);
+    return true;
+}
+
+Value getParticleEmitterFlipbookFramerate(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{static_cast<f64>(emitter->flipbookFramerate)};
+}
+
+bool setParticleEmitterFlipbookFramerate(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    f32 next = 0.0f;
+    if (emitter == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    emitter->flipbookFramerate = next;
+    return true;
+}
+
+Value getParticleEmitterFlipbookMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{}
+                              : Value{scene::EnumValue{generated::ParticleFlipbookModeEnumId, emitter->flipbookMode}};
+}
+
+bool setParticleEmitterFlipbookMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    if (item == nullptr || emitter == nullptr || item->enumId != generated::ParticleFlipbookModeEnumId)
+        return false;
+    if (world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    emitter->flipbookMode = item->value;
+    return true;
+}
+
+Value getParticleEmitterRotation(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{static_cast<f64>(emitter->rotation)};
+}
+
+bool setParticleEmitterRotation(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    f32 next = 0.0f;
+    if (emitter == nullptr || !takeFinite(value, next))
+        return false;
+    emitter->rotation = next;
+    return true;
+}
+
+Value getParticleEmitterRotationSpread(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{static_cast<f64>(emitter->rotationSpread)};
+}
+
+bool setParticleEmitterRotationSpread(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    f32 next = 0.0f;
+    if (emitter == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    emitter->rotationSpread = next;
+    return true;
+}
+
+Value getParticleEmitterRotationSpeed(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{static_cast<f64>(emitter->rotationSpeed)};
+}
+
+bool setParticleEmitterRotationSpeed(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    f32 next = 0.0f;
+    if (emitter == nullptr || !takeFinite(value, next))
+        return false;
+    emitter->rotationSpeed = next;
+    return true;
+}
+
+Value getParticleEmitterRotationSpeedSpread(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{static_cast<f64>(emitter->rotationSpeedSpread)};
+}
+
+bool setParticleEmitterRotationSpeedSpread(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    f32 next = 0.0f;
+    if (emitter == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    emitter->rotationSpeedSpread = next;
+    return true;
+}
+
+Value getParticleEmitterColorOverLife(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{emitter->colorOverLife};
+}
+
+bool setParticleEmitterColorOverLife(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<core::ColorSequence>(&value);
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    if (next == nullptr || emitter == nullptr || !core::validSequence(next->keypoints))
+        return false;
+    emitter->colorOverLife = *next;
+    return true;
+}
+
+Value getParticleEmitterSizeOverLife(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{emitter->sizeOverLife};
+}
+
+bool setParticleEmitterSizeOverLife(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<core::NumberSequence>(&value);
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    if (next == nullptr || emitter == nullptr || !core::validSequence(next->keypoints))
+        return false;
+    emitter->sizeOverLife = *next;
+    return true;
+}
+
+Value getParticleEmitterTransparencyOverLife(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{emitter->transparencyOverLife};
+}
+
+bool setParticleEmitterTransparencyOverLife(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<core::NumberSequence>(&value);
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    if (next == nullptr || emitter == nullptr || !core::validSequence(next->keypoints))
+        return false;
+    emitter->transparencyOverLife = *next;
+    return true;
+}
+
+// --- What a particle meets, and where it is simulated (ADR 0160) --------------
+
+Value getParticleEmitterCollision(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{}
+                              : Value{scene::EnumValue{generated::ParticleCollisionEnumId, emitter->collision}};
+}
+
+bool setParticleEmitterCollision(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    if (item == nullptr || emitter == nullptr || item->enumId != generated::ParticleCollisionEnumId)
+        return false;
+    if (world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    emitter->collision = item->value;
+    return true;
+}
+
+Value getParticleEmitterCollisionResponse(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::ParticleCollisionResponseEnumId, emitter->collisionResponse}};
+}
+
+bool setParticleEmitterCollisionResponse(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    if (item == nullptr || emitter == nullptr || item->enumId != generated::ParticleCollisionResponseEnumId)
+        return false;
+    if (world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    emitter->collisionResponse = item->value;
+    return true;
+}
+
+Value getParticleEmitterBounce(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{static_cast<f64>(emitter->bounce)};
+}
+
+bool setParticleEmitterBounce(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    f32 next = 0.0f;
+    if (emitter == nullptr || !takeFinite(value, next) || next < 0.0f || next > 1.0f)
+        return false;
+    emitter->bounce = next;
+    return true;
+}
+
+Value getParticleEmitterFriction(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{static_cast<f64>(emitter->friction)};
+}
+
+bool setParticleEmitterFriction(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    f32 next = 0.0f;
+    if (emitter == nullptr || !takeFinite(value, next) || next < 0.0f || next > 1.0f)
+        return false;
+    emitter->friction = next;
+    return true;
+}
+
+Value getParticleEmitterCollisionRadius(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{static_cast<f64>(emitter->collisionRadius)};
+}
+
+bool setParticleEmitterCollisionRadius(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    f32 next = 0.0f;
+    if (emitter == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    emitter->collisionRadius = next;
+    return true;
+}
+
+Value getParticleEmitterSimulation(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{}
+                              : Value{scene::EnumValue{generated::ParticleSimulationEnumId, emitter->simulation}};
+}
+
+bool setParticleEmitterSimulation(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    if (item == nullptr || emitter == nullptr || item->enumId != generated::ParticleSimulationEnumId)
+        return false;
+    if (world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    emitter->simulation = item->value;
     return true;
 }
 

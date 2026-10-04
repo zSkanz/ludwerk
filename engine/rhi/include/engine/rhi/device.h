@@ -136,6 +136,11 @@ public:
     virtual void setComputePipeline(ComputePipelineHandle pipeline) = 0;
     // The buffers the compute shader only reads.
     virtual void bindComputeStorageBuffers(u32 firstSlot, std::span<const BufferHandle> buffers) = 0;
+    // **The textures a compute shader samples** (ADR 0160): each with its
+    // sampler, from `firstSlot`, as a fragment stage's are. What lets a
+    // particle be tested against the picture's depth, and a temporal upscaler
+    // read the frame; before the buffers a shader reads, in its bindings.
+    virtual void bindComputeTextures(u32 firstSlot, std::span<const TextureBinding> bindings) = 0;
     virtual void bindComputeUniforms(u32 slot, std::span<const std::byte> data) = 0;
     virtual void dispatch(u32 groupsX, u32 groupsY, u32 groupsZ) = 0;
 
@@ -182,6 +187,11 @@ public:
         return PresentMode::None;
     }
     [[nodiscard]] virtual std::string_view driverName() const noexcept { return {}; }
+    // What the driver calls the adapter it draws on -- a card's name, or a
+    // software rasteriser's ("llvmpipe", "Microsoft Basic Render Driver"):
+    // what tells a slow frame on a GPU from a frame drawn by the CPU. Empty
+    // where the backend does not say.
+    [[nodiscard]] virtual std::string_view adapterName() const noexcept { return {}; }
 
     [[nodiscard]] virtual BufferHandle createBuffer(const BufferDesc& desc) = 0;
     [[nodiscard]] virtual TextureHandle createTexture(const TextureDesc& desc) = 0;

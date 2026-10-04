@@ -652,12 +652,16 @@ struct GpuDecalFragment
     core::Mat4 worldToBox;
     core::Mat4 inverseViewProjection;
     f32 color[4]{1.0f, 1.0f, 1.0f, 1.0f};
-    // xy: 1 / render size; z: 1 when there is an image.
+    // xy: 1 / render size; z: 1 when there is an image; w: the blend mode
+    // (ADR 0160) -- 0 Multiply, 1 Alpha, 2 Additive.
     f32 params[4]{};
     f32 axis[4]{0.0f, 0.0f, 1.0f, 0.0f};
+    // What lights an Alpha decal -- the ambient and the sun, as a particle is
+    // lit -- and, in the fourth, how brightly it glows.
+    f32 light[4]{1.0f, 1.0f, 1.0f, 0.0f};
 };
 
-static_assert(sizeof(GpuDecalFragment) == 176, "GpuDecalFragment is a cbuffer layout");
+static_assert(sizeof(GpuDecalFragment) == 192, "GpuDecalFragment is a cbuffer layout");
 
 // One particle, as `particle.hlsl` reads its instance stream (F2).
 struct GpuParticle
@@ -666,11 +670,66 @@ struct GpuParticle
     f32 positionSize[4]{};
     // Linear colour times brightness, and opacity.
     f32 color[4]{};
-    // x emission, y shape.
+    // x emission, y shape, z rotation in radians, w 1 when it is drawn from
+    // its picture (ADR 0160).
     f32 params[4]{};
+    // The picture's frame: left, top, right, bottom in texture space.
+    f32 uv[4]{0.0f, 0.0f, 1.0f, 1.0f};
 };
 
-static_assert(sizeof(GpuParticle) == 48, "GpuParticle is a vertex stride; see particle.hlsl");
+static_assert(sizeof(GpuParticle) == 64, "GpuParticle is a vertex stride; see particle.hlsl");
+
+// One particle simulated on the GPU, as `particle_sim.hlsl` keeps it in its
+// buffer and `particle_gpu.hlsl` reads it (ADR 0160).
+struct GpuSimParticle
+{
+    f32 position[3]{};
+    f32 age = 0.0f;
+    f32 velocity[3]{};
+    // Zero for a slot never born.
+    f32 lifetime = 0.0f;
+    f32 rotation = 0.0f;
+    f32 spin = 0.0f;
+    f32 frame = 0.0f;
+    f32 stuck = 0.0f;
+};
+
+static_assert(sizeof(GpuSimParticle) == 48, "GpuSimParticle is a structured buffer's stride");
+
+// Compute `b0 space2`, for `particle_sim`: one emitter's step.
+struct GpuParticleSim
+{
+    core::Mat4 prevViewProjection;
+    core::Mat4 prevInverseViewProjection;
+    f32 emitterPlace[4]{};
+    f32 emitterUp[4]{0.0f, 1.0f, 0.0f, 0.0f};
+    f32 emitterSide[4]{1.0f, 0.0f, 0.0f, 0.0f};
+    f32 emitterExtent[4]{};
+    f32 acceleration[4]{};
+    f32 wind[4]{};
+    f32 turn[4]{};
+    f32 collide[4]{};
+    f32 touch[4]{};
+    f32 originFromCamera[4]{};
+    f32 depthParams[4]{};
+    f32 ground[4]{};
+    core::u32 spawn[4]{};
+    core::u32 frame[4]{};
+};
+
+static_assert(sizeof(GpuParticleSim) == 352, "GpuParticleSim is a cbuffer layout");
+
+// Vertex `b1 space1`, for `particle_gpu`: how one emitter's particles look.
+struct GpuParticleLook
+{
+    f32 originEmission[4]{};
+    f32 flipbook[4]{1.0f, 1.0f, 0.0f, 0.0f};
+    f32 kind[4]{};
+    f32 colorOverLife[16][4]{};
+    f32 sizeOverLife[4][4]{};
+};
+
+static_assert(sizeof(GpuParticleLook) == 368, "GpuParticleLook is a cbuffer layout");
 
 // One sprite (the 2D layer), per instance, for `sprite`.
 struct GpuSprite

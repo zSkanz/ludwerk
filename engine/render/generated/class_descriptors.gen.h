@@ -117,6 +117,11 @@ inline constexpr scene::EnumId SettingSourceEnumId = 74;
 inline constexpr scene::EnumId ScrollingDirectionEnumId = 75;
 inline constexpr scene::EnumId ElasticBehaviorEnumId = 76;
 inline constexpr scene::EnumId AnimationCullingModeEnumId = 77;
+inline constexpr scene::EnumId ParticleCollisionEnumId = 78;
+inline constexpr scene::EnumId ParticleCollisionResponseEnumId = 79;
+inline constexpr scene::EnumId ParticleSimulationEnumId = 80;
+inline constexpr scene::EnumId DecalBlendModeEnumId = 81;
+inline constexpr scene::EnumId ParticleFlipbookModeEnumId = 82;
 
 } // namespace generated
 
@@ -196,6 +201,10 @@ scene::Value getDecalColor(const scene::World& world, core::InstanceId id);
 bool setDecalColor(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getDecalTransparency(const scene::World& world, core::InstanceId id);
 bool setDecalTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getDecalBlendMode(const scene::World& world, core::InstanceId id);
+bool setDecalBlendMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getDecalEmissive(const scene::World& world, core::InstanceId id);
+bool setDecalEmissive(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachDecalComponents(scene::World& world, core::InstanceId id);
 void detachDecalComponents(scene::World& world, core::InstanceId id);
 
@@ -266,6 +275,42 @@ scene::Value getParticleEmitterBrightness(const scene::World& world, core::Insta
 bool setParticleEmitterBrightness(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getParticleEmitterShape(const scene::World& world, core::InstanceId id);
 bool setParticleEmitterShape(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterTexture(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterTexture(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterFlipbookColumns(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterFlipbookColumns(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterFlipbookRows(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterFlipbookRows(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterFlipbookFramerate(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterFlipbookFramerate(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterFlipbookMode(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterFlipbookMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterRotation(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterRotation(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterRotationSpread(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterRotationSpread(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterRotationSpeed(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterRotationSpeed(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterRotationSpeedSpread(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterRotationSpeedSpread(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterColorOverLife(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterColorOverLife(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterSizeOverLife(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterSizeOverLife(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterTransparencyOverLife(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterTransparencyOverLife(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterCollision(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterCollision(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterCollisionResponse(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterCollisionResponse(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterBounce(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterBounce(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterFriction(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterFriction(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterCollisionRadius(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterCollisionRadius(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterSimulation(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterSimulation(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachParticleEmitterComponents(scene::World& world, core::InstanceId id);
 void detachParticleEmitterComponents(scene::World& world, core::InstanceId id);
 

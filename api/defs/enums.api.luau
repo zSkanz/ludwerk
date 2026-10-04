@@ -1942,6 +1942,105 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "ParticleCollision",
+            Doc = "What a `ParticleEmitter`'s particles meet (ADR 0160).",
+            Items = {
+                { Name = "None", Value = 0, Doc = "Nothing: they pass through the world, as they always did." },
+                {
+                    Name = "SceneDepth",
+                    Value = 1,
+                    Doc = "What is drawn. On the GPU, the picture's depth: every surface on the screen, and "
+                        .. "nothing off it or hidden behind something. On the CPU, a ray against the parts "
+                        .. "in its way.",
+                },
+                {
+                    Name = "Terrain",
+                    Value = 2,
+                    Doc = "The terrain's ground, in view or not: where most sparks, rain and debris land.",
+                },
+                { Name = "Both", Value = 3, Doc = "The terrain's ground and what is drawn." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "ParticleCollisionResponse",
+            Doc = "What a particle does where it meets something (ADR 0160).",
+            Items = {
+                {
+                    Name = "Bounce",
+                    Value = 0,
+                    Doc = "Comes back off it by `Bounce`, slowed along it by `Friction`, and rests when it "
+                        .. "barely rises.",
+                },
+                { Name = "Stick", Value = 1, Doc = "Stays where it landed for the rest of its life." },
+                { Name = "Kill", Value = 2, Doc = "Dies there: rain on a roof, a spark on water." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "ParticleSimulation",
+            Doc = "Where a `ParticleEmitter`'s particles are simulated (ADR 0160).",
+            Items = {
+                {
+                    Name = "Cpu",
+                    Value = 0,
+                    Doc = "On the CPU: a few thousand an emitter, sorted back to front with every other "
+                        .. "particle, on every machine.",
+                },
+                {
+                    Name = "Gpu",
+                    Value = 1,
+                    Doc = "On the GPU: tens of thousands an emitter for the cost of a few draws, born, moved "
+                        .. "and collided in a compute shader. Drawn among themselves in no order, which "
+                        .. "light added to light does not show.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "DecalBlendMode",
+            Doc = "How a `Decal` meets the surface it lands on (ADR 0160).",
+            Items = {
+                {
+                    Name = "Multiply",
+                    Value = 0,
+                    Doc = "Multiplies what is there: it darkens and tints, and cannot brighten. A stain, a "
+                        .. "shadow, a scorch mark.",
+                },
+                {
+                    Name = "Alpha",
+                    Value = 1,
+                    Doc = "Lays the image over the surface, by its alpha, lit as the surface is: a painted "
+                        .. "sign, a marking, a warning ring that reads on any ground.",
+                },
+                {
+                    Name = "Additive",
+                    Value = 2,
+                    Doc = "Adds the image's light to what is there, unlit: a glow, an aura, a magic circle.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "ParticleFlipbookMode",
+            Doc = "How a particle steps through the frames of its emitter's flipbook (ADR 0160).",
+            Items = {
+                {
+                    Name = "Loop",
+                    Value = 0,
+                    Doc = "The frames in order at `FlipbookFramerate`, round and round: fire, a flag, a glint.",
+                },
+                {
+                    Name = "OverLife",
+                    Value = 1,
+                    Doc = "Every frame once across the particle's life, the last held at its end: a puff that "
+                        .. "billows and thins, an explosion.",
+                },
+                {
+                    Name = "Random",
+                    Value = 2,
+                    Doc = "One frame of its own, chosen at birth and kept: debris, leaves, a mix of shapes from "
+                        .. "one picture.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

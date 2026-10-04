@@ -145,6 +145,16 @@ How closely a `MeshPart`'s collision shape follows the geometry it renders (§2.
 | `Box` | 2 | The mesh's bounding box, which is the cheapest shape there is and the least faithful. |
 | `Precise` | 3 | The triangles themselves. Accepted and not yet implemented: this release collides against a hull and says so through this property reading back `Precise` while behaving as `Hull`. A triangle-mesh collider is work the asset pipeline has yet to do. |
 
+## Enum.DecalBlendMode
+
+How a `Decal` meets the surface it lands on (ADR 0160).
+
+| Item | Value | Description |
+|---|---|---|
+| `Multiply` | 0 | Multiplies what is there: it darkens and tints, and cannot brighten. A stain, a shadow, a scorch mark. |
+| `Alpha` | 1 | Lays the image over the surface, by its alpha, lit as the surface is: a painted sign, a marking, a warning ring that reads on any ground. |
+| `Additive` | 2 | Adds the image's light to what is there, unlit: a glow, an aura, a magic circle. |
+
 ## Enum.DominantAxis
 
 Which axis a `UIAspectRatioConstraint` keeps when it scales with its parent.
@@ -577,6 +587,37 @@ The solid a `Part` renders and collides as; `MeshPart` carries geometry instead 
 | `Capsule` | 3 | A cylinder closed by a hemisphere at each end. |
 | `Wedge` | 4 | A box with one face sloped away to an edge: a right-triangular prism. |
 
+## Enum.ParticleCollision
+
+What a `ParticleEmitter`'s particles meet (ADR 0160).
+
+| Item | Value | Description |
+|---|---|---|
+| `None` | 0 | Nothing: they pass through the world, as they always did. |
+| `SceneDepth` | 1 | What is drawn. On the GPU, the picture's depth: every surface on the screen, and nothing off it or hidden behind something. On the CPU, a ray against the parts in its way. |
+| `Terrain` | 2 | The terrain's ground, in view or not: where most sparks, rain and debris land. |
+| `Both` | 3 | The terrain's ground and what is drawn. |
+
+## Enum.ParticleCollisionResponse
+
+What a particle does where it meets something (ADR 0160).
+
+| Item | Value | Description |
+|---|---|---|
+| `Bounce` | 0 | Comes back off it by `Bounce`, slowed along it by `Friction`, and rests when it barely rises. |
+| `Stick` | 1 | Stays where it landed for the rest of its life. |
+| `Kill` | 2 | Dies there: rain on a roof, a spark on water. |
+
+## Enum.ParticleFlipbookMode
+
+How a particle steps through the frames of its emitter's flipbook (ADR 0160).
+
+| Item | Value | Description |
+|---|---|---|
+| `Loop` | 0 | The frames in order at `FlipbookFramerate`, round and round: fire, a flag, a glint. |
+| `OverLife` | 1 | Every frame once across the particle's life, the last held at its end: a puff that billows and thins, an explosion. |
+| `Random` | 2 | One frame of its own, chosen at birth and kept: debris, leaves, a mix of shapes from one picture. |
+
 ## Enum.ParticleShape
 
 What one particle looks like before its colour is applied. Drawn in the shader rather than sampled from a texture, so a puff of smoke needs no file.
@@ -586,6 +627,15 @@ What one particle looks like before its colour is applied. Drawn in the shader r
 | `Soft` | 0 | A round puff that fades to nothing at its edge: smoke, dust, steam, a glow. |
 | `Disc` | 1 | A round dot with a crisp edge: sparks, bubbles, confetti. |
 | `Square` | 2 | A square facing the camera: pixels, debris, blocky confetti. |
+
+## Enum.ParticleSimulation
+
+Where a `ParticleEmitter`'s particles are simulated (ADR 0160).
+
+| Item | Value | Description |
+|---|---|---|
+| `Cpu` | 0 | On the CPU: a few thousand an emitter, sorted back to front with every other particle, on every machine. |
+| `Gpu` | 1 | On the GPU: tens of thousands an emitter for the cost of a few draws, born, moved and collided in a compute shader. Drawn among themselves in no order, which light added to light does not show. |
 
 ## Enum.Platform
 

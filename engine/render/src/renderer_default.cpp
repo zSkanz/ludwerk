@@ -1021,6 +1021,9 @@ private:
     rhi::PipelineHandle particlePipeline_{};
     // Decals (F2), made the first frame one is drawn.
     rhi::PipelineHandle decalPipeline_{};
+    // The same decal laid over and added (ADR 0160).
+    rhi::PipelineHandle decalAlphaPipeline_{};
+    rhi::PipelineHandle decalAddPipeline_{};
     bool decalTried_ = false;
     rhi::BufferHandle particleBuffer_{};
     // World-space UI (F3): one pipeline tested against depth and one that is
@@ -1053,6 +1056,48 @@ private:
     bool foliageCulled_ = false;
     bool particleTried_ = false;
     std::vector<GpuParticle> particleStaging_;
+    // Consecutive particles of one picture, drawn as one (ADR 0160).
+    struct ParticleRun
+    {
+        rhi::TextureHandle texture;
+        u32 first = 0;
+        u32 count = 0;
+    };
+    std::vector<ParticleRun> particleRuns_;
+
+    // **Particles simulated on the GPU** (ADR 0160): a buffer an emitter, kept
+    // from frame to frame and stepped by a compute pass, and drawn from where
+    // it is. `origin` is what its positions are measured from, in doubles
+    // here; `head` is the next slot born into, round the buffer.
+    struct GpuEmitterBuffer
+    {
+        rhi::BufferHandle buffer;
+        u32 capacity = 0;
+        u32 head = 0;
+        core::DVec3 origin;
+        // The particle system's update it was last stepped for, and the frame
+        // it was last asked for: unasked, it is let go.
+        u64 serial = 0;
+        u64 frame = 0;
+    };
+    std::map<u64, GpuEmitterBuffer> gpuEmitters_;
+    rhi::ComputePipelineHandle particleSimPipeline_{};
+    rhi::PipelineHandle particleGpuPipeline_{};
+    bool particleGpuTried_ = false;
+    // The ground's heights, as the particle system last made them.
+    rhi::TextureHandle particleGround_{};
+    u32 particleGroundRevision_ = 0;
+    u32 particleGroundCells_ = 0;
+    // The main view's camera a frame ago: what the depth it left behind was
+    // drawn through, for particles that collide with what is seen.
+    Mat4 simPrevViewProjection_{};
+    core::DVec3 simPrevOrigin_{};
+    f32 simPrevDepth_[2]{};
+    bool simPrevValid_ = false;
+    u64 gpuParticleFrame_ = 0;
+    [[nodiscard]] bool ensureGpuParticles(rhi::IDevice& device);
+    void simulateGpuParticles(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world);
+    void releaseGpuParticles(rhi::IDevice& device);
     u32 particleCount_ = 0;
     // Beams and trails (ADR 0129): the pipeline and the buffer this frame's
     // vertices are uploaded into, made the first frame there is a ribbon.
@@ -2183,6 +2228,8 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
                                           &voxelBlendPipeline_,
                                           &voxelShadowPipeline_,
                                           &decalPipeline_,
+                                          &decalAlphaPipeline_,
+                                          &decalAddPipeline_,
                                           &worldUiPipeline_,
                                           &worldUiOnTopPipeline_,
                                           &spritePipeline_,
@@ -2215,6 +2262,7 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     if (particleBuffer_.valid())
         device.destroy(particleBuffer_);
     particleBuffer_ = {};
+    releaseGpuParticles(device);
     for (rhi::BufferHandle* buffer : {&skinnedInstanceBuffer_, &paletteBuffer_}) {
         if (buffer->valid())
             device.destroy(*buffer);
@@ -3504,6 +3552,39 @@ bool DefaultRenderer::ensureDecals(rhi::IDevice& device)
         .colorTargets = multiplyTarget,
         .debugName = "decal",
     });
+    // **Laid over what is there, and added to it** (ADR 0160): the same
+    // shader, premultiplied for the one and with nothing taken away for the
+    // other. Alpha is left as it was in both.
+    const std::array<rhi::ColorTargetDesc, 1> alphaTarget{rhi::ColorTargetDesc{
+        .format = kHdrFormat,
+        .blend = {.enabled = true,
+                  .srcColor = rhi::BlendFactor::One,
+                  .dstColor = rhi::BlendFactor::OneMinusSrcAlpha,
+                  .srcAlpha = rhi::BlendFactor::Zero,
+                  .dstAlpha = rhi::BlendFactor::One},
+    }};
+    const std::array<rhi::ColorTargetDesc, 1> addTarget{rhi::ColorTargetDesc{
+        .format = kHdrFormat,
+        .blend = {.enabled = true,
+                  .srcColor = rhi::BlendFactor::One,
+                  .dstColor = rhi::BlendFactor::One,
+                  .srcAlpha = rhi::BlendFactor::Zero,
+                  .dstAlpha = rhi::BlendFactor::One},
+    }};
+    decalAlphaPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = vertex,
+        .fragmentShader = fragment,
+        .rasterizer = {.cullMode = rhi::CullMode::None},
+        .colorTargets = alphaTarget,
+        .debugName = "decal-alpha",
+    });
+    decalAddPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = vertex,
+        .fragmentShader = fragment,
+        .rasterizer = {.cullMode = rhi::CullMode::None},
+        .colorTargets = addTarget,
+        .debugName = "decal-additive",
+    });
     return decalPipeline_.valid();
 }
 
@@ -4473,10 +4554,11 @@ bool DefaultRenderer::ensureParticles(rhi::IDevice& device)
 
     // **Instances only**: the six corners come from the vertex index, so the
     // one stream is per instance and there is no per-vertex buffer at all.
-    const std::array<rhi::VertexAttribute, 3> attributes{
+    const std::array<rhi::VertexAttribute, 4> attributes{
         rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
         rhi::VertexAttribute{.location = 1, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
         rhi::VertexAttribute{.location = 2, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 32},
+        rhi::VertexAttribute{.location = 3, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 48},
     };
     const std::array<rhi::VertexBufferLayout, 1> buffers{
         rhi::VertexBufferLayout{.slot = 0, .strideBytes = sizeof(GpuParticle), .perInstance = true},
@@ -4508,6 +4590,236 @@ bool DefaultRenderer::ensureParticles(rhi::IDevice& device)
         .debugName = "particles",
     });
     return particlePipeline_.valid() && particleBuffer_.valid();
+}
+
+bool DefaultRenderer::ensureGpuParticles(rhi::IDevice& device)
+{
+    if (particleGpuTried_)
+        return particleSimPipeline_.valid() && particleGpuPipeline_.valid();
+    particleGpuTried_ = true;
+    if (shaderLibrary_ == nullptr || !device.caps().compute)
+        return false;
+    core::EngineError error;
+    particleSimPipeline_ = shaderLibrary_->createCompute(device, "particle_sim", &error);
+    const auto load = [&](std::string_view name, rhi::ShaderStage stage) -> rhi::ShaderHandle {
+        const rhi::ShaderHandle handle = shaderLibrary_->create(device, name, stage, &error);
+        if (handle.valid() && shaderCount_ < std::size(shaders_))
+            shaders_[shaderCount_++] = handle;
+        return handle;
+    };
+    const rhi::ShaderHandle vertex = load("particle_gpu", rhi::ShaderStage::Vertex);
+    const rhi::ShaderHandle fragment = load("particle_gpu", rhi::ShaderStage::Fragment);
+    if (!particleSimPipeline_.valid() || !vertex.valid() || !fragment.valid()) {
+        core::logText(core::LogLevel::Warn, error.message);
+        return false;
+    }
+    // Premultiplied, as the CPU's particles are, and with no vertex stream at
+    // all: a particle is a slot of the buffer, found by its instance number.
+    const std::array<rhi::ColorTargetDesc, 1> hdrTarget{rhi::ColorTargetDesc{
+        .format = kHdrFormat,
+        .blend = {.enabled = true,
+                  .srcColor = rhi::BlendFactor::One,
+                  .dstColor = rhi::BlendFactor::OneMinusSrcAlpha,
+                  .srcAlpha = rhi::BlendFactor::One,
+                  .dstAlpha = rhi::BlendFactor::OneMinusSrcAlpha},
+    }};
+    particleGpuPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = vertex,
+        .fragmentShader = fragment,
+        .rasterizer = {.cullMode = rhi::CullMode::None},
+        .colorTargets = hdrTarget,
+        .debugName = "particle-gpu",
+    });
+    return particleSimPipeline_.valid() && particleGpuPipeline_.valid();
+}
+
+void DefaultRenderer::releaseGpuParticles(rhi::IDevice& device)
+{
+    for (auto& [key, held] : gpuEmitters_) {
+        if (held.buffer.valid())
+            device.destroy(held.buffer);
+    }
+    gpuEmitters_.clear();
+    if (particleGround_.valid())
+        device.destroy(particleGround_);
+    particleGround_ = {};
+    particleGroundRevision_ = 0;
+    particleGroundCells_ = 0;
+    if (particleSimPipeline_.valid())
+        device.destroy(particleSimPipeline_);
+    particleSimPipeline_ = {};
+    if (particleGpuPipeline_.valid())
+        device.destroy(particleGpuPipeline_);
+    particleGpuPipeline_ = {};
+    particleGpuTried_ = false;
+    simPrevValid_ = false;
+}
+
+void DefaultRenderer::simulateGpuParticles(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world)
+{
+    // The camera the depth still in `depth_` was drawn through, and this
+    // frame's for the next.
+    const Mat4 prevViewProjection = simPrevViewProjection_;
+    const core::DVec3 prevOrigin = simPrevOrigin_;
+    const f32 prevNear = simPrevDepth_[0];
+    const f32 prevFar = simPrevDepth_[1];
+    const bool prevValid = simPrevValid_ && depth_.valid();
+    simPrevViewProjection_ = world.camera.viewProjection;
+    simPrevOrigin_ = world.camera.origin;
+    simPrevDepth_[0] = core::isOrthographic(world.camera.projection) ? -world.camera.nearPlane : world.camera.nearPlane;
+    simPrevDepth_[1] = world.camera.farPlane;
+    simPrevValid_ = world.camera.valid;
+
+    gpuParticleFrame_ += 1;
+    if (!world.gpuEmitters.empty() && ensureGpuParticles(device)) {
+        // The ground's heights, when the particle system has made them again.
+        const RenderParticleGround* ground = world.particleGround;
+        if (ground != nullptr && ground->cells > 0 && ground->revision != particleGroundRevision_ &&
+            ground->heights.size() == static_cast<usize>(ground->cells) * ground->cells) {
+            if (!particleGround_.valid() || particleGroundCells_ != ground->cells) {
+                if (particleGround_.valid())
+                    device.destroy(particleGround_);
+                particleGround_ = device.createTexture({
+                    .format = rhi::TextureFormat::R32Float,
+                    .usage = rhi::TextureUsage::Sampled,
+                    .width = ground->cells,
+                    .height = ground->cells,
+                    .debugName = "particle-ground",
+                });
+                particleGroundCells_ = ground->cells;
+            }
+            if (particleGround_.valid()) {
+                cmd.uploadTexture(particleGround_,
+                                  asBytes(ground->heights.data(), ground->heights.size() * sizeof(f32)), 0);
+                particleGroundRevision_ = ground->revision;
+            }
+        }
+        const bool groundThere = ground != nullptr && particleGround_.valid() && ground->side > 0.0f;
+
+        // Each emitter's buffer, made or grown before any pass opens: a grown
+        // one starts again from nothing, as a new one does.
+        for (const RenderGpuEmitter& emitter : world.gpuEmitters) {
+            GpuEmitterBuffer& held = gpuEmitters_[(static_cast<u64>(emitter.id.index) << 32) | emitter.id.generation];
+            held.frame = gpuParticleFrame_;
+            if (held.buffer.valid() && held.capacity >= emitter.capacity)
+                continue;
+            if (held.buffer.valid())
+                device.destroy(held.buffer);
+            held.capacity = emitter.capacity;
+            held.head = 0;
+            held.serial = 0;
+            held.origin = emitter.frame.position;
+            held.buffer = device.createBuffer({
+                .usage = rhi::BufferUsage::GraphicsStorageRead | rhi::BufferUsage::ComputeStorageWrite,
+                .sizeBytes = held.capacity * static_cast<u32>(sizeof(GpuSimParticle)),
+                .debugName = "particles.gpu",
+            });
+            if (held.buffer.valid()) {
+                const std::vector<GpuSimParticle> nobody(held.capacity);
+                cmd.upload(held.buffer, asBytes(nobody.data(), nobody.size() * sizeof(GpuSimParticle)), 0);
+            }
+        }
+
+        cmd.pushDebugGroup("particles-gpu");
+        for (const RenderGpuEmitter& emitter : world.gpuEmitters) {
+            GpuEmitterBuffer& held = gpuEmitters_[(static_cast<u64>(emitter.id.index) << 32) | emitter.id.generation];
+            // Stepped once for each update of the particle system.
+            if (!held.buffer.valid() || held.serial == emitter.serial)
+                continue;
+            held.serial = emitter.serial;
+
+            GpuParticleSim sim;
+            sim.prevViewProjection = prevViewProjection;
+            sim.prevInverseViewProjection = core::inverse(prevViewProjection);
+            sim.emitterPlace[0] = static_cast<f32>(emitter.frame.position.x - held.origin.x);
+            sim.emitterPlace[1] = static_cast<f32>(emitter.frame.position.y - held.origin.y);
+            sim.emitterPlace[2] = static_cast<f32>(emitter.frame.position.z - held.origin.z);
+            sim.emitterPlace[3] = emitter.step;
+            const Vec3 up = core::normalize(emitter.frame.rotation * Vec3{0.0f, 1.0f, 0.0f});
+            const Vec3 side = core::normalize(emitter.frame.rotation * Vec3{1.0f, 0.0f, 0.0f});
+            sim.emitterUp[0] = up.x;
+            sim.emitterUp[1] = up.y;
+            sim.emitterUp[2] = up.z;
+            sim.emitterUp[3] = emitter.speed;
+            sim.emitterSide[0] = side.x;
+            sim.emitterSide[1] = side.y;
+            sim.emitterSide[2] = side.z;
+            sim.emitterSide[3] = emitter.spread;
+            sim.emitterExtent[0] = emitter.extent.x;
+            sim.emitterExtent[1] = emitter.extent.y;
+            sim.emitterExtent[2] = emitter.extent.z;
+            sim.emitterExtent[3] = emitter.lifetime;
+            sim.acceleration[0] = emitter.acceleration.x;
+            sim.acceleration[1] = emitter.acceleration.y;
+            sim.acceleration[2] = emitter.acceleration.z;
+            sim.acceleration[3] = emitter.drag;
+            sim.wind[0] = emitter.wind.x;
+            sim.wind[1] = emitter.wind.y;
+            sim.wind[2] = emitter.wind.z;
+            sim.turn[0] = emitter.rotation;
+            sim.turn[1] = emitter.rotationSpread;
+            sim.turn[2] = emitter.spin;
+            sim.turn[3] = emitter.spinSpread;
+            // What is seen needs a frame to have been drawn; the ground, its map.
+            core::i32 meets = emitter.collision;
+            if (!prevValid)
+                meets &= ~1;
+            if (!groundThere)
+                meets &= ~2;
+            sim.collide[0] = static_cast<f32>(meets);
+            sim.collide[1] = static_cast<f32>(emitter.response);
+            sim.collide[2] = emitter.bounce;
+            sim.collide[3] = emitter.friction;
+            sim.touch[0] = emitter.radius;
+            sim.touch[1] = emitter.restSpeed;
+            sim.touch[2] = static_cast<f32>(emitter.columns * emitter.rows);
+            sim.originFromCamera[0] = static_cast<f32>(held.origin.x - prevOrigin.x);
+            sim.originFromCamera[1] = static_cast<f32>(held.origin.y - prevOrigin.y);
+            sim.originFromCamera[2] = static_cast<f32>(held.origin.z - prevOrigin.z);
+            sim.depthParams[0] = prevNear;
+            sim.depthParams[1] = prevFar;
+            sim.depthParams[2] = 1.0f / static_cast<f32>(std::max(renderWidth_, 1u));
+            sim.depthParams[3] = 1.0f / static_cast<f32>(std::max(renderHeight_, 1u));
+            if (groundThere) {
+                sim.ground[0] = static_cast<f32>(ground->corner.x - held.origin.x);
+                sim.ground[1] = static_cast<f32>(ground->corner.z - held.origin.z);
+                sim.ground[2] = 1.0f / ground->side;
+                sim.ground[3] = static_cast<f32>(held.origin.y);
+            }
+            const u32 born = std::min(emitter.spawn, held.capacity);
+            sim.spawn[0] = held.head;
+            sim.spawn[1] = born;
+            sim.spawn[2] = held.capacity;
+            sim.spawn[3] = emitter.seed;
+            sim.frame[0] = static_cast<u32>(emitter.serial);
+            sim.frame[1] = groundThere ? 1u : 0u;
+            held.head = (held.head + born) % held.capacity;
+
+            const std::array<rhi::BufferHandle, 1> written{held.buffer};
+            cmd.beginComputePass(written);
+            cmd.setComputePipeline(particleSimPipeline_);
+            const std::array<rhi::TextureBinding, 2> read{
+                rhi::TextureBinding{prevValid ? depth_ : whitePixel_, pointSampler_},
+                rhi::TextureBinding{groundThere ? particleGround_ : blackPixel_, environmentSampler_},
+            };
+            cmd.bindComputeTextures(0, read);
+            cmd.bindComputeUniforms(0, asBytes(&sim, sizeof(sim)));
+            cmd.dispatch((held.capacity + 63u) / 64u, 1, 1);
+            cmd.endComputePass();
+        }
+        cmd.popDebugGroup();
+    }
+
+    // An emitter nobody asked for this frame has gone: its buffer with it.
+    for (auto at = gpuEmitters_.begin(); at != gpuEmitters_.end();) {
+        if (at->second.frame == gpuParticleFrame_) {
+            ++at;
+            continue;
+        }
+        if (at->second.buffer.valid())
+            device.destroy(at->second.buffer);
+        at = gpuEmitters_.erase(at);
+    }
 }
 
 bool DefaultRenderer::ensureRibbons(rhi::IDevice& device)
@@ -5683,6 +5995,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // are. The pipeline is made the first frame there is one, so a world
     // without particles builds nothing and moves no golden.
     particleCount_ = 0;
+    particleRuns_.clear();
     if (!world.particles.empty() && ensureParticles(device)) {
         particleStaging_.clear();
         const usize count = std::min(world.particles.size(), ParticleSystem::MaxDrawn);
@@ -5698,7 +6011,17 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 gpu.color[channel] = particle.color[channel];
             gpu.params[0] = particle.emission;
             gpu.params[1] = static_cast<f32>(particle.shape);
+            gpu.params[2] = particle.rotation;
+            gpu.params[3] = particle.texture.valid() ? 1.0f : 0.0f;
+            for (usize corner = 0; corner < 4; ++corner)
+                gpu.uv[corner] = particle.uv[corner];
             particleStaging_.push_back(gpu);
+            // **Runs of one picture** (ADR 0160), in the order drawn: back
+            // to front across every emitter, so neighbours of one picture
+            // are one draw and blending is never out of order.
+            if (particleRuns_.empty() || particleRuns_.back().texture != particle.texture)
+                particleRuns_.push_back(ParticleRun{particle.texture, static_cast<u32>(at), 0});
+            particleRuns_.back().count += 1;
         }
         cmd.upload(particleBuffer_, asBytes(particleStaging_.data(), particleStaging_.size() * sizeof(GpuParticle)), 0);
         particleCount_ = static_cast<u32>(count);
@@ -5991,6 +6314,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
 
     // The foliage cull (ADR 0116), before any pass reads what it writes.
     cullFoliage(device, cmd, world, meshes);
+    // Particles on the GPU (ADR 0160), stepped once a frame by the main view
+    // -- a view into a texture draws the same buffers and steps nothing.
+    if (activeView_ == 0)
+        simulateGpuParticles(device, cmd, world);
 
     // --- Shadow pass --------------------------------------------------------
     ENG_PROFILE_NEXT(passes, "render.shadows");
@@ -6480,9 +6807,23 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
             cmd.setScissor(
                 {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
-            cmd.setPipeline(decalPipeline_);
             const Mat4 inverseViewProjection = core::inverse(world.camera.viewProjection);
+            // What lights an Alpha decal: the ambient and the sun, as a
+            // particle is lit -- a decal has no normal of its own to shade by.
+            const f32 decalSun = world.environment.sunBrightness * sky.lightFactor;
+            const f32 decalLight[3]{world.environment.outdoorAmbient.r + sky.lightColor.r * decalSun,
+                                    world.environment.outdoorAmbient.g + sky.lightColor.g * decalSun,
+                                    world.environment.outdoorAmbient.b + sky.lightColor.b * decalSun};
+            core::i32 boundMode = -1;
             for (const RenderDecal& decal : world.decals) {
+                // In pool order, each through its own blend (ADR 0160).
+                const core::i32 mode = decal.blendMode == 1 && decalAlphaPipeline_.valid()
+                                           ? 1
+                                           : (decal.blendMode == 2 && decalAddPipeline_.valid() ? 2 : 0);
+                if (mode != boundMode) {
+                    cmd.setPipeline(mode == 1 ? decalAlphaPipeline_ : (mode == 2 ? decalAddPipeline_ : decalPipeline_));
+                    boundMode = mode;
+                }
                 GpuDecalUniforms vertex;
                 vertex.boxToWorld = decal.boxToWorld;
                 vertex.viewProjection = world.camera.viewProjection;
@@ -6496,6 +6837,11 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 fragment.params[0] = 1.0f / static_cast<f32>(renderWidth_);
                 fragment.params[1] = 1.0f / static_cast<f32>(renderHeight_);
                 fragment.params[2] = decal.texture.valid() ? 1.0f : 0.0f;
+                fragment.params[3] = static_cast<f32>(mode);
+                fragment.light[0] = decalLight[0];
+                fragment.light[1] = decalLight[1];
+                fragment.light[2] = decalLight[2];
+                fragment.light[3] = decal.emissive;
                 fragment.axis[0] = decal.axis.x;
                 fragment.axis[1] = decal.axis.y;
                 fragment.axis[2] = decal.axis.z;
@@ -6705,7 +7051,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // pane of glass draws over it. Sorting the two together would put a
         // per-particle draw into a per-draw sort, and the whole point of a
         // particle is that it is not a draw of its own.
-        if (particleCount_ > 0 || ribbonVertexCount_ > 0) {
+        const bool gpuParticles = !world.gpuEmitters.empty() && particleGpuPipeline_.valid();
+        if (particleCount_ > 0 || ribbonVertexCount_ > 0 || gpuParticles) {
             GpuParticleUniforms particleUniforms;
             particleUniforms.viewProjection = world.camera.viewProjection;
             const Mat4 cameraToWorld = core::inverse(world.camera.view);
@@ -6782,12 +7129,62 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 cmd.setPipeline(particlePipeline_);
                 cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&particleUniforms, sizeof(particleUniforms)));
                 cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&lighting, sizeof(lighting)));
-                const std::array<rhi::TextureBinding, 1> sceneDepth{rhi::TextureBinding{depth_, pointSampler_}};
-                cmd.bindTextures(rhi::ShaderStage::Fragment, 0, sceneDepth);
                 const std::array<rhi::BufferHandle, 1> particleBuffers{particleBuffer_};
                 cmd.bindVertexBuffers(0, particleBuffers);
-                cmd.draw(6, particleCount_, 0, 0);
-                stats_.drawCalls += 1;
+                for (const ParticleRun& run : particleRuns_) {
+                    if (run.first >= particleCount_)
+                        break;
+                    const std::array<rhi::TextureBinding, 2> particleTextures{
+                        rhi::TextureBinding{depth_, pointSampler_},
+                        rhi::TextureBinding{run.texture.valid() ? run.texture : whitePixel_, linearSampler_},
+                    };
+                    cmd.bindTextures(rhi::ShaderStage::Fragment, 0, particleTextures);
+                    cmd.draw(6, std::min(run.count, particleCount_ - run.first), 0, run.first);
+                    stats_.drawCalls += 1;
+                }
+            }
+            // **And the ones simulated on the GPU** (ADR 0160): an emitter a
+            // draw, every slot of its buffer an instance -- an empty slot is a
+            // square of no size. Among themselves in no order: sorting a
+            // hundred thousand a frame is what the GPU was chosen to avoid,
+            // and light added to light does not show it.
+            if (gpuParticles) {
+                cmd.setPipeline(particleGpuPipeline_);
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&particleUniforms, sizeof(particleUniforms)));
+                cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&lighting, sizeof(lighting)));
+                for (const RenderGpuEmitter& emitter : world.gpuEmitters) {
+                    const auto found =
+                        gpuEmitters_.find((static_cast<u64>(emitter.id.index) << 32) | emitter.id.generation);
+                    if (found == gpuEmitters_.end() || !found->second.buffer.valid())
+                        continue;
+                    const GpuEmitterBuffer& held = found->second;
+                    GpuParticleLook look;
+                    look.originEmission[0] = static_cast<f32>(held.origin.x - world.camera.origin.x);
+                    look.originEmission[1] = static_cast<f32>(held.origin.y - world.camera.origin.y);
+                    look.originEmission[2] = static_cast<f32>(held.origin.z - world.camera.origin.z);
+                    look.originEmission[3] = emitter.emission;
+                    look.flipbook[0] = static_cast<f32>(emitter.columns);
+                    look.flipbook[1] = static_cast<f32>(emitter.rows);
+                    look.flipbook[2] = static_cast<f32>(emitter.flipbookMode);
+                    look.flipbook[3] = emitter.framerate;
+                    look.kind[0] = static_cast<f32>(emitter.shape);
+                    look.kind[1] = emitter.texture.valid() ? 1.0f : 0.0f;
+                    for (usize at = 0; at < 16; ++at) {
+                        for (usize channel = 0; channel < 4; ++channel)
+                            look.colorOverLife[at][channel] = emitter.colorOverLife[at][channel];
+                        look.sizeOverLife[at / 4][at % 4] = emitter.sizeOverLife[at];
+                    }
+                    cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&look, sizeof(look)));
+                    const std::array<rhi::BufferHandle, 1> slots{held.buffer};
+                    cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0, slots);
+                    const std::array<rhi::TextureBinding, 2> particleTextures{
+                        rhi::TextureBinding{depth_, pointSampler_},
+                        rhi::TextureBinding{emitter.texture.valid() ? emitter.texture : whitePixel_, linearSampler_},
+                    };
+                    cmd.bindTextures(rhi::ShaderStage::Fragment, 0, particleTextures);
+                    cmd.draw(6, held.capacity, 0, 0);
+                    stats_.drawCalls += 1;
+                }
             }
             cmd.endRenderPass();
 
