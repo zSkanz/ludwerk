@@ -79,6 +79,7 @@ nothing gets it.
 | `bloom` | false | true | **true** | true |
 | `ambient_occlusion` | false | false | **true** | true |
 | `contact_shadows` | false | true | **true** | true |
+| shadow filter taps | 4 | 8 | **16** | 16 |
 | `anti_aliasing` | fxaa | smaa | **smaa** | taa |
 | `upscaling` | fsr1 | none | **none** | none |
 | `auto_exposure` | true | true | **true** | true |
@@ -94,8 +95,17 @@ what a coarser level gets wrong may cover before a nearer, finer one is drawn
 -- 4 at low, 3 at medium, 2 at high and 1.5 at ultra (ADR 0140). It has no key
 of its own. See [Terrain](manual:world/terrain).
 
+**The shadow filter's taps follow the shadow quality** (ADR 0172): how many
+times the sun's shadow map is read at a pixel to soften its edge. They have no
+key of their own -- `shadow_quality = "low"` is the small map, two cascades
+and four taps together.
+
 **On a phone every level upscales with FSR 1**, since each but Ultra caps the
 resolution the world is drawn at, and uses FXAA below High and never TAA.
+Bloom reaches less far there -- three levels of it where a desktop has five,
+five passes where there were nine -- and contact shadows start at High
+(ADR 0172); `contact_shadows = true` under `[graphics.android]` says
+otherwise.
 
 ## Anti-aliasing and upscaling
 
@@ -292,6 +302,7 @@ apply, because they were typed by the same person as the preset.
 --shadow-distance=F
 --light-budget=N
 --frame-report=SECONDS
+--render-cap=N
 --gpu-pass-times
 --hide=LIST
 --shadow-taps=N
@@ -365,7 +376,8 @@ commas: `parts` (meshes that are none of the others), `skinned`, `terrain`,
 difference in the frame's time is what drawing the thing cost.
 
 **`shadow_taps`** (`--shadow-taps=N`) is how many taps the sun's shadow filter
-takes at a pixel, 1 to 15; it ships with sixteen.
+takes at a pixel, 1 to 16, said over the level's own count (4 at low, 8 at
+medium, 16 above).
 
 **`log_ui_touches`** (`--log-ui-touches`) writes a line for each finger that
 comes down: the whole name and rectangle of the element of the interface that
@@ -373,8 +385,22 @@ took it, or that none did and the finger is the game's.
 
 What `[graphics]` already sets needs no key here: `shadow_cascades = 0`,
 `contact_shadows`, `ambient_occlusion`, `bloom`, `anti_aliasing`, `upscaling`,
-`foliage_density` and `render_resolution_cap` each take a cost out of the
-frame the same way.
+`foliage_density` and `render_cap` each take a cost out of the frame the same
+way.
+
+**On a phone, without a build for every setting.** A game exported with
+`[debug] launch_arguments = true` takes the host's flags when it is launched,
+as the `args` extra of the launching intent:
+
+```text
+adb shell am force-stop com.example.game
+adb shell am start -n com.example.game/engine.player.PlayerActivity \
+    --es args "--gpu-pass-times --frame-report=10 --hide=ui --render-cap=720"
+```
+
+Stop the game first: an intent sent to a game that is running starts nothing.
+Without the key the arguments are ignored and the log says so -- any app on a
+phone can send that intent, so a game that ships leaves the key out.
 
 ## Clamping
 

@@ -762,6 +762,17 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             graphics.contactShadows = arg == "--contact-shadows";
             continue;
         }
+        // `[graphics] render_cap`, as a flag: zero is no cap.
+        if (arg.starts_with("--render-cap=")) {
+            engine::core::u64 lines = 0;
+            if (!numericValue(arg.substr(13), lines) || lines > 16384) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            graphics.renderCap = static_cast<engine::core::u32>(lines);
+            continue;
+        }
         if (arg == "--ambient-occlusion" || arg == "--no-ambient-occlusion") {
             graphics.ambientOcclusion = arg == "--ambient-occlusion";
             continue;
@@ -957,6 +968,21 @@ int main(int argc, char** argv)
     std::error_code packagedError;
     const bool hasPackagedProject = std::filesystem::is_directory(packagedProject, packagedError);
 
+#if defined(__ANDROID__)
+    // **A phone's launch arguments are the project's to allow** (ADR 0171).
+    // The activity hands over what an intent's `args` extra said -- how a
+    // measurement is run on a phone without a build for every setting -- and
+    // any app on the phone can send that intent. So they are read only by a
+    // game whose project file says `[debug] launch_arguments = true`, which a
+    // game that ships does not.
+    if (!args.empty() &&
+        !engine::app::launchArgumentsAllowed(hasPackagedProject ? packagedProject : std::filesystem::path{})) {
+        engine::core::log(LogLevel::Warn, ENG_TR("engine.cli.warn.launch_arguments_refused"));
+        args.clear();
+        argc = 1;
+    }
+#endif
+
     // **No project is no longer a usage error** (ADR 0055): given nothing at all,
     // the host shows the project browser, which is what makes the engine
     // something a person can double-click. Decided here and DISPATCHED at the
@@ -1061,7 +1087,8 @@ int main(int argc, char** argv)
         options.graphics = config.graphics;
         // The measuring keys (ADR 0171): the flag beats the file, and what the
         // file hides is added to what the flag does.
-        options.graphics.shadowTaps = options.debugShadowTaps != 0 ? options.debugShadowTaps : config.shadowTaps;
+        options.graphics.measuredShadowTaps =
+            options.debugShadowTaps != 0 ? options.debugShadowTaps : config.shadowTaps;
         options.graphics = engine::render::clampSettings(options.graphics);
         options.gpuPassTimes = options.gpuPassTimes || config.gpuPassTimes;
         options.logUiTouches = options.logUiTouches || config.logUiTouches;

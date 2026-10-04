@@ -302,16 +302,26 @@ float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, floa
 {
     viewDepth = viewDepthOf(shadingPosition, viewDepth);
     const float3 sunDirection = normalize(SunDirectionBrightness.xyz);
-    const float sunNol = saturate(dot(normal, sunDirection));
-    const float shadow =
-        sampleSunShadow(ShadowMap, ShadowSampler, shadingPosition, normal, sunNol, viewDepth, pixel);
-    // The darker of the shadow map and the contact mask: the map knows what is
-    // off screen and loses the last few centimetres to its biases; the mask
-    // has those centimetres and knows nothing off screen.
-    const float contact = ContactShadowTexture.SampleLevel(ContactShadowSampler, pixel * ViewportParams.zw, 0.0f);
-    const float sunShadow = min(shadow, contact);
-    const float3 sunRadiance = SunColorUnused.rgb * (SunDirectionBrightness.w * sunShadow);
-    float3 color = shadeDirect(surface, sunDirection, sunRadiance);
+    float3 color = float3(0.0f, 0.0f, 0.0f);
+    // **A surface the sun does not light asks nothing of the shadow map**
+    // (audit G1). `shadeDirect` answers black for a surface turned from the
+    // light, and a sun of no brightness lights nothing, so what the lookups
+    // would have said was multiplied by zero: half the faces of a scene, and
+    // every face of a night. Skipped, the picture is the same.
+    if (SunDirectionBrightness.w > 0.0f && dot(surface.Normal, sunDirection) > 0.0f)
+    {
+        const float sunNol = saturate(dot(normal, sunDirection));
+        const float shadow =
+            sampleSunShadow(ShadowMap, ShadowSampler, shadingPosition, normal, sunNol, viewDepth, pixel);
+        // The darker of the shadow map and the contact mask: the map knows what
+        // is off screen and loses the last few centimetres to its biases; the
+        // mask has those centimetres and knows nothing off screen.
+        const float contact =
+            ContactShadowTexture.SampleLevel(ContactShadowSampler, pixel * ViewportParams.zw, 0.0f);
+        const float sunShadow = min(shadow, contact);
+        const float3 sunRadiance = SunColorUnused.rgb * (SunDirectionBrightness.w * sunShadow);
+        color = shadeDirect(surface, sunDirection, sunRadiance);
+    }
 
     color += evaluateClusteredLights(surface, pixel, viewDepth);
 

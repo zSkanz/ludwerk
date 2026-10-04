@@ -487,12 +487,80 @@ TEST_CASE("a project asks for the measuring keys, and has none unless it does (A
 
     // The taps are an instrument: the settings a player changes keep them.
     engine::render::GraphicsSettings instruments;
-    instruments.shadowTaps = 4;
-    CHECK(app::graphicsSettingsOf(asked.graphicsModel, false, &instruments).shadowTaps == 4);
-    CHECK(app::graphicsSettingsOf(asked.graphicsModel, false, nullptr).shadowTaps == 0);
-    // Sixteen is the filter as it ships, which zero says.
-    instruments.shadowTaps = 16;
-    CHECK(engine::render::clampSettings(instruments).shadowTaps == 0);
+    instruments.measuredShadowTaps = 4;
+    CHECK(app::graphicsSettingsOf(asked.graphicsModel, false, &instruments).measuredShadowTaps == 4);
+    CHECK(app::graphicsSettingsOf(asked.graphicsModel, false, nullptr).measuredShadowTaps == 0);
+    // Sixteen is the most there are.
+    instruments.measuredShadowTaps = 40;
+    CHECK(engine::render::clampSettings(instruments).measuredShadowTaps == 16);
+}
+
+TEST_CASE("the shadow filter's taps follow the shadow quality: four, eight, sixteen (ADR 0172)")
+{
+    using engine::render::QualityLevel;
+    CHECK(engine::render::settingsFor(QualityLevel::Low).shadowTaps == 4);
+    CHECK(engine::render::settingsFor(QualityLevel::Medium).shadowTaps == 8);
+    // Zero is the filter's sixteen.
+    CHECK(engine::render::settingsFor(QualityLevel::High).shadowTaps == 0);
+    CHECK(engine::render::settingsFor(QualityLevel::Ultra).shadowTaps == 0);
+
+    // And a player who turns the shadows down alone gets the cheaper filter.
+    const ProjectDir project("[project]\nname = \"Taps\"\n");
+    app::ProjectConfig config = app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, false);
+    CHECK(app::graphicsSettingsOf(config.graphicsModel, false, nullptr).shadowTaps == 0);
+    REQUIRE(config.graphicsModel.write(engine::scene::GraphicsSetting::ShadowQuality, 1.0));
+    CHECK(app::graphicsSettingsOf(config.graphicsModel, false, nullptr).shadowTaps == 4);
+    REQUIRE(config.graphicsModel.write(engine::scene::GraphicsSetting::ShadowQuality, 2.0));
+    CHECK(app::graphicsSettingsOf(config.graphicsModel, false, nullptr).shadowTaps == 8);
+    REQUIRE(config.graphicsModel.write(engine::scene::GraphicsSetting::ShadowQuality, 4.0));
+    CHECK(app::graphicsSettingsOf(config.graphicsModel, false, nullptr).shadowTaps == 0);
+}
+
+TEST_CASE("a handheld's levels spend less on what a small screen shows least (ADR 0172)")
+{
+    using engine::render::QualityLevel;
+    for (const QualityLevel level :
+         {QualityLevel::Low, QualityLevel::Medium, QualityLevel::High, QualityLevel::Ultra}) {
+        const engine::render::GraphicsSettings desk = engine::render::settingsFor(level);
+        const engine::render::GraphicsSettings hand = engine::render::handheldSettings(desk);
+        // Five passes of bloom where a desk has nine.
+        CHECK(desk.bloomLevels == 5);
+        CHECK(hand.bloomLevels == 3);
+        // No contact shadows below High.
+        if (level == QualityLevel::Low || level == QualityLevel::Medium)
+            CHECK_FALSE(hand.contactShadows);
+        else
+            CHECK(hand.contactShadows == desk.contactShadows);
+        // The filter's taps are the level's on both.
+        CHECK(hand.shadowTaps == desk.shadowTaps);
+    }
+    engine::render::GraphicsSettings wild;
+    wild.bloomLevels = 40;
+    CHECK(engine::render::clampSettings(wild).bloomLevels == 5);
+    wild.bloomLevels = 0;
+    CHECK(engine::render::clampSettings(wild).bloomLevels == 2);
+}
+
+TEST_CASE("a phone's launch arguments are read only by a game whose project allows them (ADR 0171)")
+{
+    const ProjectDir shipped("[project]\nname = \"Shipped\"\n");
+    CHECK_FALSE(app::loadProjectConfig(shipped.path, app::GraphicsOverrides{}).launchArguments);
+    CHECK_FALSE(app::launchArgumentsAllowed(shipped.path));
+    const ProjectDir measured("[debug]\nlaunch_arguments = true\n");
+    CHECK(app::launchArgumentsAllowed(measured.path));
+    // No packaged game at all is no permission.
+    CHECK_FALSE(app::launchArgumentsAllowed(std::filesystem::path{}));
+}
+
+TEST_CASE("--render-cap is the project's render_cap, said over it")
+{
+    const ProjectDir capped("[graphics]\nrender_cap = 900\n");
+    CHECK(app::loadProjectConfig(capped.path, app::GraphicsOverrides{}).graphics.renderResolutionCap == 900);
+    app::GraphicsOverrides flag;
+    flag.renderCap = 540;
+    const app::ProjectConfig said = app::loadProjectConfig(capped.path, flag);
+    CHECK(said.graphics.renderResolutionCap == 540);
+    CHECK(app::graphicsSettingsOf(said.graphicsModel, false, nullptr).renderResolutionCap == 540);
 }
 
 TEST_CASE("D445: only the packaged game, run as a game, keeps its saves in the player's folder")

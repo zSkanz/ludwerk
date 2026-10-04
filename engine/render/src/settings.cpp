@@ -21,6 +21,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.renderScale = 0.75f;
         settings.shadowTileResolution = 512;
         settings.shadowCascades = 2;
+        settings.shadowTaps = shadowTapsFor(QualityLevel::Low);
         settings.shadowDistance = 70.0f;
         settings.lightBudget = 32;
         settings.bloom = false;
@@ -40,6 +41,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.renderScale = 1.0f;
         settings.shadowTileResolution = 1024;
         settings.shadowCascades = 3;
+        settings.shadowTaps = shadowTapsFor(QualityLevel::Medium);
         settings.shadowDistance = 100.0f;
         settings.lightBudget = 96;
         settings.bloom = true;
@@ -103,6 +105,20 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
     return settings;
 }
 
+u32 shadowTapsFor(QualityLevel level) noexcept
+{
+    switch (level) {
+    case QualityLevel::Low:
+        return 4;
+    case QualityLevel::Medium:
+        return 8;
+    case QualityLevel::High:
+    case QualityLevel::Ultra:
+        break;
+    }
+    return 0;
+}
+
 QualityLevel defaultQuality(bool handheld) noexcept
 {
     return handheld ? QualityLevel::Medium : QualityLevel::High;
@@ -116,6 +132,14 @@ GraphicsSettings handheldSettings(GraphicsSettings settings) noexcept
     // High, for the two passes it saves on a phone's GPU; never the temporal
     // pass, whose history is a full-resolution image more to keep.
     settings.upscaling = UpscalingMode::Fsr1;
+    // **What a phone's GPU is spent on** (ADR 0172). Three levels of bloom
+    // rather than five: five passes where there were nine. And below High no
+    // contact shadows -- a pass over every pixel, twenty-one depth reads each,
+    // for a few centimetres of shadow under what a phone's screen shows a
+    // finger wide.
+    settings.bloomLevels = 3;
+    if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium)
+        settings.contactShadows = false;
     if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium)
         settings.antiAliasing = AntiAliasingMode::Fxaa;
     else if (settings.antiAliasing == AntiAliasingMode::Taa)
@@ -176,6 +200,8 @@ GraphicsSettings clampSettings(GraphicsSettings settings) noexcept
     // Sixteen and more is the filter as it ships, which zero says.
     if (settings.shadowTaps >= 16)
         settings.shadowTaps = 0;
+    settings.measuredShadowTaps = std::min(settings.measuredShadowTaps, 16u);
+    settings.bloomLevels = std::clamp(settings.bloomLevels, 2u, 5u);
     return settings;
 }
 

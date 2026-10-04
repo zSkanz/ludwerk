@@ -1367,7 +1367,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         core::log(LogLevel::Warn, ENG_TR("engine.debug.warn.unknown_hide"), hideArgs);
     }
     const std::string debugKeys =
-        debugKeysInForce(options.gpuPassTimes, debugHide, options.graphics.shadowTaps, options.logUiTouches);
+        debugKeysInForce(options.gpuPassTimes, debugHide, options.graphics.measuredShadowTaps, options.logUiTouches);
     if (!debugKeys.empty()) {
         const std::array<I18nArg, 1> keyArgs{I18nArg{"keys", debugKeys}};
         core::log(LogLevel::Info, ENG_TR("engine.debug.info.keys"), keyArgs);

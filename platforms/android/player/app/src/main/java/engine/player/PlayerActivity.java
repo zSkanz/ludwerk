@@ -1,6 +1,7 @@
 package engine.player;
 
 import android.content.Context;
+import android.content.Intent;
 
 import org.libsdl.app.SDLActivity;
 import org.libsdl.app.SDLSurface;
@@ -32,12 +33,24 @@ public class PlayerActivity extends SDLActivity {
     }
 
     /**
-     * No arguments: the host finds the packaged game beside itself
+     * No arguments, as a rule: the host finds the packaged game beside itself
      * ({@code game/}, extracted from the APK on first launch), exactly as a
      * desktop build of a game does.
+     *
+     * <p>The exception is a measurement (ADR 0171): the launching intent's
+     * {@code args} extra, split at spaces, is handed to the host as its
+     * command line --
+     * {@code adb shell am start -n <id>/engine.player.PlayerActivity --es args "--gpu-pass-times --hide=ui"}.
+     * The host reads them only if the game's {@code project.toml} says
+     * {@code [debug] launch_arguments = true}; here they are only passed on.
      */
     @Override
     protected String[] getArguments() {
-        return new String[0];
+        final Intent intent = getIntent();
+        final String given = intent != null ? intent.getStringExtra("args") : null;
+        if (given == null || given.trim().isEmpty()) {
+            return new String[0];
+        }
+        return given.trim().split("\\s+");
     }
 }

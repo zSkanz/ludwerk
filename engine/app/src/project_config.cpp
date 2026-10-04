@@ -165,6 +165,8 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         settings.autoExposure = *overrides.autoExposure;
     if (overrides.contactShadows)
         settings.contactShadows = *overrides.contactShadows;
+    if (overrides.renderCap)
+        settings.renderResolutionCap = *overrides.renderCap;
     if (overrides.forcedSurface)
         settings.forcedSurface = *overrides.forcedSurface;
     if (overrides.instancing)
@@ -301,6 +303,8 @@ void seedCommandLine(scene::GraphicsModel& model, const GraphicsOverrides& overr
         say(layer, GraphicsSetting::AutoExposure, *overrides.autoExposure ? 1.0 : 0.0);
     if (overrides.contactShadows)
         say(layer, GraphicsSetting::ContactShadows, *overrides.contactShadows ? 1.0 : 0.0);
+    if (overrides.renderCap)
+        say(layer, GraphicsSetting::RenderResolutionCap, static_cast<f64>(*overrides.renderCap));
     if (overrides.vsync)
         say(layer, GraphicsSetting::VSync, *overrides.vsync ? 1.0 : 0.0);
     if (overrides.maxFrameRate)
@@ -467,6 +471,11 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
     settings.sunRays = value(GraphicsSetting::SunRays) != 0.0;
     settings.terrainPixelError = static_cast<f32>(2.0 / value(GraphicsSetting::TerrainDetail));
     settings.renderResolutionCap = static_cast<u32>(value(GraphicsSetting::RenderResolutionCap));
+    // **The filter's taps are the shadow quality's** (ADR 0172): one past the
+    // level, zero for off -- so a player who turns shadows down alone gets the
+    // cheaper filter with the smaller map.
+    const int shadowQuality = static_cast<int>(value(GraphicsSetting::ShadowQuality));
+    settings.shadowTaps = render::shadowTapsFor(static_cast<render::QualityLevel>(std::clamp(shadowQuality - 1, 0, 3)));
     if (instruments != nullptr) {
         GraphicsOverrides carried;
         if (!instruments->forcedSurface.empty())
@@ -476,9 +485,16 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
         if (!instruments->instancing)
             carried.instancing = false;
         applyOverrides(carried, settings);
-        settings.shadowTaps = instruments->shadowTaps;
+        settings.measuredShadowTaps = instruments->measuredShadowTaps;
     }
     return render::clampSettings(settings);
+}
+
+bool launchArgumentsAllowed(const std::filesystem::path& packagedProject)
+{
+    if (packagedProject.empty())
+        return false;
+    return loadProjectConfig(packagedProject, GraphicsOverrides{}).launchArguments;
 }
 
 FramePacing pacingOf(const scene::GraphicsModel& model, bool handheld) noexcept
@@ -594,6 +610,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     count("debug.shadow_taps", 0, 16, config.shadowTaps);
     if (const std::optional<bool> value = document.boolean("debug.log_ui_touches"))
         config.logUiTouches = *value;
+    if (const std::optional<bool> value = document.boolean("debug.launch_arguments"))
+        config.launchArguments = *value;
     if (const std::optional<std::string_view> value = document.string("debug.overlay_key"))
         config.overlayKey = std::string(*value);
     if (const std::optional<f64> value = document.number("scene.close_grace_seconds");

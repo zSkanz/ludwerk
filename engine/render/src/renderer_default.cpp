@@ -550,6 +550,14 @@ struct ViewState
     // Set while that mask is being drawn: `drawGeometry` takes only the parts
     // that receive none.
     bool decalMaskPass_ = false;
+    // **What is cleared and has not been drawn to since** (ADR 0172): the
+    // occlusion, the contact shadows and the bloom of a view whose settings
+    // have them off are a white, a white and a black picture, cleared the
+    // first frame and left alone after. Forgotten when the targets are made
+    // again, and with the view.
+    bool occlusionOff_ = false;
+    bool contactOff_ = false;
+    bool bloomOff_ = false;
     // Tonemapped and sRGB-encoded, so the anti-aliasing resolve has an image to
     // find edges in. FXAA works on perceptual luminance, which is what makes it
     // a post-tonemap pass rather than a pre-tonemap one.
@@ -2228,6 +2236,10 @@ std::optional<core::EngineError> DefaultRenderer::ensureTargets(rhi::IDevice& de
             device.destroy(level);
         level = {};
     }
+    // New targets hold nothing: what was cleared is cleared no longer.
+    occlusionOff_ = false;
+    contactOff_ = false;
+    bloomOff_ = false;
 
     const auto half = [](u32 value) { return value > 1 ? value / 2 : 1u; };
 
@@ -7601,13 +7613,20 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // Without that, four cascades cost four times the submission, which is the
     // exact price the instanced path elsewhere in this milestone exists to
     // remove.
+    // **Not at all when no cascade is drawn** (ADR 0172): the shader looks
+    // nothing up in a cascade whose far plane is out of reach, and with none
+    // in reach nothing reads the atlas -- so nothing has to clear it, which on
+    // a phone was a depth target of a million texels cleared and stored for
+    // every frame of a game with its shadows off.
+    const u32 cascadesDrawn = world.environment.globalShadows ? settings_.shadowCascades : 0u;
     cmd.pushDebugGroup("shadow");
-    cmd.beginRenderPass({
-        .colorAttachments = {},
-        .depthStencil = {.texture = shadowMap_, .loadOp = rhi::LoadOp::Clear, .storeOp = rhi::StoreOp::Store},
-        .debugName = "shadow",
-    });
-    if (world.camera.valid) {
+    if (cascadesDrawn != 0)
+        cmd.beginRenderPass({
+            .colorAttachments = {},
+            .depthStencil = {.texture = shadowMap_, .loadOp = rhi::LoadOp::Clear, .storeOp = rhi::StoreOp::Store},
+            .debugName = "shadow",
+        });
+    if (world.camera.valid && cascadesDrawn != 0) {
         f32 splits[kShadowCascadeCount + 1]{};
         shadowSplits(world.camera.nearPlane, settings_.shadowDistance, kShadowSplitLambda, splits);
 
@@ -7616,9 +7635,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // `shadowCascades` being a setting: the sampler needs no idea how many
         // there are, because a fragment that selects a tile nobody drew into
         // gets the same answer as one that falls outside a cascade entirely.
-        // `Lighting.GlobalShadows` off (ADR 0096) is the same mechanism with
-        // no cascade drawn: the atlas is cleared and every fragment reads lit.
-        const u32 cascadesDrawn = world.environment.globalShadows ? settings_.shadowCascades : 0u;
+        // `Lighting.GlobalShadows` off (ADR 0096) is no cascade drawn, and
+        // every far plane out of reach.
         for (u32 index = 0; index < cascadesDrawn; ++index) {
             const auto tile = static_cast<f32>(settings_.shadowTileResolution);
             const f32 x = static_cast<f32>(index & 1u) * tile;
@@ -7665,7 +7683,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 drawFoliage(cmd, world, meshes, cascades.viewProjection[index], true);
         }
     }
-    cmd.endRenderPass();
+    if (cascadesDrawn != 0)
+        cmd.endRenderPass();
     cmd.popDebugGroup();
 
     // --- Local shadow pass ---------------------------------------------------
@@ -7680,12 +7699,18 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // Each tile culls against its own light's sphere. Without that, a scene with
     // six casting lights would submit its whole geometry six times, which is the
     // cost that makes a tile budget necessary rather than nice.
+    //
+    // **And not at all with no light casting** (ADR 0172): the shader skips
+    // the lookup when no tile is live, so an atlas nobody reads was being
+    // cleared and stored -- four million texels of depth -- every frame of
+    // every scene without a casting lamp, which is most of them.
     cmd.pushDebugGroup("local-shadow");
-    cmd.beginRenderPass({
-        .colorAttachments = {},
-        .depthStencil = {.texture = localShadowMap_, .loadOp = rhi::LoadOp::Clear, .storeOp = rhi::StoreOp::Store},
-        .debugName = "local-shadow",
-    });
+    if (localShadows_.count != 0)
+        cmd.beginRenderPass({
+            .colorAttachments = {},
+            .depthStencil = {.texture = localShadowMap_, .loadOp = rhi::LoadOp::Clear, .storeOp = rhi::StoreOp::Store},
+            .debugName = "local-shadow",
+        });
     for (u32 entry = 0; entry < localShadows_.count; ++entry) {
         const LocalShadow& shadow = localShadows_.entries[entry];
         const LocalShadowCandidate& candidate = localCandidates_[shadow.candidate];
@@ -7708,7 +7733,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                          Selection::Shadow, &cull);
         }
     }
-    cmd.endRenderPass();
+    if (localShadows_.count != 0)
+        cmd.endRenderPass();
     cmd.popDebugGroup();
 
     // --- Depth prepass -------------------------------------------------------
@@ -7763,10 +7789,16 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     if (!settings_.ambientOcclusion || orthographic) {
         // White is "nothing is occluded", which is what the forward pass
         // multiplies its ambient term by when this one is switched off.
-        clearPass(cmd, occlusion_, occlusionWidth, occlusionHeight, "occlusion-off",
-                  rhi::ColorRgba{1.0f, 1.0f, 1.0f, 1.0f});
+        // **Once, not every frame** (ADR 0172): a target nothing has drawn to
+        // since it was cleared is still clear.
+        if (!occlusionOff_) {
+            clearPass(cmd, occlusion_, occlusionWidth, occlusionHeight, "occlusion-off",
+                      rhi::ColorRgba{1.0f, 1.0f, 1.0f, 1.0f});
+            occlusionOff_ = true;
+        }
     }
     else {
+        occlusionOff_ = false;
         GpuSsaoUniforms ssao;
         ssao.projection[0] = world.camera.projection.m[0][0] != 0.0f ? 1.0f / world.camera.projection.m[0][0] : 1.0f;
         ssao.projection[1] = world.camera.projection.m[1][1] != 0.0f ? 1.0f / world.camera.projection.m[1][1] : 1.0f;
@@ -7813,9 +7845,14 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.pushDebugGroup("contact-shadow");
     if (!settings_.contactShadows || !world.camera.valid || settings_.shadowCascades == 0 || orthographic ||
         !world.environment.globalShadows) {
-        clearPass(cmd, contact_, renderWidth_, renderHeight_, "contact-off", rhi::ColorRgba{1.0f, 1.0f, 1.0f, 1.0f});
+        if (!contactOff_) {
+            clearPass(cmd, contact_, renderWidth_, renderHeight_, "contact-off",
+                      rhi::ColorRgba{1.0f, 1.0f, 1.0f, 1.0f});
+            contactOff_ = true;
+        }
     }
     else {
+        contactOff_ = false;
         GpuContactUniforms contact;
         contact.projection[0] = world.camera.projection.m[0][0] != 0.0f ? 1.0f / world.camera.projection.m[0][0] : 1.0f;
         contact.projection[1] = world.camera.projection.m[1][1] != 0.0f ? 1.0f / world.camera.projection.m[1][1] : 1.0f;
@@ -7861,6 +7898,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // Whether the depth of field ran inside the forward pass, before what
     // blends (D428); the look's own passes below do not run it a second time.
     bool focusedBeforeBlended = false;
+    // Whether a pass of the forward group is open, for its end to close: the
+    // particles leave none open when nothing is drawn after them.
+    bool forwardOpen = true;
     cmd.pushDebugGroup("forward");
     cmd.beginRenderPass({
         .colorAttachments = hdrAttachment,
@@ -8009,8 +8049,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             // fragment beyond it selects the empty tile and comes back lit. The
             // blend band makes that a fade rather than a plane, which is what a
             // shadow distance ending should look like anyway.
-            frame.cascadeFar[index] =
-                index < settings_.shadowCascades ? cascades.farDistance[index] : kUnreachableDistance;
+            frame.cascadeFar[index] = index < cascadesDrawn ? cascades.farDistance[index] : kUnreachableDistance;
             frame.cascadeTexelWorld[index] = cascades.texelWorld[index];
             frame.cascadeDepthRange[index] = cascades.depthRange[index];
         }
@@ -8039,9 +8078,11 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         frame.environmentParams[0] = static_cast<f32>(kEnvironmentMipCount);
         frame.environmentParams[1] = 1.0f;
         frame.environmentParams[2] = 1.0f;
-        // `[debug] shadow_taps` (ADR 0171); zero, and the bytes unchanged,
-        // unless a measurement asked.
-        frame.environmentParams[3] = static_cast<f32>(settings_.shadowTaps);
+        // The shadow filter's taps: the level's (ADR 0172), or a
+        // measurement's over it (`[debug] shadow_taps`, ADR 0171). Zero is
+        // sixteen, and the bytes High always sent.
+        frame.environmentParams[3] =
+            static_cast<f32>(settings_.measuredShadowTaps != 0 ? settings_.measuredShadowTaps : settings_.shadowTaps);
         // `Lighting.EnvironmentDiffuseScale` (ADR 0096) on the nine
         // coefficients -- linear in them, so the sky's diffuse light scales
         // with no shader knowing. One is one, and the bytes are unchanged.
@@ -8528,20 +8569,28 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 }
             }
             cmd.endRenderPass();
+            forwardOpen = false;
 
-            const std::array<rhi::ColorAttachment, 1> resumeTarget{rhi::ColorAttachment{
-                .texture = hdr_,
-                .loadOp = rhi::LoadOp::Load,
-                .storeOp = rhi::StoreOp::Store,
-            }};
-            cmd.beginRenderPass({
-                .colorAttachments = resumeTarget,
-                .depthStencil = {.texture = depth_, .loadOp = rhi::LoadOp::Load, .storeOp = rhi::StoreOp::Store},
-                .debugName = "forward-after-particles",
-            });
-            cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
-            cmd.setScissor(
-                {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
+            // **Reopened for the world's UI, and only for it** (ADR 0172):
+            // nothing else is drawn after the particles, and a pass opened to
+            // draw nothing still loads the picture and the depth and stores
+            // them again -- every frame with a particle in it.
+            if (worldUiVertexCount_ > 0) {
+                const std::array<rhi::ColorAttachment, 1> resumeTarget{rhi::ColorAttachment{
+                    .texture = hdr_,
+                    .loadOp = rhi::LoadOp::Load,
+                    .storeOp = rhi::StoreOp::Store,
+                }};
+                cmd.beginRenderPass({
+                    .colorAttachments = resumeTarget,
+                    .depthStencil = {.texture = depth_, .loadOp = rhi::LoadOp::Load, .storeOp = rhi::StoreOp::Store},
+                    .debugName = "forward-after-particles",
+                });
+                cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
+                cmd.setScissor(
+                    {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
+                forwardOpen = true;
+            }
         }
 
         // **World UI after the particles** (F3): the trees arrive back to
@@ -8575,7 +8624,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         }
     }
 
-    cmd.endRenderPass();
+    if (forwardOpen)
+        cmd.endRenderPass();
     // Before the look's passes: a shaft of light or a blur over the whole
     // picture is not something that blended.
     if (fsr2Now_ && activeView_ == 0)
@@ -8723,14 +8773,22 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     if (!bloomOn) {
         // Black adds nothing, and the tonemap adds `bloom_[0]` unconditionally.
         // Cheaper than the eight passes it replaces and, unlike leaving the
-        // chain's textures alone, does not depend on what was in them.
-        clearPass(cmd, bloom_[0], bloomLevelSize(renderWidth_, 0), bloomLevelSize(renderHeight_, 0), "bloom-off",
-                  rhi::ColorRgba{0.0f, 0.0f, 0.0f, 1.0f});
+        // chain's textures alone, does not depend on what was in them. Once:
+        // black stays black until bloom draws again.
+        if (!bloomOff_) {
+            clearPass(cmd, bloom_[0], bloomLevelSize(renderWidth_, 0), bloomLevelSize(renderHeight_, 0), "bloom-off",
+                      rhi::ColorRgba{0.0f, 0.0f, 0.0f, 1.0f});
+            bloomOff_ = true;
+        }
     }
     else {
+        bloomOff_ = false;
+        // As many levels as the settings give it (ADR 0172): five on a desk,
+        // three on a handheld.
+        const u32 bloomLevels = std::clamp(settings_.bloomLevels, 2u, kBloomLevels);
         u32 sourceWidth = sceneWidth;
         u32 sourceHeight = sceneHeight;
-        for (u32 level = 0; level < kBloomLevels; ++level) {
+        for (u32 level = 0; level < bloomLevels; ++level) {
             GpuBloomUniforms bloom;
             bloom.texelRadius[0] = 1.0f / static_cast<f32>(sourceWidth);
             bloom.texelRadius[1] = 1.0f / static_cast<f32>(sourceHeight);
@@ -8759,7 +8817,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                            asBytes(&bloom, sizeof(bloom)));
         }
 
-        for (u32 level = kBloomLevels - 1; level > 0; --level) {
+        for (u32 level = bloomLevels - 1; level > 0; --level) {
             GpuBloomUniforms bloom;
             bloom.texelRadius[0] = 1.0f / static_cast<f32>(bloomLevelSize(renderWidth_, level));
             bloom.texelRadius[1] = 1.0f / static_cast<f32>(bloomLevelSize(renderHeight_, level));

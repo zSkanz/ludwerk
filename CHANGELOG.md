@@ -220,6 +220,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   `transparent`, `particles`, `ribbons`, `decals`, `sprites`, `world_ui`,
   `ui`, `lights`, `highlights`), `[debug] shadow_taps = 4`, and their flags
   `--hide=` and `--shadow-taps=`. Every frame report says which are in force.
+- **An Android build can be handed the host's flags at launch** (ADR 0171):
+  with `[debug] launch_arguments = true` in `project.toml`,
+  `adb shell am start -n <id>/engine.player.PlayerActivity --es args "--gpu-pass-times --hide=ui"`
+  runs the installed game with them. Without the key they are ignored.
+  `--render-cap=N` is the new flag of `[graphics] render_cap`.
 - **`[debug] log_ui_touches = true`** (ADR 0171): a log line for each finger
   that comes down, naming the element of the interface that took it and its
   rectangle, or saying the finger is the game's.
@@ -1048,6 +1053,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   `--surface-cache=DIR` moves the compiled-surface cache.
 
 ### Changed
+
+- **`Low` and `Medium` filter the sun's shadow with fewer taps** (ADR 0172):
+  four and eight, where every level took sixteen. `High` and `Ultra` are the
+  picture they were. The filter follows `ShadowQuality`.
+- **A pass with nothing to draw is no longer begun** (ADR 0172): the sun's
+  shadow atlas with no cascade, the local lights' atlas with no casting light,
+  the clear of a feature that is off, the forward pass reopened after
+  particles with no world interface. Fewer passes a frame at every level; the
+  picture is unchanged.
+- **On a phone, bloom is three levels and contact shadows start at `High`**
+  (ADR 0172). `contact_shadows = true` under `[graphics.android]` turns them
+  back on at `Medium`.
 
 - **Another player's character is met where the server has it** (ADR 0163).
   On a client, a character collided with other players' characters where they

@@ -48,6 +48,8 @@ struct GraphicsOverrides
     std::optional<bool> frameGeneration;
     std::optional<bool> autoExposure;
     std::optional<bool> contactShadows;
+    // `--render-cap=N`: the most lines the world is rendered at, 0 for none.
+    std::optional<core::u32> renderCap;
     // `--vsync`, `--no-vsync`, `--max-frame-rate=N`, `--background-frame-rate=N`
     // (ADR 0147, G0), over `[display]`.
     std::optional<bool> vsync;
@@ -169,6 +171,12 @@ struct ProjectConfig
     std::string debugHide;
     core::u32 shadowTaps = 0;
     bool logUiTouches = false;
+    // **`[debug] launch_arguments`: whether a phone's build takes arguments
+    // when it is launched** (ADR 0171) -- the host's flags, as an intent's
+    // `args` extra. Off unless the project says: an installed game is launched
+    // by anything on the phone, and a game that ships is not one a stranger's
+    // intent may hand `--hide=` to.
+    bool launchArguments = false;
     // `[debug] overlay_key`: the key that opens the host's overlay in a run of
     // the project being made, by `Enum.KeyCode`'s name for it -- "F3" unless
     // the project says, "None" for no key at all. The host takes that key: the
@@ -283,6 +291,11 @@ inline constexpr bool Handheld = false;
 // carries what is no setting -- a forced surface, a debug view -- from the
 // run's own start. For a model as `loadProjectConfig` seeded it this is
 // `ProjectConfig::graphics` exactly, which a test holds.
+// Whether the packaged game at `packagedProject` lets its launcher hand it
+// arguments: its `[debug] launch_arguments`. A folder with no project file
+// does not.
+[[nodiscard]] bool launchArgumentsAllowed(const std::filesystem::path& packagedProject);
+
 [[nodiscard]] render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, bool handheld = Handheld,
                                                           const render::GraphicsSettings* instruments = nullptr);
 // And to the frame's pacing. A handheld's sync is always on.

@@ -90,12 +90,12 @@ where the GPU is, and removing what it draws says why.
      is what drawing the thing cost. A name that is none of these is said and
      hides nothing.
    - `[debug] shadow_taps = N` / `--shadow-taps=N` -- how many taps the sun's
-     shadow filter takes, 1 through 15, where it ships with sixteen. The count
+     shadow filter takes, 1 through 16, over the level's own (ADR 0172). The count
      travels in a lane of the frame's uniforms that was unused, and the
      sixteen-tap filter is the code it was: the default picture is unchanged.
    - What `[graphics]` already has needs no key here: `shadow_cascades = 0`,
      `contact_shadows`, `ambient_occlusion`, `bloom`, `anti_aliasing`,
-     `upscaling`, `foliage_density`, `render_resolution_cap`.
+     `upscaling`, `foliage_density`, `render_cap`.
 
 9. **`[debug] log_ui_touches = true`** / `--log-ui-touches`: a line for each
    finger that comes down, with the whole name and the rectangle of the
@@ -105,6 +105,23 @@ where the GPU is, and removing what it draws says why.
 
 10. **Every report says which keys are in force**, and so does the start of
     the run. A measurement is never read without knowing what it measured.
+
+11. **A phone's build may take the host's flags when it is launched**
+    (amended the same day, on ludwerk-08's finding that a matrix of fourteen
+    settings was fourteen builds and fourteen installs). The activity hands
+    the host what the launching intent's `args` extra says, split at spaces:
+
+    ```text
+    adb shell am force-stop <id>
+    adb shell am start -n <id>/engine.player.PlayerActivity --es args "--gpu-pass-times --hide=ui"
+    ```
+
+    The host reads them only when the game's `project.toml` says
+    `[debug] launch_arguments = true`. An installed game can be launched by
+    any app on the phone, so a game that ships must not be one a stranger's
+    intent can hand `--hide=` or `--join=` to: without the key the arguments
+    are ignored, and the log says so. `--render-cap=N` is added as the flag of
+    `[graphics] render_cap`, the one key of the matrix that had none.
 
 ## What it does not do
 

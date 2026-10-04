@@ -359,6 +359,29 @@ float shadowTapPcf(Texture2D<float> atlas, SamplerState pointSampler, float2 uv,
     return lerp(bottom, top, 1.0f - fraction.y);
 }
 
+// **Vogel's disc, as sixteen points**: point i at radius sqrt(i + 0.5), a
+// golden angle on from the one before -- even coverage with no rings for the
+// eye to find. Divided by sqrt(n) the first n of them are a disc of n points
+// and radius one, so one table serves every count.
+//
+// Constants, because they were computed per tap: a square root, a sine and a
+// cosine for each of sixteen, at every lit fragment of every frame, to arrive
+// at numbers that never change. What does change is the angle the whole disc
+// is turned by, which is one sine and one cosine a fragment (audit G1).
+static const float2 EngineShadowDisc[16] = {
+    float2(0.70710678f, 0.00000000f),   float2(-0.90308875f, 0.82730327f), float2(0.13823221f, -1.57508471f),
+    float2(1.13828488f, 1.48469106f),   float2(-2.08889275f, -0.36949572f), float2(1.97878157f, -1.25873886f),
+    float2(-0.66186371f, 2.46210000f),  float2(-1.26224587f, -2.43037762f), float2(2.73856864f, 1.00012088f),
+    float2(-2.84902435f, 1.17603583f),  float2(1.37341800f, -2.93491448f),  float2(1.01492095f, 3.23572796f),
+    float2(-3.05898356f, -1.77274351f), float2(3.58853594f, -0.78892955f),  float2(-2.19002763f, 3.11508892f),
+    float2(-0.50594708f, -3.90435879f),
+};
+
+// A cascade whose far plane is past this was never drawn into: the renderer
+// puts the planes of the cascades the settings leave out at a distance no
+// frame holds (`kUnreachableDistance`).
+static const float EngineShadowNoCascade = 1.0e8f;
+
 // The receiver-slope part of the cascade bias, in texels of the cascade, and
 // the steepest slope it follows: past about eighty degrees the bias would grow
 // without bound, and a surface lit that edge-on is barely lit at all.
@@ -453,45 +476,60 @@ float sampleCascade(Texture2D<float> atlas, SamplerState pointSampler, uint casc
     const float2 highest = tile + float2(0.5f, 0.5f) - inset;
     const float2 centre = tile + local * 0.5f;
 
-    const float angle = shadowKernelAngle(pixel);
-
-    // **A measurement asked for fewer taps** (ADR 0171, `[debug] shadow_taps`):
-    // the same disc with fewer points on it, in a loop the driver cannot
-    // unroll. Kept apart from the sixteen below so that the filter as it ships
-    // is the code it was, to the bit.
+    // **How many taps is the level's to say** (ADR 0172): `EnvironmentParams.w`
+    // -- four at Low, eight at Medium, and zero for the sixteen of High and
+    // above. The first n points of the disc, turned by one angle for the pixel.
+    //
+    // The three counts the levels use are each a loop the compiler unrolls,
+    // with the disc's points folded into the code: measured, a loop it cannot
+    // unroll costs sixteen taps six per cent more than the taps themselves.
+    // Any other count is a measurement's (`[debug] shadow_taps`, ADR 0171),
+    // and takes the loop.
+    // Each a real branch: flattened, a fragment would take all twenty-eight
+    // taps and keep the answer of one set.
     const int asked = int(EnvironmentParams.w);
-    if (asked > 0 && asked < 16)
-    {
-        float few = 0.0f;
-        [loop]
-        for (int j = 0; j < asked; ++j)
-        {
-            const float r = sqrt((float(j) + 0.5f) / float(asked));
-            const float theta = float(j) * 2.39996323f + angle;
-            float s = 0.0f;
-            float c = 0.0f;
-            sincos(theta, s, c);
-            const float2 uv = clamp(centre + float2(c, s) * r * radiusUv, lowest, highest);
-            few += shadowTapPcf(atlas, pointSampler, uv, reference, atlasSize);
-        }
-        return few / float(asked);
+    float turnSin = 0.0f;
+    float turnCos = 0.0f;
+    sincos(shadowKernelAngle(pixel), turnSin, turnCos);
+
+#define ENGINE_SHADOW_TAP(index, count) \
+    { \
+        const float2 tap = EngineShadowDisc[index]; \
+        const float2 turned = float2(tap.x * turnCos - tap.y * turnSin, tap.x * turnSin + tap.y * turnCos); \
+        const float2 uv = clamp(centre + turned * (radiusUv * rsqrt(float(count))), lowest, highest); \
+        lit += shadowTapPcf(atlas, pointSampler, uv, reference, atlasSize); \
     }
 
     float lit = 0.0f;
-    [unroll]
-    for (int i = 0; i < 16; ++i)
+    [branch]
+    if (asked == 4)
     {
-        // Vogel's disc: radius sqrt((i + 0.5) / n), golden-angle turns. Even
-        // coverage with no rings for the eye to find.
-        const float r = sqrt((float(i) + 0.5f) / 16.0f);
-        const float theta = float(i) * 2.39996323f + angle;
-        float s = 0.0f;
-        float c = 0.0f;
-        sincos(theta, s, c);
-        const float2 uv = clamp(centre + float2(c, s) * r * radiusUv, lowest, highest);
-        lit += shadowTapPcf(atlas, pointSampler, uv, reference, atlasSize);
+        [unroll]
+        for (int i = 0; i < 4; ++i)
+            ENGINE_SHADOW_TAP(i, 4)
+        return lit * 0.25f;
     }
-    return lit / 16.0f;
+    [branch]
+    if (asked == 8)
+    {
+        [unroll]
+        for (int i = 0; i < 8; ++i)
+            ENGINE_SHADOW_TAP(i, 8)
+        return lit * 0.125f;
+    }
+    [branch]
+    if (asked <= 0 || asked >= 16)
+    {
+        [unroll]
+        for (int i = 0; i < 16; ++i)
+            ENGINE_SHADOW_TAP(i, 16)
+        return lit * 0.0625f;
+    }
+    [loop]
+    for (int i = 0; i < asked; ++i)
+        ENGINE_SHADOW_TAP(i, asked)
+    return lit / float(asked);
+#undef ENGINE_SHADOW_TAP
 }
 
 // How much of the sun reaches this fragment: 1 lit, 0 fully occluded.
@@ -521,6 +559,15 @@ float sampleSunShadow(Texture2D<float> atlas, SamplerState pointSampler, float3 
         }
     }
 
+    // **A cascade nobody drew into has nothing to look up** (audit G1): its
+    // tile is cleared, and sixteen taps of a cleared tile are sixteen ways of
+    // reading "lit". A fragment past the last cascade the settings draw, and
+    // every fragment of a frame with no sun shadow at all, stops here.
+    if (CascadeFar[cascade] > EngineShadowNoCascade)
+    {
+        return 1.0f;
+    }
+
     const float lit = sampleCascade(atlas, pointSampler, cascade, position, normal, nol, atlasSize, pixel);
 
     // Blend over a BAND rather than switching at a plane, which the roadmap
@@ -536,7 +583,13 @@ float sampleSunShadow(Texture2D<float> atlas, SamplerState pointSampler, float3 
         return lit;
     }
 
-    const float next = sampleCascade(atlas, pointSampler, cascade + 1u, position, normal, nol, atlasSize, pixel);
+    // Into a cascade that was not drawn, the blend is a fade to lit: what the
+    // end of the shadow distance looks like, at no lookup.
+    float next = 1.0f;
+    if (CascadeFar[cascade + 1u] <= EngineShadowNoCascade)
+    {
+        next = sampleCascade(atlas, pointSampler, cascade + 1u, position, normal, nol, atlasSize, pixel);
+    }
     return lerp(lit, next, blend);
 }
 

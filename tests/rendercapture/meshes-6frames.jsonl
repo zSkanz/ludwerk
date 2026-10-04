@@ -15,9 +15,9 @@
 {"op":"createShader","shader":5,"stage":"Vertex","bytes":972,"samplers":0,"uniformBuffers":1,"name":"shadow_depth"}
 {"op":"createShader","shader":6,"stage":"Fragment","bytes":536,"samplers":0,"uniformBuffers":0,"name":"shadow_depth"}
 {"op":"createShader","shader":7,"stage":"Vertex","bytes":6792,"samplers":0,"uniformBuffers":1,"name":"pbr"}
-{"op":"createShader","shader":8,"stage":"Fragment","bytes":48640,"samplers":13,"uniformBuffers":2,"name":"pbr"}
+{"op":"createShader","shader":8,"stage":"Fragment","bytes":70520,"samplers":13,"uniformBuffers":2,"name":"pbr"}
 {"op":"createShader","shader":9,"stage":"Vertex","bytes":8660,"samplers":0,"uniformBuffers":2,"name":"pbr_skinned"}
-{"op":"createShader","shader":10,"stage":"Fragment","bytes":48900,"samplers":13,"uniformBuffers":2,"name":"pbr_skinned"}
+{"op":"createShader","shader":10,"stage":"Fragment","bytes":70780,"samplers":13,"uniformBuffers":2,"name":"pbr_skinned"}
 {"op":"createShader","shader":11,"stage":"Vertex","bytes":2964,"samplers":0,"uniformBuffers":2,"name":"shadow_skinned"}
 {"op":"createShader","shader":12,"stage":"Fragment","bytes":828,"samplers":0,"uniformBuffers":0,"name":"shadow_skinned"}
 {"op":"createShader","shader":13,"stage":"Vertex","bytes":1272,"samplers":0,"uniformBuffers":0,"name":"sky"}
@@ -27,7 +27,7 @@
 {"op":"createShader","shader":17,"stage":"Vertex","bytes":1300,"samplers":0,"uniformBuffers":1,"name":"shadow_instanced"}
 {"op":"createShader","shader":18,"stage":"Fragment","bytes":536,"samplers":0,"uniformBuffers":0,"name":"shadow_instanced"}
 {"op":"createShader","shader":19,"stage":"Vertex","bytes":7256,"samplers":0,"uniformBuffers":1,"name":"pbr_instanced"}
-{"op":"createShader","shader":20,"stage":"Fragment","bytes":48768,"samplers":13,"uniformBuffers":2,"name":"pbr_instanced"}
+{"op":"createShader","shader":20,"stage":"Fragment","bytes":70648,"samplers":13,"uniformBuffers":2,"name":"pbr_instanced"}
 {"op":"createShader","shader":21,"stage":"Vertex","bytes":1368,"samplers":0,"uniformBuffers":0,"name":"ssao"}
 {"op":"createShader","shader":22,"stage":"Fragment","bytes":7212,"samplers":1,"uniformBuffers":1,"name":"ssao"}
 {"op":"createShader","shader":23,"stage":"Vertex","bytes":1424,"samplers":0,"uniformBuffers":0,"name":"ssao_blur"}
@@ -382,9 +382,6 @@
 {"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"pushDebugGroup","name":"local-shadow"}
-{"op":"beginRenderPass","colorCount":0,"depth":8,"name":"local-shadow"}
-{"op":"depthAttachment","load":"Clear","store":"Store","clear":1.0000}
-{"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"pushDebugGroup","name":"depth-prepass"}
 {"op":"beginRenderPass","colorCount":0,"depth":15,"name":"depth-prepass"}
@@ -1152,9 +1149,6 @@
 {"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"pushDebugGroup","name":"local-shadow"}
-{"op":"beginRenderPass","colorCount":0,"depth":8,"name":"local-shadow"}
-{"op":"depthAttachment","load":"Clear","store":"Store","clear":1.0000}
-{"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"pushDebugGroup","name":"depth-prepass"}
 {"op":"beginRenderPass","colorCount":0,"depth":15,"name":"depth-prepass"}
@@ -1912,9 +1906,6 @@
 {"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"pushDebugGroup","name":"local-shadow"}
-{"op":"beginRenderPass","colorCount":0,"depth":8,"name":"local-shadow"}
-{"op":"depthAttachment","load":"Clear","store":"Store","clear":1.0000}
-{"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"pushDebugGroup","name":"depth-prepass"}
 {"op":"beginRenderPass","colorCount":0,"depth":15,"name":"depth-prepass"}
@@ -2587,9 +2578,6 @@
 {"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"pushDebugGroup","name":"local-shadow"}
-{"op":"beginRenderPass","colorCount":0,"depth":8,"name":"local-shadow"}
-{"op":"depthAttachment","load":"Clear","store":"Store","clear":1.0000}
-{"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"pushDebugGroup","name":"depth-prepass"}
 {"op":"beginRenderPass","colorCount":0,"depth":15,"name":"depth-prepass"}
@@ -3262,9 +3250,6 @@
 {"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"pushDebugGroup","name":"local-shadow"}
-{"op":"beginRenderPass","colorCount":0,"depth":8,"name":"local-shadow"}
-{"op":"depthAttachment","load":"Clear","store":"Store","clear":1.0000}
-{"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"pushDebugGroup","name":"depth-prepass"}
 {"op":"beginRenderPass","colorCount":0,"depth":15,"name":"depth-prepass"}
@@ -3937,9 +3922,6 @@
 {"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"pushDebugGroup","name":"local-shadow"}
-{"op":"beginRenderPass","colorCount":0,"depth":8,"name":"local-shadow"}
-{"op":"depthAttachment","load":"Clear","store":"Store","clear":1.0000}
-{"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"pushDebugGroup","name":"depth-prepass"}
 {"op":"beginRenderPass","colorCount":0,"depth":15,"name":"depth-prepass"}

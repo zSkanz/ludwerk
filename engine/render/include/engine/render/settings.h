@@ -212,11 +212,26 @@ struct GraphicsSettings
     // the picture instancing has to match pixel for pixel.
     bool instancing = true;
 
-    // **A measuring instrument** (ADR 0171): `[debug] shadow_taps`. How many
-    // taps the sun's shadow filter takes at a fragment, 1 through 15, to see
-    // what the filter costs; zero is the filter as it ships, sixteen.
+    // **How many taps the sun's shadow filter takes at a fragment** (ADR
+    // 0172): four at Low, eight at Medium, and zero -- the filter's full
+    // sixteen -- at High and above. It follows the shadow quality.
     u32 shadowTaps = 0;
+    // **A measuring instrument** (ADR 0171): `[debug] shadow_taps`, 1 through
+    // 16, said over the level's count to see what the filter costs. Zero is
+    // not measuring. Carried across a player's settings changes, as the two
+    // instruments above are.
+    u32 measuredShadowTaps = 0;
+
+    // **How many levels the bloom's chain has** (ADR 0172), 2 through 5: each
+    // is a pass down and a pass up, and each reaches twice as far as the one
+    // before. Five on a desk; three on a handheld, where the passes are what
+    // bloom costs and the widest two are the least seen.
+    u32 bloomLevels = 5;
 };
+
+// The taps a shadow quality filters with: `shadowTaps` for the level's place
+// in Low, Medium, High, Ultra.
+[[nodiscard]] u32 shadowTapsFor(QualityLevel level) noexcept;
 
 // The named set every preset is. `High` was exactly what the engine shipped
 // through M7.5, because every golden in the repository was recorded against
