@@ -12,6 +12,7 @@
 #include "engine/asset/terrain_palette.h"
 #include "engine/asset/terrain_pyramid.h"
 #include "engine/core/log.h"
+#include "engine/core/profile.h"
 #include "engine/jobs/jobs.h"
 
 namespace engine::render {
@@ -1132,10 +1133,16 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
     const auto syncStarted = std::chrono::steady_clock::now();
     m_frame += 1;
     m_lastBuilds = 0;
+    m_lastBuildsInFrame = 0;
     m_pending = false;
     // **A batch built off the main thread, done** (TA14): all of it goes up
     // now, before anything is chosen, so it is drawn this frame.
     const bool paced = m_async && !m_fastUploads;
+    // What a `sync` spends, by what it is doing: putting up what was built,
+    // choosing what to draw, building an edit, sending the rest to be built,
+    // and letting go.
+    core::profile::Sections stretch;
+    ENG_PROFILE_NEXT(stretch, "terrain.upload");
     if (m_batch != nullptr && batchFinished(m_batch))
         m_lastBuilds += integrate(device, cmd, cache, library,
                                   paced ? (m_batch->edit ? EditUploadsPerSync : UploadsPerSync) : ~usize{0}, m_batch);
@@ -1732,6 +1739,7 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
     };
 
     std::vector<Request> requests;
+    ENG_PROFILE_NEXT(stretch, "terrain.choose");
     choose(requests);
 
     // **Nearest first, a fixed count** -- ties by level, terrain and key, so the
@@ -1753,13 +1761,35 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
     // **A small edit is built here and now** (`MaxEditBuildsInFrame`), whatever
     // is being built off the main thread: every node of it, on every worker,
     // put up at once and drawn in this frame.
+    ENG_PROFILE_NEXT(stretch, "terrain.edit");
+    //
+    // **Of ground that was edited, and of no other** (D541). A node is built
+    // again for a change of seams too -- the level drawn beside it moved --
+    // and those were taken for edits: a camera that moved, and a map coming
+    // in a batch at a time, built a few nodes in every frame with the frame
+    // waiting, 7 to 32 ms of it. An edit is one the ground put up does not
+    // have yet and `editLatency` is still counting; anything else waits for a
+    // worker, as loading does.
     if (m_async) {
+        const auto edited = [&](core::InstanceId id, const scene::TerrainComponent& terrain) {
+            const u64 edits = terrain.fieldRevision - terrain.streamedRevisions;
+            const auto shown = std::find_if(m_shown.begin(), m_shown.end(), [&](const Shown& entry) {
+                return entry.world == &world && entry.terrain == id;
+            });
+            if (shown == m_shown.end() || shown->edits >= edits)
+                return false;
+            const auto stamp = std::find_if(m_editStamps.begin(), m_editStamps.end(), [&](const EditStamp& entry) {
+                return entry.world == &world && entry.terrain == id;
+            });
+            return stamp != m_editStamps.end() && (stamp->pending || stamp->seen != edits);
+        };
         std::vector<Request> edits;
         for (const Request& next : requests) {
             if (!next.rebuild)
                 continue;
             const scene::TerrainComponent* terrain = world.terrains().find(next.terrain);
-            if (terrain == nullptr || find(&world, next.terrain, next.key) == nullptr ||
+            if (terrain == nullptr || !edited(next.terrain, *terrain) ||
+                find(&world, next.terrain, next.key) == nullptr ||
                 readsCells(terrain->field, terrain->cellSource.get(), next.key))
                 continue;
             edits.push_back(next);
@@ -1799,7 +1829,9 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                                   for (usize lane = begin; lane < end; ++lane)
                                       running->run(static_cast<u32>(lane));
                               });
-            m_lastBuilds += integrate(device, cmd, cache, library, ~usize{0}, batch);
+            const u32 builtHere = integrate(device, cmd, cache, library, ~usize{0}, batch);
+            m_lastBuilds += builtHere;
+            m_lastBuildsInFrame += builtHere;
             // And drawn in this frame: chosen again, with what was built.
             requests.clear();
             choose(requests);
@@ -1825,6 +1857,7 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
     // nodes never show two versions of one edit -- the flicker the owner saw
     // while editing. A node never built is loading, and loading keeps the
     // budget, nearest first.
+    ENG_PROFILE_NEXT(stretch, "terrain.build");
     if (m_batch == nullptr || m_farBatch == nullptr) {
         auto batch = std::make_unique<Batch>();
         // **Far ground, a batch of its own** (ADR 0144): built from cells on
@@ -1943,6 +1976,7 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
         }
     }
     m_pending = m_batch != nullptr || m_farBatch != nullptr || !requests.empty();
+    ENG_PROFILE_NEXT(stretch, "terrain.release");
 
     // **How long an edit takes to be seen** (`editLatency`). Stamped by the
     // `sync` that first finds the ground edited; over when the ground put up

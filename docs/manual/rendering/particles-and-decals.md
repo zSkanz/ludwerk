@@ -166,6 +166,69 @@ On a machine with no compute shaders a `Gpu` emitter runs on the CPU, with
 the CPU's limit on how many, and the log says so once. The game looks thinner
 there rather than failing, so a storm should not be what a level depends on.
 
+### Weather: rain and snow over the player
+
+Rain is not a jet from a point, and it does not need a shape of its own: **an
+emitter under a part is born anywhere inside that part**, so a wide, flat,
+invisible part over the player's head is a cloud. Keep it over the camera and
+the rain is wherever the player looks:
+
+```luau
+--!strict
+local RunService = game:GetService("RunService")
+
+-- A slab of sky: sixty metres across, and the rain is born anywhere inside it.
+local sky = Instance.new("Part")
+sky.Size = vector.create(60, 2, 60)
+sky.Anchored = true
+sky.CanCollide = false
+sky.CanQuery = false
+sky.CanTouch = false
+sky.CastShadow = false
+sky:SetMaterialParameter("Transparency", 1)
+sky.Parent = workspace
+
+local rain = Instance.new("ParticleEmitter")
+rain.Simulation = Enum.ParticleSimulation.Gpu
+rain.Rate = 6000
+rain.Lifetime = 1.6
+rain.Speed = 22                               -- along the slab's up
+rain.SpreadAngle = 2
+rain.Acceleration = vector.create(3, 0, 0)    -- the wind
+rain.Shape = Enum.ParticleShape.Disc
+rain.Size = 0.05
+rain.Color = Color3.new(0.7, 0.8, 1)
+rain.Transparency = 0.5
+rain.Collision = Enum.ParticleCollision.Both
+rain.CollisionResponse = Enum.ParticleCollisionResponse.Kill
+rain.Parent = sky
+
+-- Over the camera every frame, and turned upside down: an emitter throws
+-- along its parent's up, and this parent's up is the way rain falls.
+RunService:BindToRenderStep("weather", Enum.RenderPriority.Camera.Value + 1, function()
+    local camera = workspace.CurrentCamera
+    if camera then
+        sky.CFrame = CFrame.new(camera.CFrame.Position + vector.create(0, 25, 0))
+            * CFrame.fromEuler(math.pi, 0, 0)
+    end
+end)
+```
+
+- **The part's `Size` is the storm's**: as wide as the player can see rain
+  falling, a metre or two thick so drops do not start in a sheet. Its `CFrame`
+  turns the whole fall: tilt the slab and the rain slants.
+- **`Rate` times `Lifetime` is how many are in the air.** Rain that dies on
+  what it hits (`Kill`) spends none under a roof, and `Both` stops it at the
+  ground whether the ground is in view or not.
+- **Snow is the same slab with a slower emitter**: a `Speed` of 2 or 3, a
+  `Lifetime` long enough to reach the ground, some `Drag`, a wider
+  `SpreadAngle`, and `Stick` to lie where it lands for the rest of its life.
+- **A drop is a dot unless it has a picture**: give the emitter a `Texture`
+  of a streak for rain seen from the side.
+- **In a match, weather is each player's own.** Make the slab and its emitter
+  in a client script: particles are drawn, not simulated by the server, and a
+  slab the server moved would follow one player's camera for everybody.
+
 ## Decals
 
 A `Decal` projects an image onto whatever lies inside its box: curved,

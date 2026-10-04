@@ -213,6 +213,9 @@ struct GlyphStore
     u32 atlasWidth = 0;
     u32 atlasHeight = 0;
     u64 atlasVersion = 0;
+    // What `GlyphAtlas::rowVersions` and `clearedAt` are.
+    std::vector<u64> atlasRows;
+    u64 atlasClearedAt = 0;
     AtlasPacker packer;
 };
 
@@ -422,17 +425,55 @@ FaceTable& faceTable()
     return *table.faces.back();
 }
 
+// **The size a raster glyph is made at, for a size it is asked at.**
+//
+// A glyph was rasterised at the size it was drawn at, to the quarter pixel. A
+// `TextSize` a tween animates -- a damage number that pops -- and a label in
+// the world, a different size at every distance, asked for a new size every
+// frame: a hundred and five sizes of ten digits between 14 and 40, the store
+// filled, was emptied, and every glyph of every label was made again.
+//
+// So a size is made at the next rung of a ladder at or above it and drawn
+// smaller: whole pixels to 24, every second to 64, and a quarter larger each
+// time past that. Never more than a twelfth smaller below 64, a fifth above --
+// a minification the bilinear filter does without anybody seeing it. **A whole
+// number of pixels up to 64 is its own rung**: text at a size somebody chose
+// is drawn exactly as it was. Past 64 a glyph is thousands of texels, and one
+// set a pixel would be the atlas; a title that large is made a little larger
+// and drawn down, which it survives better than small text would. Past 128 it
+// is drawn UP from 128, and is as soft as that makes it. How distance fields would answer the same
+// question -- one set of glyphs for every size -- is a second texture format
+// and a second shader, and softer small text; that is the trade not taken.
+constexpr f32 LargestRasterSize = 128.0f;
+
+[[nodiscard]] f32 rasterSizeFor(f32 pixelSize) noexcept
+{
+    const f32 size = std::fmax(pixelSize, 1.0f);
+    const f32 whole = std::round(size);
+    if (size <= 64.0f) {
+        if (std::fabs(size - whole) < 0.01f)
+            return whole;
+        return size <= 24.0f ? std::ceil(size) : std::ceil(size * 0.5f) * 2.0f;
+    }
+    // 80, 100, 128 -- and no larger: a glyph past that is a tenth of the
+    // atlas by itself, and text that large is drawn up from 128.
+    f32 rung = 64.0f;
+    while (rung < size - 0.01f && rung < LargestRasterSize)
+        rung = std::ceil(rung * 1.25f * 0.25f) * 4.0f;
+    return std::fmin(rung, LargestRasterSize);
+}
+
 // The multiplier between a cached glyph's units and pixels.
 //
-// ONE for a raster face and `pixelSize / 12` for the built-in vector one, and
-// the difference is the whole reason the cache key has a size in it: a vector
-// glyph is cached once and scaled, a raster glyph is rasterised at the size it
-// will be drawn. Every caller multiplies by this and neither has to know which
+// For a raster face, the size asked for over the size its glyphs were made at
+// (`rasterSizeFor`): one for a whole pixel, a little under it between rungs.
+// `pixelSize / 12` for the built-in vector one, whose glyphs are cached once
+// and scaled. Every caller multiplies by this and neither has to know which
 // kind of face it is looking at.
 [[nodiscard]] f32 scaleFor(const Face& face, f32 pixelSize) noexcept
 {
     if (face.ready) {
-        return 1.0f;
+        return std::fmax(pixelSize, 1.0f) / rasterSizeFor(pixelSize);
     }
     // A `TextSize` of 12 is the built-in face's own size. Below about 6 the
     // vector strokes collapse into each other, which is a property of the face
@@ -561,6 +602,7 @@ void dilateCoverage(const std::vector<core::u8>& coverage, u32 width, u32 height
 
     if (cache.atlas.empty()) {
         cache.atlas.assign(static_cast<usize>(AtlasSize) * AtlasSize, 0u);
+        cache.atlasRows.assign(AtlasSize, 0u);
         cache.atlasWidth = AtlasSize;
         cache.atlasHeight = AtlasSize;
     }
@@ -622,6 +664,8 @@ void dilateCoverage(const std::vector<core::u8>& coverage, u32 width, u32 height
     packer.cursorX += width + Padding * 2;
     packer.rowHeight = std::max(packer.rowHeight, height + Padding * 2);
     ++cache.atlasVersion;
+    for (u32 row = 0; row < height; ++row)
+        cache.atlasRows[originY + row] = cache.atlasVersion;
 
     // The quad is in PIXELS at this size, measured from the top-left of the
     // line rather than from the baseline: everything downstream places text from
@@ -716,8 +760,10 @@ void clearStore(GlyphStore& cache)
     // keeping the pixels while dropping the entries that name them would leave
     // a megabyte of coverage nothing can find and no room for more.
     cache.atlas.clear();
+    cache.atlasRows.clear();
     cache.packer = AtlasPacker{};
     ++cache.atlasVersion;
+    cache.atlasClearedAt = cache.atlasVersion;
     cache.stats.entries = 0;
 }
 
@@ -749,7 +795,19 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
     // The one exception is a byte sequence that is not a character at all: those
     // all decode to `ReplacementCodepoint` and share one entry, because "this is
     // not text" is one fact however many times it happens.
-    const u64 key = glyphKey(face.hash, pixelSize, codepoint, stroke);
+    //
+    // **By the size it is MADE at, not the size it is asked at**: a raster
+    // glyph's rung (`rasterSizeFor`), with its outline as thick as that rung
+    // makes it -- and no size at all for the built-in face, whose glyphs are
+    // the same rectangles at every size. Its outline is the one thing of it
+    // that is in face units a size decides, so an outlined one keeps its size.
+    const f32 madeAt = face.ready ? rasterSizeFor(pixelSize) : (stroke.quarters > 0 ? pixelSize : 0.0f);
+    GlyphStroke made = stroke;
+    if (face.ready && stroke.quarters > 0) {
+        const f32 grown = static_cast<f32>(stroke.quarters) * madeAt / std::fmax(pixelSize, 1.0f);
+        made.quarters = static_cast<u32>(std::fmin(std::fmax(grown + 0.5f, 1.0f), static_cast<f32>(MaxStrokeQuarters)));
+    }
+    const u64 key = glyphKey(face.hash, madeAt, codepoint, made);
 
     const auto position = std::lower_bound(cache.entries.begin(), cache.entries.end(), key,
                                            [](const GlyphEntry& entry, u64 value) { return entry.key < value; });
@@ -767,7 +825,7 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
     entry.key = key;
     bool filled = false;
     if (face.ready) {
-        filled = rasteriseGlyph(face, pixelSize, codepoint, entry, cache, stroke);
+        filled = rasteriseGlyph(face, madeAt, codepoint, entry, cache, made);
         if (!filled && !cache.atlas.empty() && cache.entries.size() > 0) {
             // The atlas is full rather than the codepoint being absent. Clearing
             // is the same answer the entry limit gets and for the same reason.
@@ -1353,8 +1411,10 @@ void resetGlyphCache() noexcept
     cache.entries.clear();
     cache.quads.clear();
     cache.atlas.clear();
+    cache.atlasRows.clear();
     cache.packer = AtlasPacker{};
     ++cache.atlasVersion;
+    cache.atlasClearedAt = cache.atlasVersion;
     cache.stats = GlyphCacheStats{};
 }
 
@@ -1671,7 +1731,8 @@ std::string plainTextOf(std::string_view markup)
 GlyphAtlas glyphAtlas() noexcept
 {
     const GlyphStore& cache = store();
-    return GlyphAtlas{cache.atlas, cache.atlasWidth, cache.atlasHeight, cache.atlasVersion};
+    return GlyphAtlas{cache.atlas,        cache.atlasWidth, cache.atlasHeight,
+                      cache.atlasVersion, cache.atlasRows,  cache.atlasClearedAt};
 }
 
 void setFaceProvider(FaceProvider provider, void* user) noexcept

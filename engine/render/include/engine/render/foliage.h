@@ -10,10 +10,14 @@
 // the camera leaves it.
 //
 // **Growth runs on the job threads**, a bounded number of tiles a sync, nearest
-// first; the instances go up as one buffer per tile. What the frame draws is
+// first; the instances go up as one buffer per tile. **And the frame does not
+// wait for it** (`setAsync`, D542): a batch of tiles is handed over and put up
+// by the `sync` that finds it done -- except a few tiles grown AGAIN, an edit
+// somebody is watching, which are grown where they are found. What the frame draws is
 // appended to the `RenderWorld` as runs (a tile's instances of one mesh) and
 // buckets (one per mesh), which the renderer's cull turns into indirect draws.
 
+#include <memory>
 #include <vector>
 
 #include "engine/core/id.h"
@@ -47,12 +51,15 @@ struct FoliageStats
     core::u32 tilesResident = 0;
     core::u32 instancesResident = 0;
     core::u32 tilesGrownLastSync = 0;
+    // Of those, the ones the `sync` grew itself, the frame waiting for them.
+    core::u32 tilesGrownInFrame = 0;
 };
 
 class FoliageSystem
 {
 public:
-    FoliageSystem() = default;
+    FoliageSystem();
+    ~FoliageSystem();
     FoliageSystem(const FoliageSystem&) = delete;
     FoliageSystem& operator=(const FoliageSystem&) = delete;
 
@@ -66,6 +73,16 @@ public:
         m_focus = focus;
         m_hasFocus = true;
     }
+
+    // **Whether tiles are grown off the calling thread.** Not in a run that
+    // takes a picture, which is of what the frames before it grew, not of what
+    // a worker happened to finish by then -- the terrain loader's own rule.
+    void setAsync(bool async) noexcept { m_async = async; }
+    // Behind a loading curtain there is no frame of play to keep smooth: a
+    // batch is as many tiles as there are.
+    void setFastGrowth(bool fast) noexcept { m_fast = fast; }
+    // Whether the last `sync` left a tile it wanted ungrown.
+    [[nodiscard]] bool pending() const noexcept { return m_pending; }
 
     // Grows the tiles this focus wants and lets go of those it does not.
     // Outside any pass, because it uploads.
@@ -100,7 +117,11 @@ private:
         // bucket by instance.
         std::vector<core::InstanceId> meshes;
         bool wanted = false;
+        // Grown once: what it is asked for next is a change to what is drawn.
+        bool grown = false;
     };
+    // Tiles being grown off the calling thread.
+    struct Batch;
 
     [[nodiscard]] Tile* find(const scene::World* world, core::InstanceId layer, core::i32 x, core::i32 z) noexcept;
 
@@ -108,7 +129,13 @@ private:
     FoliageStats m_stats;
     core::DVec3 m_focus;
     bool m_hasFocus = false;
+    bool m_async = false;
+    bool m_fast = false;
+    bool m_pending = false;
+    // More tiles are being grown again than an edit is (`sync`).
+    bool m_regrowing = false;
     std::vector<Tile> m_tiles;
+    std::unique_ptr<Batch> m_batch;
 };
 
 } // namespace engine::render

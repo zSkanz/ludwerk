@@ -283,3 +283,130 @@ TEST_CASE("ADR 0156 amended: an agent with no body is stepped like any other, an
     CHECK(rig.at(bare).position.z == other.at(bodied).position.z);
     CHECK_FALSE(rig.at(bare).body.valid());
 }
+
+TEST_CASE("ADR 0162: a swarm keeps what became of its agents -- added, tagged, removed with its last tag")
+{
+    Rig rig;
+    SwarmAgentSettings settings;
+    settings.radius = 0.75f;
+    settings.height = 2.0f;
+    const u32 first = addSwarmAgent(rig.swarm(), core::InstanceId{}, core::DVec3{1.0, 0.0, 2.0}, settings);
+    REQUIRE(setSwarmAgentTag(rig.swarm(), first, 7));
+    // The same tag again is nothing new.
+    REQUIRE(setSwarmAgentTag(rig.swarm(), first, 7));
+    REQUIRE(setSwarmAgentTag(rig.swarm(), first, 0x8007));
+    REQUIRE(removeSwarmAgent(rig.swarm(), first, 5));
+    CHECK_FALSE(setSwarmAgentTag(rig.swarm(), first, 1));
+
+    const std::vector<SwarmEvent>& events = rig.swarm().events;
+    REQUIRE(events.size() == 4);
+    CHECK(events[0].kind == SwarmEvent::Kind::Added);
+    CHECK(events[0].agent == first);
+    CHECK(events[0].radius == 0.75f);
+    CHECK(events[0].height == 2.0f);
+    CHECK(events[1].kind == SwarmEvent::Kind::TagChanged);
+    CHECK(events[1].tag == 7);
+    CHECK(events[2].tag == 0x8007);
+    CHECK(events[3].kind == SwarmEvent::Kind::Removed);
+    CHECK(events[3].reason == SwarmRemovalRemoved);
+    CHECK(events[3].tag == 0x8007);
+    CHECK(events[3].position.x == 1.0);
+    // Only a swarm that replicates keeps the going for the replicas.
+    CHECK(rig.swarm().removed.empty());
+
+    rig.swarm().replicates = true;
+    const u32 second = addSwarmAgent(rig.swarm(), core::InstanceId{}, core::DVec3{}, settings);
+    // The number is used again, and the row is another agent.
+    CHECK(second == first);
+    const u32 born = rig.at(second).born;
+    REQUIRE(removeSwarmAgent(rig.swarm(), second, 6));
+    REQUIRE(rig.swarm().removed.size() == 1);
+    CHECK(rig.swarm().removed[0].slot == second - 1);
+    CHECK(rig.swarm().removed[0].born == born);
+}
+
+TEST_CASE("ADR 0162: a replica's row is carried along its walk on a clock of its own, and a correction is taken up")
+{
+    Rig rig;
+    SwarmComponent& swarm = rig.swarm();
+    swarm.mirrored = true;
+    // Told at the authority's tick 100: at the origin, walking four metres a
+    // second along -z, which is what a yaw of nothing faces.
+    SwarmTold told;
+    told.position = core::DVec3{0.0, 0.0, 0.0};
+    told.walk = 4.0f;
+    mirrorSwarmAgentAdded(swarm, 3, 9, 0.5f, 1.5f, told, 100.0);
+    REQUIRE(swarmAgent(swarm, 4) != nullptr);
+    CHECK(rig.at(4).tag == 9);
+    REQUIRE(swarm.events.size() == 1);
+    CHECK(swarm.events[0].kind == SwarmEvent::Kind::Added);
+
+    // **Sixty ticks with nothing said**: it has walked four metres. The clock
+    // runs on with no message to set it against.
+    rig.ticks(61);
+    CHECK(rig.at(4).position.z == doctest::Approx(-4.0).epsilon(0.02));
+    CHECK(rig.at(4).position.x == doctest::Approx(0.0));
+
+    // Told again, a metre to the side of where it is drawn: it does not jump.
+    const core::DVec3 before = rig.at(4).position;
+    SwarmTold moved;
+    moved.position = core::DVec3{1.0, 0.0, before.z};
+    moved.walk = 4.0f;
+    REQUIRE(mirrorSwarmAgentTold(swarm, 3, moved, 160.0, 1.0 / 60.0, std::optional<u16>{12}));
+    rig.ticks(1);
+    CHECK(rig.at(4).position.x < 0.3);
+    CHECK(rig.at(4).position.x > 0.0);
+    // And a second later it is where it was told, carried on.
+    rig.ticks(60);
+    CHECK(rig.at(4).position.x == doctest::Approx(1.0).epsilon(0.01));
+    CHECK(rig.at(4).tag == 12);
+    CHECK(swarm.events.back().kind == SwarmEvent::Kind::TagChanged);
+
+    // An older word -- a message that arrived late -- changes nothing.
+    SwarmTold stale;
+    stale.position = core::DVec3{50.0, 0.0, 50.0};
+    CHECK_FALSE(mirrorSwarmAgentTold(swarm, 3, stale, 120.0, 1.0 / 60.0, std::nullopt));
+    // Nor one for a number nobody has.
+    CHECK_FALSE(mirrorSwarmAgentTold(swarm, 9, stale, 500.0, 1.0 / 60.0, std::nullopt));
+
+    // Gone, with what it was: the script that draws it hears where and why.
+    mirrorSwarmAgentRemoved(swarm, 3, SwarmRemovalOutOfReach, 12, core::DVec3{1.0, 0.0, -9.0});
+    CHECK(swarmAgent(swarm, 4) == nullptr);
+    CHECK(swarm.events.back().kind == SwarmEvent::Kind::Removed);
+    CHECK(swarm.events.back().reason == SwarmRemovalOutOfReach);
+    CHECK(swarm.events.back().tag == 12);
+}
+
+TEST_CASE("ADR 0162: a replica stands an agent on the floor it was told, a lift above it, and moves its body")
+{
+    Rig rig;
+    SwarmComponent& swarm = rig.swarm();
+    swarm.mirrored = true;
+    const core::InstanceId body = rig.fixture.part("Body");
+    SwarmTold told;
+    told.position = core::DVec3{2.0, 21.6, 3.0};
+    told.floor = 20.0;
+    told.lift = 1.6f;
+    told.yaw = 1.0f;
+    mirrorSwarmAgentAdded(swarm, 0, 0, 0.5f, 1.6f, told, 10.0);
+    swarm.agents[0].body = body;
+    rig.ticks(2);
+    // No terrain here and no ray: the floor, and what it stands on.
+    CHECK(rig.at(1).position.y == doctest::Approx(21.6).epsilon(0.001));
+    const PartComponent* part = rig.fixture.world.parts().find(body);
+    CHECK(part->cframe.position.y == doctest::Approx(21.6).epsilon(0.001));
+    CHECK(part->cframe.position.x == doctest::Approx(2.0));
+
+    // It came down: the height is taken up over a few ticks, not at once.
+    SwarmTold lower;
+    lower.position = core::DVec3{2.0, 0.0, 3.0};
+    lower.floor = 20.0;
+    lower.lift = 0.0f;
+    lower.yaw = 1.0f;
+    REQUIRE(mirrorSwarmAgentTold(swarm, 0, lower, 20.0, 1.0 / 60.0, std::nullopt));
+    rig.ticks(1);
+    CHECK(rig.at(1).position.y < 21.6);
+    CHECK(rig.at(1).position.y > 20.5);
+    rig.ticks(60);
+    CHECK(rig.at(1).position.y == doctest::Approx(20.0).epsilon(0.001));
+}

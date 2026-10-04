@@ -10,6 +10,7 @@
 // the innermost frames of the Instance facade, and architecture risk #1 is the
 // facade's overhead eating the ECS's win.
 #include <cmath>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -347,6 +348,19 @@ void detachPlayerComponents(World& world, core::InstanceId id)
 // world and `Character2D` the part on the plane, each typed as what it holds,
 // over the one id a player has. Each reads nothing while the other kind is
 // set, and setting either replaces whatever was there.
+// **An instance a script wrote, or the nil it wrote** (D538): nil arrives as
+// no value at all, not as an instance that is nothing -- and a setter that
+// asked only for an instance refused it, so a script could give a player a
+// character and never take it away. Nothing for anything else.
+[[nodiscard]] std::optional<core::InstanceId> instanceOrNil(const Value& value) noexcept
+{
+    if (const auto* id = std::get_if<core::InstanceId>(&value); id != nullptr)
+        return *id;
+    if (valueType(value) == ValueType::Nil)
+        return core::InstanceId{};
+    return std::nullopt;
+}
+
 Value getPlayerCharacter(const World& world, core::InstanceId id)
 {
     const PlayerComponent* player = world.players().find(id);
@@ -369,8 +383,8 @@ Value getPlayerCharacter2D(const World& world, core::InstanceId id)
 bool setPlayerCharacter2D(World& world, core::InstanceId id, const Value& value)
 {
     PlayerComponent* player = world.players().find(id);
-    const auto* character = std::get_if<core::InstanceId>(&value);
-    if (player == nullptr || character == nullptr)
+    const std::optional<core::InstanceId> character = instanceOrNil(value);
+    if (player == nullptr || !character.has_value())
         return false;
     if (character->valid() && world.parts2d().find(*character) == nullptr)
         return false;
@@ -385,8 +399,8 @@ bool setPlayerCharacter2D(World& world, core::InstanceId id, const Value& value)
 bool setPlayerCharacter(World& world, core::InstanceId id, const Value& value)
 {
     PlayerComponent* player = world.players().find(id);
-    const auto* character = std::get_if<core::InstanceId>(&value);
-    if (player == nullptr || character == nullptr)
+    const std::optional<core::InstanceId> character = instanceOrNil(value);
+    if (player == nullptr || !character.has_value())
         return false;
     // A part or nothing: a character is somewhere in the world, and a folder is
     // nowhere a snapshot can correct or an interest radius can measure from.
@@ -396,6 +410,27 @@ bool setPlayerCharacter(World& world, core::InstanceId id, const Value& value)
     if (!character->valid() && world.parts2d().find(player->character) != nullptr)
         return true;
     player->character = *character;
+    return true;
+}
+
+Value getPlayerReplicationFocus(const World& world, core::InstanceId id)
+{
+    const PlayerComponent* player = world.players().find(id);
+    if (player == nullptr || world.parts().find(player->replicationFocus) == nullptr)
+        return Value{core::InstanceId{}};
+    return Value{player->replicationFocus};
+}
+
+bool setPlayerReplicationFocus(World& world, core::InstanceId id, const Value& value)
+{
+    PlayerComponent* player = world.players().find(id);
+    const std::optional<core::InstanceId> focus = instanceOrNil(value);
+    if (player == nullptr || !focus.has_value())
+        return false;
+    // A part or nothing: a focus is somewhere a distance can be measured from.
+    if (focus->valid() && world.parts().find(*focus) == nullptr)
+        return false;
+    player->replicationFocus = *focus;
     return true;
 }
 

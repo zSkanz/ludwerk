@@ -847,6 +847,15 @@ What a `UIStroke`'s `Thickness` is measured in.
 | `FixedSize` | 0 | Pixels. |
 | `ScaledSize` | 1 | A fraction of the parent's shorter side -- or, on text, of the font size -- so the stroke grows with what it outlines. |
 
+## Enum.SwarmAgentRemoval
+
+Why a machine no longer has an agent of a `Swarm` (ADR 0162): what `AgentRemoved` says.
+
+| Item | Value | Description |
+|---|---|---|
+| `Removed` | 0 | The authority removed it: it died, or its stage was cleared. |
+| `OutOfReach` | 1 | On a replica: it walked out of what that machine is sent. It is still alive where the swarm runs, and is added again if it comes back. |
+
 ## Enum.SwipeDirection
 
 Which way a swipe went, as `InputService.TouchSwiped` says it. Up is towards the top of the window.

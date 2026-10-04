@@ -121,6 +121,9 @@ struct Config
     u32 simulatedDelayMs = 0;
     u32 simulatedJitterMs = 0;
     core::f32 simulatedLossPercent = 0.0f;
+    // A replica says each correction of its predicted character in the log,
+    // with what the authority disagreed about (`--net-log-corrections`).
+    bool logCorrections = false;
     // How long the other end may go silent before it is gone, in
     // milliseconds: `[network] timeout` (D208). See `TransportConfig`.
     u32 timeoutMs = 10000;
@@ -217,6 +220,14 @@ struct Stats
     u64 unreliableSent = 0;
     u64 unreliableReceived = 0;
     u64 unreliableDropped = 0;
+    // A replicated `Swarm`'s agents (ADR 0162): the positions sent or taken
+    // in, the bytes of them, and the agents that came and went.
+    u64 swarmStates = 0;
+    // How many an authority WANTED to send: past the budget, the rest waited.
+    u64 swarmWanted = 0;
+    u64 swarmBytes = 0;
+    u64 swarmAdded = 0;
+    u64 swarmRemoved = 0;
     // Messages the transport refused to send -- too large, its queue full, a
     // peer gone (NA1). Before, they were counted as sent.
     u64 sendFailures = 0;

@@ -1213,3 +1213,130 @@ TEST_CASE("effects under one parent apply in the order of their priority")
     const Heard thenSquared = chain(false);
     CHECK(thenSquared.rms > thenFiltered.rms * 1.5);
 }
+
+// ---------------------------------------------------------------------------
+// Ogg Vorbis, from files a real encoder wrote (D546).
+
+namespace {
+
+// The tone was encoded at half scale and a `Sound` plays at half volume.
+constexpr double Heard = 0.25;
+
+struct VorbisFixture
+{
+    engine::asset::ContentMounts mounts;
+    VorbisFixture() { mounts.mountDirectory(std::filesystem::path(ENG_AUDIO_TEST_DATA)); }
+};
+
+// The largest step between two samples next to each other, a channel.
+[[nodiscard]] float largestStep(const std::vector<float>& samples, std::size_t first, std::size_t last)
+{
+    float largest = 0.0f;
+    for (std::size_t at = first + 2; at < last; ++at)
+        largest = std::max(largest, std::abs(samples[at] - samples[at - 2]));
+    return largest;
+}
+
+} // namespace
+
+TEST_CASE("D546: an Ogg Vorbis file decodes, and is as long as it says")
+{
+    // **The format the manual, the class and the warning itself all name.**
+    // Its length was read from the stream's pages by hand (D094), with a test
+    // made of a header and no audio; nothing ever decoded one. No Vorbis
+    // decoder was compiled in: every `.ogg` played the placeholder tone.
+    VorbisFixture content;
+    Fixture fixture;
+    fixture.system.setContentMounts(&content.mounts);
+    const InstanceId id = fixture.make("Sound");
+    fixture.sound(id).content = "asset://tone.ogg";
+    fixture.sound(id).playing = true;
+    fixture.system.tick(*fixture.world, Tick);
+    fixture.system.update(*fixture.world, InstanceId{});
+    CHECK(fixture.system.stats().clipsLoaded == 1);
+    CHECK(fixture.system.stats().clipsMissing == 0);
+    CHECK(fixture.system.stats().clipsStreamed == 0);
+    CHECK(fixture.system.clipDuration("asset://tone.ogg") == doctest::Approx(1.0).epsilon(0.00001));
+
+    // And it is the tone that was encoded: 375 Hz on the left, 750 Hz on the
+    // right. Lossy, so near it and not it.
+    const std::vector<float> heard = listen(content.mounts, "asset://tone.ogg", 0.25, 4800u);
+    double worst = 0.0;
+    for (std::size_t frame = 0; frame < 4800u; ++frame) {
+        const double t = 0.25 + static_cast<double>(frame) / 48000.0;
+        worst = std::max(worst, std::abs(static_cast<double>(heard[frame * 2]) -
+                                         Heard * std::sin(2.0 * 3.14159265358979 * 375.0 * t)));
+        worst = std::max(worst, std::abs(static_cast<double>(heard[frame * 2 + 1]) -
+                                         Heard * std::sin(2.0 * 3.14159265358979 * 750.0 * t)));
+    }
+    MESSAGE("the decoded tone is within ", worst, " of the tone that was encoded");
+    CHECK(worst < 0.03);
+
+    // A file at another rate is resampled to the mixer's, and is a second too.
+    Fixture other;
+    other.system.setContentMounts(&content.mounts);
+    const InstanceId slow = other.make("Sound");
+    other.sound(slow).content = "asset://tone44.ogg";
+    other.sound(slow).playing = true;
+    other.system.tick(*other.world, Tick);
+    other.system.update(*other.world, InstanceId{});
+    CHECK(other.system.stats().clipsMissing == 0);
+    CHECK(other.system.clipDuration("asset://tone44.ogg") == doctest::Approx(1.0).epsilon(0.0001));
+    const std::vector<float> resampled = listen(content.mounts, "asset://tone44.ogg", 0.5, 4800u);
+    CHECK(std::ranges::any_of(resampled, [](float sample) { return std::abs(sample) > 0.15f; }));
+}
+
+TEST_CASE("D546: a looped Ogg Vorbis sound wraps at the stream's own end, with no gap")
+{
+    // The tone is a whole number of periods long: where it ends it begins. A
+    // loop that ran past the last sample the stream declares -- a codec pads
+    // its last block -- or stopped short of it would put a step in the wave.
+    VorbisFixture content;
+    const std::vector<float> looped = listen(content.mounts, "asset://tone.ogg", 0.9, 9600u, true);
+    const std::vector<float> head = listen(content.mounts, "asset://tone.ogg", 0.0, 4800u);
+    // After the wrap, the file's first samples again, to the sample.
+    CHECK(std::equal(head.begin(), head.end(), looped.begin() + 4800 * 2));
+    // And no step across the seam larger than the tone's own: 750 Hz as it is
+    // heard moves at most 0.025 a sample.
+    CHECK(largestStep(looped, 4700u * 2u, 4900u * 2u) < 0.04f);
+    CHECK(std::ranges::any_of(looped, [](float sample) { return std::abs(sample) > 0.15f; }));
+}
+
+TEST_CASE("D546: a long Ogg Vorbis file streams, seeks, and loops with no gap")
+{
+    VorbisFixture content;
+    {
+        Fixture fixture;
+        fixture.system.setContentMounts(&content.mounts);
+        const InstanceId id = fixture.make("Sound");
+        fixture.sound(id).content = "asset://song.ogg";
+        fixture.sound(id).playing = true;
+        fixture.system.tick(*fixture.world, Tick);
+        fixture.system.update(*fixture.world, InstanceId{});
+        CHECK(fixture.system.stats().clipsLoaded == 1);
+        CHECK(fixture.system.stats().clipsMissing == 0);
+        CHECK(fixture.system.stats().clipsStreamed == 1);
+        CHECK(fixture.system.clipDuration("asset://song.ogg") == doctest::Approx(12.0).epsilon(0.00001));
+    }
+
+    // Five seconds in is the tone at five seconds.
+    const std::vector<float> seeked = listen(content.mounts, "asset://song.ogg", 5.0, 4800u);
+    double worst = 0.0;
+    for (std::size_t frame = 0; frame < 4800u; ++frame) {
+        const double t = 5.0 + static_cast<double>(frame) / 48000.0;
+        worst = std::max(worst, std::abs(static_cast<double>(seeked[frame * 2]) -
+                                         Heard * std::sin(2.0 * 3.14159265358979 * 375.0 * t)));
+    }
+    CHECK(worst < 0.03);
+
+    // Played once it ends at the stream's end, and is silent after it.
+    const std::vector<float> once = listen(content.mounts, "asset://song.ogg", 11.9, 9600u);
+    CHECK(std::all_of(once.begin() + 4800 * 2, once.end(), [](float sample) { return sample == 0.0f; }));
+    CHECK(std::ranges::any_of(once, [](float sample) { return std::abs(sample) > 0.15f; }));
+
+    // Looped it goes round: the head again right after the tail, no step.
+    const std::vector<float> looped = listen(content.mounts, "asset://song.ogg", 11.9, 9600u, true);
+    const std::vector<float> head = listen(content.mounts, "asset://song.ogg", 0.0, 4800u);
+    CHECK(std::equal(head.begin(), head.end(), looped.begin() + 4800 * 2));
+    CHECK(largestStep(looped, 4700u * 2u, 4900u * 2u) < 0.04f);
+}

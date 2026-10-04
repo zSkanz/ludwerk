@@ -300,6 +300,13 @@ struct GlyphAtlas
     // frame that added no glyphs costs no upload -- which is every frame after
     // the first few.
     u64 version = 0;
+    // **The version each row was last written at** (D543), a row of the atlas
+    // each: an uploader that holds version N sends the rows past N and no
+    // others -- a glyph is a few rows of a shelf, and the atlas is a thousand.
+    std::span<const u64> rowVersions;
+    // The version the atlas was last emptied at: an uploader behind it holds
+    // pixels that are nowhere now, and sends all of it.
+    u64 clearedAt = 0;
 };
 
 [[nodiscard]] GlyphAtlas glyphAtlas() noexcept;

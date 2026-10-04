@@ -213,6 +213,67 @@ cost about a third of a millisecond a tick on a desktop. An agent's body should
 be anchored and not collide -- the swarm moves it, and physics fighting it for
 the part loses.
 
+### A horde in a match
+
+In a match the server walks the horde and every player sees it. Set
+`Replicates`, and the swarm sends its own agents (ADR 0162):
+
+```luau
+-- Server: the horde has no bodies. It is rows the engine walks.
+swarm.Replicates = true
+local agent = swarm:AddAgentAt(position, { Speed = 4 })
+swarm:SetAgentTag(agent, kind)          -- 0 to 65535, yours: a kind, flags
+
+-- Every machine -- solo, the host's own view, a friend's -- draws it the same way.
+local bodies: { [number]: Model } = {}
+swarm.AgentAdded:Connect(function(agent, tag, size)
+    local body = makeEnemy(tag, size)   -- a body of this machine's own
+    bodies[agent] = body
+    swarm:SetAgentBody(agent, body.PrimaryPart)
+end)
+swarm.AgentRemoved:Connect(function(agent, tag, position, reason)
+    if reason == Enum.SwarmAgentRemoval.Removed then
+        playDeath(bodies[agent], tag, position)
+    end
+    recycle(bodies[agent])
+    bodies[agent] = nil
+end)
+swarm.AgentTagChanged:Connect(function(agent, tag)
+    pose(bodies[agent], tag)
+end)
+```
+
+- **The engine owns where an agent is; the game draws it.** `SetAgentBody`
+  hands an agent a part of this machine's own, and the swarm writes its
+  `CFrame` each tick -- nothing else about it. A friend's bodies are that
+  friend's instances and go nowhere.
+- **The same number on every machine**, from `AgentAdded` to `AgentRemoved`,
+  so a game's own messages can name an agent: a boss's health, a hit flash.
+  It names another agent only after its removal has been heard.
+- **The tag is all the engine carries for the game**: a number the server
+  sets and every machine reads (`GetAgentTag`). An agent's last tag arrives
+  with its removal, so a "killed" bit set just before `RemoveAgent` is in
+  every machine's `AgentRemoved` -- a death is played where it was killed,
+  and nothing where it only walked out of reach.
+- **A friend has the agents near its player**, out to `ReplicationRadius`
+  (80 m) from the player's character -- or from `Player.ReplicationFocus`,
+  for a fallen player watching someone else. One that walks out is removed
+  there with `OutOfReach` and added again when it returns.
+- **A friend's swarm is read-only.** It answers `GetAgents`, `GetPositions`,
+  `GetAgentPosition`, `GetAgentTag` and `QueryRadius`; `AddAgent`, `Push`
+  and the rest are the server's, and raise there.
+- **Close, not exact.** The server tells a friend about an agent when that
+  friend would otherwise draw it wrong, and the friend carries it along its
+  walk in between. A hit is the server's question (`QueryRadius` there),
+  never a friend's.
+- **A script that starts late asks first**: `AgentAdded` fires for agents
+  that arrive after it connects. `GetAgents()` says who is already there.
+
+Fifteen hundred agents reach three friends in about 28 KB a second each of
+positions, measured over a link 150 ms long that loses two packets in a
+hundred, with no agent stepping more than half a metre in a tick; a friend
+who joins has them all within half a second.
+
 ## On the plane
 
 A 2D game asks `FindPath2D(from, to)` with two `Vector2`s. There is no mesh:

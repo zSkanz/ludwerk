@@ -2013,6 +2013,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     render::RibbonSystem ribbons;
     // Foliage over terrain (ADR 0116), grown per tile around the camera.
     render::FoliageSystem foliage;
+    // **Grown off the main thread** (D542), by the terrain loader's own rule:
+    // not in a run that takes a picture or a capture, which is of what the
+    // frames before it grew and not of what a worker had finished by then.
+    foliage.setAsync(options.screenshotPath.empty() && options.capturePath.empty());
     foliage.setSettings({.density = options.foliageDensity *
                                     static_cast<f32>(graphicsHost.effective(scene::GraphicsSetting::FoliageDensity)),
                          .shadowDistance = options.foliageShadowDistance,
@@ -2156,13 +2160,6 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // say only how long, and a player's log of "Frame took 400 ms" could not
     // be diagnosed by anyone. The phases are the ones `--frame-stats` splits.
     scheduler.setQuiet(true);
-    struct FramePhases
-    {
-        f64 simMs = 0.0;
-        f64 waitMs = 0.0;
-        f64 renderScriptsMs = 0.0;
-    };
-    FramePhases lastPhases;
     core::u64 lastLongFrameWarnNs = 0;
     // **A game's world is shown once it has arrived** (D507): the meshes and
     // pictures of its first scene come in a few a frame, and until they had a
@@ -2783,13 +2780,17 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             network.noteTimeDropped();
         if (frame.clamped && (lastLongFrameWarnNs == 0 || nowNs - lastLongFrameWarnNs >= 5'000'000'000ull)) {
             lastLongFrameWarnNs = nowNs != 0 ? nowNs : 1;
+            // **The phases still being counted are the long frame's** (D540):
+            // a frame is known to have been long when the next one begins, and
+            // its phases are not put away until the statistics below have read
+            // them. What had been put away was the frame BEFORE it, and a tick
+            // that took 700 ms was reported as a simulation that took nothing.
             const f64 totalMs = frame.renderDt * 1000.0;
-            const f64 otherMs =
-                std::max(0.0, totalMs - lastPhases.simMs - lastPhases.waitMs - lastPhases.renderScriptsMs);
+            const f64 otherMs = std::max(0.0, totalMs - phaseSimMs - phaseWaitMs - phaseRenderScriptsMs);
             const std::array<I18nArg, 6> args{I18nArg{"ms", totalMs},
-                                              I18nArg{"simulation", lastPhases.simMs},
-                                              I18nArg{"scripts", lastPhases.renderScriptsMs},
-                                              I18nArg{"waiting", lastPhases.waitMs},
+                                              I18nArg{"simulation", phaseSimMs},
+                                              I18nArg{"scripts", phaseRenderScriptsMs},
+                                              I18nArg{"waiting", phaseWaitMs},
                                               I18nArg{"other", otherMs},
                                               I18nArg{"ticks", static_cast<core::i64>(frame.simTicks)}};
             core::log(LogLevel::Warn, ENG_TR("engine.frame.warn.long_frame"), args);
@@ -2937,8 +2938,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             }
             lastFrameNs = sampleNs;
         }
-        // What this frame spent, for the next one's warning if it was long.
-        lastPhases = FramePhases{phaseSimMs, phaseWaitMs, phaseRenderScriptsMs};
+        // The frame that ended is accounted for: the warning above and the
+        // statistics have both read what it spent.
         phaseSimMs = 0.0;
         phaseWaitMs = 0.0;
         phaseRenderScriptsMs = 0.0;
@@ -5819,8 +5820,16 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             const auto loadFor = [&](scene::World& world, core::InstanceId workspace) {
                 if (renderer == nullptr || !renderer->valid())
                     return;
+                // **Each kind of content in a scope of its own**: what arrives
+                // arrives here, between the frame's begin and its extraction,
+                // and a frame a scene's meshes and pictures landed in was 47 ms
+                // of `frame.draw` that no scope named.
+                core::profile::Sections loading;
+                ENG_PROFILE_NEXT(loading, "content.primitives");
                 meshLoader.syncPrimitives(*device, *cmd, world, meshCache, meshLibrary);
+                ENG_PROFILE_NEXT(loading, "content.textures");
                 (void)meshLoader.syncTextures(*device, *cmd, world, textureLibrary);
+                ENG_PROFILE_NEXT(loading, "content.views");
                 // The camera textures of the game's own world -- not of a stamp
                 // being edited, which has no game running in it.
                 if (&world == &host->world() && stageOf() == nullptr) {
@@ -5855,6 +5864,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // both the render library and the mirror -- `render` is L4 and
                 // `scene` is L3, and neither is allowed to reach the other.
                 meshCompletions.clear();
+                ENG_PROFILE_NEXT(loading, "content.meshes.load");
                 (void)meshLoader.sync(*device, *cmd, world, workspace, meshCache, meshLibrary, nullptr,
                                       &meshCompletions);
 
@@ -5863,6 +5873,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // become what it measures, and one dropped on a surface stands
                 // on it. Not an undo step of its own -- it is the rest of the
                 // placing that recorded one.
+                ENG_PROFILE_NEXT(loading, "content.collision");
                 if (options.editor) {
                     std::vector<Editor::MeshFit>& fits = editor.meshFits();
                     scene::World& authoring = authored();
@@ -5920,19 +5931,29 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 //
                 // The atom table is the world's, because the URN a tile is filed
                 // under has to be the same atom `extract` looks up.
+                ENG_PROFILE_NEXT(loading, "content.terrain");
                 (void)terrainLoader.sync(*device, *cmd, world, world.atoms(), meshCache, meshLibrary);
                 if (pictureFrame)
                     voxelLoader.settleNext();
+                ENG_PROFILE_NEXT(loading, "content.blocks");
                 (void)voxelLoader.sync(*device, *cmd, world, world.atoms(), meshCache, meshLibrary);
+                ENG_PROFILE_NEXT(loading, "content.water");
                 (void)waterLoader.sync(*device, *cmd, world, world.atoms(), meshCache, meshLibrary);
                 // Foliage over the terrain (ADR 0116), grown here for the
                 // reason the terrain is: an upload, before the extract.
+                ENG_PROFILE_NEXT(loading, "content.foliage");
                 foliage.sync(*device, *cmd, world);
             };
             loadFor(host->world(), host->workspace());
             if (Editor::Stage* const openStage = stageOf(); openStage != nullptr)
                 loadFor(openStage->world(), openStage->workspace());
 
+            // **And the rest of the frame's drawing, a stretch at a time**: what
+            // is chosen to be drawn, the effects, the sky, the interface, what
+            // goes up to the device, the views, and the render itself. A frame
+            // a scene arrived in had 15 ms here that nothing named.
+            core::profile::Sections drawing;
+            ENG_PROFILE_NEXT(drawing, "draw.choose");
             // Extraction happens once, at a known moment, from a world that is
             // between ticks (ADR 0027). Rendering never walks the ECS.
             // The aspect comes from the target rather than from the camera:
@@ -6024,6 +6045,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             terrainLoader.appendRenderTerrains(authored(),
                                                stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
                                                snapshot, &textureLibrary);
+            ENG_PROFILE_NEXT(drawing, "draw.effects");
             // **Particles, on the render clock** (F2): advanced by this frame's
             // own length -- which a headless run fixes at one tick, so a golden
             // with sparks in it is still one picture -- and appended for the
@@ -6058,6 +6080,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             foliage.append(authored(), meshLibrary, snapshot, &textureLibrary);
             // The sky's pictures, for the sky the extract resolved: a bake
             // started, or a finished one uploaded -- before any render pass.
+            ENG_PROFILE_NEXT(drawing, "draw.sky");
             if (renderer != nullptr && renderer->valid()) {
                 skyLoader.sync(*device, *cmd, authored(), snapshot.look.sky);
                 skyLoader.append(snapshot);
@@ -6100,6 +6123,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 foliage.setFocus(snapshot.camera.origin);
             }
 
+            ENG_PROFILE_NEXT(drawing, "draw.interface");
             const core::Vec2 uiViewport{static_cast<f32>(targetWidth), static_cast<f32>(targetHeight)};
             host->world().engineState().viewportSize = uiViewport;
             if (uiViewport != lastUiViewport) {
@@ -6256,6 +6280,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                              worldUiDrawList, snapshot, &uiGradients, &framePoses);
             });
 
+            ENG_PROFILE_NEXT(drawing, "draw.submit");
             frameVisibleObjects = 0;
             frameTriangles = 0;
             frameLodDraws = 0;
@@ -6419,6 +6444,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // inside one -- the seam says so and the backend enforces it. The
             // mesh loader is here for the same reason and one more: it is the
             // FrameStart safe point, so a file read cannot land mid-tick.
+            ENG_PROFILE_NEXT(drawing, "draw.uploads");
             if (debugRenderer.valid())
                 debugRenderer.upload(*device, *cmd, debugDraw);
             // Beside the other uploads and for the same reason: this is the
@@ -6463,6 +6489,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // through. Without one -- an empty project, a world booting, a
             // camera nobody assigned -- the M1 debug path still draws, which is
             // what keeps every earlier example and the capture golden working.
+            ENG_PROFILE_NEXT(drawing, "draw.views");
             const bool useRenderer = renderer != nullptr && renderer->valid() && snapshot.camera.valid;
             if (curtains) {
                 scene::EngineState& engineNow = host->world().engineState();
@@ -6475,7 +6502,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                                                            snapshot.camera.origin, CurtainGroundMetres);
                     const LoadingCurtain::Lift lift = curtain.update({
                         .nowNs = nowNs,
-                        .loadersIdle = meshLoader.meshesWaiting() == 0 && meshLoader.texturesInFlight() == 0,
+                        // And what grows on the ground (D542), which is
+                        // grown off this thread now: a meadow is not lifted
+                        // onto bare.
+                        .loadersIdle =
+                            meshLoader.meshesWaiting() == 0 && meshLoader.texturesInFlight() == 0 && !foliage.pending(),
                         .groundMeshed = ground,
                         .holds = engineNow.loadingHolds,
                     });
@@ -6494,6 +6525,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // no frame of play to keep smooth.
                 terrainLoader.setBuildsPerSync(curtain.up() || options.screenshotEvery != 0 ? 256u : 4u);
                 terrainLoader.setFastUploads(curtain.up());
+                foliage.setFastGrowth(curtain.up());
             }
 #if ENG_DEBUG_UI
             // **A screenshot is of the world as it will look** (ADR 0091): the
@@ -6712,6 +6744,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 }
             }
 
+            ENG_PROFILE_NEXT(drawing, "draw.render");
             if (useRenderer && curtain.up()) {
                 const std::array<rhi::ColorAttachment, 1> backdrop{rhi::ColorAttachment{
                     .texture = target,

@@ -251,6 +251,13 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
                 options.network.simulatedLossPercent = static_cast<engine::core::f32>(value);
             continue;
         }
+        // **Why a prediction was corrected** (D534): each correction of this
+        // machine's character, said in the log with what it disagreed about.
+        // In any build: it is how a game in somebody's hands is diagnosed.
+        if (arg == "--net-log-corrections") {
+            options.network.logCorrections = true;
+            continue;
+        }
         if (arg == "--exit") {
             options.exitAfterFrames = true;
             continue;

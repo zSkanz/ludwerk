@@ -158,3 +158,74 @@ TEST_CASE("a mesh that has not loaded contributes no bucket, and the frame carri
     CHECK(frame.foliageDensity == 0.5f);
     CHECK(frame.foliageShadowDistance == 12.0f);
 }
+
+TEST_CASE("tiles are grown off the calling thread, and an edit is grown in the frame that finds it")
+{
+    // **D542**: every tile that came within reach was grown by the `sync` that
+    // found it, on every worker with the frame waiting -- eight a frame, 14 to
+    // 17 ms of each, for as long as there were tiles to grow: a game's first
+    // second in its map, and any step into a meadow after it.
+    FoliageFixture fixture;
+    fixture.foliage.setSettings({.density = 1.0f, .shadowDistance = 30.0f, .growthsPerSync = 8});
+    fixture.foliage.setAsync(true);
+    core::u32 inFrame = 0;
+    core::u32 grown = 0;
+    int frames = 0;
+    for (; frames < 4000 && (frames == 0 || fixture.foliage.pending()); ++frames) {
+        fixture.sync();
+        inFrame += fixture.foliage.stats().tilesGrownInFrame;
+        grown += fixture.foliage.stats().tilesGrownLastSync;
+    }
+    REQUIRE_FALSE(fixture.foliage.pending());
+    CHECK(inFrame == 0);
+    // All of them, each once, a batch at a time.
+    const FoliageStats settled = fixture.foliage.stats();
+    CHECK(settled.tilesResident >= 12);
+    CHECK(grown == settled.tilesResident);
+    CHECK(frames > 2);
+    CHECK(settled.instancesResident > settled.tilesResident * 1024u * 8u / 10u);
+
+    // What it grew is what a `sync` that waits grows.
+    FoliageFixture waited;
+    waited.sync();
+    CHECK(waited.foliage.stats().instancesResident == settled.instancesResident);
+
+    // A dent in one tile: the tiles it touched, in this `sync`.
+    (void)asset::fillBall(fixture.world.terrains().find(fixture.terrain)->field, core::DVec3{16.0, 0.0, 16.0}, 3.0, 0);
+    fixture.sync();
+    CHECK(fixture.foliage.stats().tilesGrownInFrame >= 1);
+    CHECK(fixture.foliage.stats().tilesGrownInFrame <= 9);
+    CHECK_FALSE(fixture.foliage.pending());
+
+    // A rule of the layer: every tile, and none of them in the frame.
+    fixture.world.foliageLayers().find(fixture.layer)->density = 2.0f;
+    inFrame = 0;
+    grown = 0;
+    for (frames = 0; frames < 4000 && (frames == 0 || fixture.foliage.pending()); ++frames) {
+        fixture.sync();
+        inFrame += fixture.foliage.stats().tilesGrownInFrame;
+        grown += fixture.foliage.stats().tilesGrownLastSync;
+    }
+    CHECK(inFrame == 0);
+    CHECK(grown == settled.tilesResident);
+}
+
+TEST_CASE("a tile let go while it grows is not put up, and a system destroyed while one grows waits for it")
+{
+    FoliageFixture fixture;
+    fixture.foliage.setSettings({.density = 1.0f, .shadowDistance = 30.0f, .growthsPerSync = 8});
+    fixture.foliage.setAsync(true);
+    fixture.sync();
+    REQUIRE(fixture.foliage.pending());
+    // The camera is gone before the first batch is back.
+    fixture.foliage.setFocus(core::DVec3{5000.0, 2.0, 5000.0});
+    for (int frames = 0; frames < 4000 && (frames == 0 || fixture.foliage.pending()); ++frames)
+        fixture.sync();
+    CHECK(fixture.foliage.stats().tilesResident == 0);
+    CHECK(fixture.foliage.stats().instancesResident == 0);
+
+    // And back, and destroyed with a batch in flight: the fixture's own end.
+    fixture.foliage.setFocus(core::DVec3{0.0, 2.0, 0.0});
+    fixture.sync();
+    CHECK(fixture.foliage.pending());
+}

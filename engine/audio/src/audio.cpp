@@ -41,6 +41,13 @@
 #define MA_NO_RESOURCE_MANAGER
 #define MA_NO_NODE_GRAPH
 #define MA_NO_ENGINE
+// **Vorbis is decoded by stb_vorbis** (D546), which miniaudio looks for and
+// does without when it is not there -- and it was not: WAV, FLAC and MP3 are
+// decoders of miniaudio's own, Vorbis is this one, and only its declarations
+// ahead of the implementation below turn it on. Its definitions are
+// `vorbis.cpp`.
+#define STB_VORBIS_HEADER_ONLY
+#include <extras/stb_vorbis.c>
 #define MINIAUDIO_IMPLEMENTATION
 #include <miniaudio.h>
 // The reverb miniaudio ships beside its node graph (`extras/nodes`): one

@@ -48,9 +48,16 @@ A build whose content directory has no font at all falls back further, to a
 built-in face that is ASCII only, one weight and no kerning — text still draws,
 which is the point of having a fallback.
 
-Glyphs are rasterised on demand and cached by face, size and codepoint, so a
-`TextSize` a tween is animating costs one cache entry per quarter-pixel rather
-than one per frame.
+Glyphs are rasterised on demand and cached by face, size and codepoint -- and
+**a size is one of a few**: every whole pixel to 24, every second pixel to 64,
+then 80, 100 and 128. Text at a size between two of them is rasterised at the
+one above and drawn a little smaller, never by more than a twelfth below 64. So
+a `TextSize` a tween is animating -- a damage number that pops from 14 to 40 --
+costs about twenty-seven sets of glyphs however many frames it takes, and a
+label that grows and shrinks all match long does not fill the cache. Text at a
+whole number of pixels up to 64, which is what a `TextSize` somebody typed is,
+is rasterised at exactly that size. Past 128 pixels it is drawn up from 128,
+and is as soft as that makes it: a title that large wants a picture.
 
 **`TextSize` is in window pixels and is not scaled for you.**
 `UIService.DisplayScale` is what a game multiplies by when it wants text to be
@@ -65,7 +72,10 @@ letter is worse than one that overhangs.
 `TextScaled` ignores `TextSize` and rasterises at whatever size fills the box,
 preserving aspect. **Re-rasterised rather than stretched**: there is no distance
 field here, and a stretched bitmap is what "scaled text" usually means and looks
-like.
+like. The size that fills the box is drawn from the nearest of the sizes above
+(see Fonts), so a label in the world -- a name over a head, a different size at
+every distance -- costs those few sizes and not one for every step the camera
+takes.
 
 ## TextInput
 

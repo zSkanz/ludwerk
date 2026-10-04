@@ -8,6 +8,7 @@
 #include "engine/asset/foliage.h"
 #include "engine/asset/terrain.h"
 #include "engine/asset/terrain_mesher.h"
+#include "engine/core/profile.h"
 #include "engine/jobs/jobs.h"
 #include "engine/render/render_world.h"
 #include "engine/render/terrain_loader.h"
@@ -160,17 +161,32 @@ constexpr i32 Edge = static_cast<i32>(asset::ChunkEdge);
     return rules;
 }
 
-// One tile's growth, run on a worker: everything it reads is fixed for the
-// length of the sync.
+// **A tile grown again is an edit while there are this few of them**: a brush
+// stamp on the ground or on a layer's density touches a tile and the ring
+// round it, and those are grown in the frame that finds them, as the terrain
+// under them is. More -- a layer's rule changed, a script rewriting the
+// ground -- is grown off the calling thread, as a tile never grown is.
+constexpr usize MaxRegrowthsInFrame = 9;
+// How many tiles a batch holds behind a loading curtain (`setFastGrowth`).
+constexpr u32 FastGrowthsPerSync = 256;
+
+// One tile's growth, run on a worker: everything it reads is fixed for as long
+// as it runs -- the length of the sync, or a snapshot the batch holds.
 struct Growth
 {
     const asset::TerrainField* field = nullptr;
     f32 worldY = 0.0f;
     const std::vector<asset::TerrainRule>* terrainRules = nullptr;
     asset::FoliageRules rules;
+    // The tile it is: by name, since a tile can be let go while it grows.
+    const scene::World* world = nullptr;
+    core::InstanceId layer;
     i32 x = 0;
     i32 z = 0;
-    usize tile = 0;
+    // What it was grown from, as the tile was asked for it.
+    u64 content = 0;
+    u64 print = 0;
+    std::vector<core::InstanceId> meshes;
     asset::FoliageTile grown;
 };
 
@@ -202,6 +218,55 @@ void grow(Growth& growth)
 
 } // namespace
 
+// **A batch of tiles grown off the calling thread** (D542). It holds what its
+// growths read: the ground as it was when they were asked for, and each
+// terrain's rules -- a script may write either while a worker reads.
+struct FoliageSystem::Batch
+{
+    std::vector<Growth> growths;
+    std::vector<std::shared_ptr<const asset::TerrainField>> fields;
+    std::vector<std::shared_ptr<const std::vector<asset::TerrainRule>>> rules;
+    std::vector<jobs::JobHandle> lanes;
+    u32 laneCount = 1;
+
+    // One lane's share: the surfaces a tile's ground reads, gathered and
+    // cached as the terrain loader's lanes do, then the tile.
+    void run(u32 lane) noexcept
+    {
+        std::vector<asset::SurfaceWant> wants;
+        for (usize at = lane; at < growths.size(); at += laneCount) {
+            Growth& growth = growths[at];
+            if (const std::optional<asset::MeshRegion> region = regionOf(growth); region.has_value()) {
+                wants.clear();
+                asset::missingSurfaces(*growth.field, *region, wants);
+                for (const asset::SurfaceWant& want : wants) {
+                    const u64 content = asset::surfaceContent(*growth.field, want.key);
+                    asset::cacheSurfaces(*growth.field, want.key, content,
+                                         asset::buildSurfaces(*growth.field, want.key, want.levels));
+                }
+            }
+            grow(growth);
+        }
+    }
+
+    [[nodiscard]] bool finished() const noexcept
+    {
+        for (const jobs::JobHandle lane : lanes) {
+            if (!jobs::finished(lane))
+                return false;
+        }
+        return true;
+    }
+};
+
+FoliageSystem::FoliageSystem() = default;
+
+FoliageSystem::~FoliageSystem()
+{
+    if (m_batch != nullptr && !m_batch->lanes.empty())
+        jobs::waitAll(m_batch->lanes);
+}
+
 FoliageSystem::Tile* FoliageSystem::find(const scene::World* world, core::InstanceId layer, i32 x, i32 z) noexcept
 {
     for (Tile& tile : m_tiles) {
@@ -214,6 +279,52 @@ FoliageSystem::Tile* FoliageSystem::find(const scene::World* world, core::Instan
 void FoliageSystem::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::World& world)
 {
     m_stats.tilesGrownLastSync = 0;
+    m_stats.tilesGrownInFrame = 0;
+    core::profile::Sections stretch;
+
+    // One tile's instances, up: on this thread, outside any pass.
+    const auto putUp = [&](Growth& growth) {
+        Tile* const found = find(growth.world, growth.layer, growth.x, growth.z);
+        // Let go while it grew, or asked for again since -- an edit grown in
+        // its own frame: this is of ground that is gone.
+        if (found == nullptr || found->content != growth.content || found->rules != growth.print)
+            return;
+        Tile& tile = *found;
+        if (tile.instances.valid()) {
+            device.destroy(tile.instances);
+            tile.instances = {};
+        }
+        tile.count = static_cast<u32>(growth.grown.instances.size());
+        tile.meshStart = growth.grown.meshStart;
+        tile.meshes = std::move(growth.meshes);
+        tile.grown = true;
+        if (tile.count != 0) {
+            const auto bytes = static_cast<u32>(tile.count * sizeof(asset::FoliageInstance));
+            tile.instances = device.createBuffer(
+                {.usage = rhi::BufferUsage::ComputeStorageRead, .sizeBytes = bytes, .debugName = "foliage.tile"});
+            if (tile.instances.valid()) {
+                cmd.upload(tile.instances,
+                           std::span<const std::byte>(reinterpret_cast<const std::byte*>(growth.grown.instances.data()),
+                                                      bytes),
+                           0);
+            }
+            else {
+                tile.count = 0;
+            }
+        }
+        m_stats.tilesGrownLastSync += 1;
+    };
+
+    // **A batch grown off this thread, done**: all of it goes up now, whichever
+    // world this `sync` is of -- a tile is found by name.
+    ENG_PROFILE_NEXT(stretch, "foliage.arrive");
+    if (m_batch != nullptr && m_batch->finished()) {
+        for (Growth& growth : m_batch->growths)
+            putUp(growth);
+        m_batch.reset();
+    }
+
+    ENG_PROFILE_NEXT(stretch, "foliage.choose");
     for (Tile& tile : m_tiles) {
         if (tile.world == &world)
             tile.wanted = false;
@@ -279,8 +390,18 @@ void FoliageSystem::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::
         return a.z != b.z ? a.z < b.z : a.x < b.x;
     });
 
-    std::vector<Growth> growths;
-    for (const Want& want : wants) {
+    // **What to grow, and where.** A tile never grown is loading, and loads
+    // off this thread when that is allowed, a batch at a time. A few tiles
+    // grown AGAIN are an edit, and are grown here and now (`MaxRegrowthsInFrame`).
+    struct Need
+    {
+        usize want = 0;
+        bool regrowth = false;
+    };
+    std::vector<Need> needs;
+    usize regrowths = 0;
+    for (usize at = 0; at < wants.size(); ++at) {
+        const Want& want = wants[at];
         Tile* tile = find(&world, want.layer, want.x, want.z);
         if (tile == nullptr) {
             Tile fresh;
@@ -297,71 +418,112 @@ void FoliageSystem::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::
         tile->wanted = true;
         if (tile->content == want.content && tile->rules == want.rules)
             continue;
-        if (growths.size() >= m_settings.growthsPerSync)
+        needs.push_back(Need{at, tile->grown});
+        regrowths += tile->grown ? 1u : 0u;
+    }
+    // **More than a few is not an edit, and stays not one while it lasts**:
+    // what is left of every tile of a layer, a batch later, is a few tiles too.
+    if (regrowths > MaxRegrowthsInFrame)
+        m_regrowing = true;
+    else if (regrowths == 0 && m_batch == nullptr)
+        m_regrowing = false;
+    const bool editHere = m_async && !m_regrowing && regrowths != 0;
+    const usize awayLimit = m_batch != nullptr ? 0u : (m_fast ? FastGrowthsPerSync : m_settings.growthsPerSync);
+
+    std::vector<Growth> here;
+    std::unique_ptr<Batch> batch;
+    std::vector<core::InstanceId> held;
+    bool left = false;
+    for (const Need& need : needs) {
+        const Want& want = wants[need.want];
+        const bool inFrame = !m_async || (need.regrowth && editHere);
+        const usize handed = batch != nullptr ? batch->growths.size() : 0u;
+        if (inFrame ? (!m_async && here.size() >= m_settings.growthsPerSync) : handed >= awayLimit) {
+            left = true;
             continue;
+        }
+        Tile* const tile = find(&world, want.layer, want.x, want.z);
         const scene::TerrainComponent* terrain = world.terrains().find(want.terrain);
         const scene::FoliageLayerComponent* layer = world.foliageLayers().find(want.layer);
         Growth growth;
         growth.field = &terrain->field;
-        growth.worldY = static_cast<f32>(terrain->origin.y);
         growth.terrainRules = &terrain->rules;
-        tile->meshes = meshesOf(world, want.layer);
-        growth.rules = placementOf(world, *layer, tile->meshes);
+        if (!inFrame) {
+            if (batch == nullptr)
+                batch = std::make_unique<Batch>();
+            // The ground and the rules as they are now, one copy a terrain.
+            usize slot = 0;
+            while (slot < held.size() && !(held[slot] == want.terrain))
+                slot += 1;
+            if (slot == held.size()) {
+                held.push_back(want.terrain);
+                batch->fields.push_back(std::make_shared<const asset::TerrainField>(terrain->field));
+                batch->rules.push_back(std::make_shared<const std::vector<asset::TerrainRule>>(terrain->rules));
+            }
+            growth.field = batch->fields[slot].get();
+            growth.terrainRules = batch->rules[slot].get();
+        }
+        growth.worldY = static_cast<f32>(terrain->origin.y);
+        growth.meshes = meshesOf(world, want.layer);
+        growth.rules = placementOf(world, *layer, growth.meshes);
         growth.rules.voxelSize = terrain->field.settings().voxelSize;
         if (const std::vector<core::u8>* mask = maskOf(*layer, want.x, want.z); mask != nullptr)
             growth.rules.mask = *mask;
+        growth.world = &world;
+        growth.layer = want.layer;
         growth.x = want.x;
         growth.z = want.z;
-        growth.tile = static_cast<usize>(tile - m_tiles.data());
+        growth.content = want.content;
+        growth.print = want.rules;
         tile->content = want.content;
         tile->rules = want.rules;
-        growths.push_back(std::move(growth));
+        (inFrame ? here : batch->growths).push_back(std::move(growth));
     }
 
-    // The surfaces their ground reads, gathered first (ADR 0140): the tiles
-    // then only read them.
-    std::vector<MissingSurface> missing;
-    std::vector<asset::SurfaceWant> surfaceWants;
-    for (const Growth& growth : growths) {
-        if (const std::optional<asset::MeshRegion> region = regionOf(growth); region.has_value()) {
-            surfaceWants.clear();
-            asset::missingSurfaces(*growth.field, *region, surfaceWants);
-            for (const asset::SurfaceWant& want : surfaceWants)
-                missing.push_back(MissingSurface{growth.field, want});
+    // **Here and now**: the surfaces their ground reads, gathered first (ADR
+    // 0140) so the tiles then only read them; every worker, the frame waiting.
+    if (!here.empty()) {
+        ENG_PROFILE_NEXT(stretch, "foliage.surfaces");
+        std::vector<MissingSurface> missing;
+        std::vector<asset::SurfaceWant> surfaceWants;
+        for (const Growth& growth : here) {
+            if (const std::optional<asset::MeshRegion> region = regionOf(growth); region.has_value()) {
+                surfaceWants.clear();
+                asset::missingSurfaces(*growth.field, *region, surfaceWants);
+                for (const asset::SurfaceWant& want : surfaceWants)
+                    missing.push_back(MissingSurface{growth.field, want});
+            }
         }
+        gatherTerrainSurfaces(std::move(missing));
+        ENG_PROFILE_NEXT(stretch, "foliage.grow");
+        jobs::parallelFor("foliage.grow", jobs::Domain::Render, 0, here.size(), 1,
+                          [&here](usize begin, usize end, u32) noexcept {
+                              for (usize at = begin; at < end; ++at)
+                                  grow(here[at]);
+                          });
+        // Uploaded on this thread, nearest first.
+        ENG_PROFILE_NEXT(stretch, "foliage.upload");
+        const u32 before = m_stats.tilesGrownLastSync;
+        for (Growth& growth : here)
+            putUp(growth);
+        m_stats.tilesGrownInFrame = m_stats.tilesGrownLastSync - before;
     }
-    gatherTerrainSurfaces(std::move(missing));
-    jobs::parallelFor("foliage.grow", jobs::Domain::Render, 0, growths.size(), 1,
-                      [&growths](usize begin, usize end, u32) noexcept {
-                          for (usize at = begin; at < end; ++at)
-                              grow(growths[at]);
-                      });
 
-    // Uploaded on this thread, nearest first.
-    for (Growth& growth : growths) {
-        Tile& tile = m_tiles[growth.tile];
-        if (tile.instances.valid()) {
-            device.destroy(tile.instances);
-            tile.instances = {};
-        }
-        tile.count = static_cast<u32>(growth.grown.instances.size());
-        tile.meshStart = growth.grown.meshStart;
-        if (tile.count != 0) {
-            const auto bytes = static_cast<u32>(tile.count * sizeof(asset::FoliageInstance));
-            tile.instances = device.createBuffer(
-                {.usage = rhi::BufferUsage::ComputeStorageRead, .sizeBytes = bytes, .debugName = "foliage.tile"});
-            if (tile.instances.valid()) {
-                cmd.upload(tile.instances,
-                           std::span<const std::byte>(reinterpret_cast<const std::byte*>(growth.grown.instances.data()),
-                                                      bytes),
-                           0);
-            }
-            else {
-                tile.count = 0;
-            }
-        }
-        m_stats.tilesGrownLastSync += 1;
+    // **And the rest handed over** (D542): a few lanes, never every worker --
+    // the frame's own jobs run beside them -- and put up by the `sync` that
+    // finds them done.
+    ENG_PROFILE_NEXT(stretch, "foliage.hand");
+    if (batch != nullptr) {
+        Batch* const running = batch.get();
+        running->laneCount =
+            std::clamp<u32>(std::max(jobs::workerCount(), 2u) / 2u, 1u, static_cast<u32>(running->growths.size()));
+        for (u32 lane = 0; lane < running->laneCount; ++lane)
+            running->lanes.push_back(jobs::schedule("foliage.grow", jobs::Domain::Render,
+                                                    [running, lane]() noexcept { running->run(lane); }));
+        m_batch = std::move(batch);
     }
+    m_pending = m_batch != nullptr || left;
+    stretch.close();
 
     // Tiles of this world nobody wants any more let their instances go.
     for (usize at = m_tiles.size(); at > 0; --at) {
@@ -466,6 +628,9 @@ void FoliageSystem::append(const scene::World& world, const MeshLibrary& meshes,
 
 void FoliageSystem::destroy(rhi::IDevice& device)
 {
+    if (m_batch != nullptr && !m_batch->lanes.empty())
+        jobs::waitAll(m_batch->lanes);
+    m_batch.reset();
     for (Tile& tile : m_tiles) {
         if (tile.instances.valid())
             device.destroy(tile.instances);

@@ -44,6 +44,8 @@ constexpr f64 OnTopReach = 0.75;
 // A neighbour is in the way when it is this far towards the target, as a
 // share of the distance between them.
 constexpr f64 InTheWay = 0.3;
+// How much of a step's walk an agent's remembered walk takes up (ADR 0162).
+constexpr f64 WalkSmoothing = 0.15;
 // How far the ground is searched for under an agent, up and down, where no
 // terrain covers it.
 constexpr f64 GroundReach = 64.0;
@@ -63,19 +65,10 @@ constexpr f64 GroundReach = 64.0;
 [[nodiscard]] f64 groundAt(const World& world, const PhysicsSync* physics, core::InstanceId body, f64 x, f64 z,
                            f64 from)
 {
-    bool found = false;
-    f64 best = 0.0;
-    world.terrains().forEach([&](core::InstanceId, const TerrainComponent& terrain) {
-        const std::optional<float> height = asset::heightAt(terrain.field, x - terrain.origin.x, z - terrain.origin.z);
-        if (!height.has_value())
-            return;
-        const f64 top = static_cast<f64>(*height) + terrain.origin.y;
-        if (!found || top > best)
-            best = top;
-        found = true;
-    });
-    if (found || physics == nullptr)
-        return best;
+    if (const std::optional<f64> terrain = swarmTerrainAt(world, x, z); terrain.has_value())
+        return *terrain;
+    if (physics == nullptr)
+        return 0.0;
 
     const std::array<u64, 1> excluded{physics->userDataOf(body)};
     physics::QueryFilter filter;
@@ -285,18 +278,123 @@ void stepSwarm(World& world, const PhysicsSync* physics, SwarmComponent& swarm, 
                 vy = 0.0;
             }
         }
+        // **What a replica carries it forward by** (ADR 0162): the way it
+        // faces, and how much of this step's move was that way. What pushed it
+        // sideways is not in it; a replica that guesses wrong is told again.
+        //
+        // **Smoothed over a few steps**: in a packed crowd an agent is blocked
+        // one tick and shoved the next, and a replica carried forward by
+        // whichever of those it was last told is wrong within a tenth of a
+        // second -- measured, every agent wanted telling twenty times a second.
+        agent.yaw = static_cast<f32>(std::atan2(-dirX, -dirZ));
+        agent.faceX = static_cast<f32>(dirX);
+        agent.faceZ = static_cast<f32>(dirZ);
+        const f64 walked = std::max(((nx - x) * dirX + (nz - z) * dirZ) / step, 0.0);
+        agent.walk += static_cast<f32>((walked - static_cast<f64>(agent.walk)) * WalkSmoothing);
+        agent.stepped = tick;
+        agent.lift = static_cast<f32>(ny - ground);
         agent.position = core::DVec3{nx, ny, nz};
         agent.verticalSpeed = static_cast<f32>(vy);
 
         // **Placed facing the target**: the body's whole transform, written as
         // a script writes one.
         if (agent.body.valid() && world.alive(agent.body) && world.parts().find(agent.body) != nullptr) {
-            const f32 yaw = static_cast<f32>(std::atan2(-dirX, -dirZ));
-            (void)world.setProperty(agent.body, cframeName, Value{core::CFrameD{agent.position, core::rotationY(yaw)}});
+            (void)world.setProperty(agent.body, cframeName,
+                                    Value{core::CFrameD{agent.position, core::rotationY(agent.yaw)}});
         }
     }
     // Where everyone is now: what a script asks about until the next step.
     buildGrid(swarm);
+}
+
+// The direction `yaw` faces along the ground, into an agent's row.
+void faceBy(SwarmAgent& agent, f32 yaw) noexcept
+{
+    agent.yaw = yaw;
+    agent.faceX = -std::sin(yaw);
+    agent.faceZ = -std::cos(yaw);
+}
+
+// How much of a correction is left after a tick: a tenth of a second to take
+// most of it up.
+constexpr f32 EaseKept = 0.85f;
+// How far the clock a replica draws by may trail the newest tick it was told
+// before it jumps to it, and how fast it closes a smaller gap.
+constexpr f64 ClockSnapTicks = 8.0;
+constexpr f64 ClockSlew = 0.25;
+
+// Where a replica's row is at the swarm's clock: what it was told, carried
+// along its walk, without the height.
+[[nodiscard]] core::DVec3 carried(const SwarmAgent& agent, f64 clock, f64 dt) noexcept
+{
+    const f64 ticks = std::clamp(clock - agent.toldTick, 0.0, SwarmCarryTicks);
+    const f64 metres = static_cast<f64>(agent.walk) * ticks * dt;
+    return agent.told +
+           core::DVec3{static_cast<f64>(agent.faceX) * metres, 0.0, static_cast<f64>(agent.faceZ) * metres};
+}
+
+// **A replica's tick of the authority's swarm** (ADR 0162): nothing is
+// simulated. The clock follows the newest tick a message said, each agent is
+// where it was told carried forward to that clock, on the ground this machine
+// has, and its body -- this machine's own -- is placed there.
+void stepMirror(World& world, SwarmComponent& swarm, f64 dt, core::NameAtom cframeName)
+{
+    if (!swarm.mirrorClockSet) {
+        swarm.mirrorClock = swarm.mirrorNewest;
+        swarm.mirrorClockSet = true;
+    }
+    else {
+        // **It runs on its own, a tick a tick, and is set against a message
+        // only when one arrives.** Pulled towards the newest tick every tick,
+        // it stood still whenever nothing arrived -- and nothing arrives for
+        // an agent walking a straight line, which is the one case a replica
+        // carries forward for seconds: measured, eleven metres behind.
+        swarm.mirrorClock += 1.0;
+        if (swarm.mirrorHeard) {
+            const f64 behind = swarm.mirrorNewest - swarm.mirrorClock;
+            if (std::fabs(behind) > ClockSnapTicks)
+                swarm.mirrorClock = swarm.mirrorNewest;
+            else
+                swarm.mirrorClock += behind * ClockSlew;
+        }
+    }
+    swarm.mirrorHeard = false;
+    for (SwarmAgent& agent : swarm.agents) {
+        if (!agent.alive)
+            continue;
+        const core::DVec3 at = carried(agent, swarm.mirrorClock, dt);
+        agent.ease = agent.ease * EaseKept;
+        const f64 x = at.x + static_cast<f64>(agent.ease.x);
+        const f64 z = at.z + static_cast<f64>(agent.ease.z);
+        // **The terrain this machine has, or the floor it was told** -- never a
+        // ray: what a ray finds here is this machine's world, with the bodies
+        // its own scripts made and none of what did not replicate.
+        if (std::fabs(x - agent.groundX) + std::fabs(z - agent.groundZ) > 0.1) {
+            const std::optional<f64> terrain = swarmTerrainAt(world, x, z);
+            agent.onTerrain = terrain.has_value();
+            agent.ground = terrain.value_or(agent.floor);
+            agent.groundX = x;
+            agent.groundZ = z;
+        }
+        if (!agent.onTerrain)
+            agent.ground = agent.floor;
+        agent.position = core::DVec3{x, agent.ground + static_cast<f64>(agent.lift + agent.ease.y), z};
+        if (agent.body.valid() && world.alive(agent.body) && world.parts().find(agent.body) != nullptr) {
+            (void)world.setProperty(agent.body, cframeName,
+                                    Value{core::CFrameD{agent.position, core::rotationY(agent.yaw)}});
+        }
+    }
+    buildGrid(swarm);
+}
+
+void keepEvent(SwarmComponent& swarm, const SwarmEvent& event)
+{
+    // A script layer that is not firing them -- a test of this module alone --
+    // must not let them grow for ever.
+    if (swarm.events.size() >= MaxSwarmEvents)
+        swarm.events.erase(swarm.events.begin(),
+                           swarm.events.begin() + static_cast<std::ptrdiff_t>(MaxSwarmEvents / 2));
+    swarm.events.push_back(event);
 }
 
 } // namespace
@@ -314,28 +412,187 @@ u32 addSwarmAgent(SwarmComponent& swarm, core::InstanceId body, core::DVec3 posi
     agent.floatHeight = settings.floatHeight;
     agent.climbs = settings.climbs;
     agent.alive = true;
+    agent.born = ++swarm.births;
     swarm.gridValid = false;
+    u32 number = 0;
     if (!swarm.free.empty()) {
         // The lowest free slot, so the slots a crowd uses stay packed.
         const auto lowest = std::min_element(swarm.free.begin(), swarm.free.end());
         const u32 slot = *lowest;
         swarm.free.erase(lowest);
         swarm.agents[slot] = agent;
-        return slot + 1;
+        number = slot + 1;
     }
-    swarm.agents.push_back(agent);
-    return static_cast<u32>(swarm.agents.size());
+    else {
+        swarm.agents.push_back(agent);
+        number = static_cast<u32>(swarm.agents.size());
+    }
+    keepEvent(swarm, SwarmEvent{.kind = SwarmEvent::Kind::Added,
+                                .agent = number,
+                                .radius = agent.radius,
+                                .height = agent.height,
+                                .position = position});
+    return number;
 }
 
-bool removeSwarmAgent(SwarmComponent& swarm, u32 agent)
+bool removeSwarmAgent(SwarmComponent& swarm, u32 agent, u64 tick)
 {
     SwarmAgent* row = swarmAgent(swarm, agent);
     if (row == nullptr)
         return false;
+    keepEvent(swarm, SwarmEvent{.kind = SwarmEvent::Kind::Removed,
+                                .reason = SwarmRemovalRemoved,
+                                .tag = row->tag,
+                                .agent = agent,
+                                .position = row->position});
+    // For the replicas, which are told by a module that looks at the rows
+    // after this one is another agent's (ADR 0162). Kept only by a swarm
+    // that replicates, and a tick: the replication takes them every tick.
+    if (swarm.replicates) {
+        std::erase_if(swarm.removed, [tick](const SwarmRemoved& gone) { return gone.tick + 600 < tick; });
+        swarm.removed.push_back(SwarmRemoved{agent - 1, row->born, row->tag, tick, row->position});
+    }
     *row = SwarmAgent{};
     swarm.free.push_back(agent - 1);
     swarm.gridValid = false;
     return true;
+}
+
+bool setSwarmAgentTag(SwarmComponent& swarm, u32 agent, u16 tag)
+{
+    SwarmAgent* row = swarmAgent(swarm, agent);
+    if (row == nullptr)
+        return false;
+    if (row->tag != tag) {
+        row->tag = tag;
+        SwarmEvent changed;
+        changed.kind = SwarmEvent::Kind::TagChanged;
+        changed.tag = tag;
+        changed.agent = agent;
+        keepEvent(swarm, changed);
+    }
+    return true;
+}
+
+core::DVec3 swarmAgentAt(const SwarmAgent& agent, f64 tick, f64 dt) noexcept
+{
+    // A far agent is stepped every second or fourth tick with the time it
+    // skipped: between its steps it is where its walk carries it.
+    const f64 ticks = std::clamp(tick - static_cast<f64>(agent.stepped), 0.0, 4.0);
+    const f64 metres = static_cast<f64>(agent.walk) * ticks * dt;
+    return agent.position +
+           core::DVec3{static_cast<f64>(agent.faceX) * metres, 0.0, static_cast<f64>(agent.faceZ) * metres};
+}
+
+void mirrorSwarmAgentRemoved(SwarmComponent& swarm, u32 slot, u8 reason, u16 tag, core::DVec3 position)
+{
+    if (slot >= swarm.agents.size() || !swarm.agents[slot].alive)
+        return;
+    keepEvent(
+        swarm,
+        SwarmEvent{
+            .kind = SwarmEvent::Kind::Removed, .reason = reason, .tag = tag, .agent = slot + 1, .position = position});
+    // Its body is this machine's, and stays whoever's it was: the script that
+    // hears the removal decides what becomes of it.
+    swarm.agents[slot] = SwarmAgent{};
+    swarm.gridValid = false;
+}
+
+void mirrorSwarmAgentAdded(SwarmComponent& swarm, u32 slot, u16 tag, f32 radius, f32 height, const SwarmTold& told,
+                           f64 tick)
+{
+    if (slot >= swarm.agents.size())
+        swarm.agents.resize(static_cast<usize>(slot) + 1);
+    // A number that still names another here: that one went, and the message
+    // that said so was this one's own.
+    if (swarm.agents[slot].alive)
+        mirrorSwarmAgentRemoved(swarm, slot, SwarmRemovalRemoved, swarm.agents[slot].tag, swarm.agents[slot].position);
+    SwarmAgent agent;
+    agent.alive = true;
+    agent.tag = tag;
+    agent.radius = radius;
+    agent.height = height;
+    agent.born = ++swarm.births;
+    agent.told = told.position;
+    agent.toldTick = tick;
+    agent.lift = told.lift;
+    agent.floor = told.floor;
+    faceBy(agent, told.yaw);
+    agent.walk = told.walk;
+    agent.position = told.position;
+    swarm.agents[slot] = agent;
+    if (tick >= swarm.mirrorNewest) {
+        swarm.mirrorNewest = tick;
+        swarm.mirrorHeard = true;
+    }
+    swarm.gridValid = false;
+    keepEvent(swarm, SwarmEvent{.kind = SwarmEvent::Kind::Added,
+                                .tag = tag,
+                                .agent = slot + 1,
+                                .radius = radius,
+                                .height = height,
+                                .position = told.position});
+}
+
+bool mirrorSwarmAgentTold(SwarmComponent& swarm, u32 slot, const SwarmTold& told, f64 tick, f64 dt,
+                          std::optional<u16> tag)
+{
+    if (slot >= swarm.agents.size() || !swarm.agents[slot].alive)
+        return false;
+    SwarmAgent& agent = swarm.agents[slot];
+    // Older than what it has: a message that arrived late, or one for the
+    // agent that had this number before.
+    if (tick <= agent.toldTick)
+        return false;
+    if (tick >= swarm.mirrorNewest) {
+        swarm.mirrorNewest = tick;
+        swarm.mirrorHeard = true;
+    }
+    const f64 clock = swarm.mirrorClockSet ? swarm.mirrorClock : tick;
+    // **Taken up, not jumped to**: what it is drawn at stays where it is this
+    // tick, and the difference from where the new word puts it dies away.
+    const core::DVec3 before = carried(agent, clock, dt);
+    const f64 heightBefore =
+        (agent.onTerrain ? agent.ground : agent.floor) + static_cast<f64>(agent.lift + agent.ease.y);
+    agent.told = told.position;
+    agent.toldTick = tick;
+    faceBy(agent, told.yaw);
+    agent.walk = told.walk;
+    agent.lift = told.lift;
+    agent.floor = told.floor;
+    // The height it is drawn at stays too: on the terrain it has, or on the
+    // floor it is told -- which may have changed with the lift.
+    const f64 heightAfter = (agent.onTerrain ? agent.ground : agent.floor) + static_cast<f64>(agent.lift);
+    const core::DVec3 after = carried(agent, clock, dt);
+    agent.ease =
+        core::Vec3{agent.ease.x + static_cast<f32>(before.x - after.x), static_cast<f32>(heightBefore - heightAfter),
+                   agent.ease.z + static_cast<f32>(before.z - after.z)};
+    // Too far to be a correction: it was moved. There it is.
+    if (agent.ease.x * agent.ease.x + agent.ease.z * agent.ease.z > 16.0f)
+        agent.ease = core::Vec3{};
+    if (tag.has_value() && *tag != agent.tag) {
+        agent.tag = *tag;
+        SwarmEvent changed;
+        changed.kind = SwarmEvent::Kind::TagChanged;
+        changed.tag = *tag;
+        changed.agent = slot + 1;
+        keepEvent(swarm, changed);
+    }
+    return true;
+}
+
+std::optional<f64> swarmTerrainAt(const World& world, f64 x, f64 z)
+{
+    std::optional<f64> best;
+    world.terrains().forEach([&](core::InstanceId, const TerrainComponent& terrain) {
+        const std::optional<float> height = asset::heightAt(terrain.field, x - terrain.origin.x, z - terrain.origin.z);
+        if (!height.has_value())
+            return;
+        const f64 top = static_cast<f64>(*height) + terrain.origin.y;
+        if (!best.has_value() || top > *best)
+            best = top;
+    });
+    return best;
 }
 
 SwarmAgent* swarmAgent(SwarmComponent& swarm, u32 agent) noexcept
@@ -398,12 +655,17 @@ void stepSwarms(World& world, const PhysicsSync* physics, f64 dt)
     const u64 tick = world.engineState().tick;
     std::vector<core::InstanceId> swarms;
     world.swarms().forEach([&](core::InstanceId id, SwarmComponent& swarm) {
-        if (swarm.enabled && !swarm.agents.empty())
+        if ((swarm.enabled || swarm.mirrored) && !swarm.agents.empty())
             swarms.push_back(id);
     });
     // Collected first: a step writes parts, which can grow the world's pools.
     for (const core::InstanceId id : swarms) {
-        if (SwarmComponent* swarm = world.swarms().find(id); swarm != nullptr)
+        SwarmComponent* swarm = world.swarms().find(id);
+        if (swarm == nullptr)
+            continue;
+        if (swarm->mirrored)
+            stepMirror(world, *swarm, dt, cframeName);
+        else
             stepSwarm(world, physics, *swarm, dt, tick, cframeName);
     }
 }

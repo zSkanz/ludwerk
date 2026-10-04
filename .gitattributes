@@ -19,6 +19,7 @@
 *.lpack binary
 *.wav binary
 *.ogg binary
+*.ogg binary
 *.mp3 binary
 *.ttf binary
 *.otf binary

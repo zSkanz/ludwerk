@@ -309,6 +309,41 @@ bool setSwarmTarget(World& world, core::InstanceId id, const Value& value)
     return c != nullptr && takeVector(value, c->target);
 }
 
+Value getSwarmReplicates(const World& world, core::InstanceId id)
+{
+    const SwarmComponent* c = world.swarms().find(id);
+    return c == nullptr ? Value{} : Value{c->replicates};
+}
+
+bool setSwarmReplicates(World& world, core::InstanceId id, const Value& value)
+{
+    SwarmComponent* c = world.swarms().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (c == nullptr || flag == nullptr)
+        return false;
+    // The authority's (ADR 0162): on a replica it is what arrived.
+    if (!c->mirrored)
+        c->replicates = *flag;
+    return true;
+}
+
+Value getSwarmReplicationRadius(const World& world, core::InstanceId id)
+{
+    const SwarmComponent* c = world.swarms().find(id);
+    return c == nullptr ? Value{} : Value{static_cast<f64>(c->replicationRadius)};
+}
+
+bool setSwarmReplicationRadius(World& world, core::InstanceId id, const Value& value)
+{
+    SwarmComponent* c = world.swarms().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (c == nullptr || number == nullptr || !std::isfinite(*number) || !(*number > 0.0))
+        return false;
+    if (!c->mirrored)
+        c->replicationRadius = static_cast<f32>(*number);
+    return true;
+}
+
 Value getSwarmEnabled(const World& world, core::InstanceId id)
 {
     const SwarmComponent* c = world.swarms().find(id);

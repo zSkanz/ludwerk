@@ -231,6 +231,9 @@ public:
     [[nodiscard]] bool nodeResident(core::InstanceId terrain, TerrainNodeKey key) const noexcept;
     // Meshes built by the last `sync`, for tests and the perf overlay.
     [[nodiscard]] core::u32 lastBuilds() const noexcept { return m_lastBuilds; }
+    // How many of them the last `sync` built itself, in the frame that found
+    // them, instead of handing them to a worker: an edit's, and nothing else's.
+    [[nodiscard]] core::u32 lastBuildsInFrame() const noexcept { return m_lastBuildsInFrame; }
     // Whether the last `sync` left anything it wanted unbuilt.
     [[nodiscard]] bool pending() const noexcept { return m_pending; }
     // **Whether the ground within `radius` of `centre` is drawn as it will be**
@@ -347,6 +350,7 @@ private:
     core::u32 m_buildsPerSync = 4;
     bool m_fastUploads = false;
     core::u32 m_lastBuilds = 0;
+    core::u32 m_lastBuildsInFrame = 0;
     bool m_pending = false;
     core::u64 m_frame = 0;
 

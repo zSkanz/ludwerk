@@ -45,10 +45,16 @@ end)
 -- frames in that time, on either machine, that took longer than three ticks,
 -- which drop simulated time and may each cost a correction: the one this run
 -- hangs on purpose, and any a busy machine makes of its own.
-local function corrections(seconds: number): (number, number)
+--
+-- `begin`, when there is one, runs once the count has started: what is done in
+-- it -- a key going down -- is inside the time measured.
+local function corrections(seconds: number, begin: (() -> ())?): (number, number)
     local serverLong = Workspace:WaitForChild("LongFrames") :: RemoteFunction
     local serverBefore = serverLong:InvokeServerAsync() :: number
     local before: number = NetworkService:GetStats().Corrections
+    if begin then
+        begin()
+    end
     local long = 0
     local last = os.clock()
     local watch = RunService.Heartbeat:Connect(function()
@@ -77,15 +83,25 @@ task.spawn(function()
     -- A settled second, so the count starts from the walk and not the join.
     corrections(1)
 
-    InputService:SetVirtualState(Enum.KeyCode.Virtual1, 1)
-    if Condition.HangSeconds > 0 then
-        task.delay(5, function()
-            local began = os.clock()
-            while os.clock() - began < Condition.HangSeconds do
-            end
-        end)
-    end
-    local walked, hitches = corrections(10)
+    -- **The second in which the walk begins, counted apart** (D534). An input
+    -- that changes is one intent, and when the packets that carry it are lost
+    -- or late the authority has already stepped that tick with what the
+    -- player was doing before -- standing -- so it starts one tick after the
+    -- client did, and the client is corrected once, by one tick's walk. That
+    -- is the link's doing and it is one correction: counted with the walk, it
+    -- was "a straight walk corrected" some one run in fifty, with nothing to
+    -- say why. The nine seconds after it are the straight walk.
+    local start, startHitches = corrections(1, function()
+        InputService:SetVirtualState(Enum.KeyCode.Virtual1, 1)
+        if Condition.HangSeconds > 0 then
+            task.delay(5, function()
+                local began = os.clock()
+                while os.clock() - began < Condition.HangSeconds do
+                end
+            end)
+        end
+    end)
+    local walked, hitches = corrections(9)
     InputService:SetVirtualState(Enum.KeyCode.Virtual1, 0)
     task.wait(2)
 
@@ -112,7 +128,8 @@ task.spawn(function()
         return string.format(`%.{places}f`, value)
     end
     print(
-        `[acceptance] condition={Condition.Name} corrections={counted} hitches={hitches} stop={decimal(stop, 4)} `
+        `[acceptance] condition={Condition.Name} corrections={counted} hitches={hitches} `
+            .. `start={math.round(start)} startHitches={startHitches} stop={decimal(stop, 4)} `
             .. `ping={decimal(ping, 1)} remote={decimal(remote, 1)} interpolation={decimal(interpolation, 1)}`
     )
 end)

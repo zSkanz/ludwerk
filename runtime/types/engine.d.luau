@@ -276,6 +276,9 @@ end
 declare extern type EnumParticleFlipbookMode extends EnumItem with
 end
 
+declare extern type EnumSwarmAgentRemoval extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -3599,6 +3602,31 @@ declare extern type Swarm extends Instance with
     NearDistance: number
     --- Past this far, every fourth.
     FarDistance: number
+    --- Whether its agents reach every other machine of a match as agents (ADR 0162). On, each replica
+    --- has this swarm with the same agent numbers, read-only: `GetAgents`, `GetPositions`,
+    --- `GetAgentPosition`, `GetAgentTag` and `QueryRadius` answer there, `AgentAdded`, `AgentRemoved`
+    --- and `AgentTagChanged` fire there, and `SetAgentBody` gives an agent a body of that machine's own
+    --- to move. The engine sends an agent to a replica when that replica would otherwise draw it wrong,
+    --- and each replica carries it forward in between: a replica's agent is close to where the
+    --- authority's is, never exactly there, and a hit is the authority's to decide. A replica has the
+    --- agents within `ReplicationRadius` of its player's focus, not the whole crowd. Off, a swarm is
+    --- where it runs and nowhere else, as it always was.
+    Replicates: boolean
+    --- How far from a player's focus -- their `Character`, or `Player.ReplicationFocus` -- an agent is
+    --- sent to that player's machine, in metres. An agent that walks out of it is removed there
+    --- (`AgentRemoved` with `OutOfReach`) and added again when it returns.
+    ReplicationRadius: number
+    --- Fires when this machine has a new agent: on the authority after `AddAgent`, on a replica when
+    --- one arrives -- born, or walking into what that replica is sent. `size` is its width, its height
+    --- and its width again. The number is the agent's on every machine until `AgentRemoved` fires for
+    --- it, and may name another after.
+    read AgentAdded: Signal<number, number, vector>
+    --- Fires when this machine no longer has an agent, with the tag and the place it had last, and why:
+    --- the authority removed it, or -- on a replica -- it walked out of what that machine is sent. A
+    --- death is played for the first and nothing for the second.
+    read AgentRemoved: Signal<number, number, vector, EnumSwarmAgentRemoval>
+    --- Fires when an agent this machine has is given another tag.
+    read AgentTagChanged: Signal<number, number>
     --- Adds an agent standing where `body` is, and returns its number. For an agent with no body, see
     --- `AddAgentAt`. `Radius` (0.5), `Height` (1) and `Speed` (4, metres a second) say what it is;
     --- `Floats` keeps it `FloatHeight` (1) over the ground and out of the crowd's pushing; `Climbs`
@@ -3638,6 +3666,20 @@ declare extern type Swarm extends Instance with
     function AddObstacle(self, position: vector, radius: number): ()
     --- Forgets every obstacle.
     function ClearObstacles(self): ()
+    --- Gives an agent a number that means what the game says -- a whole number from 0 to 65535: a kind
+    --- in some bits, flags in the others (ADR 0162). It reaches every machine that has the agent, which
+    --- reads it with `GetAgentTag` and hears `AgentTagChanged`: what a replica picks a mesh and a pose
+    --- from. The tag an agent has when it is removed arrives with its removal, so a "killed" bit set
+    --- just before `RemoveAgent` is in every machine's `AgentRemoved`. The authority's to call.
+    function SetAgentTag(self, agent: number, tag: number): ()
+    --- The agent's tag, 0 for one that was never given any or that is not there.
+    function GetAgentTag(self, agent: number): number
+    --- Gives an agent a part of THIS machine's to move, or nil to let it go: each tick the swarm writes
+    --- the part's `CFrame` -- where the agent is, facing its target -- and nothing else about it. On
+    --- the authority it replaces the body `AddAgent` took. On a replica it is how a horde is drawn: a
+    --- body made when `AgentAdded` fires, given here, and taken back when `AgentRemoved` does. The part
+    --- is drawn between ticks like any other that moves.
+    function SetAgentBody(self, agent: number, body: BasePart?): ()
 end
 
 declare extern type NavigationAgent extends Instance with
@@ -4368,7 +4410,7 @@ declare extern type NetworkService extends Instance with
     --- stepped them again and the ticks it stepped, and what one took on average in milliseconds
     --- (`ResimulationTime`). On an authority, the worst peer's link and the deepest queue. All zero
     --- solo.
-    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number }
+    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number }
     --- Connects to a server at `address` (`host` or `host:port`), or to `[network] server` from
     --- `project.toml` with none. **Joining replaces this machine's scene with the server's**: what it
     --- replicates arrives, and server code stops, since this machine no longer decides the world.
@@ -4447,6 +4489,12 @@ declare extern type Player extends Instance with
     --- And the authority sends each replica only what is near that replica's character, out to
     --- `StreamingService.LoadRadius`; a player with no character is sent everything.
     Character: BasePart?
+    --- The part what this player's machine is sent is measured from, in place of their character (ADR
+    --- 0162): a fallen player watching a friend is the friend's character here. Nil -- the default --
+    --- is their own `Character`. **The authority's**: it decides which parts are streamed to that
+    --- player and which agents of a replicated `Swarm` reach them. It changes nothing about whose
+    --- character is predicted.
+    ReplicationFocus: BasePart?
     --- The `Part2D` that is this player on the plane: `Character` for a 2D game, and the same one thing
     --- -- a player has one character, so setting either replaces the other, and each reads nil while
     --- the other kind is set. Two properties so that each is typed as what it holds: a 3D game reads a
@@ -5748,6 +5796,11 @@ declare Enum: {
         OverLife: EnumParticleFlipbookMode,
         Random: EnumParticleFlipbookMode,
         GetEnumItems: (self: any) -> { EnumParticleFlipbookMode },
+    },
+    SwarmAgentRemoval: {
+        Removed: EnumSwarmAgentRemoval,
+        OutOfReach: EnumSwarmAgentRemoval,
+        GetEnumItems: (self: any) -> { EnumSwarmAgentRemoval },
     },
 }
 

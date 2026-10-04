@@ -459,6 +459,9 @@ void NetworkSession::update()
         shown.unreliableSent = stats.unreliableSent;
         shown.unreliableReceived = stats.unreliableReceived;
         shown.unreliableDropped = stats.unreliableDropped;
+        shown.bytesSent = stats.bytesSent;
+        shown.bytesReceived = stats.bytesReceived;
+        shown.swarmBytes = stats.swarmBytes;
         const core::u64 now = m_clock ? m_clock() : platform::nowNs();
         const core::u64 snapshots = status.authority ? stats.snapshotsSent : stats.snapshotsReceived;
         if (m_rateStartedNs == 0 || now < m_rateStartedNs) {

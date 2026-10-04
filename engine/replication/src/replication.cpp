@@ -43,6 +43,7 @@ public:
             if (auto error = m_transport->connect(m_config.address, m_config.port, authority); error.has_value())
                 return error;
             m_replica.emplace(*m_transport, authority);
+            m_replica->setCorrectionLog(m_config.logCorrections);
             if (m_config.token.valid())
                 m_replica->setPlayerToken(m_config.token);
             m_replica->setInterpolationDelay(m_config.interpolationDelayTicks);

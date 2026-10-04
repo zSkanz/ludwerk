@@ -91,6 +91,39 @@ inline constexpr usize MaxRemoteWirePayload = 64u * 1024u + 16u;
 // carry, and its count byte.
 inline constexpr usize MaxUnreliableWirePayload = 16u * 1024u + 16u;
 
+// **A replicated swarm** (ADR 0162).
+//
+// One message of positions: a packet, so it is never sent in fragments and a
+// lost one is only itself.
+inline constexpr usize SwarmStateBytes = 1100;
+// What one replica is sent of positions, a tick and at most in hand: 29 KB a
+// second, and a burst of five ticks.
+inline constexpr core::f64 SwarmBytesPerTick = 480.0;
+inline constexpr core::f64 SwarmByteBurst = 4000.0;
+// How wrong a replica may draw an agent before it is told again, near its
+// focus and at the edge of its reach, in metres and in radians of facing; and
+// how long an agent goes untold, in ticks.
+inline constexpr core::f64 SwarmNearError = 0.2;
+inline constexpr core::f64 SwarmFarError = 1.5;
+inline constexpr core::f64 SwarmNearTurn = 0.35;
+inline constexpr core::f64 SwarmFarTurn = 1.2;
+// A lost message is told again when nobody acknowledges it, so the refresh is
+// only for what that misses: two seconds near, four far.
+inline constexpr core::f64 SwarmNearRefresh = 120.0;
+inline constexpr core::f64 SwarmFarRefresh = 240.0;
+// How long a message of positions waits for its acknowledgement before its
+// agents are told again, in ticks: the round trip it has measured and half
+// again, within these.
+inline constexpr core::f64 SwarmAckWaitLeast = 8.0;
+inline constexpr core::f64 SwarmAckWaitMost = 60.0;
+// How many of the last messages a replica names in each acknowledgement.
+inline constexpr usize SwarmAcksRepeated = 12;
+// The reach a position's twelve bits an axis can say, with the lattice its
+// origin sits on.
+inline constexpr core::f64 MaxSwarmReach = 220.0;
+// How many agents one reliable message of comings and goings carries.
+inline constexpr usize SwarmAgentsPerMessage = 512;
+
 // **What one peer may cost an authority in one tick** (audit N1's review). A
 // client is not trusted to send one intent and one owned state a tick, or a
 // sane count in either; what is over these is dropped, and a count over them
@@ -450,6 +483,61 @@ private:
         u16 unreliableOut = 0;
         u16 unreliableIn = 0;
         bool unreliableHeard = false;
+
+        // **What this peer was last told of a swarm's agents** (ADR 0162), by
+        // slot: whether it has the agent, which agent that was, and the
+        // position, facing, walk, lift and tag it draws it from.
+        struct SwarmSent
+        {
+            bool known = false;
+            // The message that last told it was not acknowledged: told again.
+            bool lost = false;
+            u32 born = 0;
+            u16 tag = 0;
+            core::f32 yaw = 0.0f;
+            core::f32 walk = 0.0f;
+            core::f32 lift = 0.0f;
+            u64 tick = 0;
+            core::DVec3 position;
+            // The direction `yaw` is the angle of.
+            core::f32 faceX = 0.0f;
+            core::f32 faceZ = -1.0f;
+            // Whether a terrain was under it then: its lift is from that, and
+            // a replica follows the terrain as it walks. Otherwise it stays at
+            // the height it was told.
+            bool onTerrain = false;
+            // Which message of comings and goings brought it to this peer:
+            // its position is not sent until the peer says it took that in.
+            u16 addedIn = 0;
+        };
+        struct SwarmView
+        {
+            u32 netId = 0;
+            // Bytes of positions it may be sent now, and the tick that was
+            // last added to.
+            core::f64 budget = SwarmByteBurst;
+            u64 budgetTick = 0;
+            // How many messages of comings and goings it has been sent, and
+            // the last of them it said it took in.
+            u16 membership = 0;
+            u16 membershipTaken = 0;
+            std::vector<SwarmSent> agents;
+        };
+        std::vector<SwarmView> swarms;
+        // The messages of positions on their way: which swarm, the tick they
+        // were sent, and the agents in each. Acknowledged, one is forgotten;
+        // not acknowledged in time, its agents are told again.
+        struct SwarmFlight
+        {
+            u16 sequence = 0;
+            u32 netId = 0;
+            u64 tick = 0;
+            std::vector<u32> slots;
+        };
+        std::deque<SwarmFlight> swarmFlights;
+        u16 swarmSequence = 0;
+        // How long an acknowledgement takes to come back, in ticks, smoothed.
+        core::f64 swarmAckTicks = 12.0;
     };
 
     // One captured instance, in the walk's pre-order: its id, which instance
@@ -470,6 +558,13 @@ private:
                 const std::vector<u32>& relevant, const std::vector<u32>& owned);
     // The ids this peer should hold now, sorted (ADR 0076).
     [[nodiscard]] std::vector<u32> interestOf(const scene::World& world, const Peer& peer) const;
+    // Every replicated swarm's agents to every peer (ADR 0162): who came and
+    // went, reliably, and where the ones it would draw wrong are.
+    void sendSwarms(scene::World& world);
+    void sendSwarmTo(scene::World& world, Peer& peer, scene::SwarmComponent& swarm, u32 netId,
+                     std::span<const core::DVec3> truths);
+    // The tick `sendSwarms` last ran for: once a tick, however often it is asked.
+    u64 m_swarmTick = 0;
     [[nodiscard]] const WorldState* historyAt(u64 tick) const noexcept;
     [[nodiscard]] Peer* peerFor(net::PeerId id) noexcept;
     // The instance a network id names in the last capture, or an invalid id.
@@ -571,6 +666,11 @@ private:
         u64 restores = 0;
     };
     GroundShadow m_ground;
+    // The collision groups as last sent (D545), and the revision they were
+    // read at: the world's, kept through a change of scene.
+    std::vector<u8> m_groupsSent;
+    u32 m_groupsRevision = 0;
+    bool m_groupsRead = false;
     // This send's changes, as whole messages for every peer already holding
     // the ground.
     std::vector<std::vector<u8>> m_groundEdits;
@@ -636,6 +736,9 @@ public:
     // authority said and replays the commands it has not answered yet. Unset,
     // a correction shifts the prediction by the error, as before.
     void setCharacterReplay(scene::ICharacterReplay* replay) noexcept { m_replay = replay; }
+    // Whether each correction is said in the log, with what it disagreed about
+    // (`Config::logCorrections`).
+    void setCorrectionLog(bool log) noexcept { m_logCorrections = log; }
     // **Where this replica's own scripts are kept** (ADR 0138 §6): asked at
     // each spawn, because a hot reload makes a new host and new templates.
     // Unset, nothing is attached, which is what a test with no host wants.
@@ -716,10 +819,24 @@ private:
     void onTerrainLook(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
     void onVoxelChunks(scene::World& world, std::span<const u8> bytes);
     void onVoxelTypes(scene::World& world, std::span<const u8> bytes);
+    void onCollisionGroups(scene::World& world, std::span<const u8> bytes);
     void onSceneChange(scene::World& world, std::span<const u8> bytes);
     void onAttributes(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
     // An `UnreliableRemoteEvent` message (ADR 0161), into the world's inbox.
     void onUnreliable(scene::World& world, std::span<const u8> payload);
+    // A replicated swarm's agents (ADR 0162): who came and went, and where
+    // some of them are.
+    void onSwarmAgents(scene::World& world, std::span<const u8> payload);
+    void onSwarmState(scene::World& world, std::span<const u8> payload);
+    // The last `SwarmState` messages taken in, newest last, and whether one
+    // has arrived since they were last said.
+    std::vector<u16> m_swarmAcks;
+    bool m_swarmAckDue = false;
+    // For each swarm this replica mirrors, by network id: the last message
+    // of comings and goings it took in.
+    std::vector<std::pair<u32, u16>> m_swarmMemberships;
+    // Sends since the last acknowledgement.
+    u32 m_swarmAckQuiet = 0;
     void sendOwned(const scene::World& world, u64 tick);
     void reconcile(scene::World& world, core::InstanceId character, const scene::CharacterReplayStart& authority);
     // The same for a character on the plane (D434): where the authority has
@@ -792,6 +909,7 @@ private:
     std::map<u32, u32> m_predictedParts;
     // How far the last comparison found a predicted part from the authority's.
     core::f64 m_lastBodyCorrection = 0.0;
+    bool m_logCorrections = false;
     core::f64 m_predictRadius = DefaultPredictRadius;
     u32 m_predictMax = DefaultPredictMaxBodies;
     u32 m_predictLinger = DefaultPredictLingerTicks;

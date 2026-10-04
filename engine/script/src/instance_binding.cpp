@@ -1079,6 +1079,16 @@ int methodApplyImpulse(lua_State* L)
     return *swarm;
 }
 
+// The swarm a method that CHANGES it was called on: the authority's own. A
+// replica's copy of the authority's swarm is read (ADR 0162).
+[[nodiscard]] scene::SwarmComponent& ownSwarmOf(lua_State* L)
+{
+    scene::SwarmComponent& swarm = swarmOf(L);
+    if (swarm.mirrored)
+        raise(L, ENG_TR("script.err.swarm_read_only"));
+    return swarm;
+}
+
 // A number argument that is finite, or an error.
 [[nodiscard]] double checkFinite(lua_State* L, int index)
 {
@@ -1137,7 +1147,7 @@ int methodApplyImpulse(lua_State* L)
 
 int methodSwarmAddAgent(lua_State* L)
 {
-    scene::SwarmComponent& swarm = swarmOf(L);
+    scene::SwarmComponent& swarm = ownSwarmOf(L);
     const core::InstanceId body = checkInstance(L, 2);
     const scene::PartComponent* part = world(L).parts().find(body);
     if (part == nullptr)
@@ -1153,7 +1163,7 @@ int methodSwarmAddAgent(lua_State* L)
 // what a server simulating a horde its players draw from snapshots keeps.
 int methodSwarmAddAgentAt(lua_State* L)
 {
-    scene::SwarmComponent& swarm = swarmOf(L);
+    scene::SwarmComponent& swarm = ownSwarmOf(L);
     const core::Vec3 position = checkVector3(L, 2);
     if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
         raise(L, ENG_TR("script.err.not_finite"));
@@ -1167,7 +1177,7 @@ int methodSwarmAddAgentAt(lua_State* L)
 // table is `Target` alone again.
 int methodSwarmSetTargets(lua_State* L)
 {
-    scene::SwarmComponent& swarm = swarmOf(L);
+    scene::SwarmComponent& swarm = ownSwarmOf(L);
     luaL_checktype(L, 2, LUA_TTABLE);
     std::vector<core::DVec3> targets;
     const int count = lua_objlen(L, 2);
@@ -1186,14 +1196,14 @@ int methodSwarmSetTargets(lua_State* L)
 
 int methodSwarmRemoveAgent(lua_State* L)
 {
-    scene::SwarmComponent& swarm = swarmOf(L);
-    (void)scene::removeSwarmAgent(swarm, checkAgent(L, 2));
+    scene::SwarmComponent& swarm = ownSwarmOf(L);
+    (void)scene::removeSwarmAgent(swarm, checkAgent(L, 2), world(L).engineState().tick);
     return 0;
 }
 
 int methodSwarmSetAgentSpeed(lua_State* L)
 {
-    scene::SwarmComponent& swarm = swarmOf(L);
+    scene::SwarmComponent& swarm = ownSwarmOf(L);
     scene::SwarmAgent* agent = scene::swarmAgent(swarm, checkAgent(L, 2));
     const double speed = checkFinite(L, 3);
     if (agent != nullptr)
@@ -1203,7 +1213,7 @@ int methodSwarmSetAgentSpeed(lua_State* L)
 
 int methodSwarmSetAgentPosition(lua_State* L)
 {
-    scene::SwarmComponent& swarm = swarmOf(L);
+    scene::SwarmComponent& swarm = ownSwarmOf(L);
     scene::SwarmAgent* agent = scene::swarmAgent(swarm, checkAgent(L, 2));
     const core::Vec3 position = checkFiniteVector(L, 3);
     if (agent != nullptr) {
@@ -1218,7 +1228,7 @@ int methodSwarmSetAgentPosition(lua_State* L)
 
 int methodSwarmPush(lua_State* L)
 {
-    scene::SwarmComponent& swarm = swarmOf(L);
+    scene::SwarmComponent& swarm = ownSwarmOf(L);
     scene::SwarmAgent* agent = scene::swarmAgent(swarm, checkAgent(L, 2));
     const core::Vec3 velocity = checkFiniteVector(L, 3);
     if (agent != nullptr) {
@@ -1309,7 +1319,7 @@ int methodSwarmQueryRadius(lua_State* L)
 
 int methodSwarmAddObstacle(lua_State* L)
 {
-    scene::SwarmComponent& swarm = swarmOf(L);
+    scene::SwarmComponent& swarm = ownSwarmOf(L);
     const core::Vec3 position = checkFiniteVector(L, 2);
     const double radius = checkFinite(L, 3);
     swarm.obstacles.push_back(scene::SwarmObstacle{static_cast<f64>(position.x), static_cast<f64>(position.z),
@@ -1319,7 +1329,45 @@ int methodSwarmAddObstacle(lua_State* L)
 
 int methodSwarmClearObstacles(lua_State* L)
 {
-    swarmOf(L).obstacles.clear();
+    ownSwarmOf(L).obstacles.clear();
+    return 0;
+}
+
+// `SetAgentTag(agent, tag)` (ADR 0162): a number the game gives an agent, that
+// every machine with the agent reads.
+int methodSwarmSetAgentTag(lua_State* L)
+{
+    scene::SwarmComponent& swarm = ownSwarmOf(L);
+    const core::u32 agent = checkAgent(L, 2);
+    const double tag = checkFinite(L, 3);
+    if (tag < 0.0 || tag > 65535.0 || tag != std::floor(tag))
+        raise(L, ENG_TR("script.err.swarm_tag_range"));
+    (void)scene::setSwarmAgentTag(swarm, agent, static_cast<core::u16>(tag));
+    return 0;
+}
+
+int methodSwarmGetAgentTag(lua_State* L)
+{
+    const scene::SwarmComponent& swarm = swarmOf(L);
+    const scene::SwarmAgent* agent = scene::swarmAgent(swarm, checkAgent(L, 2));
+    lua_pushnumber(L, agent != nullptr ? static_cast<double>(agent->tag) : 0.0);
+    return 1;
+}
+
+// `SetAgentBody(agent, body?)` (ADR 0162): a part of this machine's for the
+// swarm to place. On a replica too -- it is how a replica draws the horde.
+int methodSwarmSetAgentBody(lua_State* L)
+{
+    scene::SwarmComponent& swarm = swarmOf(L);
+    scene::SwarmAgent* agent = scene::swarmAgent(swarm, checkAgent(L, 2));
+    core::InstanceId body;
+    if (!lua_isnoneornil(L, 3)) {
+        body = checkInstance(L, 3);
+        if (world(L).parts().find(body) == nullptr)
+            raise(L, ENG_TR("script.err.swarm_body_not_part"));
+    }
+    if (agent != nullptr)
+        agent->body = body;
     return 0;
 }
 
@@ -2964,6 +3012,9 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"Swarm", "QueryRadius", methodSwarmQueryRadius},
     {"Swarm", "AddObstacle", methodSwarmAddObstacle},
     {"Swarm", "ClearObstacles", methodSwarmClearObstacles},
+    {"Swarm", "SetAgentTag", methodSwarmSetAgentTag},
+    {"Swarm", "GetAgentTag", methodSwarmGetAgentTag},
+    {"Swarm", "SetAgentBody", methodSwarmSetAgentBody},
     {"BasePart", "SetNetworkOwner", methodSetNetworkOwner},
     {"BasePart", "GetRenderCFrame", methodGetRenderCFrame},
     {"Attachment", "GetRenderCFrame", methodGetRenderCFrame},
@@ -3170,6 +3221,69 @@ void registerInstanceBinding(lua_State* L)
     luaL_register(L, "Instance", constructors);
     lua_setreadonly(L, -1, true);
     lua_pop(L, 1);
+}
+
+void fireSwarmEvents(lua_State* L)
+{
+    scene::World& w = world(L);
+    // Taken first: nothing runs here -- signals are deferred -- but what a
+    // swarm keeps must not be walked while it could be added to.
+    std::vector<std::pair<core::InstanceId, std::vector<scene::SwarmEvent>>> pending;
+    w.swarms().forEach([&](core::InstanceId id, scene::SwarmComponent& swarm) {
+        if (swarm.events.empty())
+            return;
+        pending.emplace_back(id, std::move(swarm.events));
+        swarm.events.clear();
+    });
+    if (pending.empty())
+        return;
+    const core::NameAtom addedName = w.atoms().intern("AgentAdded");
+    const core::NameAtom removedName = w.atoms().intern("AgentRemoved");
+    const core::NameAtom taggedName = w.atoms().intern("AgentTagChanged");
+    const scene::EnumId removal = w.enums().findId(w.atoms().intern("SwarmAgentRemoval"));
+    for (const auto& [id, events] : pending) {
+        if (!w.alive(id))
+            continue;
+        const scene::ClassId owner = w.classOf(id);
+        const scene::EventDesc* added = w.classes().findEvent(owner, addedName);
+        const scene::EventDesc* removed = w.classes().findEvent(owner, removedName);
+        const scene::EventDesc* tagged = w.classes().findEvent(owner, taggedName);
+        // Nobody listening is nothing pushed: a horde of a thousand is a
+        // thousand of these a stage.
+        const bool hearsAdded = added != nullptr && instanceEventHeard(L, id, added->slot);
+        const bool hearsRemoved = removed != nullptr && instanceEventHeard(L, id, removed->slot);
+        const bool hearsTagged = tagged != nullptr && instanceEventHeard(L, id, tagged->slot);
+        for (const scene::SwarmEvent& event : events) {
+            const int top = lua_gettop(L);
+            switch (event.kind) {
+            case scene::SwarmEvent::Kind::Added:
+                if (!hearsAdded)
+                    break;
+                lua_pushnumber(L, static_cast<double>(event.agent));
+                lua_pushnumber(L, static_cast<double>(event.tag));
+                pushVector3(L, core::Vec3{event.radius * 2.0f, event.height, event.radius * 2.0f});
+                fireInstanceEvent(L, id, added->slot, top + 1, 3);
+                break;
+            case scene::SwarmEvent::Kind::Removed:
+                if (!hearsRemoved)
+                    break;
+                lua_pushnumber(L, static_cast<double>(event.agent));
+                lua_pushnumber(L, static_cast<double>(event.tag));
+                pushVector3(L, core::toVec3(event.position));
+                pushEnumItem(L, scene::EnumValue{removal, static_cast<core::i32>(event.reason)});
+                fireInstanceEvent(L, id, removed->slot, top + 1, 4);
+                break;
+            case scene::SwarmEvent::Kind::TagChanged:
+                if (!hearsTagged)
+                    break;
+                lua_pushnumber(L, static_cast<double>(event.agent));
+                lua_pushnumber(L, static_cast<double>(event.tag));
+                fireInstanceEvent(L, id, tagged->slot, top + 1, 2);
+                break;
+            }
+            lua_settop(L, top);
+        }
+    }
 }
 
 } // namespace engine::script

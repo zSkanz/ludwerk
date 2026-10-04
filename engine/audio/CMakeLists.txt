@@ -9,12 +9,16 @@
 # miniaudio is compiled in ONE translation unit and appears in no header. That is
 # what makes "the public API never leaks miniaudio concepts" structural: nothing
 # outside src/audio.cpp can name a miniaudio type even by accident.
+#
+# `src/vorbis.cpp` is the Vorbis decoder miniaudio ships beside itself and
+# decodes through (D546), in a translation unit of its own.
 
 engine_add_module(audio
     LAYER 4
     SOURCES
         src/audio.cpp
         src/native_accessors.cpp
+        src/vorbis.cpp
         generated/class_descriptors.gen.cpp
     DEPS
         asset
@@ -36,3 +40,9 @@ engine_add_module_tests(audio
     SOURCES
         tests/audio_tests.cpp
 )
+# Real Ogg Vorbis files (D546): tones a libvorbis encoder wrote, since the
+# engine has none to write them with at test time.
+if(TARGET engine_audio_tests)
+    target_compile_definitions(engine_audio_tests PRIVATE
+        ENG_AUDIO_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+endif()

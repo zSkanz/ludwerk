@@ -186,6 +186,16 @@ local BasePartFields: { Schema.Field } = {
         Doc = "Whether the part casts a shadow (protocol 38). A look, like what it wears: a replica that "
             .. "did not have it drew a shadow under every effect the authority had asked to cast none.",
     },
+    {
+        Name = "CollisionGroup",
+        Id = 18,
+        Encoding = "NameAtom",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "Which group the part collides as (protocol 38, D545). A replica predicts its own character "
+            .. "against the parts it holds: one whose group it was never told stopped a character the "
+            .. "authority's walked through. The table of groups travels in `CollisionGroups`.",
+    },
 }
 
 --- What a `Part` is beyond a base part (protocol 30, D424): its shape. On
@@ -2582,6 +2592,32 @@ local Classes: { Schema.Class } = {
         Fields = BlurEffectFields,
     },
     {
+        Name = "Swarm",
+        Doc = "A crowd the engine steers (ADR 0156), replicated so a replica has something to ask "
+            .. "(ADR 0162, protocol 38). Its agents are rows, not instances: with `Replicates` they "
+            .. "travel in `SwarmAgents` and `SwarmState`, and without it a replica's copy is empty.",
+        Fields = {
+            {
+                Name = "Replicates",
+                Id = 1,
+                Encoding = "Bool",
+                Source = "Component",
+                Component = "swarms",
+                Doc = "Whether the authority sends this swarm's agents: a replica's copy is read-only "
+                    .. "either way.",
+            },
+            {
+                Name = "ReplicationRadius",
+                Id = 2,
+                Encoding = "F32",
+                Source = "Component",
+                Component = "swarms",
+                Doc = "How far from a player's focus an agent is sent, so a replica's script can read what "
+                    .. "the authority decided.",
+            },
+        },
+    },
+    {
         Name = "DepthOfFieldEffect",
         Doc = "The world's look under `Lighting` (ADR 0096, protocol 13): the authority's is every replica's. A camera's stays on its own screen.",
         Fields = DepthOfFieldEffectFields,
@@ -2913,12 +2949,6 @@ local Excluded: { Schema.Excluded } = {
             .. "interpolated like any other part's. Sending the agent too would send a second account of "
             .. "one motion.",
     },
-    {
-        Name = "Swarm",
-        Reason = "It walks its agents' bodies where it runs (ADR 0156), and those bodies' `CFrame`s are "
-            .. "what arrives, as `NavigationAgent`'s part's do. Its agents are rows, not instances, and a "
-            .. "replica that wants a horde of its own runs one where it is seen.",
-    },
     { Name = "Frame", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "TextLabel", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "TextButton", Reason = "Screen-space UI. The same as `ScreenGui`." },
@@ -3023,6 +3053,17 @@ local Channels: { Schema.Channel } = {
             .. "once and never again, so a lost one holds nothing up, and sequenced so one that arrives "
             .. "after a later one is dropped. Its own channel: the sequence it shares is only its own, "
             .. "and a game's messages cannot make a snapshot late.",
+    },
+    {
+        Name = "Swarm",
+        Id = 5,
+        Delivery = "Unreliable",
+        Doc = "Where a replicated `Swarm`'s agents are (ADR 0162, protocol 38): each message stands "
+            .. "alone, a packet, and is never sent again -- an agent a replica draws wrong is sent again "
+            .. "because it is wrong. **Not sequenced**: every agent in a message carries the order with "
+            .. "it, in the message's tick, so one that arrives after a later one is still taken for the "
+            .. "agents the later one did not name; sequenced, a link whose packets swap places lost a "
+            .. "third of them to the rule.",
     },
 }
 
@@ -3829,6 +3870,38 @@ local Messages: { Schema.Message } = {
             .. "the player waited out the join's timeout with no reason.",
     },
     {
+        Name = "CollisionGroups",
+        Id = 30,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "count", Type = "u16", Doc = "At most 1024; `Default` is among them." },
+            {
+                Name = "groups",
+                Type = "repeat",
+                Count = "count",
+                Each = {
+                    { Name = "name", Type = "text" },
+                },
+            },
+            { Name = "apartCount", Type = "u32" },
+            {
+                Name = "apart",
+                Type = "repeat",
+                Count = "apartCount",
+                Each = {
+                    { Name = "a", Type = "u16", Doc = "A group, by its place in `groups`." },
+                    { Name = "b", Type = "u16", Doc = "Another, or the same: `a` at most `b`." },
+                },
+            },
+        },
+        Doc = "The authority's collision groups and the pairs of them that do not collide (protocol 38, "
+            .. "D545), whole: once to a replica that joins, when a game has registered any, and whenever the "
+            .. "table changed. A replica registers the names it has not and takes every pair among them "
+            .. "from here -- collidable unless listed -- and keeps its own word on groups the authority "
+            .. "never named. By name, never by number: each machine numbers its groups as it met them.",
+    },
+    {
         Name = "UnreliableToAuthority",
         Id = 25,
         Channel = "Remote",
@@ -3887,6 +3960,150 @@ local Messages: { Schema.Message } = {
         Doc = "`UnreliableRemoteEvent:FireClient` and `FireAllClients`, laid out as "
             .. "`UnreliableToAuthority` is. Never held: a replica that does not have the event yet is "
             .. "sent nothing.",
+    },
+    {
+        Name = "SwarmAgents",
+        Id = 27,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "swarm", Type = "u32", Doc = "The network id of the `Swarm`." },
+            { Name = "tick", Type = "u32", Doc = "The authority's tick this is true at, its low 32 bits." },
+            {
+                Name = "originX",
+                Type = "u32",
+                Doc = "Where every position below is measured from, in whole metres, as a signed number: "
+                    .. "a point on a 16 m lattice near the replica's focus.",
+            },
+            { Name = "originY", Type = "u32" },
+            { Name = "originZ", Type = "u32" },
+            {
+                Name = "membership",
+                Type = "u16",
+                Doc = "How many `SwarmAgents` messages this replica has been sent for this swarm, this one "
+                    .. "counted. The replica says the last it took in (`SwarmAck`), and the authority sends "
+                    .. "the position of an agent only once the message that brought it was taken in: a "
+                    .. "number is used again, and a position must not reach the agent that had it before.",
+            },
+            {
+                Name = "floor",
+                Type = "f32",
+                Doc = "The height, from the origin, that a lift is measured from where no terrain covers "
+                    .. "the agent. Where one does, it is measured from the terrain's top there.",
+            },
+            { Name = "removedCount", Type = "u16" },
+            {
+                Name = "removed",
+                Type = "repeat",
+                Count = "removedCount",
+                Doc = "The agents this replica no longer has, before the ones it gains: a number is used "
+                    .. "again only after its agent went.",
+                Each = {
+                    { Name = "slot", Type = "u16", Doc = "The agent's number, less one." },
+                    { Name = "reason", Type = "u8", Doc = "`Enum.SwarmAgentRemoval`: 0 removed, 1 out of reach." },
+                    { Name = "tag", Type = "u16", Doc = "The tag it had last." },
+                    { Name = "x", Type = "f32", Doc = "Where it was last, from the origin." },
+                    { Name = "y", Type = "f32" },
+                    { Name = "z", Type = "f32" },
+                },
+            },
+            { Name = "addedCount", Type = "u16" },
+            {
+                Name = "added",
+                Type = "repeat",
+                Count = "addedCount",
+                Each = {
+                    { Name = "slot", Type = "u16", Doc = "The agent's number, less one." },
+                    { Name = "tag", Type = "u16" },
+                    { Name = "radius", Type = "u8", Doc = "In sixteenths of a metre." },
+                    { Name = "height", Type = "u8", Doc = "In eighths of a metre." },
+                    { Name = "x", Type = "f32", Doc = "Where it is, from the origin." },
+                    { Name = "y", Type = "f32" },
+                    { Name = "z", Type = "f32" },
+                    { Name = "lift", Type = "f32", Doc = "How far above its ground: the terrain, or the floor." },
+                    { Name = "yaw", Type = "u8", Doc = "The way it faces, a 256th of a turn." },
+                    {
+                        Name = "walk",
+                        Type = "u8",
+                        Doc = "How fast it walks that way, in quarters of a metre a second.",
+                    },
+                },
+            },
+        },
+        Doc = "The agents of a replicated `Swarm` entering and leaving what one replica is sent "
+            .. "(protocol 38, ADR 0162): reliable, in order, and ahead of the game's own reliable messages "
+            .. "of the tick, so a number names one agent from its arrival to its removal on every "
+            .. "machine. A removal carries the agent's last tag and place.",
+    },
+    {
+        Name = "SwarmState",
+        Id = 28,
+        Channel = "Swarm",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "swarm", Type = "u32", Doc = "The network id of the `Swarm`." },
+            { Name = "tick", Type = "u32", Doc = "The authority's tick this is true at, its low 32 bits." },
+            {
+                Name = "sequence",
+                Type = "u16",
+                Doc = "This message's number for the replica, counted up and wrapping: what a `SwarmAck` " .. "names.",
+            },
+            { Name = "originX", Type = "u32", Doc = "As `SwarmAgents`'s." },
+            { Name = "originY", Type = "u32" },
+            { Name = "originZ", Type = "u32" },
+            { Name = "floor", Type = "f32", Doc = "As `SwarmAgents`'s." },
+            { Name = "byteCount", Type = "u16" },
+            {
+                Name = "agents",
+                Type = "repeat",
+                Count = "byteCount",
+                Each = { { Name = "byte", Type = "u8" } },
+                Doc = "The agents, in rising number. Each: the step from the number before it (from -1 "
+                    .. "for the first) as a varint of seven bits a byte, low first; three bytes of x and z, "
+                    .. "twelve bits each, in eighths of a metre from the origin less 256 m; a byte of yaw, a "
+                    .. "256th of a turn; a byte whose low six bits are the walk in quarters of a metre a "
+                    .. "second, bit 6 says a lift follows and bit 7 a tag. The lift is a byte of eighths of "
+                    .. "a metre above its ground -- the terrain, or the floor -- or 255 and then a u16 of "
+                    .. "them; the tag is a u16.",
+            },
+        },
+        Doc = "Where some agents of a replicated `Swarm` are (protocol 38, ADR 0162), at most 1100 bytes "
+            .. "so it is one packet. An agent is in it when the replica's drawing of it would otherwise "
+            .. "be wrong by more than a threshold, when its tag changed, or when it has not been sent for "
+            .. "a while. A replica ignores one older than what it holds for that agent, and says which "
+            .. "messages arrived (`SwarmAck`): the agents of one that did not are sent again.",
+    },
+    {
+        Name = "SwarmAck",
+        Id = 29,
+        Channel = "Swarm",
+        Direction = "ToAuthority",
+        Layout = {
+            { Name = "count", Type = "u8" },
+            {
+                Name = "sequences",
+                Type = "repeat",
+                Count = "count",
+                Doc = "The `SwarmState` messages this replica took in, newest last: each is said in "
+                    .. "several of these, since one of them may be lost too.",
+                Each = { { Name = "sequence", Type = "u16" } },
+            },
+            { Name = "swarmCount", Type = "u8" },
+            {
+                Name = "swarms",
+                Type = "repeat",
+                Count = "swarmCount",
+                Doc = "For each swarm this replica mirrors, the last `SwarmAgents` it took in.",
+                Each = {
+                    { Name = "swarm", Type = "u32", Doc = "The network id of the `Swarm`." },
+                    { Name = "membership", Type = "u16" },
+                },
+            },
+        },
+        Doc = "Which `SwarmState` messages arrived (protocol 38, ADR 0162). The authority sends an agent "
+            .. "when a replica would draw it wrong, and takes what it sent as what the replica has; a "
+            .. "message nobody acknowledges within the round trip was lost, and its agents are told "
+            .. "again at once rather than when they are next due.",
     },
 }
 

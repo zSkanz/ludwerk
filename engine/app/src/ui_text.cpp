@@ -473,6 +473,11 @@ void UiText::sync(rhi::IDevice& device, rhi::ICmdList& cmd)
         return;
     }
 
+    // **Whether the GPU holds what this atlas was** (D543): the same texture,
+    // of pixels not emptied since. Then a new glyph is the rows it was written
+    // on, and those are what goes up.
+    const bool rows = atlas_.valid() && source.width == width_ && source.height == height_ &&
+                      uploadedVersion_ >= source.clearedAt && source.rowVersions.size() == source.height;
     if (!atlas_.valid() || source.width != width_ || source.height != height_) {
         if (atlas_.valid()) {
             device.destroy(atlas_);
@@ -502,14 +507,38 @@ void UiText::sync(rhi::IDevice& device, rhi::ICmdList& cmd)
     //
     // The CPU-side atlas stays one byte a texel, which is the honest storage;
     // this is the upload.
-    staging_.resize(static_cast<core::usize>(source.width) * source.height * 4u);
-    for (core::usize i = 0; i < source.pixels.size(); ++i) {
-        staging_[i * 4 + 0] = std::byte{0xFF};
-        staging_[i * 4 + 1] = std::byte{0xFF};
-        staging_[i * 4 + 2] = std::byte{0xFF};
-        staging_[i * 4 + 3] = std::byte{source.pixels[i]};
+    const auto expand = [&](core::u32 firstRow, core::u32 rowCount) {
+        const core::usize texels = static_cast<core::usize>(source.width) * rowCount;
+        const core::u8* const from = source.pixels.data() + static_cast<core::usize>(firstRow) * source.width;
+        staging_.resize(texels * 4u);
+        for (core::usize i = 0; i < texels; ++i) {
+            staging_[i * 4 + 0] = std::byte{0xFF};
+            staging_[i * 4 + 1] = std::byte{0xFF};
+            staging_[i * 4 + 2] = std::byte{0xFF};
+            staging_[i * 4 + 3] = std::byte{from[i]};
+        }
+        atlasBytes_ += staging_.size();
+    };
+    if (rows) {
+        // Each run of rows written since, the width of the atlas: a shelf's
+        // worth for the glyphs of one frame, most often one run.
+        for (core::u32 row = 0; row < source.height;) {
+            if (source.rowVersions[row] <= uploadedVersion_) {
+                row += 1;
+                continue;
+            }
+            core::u32 end = row + 1;
+            while (end < source.height && source.rowVersions[end] > uploadedVersion_)
+                end += 1;
+            expand(row, end - row);
+            cmd.uploadTextureRegion(atlas_, 0, row, source.width, end - row, staging_);
+            row = end;
+        }
     }
-    cmd.uploadTexture(atlas_, staging_, 0);
+    else {
+        expand(0, source.height);
+        cmd.uploadTexture(atlas_, staging_, 0);
+    }
     uploadedVersion_ = source.version;
 }
 

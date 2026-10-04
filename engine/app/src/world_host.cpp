@@ -1153,6 +1153,9 @@ void WorldHost::tick()
     {
         ENG_PROFILE_SCOPE("net.messages");
         script::fireRemoteMessages(m_runtime->state());
+        // And what became of the swarms' agents (ADR 0162): on a replica it
+        // arrived from the network, for the same reason.
+        script::fireSwarmEvents(m_runtime->state());
         // And what crossed from a sub-world, or into one (ADR 0107 §3), for the
         // same reason: it arrived between ticks, and this is where it becomes one.
         script::fireSubWorldMessages(m_runtime->state());

@@ -14,6 +14,8 @@
 #include <chrono>
 #include <doctest/doctest.h>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <thread>
 
@@ -22,6 +24,7 @@
 #include "engine/core/i18n.h"
 #include "engine/platform/async_io.h"
 #include "engine/rhi/backends.h"
+#include "engine/ui/ui.h"
 
 using namespace engine;
 using engine::app::UiText;
@@ -245,4 +248,63 @@ TEST_CASE("a view's picture remade in a frame is the one that frame draws (the 2
     text.refreshViews();
     CHECK_FALSE(text.images()[0].valid());
     fixture.device->destroy(current);
+}
+
+namespace {
+
+bool provideTestFace(void*, std::string_view name, std::vector<core::u8>& out)
+{
+    if (name != "asset://fonts/test.ttf")
+        return false;
+    std::ifstream file(ENG_TEST_FONT, std::ios::binary);
+    if (!file)
+        return false;
+    const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    out.assign(bytes.begin(), bytes.end());
+    return !out.empty();
+}
+
+} // namespace
+
+TEST_CASE("a new glyph sends the rows it was written on, not the atlas")
+{
+    // **D543**: the atlas went up whole whenever its version moved -- a
+    // million texels made four million bytes and sent, for one new digit in a
+    // damage number. 10 to 15 ms of a frame, as often as a game showed a
+    // character it had not shown at that size.
+    Fixture fixture;
+    ui::setFaceProvider(&provideTestFace, nullptr);
+    ui::resetGlyphCache();
+    {
+        UiText text;
+        text.setMounts(&fixture.mounts);
+        (void)ui::measureText("Score", "asset://fonts/test.ttf", 24.0f, 0.0f);
+        const ui::GlyphAtlas first = ui::glyphAtlas();
+        REQUIRE_FALSE(first.pixels.empty());
+        text.sync(*fixture.device, *fixture.cmd);
+        // The first time there is nothing on the GPU: all of it.
+        const core::u64 whole = static_cast<core::u64>(first.width) * first.height * 4u;
+        CHECK(text.atlasBytesUploaded() == whole);
+
+        // Nothing new: nothing sent.
+        text.sync(*fixture.device, *fixture.cmd);
+        CHECK(text.atlasBytesUploaded() == whole);
+
+        // One more character: the rows of one glyph, the width of the atlas.
+        (void)ui::measureText("7", "asset://fonts/test.ttf", 24.0f, 0.0f);
+        text.sync(*fixture.device, *fixture.cmd);
+        const core::u64 added = text.atlasBytesUploaded() - whole;
+        MESSAGE("one new glyph at 24 px: ", added, " bytes sent, of ", whole);
+        CHECK(added > 0);
+        CHECK(added <= static_cast<core::u64>(first.width) * 40u * 4u);
+
+        // An atlas emptied and written again is nothing the GPU holds: whole.
+        ui::resetGlyphCache();
+        (void)ui::measureText("Score", "asset://fonts/test.ttf", 24.0f, 0.0f);
+        text.sync(*fixture.device, *fixture.cmd);
+        CHECK(text.atlasBytesUploaded() == whole + added + whole);
+        text.destroy(*fixture.device);
+    }
+    ui::resetGlyphCache();
+    ui::setFaceProvider(nullptr, nullptr);
 }

@@ -430,6 +430,9 @@ if(ENG_BUILD_TESTS)
     # fixture is two things to keep in step for no gain.
     target_compile_definitions(engine_app_tests PRIVATE
         ENG_TEST_IMAGE="${CMAKE_SOURCE_DIR}/engine/asset/tests/data/checker.png")
+    # And one real face, so the glyph atlas has something in it (D543).
+    target_compile_definitions(engine_app_tests PRIVATE
+        ENG_TEST_FONT="${ENG_THIRD_PARTY_DIR}/inter/docs/font-files/InterVariable.ttf")
 
     # One real mesh, so the preview's RENDER half has something to draw (S5.16).
     # The engine's staged content is shaders, icons and templates -- no models --
@@ -511,6 +514,17 @@ if(ENG_BUILD_TESTS)
         COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/serve/match_over.luau" --serve=47913 --rhi=null)
     set_tests_properties(serve_ends_on_match PROPERTIES
         PASS_REGULAR_EXPRESSION "server closed after the match"
+        TIMEOUT 60)
+
+    # **A long frame's warning is about that frame** (D540): it split the
+    # frame BEFORE the long one into phases, so a tick that stood still for
+    # most of a second was reported as a simulation that took nothing and "the
+    # rest" that took all of it. A server, because a served match is on the
+    # real clock and a headless run is not.
+    add_test(NAME long_frame_names_its_phases
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/serve/long_frame.luau" --serve=47914 --rhi=null)
+    set_tests_properties(long_frame_names_its_phases PROPERTIES
+        PASS_REGULAR_EXPRESSION "simulation and its scripts [1-9][0-9][0-9][.][0-9]+ ms"
         TIMEOUT 60)
 
     # The frame loop terminates on its budget and says what it ran. Separate

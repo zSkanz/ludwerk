@@ -16,10 +16,12 @@
 #include "engine/core/finite.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
+#include "engine/core/profile.h"
 #include "engine/replication/script_templates.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/components.h"
 #include "engine/scene/players.h"
+#include "engine/scene/swarm.h"
 #include "engine/scene/voxel_fluid.h"
 #include "engine/scene/world.h"
 #include "wire_schema.gen.h"
@@ -68,6 +70,7 @@ constexpr u8 StateChannel = 1;
 constexpr u8 IntentChannel = 2;
 constexpr u8 OwnershipChannel = 3;
 constexpr u8 RemoteChannel = 4;
+constexpr u8 SwarmChannel = 5;
 
 // A snapshot record whose fields are the whole set rather than a diff.
 constexpr u8 FullRecord = 1;
@@ -1093,6 +1096,35 @@ void writeKey(Writer& out, core::i32 x, core::i32 y, core::i32 z)
     return std::move(out.bytes);
 }
 
+// **The collision groups, whole** (D545): the names, and the pairs that do not
+// collide. Nothing at all while no game has registered a group and `Default`
+// meets itself -- the table every machine starts with.
+[[nodiscard]] std::vector<u8> collisionGroupsMessage(const scene::World& world)
+{
+    const scene::CollisionGroups& groups = world.collisionGroups();
+    const u32 count = groups.count();
+    if (count <= 1 && groups.collidable(scene::CollisionGroups::kDefault, scene::CollisionGroups::kDefault))
+        return {};
+    Writer out;
+    out.u8v(static_cast<u8>(MessageType::CollisionGroups));
+    out.u16v(static_cast<u16>(count));
+    for (u32 at = 0; at < count; ++at)
+        out.text(world.atoms().text(groups.nameAt(static_cast<u16>(at))));
+    std::vector<std::pair<u16, u16>> apart;
+    for (u32 a = 0; a < count; ++a) {
+        for (u32 b = a; b < count; ++b) {
+            if (!groups.collidable(static_cast<u16>(a), static_cast<u16>(b)))
+                apart.emplace_back(static_cast<u16>(a), static_cast<u16>(b));
+        }
+    }
+    out.u32v(static_cast<u32>(apart.size()));
+    for (const auto& [a, b] : apart) {
+        out.u16v(a);
+        out.u16v(b);
+    }
+    return std::move(out.bytes);
+}
+
 [[nodiscard]] std::vector<u8> voxelTypesMessage(const scene::World& world, const scene::VoxelComponent& voxels)
 {
     Writer out;
@@ -1138,6 +1170,28 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
     const auto invalidate = [this]() { m_groundWholeValid = false; };
     const bool restored = m_ground.restores != world.restores();
     m_ground.restores = world.restores();
+
+    // **The collision groups** (D545), with the ground because they are sent
+    // as it is: whole to a peer that joins, and to every peer when they
+    // change. The world's, not a scene's -- a new scene does not forget them.
+    // Read once a revision, and after everything below, put FIRST: a part
+    // whose group a replica has not heard of collides as `Default` until it
+    // has.
+    std::vector<u8> groupsChanged;
+    if (const u32 revision = world.collisionGroups().revision(); !m_groupsRead || revision != m_groupsRevision) {
+        m_groupsRead = true;
+        m_groupsRevision = revision;
+        std::vector<u8> groups = collisionGroupsMessage(world);
+        if (groups != m_groupsSent) {
+            m_groupsSent = groups;
+            groupsChanged = std::move(groups);
+            invalidate();
+        }
+    }
+    const auto withGroups = [&]() {
+        if (!groupsChanged.empty())
+            m_groundEdits.insert(m_groundEdits.begin(), std::move(groupsChanged));
+    };
 
     // **A new scene is every peer's own ground again**: each loads it.
     if (const std::string& scene = world.engineState().currentScene; scene != m_ground.scene) {
@@ -1225,6 +1279,7 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
         m_ground.voxelShipped.clear();
         m_ground.voxelTypes.clear();
         m_ground.voxelRevision = ~u64{0};
+        withGroups();
         return;
     }
     // A block world new here, on the terrain's terms.
@@ -1248,6 +1303,7 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
         m_groundEdits.insert(m_groundEdits.begin(), types);
         m_ground.voxelTypes = std::move(types);
     }
+    withGroups();
     if (!m_groundEdits.empty())
         invalidate();
 }
@@ -1268,6 +1324,9 @@ void AuthoritySession::sendGroundWhole(Peer& peer, const scene::World& world)
 template <typename Send>
 void AuthoritySession::encodeGroundWhole(const scene::World& world, Send send)
 {
+    // The collision groups first (D545), when a game has any.
+    if (std::vector<u8> groups = collisionGroupsMessage(world); !groups.empty())
+        send(std::move(groups));
     if (const scene::TerrainComponent* terrain =
             m_ground.terrain.valid() ? world.terrains().find(m_ground.terrain) : nullptr;
         terrain != nullptr) {
@@ -1341,8 +1400,479 @@ void AuthoritySession::sendAttributes(Peer& peer, const std::vector<u32>& enteri
     }
 }
 
+// --- A replicated swarm (ADR 0162) ------------------------------------------------
+
+[[nodiscard]] static std::optional<core::DVec3> focusOf(const scene::World& world,
+                                                        const scene::PlayerComponent* player);
+
+namespace {
+
+constexpr f64 Pi = 3.14159265358979323846;
+
+// A facing as a 256th of a turn, and back.
+[[nodiscard]] u8 packYaw(f32 yaw) noexcept
+{
+    const f64 turns = static_cast<f64>(yaw) / (2.0 * Pi);
+    const f64 wrapped = turns - std::floor(turns);
+    return static_cast<u8>(static_cast<u32>(wrapped * 256.0 + 0.5) & 0xffu);
+}
+
+[[nodiscard]] f32 unpackYaw(u8 packed) noexcept
+{
+    const f64 turns = static_cast<f64>(packed) / 256.0;
+    return static_cast<f32>((turns > 0.5 ? turns - 1.0 : turns) * 2.0 * Pi);
+}
+
+// A walk in quarters of a metre a second, six bits.
+[[nodiscard]] u8 packWalk(f32 walk) noexcept
+{
+    return static_cast<u8>(std::clamp(static_cast<f64>(walk) * 4.0 + 0.5, 0.0, 63.0));
+}
+
+// How far apart two facings are, in radians.
+[[nodiscard]] f64 turnBetween(f32 a, f32 b) noexcept
+{
+    f64 turn = std::fabs(static_cast<f64>(a) - static_cast<f64>(b));
+    while (turn > Pi)
+        turn = std::fabs(turn - 2.0 * Pi);
+    return turn;
+}
+
+// The origin a message's positions are measured from: a 16 m lattice near
+// `focus`, in whole metres, so every agent in reach is within twelve bits of
+// an eighth of a metre of it.
+struct SwarmOrigin
+{
+    core::i32 x = 0;
+    core::i32 y = 0;
+    core::i32 z = 0;
+};
+
+[[nodiscard]] SwarmOrigin originNear(const core::DVec3& focus) noexcept
+{
+    const auto lattice = [](f64 value) {
+        return static_cast<core::i32>(std::clamp(std::floor(value / 16.0 + 0.5) * 16.0, -2.0e9, 2.0e9));
+    };
+    return SwarmOrigin{lattice(focus.x), lattice(focus.y), lattice(focus.z)};
+}
+
+void writeSwarmF32(Writer& out, f32 value)
+{
+    out.u32v(std::bit_cast<u32>(value));
+}
+
+// A float off the wire: finite, and within `limit` of zero.
+[[nodiscard]] f32 readSwarmF32(Reader& in, f32 limit = 1.0e6f) noexcept
+{
+    const f32 value = std::bit_cast<f32>(in.u32v());
+    return std::isfinite(value) ? std::clamp(value, -limit, limit) : 0.0f;
+}
+
+// A message of comings and goings carries its number for the peer; one of
+// positions carries its own sequence instead.
+void writeSwarmHeader(Writer& out, MessageType type, u32 swarm, u64 tick, const SwarmOrigin& origin, f32 floor,
+                      u16 number)
+{
+    out.u8v(static_cast<u8>(type));
+    out.u32v(swarm);
+    out.u32v(static_cast<u32>(tick));
+    if (type == MessageType::SwarmState)
+        out.u16v(number);
+    out.u32v(static_cast<u32>(origin.x));
+    out.u32v(static_cast<u32>(origin.y));
+    out.u32v(static_cast<u32>(origin.z));
+    if (type == MessageType::SwarmAgents)
+        out.u16v(number);
+    writeSwarmF32(out, floor);
+}
+
+// Where a replica draws an agent it was last told of, at `tick`: its place
+// carried along the direction it faced.
+[[nodiscard]] core::DVec3 drawnAt(const core::DVec3& position, f32 faceX, f32 faceZ, f32 walk, u64 told, u64 tick,
+                                  f64 dt) noexcept
+{
+    const f64 ticks = std::min(static_cast<f64>(tick - std::min(told, tick)), scene::SwarmCarryTicks);
+    const f64 metres = static_cast<f64>(walk) * ticks * dt;
+    return core::DVec3{position.x + static_cast<f64>(faceX) * metres, position.y,
+                       position.z + static_cast<f64>(faceZ) * metres};
+}
+
+} // namespace
+
+void AuthoritySession::sendSwarms(scene::World& world)
+{
+    if (m_swarmTick == m_tick)
+        return;
+    m_swarmTick = m_tick;
+    ENG_PROFILE_SCOPE("net.swarms");
+    // Collected first, in pool order: a send does not change the pool, but
+    // what is walked while a swarm's log is cleared should not be the pool.
+    std::vector<InstanceId> swarms;
+    world.swarms().forEach([&](InstanceId id, scene::SwarmComponent& swarm) {
+        if (swarm.replicates)
+            swarms.push_back(id);
+        else
+            swarm.removed.clear();
+    });
+    std::vector<core::DVec3> truths;
+    for (const InstanceId id : swarms) {
+        scene::SwarmComponent* swarm = world.swarms().find(id);
+        const NetId netId = netIdOf(id);
+        if (swarm == nullptr)
+            continue;
+        if (netId.valid()) {
+            // Where every agent is this tick, once for every peer.
+            const f64 dt = world.engineState().fixedTimestep;
+            const usize count = std::min<usize>(swarm->agents.size(), 65535);
+            truths.resize(count);
+            for (usize slot = 0; slot < count; ++slot) {
+                if (swarm->agents[slot].alive)
+                    truths[slot] = scene::swarmAgentAt(swarm->agents[slot], static_cast<f64>(m_tick), dt);
+            }
+            for (Peer& peer : m_peers) {
+                // A peer that has not been told of the swarm has nothing to
+                // put its agents in: it is told of them the tick it is.
+                if (peer.welcomed && std::binary_search(peer.known.begin(), peer.known.end(), netId.value))
+                    sendSwarmTo(world, peer, *swarm, netId.value, truths);
+            }
+        }
+        // Every peer has been told who went.
+        swarm->removed.clear();
+    }
+}
+
+void AuthoritySession::sendSwarmTo(scene::World& world, Peer& peer, scene::SwarmComponent& swarm, u32 netId,
+                                   std::span<const core::DVec3> truths)
+{
+    auto view = std::find_if(peer.swarms.begin(), peer.swarms.end(),
+                             [netId](const Peer::SwarmView& held) { return held.netId == netId; });
+    if (view == peer.swarms.end()) {
+        Peer::SwarmView fresh;
+        fresh.netId = netId;
+        peer.swarms.push_back(std::move(fresh));
+        view = peer.swarms.end() - 1;
+    }
+    // A number is sixteen bits on the wire: a swarm past that many agents
+    // replicates its first 65535.
+    const usize count = std::min<usize>(swarm.agents.size(), 65535);
+    if (view->agents.size() < count)
+        view->agents.resize(count);
+
+    const f64 dt = world.engineState().fixedTimestep;
+    const u64 tick = m_tick;
+    const scene::PlayerComponent* player = peer.player.valid() ? world.players().find(peer.player) : nullptr;
+    const std::optional<core::DVec3> focus = focusOf(world, player);
+    const f64 reach = std::clamp(static_cast<f64>(swarm.replicationRadius), 1.0, MaxSwarmReach);
+    const f64 keep = reach * 1.25;
+
+    struct Gone
+    {
+        u16 slot = 0;
+        u8 reason = 0;
+        u16 tag = 0;
+        core::DVec3 position;
+    };
+    struct Told
+    {
+        f32 ratio = 0.0f;
+        u32 slot = 0;
+        core::DVec3 position;
+    };
+    std::vector<Gone> gone;
+    std::vector<u32> added;
+    std::vector<Told> wrong;
+    // The lowest of the agents this tick tells of: the floor a lift is
+    // measured from where no terrain is under the agent.
+    f64 lowest = 1.0e300;
+
+    // **A message nobody acknowledged was lost** (its round trip and half
+    // again have passed): what it said, the replica does not have, whatever
+    // this end took for sent.
+    const f64 wait = std::clamp(peer.swarmAckTicks * 1.5 + 2.0, SwarmAckWaitLeast, SwarmAckWaitMost);
+    while (!peer.swarmFlights.empty() &&
+           static_cast<f64>(tick - std::min(peer.swarmFlights.front().tick, tick)) > wait) {
+        const Peer::SwarmFlight& flight = peer.swarmFlights.front();
+        const auto owner = std::find_if(peer.swarms.begin(), peer.swarms.end(),
+                                        [&flight](const Peer::SwarmView& held) { return held.netId == flight.netId; });
+        if (owner != peer.swarms.end()) {
+            for (const u32 slot : flight.slots) {
+                // Unless it has been told again since: that is another message's.
+                if (slot < owner->agents.size() && owner->agents[slot].known && owner->agents[slot].tick == flight.tick)
+                    owner->agents[slot].lost = true;
+            }
+        }
+        peer.swarmFlights.pop_front();
+    }
+
+    for (usize slot = 0; slot < view->agents.size(); ++slot) {
+        Peer::SwarmSent& sent = view->agents[slot];
+        const scene::SwarmAgent* agent = slot < count && swarm.agents[slot].alive ? &swarm.agents[slot] : nullptr;
+        // The agent this peer has under that number is no more: removed, and
+        // perhaps another in its place already.
+        if (sent.known && (agent == nullptr || agent->born != sent.born)) {
+            Gone record{static_cast<u16>(slot), scene::SwarmRemovalRemoved, sent.tag, sent.position};
+            for (const scene::SwarmRemoved& removed : swarm.removed) {
+                if (removed.slot == slot && removed.born == sent.born) {
+                    record.tag = removed.tag;
+                    record.position = removed.position;
+                }
+            }
+            gone.push_back(record);
+            sent = Peer::SwarmSent{};
+        }
+        if (agent == nullptr)
+            continue;
+        const core::DVec3& truth = truths[slot];
+        f64 distance = 0.0;
+        if (focus.has_value()) {
+            const core::DVec3 away = truth - *focus;
+            distance = std::sqrt(away.x * away.x + away.y * away.y + away.z * away.z);
+        }
+        if (!sent.known) {
+            if (distance > reach)
+                continue;
+            sent = Peer::SwarmSent{.known = true,
+                                   .born = agent->born,
+                                   .tag = agent->tag,
+                                   .yaw = agent->yaw,
+                                   .walk = agent->walk,
+                                   .lift = 0.0f,
+                                   .tick = tick,
+                                   .position = truth,
+                                   .faceX = agent->faceX,
+                                   .faceZ = agent->faceZ};
+            added.push_back(static_cast<u32>(slot));
+            continue;
+        }
+        if (distance > keep) {
+            gone.push_back(Gone{static_cast<u16>(slot), scene::SwarmRemovalOutOfReach, agent->tag, truth});
+            sent = Peer::SwarmSent{};
+            continue;
+        }
+        // **Not until the peer has taken in the message that brought it**: a
+        // number is used again, and until then a position for this agent
+        // would move the one the peer still knows by that number. The message
+        // that brings it says where it is; it waits a round trip for more.
+        if (static_cast<core::i16>(static_cast<u16>(view->membershipTaken - sent.addedIn)) < 0)
+            continue;
+        // **Told again when the replica would be wrong** -- where it draws the
+        // agent from what it was last told, against where the agent is -- by
+        // more than a threshold that grows with distance; or when it has not
+        // been told for a while, which is what repairs a message the network
+        // lost, since nobody says one was.
+        const core::DVec3 drawn = drawnAt(sent.position, sent.faceX, sent.faceZ, sent.walk, sent.tick, tick, dt);
+        const f64 offX = truth.x - drawn.x;
+        const f64 offZ = truth.z - drawn.z;
+        // Up and down counts half: a pile's heights change every tick, and
+        // nobody reads a pile to the decimetre. On terrain a replica follows
+        // the ground itself, so what can be wrong is the lift; off it, it
+        // stays at the height it was told.
+        const f64 rise = sent.onTerrain ? static_cast<f64>(agent->lift - sent.lift) : truth.y - sent.position.y;
+        const f64 off = std::sqrt(offX * offX + offZ * offZ) + 0.5 * std::fabs(rise);
+        const f64 far = std::clamp(distance / reach, 0.0, 1.0);
+        const f64 error = off / (SwarmNearError + (SwarmFarError - SwarmNearError) * far);
+        const f64 turn = turnBetween(agent->yaw, sent.yaw) / (SwarmNearTurn + (SwarmFarTurn - SwarmNearTurn) * far);
+        const f64 stale =
+            static_cast<f64>(tick - sent.tick) / (SwarmNearRefresh + (SwarmFarRefresh - SwarmNearRefresh) * far);
+        f64 ratio = std::max({error, turn, stale});
+        if (agent->tag != sent.tag)
+            ratio = std::max(ratio, 2.0);
+        if (sent.lost)
+            ratio = std::max(ratio, 3.0);
+        if (ratio >= 1.0)
+            wrong.push_back(Told{static_cast<f32>(ratio), static_cast<u32>(slot), truth});
+    }
+
+    const SwarmOrigin origin = originNear(focus.value_or(core::DVec3{}));
+    for (const Told& told : wrong)
+        lowest = std::min(lowest, told.position.y);
+    for (const u32 slot : added)
+        lowest = std::min(lowest, view->agents[slot].position.y);
+    // From the origin, and an eighth of a metre under the lowest, so nothing
+    // rounds to below it.
+    const f32 floor =
+        lowest < 1.0e299 ? static_cast<f32>(std::floor((lowest - static_cast<f64>(origin.y)) * 8.0) / 8.0) : 0.0f;
+    const f64 floorY = static_cast<f64>(origin.y) + static_cast<f64>(floor);
+    // An agent's lift on the wire: above the terrain where there is one under
+    // it, above the floor where there is none.
+    const auto liftOf = [&](const core::DVec3& at, bool& onTerrain) {
+        const std::optional<f64> terrain = scene::swarmTerrainAt(world, at.x, at.z);
+        onTerrain = terrain.has_value();
+        return static_cast<f32>(std::max(at.y - terrain.value_or(floorY), 0.0));
+    };
+    const auto relative = [&origin](const core::DVec3& position) {
+        return core::Vec3{static_cast<f32>(position.x - static_cast<f64>(origin.x)),
+                          static_cast<f32>(position.y - static_cast<f64>(origin.y)),
+                          static_cast<f32>(position.z - static_cast<f64>(origin.z))};
+    };
+
+    // --- Who came and went: reliable, the goings first.
+    usize goneAt = 0;
+    usize addedAt = 0;
+    while (goneAt < gone.size() || addedAt < added.size()) {
+        Writer out;
+        view->membership = static_cast<u16>(view->membership + 1);
+        writeSwarmHeader(out, MessageType::SwarmAgents, netId, tick, origin, floor, view->membership);
+        const usize goneCount = std::min(gone.size() - goneAt, SwarmAgentsPerMessage);
+        out.u16v(static_cast<u16>(goneCount));
+        for (usize at = goneAt; at < goneAt + goneCount; ++at) {
+            const core::Vec3 where = relative(gone[at].position);
+            out.u16v(gone[at].slot);
+            out.u8v(gone[at].reason);
+            out.u16v(gone[at].tag);
+            writeSwarmF32(out, where.x);
+            writeSwarmF32(out, where.y);
+            writeSwarmF32(out, where.z);
+        }
+        // The comings of this message wait for every going to have gone: a
+        // number is used again only after its agent went.
+        goneAt += goneCount;
+        const usize addedCount = goneAt >= gone.size() ? std::min(added.size() - addedAt, SwarmAgentsPerMessage) : 0;
+        out.u16v(static_cast<u16>(addedCount));
+        for (usize at = addedAt; at < addedAt + addedCount; ++at) {
+            const scene::SwarmAgent& agent = swarm.agents[added[at]];
+            Peer::SwarmSent& sent = view->agents[added[at]];
+            const core::Vec3 where = relative(sent.position);
+            sent.lift = liftOf(sent.position, sent.onTerrain);
+            sent.addedIn = view->membership;
+            out.u16v(static_cast<u16>(added[at]));
+            out.u16v(agent.tag);
+            out.u8v(static_cast<u8>(std::clamp(static_cast<f64>(agent.radius) * 16.0 + 0.5, 0.0, 255.0)));
+            out.u8v(static_cast<u8>(std::clamp(static_cast<f64>(agent.height) * 8.0 + 0.5, 0.0, 255.0)));
+            writeSwarmF32(out, where.x);
+            writeSwarmF32(out, where.y);
+            writeSwarmF32(out, where.z);
+            writeSwarmF32(out, sent.lift);
+            out.u8v(packYaw(agent.yaw));
+            out.u8v(packWalk(agent.walk));
+        }
+        addedAt += addedCount;
+        (void)sendBytes(m_transport, peer.id, out.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+        m_stats.swarmRemoved += goneCount;
+        m_stats.swarmAdded += addedCount;
+    }
+
+    // --- Where the ones it would draw wrong are: what the budget lets through,
+    // the most wrong first, then in rising number for the wire.
+    // By the ticks since it was last sent to: an authority that sends every
+    // second or third tick has the same budget a second as one that sends
+    // every tick.
+    const f64 elapsed = std::clamp(static_cast<f64>(tick - std::min(view->budgetTick, tick)), 1.0, 8.0);
+    view->budgetTick = tick;
+    view->budget = std::min(view->budget + SwarmBytesPerTick * elapsed, SwarmByteBurst);
+    m_stats.swarmWanted += wrong.size();
+    if (wrong.empty() || view->budget < 32.0)
+        return;
+    constexpr f64 AgentBytes = 6.5;
+    const auto fits = static_cast<usize>(view->budget / AgentBytes);
+    if (wrong.size() > fits) {
+        std::partial_sort(
+            wrong.begin(), wrong.begin() + static_cast<std::ptrdiff_t>(fits), wrong.end(),
+            [](const Told& a, const Told& b) { return a.ratio != b.ratio ? a.ratio > b.ratio : a.slot < b.slot; });
+        wrong.resize(fits);
+    }
+    std::sort(wrong.begin(), wrong.end(), [](const Told& a, const Told& b) { return a.slot < b.slot; });
+
+    Writer out;
+    std::vector<u8> body;
+    std::vector<u32> carried;
+    core::i64 last = -1;
+    const auto flush = [&] {
+        if (body.empty())
+            return;
+        out.bytes.clear();
+        peer.swarmSequence = static_cast<u16>(peer.swarmSequence + 1);
+        writeSwarmHeader(out, MessageType::SwarmState, netId, tick, origin, floor, peer.swarmSequence);
+        out.u16v(static_cast<u16>(body.size()));
+        out.bytes.insert(out.bytes.end(), body.begin(), body.end());
+        // **Not sequenced**: every agent in a message is ordered by its own
+        // tick where it arrives, and a message that arrives after a later one
+        // still says something about the agents the later one did not name.
+        // Sequenced, a link whose packets swap places -- twenty milliseconds
+        // of jitter at sixty a second -- loses a third of them to the rule.
+        if (sendBytes(m_transport, peer.id, out.bytes, net::Delivery::Unreliable, SwarmChannel, m_stats))
+            m_stats.swarmBytes += out.bytes.size();
+        view->budget -= static_cast<f64>(out.bytes.size());
+        // On its way, until the replica says it arrived. Bounded: a replica
+        // that acknowledges nothing is told everything again and again, and
+        // what is kept of that is the last four seconds.
+        if (peer.swarmFlights.size() >= 1024)
+            peer.swarmFlights.pop_front();
+        peer.swarmFlights.push_back(Peer::SwarmFlight{peer.swarmSequence, netId, tick, std::move(carried)});
+        carried.clear();
+        body.clear();
+        last = -1;
+    };
+    for (const Told& told : wrong) {
+        const scene::SwarmAgent& agent = swarm.agents[told.slot];
+        Peer::SwarmSent& sent = view->agents[told.slot];
+        // Twelve bits an axis of an eighth of a metre, from the origin less
+        // 256 m. An agent past that -- a focus that jumped -- waits a tick.
+        const f64 x = (told.position.x - static_cast<f64>(origin.x) + 256.0) * 8.0 + 0.5;
+        const f64 z = (told.position.z - static_cast<f64>(origin.z) + 256.0) * 8.0 + 0.5;
+        if (!(x >= 0.0 && x < 4096.0 && z >= 0.0 && z < 4096.0))
+            continue;
+        if (body.size() + 13 > SwarmStateBytes - 29)
+            flush();
+        carried.push_back(told.slot);
+        u32 step = static_cast<u32>(static_cast<core::i64>(told.slot) - last);
+        last = static_cast<core::i64>(told.slot);
+        while (step >= 0x80u) {
+            body.push_back(static_cast<u8>(step | 0x80u));
+            step >>= 7;
+        }
+        body.push_back(static_cast<u8>(step));
+        const u32 packed = (static_cast<u32>(x) << 12) | static_cast<u32>(z);
+        body.push_back(static_cast<u8>(packed));
+        body.push_back(static_cast<u8>(packed >> 8));
+        body.push_back(static_cast<u8>(packed >> 16));
+        const u8 yaw = packYaw(agent.yaw);
+        const u8 walk = packWalk(agent.walk);
+        bool onTerrain = false;
+        const f64 liftEighths =
+            std::clamp(static_cast<f64>(liftOf(told.position, onTerrain)) * 8.0 + 0.5, 0.0, 65535.0);
+        const auto lift = static_cast<u32>(liftEighths);
+        const bool tagged = agent.tag != sent.tag;
+        body.push_back(yaw);
+        body.push_back(static_cast<u8>(walk | (lift != 0 ? 0x40u : 0u) | (tagged ? 0x80u : 0u)));
+        if (lift != 0) {
+            if (lift < 255) {
+                body.push_back(static_cast<u8>(lift));
+            }
+            else {
+                body.push_back(255);
+                body.push_back(static_cast<u8>(lift));
+                body.push_back(static_cast<u8>(lift >> 8));
+            }
+        }
+        if (tagged) {
+            body.push_back(static_cast<u8>(agent.tag));
+            body.push_back(static_cast<u8>(agent.tag >> 8));
+        }
+        // What the replica now draws it from: what it was sent, as it reads it.
+        sent.position = core::DVec3{static_cast<f64>(origin.x) - 256.0 + static_cast<f64>(static_cast<u32>(x)) / 8.0,
+                                    told.position.y,
+                                    static_cast<f64>(origin.z) - 256.0 + static_cast<f64>(static_cast<u32>(z)) / 8.0};
+        sent.yaw = unpackYaw(yaw);
+        sent.faceX = -std::sin(sent.yaw);
+        sent.faceZ = -std::cos(sent.yaw);
+        sent.walk = static_cast<f32>(walk) / 4.0f;
+        sent.lift = onTerrain ? agent.lift : static_cast<f32>(lift) / 8.0f;
+        sent.onTerrain = onTerrain;
+        sent.tag = agent.tag;
+        sent.tick = tick;
+        sent.lost = false;
+        m_stats.swarmStates += 1;
+    }
+    flush();
+}
+
 void AuthoritySession::sendMessages(scene::World& world)
 {
+    // **The crowd's comings and goings first** (ADR 0162): a game's own
+    // messages of this tick name agents by number, and arrive behind the
+    // message that says which agent a number is.
+    sendSwarms(world);
     std::vector<scene::RemoteMessage> outbox;
     outbox.swap(world.engineState().remoteOutbox);
 
@@ -1820,6 +2350,38 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     record.part->cframe = record.frame;
                     record.body->linearVelocity = core::sanitize(record.speed, MaxOwnedSpeed);
                     record.body->angularVelocity = core::sanitize(record.spin, core::MaxSpeed);
+                }
+                break;
+            }
+            if (event.channel == SwarmChannel && type == MessageType::SwarmAck && peer->welcomed) {
+                // **Which messages of positions arrived** (ADR 0162): each is
+                // forgotten, and how long it took is how long the next is
+                // waited for.
+                const u8 count = reader.u8v();
+                for (u8 at = 0; at < count && reader.ok(); ++at) {
+                    const u16 sequence = reader.u16v();
+                    const auto flight =
+                        std::find_if(peer->swarmFlights.begin(), peer->swarmFlights.end(),
+                                     [sequence](const Peer::SwarmFlight& held) { return held.sequence == sequence; });
+                    if (flight == peer->swarmFlights.end())
+                        continue;
+                    const f64 took = static_cast<f64>(m_tick - std::min(flight->tick, m_tick));
+                    peer->swarmAckTicks += (took - peer->swarmAckTicks) * 0.1;
+                    peer->swarmFlights.erase(flight);
+                }
+                const u8 swarms = reader.u8v();
+                for (u8 at = 0; at < swarms && reader.ok(); ++at) {
+                    const u32 swarm = reader.u32v();
+                    const u16 taken = reader.u16v();
+                    for (Peer::SwarmView& view : peer->swarms) {
+                        // Forward only: an acknowledgement that arrives late
+                        // says less than one already heard. And never past
+                        // what was sent -- a peer is not trusted to count.
+                        if (view.netId == swarm && reader.ok() &&
+                            static_cast<core::i16>(static_cast<u16>(taken - view.membershipTaken)) > 0 &&
+                            static_cast<core::i16>(static_cast<u16>(view.membership - taken)) >= 0)
+                            view.membershipTaken = taken;
+                    }
                 }
                 break;
             }
@@ -2485,6 +3047,22 @@ void AuthoritySession::send(const scene::World& world, InstanceId root, u64 tick
     }
 }
 
+// **Where a player looks from** (ADR 0162): `Player.ReplicationFocus` when
+// the game named one, their character otherwise, and nothing for a player
+// with neither.
+static std::optional<core::DVec3> focusOf(const scene::World& world, const scene::PlayerComponent* player)
+{
+    if (player == nullptr)
+        return std::nullopt;
+    if (player->replicationFocus.valid() && world.alive(player->replicationFocus)) {
+        if (const std::optional<core::DVec3> place = placeOf(world, player->replicationFocus); place.has_value())
+            return place;
+    }
+    if (player->character.valid() && world.alive(player->character))
+        return placeOf(world, player->character);
+    return std::nullopt;
+}
+
 std::vector<u32> AuthoritySession::interestOf(const scene::World& world, const Peer& peer) const
 {
     std::vector<u32> relevant;
@@ -2494,10 +3072,7 @@ std::vector<u32> AuthoritySession::interestOf(const scene::World& world, const P
     // with none has nothing to measure from and is sent everything, which is
     // what every session did before interest existed.
     const scene::PlayerComponent* player = peer.player.valid() ? world.players().find(peer.player) : nullptr;
-    const std::optional<core::DVec3> body =
-        player != nullptr && player->character.valid() && world.alive(player->character)
-            ? placeOf(world, player->character)
-            : std::nullopt;
+    const std::optional<core::DVec3> body = focusOf(world, player);
     if (!body.has_value()) {
         for (const Captured& entry : m_order)
             relevant.push_back(entry.netId);
@@ -3028,6 +3603,15 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
         case MessageType::Attributes:
             onAttributes(world, root, event.payload);
             break;
+        case MessageType::CollisionGroups:
+            onCollisionGroups(world, event.payload);
+            break;
+        case MessageType::SwarmAgents:
+            onSwarmAgents(world, event.payload);
+            break;
+        case MessageType::SwarmState:
+            onSwarmState(world, event.payload);
+            break;
         case MessageType::UnreliableToReplica:
             if (++remotesThisTick > MaxReplicaRemotesPerTick)
                 m_stats.unreliableDropped += 1;
@@ -3225,6 +3809,160 @@ void ReplicaSession::decayVisualOffset() noexcept
         m_visualOffset = core::DVec3{};
 }
 
+void ReplicaSession::onSwarmAgents(scene::World& world, std::span<const u8> payload)
+{
+    Reader reader(payload);
+    (void)reader.u8v();
+    const u32 netId = reader.u32v();
+    const f64 tick = static_cast<f64>(reader.u32v());
+    const f64 originX = static_cast<f64>(static_cast<core::i32>(reader.u32v()));
+    const f64 originY = static_cast<f64>(static_cast<core::i32>(reader.u32v()));
+    const f64 originZ = static_cast<f64>(static_cast<core::i32>(reader.u32v()));
+    const u16 membership = reader.u16v();
+    const f64 floor = originY + static_cast<f64>(readSwarmF32(reader));
+    const auto local = m_locals.find(netId);
+    scene::SwarmComponent* swarm = local != m_locals.end() ? world.swarms().find(local->second) : nullptr;
+    if (!reader.ok() || swarm == nullptr) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    swarm->mirrored = true;
+    // Reliable and in order: this is the next of them. Said to the authority,
+    // which sends an agent's position only once its coming was taken in.
+    swarm->mirrorMembership = membership;
+    const auto held = std::find_if(m_swarmMemberships.begin(), m_swarmMemberships.end(),
+                                   [netId](const std::pair<u32, u16>& entry) { return entry.first == netId; });
+    if (held == m_swarmMemberships.end())
+        m_swarmMemberships.emplace_back(netId, membership);
+    else
+        held->second = membership;
+    m_swarmAckDue = true;
+    const u16 goneCount = reader.u16v();
+    // Seventeen bytes a going, twenty-two a coming: a count the message
+    // cannot hold is refused before anything is done for it.
+    if (!reader.ok() || reader.remaining() < static_cast<usize>(goneCount) * 17u) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    for (u16 at = 0; at < goneCount; ++at) {
+        const u16 slot = reader.u16v();
+        const u8 reason = reader.u8v();
+        const u16 tag = reader.u16v();
+        const f32 x = readSwarmF32(reader);
+        const f32 y = readSwarmF32(reader);
+        const f32 z = readSwarmF32(reader);
+        scene::mirrorSwarmAgentRemoved(
+            *swarm, slot, reason == scene::SwarmRemovalOutOfReach ? reason : scene::SwarmRemovalRemoved, tag,
+            core::DVec3{originX + static_cast<f64>(x), originY + static_cast<f64>(y), originZ + static_cast<f64>(z)});
+        m_stats.swarmRemoved += 1;
+    }
+    const u16 addedCount = reader.u16v();
+    if (!reader.ok() || reader.remaining() < static_cast<usize>(addedCount) * 24u) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    for (u16 at = 0; at < addedCount; ++at) {
+        const u16 slot = reader.u16v();
+        const u16 tag = reader.u16v();
+        const f32 radius = static_cast<f32>(reader.u8v()) / 16.0f;
+        const f32 height = static_cast<f32>(reader.u8v()) / 8.0f;
+        const f32 x = readSwarmF32(reader);
+        const f32 y = readSwarmF32(reader);
+        const f32 z = readSwarmF32(reader);
+        const f32 lift = readSwarmF32(reader);
+        const f32 yaw = unpackYaw(reader.u8v());
+        const f32 walk = static_cast<f32>(reader.u8v() & 0x3fu) / 4.0f;
+        scene::SwarmTold told;
+        told.position =
+            core::DVec3{originX + static_cast<f64>(x), originY + static_cast<f64>(y), originZ + static_cast<f64>(z)};
+        told.lift = std::max(lift, 0.0f);
+        told.floor = floor;
+        told.yaw = yaw;
+        told.walk = walk;
+        scene::mirrorSwarmAgentAdded(*swarm, slot, tag, std::max(radius, 0.01f), std::max(height, 0.01f), told, tick);
+        m_stats.swarmAdded += 1;
+    }
+}
+
+void ReplicaSession::onSwarmState(scene::World& world, std::span<const u8> payload)
+{
+    Reader reader(payload);
+    (void)reader.u8v();
+    const u32 netId = reader.u32v();
+    const f64 tick = static_cast<f64>(reader.u32v());
+    const u16 sequence = reader.u16v();
+    const f64 originX = static_cast<f64>(static_cast<core::i32>(reader.u32v()));
+    const f64 originY = static_cast<f64>(static_cast<core::i32>(reader.u32v()));
+    const f64 originZ = static_cast<f64>(static_cast<core::i32>(reader.u32v()));
+    const f64 floor = originY + static_cast<f64>(readSwarmF32(reader));
+    const u16 size = reader.u16v();
+    const auto local = m_locals.find(netId);
+    scene::SwarmComponent* swarm = local != m_locals.end() ? world.swarms().find(local->second) : nullptr;
+    if (!reader.ok() || swarm == nullptr || reader.remaining() != size) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    swarm->mirrored = true;
+    m_stats.swarmBytes += payload.size();
+
+    // It arrived, whatever of it is still news: said to the authority, in
+    // the next few acknowledgements.
+    if (std::find(m_swarmAcks.begin(), m_swarmAcks.end(), sequence) == m_swarmAcks.end()) {
+        if (m_swarmAcks.size() >= SwarmAcksRepeated)
+            m_swarmAcks.erase(m_swarmAcks.begin());
+        m_swarmAcks.push_back(sequence);
+    }
+    m_swarmAckDue = true;
+    const std::span<const u8> body = reader.bytes().subspan(reader.at(), size);
+    const f64 dt = world.engineState().fixedTimestep;
+    usize at = 0;
+    core::i64 slot = -1;
+    const auto byte = [&]() -> u32 { return at < body.size() ? body[at++] : (at = body.size() + 1, 0u); };
+    while (at < body.size()) {
+        u32 step = 0;
+        for (u32 shift = 0; shift < 35; shift += 7) {
+            const u32 part = byte();
+            step |= (part & 0x7fu) << shift;
+            if ((part & 0x80u) == 0)
+                break;
+        }
+        slot += static_cast<core::i64>(step);
+        const u32 low = byte();
+        const u32 middle = byte();
+        const u32 high = byte();
+        const u32 packed = low | (middle << 8) | (high << 16);
+        const u8 yaw = static_cast<u8>(byte());
+        const u32 flags = byte();
+        u32 lift = 0;
+        if ((flags & 0x40u) != 0) {
+            lift = byte();
+            if (lift == 255) {
+                lift = byte();
+                const u32 more = byte();
+                lift |= more << 8;
+            }
+        }
+        std::optional<u16> tag;
+        if ((flags & 0x80u) != 0) {
+            const u32 tagLow = byte();
+            const u32 tagHigh = byte();
+            tag = static_cast<u16>(tagLow | (tagHigh << 8));
+        }
+        // Cut short: what was read of this agent is not an agent.
+        if (at > body.size() || step == 0 || slot > 65535)
+            break;
+        scene::SwarmTold told;
+        told.position = core::DVec3{originX - 256.0 + static_cast<f64>(packed >> 12) / 8.0, 0.0,
+                                    originZ - 256.0 + static_cast<f64>(packed & 0xfffu) / 8.0};
+        told.lift = static_cast<f32>(lift) / 8.0f;
+        told.floor = floor;
+        told.yaw = unpackYaw(yaw);
+        told.walk = static_cast<f32>(flags & 0x3fu) / 4.0f;
+        if (scene::mirrorSwarmAgentTold(*swarm, static_cast<u32>(slot), told, tick, dt, tag))
+            m_stats.swarmStates += 1;
+    }
+}
+
 void ReplicaSession::onUnreliable(scene::World& world, std::span<const u8> payload)
 {
     Reader reader(payload);
@@ -3256,6 +3994,27 @@ void ReplicaSession::onUnreliable(scene::World& world, std::span<const u8> paylo
 
 void ReplicaSession::sendMessages(scene::World& world)
 {
+    // Which messages of a swarm's positions arrived (ADR 0162) -- and said
+    // again every so often with nothing new, since the one that said a
+    // coming was taken in may itself be lost, and the authority waits on it.
+    m_swarmAckQuiet += 1;
+    if ((m_swarmAckDue || (!m_swarmMemberships.empty() && m_swarmAckQuiet >= 15)) && m_welcomed) {
+        m_swarmAckDue = false;
+        m_swarmAckQuiet = 0;
+        Writer ack;
+        ack.u8v(static_cast<u8>(MessageType::SwarmAck));
+        ack.u8v(static_cast<u8>(m_swarmAcks.size()));
+        for (const u16 sequence : m_swarmAcks)
+            ack.u16v(sequence);
+        // And the last message of comings and goings taken in, for each swarm.
+        const usize swarms = std::min<usize>(m_swarmMemberships.size(), 255);
+        ack.u8v(static_cast<u8>(swarms));
+        for (usize at = 0; at < swarms; ++at) {
+            ack.u32v(m_swarmMemberships[at].first);
+            ack.u16v(m_swarmMemberships[at].second);
+        }
+        (void)sendBytes(m_transport, m_authority, ack.bytes, net::Delivery::Unreliable, SwarmChannel, m_stats);
+    }
     std::vector<scene::RemoteMessage> outbox;
     outbox.swap(world.engineState().remoteOutbox);
     // This machine's instance to the network id the authority knows it by.
@@ -3954,6 +4713,68 @@ void ReplicaSession::onVoxelChunks(scene::World& world, std::span<const u8> byte
 }
 
 constexpr u16 MaxFluidReactionsOnWire = 4096;
+
+void ReplicaSession::onCollisionGroups(scene::World& world, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u16 count = reader.u16v();
+    if (count == 0 || count > scene::CollisionGroups::kMaxGroups) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    // Read whole before anything is registered: a message cut short must not
+    // leave half a table, nor grow the atom table.
+    std::vector<std::string_view> names;
+    names.reserve(count);
+    for (u16 at = 0; at < count && reader.ok(); ++at)
+        names.push_back(reader.text());
+    const u32 apartCount = reader.u32v();
+    if (!reader.ok() || apartCount > static_cast<u32>(count) * count) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    std::vector<std::pair<u16, u16>> apart;
+    apart.reserve(apartCount);
+    for (u32 at = 0; at < apartCount && reader.ok(); ++at) {
+        const u16 a = reader.u16v();
+        const u16 b = reader.u16v();
+        if (a >= count || b >= count)
+            reader.fail();
+        apart.emplace_back(a, b);
+    }
+    if (!reader.ok()) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    for (const std::string_view name : names) {
+        if (name.empty() || name.size() > 256) {
+            m_stats.messagesDropped += 1;
+            return;
+        }
+    }
+
+    // **By name**: this machine numbers its groups as it met them, and its own
+    // scripts may have registered some first. Every pair among the groups the
+    // authority named is the authority's -- collidable unless it says apart --
+    // and a group only this machine has is left as this machine set it.
+    scene::CollisionGroups& groups = world.collisionGroups();
+    std::vector<u16> local;
+    local.reserve(count);
+    for (const std::string_view name : names)
+        local.push_back(groups.add(world.atoms().intern(name)));
+    for (u16 a = 0; a < count; ++a) {
+        for (u16 b = a; b < count; ++b) {
+            if (local[a] != scene::CollisionGroups::kInvalid && local[b] != scene::CollisionGroups::kInvalid)
+                groups.setCollidable(local[a], local[b], true);
+        }
+    }
+    for (const auto& [a, b] : apart) {
+        if (local[a] != scene::CollisionGroups::kInvalid && local[b] != scene::CollisionGroups::kInvalid)
+            groups.setCollidable(local[a], local[b], false);
+    }
+    groups.bumpRevision();
+}
 
 void ReplicaSession::onVoxelTypes(scene::World& world, std::span<const u8> bytes)
 {
@@ -4712,6 +5533,7 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
         // authority has otherwise at that tick -- a dash it never began, a
         // value this replica's own code wrote over -- is a correction too.
         bool attributesOff = false;
+        std::vector<core::NameAtom> attributesWrong;
         if (authoritative.attributes.has_value() && m_replay != nullptr) {
             const std::optional<scene::PredictedAttributes> mine =
                 m_replay->rememberedAttributes(m_ackedIntent, character);
@@ -4720,8 +5542,11 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
                     const auto held = std::find_if(mine->begin(), mine->end(),
                                                    [&](const auto& entry) { return entry.first == name; });
                     const scene::Value remembered = held != mine->end() ? held->second : scene::Value{};
-                    if (!(remembered == value))
+                    if (!(remembered == value)) {
                         attributesOff = true;
+                        if (m_logCorrections)
+                            attributesWrong.push_back(name);
+                    }
                 }
             }
         }
@@ -4738,6 +5563,29 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
         corrected = distance >= 0.01 || turned || m_lastBodyCorrection >= 0.01 || attributesOff;
         if (corrected)
             m_stats.corrections += 1;
+        if (corrected && m_logCorrections) {
+            // **What it disagreed about** (D534): a count says a prediction
+            // was wrong and nothing of why, and the why is the game's to act
+            // on -- a state the authority decided, a body it ran into that is
+            // somewhere else there, a long frame.
+            std::string names;
+            for (const core::NameAtom name : attributesWrong) {
+                if (!names.empty())
+                    names += ", ";
+                names += world.atoms().text(name);
+            }
+            const std::array<core::I18nArg, 9> args{
+                core::I18nArg{"tick", static_cast<core::i64>(world.engineState().tick)},
+                core::I18nArg{"intent", static_cast<core::i64>(m_ackedIntent)},
+                core::I18nArg{"metres", distance},
+                core::I18nArg{"x", error.x},
+                core::I18nArg{"y", error.y},
+                core::I18nArg{"z", error.z},
+                core::I18nArg{"turned", std::string_view{turned ? "yes" : "no"}},
+                core::I18nArg{"parts", m_lastBodyCorrection},
+                core::I18nArg{"attributes", std::string_view{names.empty() ? std::string_view{"-"} : names}}};
+            core::log(core::LogLevel::Info, ENG_TR("net.info.correction"), args);
+        }
     }
 
     // **Stepped again from where the authority put it** -- what every engine
@@ -4897,6 +5745,19 @@ void ReplicaSession::reconcile2d(scene::World& world, InstanceId character, core
         return;
     m_stats.corrections += 1;
     m_stats.lastCorrectionMetres = distance;
+    if (m_logCorrections) {
+        const std::array<core::I18nArg, 9> args{
+            core::I18nArg{"tick", static_cast<core::i64>(world.engineState().tick)},
+            core::I18nArg{"intent", static_cast<core::i64>(m_ackedIntent)},
+            core::I18nArg{"metres", distance},
+            core::I18nArg{"x", static_cast<f64>(error.x)},
+            core::I18nArg{"y", static_cast<f64>(error.y)},
+            core::I18nArg{"z", 0.0},
+            core::I18nArg{"turned", std::string_view{std::abs(turn) < 1.0e-3f ? "no" : "yes"}},
+            core::I18nArg{"parts", 0.0},
+            core::I18nArg{"attributes", std::string_view{"-"}}};
+        core::log(core::LogLevel::Info, ENG_TR("net.info.correction"), args);
+    }
     sprite->position = sprite->position + error;
     sprite->rotation = sprite->rotation + turn;
     for (Sample2D& sample : m_predicted2d) {

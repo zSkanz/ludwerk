@@ -4560,6 +4560,132 @@ TEST_CASE("D532: a character walking a terrain slope it can walk stays Grounded,
     CHECK_MESSAGE(log.firstError().empty(), log.firstError());
 }
 
+TEST_CASE("ADR 0162: a swarm's agents are heard, tagged and given bodies by a script -- and a replica's copy is read")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local swarm = Instance.new("Swarm")
+        swarm.Parent = workspace
+        swarm.Target = vector.create(0, 0, -100)
+        local added, removed, tagged = {}, {}, {}
+        swarm.AgentAdded:Connect(function(agent, tag, size)
+            table.insert(added, { agent, tag, size })
+        end)
+        swarm.AgentRemoved:Connect(function(agent, tag, position, reason)
+            table.insert(removed, { agent, tag, position, reason })
+        end)
+        swarm.AgentTagChanged:Connect(function(agent, tag)
+            table.insert(tagged, { agent, tag })
+        end)
+
+        local walker = swarm:AddAgentAt(vector.create(0, 0, 0), { Speed = 6, Radius = 0.5, Height = 2 })
+        local doomed = swarm:AddAgentAt(vector.create(10, 0, 0), { Speed = 0 })
+        swarm:SetAgentTag(walker, 0x0102)
+
+        -- A body of this machine's, placed by the swarm from now on.
+        local body = Instance.new("Part")
+        body.Anchored = true
+        body.Parent = workspace
+        swarm:SetAgentBody(walker, body)
+
+        local ticks = 0
+        game:GetService("RunService").Heartbeat:Connect(function()
+            ticks += 1
+            if ticks == 10 then
+                swarm:SetAgentTag(doomed, 0x8000)
+                swarm:RemoveAgent(doomed)
+            elseif ticks == 40 then
+                workspace:SetAttribute("Added", #added)
+                workspace:SetAttribute("FirstSize", added[1] and added[1][3] or vector.zero)
+                workspace:SetAttribute("Tagged", #tagged)
+                workspace:SetAttribute("WalkerTag", swarm:GetAgentTag(walker))
+                workspace:SetAttribute("GoneTag", swarm:GetAgentTag(doomed))
+                workspace:SetAttribute("Removed", #removed)
+                if removed[1] then
+                    workspace:SetAttribute("RemovedTag", removed[1][2])
+                    workspace:SetAttribute("RemovedAt", removed[1][3])
+                    workspace:SetAttribute("RemovedWhy", removed[1][4] == Enum.SwarmAgentRemoval.Removed)
+                end
+                workspace:SetAttribute("BodyZ", body.Position.z)
+                workspace:SetAttribute("AgentZ", swarm:GetAgentPosition(walker).z)
+                -- Let go: the swarm no longer moves it.
+                swarm:SetAgentBody(walker, nil)
+            elseif ticks == 60 then
+                workspace:SetAttribute("BodyLater", body.Position.z)
+                workspace:SetAttribute("BadTag", (pcall(function()
+                    swarm:SetAgentTag(walker, 70000)
+                end)))
+            elseif ticks == 70 then
+                -- By now the test has made this swarm a replica's copy.
+                workspace:SetAttribute("ReplicaAdd", (pcall(function()
+                    swarm:AddAgentAt(vector.create(1, 0, 1))
+                end)))
+                workspace:SetAttribute("ReplicaPush", (pcall(function()
+                    swarm:Push(walker, vector.create(1, 0, 0))
+                end)))
+                workspace:SetAttribute("ReplicaTag", (pcall(function()
+                    swarm:SetAgentTag(walker, 5)
+                end)))
+                workspace:SetAttribute("ReplicaReads", #swarm:GetAgents())
+                workspace:SetAttribute("ReplicaBody", (pcall(function()
+                    swarm:SetAgentBody(walker, body)
+                end)))
+            end
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 64; ++tick)
+        host.tick();
+    scene::World& world = host.world();
+    const auto value = [&](std::string_view name) {
+        return world.getAttribute(host.workspace(), world.atoms().intern(name));
+    };
+    const auto number = [&](std::string_view name) {
+        const scene::Value found = value(name);
+        const double* at = std::get_if<double>(&found);
+        return at != nullptr ? *at : -1.0e9;
+    };
+    // Both agents were heard, the first with the size it was given.
+    CHECK(number("Added") == 2.0);
+    const scene::Value size = value("FirstSize");
+    REQUIRE(std::holds_alternative<core::Vec3>(size));
+    CHECK(std::get<core::Vec3>(size).x == doctest::Approx(1.0));
+    CHECK(std::get<core::Vec3>(size).y == doctest::Approx(2.0));
+    // Two tags given, two heard; and read back -- nothing for one that is gone.
+    CHECK(number("Tagged") == 2.0);
+    CHECK(number("WalkerTag") == 258.0);
+    CHECK(number("GoneTag") == 0.0);
+    // **The removal carries the tag set just before it**, the place and the reason.
+    CHECK(number("Removed") == 1.0);
+    CHECK(number("RemovedTag") == 32768.0);
+    const scene::Value where = value("RemovedAt");
+    REQUIRE(std::holds_alternative<core::Vec3>(where));
+    CHECK(std::get<core::Vec3>(where).x == doctest::Approx(10.0));
+    CHECK(std::get<bool>(value("RemovedWhy")));
+    // The body is where the agent is, and stays where it was let go.
+    CHECK(number("AgentZ") < -3.0);
+    CHECK(number("BodyZ") == doctest::Approx(number("AgentZ")).epsilon(0.02));
+    CHECK(number("BodyLater") == doctest::Approx(number("BodyZ")).epsilon(0.001));
+    CHECK_FALSE(std::get<bool>(value("BadTag")));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+
+    // **A replica's copy is the authority's**: read, given bodies, and not changed.
+    scene::SwarmComponent* rows = nullptr;
+    world.swarms().forEach([&](core::InstanceId, scene::SwarmComponent& swarm) { rows = &swarm; });
+    REQUIRE(rows != nullptr);
+    rows->mirrored = true;
+    for (int tick = 0; tick < 10; ++tick)
+        host.tick();
+    CHECK_FALSE(std::get<bool>(value("ReplicaAdd")));
+    CHECK_FALSE(std::get<bool>(value("ReplicaPush")));
+    CHECK_FALSE(std::get<bool>(value("ReplicaTag")));
+    CHECK(number("ReplicaReads") == 1.0);
+    CHECK(std::get<bool>(value("ReplicaBody")));
+}
+
 TEST_CASE("Swarm:SetTargets and AddAgentAt: every player is chased by the agents nearest them, and a server keeps "
           "agents with no body")
 {

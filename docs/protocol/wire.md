@@ -23,7 +23,7 @@ the compatibility policy.
 
 ## Transport
 
-ENet, with 5 channels opened on every connection. Each message is one
+ENet, with 6 channels opened on every connection. Each message is one
 packet and begins with a `u8` message type; nothing else frames it.
 
 | Channel | Name | Delivery | What travels on it |
@@ -33,6 +33,7 @@ packet and begins with a `u8` message type; nothing else frames it.
 | 2 | Intent | UnreliableSequenced | What a client did, never what happened. The client says it moved and fired; the authority decides whether it moved and whether it hit. |
 | 3 | Ownership | UnreliableSequenced | Where an owner's parts are, from the owner (ADR 0099, protocol 14). Reserved as channel 3 since protocol 1 so its arrival shifted nothing. Unreliable and sequenced for the reason the State channel is: a lost state is superseded by the next tick's, and an old one arriving late would move a part backwards. |
 | 4 | Remote | UnreliableSequenced | What a script sends through an `UnreliableRemoteEvent` (ADR 0161, protocol 38): sent once and never again, so a lost one holds nothing up, and sequenced so one that arrives after a later one is dropped. Its own channel: the sequence it shares is only its own, and a game's messages cannot make a snapshot late. |
+| 5 | Swarm | Unreliable | Where a replicated `Swarm`'s agents are (ADR 0162, protocol 38): each message stands alone, a packet, and is never sent again -- an agent a replica draws wrong is sent again because it is wrong. **Not sequenced**: every agent in a message carries the order with it, in the message's tick, so one that arrives after a later one is still taken for the agents the later one did not name; sequenced, a link whose packets swap places lost a third of them to the rule. |
 
 ## Primitives
 
@@ -117,8 +118,12 @@ gives it.
 | 20 | [VoxelTypes](#voxeltypes) | Control | ToReplica |
 | 22 | [SnapshotPart](#snapshotpart) | Control | ToReplica |
 | 23 | [Refused](#refused) | Control | ToReplica |
+| 30 | [CollisionGroups](#collisiongroups) | Control | ToReplica |
 | 25 | [UnreliableToAuthority](#unreliabletoauthority) | Remote | ToAuthority |
 | 26 | [UnreliableToReplica](#unreliabletoreplica) | Remote | ToReplica |
+| 27 | [SwarmAgents](#swarmagents) | Control | ToReplica |
+| 28 | [SwarmState](#swarmstate) | Swarm | ToReplica |
+| 29 | [SwarmAck](#swarmack) | Swarm | ToAuthority |
 
 ### Hello
 
@@ -482,6 +487,21 @@ Type 23, on Control, ToReplica. Why the authority will not take this replica (pr
 | type | u8 | `23` |
 | reason | u8 | 1: the replica speaks another protocol. 2: the server is full. |
 
+### CollisionGroups
+
+Type 30, on Control, ToReplica. The authority's collision groups and the pairs of them that do not collide (protocol 38, D545), whole: once to a replica that joins, when a game has registered any, and whenever the table changed. A replica registers the names it has not and takes every pair among them from here -- collidable unless listed -- and keeps its own word on groups the authority never named. By name, never by number: each machine numbers its groups as it met them.
+
+| Part | Type | |
+|---|---|---|
+| type | u8 | `30` |
+| count | u16 | At most 1024; `Default` is among them. |
+| groups | count × |  |
+| &nbsp;&nbsp;&nbsp;&nbsp;name | text |  |
+| apartCount | u32 |  |
+| apart | apartCount × |  |
+| &nbsp;&nbsp;&nbsp;&nbsp;a | u16 | A group, by its place in `groups`. |
+| &nbsp;&nbsp;&nbsp;&nbsp;b | u16 | Another, or the same: `a` at most `b`. |
+
 ### UnreliableToAuthority
 
 Type 25, on Remote, ToAuthority. `UnreliableRemoteEvent:FireServer` (protocol 38, ADR 0161): a message sent once. The sender is the connection's player, never anything the message says, and it is taken from the same budgets a `RemoteToAuthority` is.
@@ -511,6 +531,74 @@ Type 26, on Remote, ToReplica. `UnreliableRemoteEvent:FireClient` and `FireAllCl
 | &nbsp;&nbsp;&nbsp;&nbsp;netId | u32 | 0 for an instance the sender has no id for. |
 | size | u32 | The byte length of what follows, at most 16384. |
 | arguments | arguments | See "Arguments". |
+
+### SwarmAgents
+
+Type 27, on Control, ToReplica. The agents of a replicated `Swarm` entering and leaving what one replica is sent (protocol 38, ADR 0162): reliable, in order, and ahead of the game's own reliable messages of the tick, so a number names one agent from its arrival to its removal on every machine. A removal carries the agent's last tag and place.
+
+| Part | Type | |
+|---|---|---|
+| type | u8 | `27` |
+| swarm | u32 | The network id of the `Swarm`. |
+| tick | u32 | The authority's tick this is true at, its low 32 bits. |
+| originX | u32 | Where every position below is measured from, in whole metres, as a signed number: a point on a 16 m lattice near the replica's focus. |
+| originY | u32 |  |
+| originZ | u32 |  |
+| membership | u16 | How many `SwarmAgents` messages this replica has been sent for this swarm, this one counted. The replica says the last it took in (`SwarmAck`), and the authority sends the position of an agent only once the message that brought it was taken in: a number is used again, and a position must not reach the agent that had it before. |
+| floor | f32 | The height, from the origin, that a lift is measured from where no terrain covers the agent. Where one does, it is measured from the terrain's top there. |
+| removedCount | u16 |  |
+| removed | removedCount × | The agents this replica no longer has, before the ones it gains: a number is used again only after its agent went. |
+| &nbsp;&nbsp;&nbsp;&nbsp;slot | u16 | The agent's number, less one. |
+| &nbsp;&nbsp;&nbsp;&nbsp;reason | u8 | `Enum.SwarmAgentRemoval`: 0 removed, 1 out of reach. |
+| &nbsp;&nbsp;&nbsp;&nbsp;tag | u16 | The tag it had last. |
+| &nbsp;&nbsp;&nbsp;&nbsp;x | f32 | Where it was last, from the origin. |
+| &nbsp;&nbsp;&nbsp;&nbsp;y | f32 |  |
+| &nbsp;&nbsp;&nbsp;&nbsp;z | f32 |  |
+| addedCount | u16 |  |
+| added | addedCount × |  |
+| &nbsp;&nbsp;&nbsp;&nbsp;slot | u16 | The agent's number, less one. |
+| &nbsp;&nbsp;&nbsp;&nbsp;tag | u16 |  |
+| &nbsp;&nbsp;&nbsp;&nbsp;radius | u8 | In sixteenths of a metre. |
+| &nbsp;&nbsp;&nbsp;&nbsp;height | u8 | In eighths of a metre. |
+| &nbsp;&nbsp;&nbsp;&nbsp;x | f32 | Where it is, from the origin. |
+| &nbsp;&nbsp;&nbsp;&nbsp;y | f32 |  |
+| &nbsp;&nbsp;&nbsp;&nbsp;z | f32 |  |
+| &nbsp;&nbsp;&nbsp;&nbsp;lift | f32 | How far above its ground: the terrain, or the floor. |
+| &nbsp;&nbsp;&nbsp;&nbsp;yaw | u8 | The way it faces, a 256th of a turn. |
+| &nbsp;&nbsp;&nbsp;&nbsp;walk | u8 | How fast it walks that way, in quarters of a metre a second. |
+
+### SwarmState
+
+Type 28, on Swarm, ToReplica. Where some agents of a replicated `Swarm` are (protocol 38, ADR 0162), at most 1100 bytes so it is one packet. An agent is in it when the replica's drawing of it would otherwise be wrong by more than a threshold, when its tag changed, or when it has not been sent for a while. A replica ignores one older than what it holds for that agent, and says which messages arrived (`SwarmAck`): the agents of one that did not are sent again.
+
+| Part | Type | |
+|---|---|---|
+| type | u8 | `28` |
+| swarm | u32 | The network id of the `Swarm`. |
+| tick | u32 | The authority's tick this is true at, its low 32 bits. |
+| sequence | u16 | This message's number for the replica, counted up and wrapping: what a `SwarmAck` names. |
+| originX | u32 | As `SwarmAgents`'s. |
+| originY | u32 |  |
+| originZ | u32 |  |
+| floor | f32 | As `SwarmAgents`'s. |
+| byteCount | u16 |  |
+| agents | byteCount × | The agents, in rising number. Each: the step from the number before it (from -1 for the first) as a varint of seven bits a byte, low first; three bytes of x and z, twelve bits each, in eighths of a metre from the origin less 256 m; a byte of yaw, a 256th of a turn; a byte whose low six bits are the walk in quarters of a metre a second, bit 6 says a lift follows and bit 7 a tag. The lift is a byte of eighths of a metre above its ground -- the terrain, or the floor -- or 255 and then a u16 of them; the tag is a u16. |
+| &nbsp;&nbsp;&nbsp;&nbsp;byte | u8 |  |
+
+### SwarmAck
+
+Type 29, on Swarm, ToAuthority. Which `SwarmState` messages arrived (protocol 38, ADR 0162). The authority sends an agent when a replica would draw it wrong, and takes what it sent as what the replica has; a message nobody acknowledges within the round trip was lost, and its agents are told again at once rather than when they are next due.
+
+| Part | Type | |
+|---|---|---|
+| type | u8 | `29` |
+| count | u8 |  |
+| sequences | count × | The `SwarmState` messages this replica took in, newest last: each is said in several of these, since one of them may be lost too. |
+| &nbsp;&nbsp;&nbsp;&nbsp;sequence | u16 |  |
+| swarmCount | u8 |  |
+| swarms | swarmCount × | For each swarm this replica mirrors, the last `SwarmAgents` it took in. |
+| &nbsp;&nbsp;&nbsp;&nbsp;swarm | u32 | The network id of the `Swarm`. |
+| &nbsp;&nbsp;&nbsp;&nbsp;membership | u16 |  |
 
 ## Wire ids
 
@@ -589,6 +677,7 @@ The moving half of nearly every game, and therefore the field set that decides w
 | 15 | LinearVelocity | Vector3 | How fast a loose part moves (protocol 23, ADR 0133). A replica that predicts the part -- one near its character -- starts it and corrects it from the authority's motion, not only its place: a crate restored without its velocity steps again as a crate at rest. |
 | 16 | AngularVelocity | Vector3 | How fast it turns, for the same reason (protocol 23). |
 | 17 | CastShadow | Bool | Whether the part casts a shadow (protocol 38). A look, like what it wears: a replica that did not have it drew a shadow under every effect the authority had asked to cast none. |
+| 18 | CollisionGroup | NameAtom | Which group the part collides as (protocol 38, D545). A replica predicts its own character against the parts it holds: one whose group it was never told stopped a character the authority's walked through. The table of groups travels in `CollisionGroups`. |
 
 Retired, and claimed for ever:
 
@@ -838,7 +927,16 @@ The world's look under `Lighting` (ADR 0096, protocol 13): the authority's is ev
 | 1 | Enabled | Bool | An effect switched off from a script is off on every screen that sees the world. |
 | 2 | Size | F32 | How far the world picture is softened. |
 
-### 22 — DepthOfFieldEffect
+### 22 — Swarm
+
+A crowd the engine steers (ADR 0156), replicated so a replica has something to ask (ADR 0162, protocol 38). Its agents are rows, not instances: with `Replicates` they travel in `SwarmAgents` and `SwarmState`, and without it a replica's copy is empty.
+
+| Id | Field | Encoding | Why it travels |
+|---|---|---|---|
+| 1 | Replicates | Bool | Whether the authority sends this swarm's agents: a replica's copy is read-only either way. |
+| 2 | ReplicationRadius | F32 | How far from a player's focus an agent is sent, so a replica's script can read what the authority decided. |
+
+### 23 — DepthOfFieldEffect
 
 The world's look under `Lighting` (ADR 0096, protocol 13): the authority's is every replica's. A camera's stays on its own screen.
 
@@ -850,7 +948,7 @@ The world's look under `Lighting` (ADR 0096, protocol 13): the authority's is ev
 | 4 | NearIntensity | F32 | How soft the near side is. |
 | 5 | FarIntensity | F32 | How soft the far side is. |
 
-### 23 — SunRaysEffect
+### 24 — SunRaysEffect
 
 The world's look under `Lighting` (ADR 0096, protocol 13): the authority's is every replica's. A camera's stays on its own screen.
 
@@ -860,7 +958,7 @@ The world's look under `Lighting` (ADR 0096, protocol 13): the authority's is ev
 | 2 | Intensity | F32 | How bright the shafts are. |
 | 3 | Spread | F32 | How far they reach. |
 
-### 24 — Atmosphere
+### 25 — Atmosphere
 
 The world's look under `Lighting` (ADR 0096, protocol 13): the authority's is every replica's. A camera's stays on its own screen.
 
@@ -873,7 +971,7 @@ The world's look under `Lighting` (ADR 0096, protocol 13): the authority's is ev
 | 5 | Glare | F32 | Its glow towards the sun. |
 | 6 | Haze | F32 | Its thickness at the horizon. |
 
-### 25 — Sky
+### 26 — Sky
 
 The world's look under `Lighting` (ADR 0096, protocol 13): the authority's is every replica's. A camera's stays on its own screen.
 
@@ -896,9 +994,9 @@ The world's look under `Lighting` (ADR 0096, protocol 13): the authority's is ev
 | 15 | CloudDensity | F32 | How thick the clouds are. |
 | 16 | CloudColor | Color3 | Their colour. |
 
-### 26 — Workspace
+### 27 — Workspace
 
-A service, under network id `0x7F00001A`. The wind (ADR 0115, protocol 19). **A service for its properties only**: its children already travel as the world, by where they are, so it does not carry its contents the way `ReplicatedStorage` does. After every other service in this list, so each of them keeps its id; what follows it is instances.
+A service, under network id `0x7F00001B`. The wind (ADR 0115, protocol 19). **A service for its properties only**: its children already travel as the world, by where they are, so it does not carry its contents the way `ReplicatedStorage` does. After every other service in this list, so each of them keeps its id; what follows it is instances.
 
 | Id | Field | Encoding | Why it travels |
 |---|---|---|---|
@@ -907,7 +1005,7 @@ A service, under network id `0x7F00001A`. The wind (ADR 0115, protocol 19). **A 
 | 3 | WindTurbulence | F32 | How turbulent. |
 | 4 | Gravity | Vector3 | **What a replica simulates its own bodies under** (protocol 34): a part it owns or predicts, a vehicle it drives. Left behind, a game that changed gravity on the authority had every owner's parts fall at the old rate and corrected a round trip later. |
 
-### 27 — Attachment
+### 28 — Attachment
 
 A frame on a part, which a joint holds to another (NA34). A `Bone` is one too, and stays off the wire by its own exclusion: its pose is derived from state that travels.
 
@@ -915,7 +1013,7 @@ A frame on a part, which a joint holds to another (NA34). A `Bone` is one too, a
 |---|---|---|---|
 | 1 | CFrame | CFrameD | Where on its part the frame is. A joint holds two of these together, so a replica that solves the joint (NA34) needs them where the authority has them. |
 
-### 28 — Constraint
+### 29 — Constraint
 
 What every joint between two attachments has (NA34): its two ends, whether it holds, and when it breaks. Each kind adds what it is, by `Extends`, and is spawned on the replica as the class it is.
 
@@ -929,7 +1027,7 @@ What every joint between two attachments has (NA34): its two ends, whether it ho
 | 6 | BreakForce | F32 | The force past which it breaks; zero never breaks. |
 | 7 | BreakTorque | F32 | The same, for a twist. |
 
-### 29 — BallSocketConstraint
+### 30 — BallSocketConstraint
 
 Carries `Constraint`'s fields too. A ball joint: its cone and twist, and the pose a servo holds it in.
 
@@ -945,7 +1043,7 @@ Carries `Constraint`'s fields too. A ball joint: its cone and twist, and the pos
 | 8 | Stiffness | F32 | The joint as a spring, in its own terms. |
 | 9 | Damping | F32 | The same, for damping. |
 
-### 30 — HingeConstraint
+### 31 — HingeConstraint
 
 Carries `Constraint`'s fields too. A hinge: its stops, and the motor or servo that turns it -- a vehicle's wheel.
 
@@ -965,11 +1063,11 @@ Carries `Constraint`'s fields too. A hinge: its stops, and the motor or servo th
 | 12 | Stiffness | F32 | The joint as a spring, in its own terms. |
 | 13 | Damping | F32 | The same, for damping. |
 
-### 31 — FixedConstraint
+### 32 — FixedConstraint
 
 Carries `Constraint`'s fields too. Two parts held as one by the solver. Nothing of its own beyond a joint's.
 
-### 32 — PrismaticConstraint
+### 33 — PrismaticConstraint
 
 Carries `Constraint`'s fields too. A slider: its stops, and the motor or servo that moves it -- a lift, a suspension.
 
@@ -989,7 +1087,7 @@ Carries `Constraint`'s fields too. A slider: its stops, and the motor or servo t
 | 12 | Stiffness | F32 | The joint as a spring, in its own terms. |
 | 13 | Damping | F32 | The same, for damping. |
 
-### 33 — RopeConstraint
+### 34 — RopeConstraint
 
 Carries `Constraint`'s fields too. A rope: its length and its winch, and how it is drawn.
 
@@ -1003,7 +1101,7 @@ Carries `Constraint`'s fields too. A rope: its length and its winch, and how it 
 | 6 | Color | Color3 | Its colour, where it is drawn. |
 | 7 | Thickness | F32 | How thick it is drawn. |
 
-### 34 — RodConstraint
+### 35 — RodConstraint
 
 Carries `Constraint`'s fields too. A rod: its length, and how it is drawn.
 
@@ -1013,7 +1111,7 @@ Carries `Constraint`'s fields too. A rod: its length, and how it is drawn.
 | 2 | Color | Color3 | Its colour, where it is drawn. |
 | 3 | Thickness | F32 | How thick it is drawn. |
 
-### 35 — SpringConstraint
+### 36 — SpringConstraint
 
 Carries `Constraint`'s fields too. A spring: its free length, how stiff, its stops, and how it is drawn.
 
@@ -1028,7 +1126,7 @@ Carries `Constraint`'s fields too. A spring: its free length, how stiff, its sto
 | 7 | Color | Color3 | Its colour, where it is drawn. |
 | 8 | Thickness | F32 | How thick it is drawn. |
 
-### 36 — LinearVelocity
+### 37 — LinearVelocity
 
 Carries `Constraint`'s fields too. A mover (ADR 0127, NA34): the speed it holds. Applied only where its body is simulated -- on the authority, or on the replica that owns or predicts it.
 
@@ -1044,7 +1142,7 @@ Carries `Constraint`'s fields too. A mover (ADR 0127, NA34): the speed it holds.
 | 8 | MaxForce | F32 | How hard it may push. |
 | 9 | RelativeTo | I32 | The frame its vector is written in. |
 
-### 37 — AngularVelocity
+### 38 — AngularVelocity
 
 Carries `Constraint`'s fields too. A mover: the spin it holds.
 
@@ -1055,7 +1153,7 @@ Carries `Constraint`'s fields too. A mover: the spin it holds.
 | 3 | RelativeTo | I32 | The frame its vector is written in. |
 | 4 | ReactionEnabled | Bool | Whether what it does to one body it does, reversed, to the other. |
 
-### 38 — AlignPosition
+### 39 — AlignPosition
 
 Carries `Constraint`'s fields too. A mover: the place it pulls to.
 
@@ -1072,7 +1170,7 @@ Carries `Constraint`'s fields too. A mover: the place it pulls to.
 | 9 | MoverStiffness | F32 | It as a spring, in its own terms. |
 | 10 | MoverDamping | F32 | The same, for damping. |
 
-### 39 — AlignOrientation
+### 40 — AlignOrientation
 
 Carries `Constraint`'s fields too. A mover: the facing it turns to.
 
@@ -1088,7 +1186,7 @@ Carries `Constraint`'s fields too. A mover: the facing it turns to.
 | 8 | MoverStiffness | F32 | It as a spring, in its own terms. |
 | 9 | MoverDamping | F32 | The same, for damping. |
 
-### 40 — VectorForce
+### 41 — VectorForce
 
 Carries `Constraint`'s fields too. A mover: the force it pushes with.
 
@@ -1098,7 +1196,7 @@ Carries `Constraint`'s fields too. A mover: the force it pushes with.
 | 2 | RelativeTo | I32 | The frame its vector is written in. |
 | 3 | ApplyAtCenterOfMass | Bool | Whether it pushes at the body's centre rather than at its attachment. |
 
-### 41 — Torque
+### 42 — Torque
 
 Carries `Constraint`'s fields too. A mover: the torque it turns with.
 
@@ -1107,7 +1205,7 @@ Carries `Constraint`'s fields too. A mover: the torque it turns with.
 | 1 | Vector | Vector3 | The speed, the spin, the force or the torque it holds. |
 | 2 | RelativeTo | I32 | The frame its vector is written in. |
 
-### 42 — Weld
+### 43 — Weld
 
 Two parts held as one (NA34). A replica that simulates either end resolves it as the authority does; any other is sent where the welded part ended up, and ignores it.
 
@@ -1119,7 +1217,7 @@ Two parts held as one (NA34). A replica that simulates either end resolves it as
 | 4 | C1 | CFrameD | The joint's frame on the second. |
 | 5 | Enabled | Bool | A weld switched off holds nothing. |
 
-### 43 — WeldConstraint
+### 44 — WeldConstraint
 
 A weld that reads its offset off the world, on a replica too; as `Weld`.
 
@@ -1129,7 +1227,7 @@ A weld that reads its offset off the world, on a replica too; as `Weld`.
 | 2 | Part1 | InstanceRef | What the weld moves. A network id; resolved on the replica to its own copy, and written once that copy exists. |
 | 3 | Enabled | Bool | A weld switched off holds nothing. |
 
-### 44 — NoCollisionConstraint
+### 45 — NoCollisionConstraint
 
 Two parts that pass through each other (NA34): a vehicle's wheel and its arch, on the machine that drives it as on the authority.
 
@@ -1184,7 +1282,6 @@ Every other concrete class is deliberately off the wire, and this is why.
 | NavigationArea | What it says is a question only the authority's navigation asks (ADR 0098): a path is searched where the game's scripts run, and a replica that wants one asks with a remote. The part it labels is replicated; the label is not something a replica draws. |
 | NavigationLink | A way across for the authority's paths. The same as `NavigationArea`. |
 | NavigationAgent | It walks its part on the authority's tick, and the part's `CFrame` is what arrives -- interpolated like any other part's. Sending the agent too would send a second account of one motion. |
-| Swarm | It walks its agents' bodies where it runs (ADR 0156), and those bodies' `CFrame`s are what arrives, as `NavigationAgent`'s part's do. Its agents are rows, not instances, and a replica that wants a horde of its own runs one where it is seen. |
 | Frame | Screen-space UI. The same as `ScreenGui`. |
 | TextLabel | Screen-space UI. The same as `ScreenGui`. |
 | TextButton | Screen-space UI. The same as `ScreenGui`. |

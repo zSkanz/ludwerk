@@ -49,6 +49,12 @@ void registerInstanceBinding(lua_State* L);
 // feature.
 void bindInstanceMethods(lua_State* L, std::span<const InstanceMethodBinding> bindings);
 
+// Fires what became of every swarm's agents since the last call -- `AgentAdded`,
+// `AgentRemoved`, `AgentTagChanged` (ADR 0162) -- in the order it happened.
+// Called once a tick, beside the remote messages: on a replica these arrived
+// from the network, and this is where they become a tick.
+void fireSwarmEvents(lua_State* L);
+
 // The two halves of the cross-check `MethodDesc` exists for.
 // `declaredWithoutBinding` is how many methods the IDL declares that this build
 // does not implement, and those raise `script.err.not_implemented` rather than

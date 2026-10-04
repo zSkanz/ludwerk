@@ -1558,7 +1558,8 @@ local Classes: { Schema.Class } = {
                         .. "InputStarvations: number, InputReanchors: number, InterpolationDelay: number, "
                         .. "PredictedParts: number, ResimulationsPerSecond: number, "
                         .. "ResimulatedTicksPerSecond: number, ResimulationTime: number, "
-                        .. "UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number }",
+                        .. "UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, "
+                        .. "BytesSent: number, BytesReceived: number, SwarmBytes: number }",
                 },
                 ThreadSafety = "Unsafe",
                 Doc = "**How the connection is doing**, for a game that shows a connection-quality mark: the "
@@ -1840,6 +1841,15 @@ local Classes: { Schema.Class } = {
                     .. "else's between snapshots. And the authority sends each replica only what is near "
                     .. "that replica's character, out to `StreamingService.LoadRadius`; a player with no "
                     .. "character is sent everything.",
+            },
+            {
+                Name = "ReplicationFocus",
+                Type = "BasePart?",
+                Doc = "The part what this player's machine is sent is measured from, in place of their "
+                    .. "character (ADR 0162): a fallen player watching a friend is the friend's character "
+                    .. "here. Nil -- the default -- is their own `Character`. **The authority's**: it "
+                    .. "decides which parts are streamed to that player and which agents of a replicated "
+                    .. "`Swarm` reach them. It changes nothing about whose character is predicted.",
             },
             {
                 Name = "Character2D",

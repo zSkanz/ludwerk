@@ -465,6 +465,59 @@ TEST_CASE("built off the main thread, every node drawn is built for the seams it
     }
 }
 
+TEST_CASE("a change of seams is built off the main thread: only an edit is built in the frame that finds it")
+{
+    // **D541**: a node built before and wanted with other seams -- the level
+    // drawn beside it changed -- was asked for as an edit is, and a few of
+    // them were "a small edit": built in the frame that found them, on every
+    // worker, the frame waiting. A camera that moved, and a map coming in a
+    // batch at a time, paid 7 to 32 ms a frame for it -- thirty-five frames
+    // running, on a game's first second in its map.
+    LoaderFixture fixture;
+    fixture.loader.setAsync(true);
+    fixture.loader.setBuildsPerSync(3);
+    for (const double x : {-60.0, 0.0, 70.0})
+        (void)asset::fillBall(fixture.component().field, core::DVec3{x, -6.0, 20.0}, 22.0, 1);
+    fixture.component().fieldRevision += 1;
+    core::u32 builtInFrame = 0;
+    for (int frame = 0; frame < 240; ++frame) {
+        const double t = static_cast<double>(frame < 120 ? 120 - frame : frame - 120) / 120.0;
+        fixture.loader.setFocus(core::DVec3{8.0, 4.0 + 900.0 * t, 8.0});
+        (void)fixture.sync();
+        builtInFrame += fixture.loader.lastBuildsInFrame();
+    }
+    CHECK(builtInFrame == 0);
+
+    // **Ground a script wrote where there was none**, as a game that makes
+    // its map does: it comes in off the main thread, seams and all.
+    LoaderFixture written;
+    written.loader.setAsync(true);
+    written.loader.setBuildsPerSync(3);
+    written.component().field =
+        asset::TerrainField(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 64.0f});
+    written.loader.setFocus(core::DVec3{8.0, 4.0, 8.0});
+    (void)written.sync();
+    (void)asset::fillFlat(written.component().field, core::DVec3{0.0, 0.0, 0.0}, 256.0f, 0.0f, 1);
+    for (const double x : {-60.0, 0.0, 70.0})
+        (void)asset::fillBall(written.component().field, core::DVec3{x, -6.0, 20.0}, 22.0, 1);
+    written.component().fieldRevision += 1;
+    builtInFrame = 0;
+    int frames = 0;
+    for (; frames < 400 && (frames < 2 || written.loader.pending()); ++frames) {
+        (void)written.sync();
+        builtInFrame += written.loader.lastBuildsInFrame();
+    }
+    REQUIRE_FALSE(written.loader.pending());
+    CHECK(builtInFrame == 0);
+
+    // And an edit still is: a brush stamp on that ground, in one `sync`.
+    (void)asset::fillBall(written.component().field, core::DVec3{0.0, 0.0, 0.0}, 4.0, 1);
+    written.component().fieldRevision += 1;
+    (void)written.sync();
+    CHECK(written.loader.lastBuildsInFrame() > 0);
+    CHECK(written.loader.drawnOutOfDate(written.world).empty());
+}
+
 TEST_CASE("ground a streamer let go is not drawn from the meshes it had, however the camera moved")
 {
     // ludwerk-08's plates on the owner's place (2026-09-30): pale squares of

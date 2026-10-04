@@ -1433,7 +1433,7 @@ int networkServiceGetStats(lua_State* L)
 {
     (void)checkInstance(L, 1);
     const scene::EngineState::NetworkStats& stats = world(L).engineState().networkStats;
-    lua_createtable(L, 0, 18);
+    lua_createtable(L, 0, 21);
     const auto field = [L](const char* name, double value) {
         lua_pushnumber(L, value);
         lua_setfield(L, -2, name);
@@ -1456,6 +1456,9 @@ int networkServiceGetStats(lua_State* L)
     field("UnreliableSent", static_cast<double>(stats.unreliableSent));
     field("UnreliableReceived", static_cast<double>(stats.unreliableReceived));
     field("UnreliableDropped", static_cast<double>(stats.unreliableDropped));
+    field("BytesSent", static_cast<double>(stats.bytesSent));
+    field("BytesReceived", static_cast<double>(stats.bytesReceived));
+    field("SwarmBytes", static_cast<double>(stats.swarmBytes));
     return 1;
 }
 

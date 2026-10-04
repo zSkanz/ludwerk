@@ -23,6 +23,7 @@
 #include "engine/asset/gltf.h"
 #include "engine/asset/material.h"
 #include "engine/asset/mesh_format.h"
+#include "engine/asset/terrain_layers.h"
 #include "engine/core/content_hash.h"
 #include "engine/core/i18n.h"
 #include "engine/jobs/jobs.h"
@@ -590,4 +591,44 @@ TEST_CASE("forgetting a mesh forgets that it failed, so a fixed file loads")
 
     loader.destroy(*fixture.device);
     cache.destroy(*fixture.device);
+}
+
+TEST_CASE("the engine's own terrain textures are drawn off the frame that asks for them")
+{
+    // **D544**: a terrain's layers are the engine's own materials unless a game
+    // says otherwise, and their maps are drawn from noise -- a sheet of four a
+    // layer, some tens of milliseconds each. They were drawn by the frame that
+    // first asked, every layer of the terrain in that one frame: 400 ms of a
+    // game's first frame in its map, with files decoded off the frame beside
+    // them the whole time.
+    Fixture fixture;
+    REQUIRE(platform::initIo());
+    scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+    world.setMaterialLibrary(&fixture.materials);
+    const scene::ClassId terrainClass = fixture.classes.registerClass(
+        {.name = fixture.atoms.intern("Terrain"), .defaultName = fixture.atoms.intern("Terrain")});
+    const core::InstanceId terrain = world.create(terrainClass);
+    scene::TerrainComponent ground;
+    ground.layers = asset::defaultTerrainLayers();
+    REQUIRE(ground.layers.size() >= 4);
+    const core::usize maps = ground.layers.size() * 4u;
+    world.terrains().add(terrain, std::move(ground));
+
+    render::MeshLoader loader;
+    loader.setContentRoot(fixture.contentRoot);
+    loader.setDeferredTextures(true);
+    render::TextureLibrary library;
+
+    // The frame that asks draws none of them, and all of them are on their way.
+    CHECK(loader.syncTextures(*fixture.device, *fixture.cmd, world, library) == 0);
+    CHECK(library.size() == 0);
+    CHECK(loader.texturesInFlight() == maps);
+
+    for (int frame = 0; frame < 20000 && library.size() < maps; ++frame) {
+        (void)loader.syncTextures(*fixture.device, *fixture.cmd, world, library);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(library.size() == maps);
+    CHECK(loader.texturesInFlight() == 0);
+    loader.destroy(*fixture.device);
 }

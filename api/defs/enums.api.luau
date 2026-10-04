@@ -2041,6 +2041,19 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "SwarmAgentRemoval",
+            Doc = "Why a machine no longer has an agent of a `Swarm` (ADR 0162): what `AgentRemoved` says.",
+            Items = {
+                { Name = "Removed", Value = 0, Doc = "The authority removed it: it died, or its stage was cleared." },
+                {
+                    Name = "OutOfReach",
+                    Value = 1,
+                    Doc = "On a replica: it walked out of what that machine is sent. It is still alive where "
+                        .. "the swarm runs, and is added again if it comes back.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

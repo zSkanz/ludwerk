@@ -120,6 +120,7 @@ inline constexpr EnumId ParticleCollisionResponseEnumId = 79;
 inline constexpr EnumId ParticleSimulationEnumId = 80;
 inline constexpr EnumId DecalBlendModeEnumId = 81;
 inline constexpr EnumId ParticleFlipbookModeEnumId = 82;
+inline constexpr EnumId SwarmAgentRemovalEnumId = 83;
 
 } // namespace generated
 
@@ -746,6 +747,10 @@ Value getSwarmNearDistance(const World& world, core::InstanceId id);
 bool setSwarmNearDistance(World& world, core::InstanceId id, const Value& value);
 Value getSwarmFarDistance(const World& world, core::InstanceId id);
 bool setSwarmFarDistance(World& world, core::InstanceId id, const Value& value);
+Value getSwarmReplicates(const World& world, core::InstanceId id);
+bool setSwarmReplicates(World& world, core::InstanceId id, const Value& value);
+Value getSwarmReplicationRadius(const World& world, core::InstanceId id);
+bool setSwarmReplicationRadius(World& world, core::InstanceId id, const Value& value);
 void attachSwarmComponents(World& world, core::InstanceId id);
 void detachSwarmComponents(World& world, core::InstanceId id);
 
@@ -939,6 +944,8 @@ Value getNetworkServiceLocalPlayer(const World& world, core::InstanceId id);
 Value getPlayerUserId(const World& world, core::InstanceId id);
 Value getPlayerCharacter(const World& world, core::InstanceId id);
 bool setPlayerCharacter(World& world, core::InstanceId id, const Value& value);
+Value getPlayerReplicationFocus(const World& world, core::InstanceId id);
+bool setPlayerReplicationFocus(World& world, core::InstanceId id, const Value& value);
 Value getPlayerCharacter2D(const World& world, core::InstanceId id);
 bool setPlayerCharacter2D(World& world, core::InstanceId id, const Value& value);
 void attachPlayerComponents(World& world, core::InstanceId id);

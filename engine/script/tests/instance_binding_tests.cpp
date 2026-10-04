@@ -582,7 +582,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // `WaitForMeshAsync`, and `SceneService`'s `HoldLoading` and
     // `ReleaseLoading` (ADR 0159). 237: `Swarm`'s `AddAgentAt` and
     // `SetTargets` (ADR 0156, amended). 240: `UnreliableRemoteEvent`'s
-    // `FireServer`, `FireClient` and `FireAllClients` (ADR 0161).
+    // `FireServer`, `FireClient` and `FireAllClients` (ADR 0161). 243:
+    // `Swarm`'s `SetAgentTag`, `GetAgentTag` and `SetAgentBody` (ADR 0162).
     // This number is what makes a
     // DECLARED-but-unbound method impossible to ship: the IDL would count it and the binding table would not, which is
     // `Inert` for a method.
@@ -590,8 +591,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // **It earned its keep at F1.** Five methods were declared in the IDL in one
     // commit and this failed on the next build, before anything could reach a
     // script and find a name that answered nothing.
-    CHECK(coverage.declared == 240);
-    CHECK(coverage.bound == 240);
+    CHECK(coverage.declared == 243);
+    CHECK(coverage.bound == 243);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

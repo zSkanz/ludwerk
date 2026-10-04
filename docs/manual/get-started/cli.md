@@ -244,6 +244,20 @@ slowest frames, each on its own -- the worst five and any other over twice the
 median -- as the tree of that one frame: what a player felt as a hitch, which
 no median names. The Luau collector's steps are `scripts.gc`.
 
+What arrives in a frame is under `content.*` -- `content.textures`,
+`content.meshes.load`, `content.terrain` (with `terrain.upload`, the meshes put
+up; `terrain.edit`, an edit built in the frame; `terrain.build`, what is handed
+to the workers), `content.blocks`, `content.water`, `content.foliage` -- and the
+drawing's own stretches are `draw.choose`, `draw.effects`, `draw.sky`,
+`draw.interface`, `draw.submit`, `draw.uploads`, `draw.views` and `draw.render`.
+A scene's first frames are where these are large; a frame of play in which one
+of them is, is a defect to report.
+
+The log's own line about a long frame -- "Frame took N ms -- simulation and
+its scripts ..., render-step scripts ..., waiting for the GPU and the display
+..., the rest ..." -- splits that frame the same way, with no flag: the first
+thing to read when a player says the game hitched.
+
 `--pace=HZ` makes a headless run wait out each frame's share of a second, the
 wait left out of `--frame-stats`: without it a headless flight is over in a
 second or two, and ground built beside the frame is measured against a camera

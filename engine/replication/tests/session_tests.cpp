@@ -31,6 +31,7 @@
 #include "engine/scene/components.h"
 #include "engine/scene/enum_registry.h"
 #include "engine/scene/players.h"
+#include "engine/scene/swarm.h"
 #include "engine/scene/world.h"
 
 using namespace engine;
@@ -97,8 +98,8 @@ struct Match
         serverTransport = loss != nullptr ? net::createLossyTransport(net::createMemoryTransport(network), *loss)
                                           : net::createMemoryTransport(network);
         REQUIRE_FALSE(
-            serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
-        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
+            serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 6}).has_value());
+        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
         net::PeerId toServer;
         REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
         authority.emplace(*serverTransport);
@@ -236,8 +237,8 @@ TEST_CASE("a peer speaking another protocol is refused before anything is parsed
     auto network = net::createMemoryNetwork();
     auto serverTransport = net::createMemoryTransport(network);
     auto rogue = net::createMemoryTransport(network);
-    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
-    REQUIRE_FALSE(rogue->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
+    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 6}).has_value());
+    REQUIRE_FALSE(rogue->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
     net::PeerId toServer;
     REQUIRE_FALSE(rogue->connect("memory", Port, toServer).has_value());
 
@@ -449,8 +450,8 @@ TEST_CASE("a joined replica is a player on the authority, and what it does arriv
     auto network = net::createMemoryNetwork();
     auto serverTransport = net::createMemoryTransport(network);
     auto clientTransport = net::createMemoryTransport(network);
-    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
-    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
+    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 6}).has_value());
+    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
     net::PeerId toServer;
     REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
 
@@ -527,8 +528,8 @@ TEST_CASE("a character's transform replicates, because a CharacterBody carries B
     auto network = net::createMemoryNetwork();
     auto serverTransport = net::createMemoryTransport(network);
     auto clientTransport = net::createMemoryTransport(network);
-    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
-    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
+    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 6}).has_value());
+    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
     net::PeerId toServer;
     REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
 
@@ -657,8 +658,8 @@ struct PlayedMatch
             clientTransport = std::move(wrapped);
         }
         REQUIRE_FALSE(
-            serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
-        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
+            serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 6}).has_value());
+        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
         REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
         host = scene::createPlayer(server.world, server.network, 1, true);
         me = scene::createPlayer(client.world, client.network, 0, true);
@@ -856,7 +857,7 @@ TEST_CASE("a connection still holding a player who is back already is let go")
     REQUIRE(token.valid());
 
     auto otherTransport = net::createMemoryTransport(match.network);
-    REQUIRE_FALSE(otherTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
+    REQUIRE_FALSE(otherTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
     net::PeerId toServer;
     REQUIRE_FALSE(otherTransport->connect("memory", Port, toServer).has_value());
     RealSide other;
@@ -2359,7 +2360,7 @@ TEST_CASE("D457: a client that joins late has the attributes as they stand, of t
     seedCatalog();
     auto network = net::createMemoryNetwork();
     auto serverTransport = net::createMemoryTransport(network);
-    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
+    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 6}).has_value());
 
     RealSide server;
     const core::InstanceId crate = server.world.create(server.classes.findId(server.atoms.intern("Part")));
@@ -2378,7 +2379,7 @@ TEST_CASE("D457: a client that joins late has the attributes as they stand, of t
 
     // And then somebody joins.
     auto clientTransport = net::createMemoryTransport(network);
-    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
+    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
     net::PeerId toServer;
     REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
     RealSide client;
@@ -2663,8 +2664,8 @@ struct FakeAuthority
     FakeAuthority()
     {
         seedCatalog();
-        REQUIRE_FALSE(server->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 5}).has_value());
-        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
+        REQUIRE_FALSE(server->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 6}).has_value());
+        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
         net::PeerId toServer;
         REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
         replica.emplace(*clientTransport, toServer);
@@ -2807,7 +2808,7 @@ TEST_CASE("a connection that never says hello is let go, and a message naming to
 {
     PlayedMatch match;
     auto silent = net::createMemoryTransport(match.network);
-    REQUIRE_FALSE(silent->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
+    REQUIRE_FALSE(silent->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
     net::PeerId toServer;
     REQUIRE_FALSE(silent->connect("memory", Port, toServer).has_value());
     match.authority->receive(match.server.world, match.server.workspace);
@@ -3788,12 +3789,12 @@ struct EnetMatch
         REQUIRE_FALSE(serverTransport
                           ->open(net::TransportConfig{.port = port,
                                                       .maxPeers = 4,
-                                                      .channels = 5,
+                                                      .channels = 6,
                                                       .timeoutMs = 10000,
                                                       .maxMessageBytes = MaxAuthorityMessageBytes,
                                                       .maxPeersPerAddress = MaxPeersPerAddress})
                           .has_value());
-        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 5}).has_value());
+        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
         REQUIRE_FALSE(clientTransport->connect("127.0.0.1", port, toServer).has_value());
         host = scene::createPlayer(server.world, server.network, 1, true);
         me = scene::createPlayer(client.world, client.network, 0, true);
@@ -3843,6 +3844,296 @@ double stepUntil(EnetMatch& match, double seconds, Done done)
 }
 
 } // namespace
+
+namespace {
+
+// A match with a replicated swarm in it, and the replica's player standing at
+// the origin: what ADR 0162's tests are about.
+struct SwarmMatch
+{
+    PlayedMatch match;
+    core::InstanceId swarm;
+    core::InstanceId racer;
+
+    explicit SwarmMatch(const net::LossConfig* loss = nullptr, float radius = 60.0f) : match(loss)
+    {
+        swarm = match.server.world.create(match.server.classes.findId(match.server.atoms.intern("Swarm")));
+        REQUIRE(swarm.valid());
+        REQUIRE_FALSE(match.server.world.setParent(swarm, match.server.workspace).has_value());
+        scene::SwarmComponent& rows = server();
+        rows.replicates = true;
+        rows.replicationRadius = radius;
+        racer = match.part("Racer", core::DVec3{0.0, 0.0, 0.0});
+        match.server.world.players().find(match.remote())->character = racer;
+    }
+
+    [[nodiscard]] scene::SwarmComponent& server() { return *match.server.world.swarms().find(swarm); }
+    // The replica's copy, or null before it has one.
+    [[nodiscard]] scene::SwarmComponent* client()
+    {
+        const core::InstanceId copy = match.copyOf(swarm);
+        return copy.valid() ? match.client.world.swarms().find(copy) : nullptr;
+    }
+
+    core::u32 add(core::DVec3 at, core::u16 tag = 0, float speed = 3.0f)
+    {
+        scene::SwarmAgentSettings settings;
+        settings.speed = speed;
+        const core::u32 agent = scene::addSwarmAgent(server(), core::InstanceId{}, at, settings);
+        REQUIRE(agent != 0);
+        REQUIRE(scene::setSwarmAgentTag(server(), agent, tag));
+        return agent;
+    }
+
+    // One tick of both machines: the authority's swarm walks, the wire, and
+    // the replica's copy is carried forward.
+    void step()
+    {
+        match.server.world.engineState().tick = match.tick + 1;
+        match.client.world.engineState().tick = match.tick + 1;
+        scene::stepSwarms(match.server.world, nullptr, match.server.world.engineState().fixedTimestep);
+        match.step();
+        scene::stepSwarms(match.client.world, nullptr, match.client.world.engineState().fixedTimestep);
+    }
+
+    void run(int ticks)
+    {
+        for (int at = 0; at < ticks; ++at)
+            step();
+    }
+
+    // How far the replica's agent is from the authority's, along the ground;
+    // negative when the replica has none.
+    [[nodiscard]] double off(core::u32 agent)
+    {
+        const scene::SwarmAgent* truth = scene::swarmAgent(server(), agent);
+        scene::SwarmComponent* copy = client();
+        const scene::SwarmAgent* drawn = copy != nullptr ? scene::swarmAgent(*copy, agent) : nullptr;
+        if (truth == nullptr || drawn == nullptr)
+            return -1.0;
+        return std::hypot(truth->position.x - drawn->position.x, truth->position.z - drawn->position.z);
+    }
+};
+
+} // namespace
+
+TEST_CASE("ADR 0162: a replicated swarm's agents reach a replica over a link that loses a third")
+{
+    const net::LossConfig loss{.seed = 5, .dropPerMille = 300, .reorderPerMille = 150};
+    SwarmMatch crowd(&loss);
+    // Two hundred walking in from a ring, and twenty out of the replica's reach.
+    std::vector<core::u32> near;
+    std::vector<core::u32> far;
+    for (int at = 0; at < 200; ++at) {
+        const double angle = static_cast<double>(at) * 0.0314159 * 2.0;
+        const double radius = 20.0 + static_cast<double>(at % 30);
+        near.push_back(crowd.add(core::DVec3{std::cos(angle) * radius, 0.0, std::sin(angle) * radius},
+                                 static_cast<core::u16>(at % 7)));
+    }
+    for (int at = 0; at < 20; ++at)
+        far.push_back(crowd.add(core::DVec3{300.0 + static_cast<double>(at), 0.0, 0.0}, 9, 0.0f));
+    crowd.server().target = core::DVec3{0.0, 0.0, 0.0};
+    crowd.run(300);
+
+    scene::SwarmComponent* copy = crowd.client();
+    REQUIRE(copy != nullptr);
+    // The authority's, read here and never stepped.
+    CHECK(copy->mirrored);
+    CHECK(copy->replicates);
+    double worst = 0.0;
+    double sum = 0.0;
+    for (const core::u32 agent : near) {
+        // **The same number on both machines**, and its tag.
+        const double off = crowd.off(agent);
+        REQUIRE(off >= 0.0);
+        CHECK(scene::swarmAgent(*copy, agent)->tag == scene::swarmAgent(crowd.server(), agent)->tag);
+        worst = std::max(worst, off);
+        sum += off;
+    }
+    CAPTURE(worst);
+    CAPTURE(sum / 200.0);
+    // Near the threshold on average, and no one of them lost: a message the
+    // link dropped goes unacknowledged, and what it said is said again.
+    // Without that the worst was ten metres off.
+    CHECK(sum / 200.0 < 0.6);
+    CHECK(worst < 2.5);
+    // What is out of reach is not there.
+    for (const core::u32 agent : far)
+        CHECK(scene::swarmAgent(*copy, agent) == nullptr);
+    usize alive = 0;
+    for (const scene::SwarmAgent& agent : copy->agents)
+        alive += agent.alive ? 1 : 0;
+    CHECK(alive == 200);
+    CHECK(crowd.match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("ADR 0162: an agent removed is removed on a replica with its last tag, and its number names the next")
+{
+    SwarmMatch crowd;
+    const core::u32 first = crowd.add(core::DVec3{5.0, 0.0, 0.0}, 3, 0.0f);
+    const core::u32 second = crowd.add(core::DVec3{8.0, 0.0, 0.0}, 4, 0.0f);
+    crowd.run(4);
+    scene::SwarmComponent* copy = crowd.client();
+    REQUIRE(copy != nullptr);
+    REQUIRE(scene::swarmAgent(*copy, first) != nullptr);
+    REQUIRE(scene::swarmAgent(*copy, second) != nullptr);
+    copy->events.clear();
+
+    // Killed: the bit is set and the agent removed in one tick, and another
+    // takes its number at once.
+    REQUIRE(scene::setSwarmAgentTag(crowd.server(), first, 0x8003));
+    REQUIRE(scene::removeSwarmAgent(crowd.server(), first, crowd.match.tick));
+    const core::u32 reused = crowd.add(core::DVec3{-6.0, 0.0, 2.0}, 7, 0.0f);
+    CHECK(reused == first);
+    crowd.run(3);
+
+    // **The going, then the coming**, and the going with what it was last.
+    std::vector<scene::SwarmEvent> heard;
+    for (const scene::SwarmEvent& event : copy->events) {
+        if (event.agent == first && event.kind != scene::SwarmEvent::Kind::TagChanged)
+            heard.push_back(event);
+    }
+    REQUIRE(heard.size() == 2);
+    CHECK(heard[0].kind == scene::SwarmEvent::Kind::Removed);
+    CHECK(heard[0].reason == scene::SwarmRemovalRemoved);
+    CHECK(heard[0].tag == 0x8003);
+    CHECK(heard[0].position.x == doctest::Approx(5.0).epsilon(0.02));
+    CHECK(heard[1].kind == scene::SwarmEvent::Kind::Added);
+    CHECK(heard[1].tag == 7);
+    const scene::SwarmAgent* now = scene::swarmAgent(*copy, first);
+    REQUIRE(now != nullptr);
+    CHECK(now->tag == 7);
+    CHECK(now->position.x == doctest::Approx(-6.0).epsilon(0.05));
+    // The other was never touched.
+    CHECK(scene::swarmAgent(*copy, second)->tag == 4);
+
+    // A tag changed on a living agent reaches the replica, and is heard.
+    copy->events.clear();
+    REQUIRE(scene::setSwarmAgentTag(crowd.server(), second, 0x0104));
+    crowd.run(3);
+    CHECK(scene::swarmAgent(*copy, second)->tag == 0x0104);
+    CHECK(std::any_of(copy->events.begin(), copy->events.end(), [second](const scene::SwarmEvent& event) {
+        return event.kind == scene::SwarmEvent::Kind::TagChanged && event.agent == second && event.tag == 0x0104;
+    }));
+}
+
+TEST_CASE("ADR 0162: a replica has what is within reach of its player's focus, and the focus can be named")
+{
+    SwarmMatch crowd(nullptr, 50.0f);
+    const core::u32 here = crowd.add(core::DVec3{10.0, 0.0, 0.0}, 1, 0.0f);
+    const core::u32 there = crowd.add(core::DVec3{400.0, 0.0, 0.0}, 2, 0.0f);
+    crowd.run(4);
+    scene::SwarmComponent* copy = crowd.client();
+    REQUIRE(copy != nullptr);
+    CHECK(scene::swarmAgent(*copy, here) != nullptr);
+    CHECK(scene::swarmAgent(*copy, there) == nullptr);
+
+    // **A fallen player watching a friend**: the focus is the friend, and what
+    // the replica is sent is what is round the friend.
+    copy->events.clear();
+    const core::InstanceId friendPart = crowd.match.part("Friend", core::DVec3{400.0, 0.0, 5.0});
+    crowd.match.server.world.players().find(crowd.match.remote())->replicationFocus = friendPart;
+    crowd.run(4);
+    CHECK(scene::swarmAgent(*copy, here) == nullptr);
+    REQUIRE(scene::swarmAgent(*copy, there) != nullptr);
+    CHECK(scene::swarmAgent(*copy, there)->position.x == doctest::Approx(400.0).epsilon(0.01));
+    // It walked out of reach: it was not killed.
+    CHECK(std::any_of(copy->events.begin(), copy->events.end(), [here](const scene::SwarmEvent& event) {
+        return event.kind == scene::SwarmEvent::Kind::Removed && event.agent == here &&
+               event.reason == scene::SwarmRemovalOutOfReach && event.tag == 1;
+    }));
+
+    // Back to their own character: the other way round.
+    crowd.match.server.world.players().find(crowd.match.remote())->replicationFocus = {};
+    crowd.run(4);
+    CHECK(scene::swarmAgent(*copy, here) != nullptr);
+    CHECK(scene::swarmAgent(*copy, there) == nullptr);
+
+    // A swarm that does not replicate sends no agents at all.
+    const core::InstanceId quiet =
+        crowd.match.server.world.create(crowd.match.server.classes.findId(crowd.match.server.atoms.intern("Swarm")));
+    REQUIRE_FALSE(crowd.match.server.world.setParent(quiet, crowd.match.server.workspace).has_value());
+    scene::SwarmAgentSettings settings;
+    (void)scene::addSwarmAgent(*crowd.match.server.world.swarms().find(quiet), core::InstanceId{},
+                               core::DVec3{2.0, 0.0, 2.0}, settings);
+    crowd.run(4);
+    const core::InstanceId quietCopy = crowd.match.copyOf(quiet);
+    REQUIRE(quietCopy.valid());
+    CHECK(crowd.match.client.world.swarms().find(quietCopy)->agents.empty());
+}
+
+TEST_CASE("ADR 0162: fifteen hundred agents arrive in a second, and their positions stay inside the budget")
+{
+    SwarmMatch crowd(nullptr, 80.0f);
+    // A horde on a field forty metres each way round the player, walking at
+    // it: packed, pushing, piling.
+    std::vector<core::u32> agents;
+    for (int at = 0; at < 1500; ++at) {
+        const double x = static_cast<double>(at % 40) * 1.6 - 32.0;
+        const double z = static_cast<double>(at / 40) * 1.6 - 30.0;
+        agents.push_back(crowd.add(core::DVec3{x, 0.0, z}, static_cast<core::u16>(at % 5)));
+    }
+    crowd.server().target = core::DVec3{0.0, 0.0, 0.0};
+    // **A replica that joins with them all alive has them all** within a
+    // second -- here, within three ticks, in reliable messages of 512.
+    crowd.run(3);
+    scene::SwarmComponent* copy = crowd.client();
+    REQUIRE(copy != nullptr);
+    usize alive = 0;
+    for (const scene::SwarmAgent& agent : copy->agents)
+        alive += agent.alive ? 1 : 0;
+    CHECK(alive == 1500);
+    CHECK(crowd.match.authority->stats().swarmAdded == 1500);
+
+    const Stats before = crowd.match.authority->stats();
+    crowd.run(600);
+    const Stats after = crowd.match.authority->stats();
+    const double seconds = 10.0;
+    const double bytesPerSecond = static_cast<double>(after.swarmBytes - before.swarmBytes) / seconds;
+    const double statesPerSecond = static_cast<double>(after.swarmStates - before.swarmStates) / seconds;
+    MESSAGE("1500 agents to one replica: ", bytesPerSecond / 1000.0, " KB a second of positions, ", statesPerSecond,
+            " agents a second told of ", static_cast<double>(after.swarmWanted - before.swarmWanted) / seconds,
+            " that wanted telling");
+    // The target is forty; the budget is under it.
+    CHECK(bytesPerSecond < 40'000.0);
+    CHECK(after.sendFailures == before.sendFailures);
+
+    double worst = 0.0;
+    double sum = 0.0;
+    for (const core::u32 agent : agents) {
+        const double off = crowd.off(agent);
+        REQUIRE(off >= 0.0);
+        worst = std::max(worst, off);
+        sum += off;
+    }
+    MESSAGE("drawn within ", sum / 1500.0, " m of the truth on average, ", worst, " m at worst");
+    CHECK(sum / 1500.0 < 0.5);
+    CHECK(worst < 3.0);
+}
+
+TEST_CASE("ADR 0162: an agent walking a straight line is carried forward, not corrected")
+{
+    // **What a replica is for**: one agent, fifty-five metres off, walking at
+    // the player. Nothing about it changes, so nothing need be said -- and
+    // while nothing is said the replica's clock must run on. It stood still
+    // once, and the agent with it: eleven metres behind. And carried forward
+    // for half a second only, the agent was stopped and corrected every forty
+    // ticks, a metre and three quarters each time.
+    SwarmMatch crowd(nullptr, 80.0f);
+    const core::u32 walker = crowd.add(core::DVec3{55.0, 0.0, 10.0}, 1, 4.0f);
+    crowd.server().target = core::DVec3{0.0, 0.0, 0.0};
+    crowd.run(90);
+    const core::u64 toldBefore = crowd.match.authority->stats().swarmStates;
+    double worst = 0.0;
+    for (int tick = 0; tick < 420; ++tick) {
+        crowd.step();
+        worst = std::max(worst, crowd.off(walker));
+    }
+    // Seven seconds: a refresh or two, and its turn as it comes near.
+    CHECK(crowd.match.authority->stats().swarmStates - toldBefore <= 6);
+    CAPTURE(worst);
+    CHECK(worst < 0.8);
+}
 
 TEST_CASE("N10: a fifteen-kilobyte unreliable message crosses the real transport whole, both ways")
 {
@@ -4404,4 +4695,69 @@ TEST_CASE(
     stage(3);
     CHECK(stepUntil(match, 20.0, agreed) >= 0.0);
     CHECK(match.authority->stats().sendFailures == 0);
+}
+
+TEST_CASE("D545: a part's collision group, and the table of groups, reach a replica")
+{
+    // A replica PREDICTS its own character against the world it holds. A part's
+    // `CollisionGroup` never left the authority and neither did the table that
+    // says which groups meet: a game that put its heroes in a group that does
+    // not collide with itself had heroes that passed through each other on the
+    // authority and stopped against each other on every replica -- a
+    // correction a snapshot for as long as two of them ran side by side.
+    PlayedMatch match;
+    scene::World& server = match.server.world;
+    const core::NameAtom heroes = match.server.atoms.intern("Heroes");
+    const core::NameAtom walls = match.server.atoms.intern("Walls");
+    scene::CollisionGroups& groups = server.collisionGroups();
+    const core::u16 heroGroup = groups.add(heroes);
+    const core::u16 wallGroup = groups.add(walls);
+    groups.setCollidable(heroGroup, heroGroup, false);
+    groups.bumpRevision();
+    const core::InstanceId hero = match.part("Hero", core::DVec3{0.0, 0.0, 0.0});
+    REQUIRE(server.rigidBodies().find(hero) != nullptr);
+    server.rigidBodies().find(hero)->collisionGroup = heroes;
+    match.run(6);
+
+    const core::InstanceId copy = match.copyOf(hero);
+    REQUIRE(copy.valid());
+    const scene::World& client = match.client.world;
+    const scene::CollisionGroups& there = client.collisionGroups();
+    const core::NameAtom heroesThere = match.client.atoms.lookup("Heroes");
+    const core::NameAtom wallsThere = match.client.atoms.lookup("Walls");
+    REQUIRE(heroesThere.valid());
+    REQUIRE(wallsThere.valid());
+    const core::u16 heroThere = there.find(heroesThere);
+    const core::u16 wallThere = there.find(wallsThere);
+    REQUIRE(heroThere != scene::CollisionGroups::kInvalid);
+    REQUIRE(wallThere != scene::CollisionGroups::kInvalid);
+    // The table, pair by pair.
+    CHECK_FALSE(there.collidable(heroThere, heroThere));
+    CHECK(there.collidable(heroThere, wallThere));
+    CHECK(there.collidable(heroThere, scene::CollisionGroups::kDefault));
+    CHECK(there.collidable(wallThere, wallThere));
+    // And the part is in its group.
+    REQUIRE(client.rigidBodies().find(copy) != nullptr);
+    CHECK(client.rigidBodies().find(copy)->collisionGroup == heroesThere);
+
+    // A pair changed during the match, and a part moved to another group.
+    groups.setCollidable(heroGroup, wallGroup, false);
+    groups.bumpRevision();
+    server.rigidBodies().find(hero)->collisionGroup = walls;
+    match.run(6);
+    CHECK_FALSE(there.collidable(heroThere, wallThere));
+    CHECK_FALSE(there.collidable(heroThere, heroThere));
+    CHECK(client.rigidBodies().find(copy)->collisionGroup == wallsThere);
+
+    // A replica's own table is its own where the authority says nothing: a
+    // group only this machine registered stays as it set it.
+    scene::CollisionGroups& mine = match.client.world.collisionGroups();
+    const core::u16 local = mine.add(match.client.atoms.intern("Ghosts"));
+    mine.setCollidable(local, scene::CollisionGroups::kDefault, false);
+    mine.bumpRevision();
+    groups.setCollidable(wallGroup, wallGroup, false);
+    groups.bumpRevision();
+    match.run(6);
+    CHECK_FALSE(there.collidable(wallThere, wallThere));
+    CHECK_FALSE(there.collidable(local, scene::CollisionGroups::kDefault));
 }

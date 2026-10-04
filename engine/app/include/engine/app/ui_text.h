@@ -105,6 +105,8 @@ public:
     // with no font file stays in -- there the built-in vector face draws solid
     // rectangles and samples nothing.
     [[nodiscard]] rhi::TextureHandle atlasTexture() const noexcept { return atlas_; }
+    // How many bytes of the atlas have gone up, in all: what a new glyph costs.
+    [[nodiscard]] core::u64 atlasBytesUploaded() const noexcept { return atlasBytes_; }
 
     // Every image the UI has asked for, in the order it asked. The frame loop
     // appends these after the atlas, so index 2 is the first picture -- which
@@ -117,6 +119,7 @@ private:
     core::u32 width_ = 0;
     core::u32 height_ = 0;
     core::u64 uploadedVersion_ = 0;
+    core::u64 atlasBytes_ = 0;
     // The atlas expanded from coverage to RGBA. Kept between frames so a
     // re-upload does not allocate four megabytes every time a new glyph appears.
     std::vector<std::byte> staging_;

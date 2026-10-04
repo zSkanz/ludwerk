@@ -194,6 +194,20 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`--net-log-corrections`**: a client says, for every correction of its
+  predicted character, how far and which way it was off, whether it was turned,
+  the part it pushed and the predicted attributes that differ. The multiplayer
+  guide has what each means and what a game does about it.
+- **A swarm replicates itself** (ADR 0162): `Swarm.Replicates` and
+  `ReplicationRadius`. Each replica has the swarm with the same agent numbers,
+  read-only; `SetAgentTag` and `GetAgentTag` carry a number of the game's for
+  each agent; `AgentAdded`, `AgentRemoved` (with the last tag, the place and
+  an `Enum.SwarmAgentRemoval`) and `AgentTagChanged` fire on every machine;
+  `SetAgentBody` gives an agent a part of that machine's own to move.
+  `Player.ReplicationFocus` names the part a player is sent the world round.
+  `NetworkService:GetStats()` gains `BytesSent`, `BytesReceived` and
+  `SwarmBytes`. Fifteen hundred agents to three replicas: about 28 KB a second
+  each of positions at 150 ms and 2% loss.
 - **`BasePart.CastShadow`**: whether a part casts a shadow, into the sun's and
   every lamp's -- on by default, off for what is light or an effect. It
   replicates, a streamed world's records keep it, and it is under Appearance
@@ -1140,6 +1154,39 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   between a shadow cascade and the sun, outside the cascade's own sphere --
   a tower beside the camera, at a low sun, onto ground far away -- was left
   out of that cascade's map. Casters are now kept along the sun's light.
+- `player.Character = nil` takes a player's character away, as the guide says:
+  from a script it was refused (D538).
+- **Text at any size costs a few sets of glyphs** (D539). A label whose
+  `TextSize` is animated, or a `TextScaled` label in the world as the camera
+  moves, asked for a new set of glyphs at every size, filled the glyph cache
+  and had it emptied -- every label rasterised again, and a warning each time.
+  A size is now rasterised at the nearest of a few sizes at or above it and
+  drawn smaller; text at a whole number of pixels up to 64 is drawn exactly as
+  before, and text over 128 pixels is drawn up from 128.
+- **Ogg Vorbis plays** (D546). A `.ogg` as `Sound.Content` played the
+  placeholder tone and said it could not be decoded, though the manual named
+  the format: no Vorbis decoder was compiled in. It decodes now, streams when
+  it is long, seeks, and loops at the stream's own last sample with no gap.
+- **Collision groups reach every client** (D545). A part's `CollisionGroup`
+  and the server's table of groups stayed on the server, so a character a
+  client predicts collided with parts the server's walked through, and was
+  corrected every snapshot while it touched one. Both replicate now: groups
+  registered and set on the server are the same on every machine.
+- **A new character no longer sends the whole glyph atlas to the GPU** (D543):
+  the rows it was written on, a seventieth of it.
+- **A long frame's warning is about that frame** (D540): "Frame took N ms"
+  split the frame before the long one into its phases, so a tick that stood
+  still was reported as a simulation that took nothing. `--frame-stats` names
+  what arrives in a frame and each stretch of its drawing.
+- **Terrain and grass arriving no longer hold the frame** (D541, D542, D544).
+  A terrain node re-stitched because the level beside it changed was built in
+  the frame that found it, as a brush stamp is; grass was grown with the frame
+  waiting for it; and the engine's own terrain textures were drawn in the
+  frame that first asked for them. A map's first second, and a camera moving
+  over ground with grass on it, had frames of 30 to 50 ms from these; each is
+  now done on the worker threads and shown when it is ready. An edit -- a
+  brush, a script changing the ground under a player -- is still shown in the
+  frame that makes it.
 - **A window held by its title bar no longer stops the game** (D535). On
   Windows, holding or dragging a window's title bar, sizing it, or opening its
   menu stopped the whole main loop until the hand let go -- and a host that

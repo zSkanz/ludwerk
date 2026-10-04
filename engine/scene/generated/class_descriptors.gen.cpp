@@ -3791,7 +3791,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(navigationLinkDesc);
 
     // --- Swarm ---
-    static std::array<PropertyDesc, 9> swarmProperties;
+    static std::array<PropertyDesc, 11> swarmProperties;
     swarmProperties = {{
         PropertyDesc{
             .name = atoms.intern("Target"),
@@ -3892,8 +3892,30 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getSwarmFarDistance,
             .set = native::setSwarmFarDistance,
         },
+        PropertyDesc{
+            .name = atoms.intern("Replicates"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether its agents reach every other machine of a match as agents (ADR 0162). On, each replica has this swarm with the same agent numbers, read-only: `GetAgents`, `GetPositions`, `GetAgentPosition`, `GetAgentTag` and `QueryRadius` answer there, `AgentAdded`, `AgentRemoved` and `AgentTagChanged` fire there, and `SetAgentBody` gives an agent a body of that machine's own to move.\012\012The engine sends an agent to a replica when that replica would otherwise draw it wrong, and each replica carries it forward in between: a replica's agent is close to where the authority's is, never exactly there, and a hit is the authority's to decide. A replica has the agents within `ReplicationRadius` of its player's focus, not the whole crowd.\012\012Off, a swarm is where it runs and nowhere else, as it always was.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getSwarmReplicates,
+            .set = native::setSwarmReplicates,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ReplicationRadius"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far from a player's focus -- their `Character`, or `Player.ReplicationFocus` -- an agent is sent to that player's machine, in metres. An agent that walks out of it is removed there (`AgentRemoved` with `OutOfReach`) and added again when it returns.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getSwarmReplicationRadius,
+            .set = native::setSwarmReplicationRadius,
+        },
     }};
-    static std::array<MethodDesc, 13> swarmMethods;
+    static std::array<MethodDesc, 16> swarmMethods;
     swarmMethods = {{
         MethodDesc{
             .name = atoms.intern("AddAgent"),
@@ -3973,6 +3995,42 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Forgets every obstacle.",
         },
+        MethodDesc{
+            .name = atoms.intern("SetAgentTag"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Gives an agent a number that means what the game says -- a whole number from 0 to 65535: a kind in some bits, flags in the others (ADR 0162). It reaches every machine that has the agent, which reads it with `GetAgentTag` and hears `AgentTagChanged`: what a replica picks a mesh and a pose from. The tag an agent has when it is removed arrives with its removal, so a \"killed\" bit set just before `RemoveAgent` is in every machine's `AgentRemoved`. The authority's to call.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetAgentTag"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The agent's tag, 0 for one that was never given any or that is not there.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SetAgentBody"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Gives an agent a part of THIS machine's to move, or nil to let it go: each tick the swarm writes the part's `CFrame` -- where the agent is, facing its target -- and nothing else about it. On the authority it replaces the body `AddAgent` took. On a replica it is how a horde is drawn: a body made when `AgentAdded` fires, given here, and taken back when `AgentRemoved` does. The part is drawn between ticks like any other that moves.",
+        },
+    }};
+    static std::array<EventDesc, 3> swarmEvents;
+    swarmEvents = {{
+        EventDesc{
+            .name = atoms.intern("AgentAdded"),
+            .slot = 7,
+            .doc = "Fires when this machine has a new agent: on the authority after `AddAgent`, on a replica when one arrives -- born, or walking into what that replica is sent. `size` is its width, its height and its width again. The number is the agent's on every machine until `AgentRemoved` fires for it, and may name another after.",
+        },
+        EventDesc{
+            .name = atoms.intern("AgentRemoved"),
+            .slot = 8,
+            .doc = "Fires when this machine no longer has an agent, with the tag and the place it had last, and why: the authority removed it, or -- on a replica -- it walked out of what that machine is sent. A death is played for the first and nothing for the second.",
+        },
+        EventDesc{
+            .name = atoms.intern("AgentTagChanged"),
+            .slot = 9,
+            .doc = "Fires when an agent this machine has is given another tag.",
+        },
     }};
     ClassDescriptor swarmDesc;
     swarmDesc.name = atoms.intern("Swarm");
@@ -3984,6 +4042,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     swarmDesc.parents = swarmParents;
     swarmDesc.properties = swarmProperties;
     swarmDesc.methods = swarmMethods;
+    swarmDesc.events = swarmEvents;
     swarmDesc.attachComponents = native::attachSwarmComponents;
     swarmDesc.detachComponents = native::detachSwarmComponents;
     classes.registerClass(swarmDesc);
@@ -5830,7 +5889,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(remoteFunctionDesc);
 
     // --- Player ---
-    static std::array<PropertyDesc, 3> playerProperties;
+    static std::array<PropertyDesc, 4> playerProperties;
     playerProperties = {{
         PropertyDesc{
             .name = atoms.intern("UserId"),
@@ -5854,6 +5913,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
             .get = native::getPlayerCharacter,
             .set = native::setPlayerCharacter,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ReplicationFocus"),
+            .type = ValueType::Instance,
+            .instanceClass = atoms.intern("BasePart"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The part what this player's machine is sent is measured from, in place of their character (ADR 0162): a fallen player watching a friend is the friend's character here. Nil -- the default -- is their own `Character`. **The authority's**: it decides which parts are streamed to that player and which agents of a replicated `Swarm` reach them. It changes nothing about whose character is predicted.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getPlayerReplicationFocus,
+            .set = native::setPlayerReplicationFocus,
         },
         PropertyDesc{
             .name = atoms.intern("Character2D"),
@@ -9821,6 +9892,26 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     particleFlipbookModeDesc.docKey = {};
     particleFlipbookModeDesc.items = particleFlipbookModeItems;
     enums.registerEnum(particleFlipbookModeDesc);
+
+    // --- SwarmAgentRemoval ---
+    static std::array<EnumItemDesc, 2> swarmAgentRemovalItems;
+    swarmAgentRemovalItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Removed"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("OutOfReach"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor swarmAgentRemovalDesc;
+    swarmAgentRemovalDesc.name = atoms.intern("SwarmAgentRemoval");
+    swarmAgentRemovalDesc.docKey = {};
+    swarmAgentRemovalDesc.items = swarmAgentRemovalItems;
+    enums.registerEnum(swarmAgentRemovalDesc);
 }
 
 } // namespace engine::scene::generated

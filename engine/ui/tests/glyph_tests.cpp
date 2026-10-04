@@ -95,10 +95,15 @@ TEST_CASE("G6: a frame whose text filled the glyph store is built again against 
         ++builds;
         const engine::core::u64 before = glyphCacheStats().clears;
         (void)quadsOf("HUD");
-        // The first build asks for more sizes than the store holds.
+        // The first build asks for more glyphs than the store holds: two
+        // thousand characters the face has none of, each its own box.
         if (builds == 1) {
-            for (int size = 0; size < 2100; ++size)
-                (void)measureText("a", {}, 6.0f + static_cast<f32>(size), 0.0f);
+            for (unsigned codepoint = 0x800; codepoint < 0x800 + 2100; ++codepoint) {
+                const char encoded[4] = {static_cast<char>(0xE0u | (codepoint >> 12)),
+                                         static_cast<char>(0x80u | ((codepoint >> 6) & 0x3Fu)),
+                                         static_cast<char>(0x80u | (codepoint & 0x3Fu)), '\0'};
+                (void)measureText(encoded, {}, 12.0f, 0.0f);
+            }
         }
         clearsInLast = glyphCacheStats().clears - before;
     });
@@ -115,16 +120,20 @@ TEST_CASE("G6: a frame whose text filled the glyph store is built again against 
     CHECK(builds == 1);
 }
 
-TEST_CASE("size is part of the key, which is what stops M7 being a rewrite")
+TEST_CASE("the built-in face is one set of glyphs at every size")
 {
-    // For THIS face the size half of the key is redundant, because a vector
-    // glyph scales by multiplication. For a raster face it is not, and putting
-    // it in the key now is the whole of the decision this file records.
+    // A vector glyph scales by multiplication: the size was in its key all the
+    // same, and a label animated through a hundred sizes made a hundred copies
+    // of the same rectangles.
     resetGlyphCache();
     (void)measureText("a", {}, 12.0f, 0.0f);
     (void)measureText("a", {}, 24.0f, 0.0f);
-    CHECK(glyphCacheStats().fills == 2);
-    CHECK(glyphCacheStats().entries == 2);
+    (void)measureText("a", {}, 37.3f, 0.0f);
+    CHECK(glyphCacheStats().fills == 1);
+    CHECK(glyphCacheStats().entries == 1);
+    // And it is as wide as its size says.
+    CHECK(measureText("a", {}, 24.0f, 0.0f).size.x ==
+          doctest::Approx(static_cast<double>(2.0f * measureText("a", {}, 12.0f, 0.0f).size.x)));
 }
 
 TEST_CASE("two names that resolve to the same face share its glyphs")
@@ -368,4 +377,104 @@ TEST_CASE("scaled text steps through a few sizes, never past what fits, and stop
     CHECK(engine::ui::scaledTextSize(99.0f) == 96.0f);
     CHECK(engine::ui::scaledTextSize(640.0f) == 100.0f);
     CHECK(engine::ui::scaledTextSize(0.2f) == 1.0f);
+}
+
+TEST_CASE("a label whose size is animated costs a few sets of glyphs, not one a quarter pixel")
+{
+    // **What a damage number does**: its `TextSize` popped from 14 to 40 and
+    // back, and a name over a head in the world is a different size at every
+    // distance. A raster glyph was cached at the size it was asked for, to the
+    // quarter pixel: a hundred and five sizes of ten digits, and the store
+    // filled and was emptied -- every glyph of every label rasterised again,
+    // and a warning in the log.
+    FaceGuard guard;
+    resetGlyphCache();
+    for (float size = 14.0f; size <= 40.0f; size += 0.25f)
+        (void)measureText("0123456789", "asset://fonts/test.ttf", size, 0.0f);
+    const engine::core::u64 fills = glyphCacheStats().fills;
+    MESSAGE("a hundred and five sizes of ten digits: ", fills, " glyphs rasterised");
+    // Twenty-seven: every whole pixel from 14 to 40, each the rung of the
+    // sizes just under it.
+    CHECK(fills <= 10u * 30u);
+    CHECK(glyphCacheStats().clears == 0);
+
+    // The store that filled: every digit at every quarter pixel to 300.
+    for (float size = 8.0f; size <= 300.0f; size += 0.25f)
+        (void)measureText("0123456789", "asset://fonts/test.ttf", size, 0.0f);
+    CHECK(glyphCacheStats().clears == 0);
+
+    // Past 64 a whole pixel is not its own rung: a title is made at the rung
+    // above it and drawn down.
+    resetGlyphCache();
+    (void)measureText("a", "asset://fonts/test.ttf", 70.0f, 0.0f);
+    (void)measureText("a", "asset://fonts/test.ttf", 77.5f, 0.0f);
+    (void)measureText("a", "asset://fonts/test.ttf", 80.0f, 0.0f);
+    CHECK(glyphCacheStats().fills == 1);
+    CHECK(measureText("a", "asset://fonts/test.ttf", 70.0f, 0.0f).size.x ==
+          doctest::Approx(
+              static_cast<double>(measureText("a", "asset://fonts/test.ttf", 80.0f, 0.0f).size.x * 70.0f / 80.0f))
+              .epsilon(0.001));
+}
+
+TEST_CASE("text between two rasterised sizes is the larger one made smaller, and measures as its own size")
+{
+    FaceGuard guard;
+    resetGlyphCache();
+    // A whole pixel is rasterised at itself: text at a size somebody chose is
+    // drawn as it always was.
+    const float exact = measureText("Hamburgefonstiv", "asset://fonts/test.ttf", 23.0f, 0.0f).size.x;
+    const engine::core::u64 afterExact = glyphCacheStats().fills;
+    // Half a pixel smaller takes the same glyphs and scales them: nothing new
+    // is rasterised, and the line is as much narrower as the size is smaller.
+    const float between = measureText("Hamburgefonstiv", "asset://fonts/test.ttf", 22.5f, 0.0f).size.x;
+    CHECK(glyphCacheStats().fills == afterExact);
+    CHECK(between == doctest::Approx(static_cast<double>(exact * 22.5f / 23.0f)).epsilon(0.001));
+    CHECK(measureText("Hamburgefonstiv", "asset://fonts/test.ttf", 22.5f, 0.0f).size.y ==
+          doctest::Approx(
+              static_cast<double>(measureText("Hamburgefonstiv", "asset://fonts/test.ttf", 23.0f, 0.0f).size.y * 22.5f /
+                                  23.0f))
+              .epsilon(0.001));
+
+    // And it is drawn that much smaller: the same quads, scaled.
+    const std::vector<DrawQuad> whole = quadsOf("H", "asset://fonts/test.ttf", 23.0f);
+    const std::vector<DrawQuad> part = quadsOf("H", "asset://fonts/test.ttf", 22.5f);
+    REQUIRE(whole.size() == 1);
+    REQUIRE(part.size() == 1);
+    CHECK(part[0].max.y - part[0].min.y ==
+          doctest::Approx(static_cast<double>((whole[0].max.y - whole[0].min.y) * 22.5f / 23.0f)).epsilon(0.001));
+    CHECK(part[0].uvMin.x == whole[0].uvMin.x);
+    CHECK(part[0].uvMax.x == whole[0].uvMax.x);
+
+    // Past 24 the rungs are two pixels apart, and a whole pixel between them
+    // is still itself.
+    resetGlyphCache();
+    (void)measureText("a", "asset://fonts/test.ttf", 31.0f, 0.0f);
+    (void)measureText("a", "asset://fonts/test.ttf", 32.0f, 0.0f);
+    CHECK(glyphCacheStats().fills == 2);
+    (void)measureText("a", "asset://fonts/test.ttf", 30.5f, 0.0f);
+    (void)measureText("a", "asset://fonts/test.ttf", 31.25f, 0.0f);
+    CHECK(glyphCacheStats().fills == 2);
+}
+
+TEST_CASE("the atlas says which rows a glyph was written on, and when it was emptied")
+{
+    // D543: what lets an uploader send a glyph's rows and not the atlas.
+    FaceGuard guard;
+    resetGlyphCache();
+    (void)measureText("a", "asset://fonts/test.ttf", 20.0f, 0.0f);
+    const engine::ui::GlyphAtlas first = glyphAtlas();
+    REQUIRE(first.rowVersions.size() == first.height);
+    const engine::core::u64 before = first.version;
+    (void)measureText("b", "asset://fonts/test.ttf", 20.0f, 0.0f);
+    const engine::ui::GlyphAtlas second = glyphAtlas();
+    CHECK(second.version > before);
+    engine::core::u32 written = 0;
+    for (const engine::core::u64 row : second.rowVersions)
+        written += row > before ? 1u : 0u;
+    CHECK(written > 0);
+    CHECK(written <= 24);
+    CHECK(second.clearedAt <= before);
+
+    resetGlyphCache();
+    CHECK(glyphAtlas().clearedAt > second.version);
 }

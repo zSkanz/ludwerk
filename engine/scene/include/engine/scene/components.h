@@ -1401,7 +1401,78 @@ struct SwarmAgent
     f64 ground = 0.0;
     f64 groundX = 1.0e30;
     f64 groundZ = 1.0e30;
+
+    // **What a replica draws it from** (ADR 0162).
+    //
+    // `SetAgentTag`: a number that means what the game says -- a kind, flags.
+    u16 tag = 0;
+    // Which agent this row is, counted up by the swarm for every one added: a
+    // number is used again when an agent is removed, and this is what tells
+    // the one that has it now from the one that had it before.
+    u32 born = 0;
+    // The way it faces -- at its target -- and how fast the last step walked
+    // it that way, and the tick that step was: where it is at any tick since
+    // is its position carried along that.
+    f32 yaw = 0.0f;
+    f32 walk = 0.0f;
+    u64 stepped = 0;
+    // The way it faces along the ground, as a direction: what `yaw` is the
+    // angle of, kept so that carrying an agent forward is two multiplies and
+    // not a sine and a cosine -- for every agent, every tick, for every
+    // replica.
+    f32 faceX = 0.0f;
+    f32 faceZ = -1.0f;
+
+    // On a replica, the last it was told: where it was, at which of the
+    // authority's ticks, and how far above the ground. Its position is that,
+    // carried forward, with what is left of the last correction.
+    core::DVec3 told;
+    f64 toldTick = 0.0;
+    f32 lift = 0.0f;
+    core::Vec3 ease{};
+    // The height its lift is measured from where no terrain covers it: the
+    // floor the authority said. A replica never looks for the ground with a
+    // ray -- its world is not the authority's in what a ray finds.
+    f64 floor = 0.0;
+    // Whether the ground it holds is a terrain's, rather than that floor.
+    bool onTerrain = false;
 };
+
+// What became of an agent, for the scripts that draw it (ADR 0162): a swarm
+// keeps these until the script layer has fired them.
+struct SwarmEvent
+{
+    enum class Kind : u8
+    {
+        Added,
+        Removed,
+        TagChanged,
+    };
+    Kind kind = Kind::Added;
+    // `Enum.SwarmAgentRemoval`, for a removal.
+    u8 reason = 0;
+    u16 tag = 0;
+    u32 agent = 0;
+    // Added: its size. Removed: where it was last.
+    f32 radius = 0.0f;
+    f32 height = 0.0f;
+    core::DVec3 position;
+};
+
+// An agent the authority removed, kept a tick for the replication that tells
+// the replicas: by then its row is another agent's, or nobody's.
+struct SwarmRemoved
+{
+    u32 slot = 0;
+    u32 born = 0;
+    u16 tag = 0;
+    u64 tick = 0;
+    core::DVec3 position;
+};
+
+// `Enum.SwarmAgentRemoval`'s values.
+inline constexpr u8 SwarmRemovalRemoved = 0;
+inline constexpr u8 SwarmRemovalOutOfReach = 1;
 
 struct SwarmObstacle
 {
@@ -1427,10 +1498,36 @@ struct SwarmComponent
     f32 nearDistance = 24.0f;
     f32 farDistance = 48.0f;
 
+    // **A swarm that replicates itself** (ADR 0162): its agents reach every
+    // replica within this many metres of that player's focus.
+    bool replicates = false;
+    f32 replicationRadius = 80.0f;
+    // On a replica: this swarm is the authority's. It is not stepped here --
+    // its agents are carried forward from what arrives -- and a script may
+    // not change it.
+    bool mirrored = false;
+    // The authority's tick as this replica has it: the newest a message said,
+    // and the clock that follows it.
+    f64 mirrorNewest = 0.0;
+    f64 mirrorClock = 0.0;
+    bool mirrorClockSet = false;
+    // Whether a message arrived since the clock was last set against it.
+    bool mirrorHeard = false;
+    // How many messages of comings and goings this replica has taken in: a
+    // message of positions says how many had been sent before it, and one
+    // that is ahead names agents this replica has not been told of yet.
+    u16 mirrorMembership = 0;
+    // How many agents were ever added: the next one's `born`.
+    u32 births = 0;
+
     std::vector<SwarmAgent> agents;
     // Slots of removed agents, the next agent's first.
     std::vector<u32> free;
     std::vector<SwarmObstacle> obstacles;
+    // What the script layer has yet to fire, in the order it happened.
+    std::vector<SwarmEvent> events;
+    // What the replication has yet to tell the replicas went.
+    std::vector<SwarmRemoved> removed;
 
     // **The agents by cell**, as the last step left them: the first agent in a
     // cell and the next in the same one. What the step's neighbours and a
@@ -1514,6 +1611,9 @@ struct PlayerComponent
     u64 intentTick = 0;
     // `Player.Character`: the part that is them, on this machine.
     core::InstanceId character;
+    // `Player.ReplicationFocus` (ADR 0162): the part what they are sent is
+    // measured from, in place of their character. The authority's.
+    core::InstanceId replicationFocus;
 };
 
 // **The blocks the fluid step is due to look at**, by position, with the tick

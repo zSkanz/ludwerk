@@ -3892,7 +3892,7 @@
         {
           "Name": "GetStats",
           "Parameters": [],
-          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number }"],
+          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number }"],
           "ThreadSafety": "Unsafe"
         },
         {
@@ -4457,6 +4457,10 @@
         {
           "Name": "Character2D",
           "Type": "Part2D?"
+        },
+        {
+          "Name": "ReplicationFocus",
+          "Type": "BasePart?"
         },
         {
           "Name": "UserId",
@@ -6043,6 +6047,16 @@
           "Default": "24"
         },
         {
+          "Name": "Replicates",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "ReplicationRadius",
+          "Type": "number",
+          "Default": "80"
+        },
+        {
           "Name": "StopDistance",
           "Type": "number",
           "Default": "0.55"
@@ -6111,6 +6125,16 @@
           "Returns": ["vector?"]
         },
         {
+          "Name": "GetAgentTag",
+          "Parameters": [
+            {
+              "Name": "agent",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["number"]
+        },
+        {
           "Name": "GetAgents",
           "Parameters": [],
           "Returns": ["{ number }"]
@@ -6167,6 +6191,20 @@
           "Returns": []
         },
         {
+          "Name": "SetAgentBody",
+          "Parameters": [
+            {
+              "Name": "agent",
+              "Type": "number"
+            },
+            {
+              "Name": "body",
+              "Type": "BasePart?"
+            }
+          ],
+          "Returns": []
+        },
+        {
           "Name": "SetAgentPosition",
           "Parameters": [
             {
@@ -6195,6 +6233,20 @@
           "Returns": []
         },
         {
+          "Name": "SetAgentTag",
+          "Parameters": [
+            {
+              "Name": "agent",
+              "Type": "number"
+            },
+            {
+              "Name": "tag",
+              "Type": "number"
+            }
+          ],
+          "Returns": []
+        },
+        {
           "Name": "SetTargets",
           "Parameters": [
             {
@@ -6205,7 +6257,59 @@
           "Returns": []
         }
       ],
-      "Events": []
+      "Events": [
+        {
+          "Name": "AgentAdded",
+          "Parameters": [
+            {
+              "Name": "agent",
+              "Type": "number"
+            },
+            {
+              "Name": "tag",
+              "Type": "number"
+            },
+            {
+              "Name": "size",
+              "Type": "vector"
+            }
+          ]
+        },
+        {
+          "Name": "AgentRemoved",
+          "Parameters": [
+            {
+              "Name": "agent",
+              "Type": "number"
+            },
+            {
+              "Name": "tag",
+              "Type": "number"
+            },
+            {
+              "Name": "position",
+              "Type": "vector"
+            },
+            {
+              "Name": "reason",
+              "Type": "Enum.SwarmAgentRemoval"
+            }
+          ]
+        },
+        {
+          "Name": "AgentTagChanged",
+          "Parameters": [
+            {
+              "Name": "agent",
+              "Type": "number"
+            },
+            {
+              "Name": "tag",
+              "Type": "number"
+            }
+          ]
+        }
+      ]
     },
     {
       "Name": "TagService",
@@ -13538,6 +13642,19 @@
         {
           "Name": "ScaledSize",
           "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "SwarmAgentRemoval",
+      "Items": [
+        {
+          "Name": "OutOfReach",
+          "Value": 1
+        },
+        {
+          "Name": "Removed",
+          "Value": 0
         }
       ]
     },

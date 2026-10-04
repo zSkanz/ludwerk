@@ -28,6 +28,8 @@ offers is on the base's page, which is what keeps one added member on
 | `Gravity` | `number` | `30` | read/write | How fast an agent falls, in metres per second per second. |
 | `MaxNeighbours` | `number` | `14` | read/write | The most neighbours an agent looks at a tick. In a tower of them the nearest few are what matter, and the cost of a crowd packed tight is capped. |
 | `NearDistance` | `number` | `24` | read/write | Past this far from `Target`, in metres, an agent thinks every second tick. |
+| `Replicates` | `boolean` | `false` | read/write | Whether its agents reach every other machine of a match as agents (ADR 0162). On, each replica has this swarm with the same agent numbers, read-only: `GetAgents`, `GetPositions`, `GetAgentPosition`, `GetAgentTag` and `QueryRadius` answer there, `AgentAdded`, `AgentRemoved` and `AgentTagChanged` fire there, and `SetAgentBody` gives an agent a body of that machine's own to move.<br><br>The engine sends an agent to a replica when that replica would otherwise draw it wrong, and each replica carries it forward in between: a replica's agent is close to where the authority's is, never exactly there, and a hit is the authority's to decide. A replica has the agents within `ReplicationRadius` of its player's focus, not the whole crowd.<br><br>Off, a swarm is where it runs and nowhere else, as it always was. |
+| `ReplicationRadius` | `number` | `80` | read/write | How far from a player's focus -- their `Character`, or `Player.ReplicationFocus` -- an agent is sent to that player's machine, in metres. An agent that walks out of it is removed there (`AgentRemoved` with `OutOfReach`) and added again when it returns. |
 | `StopDistance` | `number` | `0.55` | read/write | How far past its own radius from `Target` an agent stops walking at it. |
 | `Target` | `vector` | — | read/write | Where every agent walks, while `SetTargets` has given it none. |
 
@@ -53,6 +55,10 @@ Forgets every obstacle.
 
 Where it stands, or nil when there is no such agent.
 
+### `GetAgentTag(agent: number): number`
+
+The agent's tag, 0 for one that was never given any or that is not there.
+
 ### `GetAgents(): { number }`
 
 Every live agent's number, in slot order.
@@ -75,6 +81,10 @@ Every live agent whose feet are within `radius` of `centre`, in slot order: what
 
 Stops moving an agent and forgets it. Its body stays where it was.
 
+### `SetAgentBody(agent: number, body: BasePart?)`
+
+Gives an agent a part of THIS machine's to move, or nil to let it go: each tick the swarm writes the part's `CFrame` -- where the agent is, facing its target -- and nothing else about it. On the authority it replaces the body `AddAgent` took. On a replica it is how a horde is drawn: a body made when `AgentAdded` fires, given here, and taken back when `AgentRemoved` does. The part is drawn between ticks like any other that moves.
+
 ### `SetAgentPosition(agent: number, position: vector)`
 
 Puts it somewhere, falling from there.
@@ -83,6 +93,27 @@ Puts it somewhere, falling from there.
 
 How fast it walks, in metres a second. Zero holds it where it stands, still pushed.
 
+### `SetAgentTag(agent: number, tag: number)`
+
+Gives an agent a number that means what the game says -- a whole number from 0 to 65535: a kind in some bits, flags in the others (ADR 0162). It reaches every machine that has the agent, which reads it with `GetAgentTag` and hears `AgentTagChanged`: what a replica picks a mesh and a pose from. The tag an agent has when it is removed arrives with its removal, so a "killed" bit set just before `RemoveAgent` is in every machine's `AgentRemoved`. The authority's to call.
+
 ### `SetTargets(targets: { vector })`
 
 Where the agents walk when there is more than one place to go -- every player of a match: each agent walks at the nearest of them, and thinks as often as that one is near (`NearDistance`, `FarDistance`). Called again whenever they move. An empty table is `Target` alone again.
+
+## Events
+
+Every signal here is **deferred** (ADR 0015): a handler runs at the next
+drain point, never inside the call that fired it.
+
+### `AgentAdded(agent: number, tag: number, size: vector)`
+
+Fires when this machine has a new agent: on the authority after `AddAgent`, on a replica when one arrives -- born, or walking into what that replica is sent. `size` is its width, its height and its width again. The number is the agent's on every machine until `AgentRemoved` fires for it, and may name another after.
+
+### `AgentRemoved(agent: number, tag: number, position: vector, reason: Enum.SwarmAgentRemoval)`
+
+Fires when this machine no longer has an agent, with the tag and the place it had last, and why: the authority removed it, or -- on a replica -- it walked out of what that machine is sent. A death is played for the first and nothing for the second.
+
+### `AgentTagChanged(agent: number, tag: number)`
+
+Fires when an agent this machine has is given another tag.

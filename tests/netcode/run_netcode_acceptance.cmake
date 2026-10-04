@@ -9,6 +9,8 @@
 #
 #   - a straight walk is not corrected (twice at most for a long frame: the
 #     time the client dropped, and the stream anchored again);
+#   - the second in which the walk BEGINS costs at most one correction on a
+#     link that loses packets, and none on one that does not (D534);
 #   - stopped, the replica is where the authority is, to a millimetre;
 #   - a remote's round trip is at most the ping, a tick and a frame;
 #   - the ping is the link's.
@@ -34,7 +36,7 @@ set(conditions
 
 file(REMOVE_RECURSE "${STAGE}")
 file(MAKE_DIRECTORY "${STAGE}")
-set(table "| condition | corrections | long frames | stop (m) | ping (ms) | remote (ms) | interpolation (ms) |\n|---|---|---|---|---|---|---|\n")
+set(table "| condition | corrections | long frames | as it began | stop (m) | ping (ms) | remote (ms) | interpolation (ms) |\n|---|---|---|---|---|---|---|---|\n")
 set(failures "")
 set(port ${PORT})
 
@@ -62,7 +64,7 @@ foreach(entry IN LISTS conditions)
     execute_process(
         COMMAND "${HOST}" --headless --pace=60 "--serve=${port}" --frames=1800 "${game}"
         COMMAND "${HOST}" --headless --rhi=null --pace=60 "--join=127.0.0.1:${port}" --frames=1500
-                "--net-delay=${delay}" "--net-jitter=${jitter}" "--net-loss=${loss}" "${game}"
+                "--net-delay=${delay}" "--net-jitter=${jitter}" "--net-loss=${loss}" --net-log-corrections "${game}"
         WORKING_DIRECTORY "${game}"
         RESULT_VARIABLE results
         OUTPUT_VARIABLE output
@@ -73,14 +75,18 @@ foreach(entry IN LISTS conditions)
     if(line STREQUAL "")
         message("${output}")
         string(APPEND failures "  ${name}: the bot printed no measurement\n")
-        string(APPEND table "| ${name} | -- | -- | -- | -- | -- | -- |\n")
+        string(APPEND table "| ${name} | -- | -- | -- | -- | -- | -- | -- |\n")
         continue()
     endif()
     message("${line}")
     string(REGEX MATCH "corrections=([0-9]+)" _ "${line}")
     set(corrections ${CMAKE_MATCH_1})
-    string(REGEX MATCH "hitches=([0-9]+)" _ "${line}")
+    string(REGEX MATCH " hitches=([0-9]+)" _ "${line}")
     set(hitches ${CMAKE_MATCH_1})
+    string(REGEX MATCH "start=([0-9]+)" _ "${line}")
+    set(start ${CMAKE_MATCH_1})
+    string(REGEX MATCH "startHitches=([0-9]+)" _ "${line}")
+    set(startHitches ${CMAKE_MATCH_1})
     string(REGEX MATCH "stop=([0-9.]+)" _ "${line}")
     set(stop ${CMAKE_MATCH_1})
     string(REGEX MATCH "ping=([0-9.]+)" _ "${line}")
@@ -89,7 +95,7 @@ foreach(entry IN LISTS conditions)
     set(remote ${CMAKE_MATCH_1})
     string(REGEX MATCH "interpolation=([0-9.]+)" _ "${line}")
     set(interpolation ${CMAKE_MATCH_1})
-    string(APPEND table "| ${name} | ${corrections} | ${hitches} | ${stop} | ${ping} | ${remote} | ${interpolation} |\n")
+    string(APPEND table "| ${name} | ${corrections} | ${hitches} | ${start} | ${stop} | ${ping} | ${remote} | ${interpolation} |\n")
 
     # What each condition is held to. **A long frame costs at most two
     # corrections** -- the time the client dropped, which the authority went on
@@ -107,9 +113,39 @@ foreach(entry IN LISTS conditions)
         set(slack 1)
     endif()
     math(EXPR allowed "2 * ${hitches} + ${slack}")
+    # **Each correction says what it disagreed about** (D534,
+    # `--net-log-corrections`): the client's log has a line for every one,
+    # the landing at the join among them. One that should not have been is
+    # printed with the rest, so a run that fails says why -- a count alone
+    # was a failure nobody could act on, four times.
+    string(REGEX MATCHALL "Corrected at tick [^\n]*" said "${output}")
+    list(LENGTH said saidCount)
+    # **The walk's first second** (D534): the key going down is one intent,
+    # and where the packets carrying it were lost or late the authority began
+    # the walk a tick after the client did -- one correction, one tick's walk.
+    # None where the link loses nothing.
+    set(startAllowed 0)
+    if(loss GREATER 0)
+        set(startAllowed 1)
+    endif()
+    math(EXPR startAllowed "${startAllowed} + 2 * ${startHitches}")
+    if(start GREATER startAllowed)
+        string(APPEND failures
+             "  ${name}: ${start} corrections as the walk began with ${startHitches} long frames (at most ${startAllowed})\n")
+        foreach(line IN LISTS said)
+            string(APPEND failures "      ${line}\n")
+        endforeach()
+    endif()
+    if(corrections GREATER 0 AND saidCount LESS corrections)
+        string(APPEND failures
+             "  ${name}: ${corrections} corrections counted and ${saidCount} said in the log\n")
+    endif()
     if(corrections GREATER allowed)
         string(APPEND failures
              "  ${name}: ${corrections} corrections on a straight walk with ${hitches} long frames (at most ${allowed})\n")
+        foreach(line IN LISTS said)
+            string(APPEND failures "      ${line}\n")
+        endforeach()
     endif()
     if(stop GREATER 0.001)
         string(APPEND failures "  ${name}: stopped ${stop} m from the authority (at most 0.001)\n")

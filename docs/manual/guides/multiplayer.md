@@ -102,8 +102,11 @@ its own, so a window in the background reads the same ping as one in front --
 how many times this machine's own character was corrected (`Corrections`, and
 `CorrectionsPerSecond`), how far in the past the others are drawn
 (`InterpolationDelay`, in milliseconds: it grows with a jittery link and comes
-back when the link does), the authority's queue of this player's input, and
-the unreliable messages this machine sent, took in and dropped.
+back when the link does), the authority's queue of this player's input, the
+unreliable messages this machine sent, took in and dropped, and everything it
+has sent and received in bytes (`BytesSent`, `BytesReceived` -- totals since
+the session began, so a rate is the difference over a second; `SwarmBytes` is
+the share of a replicated `Swarm`'s positions).
 
 **A worse network, on purpose.** To see a game the way a player far away does:
 
@@ -116,7 +119,49 @@ below the transport, so its own round trip, resends and timeouts see it as they
 would see the real thing. For measuring; a shipping build refuses it. The
 engine's own acceptance gate walks a predicted character this way at 0, 50, 150
 and 300 ms round trip and with frames of 150 and 400 ms, and holds every
-condition to no correction on a straight walk.
+condition to no correction on a straight walk -- and to one at most in the
+second the walk begins, where the link loses packets.
+
+**Why a character was corrected.** `Corrections` counts how often the server
+put this machine's predicted character somewhere else; what it disagreed about
+is in the log when the game is started with `--net-log-corrections`:
+
+```
+Corrected at tick 2350, by the authority's answer to intent 2346: 0.167219 m off
+(-0.005486, -0.013573, 0.166576); turned: no; a part it pushes: 0 m off;
+predicted attributes that differ: HeldY, Held.
+```
+
+A correction now and then is the design working. A steady stream of them is
+one of a few things, and the line says which:
+
+- **Attributes named**: a predicted step decided something from state the
+  server sets -- a pause, a stun, a buff that arrives as an attribute of
+  something else. The client learns of it a few ticks after the server acted on
+  it, and is put right once when it begins and once when it ends. That is the
+  cost of a server-decided stop; make it rare, or keep it out of the step.
+- **Only metres, every snapshot, while two players run side by side**: another
+  player's character is drawn a little in the past, and a predicted character
+  collides with it where it is drawn, not where the server has it. Characters
+  that need not block each other -- a team in a co-op game -- go in a collision
+  group that does not collide with itself, and are never corrected for it:
+
+  ```luau
+  PhysicsService:RegisterCollisionGroup("Heroes")
+  PhysicsService:CollisionGroupSetCollidable("Heroes", "Heroes", false)
+  character.CollisionGroup = "Heroes"
+  ```
+
+  A part's `CollisionGroup` and the server's table of groups reach every
+  client: registered and set on the server, they are the same on all of them.
+- **Only metres, in a burst after a hitch**: a long frame on this machine. The
+  time it lost the server went on simulating.
+- **One tick's worth, once, as a key goes down or up**: the packets carrying
+  that change of input were lost or late, and the server began a tick after
+  this machine did. A bad link's cost; it does not repeat while the key is
+  held.
+- **A part it pushes**: a crate the character moved that the server has
+  somewhere else.
 
 **A server and a player of one game on one machine** keep separate saves: a
 dedicated server keeps `saves-server` beside the player's `saves`, and
@@ -555,9 +600,10 @@ there is there when the game starts.
 
 **A crowd the server simulates** -- a horde every player sees -- is a `Swarm`
 whose agents have no body (`Swarm:AddAgentAt`), each after the nearest player
-(`Swarm:SetTargets`). The server sends the positions it reads from
-`GetPositions`, and each machine draws them. A body under `ServerStorage`
-never replicates either, but it is a part moved every tick for nobody.
+(`Swarm:SetTargets`), with `Replicates` on: the engine sends the agents to
+every machine, each draws them with bodies of its own, and nothing about it
+is the game's to pack or send. [Navigation](manual:world/navigation) has the
+whole of it under "A horde in a match".
 
 A template comes into the world by being cloned into `Workspace`:
 

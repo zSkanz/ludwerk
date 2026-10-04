@@ -129,6 +129,12 @@ order into a simulation.
 
 A world holds at most 1024 groups.
 
+**In a match the server's groups are everybody's.** The groups the server
+registers, which of them collide, and each part's `CollisionGroup` reach every
+client, so a character a client predicts meets the world the server's does.
+Register and set them on the server; a client that registers the same names in
+shared code loses nothing, and a group only a client has is its own.
+
 Collision groups also decide **character against character**: what holds the
 block is the rigid body inside the capsule, so two characters in a group set
 never to collide with itself walk straight through one another.

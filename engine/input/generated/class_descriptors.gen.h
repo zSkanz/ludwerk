@@ -122,6 +122,7 @@ inline constexpr scene::EnumId ParticleCollisionResponseEnumId = 79;
 inline constexpr scene::EnumId ParticleSimulationEnumId = 80;
 inline constexpr scene::EnumId DecalBlendModeEnumId = 81;
 inline constexpr scene::EnumId ParticleFlipbookModeEnumId = 82;
+inline constexpr scene::EnumId SwarmAgentRemovalEnumId = 83;
 
 } // namespace generated
 

@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "engine/asset/content.h"
@@ -270,6 +271,8 @@ private:
     struct TextureWork
     {
         std::vector<std::byte> bytes;
+        // For a texture that is drawn and not read (D544): which one.
+        std::string name;
         asset::Image image;
         bool ok = false;
     };

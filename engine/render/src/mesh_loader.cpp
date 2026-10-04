@@ -397,11 +397,39 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
         }
         // **The engine's own terrain textures are drawn, not read** (ADR
         // 0113): from noise, once, and uploaded like a loose image.
+        //
+        // **Off the frame, where a file would be** (D544): a sheet is some tens
+        // of milliseconds of noise, and a terrain's eight layers in the frame
+        // that first asked were 400 ms of it. Past `MaxTexturesInFlight`, which
+        // bounds files open and images held: these are neither, and a layer's
+        // four maps are one sheet.
         if (asset::isEngineTexture(world.atoms().text(urn))) {
+            if (deferredTextures_) {
+                if (textureInFlight(urn))
+                    return;
+                PendingTexture pending;
+                pending.urn = urn;
+                pending.srgb = srgb;
+                pending.work = std::make_unique<TextureWork>();
+                TextureWork* work = pending.work.get();
+                work->name = std::string(world.atoms().text(urn));
+                pending.decode = jobs::schedule("texture-draw", jobs::Domain::AssetIo, [work]() noexcept {
+                    std::optional<asset::Image> drawn = asset::engineTexture(work->name);
+                    work->ok = drawn.has_value();
+                    if (work->ok)
+                        work->image = std::move(*drawn);
+                });
+                if (pending.decode.valid()) {
+                    pendingTextures_.push_back(std::move(pending));
+                    return;
+                }
+                // No job to be had: drawn here, as it is with nothing deferred.
+            }
             const std::optional<asset::Image> drawn = asset::engineTexture(world.atoms().text(urn));
             if (drawn.has_value()) {
                 const rhi::TextureHandle handle = uploadImage(device, cmd, *drawn, "engine-terrain", srgb);
                 if (handle.valid()) {
+                    textures_.push_back(handle);
                     library.set(urn, handle, drawn->width, drawn->height);
                     ++loaded;
                 }

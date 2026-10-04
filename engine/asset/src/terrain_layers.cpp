@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <memory>
 #include <mutex>
 
 namespace engine::asset {
@@ -432,13 +433,28 @@ std::optional<Image> engineTexture(std::string_view urn)
 
     // Drawn once per layer and kept: a terrain asks for four maps of each of
     // its layers, and a second terrain for the same ones again.
+    //
+    // **One layer's drawing holds up nobody else's** (D544): the table is
+    // locked for as long as it takes to find a layer's place in it, and the
+    // sheet is drawn under that layer's own flag -- so eight layers asked for
+    // by eight jobs are drawn side by side, and four maps of one are one sheet.
+    struct Drawn
+    {
+        std::once_flag once;
+        Sheet sheet;
+    };
     static std::mutex mutex;
-    static std::map<std::string_view, Sheet> sheets;
-    const std::lock_guard lock(mutex);
-    auto found = sheets.find(layer.name);
-    if (found == sheets.end())
-        found = sheets.emplace(layer.name, drawSheet(layer)).first;
-    const Sheet& sheet = found->second;
+    static std::map<std::string_view, std::shared_ptr<Drawn>> sheets;
+    std::shared_ptr<Drawn> drawn;
+    {
+        const std::lock_guard lock(mutex);
+        std::shared_ptr<Drawn>& place = sheets[layer.name];
+        if (place == nullptr)
+            place = std::make_shared<Drawn>();
+        drawn = place;
+    }
+    std::call_once(drawn->once, [&] { drawn->sheet = drawSheet(layer); });
+    const Sheet& sheet = drawn->sheet;
     return map == "color"     ? sheet.color
            : map == "normal"  ? sheet.normal
            : map == "surface" ? sheet.surface

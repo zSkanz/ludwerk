@@ -129,6 +129,7 @@ inline constexpr FieldDesc BasePartFields[] = {
     {"LinearVelocity", 15, Encoding::Vector3, Source::Component, "rigidBodies"},
     {"AngularVelocity", 16, Encoding::Vector3, Source::Component, "rigidBodies"},
     {"CastShadow", 17, Encoding::Bool, Source::Component, "parts"},
+    {"CollisionGroup", 18, Encoding::NameAtom, Source::Component, "rigidBodies"},
 };
 
 inline constexpr FieldDesc PartFields[] = {
@@ -288,6 +289,11 @@ inline constexpr FieldDesc ColorCorrectionEffectFields[] = {
 inline constexpr FieldDesc BlurEffectFields[] = {
     {"Enabled", 1, Encoding::Bool, Source::Component, "postEffects"},
     {"Size", 2, Encoding::F32, Source::Component, "blurEffects"},
+};
+
+inline constexpr FieldDesc SwarmFields[] = {
+    {"Replicates", 1, Encoding::Bool, Source::Component, "swarms"},
+    {"ReplicationRadius", 2, Encoding::F32, Source::Component, "swarms"},
 };
 
 inline constexpr FieldDesc DepthOfFieldEffectFields[] = {
@@ -523,6 +529,7 @@ inline constexpr ClassDesc Classes[] = {
     {"BloomEffect", BloomEffectFields, -1, false, false},
     {"ColorCorrectionEffect", ColorCorrectionEffectFields, -1, false, false},
     {"BlurEffect", BlurEffectFields, -1, false, false},
+    {"Swarm", SwarmFields, -1, false, false},
     {"DepthOfFieldEffect", DepthOfFieldEffectFields, -1, false, false},
     {"SunRaysEffect", SunRaysEffectFields, -1, false, false},
     {"Atmosphere", AtmosphereFields, -1, false, false},
@@ -530,19 +537,19 @@ inline constexpr ClassDesc Classes[] = {
     {"Workspace", WorkspaceFields, -1, true, false},
     {"Attachment", AttachmentFields, -1, false, false},
     {"Constraint", ConstraintFields, -1, false, false},
-    {"BallSocketConstraint", BallSocketConstraintFields, 28, false, false},
-    {"HingeConstraint", HingeConstraintFields, 28, false, false},
-    {"FixedConstraint", {}, 28, false, false},
-    {"PrismaticConstraint", PrismaticConstraintFields, 28, false, false},
-    {"RopeConstraint", RopeConstraintFields, 28, false, false},
-    {"RodConstraint", RodConstraintFields, 28, false, false},
-    {"SpringConstraint", SpringConstraintFields, 28, false, false},
-    {"LinearVelocity", LinearVelocityFields, 28, false, false},
-    {"AngularVelocity", AngularVelocityFields, 28, false, false},
-    {"AlignPosition", AlignPositionFields, 28, false, false},
-    {"AlignOrientation", AlignOrientationFields, 28, false, false},
-    {"VectorForce", VectorForceFields, 28, false, false},
-    {"Torque", TorqueFields, 28, false, false},
+    {"BallSocketConstraint", BallSocketConstraintFields, 29, false, false},
+    {"HingeConstraint", HingeConstraintFields, 29, false, false},
+    {"FixedConstraint", {}, 29, false, false},
+    {"PrismaticConstraint", PrismaticConstraintFields, 29, false, false},
+    {"RopeConstraint", RopeConstraintFields, 29, false, false},
+    {"RodConstraint", RodConstraintFields, 29, false, false},
+    {"SpringConstraint", SpringConstraintFields, 29, false, false},
+    {"LinearVelocity", LinearVelocityFields, 29, false, false},
+    {"AngularVelocity", AngularVelocityFields, 29, false, false},
+    {"AlignPosition", AlignPositionFields, 29, false, false},
+    {"AlignOrientation", AlignOrientationFields, 29, false, false},
+    {"VectorForce", VectorForceFields, 29, false, false},
+    {"Torque", TorqueFields, 29, false, false},
     {"Weld", WeldFields, -1, false, false},
     {"WeldConstraint", WeldConstraintFields, -1, false, false},
     {"NoCollisionConstraint", NoCollisionConstraintFields, -1, false, false},
@@ -591,7 +598,6 @@ inline constexpr std::string_view ExcludedClasses[] = {
     "NavigationArea",
     "NavigationLink",
     "NavigationAgent",
-    "Swarm",
     "Frame",
     "TextLabel",
     "TextButton",
@@ -640,6 +646,7 @@ inline constexpr ChannelDesc Channels[] = {
     {"Intent", 2, Delivery::UnreliableSequenced},
     {"Ownership", 3, Delivery::UnreliableSequenced},
     {"Remote", 4, Delivery::UnreliableSequenced},
+    {"Swarm", 5, Delivery::Unreliable},
 };
 
 // The message types. An enum rather than bare numbers, so a switch over them
@@ -669,8 +676,12 @@ enum class MessageType : u8
     VoxelTypes = 20,
     SnapshotPart = 22,
     Refused = 23,
+    CollisionGroups = 30,
     UnreliableToAuthority = 25,
     UnreliableToReplica = 26,
+    SwarmAgents = 27,
+    SwarmState = 28,
+    SwarmAck = 29,
 };
 
 // Which direction a message may travel. A server that accepted a
@@ -714,8 +725,12 @@ inline constexpr MessageDesc Messages[] = {
     {"VoxelTypes", MessageType::VoxelTypes, 0, Direction::ToReplica},
     {"SnapshotPart", MessageType::SnapshotPart, 0, Direction::ToReplica},
     {"Refused", MessageType::Refused, 0, Direction::ToReplica},
+    {"CollisionGroups", MessageType::CollisionGroups, 0, Direction::ToReplica},
     {"UnreliableToAuthority", MessageType::UnreliableToAuthority, 4, Direction::ToAuthority},
     {"UnreliableToReplica", MessageType::UnreliableToReplica, 4, Direction::ToReplica},
+    {"SwarmAgents", MessageType::SwarmAgents, 0, Direction::ToReplica},
+    {"SwarmState", MessageType::SwarmState, 5, Direction::ToReplica},
+    {"SwarmAck", MessageType::SwarmAck, 5, Direction::ToAuthority},
 };
 
 } // namespace engine::replication::generated

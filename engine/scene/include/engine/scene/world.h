@@ -397,6 +397,11 @@ struct EngineState
         u64 unreliableSent = 0;
         u64 unreliableReceived = 0;
         u64 unreliableDropped = 0;
+        // Everything this machine's session sent and took in, in bytes, since
+        // it began; and of those, a replicated swarm's positions (ADR 0162).
+        u64 bytesSent = 0;
+        u64 bytesReceived = 0;
+        u64 swarmBytes = 0;
     };
     NetworkStats networkStats;
 

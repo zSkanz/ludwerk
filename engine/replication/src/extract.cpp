@@ -476,6 +476,11 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setVec3(out, body->angularVelocity);
             return true;
         }
+        // The group by name (D545), as a material is.
+        if (field.name == "CollisionGroup") {
+            setU32(out, body->collisionGroup.id);
+            return true;
+        }
         return false;
     }
 
@@ -780,6 +785,22 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "Size") {
             setF32(out, component->size);
+            return true;
+        }
+        return false;
+    }
+
+    if (field.pool == "swarms") {
+        const scene::SwarmComponent* component = world.swarms().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "Replicates") {
+            setBool(out, component->replicates);
+            return true;
+        }
+        if (field.name == "ReplicationRadius") {
+            setF32(out, component->replicationRadius);
             return true;
         }
         return false;
@@ -1411,6 +1432,25 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         return false;
     }
 
+    if (field.pool == "swarms") {
+        scene::SwarmComponent* component = world.swarms().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        // What arrives is the authority's swarm: read here, never stepped
+        // (ADR 0162).
+        component->mirrored = true;
+        if (field.name == "Replicates") {
+            component->replicates = asBool(value);
+            return true;
+        }
+        if (field.name == "ReplicationRadius") {
+            component->replicationRadius = asF32(value);
+            return true;
+        }
+        return false;
+    }
+
     if (field.pool == "depthOfFieldEffects") {
         scene::DepthOfFieldEffectComponent* component = world.depthOfFieldEffects().find(id);
         if (component == nullptr) {
@@ -1675,6 +1715,27 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "AngularVelocity") {
             body->angularVelocity = asVec3(value);
+            return true;
+        }
+        // **This machine's own atom for the group's name** (D545). One it has
+        // not registered is registered here, colliding with everything: the
+        // table of groups travels in a message of its own, and a part may be
+        // told of before it. No name is `Default`.
+        if (field.name == "CollisionGroup") {
+            const core::NameAtom atom{asU32(value)};
+            scene::CollisionGroups& groups = world.collisionGroups();
+            if (world.atoms().text(atom).empty()) {
+                body->collisionGroup = groups.nameAt(scene::CollisionGroups::kDefault);
+                return true;
+            }
+            if (groups.find(atom) == scene::CollisionGroups::kInvalid) {
+                if (groups.add(atom) == scene::CollisionGroups::kInvalid) {
+                    body->collisionGroup = groups.nameAt(scene::CollisionGroups::kDefault);
+                    return true;
+                }
+                groups.bumpRevision();
+            }
+            body->collisionGroup = atom;
             return true;
         }
         return false;
