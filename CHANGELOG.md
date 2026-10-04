@@ -209,6 +209,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A phone's back button is `Enum.KeyCode.Escape`** (ADR 0170). On Android
+  the back button and gesture closed the game; they are now delivered to it,
+  as the key a desktop game already answers. A game leaves with
+  `game:Shutdown()`.
 - **`NetworkService.MaxPlayers` and `Player:Kick`** (ADR 0167): a host says
   how many players its match takes, its own among them, and removes one --
   who is told why in `Disconnected`. Both from a script, on the authority.
@@ -1222,6 +1226,21 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   A size is now rasterised at the nearest of a few sizes at or above it and
   drawn smaller; text at a whole number of pixels up to 64 is drawn exactly as
   before, and text over 128 pixels is drawn up from 128.
+- **Hidden interface no longer reads `AbsolutePosition` and `AbsoluteSize`
+  as infinite or NaN** (D551). Under a `ScreenGui` with a `ReferenceHeight`,
+  on a window of another height, the rectangle of anything not `Visible`
+  grew at every layout. What is hidden keeps the rectangle it last had.
+- **A model the project's cache had lost is compiled again** (D554). A
+  project opened by two processes at once could be left with a model that
+  "has no compiled form" at every open after, until its cache was deleted.
+- **Name tags and signs in the world no longer flicker** (D553). A
+  `BillboardGui` or `SurfaceGui` could be drawn for one frame in black or in
+  another label's letters, each time the glyph cache filled.
+- **Large text no longer stalls a frame every minute or so** (D552, ADR
+  0169). On a dense screen -- a phone, a 2160-line window -- the glyph cache
+  filled and was emptied whole, and every glyph on the screen was made again
+  in one frame of 60 to 110 ms. It grows a page at a time now, and gives up
+  only what has not been shown.
 - **An attribute or a tag that changes no longer sends everything its
   instance carries** (D549). One attribute written every tick on an instance
   with eighteen sent all eighteen, by name, every snapshot -- most of what a

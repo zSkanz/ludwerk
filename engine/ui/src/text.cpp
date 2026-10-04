@@ -104,7 +104,7 @@ constexpr u32 ReplacementCodepoint = 0x11000000u;
 // means something is asking for a new size every frame, which is a bug worth a
 // log line rather than a policy worth writing. M7's milestone -- the one with a
 // face large enough to need one -- is where a policy is measured.
-constexpr usize MaxGlyphEntries = 2048;
+constexpr usize MaxGlyphEntries = 16384;
 
 // --- UTF-8 -------------------------------------------------------------------
 
@@ -183,6 +183,10 @@ struct GlyphEntry
     // the metrics is where the two faces differ, and nowhere else -- which is
     // what the M6 seam was built for.
     bool textured = false;
+    // Which page of the atlas its texels are on (ADR 0169), when it has any:
+    // a glyph with no ink is on none, and is not lost with a page.
+    bool paged = false;
+    core::u8 page = 0;
 };
 
 // A shelf packer: glyphs go left to right on a row whose height is the tallest
@@ -197,6 +201,18 @@ struct AtlasPacker
     u32 rowHeight = 0;
 };
 
+// **One page of the atlas** (ADR 0169): a square of coverage with a packer of
+// its own, the version each of its rows was last written at, the version it
+// was last emptied at, and the frame anything on it was last shown in.
+struct AtlasPage
+{
+    std::vector<core::u8> pixels;
+    std::vector<u64> rows;
+    AtlasPacker packer;
+    u64 clearedAt = 0;
+    u64 shownAt = 0;
+};
+
 struct GlyphStore
 {
     // Sorted by key. A UI has a few hundred distinct glyphs at most, so a binary
@@ -207,16 +223,18 @@ struct GlyphStore
     std::vector<GlyphQuad> quads;
     GlyphCacheStats stats;
 
-    // Single-channel coverage. Empty until a raster face has drawn something,
-    // and empty forever with the built-in one.
-    std::vector<core::u8> atlas;
-    u32 atlasWidth = 0;
-    u32 atlasHeight = 0;
+    // Single-channel coverage, a page at a time. None until a raster face has
+    // drawn something, and none forever with the built-in one.
+    std::vector<AtlasPage> pages;
+    // The page new glyphs go on.
+    usize filling = 0;
+    // One count for every page: what `GlyphAtlas::version` is.
     u64 atlasVersion = 0;
-    // What `GlyphAtlas::rowVersions` and `clearedAt` are.
-    std::vector<u64> atlasRows;
-    u64 atlasClearedAt = 0;
-    AtlasPacker packer;
+    // What every page was last emptied at by a clear or a reset, kept for the
+    // pages there are none of now: an uploader of page 0 must know.
+    u64 emptiedAt = 0;
+    // Which frame is being built (`beginGlyphFrame`).
+    u64 frame = 1;
 };
 
 GlyphStore& store()
@@ -504,11 +522,16 @@ constexpr f32 LargestRasterSize = 128.0f;
 
 // --- The atlas ---------------------------------------------------------------
 
-// Square and fixed. 1024x1024 of single-channel coverage is one megabyte and
-// holds several thousand glyphs at UI sizes, which is more distinct glyphs than
-// a HUD has. Growing it would mean reuploading everything and re-deriving every
-// cached UV, and the store already has a clear-and-refill path for the case
-// where it genuinely fills up.
+// **A page is 1024 square, and there are up to eight** (ADR 0169). One page
+// holds several thousand glyphs at the sizes a 1080-line screen draws them,
+// which is more than a HUD has. An interface laid out for half the lines of
+// its screen -- a phone, a 2160-line window -- rasterises every glyph at twice
+// the size, four times the texels, and one page was a few sizes of them: it
+// filled and was emptied whole, every glyph on the screen rasterised again in
+// one frame, a minute into a run and every minute after. So a page that is
+// full is followed by another, each a texture of its own -- nothing already
+// sent is sent again and no cached place moves -- and past the last, the page
+// nobody has shown for longest is emptied for the next glyph.
 constexpr u32 AtlasSize = 1024;
 
 // **A glyph's outline, made from its coverage** (ADR 0110): every texel takes
@@ -566,6 +589,65 @@ void dilateCoverage(const std::vector<core::u8>& coverage, u32 width, u32 height
     }
 }
 
+// **The page the next glyph goes on, when the one being filled is full**
+// (ADR 0169): a new one while there may be more; after that, the page nobody
+// has shown for longest, emptied -- its glyphs forgotten, to be rasterised
+// again if they come back. False when every page holds something the frame
+// being built has shown: then nothing can go without what is on the screen
+// going, and the caller clears.
+[[nodiscard]] bool nextPage(GlyphStore& cache)
+{
+    if (cache.pages.size() < kGlyphPages) {
+        AtlasPage page;
+        page.pixels.assign(static_cast<usize>(AtlasSize) * AtlasSize, 0u);
+        page.rows.assign(AtlasSize, 0u);
+        page.clearedAt = cache.emptiedAt;
+        page.shownAt = cache.frame;
+        cache.pages.push_back(std::move(page));
+        cache.filling = cache.pages.size() - 1;
+        return true;
+    }
+    usize oldest = cache.pages.size();
+    for (usize at = 0; at < cache.pages.size(); ++at) {
+        if (cache.pages[at].shownAt >= cache.frame)
+            continue;
+        if (oldest == cache.pages.size() || cache.pages[at].shownAt < cache.pages[oldest].shownAt)
+            oldest = at;
+    }
+    if (oldest == cache.pages.size())
+        return false;
+
+    // Its glyphs go, and the quads they had with them: the entries that stay
+    // are told where theirs are now.
+    std::vector<GlyphEntry> kept;
+    std::vector<GlyphQuad> quads;
+    kept.reserve(cache.entries.size());
+    quads.reserve(cache.quads.size());
+    for (GlyphEntry entry : cache.entries) {
+        if (entry.paged && entry.page == oldest)
+            continue;
+        const u32 first = static_cast<u32>(quads.size());
+        quads.insert(quads.end(), cache.quads.begin() + entry.firstQuad,
+                     cache.quads.begin() + entry.firstQuad + entry.quadCount);
+        entry.firstQuad = first;
+        kept.push_back(entry);
+    }
+    cache.entries = std::move(kept);
+    cache.quads = std::move(quads);
+    cache.stats.entries = cache.entries.size();
+    ++cache.stats.evictions;
+
+    AtlasPage& page = cache.pages[oldest];
+    std::fill(page.pixels.begin(), page.pixels.end(), core::u8{0});
+    std::fill(page.rows.begin(), page.rows.end(), u64{0});
+    page.packer = AtlasPacker{};
+    ++cache.atlasVersion;
+    page.clearedAt = cache.atlasVersion;
+    page.shownAt = cache.frame;
+    cache.filling = oldest;
+    return true;
+}
+
 // Rasterises one codepoint into the atlas at `pixelSize`, filling `entry` --
 // outlined by `stroke` when it has a radius. False means it did not fit, which
 // the caller answers by clearing the store.
@@ -600,12 +682,9 @@ void dilateCoverage(const std::vector<core::u8>& coverage, u32 width, u32 height
         return true;
     }
 
-    if (cache.atlas.empty()) {
-        cache.atlas.assign(static_cast<usize>(AtlasSize) * AtlasSize, 0u);
-        cache.atlasRows.assign(AtlasSize, 0u);
-        cache.atlasWidth = AtlasSize;
-        cache.atlasHeight = AtlasSize;
-    }
+    // A glyph larger than a page is on none of them: the box a missing one is.
+    if (plainWidth + 2 > AtlasSize || plainHeight + 2 > AtlasSize)
+        return false;
 
     // An outline is the glyph drawn somewhere else first, and grown: `pad`
     // texels on every side, which is where the outline goes.
@@ -637,35 +716,54 @@ void dilateCoverage(const std::vector<core::u8>& coverage, u32 width, u32 height
     // glyph cannot reach into its neighbour. Without it, text at a fractional
     // scale grows faint marks nobody can account for.
     constexpr u32 Padding = 1;
-    AtlasPacker& packer = cache.packer;
-    if (packer.cursorX + width + Padding * 2 > cache.atlasWidth) {
-        packer.cursorX = 0;
-        packer.cursorY += packer.rowHeight;
-        packer.rowHeight = 0;
-    }
-    if (packer.cursorY + height + Padding * 2 > cache.atlasHeight) {
+    if (width + Padding * 2 > AtlasSize || height + Padding * 2 > AtlasSize)
         return false;
+    // Whether the page being filled has room, moving its cursor to where the
+    // glyph goes when it has.
+    const auto fits = [&](AtlasPage& page) {
+        AtlasPacker& packer = page.packer;
+        if (packer.cursorX + width + Padding * 2 > AtlasSize) {
+            packer.cursorX = 0;
+            packer.cursorY += packer.rowHeight;
+            packer.rowHeight = 0;
+        }
+        return packer.cursorY + height + Padding * 2 <= AtlasSize;
+    };
+    if (cache.pages.empty() || !fits(cache.pages[cache.filling])) {
+        if (!nextPage(cache))
+            return false;
+        if (!fits(cache.pages[cache.filling]))
+            return false;
     }
+    AtlasPage& page = cache.pages[cache.filling];
+    AtlasPacker& packer = page.packer;
 
     const u32 originX = packer.cursorX + Padding;
     const u32 originY = packer.cursorY + Padding;
     if (pad == 0) {
-        stbtt_MakeGlyphBitmap(&face.info, cache.atlas.data() + static_cast<usize>(originY) * cache.atlasWidth + originX,
-                              static_cast<int>(width), static_cast<int>(height), static_cast<int>(cache.atlasWidth),
-                              scale, scale, glyph);
+        stbtt_MakeGlyphBitmap(&face.info, page.pixels.data() + static_cast<usize>(originY) * AtlasSize + originX,
+                              static_cast<int>(width), static_cast<int>(height), static_cast<int>(AtlasSize), scale,
+                              scale, glyph);
     }
     else {
         for (u32 row = 0; row < height; ++row) {
             std::copy_n(outlined.data() + static_cast<usize>(row) * width, width,
-                        cache.atlas.data() + static_cast<usize>(originY + row) * cache.atlasWidth + originX);
+                        page.pixels.data() + static_cast<usize>(originY + row) * AtlasSize + originX);
         }
     }
 
     packer.cursorX += width + Padding * 2;
     packer.rowHeight = std::max(packer.rowHeight, height + Padding * 2);
     ++cache.atlasVersion;
-    for (u32 row = 0; row < height; ++row)
-        cache.atlasRows[originY + row] = cache.atlasVersion;
+    // The glyph's rows **and the row of padding on either side of it**: what
+    // an uploader sends. A page emptied to make room is not sent again whole
+    // -- four megabytes, the hitch this was written to end -- so the rows a
+    // glyph's edge can sample must be the ones that travel with it.
+    for (u32 row = originY - Padding; row < originY + height + Padding; ++row)
+        page.rows[row] = cache.atlasVersion;
+    page.shownAt = cache.frame;
+    entry.paged = true;
+    entry.page = static_cast<core::u8>(cache.filling);
 
     // The quad is in PIXELS at this size, measured from the top-left of the
     // line rather than from the baseline: everything downstream places text from
@@ -679,10 +777,10 @@ void dilateCoverage(const std::vector<core::u8>& coverage, u32 width, u32 height
         .minY = ascentPixels + static_cast<f32>(y0) - static_cast<f32>(pad),
         .maxX = static_cast<f32>(x0) - static_cast<f32>(pad) + static_cast<f32>(width),
         .maxY = ascentPixels + static_cast<f32>(y0) - static_cast<f32>(pad) + static_cast<f32>(height),
-        .u0 = static_cast<f32>(originX) / static_cast<f32>(cache.atlasWidth),
-        .v0 = static_cast<f32>(originY) / static_cast<f32>(cache.atlasHeight),
-        .u1 = static_cast<f32>(originX + width) / static_cast<f32>(cache.atlasWidth),
-        .v1 = static_cast<f32>(originY + height) / static_cast<f32>(cache.atlasHeight),
+        .u0 = static_cast<f32>(originX) / static_cast<f32>(AtlasSize),
+        .v0 = static_cast<f32>(originY) / static_cast<f32>(AtlasSize),
+        .u1 = static_cast<f32>(originX + width) / static_cast<f32>(AtlasSize),
+        .v1 = static_cast<f32>(originY + height) / static_cast<f32>(AtlasSize),
     });
     return true;
 }
@@ -756,14 +854,13 @@ void clearStore(GlyphStore& cache)
     }
     cache.entries.clear();
     cache.quads.clear();
-    // The atlas goes with them. Its packer hands out places by cursor, so
-    // keeping the pixels while dropping the entries that name them would leave
-    // a megabyte of coverage nothing can find and no room for more.
-    cache.atlas.clear();
-    cache.atlasRows.clear();
-    cache.packer = AtlasPacker{};
+    // The atlas goes with them, every page of it: keeping the pixels while
+    // dropping the entries that name them would leave coverage nothing can
+    // find and no room for more.
+    cache.pages.clear();
+    cache.filling = 0;
     ++cache.atlasVersion;
-    cache.atlasClearedAt = cache.atlasVersion;
+    cache.emptiedAt = cache.atlasVersion;
     cache.stats.entries = 0;
 }
 
@@ -782,6 +879,15 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
         quad.maxX += amount;
         quad.maxY += amount;
     }
+}
+
+// Whether a glyph that was not placed was refused for want of room, and not
+// because the face has none of it: the atlas has its every page, and the face
+// knows the codepoint.
+[[nodiscard]] bool atlasFull(const GlyphStore& cache, Face& face, u32 codepoint)
+{
+    return cache.pages.size() >= kGlyphPages && !cache.entries.empty() &&
+           stbtt_FindGlyphIndex(&face.info, static_cast<int>(codepoint)) != 0;
 }
 
 [[nodiscard]] usize glyphIndex(Face& face, f32 pixelSize, u32 codepoint, GlyphStroke stroke = {})
@@ -813,6 +919,9 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
                                            [](const GlyphEntry& entry, u64 value) { return entry.key < value; });
     if (position != cache.entries.end() && position->key == key) {
         ++cache.stats.hits;
+        // Shown in this frame: its page is not one to empty for another glyph.
+        if (position->paged)
+            cache.pages[position->page].shownAt = cache.frame;
         return static_cast<usize>(std::distance(cache.entries.begin(), position));
     }
 
@@ -826,9 +935,11 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
     bool filled = false;
     if (face.ready) {
         filled = rasteriseGlyph(face, madeAt, codepoint, entry, cache, made);
-        if (!filled && !cache.atlas.empty() && cache.entries.size() > 0) {
-            // The atlas is full rather than the codepoint being absent. Clearing
-            // is the same answer the entry limit gets and for the same reason.
+        if (!filled && atlasFull(cache, face, codepoint)) {
+            // Every page holds something this frame has shown, and the face
+            // does have the glyph: one frame asked for more than the whole
+            // atlas. Clearing is the answer the entry limit gets, and the
+            // frame is built again (`buildWithSettledGlyphs`).
             clearStore(cache);
             return glyphIndex(face, pixelSize, codepoint, stroke);
         }
@@ -861,7 +972,11 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
             growQuads(entry, cache.quads, static_cast<f32>(stroke.quarters) * 0.25f / scaleFor(face, pixelSize));
     }
 
-    const auto inserted = cache.entries.insert(position, entry);
+    // Looked for again: making room for this glyph may have taken a page's
+    // entries out from before where it goes.
+    const auto place = std::lower_bound(cache.entries.begin(), cache.entries.end(), key,
+                                        [](const GlyphEntry& held, u64 value) { return held.key < value; });
+    const auto inserted = cache.entries.insert(place, entry);
     ++cache.stats.fills;
     cache.stats.entries = cache.entries.size();
     return static_cast<usize>(std::distance(cache.entries.begin(), inserted));
@@ -1410,12 +1525,16 @@ void resetGlyphCache() noexcept
     GlyphStore& cache = store();
     cache.entries.clear();
     cache.quads.clear();
-    cache.atlas.clear();
-    cache.atlasRows.clear();
-    cache.packer = AtlasPacker{};
+    cache.pages.clear();
+    cache.filling = 0;
     ++cache.atlasVersion;
-    cache.atlasClearedAt = cache.atlasVersion;
+    cache.emptiedAt = cache.atlasVersion;
     cache.stats = GlyphCacheStats{};
+}
+
+void beginGlyphFrame() noexcept
+{
+    ++store().frame;
 }
 
 f32 scaledTextSize(f32 fits) noexcept
@@ -1604,11 +1723,11 @@ void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSi
                     glyph.max = Vec2{x + (pen + shape.maxX) * scale, y + shape.maxY * scale};
                     glyph.color = color;
                     glyph.alpha = alpha;
-                    // Texture 1 is the glyph atlas by convention (`ui.h`). A
+                    // Textures 1 to `kGlyphPages` are the atlas's pages (`ui.h`). A
                     // vector glyph is a solid rectangle and samples nothing,
                     // which is texture 0 -- the two faces differ here and in
                     // the metrics, and nowhere else.
-                    glyph.texture = entry.textured ? 1u : 0u;
+                    glyph.texture = entry.textured ? 1u + entry.page : 0u;
                     glyph.uvMin = Vec2{shape.u0, shape.v0};
                     glyph.uvMax = Vec2{shape.u1, shape.v1};
                     glyph.scissor = scissor;
@@ -1724,7 +1843,7 @@ void buildRichTextGeometry(std::string_view markup, std::string_view font, f32 p
                         drawn.max = Vec2{pen + offset + shape.maxX * scale, top + shape.maxY * scale};
                         drawn.color = style.color;
                         drawn.alpha = style.alpha;
-                        drawn.texture = entry.textured ? 1u : 0u;
+                        drawn.texture = entry.textured ? 1u + entry.page : 0u;
                         drawn.uvMin = Vec2{shape.u0, shape.v0};
                         drawn.uvMax = Vec2{shape.u1, shape.v1};
                         drawn.scissor = scissor;
@@ -1785,11 +1904,26 @@ std::string plainTextOf(std::string_view markup)
     return out;
 }
 
-GlyphAtlas glyphAtlas() noexcept
+u32 glyphAtlasPages() noexcept
+{
+    return static_cast<u32>(store().pages.size());
+}
+
+u64 glyphAtlasVersion() noexcept
+{
+    return store().atlasVersion;
+}
+
+GlyphAtlas glyphAtlas(u32 page) noexcept
 {
     const GlyphStore& cache = store();
-    return GlyphAtlas{cache.atlas,        cache.atlasWidth, cache.atlasHeight,
-                      cache.atlasVersion, cache.atlasRows,  cache.atlasClearedAt};
+    // A page there is none of: nothing, emptied when the store last was --
+    // which is what tells an uploader that the texture it holds is of pixels
+    // that are nowhere now.
+    if (page >= cache.pages.size())
+        return GlyphAtlas{{}, 0, 0, cache.atlasVersion, {}, cache.emptiedAt};
+    const AtlasPage& held = cache.pages[page];
+    return GlyphAtlas{held.pixels, AtlasSize, AtlasSize, cache.atlasVersion, held.rows, held.clearedAt};
 }
 
 void setFaceProvider(FaceProvider provider, void* user) noexcept

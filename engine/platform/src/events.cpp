@@ -71,6 +71,9 @@ Key translateScancode(SDL_Scancode scancode) noexcept
 {
     switch (scancode) {
     case SDL_SCANCODE_ESCAPE:
+    // **A phone's back button, and the back gesture** (ADR 0170): the key a
+    // game on a desktop already closes a menu and opens the pause with.
+    case SDL_SCANCODE_AC_BACK:
         return Key::Escape;
     case SDL_SCANCODE_F1:
         return Key::F1;

@@ -217,6 +217,13 @@ std::optional<core::EngineError> init(const InitOptions& options)
     if (options.headless)
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
 
+    // **A phone's back button is the game's** (ADR 0170). Left to the system
+    // it finishes the activity: the app closed under a player who meant to
+    // close a sheet. Asked for as a key instead, it arrives as `Escape`
+    // (`translateScancode`), and a game leaves by `game:Shutdown()`. Android
+    // alone reads the hint.
+    SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
+
     // SDL_INIT_VIDEO implies SDL_INIT_EVENTS, so the window and the event pump
     // come up together -- which is the only combination this module offers.
     //

@@ -271,9 +271,14 @@ struct GlyphCacheStats
     // Entries created. Rises once per new triple and never for a repeat.
     u64 fills = 0;
     u64 hits = 0;
-    // How many times the store filled up and was emptied. Non-zero means
-    // something is asking for a new size every frame; see `text.cpp`.
+    // How many times the store filled up and was emptied. Non-zero means one
+    // frame asked for more than the whole atlas holds; see `text.cpp`.
     u64 clears = 0;
+    // How many times a page of the atlas nobody had shown for longest was
+    // emptied to make room (ADR 0169): what a screen of large text costs in
+    // place of a clear. The glyphs on it are rasterised again if they come
+    // back.
+    u64 evictions = 0;
     u64 missingGlyphs = 0;
     // Text broken into lines (H9): found in the line cache, and broken anew.
     // A label that moves, fades or is drawn again is a hit.
@@ -309,7 +314,23 @@ struct GlyphAtlas
     u64 clearedAt = 0;
 };
 
-[[nodiscard]] GlyphAtlas glyphAtlas() noexcept;
+// **The atlas is pages** (ADR 0169): each a square of coverage of its own,
+// made when the one before is full, at most `kGlyphPages` of them -- eight
+// megabytes of coverage. A glyph's quad names its page as its texture: 1 is
+// the first page, `kGlyphPages` the last, and a picture's texture is numbered
+// from `kFirstImageTexture`. `version` is one count for every page, so an
+// uploader that holds one number knows what of each page is newer.
+inline constexpr u32 kGlyphPages = 8;
+inline constexpr u32 kFirstImageTexture = 1 + kGlyphPages;
+[[nodiscard]] u32 glyphAtlasPages() noexcept;
+[[nodiscard]] GlyphAtlas glyphAtlas(u32 page = 0) noexcept;
+// The count every page's `version` is: rises when any glyph is added or any
+// page emptied.
+[[nodiscard]] u64 glyphAtlasVersion() noexcept;
+// **A frame begins**: what is shown from now on is this frame's, and a page
+// holding any of it is not one that is emptied to make room. Called by
+// `buildWithSettledGlyphs`; a test that builds text by hand calls it itself.
+void beginGlyphFrame() noexcept;
 
 // Supplies the bytes of a named face, for `TextLabel.Font`.
 //
@@ -362,6 +383,7 @@ void resetGlyphCache() noexcept;
 template <class Build>
 void buildWithSettledGlyphs(Build&& build)
 {
+    beginGlyphFrame();
     const u64 before = glyphCacheStats().clears;
     build();
     if (glyphCacheStats().clears != before)

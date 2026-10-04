@@ -67,7 +67,7 @@ void settle(UiText& text, rhi::IDevice& device, rhi::ICmdList& cmd, int frames =
 [[nodiscard]] bool resolves(UiText& text, std::string_view urn)
 {
     ui::ResolvedImage out{};
-    return text.requestImage(urn, out) && out.texture >= 2u;
+    return text.requestImage(urn, out) && out.texture >= ui::kFirstImageTexture;
 }
 
 } // namespace
@@ -117,8 +117,9 @@ TEST_CASE("a deferred picture costs the frame that asked for it nothing")
 
     ui::ResolvedImage out{};
     REQUIRE(text.requestImage("asset://checker.png", out));
-    REQUIRE(out.texture >= 2u);
-    const core::usize slot = static_cast<core::usize>(out.texture) - 2u;
+    // After the atlas's pages (ADR 0169).
+    REQUIRE(out.texture >= ui::kFirstImageTexture);
+    const core::usize slot = static_cast<core::usize>(out.texture) - ui::kFirstImageTexture;
     REQUIRE(text.images().size() > slot);
     CHECK(text.images()[slot].valid());
 
@@ -282,27 +283,36 @@ TEST_CASE("a new glyph sends the rows it was written on, not the atlas")
         const ui::GlyphAtlas first = ui::glyphAtlas();
         REQUIRE_FALSE(first.pixels.empty());
         text.sync(*fixture.device, *fixture.cmd);
-        // The first time there is nothing on the GPU: all of it.
+        // **The rows that were written, the first time too** (ADR 0169): a
+        // page is a megabyte of which five glyphs are a shelf, and nothing
+        // samples the rest. All of it was four megabytes sent before a word
+        // was drawn.
         const core::u64 whole = static_cast<core::u64>(first.width) * first.height * 4u;
-        CHECK(text.atlasBytesUploaded() == whole);
+        const core::u64 begun = text.atlasBytesUploaded();
+        CHECK(begun > 0);
+        CHECK(begun <= static_cast<core::u64>(first.width) * 40u * 4u);
+        CHECK(begun < whole / 20u);
 
         // Nothing new: nothing sent.
         text.sync(*fixture.device, *fixture.cmd);
-        CHECK(text.atlasBytesUploaded() == whole);
+        CHECK(text.atlasBytesUploaded() == begun);
 
         // One more character: the rows of one glyph, the width of the atlas.
         (void)ui::measureText("7", "asset://fonts/test.ttf", 24.0f, 0.0f);
         text.sync(*fixture.device, *fixture.cmd);
-        const core::u64 added = text.atlasBytesUploaded() - whole;
+        const core::u64 added = text.atlasBytesUploaded() - begun;
         MESSAGE("one new glyph at 24 px: ", added, " bytes sent, of ", whole);
         CHECK(added > 0);
         CHECK(added <= static_cast<core::u64>(first.width) * 40u * 4u);
 
-        // An atlas emptied and written again is nothing the GPU holds: whole.
+        // An atlas emptied and written again is the rows written again: what
+        // the texture held beside them is on no glyph's rows now.
         ui::resetGlyphCache();
         (void)ui::measureText("Score", "asset://fonts/test.ttf", 24.0f, 0.0f);
         text.sync(*fixture.device, *fixture.cmd);
-        CHECK(text.atlasBytesUploaded() == whole + added + whole);
+        const core::u64 again = text.atlasBytesUploaded() - begun - added;
+        CHECK(again > 0);
+        CHECK(again <= static_cast<core::u64>(first.width) * 40u * 4u);
         text.destroy(*fixture.device);
     }
     ui::resetGlyphCache();

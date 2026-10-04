@@ -1,3 +1,4 @@
+#include <SDL3/SDL_hints.h>
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -21,9 +22,7 @@
 #include "engine/platform/platform.h"
 #include "engine/platform/sdl_interop.h"
 #include "engine/platform/window.h"
-
 #ifdef _WIN32
-#include <SDL3/SDL_hints.h>
 #include <windows.h>
 #endif
 
@@ -175,6 +174,39 @@ TEST_CASE("the pump translates what the engine models and drops the rest")
 
     CHECK(std::ranges::any_of(
         raw, [](const SDL_Event& e) { return e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_INSERT; }));
+}
+
+TEST_CASE("a phone's back button is Escape, and is the game's to answer (ADR 0170)")
+{
+    // Back closed the app: the system took it, the activity finished, and a
+    // game with a sheet open had no way to close the sheet with it.
+    using engine::platform::EventType;
+    using engine::platform::Key;
+
+    HeadlessPlatform platform;
+    static_cast<void>(engine::platform::pumpEvents());
+    // Asked of the system once, when the platform starts: on Android the
+    // button is delivered and not acted on; anywhere else there is none.
+    const char* trapped = SDL_GetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON);
+    REQUIRE(trapped != nullptr);
+    CHECK(std::string_view(trapped) == "1");
+
+    SDL_Event back{};
+    back.type = SDL_EVENT_KEY_DOWN;
+    back.key.scancode = SDL_SCANCODE_AC_BACK;
+    back.key.down = true;
+    REQUIRE(SDL_PushEvent(&back));
+    SDL_Event released = back;
+    released.type = SDL_EVENT_KEY_UP;
+    released.key.down = false;
+    REQUIRE(SDL_PushEvent(&released));
+
+    const auto events = engine::platform::pumpEvents();
+    CHECK(std::ranges::any_of(events,
+                              [](const auto& e) { return e.type == EventType::KeyDown && e.key == Key::Escape; }));
+    CHECK(
+        std::ranges::any_of(events, [](const auto& e) { return e.type == EventType::KeyUp && e.key == Key::Escape; }));
+    CHECK_FALSE(std::ranges::any_of(events, [](const auto& e) { return e.type == EventType::Quit; }));
 }
 
 // --- The device layer (M6) ---------------------------------------------------

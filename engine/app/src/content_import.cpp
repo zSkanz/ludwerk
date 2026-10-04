@@ -8,6 +8,7 @@
 #include <future>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 
 #include "engine/app/content_tree.h"
@@ -97,6 +98,26 @@ struct SourceStamp
     return stamps;
 }
 
+// **What the store answers for**: the URN of every asset its index lists.
+// A source is done when its stamp says so AND the store has it (D554) -- the
+// stamps and the index are two files, and a second process merging into the
+// index at the same moment can leave one saying "compiled" of what the other
+// no longer lists.
+[[nodiscard]] std::set<std::string> storedUrns(const std::filesystem::path& projectRoot)
+{
+    std::set<std::string> urns;
+    std::string text;
+    if (!platform::readTextFile(importIndexPath(projectRoot), text))
+        return urns;
+    core::JsonDocument document;
+    if (!document.parse(text, importIndexPath(projectRoot).string()).ok)
+        return urns;
+    const core::JsonValue assets = document.root()["assets"];
+    for (core::usize at = 0; at < assets.size(); ++at)
+        urns.emplace(assets.at(at)["urn"].asString());
+    return urns;
+}
+
 void writeStamps(const std::filesystem::path& projectRoot, std::string_view fingerprint,
                  const std::map<std::string, SourceStamp>& stamps)
 {
@@ -167,6 +188,7 @@ ContentImportReport compileImported(const std::filesystem::path& projectRoot, co
     const std::map<std::string, SourceStamp> known =
         skipUnchanged ? readStamps(projectRoot, fingerprint) : std::map<std::string, SourceStamp>{};
     std::map<std::string, SourceStamp> stamps;
+    const std::set<std::string> stored = known.empty() ? std::set<std::string>{} : storedUrns(projectRoot);
 
     std::vector<std::string_view> todo;
     for (const std::string& name : names) {
@@ -179,7 +201,10 @@ ContentImportReport compileImported(const std::filesystem::path& projectRoot, co
         if (skipUnchanged) {
             const std::optional<SourceStamp> stamp = stampOf(contentRoot / std::filesystem::path(name));
             const auto found = known.find(name);
-            if (stamp.has_value() && found != known.end() && found->second == *stamp) {
+            // Unchanged since it compiled, **and still in the store** (D554):
+            // a stamp for a source the index has lost is no reason to skip it.
+            if (stamp.has_value() && found != known.end() && found->second == *stamp &&
+                stored.contains("asset://" + std::filesystem::path(name).generic_string())) {
                 stamps.emplace(name, *stamp);
                 continue;
             }

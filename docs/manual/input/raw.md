@@ -129,6 +129,36 @@ InputService.InputBegan:Connect(function(input: InputObject, uiConsumed: boolean
 end)
 ```
 
+## The back button of a phone
+
+**On Android, the back button and the back gesture are `Enum.KeyCode.Escape`**
+(ADR 0170): pressed and released like the key, heard by `InputBegan`, by
+`IsKeyDown` and by any `InputAction` bound to Escape. The system does not
+close the game for it. A game that closes a menu or opens its pause on Escape
+does the same on a phone with nothing changed.
+
+```luau
+--!strict
+local InputService = game:GetService("InputService")
+
+InputService.InputBegan:Connect(function(input: InputObject)
+    if input.KeyCode ~= Enum.KeyCode.Escape then
+        return
+    end
+    if sheetIsOpen() then
+        closeSheet()
+    elseif atTheFirstScreen() then
+        game:Shutdown() -- what back means where there is nothing to close
+    else
+        openPause()
+    end
+end)
+```
+
+**Leaving is yours to do**: at the first screen, where back has nothing to
+close, a phone's player expects to leave, and `game:Shutdown()` is how. The
+engine does not guess which screen that is.
+
 ## Gestures
 
 A swipe, a tap, a press held, two fingers closing, a drag: the engine

@@ -5,6 +5,7 @@
 // filled on demand, bounded, and with a chosen answer for a codepoint the face
 // cannot draw. When M7 hands over a real face, these are the cases that say the
 // key did not have to change.
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <doctest/doctest.h>
@@ -12,6 +13,7 @@
 #include <iterator>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "engine/ui/ui.h"
@@ -95,10 +97,10 @@ TEST_CASE("G6: a frame whose text filled the glyph store is built again against 
         ++builds;
         const engine::core::u64 before = glyphCacheStats().clears;
         (void)quadsOf("HUD");
-        // The first build asks for more glyphs than the store holds: two
+        // The first build asks for more glyphs than the store holds: sixteen
         // thousand characters the face has none of, each its own box.
         if (builds == 1) {
-            for (unsigned codepoint = 0x800; codepoint < 0x800 + 2100; ++codepoint) {
+            for (unsigned codepoint = 0x800; codepoint < 0x800 + 16500; ++codepoint) {
                 const char encoded[4] = {static_cast<char>(0xE0u | (codepoint >> 12)),
                                          static_cast<char>(0x80u | ((codepoint >> 6) & 0x3Fu)),
                                          static_cast<char>(0x80u | (codepoint & 0x3Fu)), '\0'};
@@ -454,6 +456,105 @@ TEST_CASE("text between two rasterised sizes is the larger one made smaller, and
     (void)measureText("a", "asset://fonts/test.ttf", 30.5f, 0.0f);
     (void)measureText("a", "asset://fonts/test.ttf", 31.25f, 0.0f);
     CHECK(glyphCacheStats().fills == 2);
+}
+
+TEST_CASE(
+    "D552: large text at many sizes fills pages of the atlas, and what is not shown makes room -- nothing is cleared")
+{
+    // **Reported from play, on a phone**: an interface laid out for 540 lines
+    // on a 1080-line screen rasterises every glyph at twice the size, and the
+    // one megabyte the atlas was held a few sizes of them. It filled two
+    // minutes into a run and was emptied whole -- every glyph on the screen
+    // rasterised again, a frame of 60 to 110 ms -- and again a minute later.
+    FaceGuard guard;
+    resetGlyphCache();
+    const std::string letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const auto show = [&](f32 size, f32 outline) {
+        std::vector<DrawQuad> quads;
+        engine::ui::TextStroke stroke;
+        stroke.thickness = outline;
+        buildTextGeometry(letters, "asset://fonts/test.ttf", size, 0.0f, Rect{Vec2{0.0f, 0.0f}, Vec2{4000.0f, 200.0f}},
+                          0, 0, Color3{1.0f, 1.0f, 1.0f}, 1.0f, 0, quads, stroke);
+        return quads;
+    };
+
+    // **One screen**: thirty sizes at once, frame after frame -- a settings
+    // page and a HUD on a 2160-line window. More than a page holds.
+    engine::core::u64 afterFirst = 0;
+    for (int frame = 0; frame < 3; ++frame) {
+        engine::ui::beginGlyphFrame();
+        for (int step = 0; step < 30; ++step)
+            (void)show(24.0f + 2.0f * static_cast<f32>(step), 0.0f);
+        if (frame == 0)
+            afterFirst = glyphCacheStats().fills;
+    }
+    CHECK(glyphCacheStats().clears == 0);
+    CHECK(glyphCacheStats().evictions == 0);
+    CHECK(engine::ui::glyphAtlasPages() > 1);
+    CHECK(engine::ui::glyphAtlasPages() <= engine::ui::kGlyphPages);
+    // The second frame and the third rasterised nothing.
+    CHECK(glyphCacheStats().fills == afterFirst);
+
+    // **Then screen after screen**, each with its own sizes and outlines: more
+    // text in all than the atlas may hold. The page nobody has shown for
+    // longest makes room; nothing is cleared.
+    std::vector<std::pair<f32, f32>> last;
+    for (int screen = 0; screen < 16; ++screen) {
+        last.clear();
+        for (int step = 0; step < 8; ++step) {
+            last.emplace_back(40.0f + 4.0f * static_cast<f32>((screen * 3 + step) % 15),
+                              static_cast<f32>(1 + screen % 4));
+        }
+        for (int frame = 0; frame < 2; ++frame) {
+            engine::ui::beginGlyphFrame();
+            for (const auto& [size, outline] : last) {
+                for (const DrawQuad& quad : show(size, outline)) {
+                    // Every glyph names a page there is.
+                    REQUIRE(quad.texture >= 1);
+                    REQUIRE(quad.texture <= engine::ui::glyphAtlasPages());
+                }
+            }
+        }
+    }
+    CHECK(glyphCacheStats().clears == 0);
+    CHECK(glyphCacheStats().evictions > 0);
+    CHECK(engine::ui::glyphAtlasPages() == engine::ui::kGlyphPages);
+
+    // **What the frame being built shows is never what goes.** The last
+    // screen, built again in its own frame, rasterises nothing: all of it is
+    // still there.
+    engine::ui::beginGlyphFrame();
+    for (const auto& [size, outline] : last)
+        (void)show(size, outline);
+    const engine::core::u64 held = glyphCacheStats().fills;
+    for (const auto& [size, outline] : last)
+        (void)show(size, outline);
+    CHECK(glyphCacheStats().fills == held);
+
+    // And a page that was emptied says so to whoever uploads it: its rows are
+    // newer than anything sent before.
+    engine::core::u64 emptied = 0;
+    for (engine::core::u32 page = 0; page < engine::ui::glyphAtlasPages(); ++page)
+        emptied = std::max(emptied, glyphAtlas(page).clearedAt);
+    CHECK(emptied > 0);
+
+    // **One frame that asks for more than the whole atlas** is the case
+    // nothing can serve: it is cleared, said, and the frame built again -- as
+    // it always was.
+    resetGlyphCache();
+    int builds = 0;
+    engine::ui::buildWithSettledGlyphs([&] {
+        ++builds;
+        if (builds == 1) {
+            for (int step = 0; step < 15; ++step) {
+                for (int outline = 0; outline < 6; ++outline)
+                    (void)show(44.0f + 4.0f * static_cast<f32>(step), static_cast<f32>(outline));
+            }
+        }
+        (void)show(24.0f, 0.0f);
+    });
+    CHECK(builds == 2);
+    CHECK(glyphCacheStats().clears > 0);
 }
 
 TEST_CASE("the atlas says which rows a glyph was written on, and when it was emptied")

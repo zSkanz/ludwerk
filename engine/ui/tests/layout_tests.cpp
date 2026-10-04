@@ -1242,6 +1242,79 @@ TEST_CASE("D437: a ScreenGui with a reference height is laid out in its units an
     CHECK(fixture.object(button).unitScale == doctest::Approx(0.5));
 }
 
+TEST_CASE("D551: what is hidden keeps the rectangle it last had, however many times the screen is laid out")
+{
+    // **Reported from play, on a phone**: a settings sheet's pages that were
+    // not shown read `AbsolutePosition` as NaN, and a frame placed from the
+    // difference of two of them was refused sixty times a second. Not the
+    // phone's processor: its screen. A tree drawn for a reference height is
+    // laid out in its own units and every rectangle under it is then scaled
+    // to pixels -- every one, the hidden ones too, which the pass had not
+    // placed. On a 540-line tree shown on 1080 lines a hidden row's rectangle
+    // doubled at every layout: infinite inside three seconds, and the
+    // difference of two infinities after that.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    scene::ScreenGuiComponent* gui = fixture.world->screenGuis().find(screen);
+    REQUIRE(gui != nullptr);
+    gui->referenceHeight = 540.0f;
+    const InstanceId page = fixture.child("Frame", screen);
+    fixture.object(page).position = core::UDim2{core::UDim{0.0f, 40.0f}, core::UDim{0.0f, 30.0f}};
+    fixture.object(page).size = core::UDim2{core::UDim{0.0f, 400.0f}, core::UDim{0.0f, 300.0f}};
+    const InstanceId row = fixture.child("Frame", page);
+    fixture.object(row).position = core::UDim2{core::UDim{0.0f, 10.0f}, core::UDim{0.0f, 20.0f}};
+    fixture.object(row).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 24.0f}};
+    // A page never shown, beside it.
+    const InstanceId never = fixture.child("Frame", screen);
+    fixture.object(never).visible = false;
+    const InstanceId neverRow = fixture.child("Frame", never);
+    fixture.object(neverRow).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 24.0f}};
+
+    const core::Vec2 window{2160.0f, 1080.0f};
+    const auto laid = [&] {
+        gui->layoutDirty = true;
+        ui::layout(*fixture.world, fixture.service, window);
+    };
+    laid();
+    // Twice the pixels of its units, where it is.
+    CHECK(fixture.object(row).absolutePosition.x == doctest::Approx(100.0));
+    CHECK(fixture.object(row).absolutePosition.y == doctest::Approx(100.0));
+    CHECK(fixture.object(row).absoluteSize.x == doctest::Approx(200.0));
+    CHECK(fixture.object(row).unitScale == doctest::Approx(2.0));
+
+    // The page is hidden, and the screen is laid out three hundred times --
+    // five seconds of a sheet whose contents move.
+    fixture.object(page).visible = false;
+    for (int pass = 0; pass < 300; ++pass)
+        laid();
+    for (const InstanceId id : {page, row}) {
+        const scene::UIObjectComponent& object = fixture.object(id);
+        CHECK(std::isfinite(object.absolutePosition.x));
+        CHECK(std::isfinite(object.absolutePosition.y));
+        CHECK(std::isfinite(object.absoluteSize.x));
+        CHECK(std::isfinite(object.absoluteSize.y));
+        CHECK(std::isfinite(object.unitScale));
+    }
+    // **What it last had**: where it was when it was last seen.
+    CHECK(fixture.object(row).absolutePosition.x == doctest::Approx(100.0));
+    CHECK(fixture.object(row).absolutePosition.y == doctest::Approx(100.0));
+    CHECK(fixture.object(row).absoluteSize.x == doctest::Approx(200.0));
+    CHECK(fixture.object(row).absoluteSize.y == doctest::Approx(48.0));
+    CHECK(fixture.object(row).unitScale == doctest::Approx(2.0));
+    // What was never laid out is nothing, at nowhere: zeros, and a script's
+    // "has it a size yet" reads no.
+    CHECK(fixture.object(neverRow).absolutePosition.x == 0.0f);
+    CHECK(fixture.object(neverRow).absoluteSize.x == 0.0f);
+    CHECK(fixture.object(neverRow).absoluteSize.y == 0.0f);
+
+    // Shown again, it is placed again.
+    fixture.object(page).visible = true;
+    fixture.object(row).position = core::UDim2{core::UDim{0.0f, 30.0f}, core::UDim{0.0f, 20.0f}};
+    laid();
+    CHECK(fixture.object(row).absolutePosition.x == doctest::Approx(140.0));
+    CHECK(fixture.object(row).unitScale == doctest::Approx(2.0));
+}
+
 TEST_CASE("D547: a list that scrolls down has no bar across its bottom, at any window size")
 {
     // **Reported from play**: a settings list -- `ScrollingDirection` Y, an

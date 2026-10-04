@@ -6431,7 +6431,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // been unloaded.
                 uiTextures.clear();
                 uiTextures.push_back(rhi::TextureHandle{});
-                uiTextures.push_back(uiText.atlasTexture());
+                // The atlas's pages, each a texture (ADR 0169): a quad names
+                // its page, and one there is none of is nothing.
+                for (core::u32 page = 0; page < ui::kGlyphPages; ++page)
+                    uiTextures.push_back(uiText.atlasTexture(page));
                 for (const rhi::TextureHandle image : uiText.images())
                     uiTextures.push_back(image);
                 uiGradients.clear();

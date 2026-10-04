@@ -400,6 +400,14 @@ void buildWorldUi(scene::World& world, core::InstanceId workspace, core::Instanc
                   std::span<const rhi::TextureHandle> textures, ui::DrawList& scratch, render::RenderWorld& out,
                   UiGradientRows* gradients, const render::DrawPoses* poses)
 {
+    // **This frame's world UI is what this call builds, and nothing before
+    // it** (D553). A frame whose text emptied the glyph store is built a
+    // second time (G6), and the first build's canvases -- glyphs at places
+    // that hold other glyphs now -- were left in the list under the second's:
+    // a name tag drawn black or in another label's letters, for one frame,
+    // every time the store filled.
+    out.worldUiVertices.clear();
+    out.worldUiRuns.clear();
     if (!out.camera.valid)
         return;
 

@@ -655,6 +655,19 @@ local function assemble(options: AssembleOptions): (string?, string?)
     env["ORG_GRADLE_PROJECT_engine.storePassword"] = options.passwords.store
     env["ORG_GRADLE_PROJECT_engine.keyPassword"] = options.passwords.key
     local built = process.run(command, { env = env })
+    -- **Once more, with nothing kept, when it is Gradle's own incremental
+    -- packaging that fell over.** The Android plugin keeps what it packaged
+    -- last time and packages the difference; when what it kept names a file
+    -- that is no longer there it dies in `IncrementalSplitterRunnable` with a
+    -- null pointer, fifteen seconds in -- and the same command run again
+    -- works, because the failure threw the state away. `--rerun-tasks` is
+    -- that second run made on purpose: slower, and not dependent on what the
+    -- last one left.
+    if not built.ok and string.find(built.stdout .. built.stderr, "IncrementalSplitterRunnable", 1, true) ~= nil then
+        local again = table.clone(command)
+        table.insert(again, "--rerun-tasks")
+        built = process.run(again, { env = env })
+    end
     if not built.ok then
         return nil, built.stdout .. built.stderr .. "\n" .. tr("cli.build.err.android_gradle")
     end

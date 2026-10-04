@@ -144,6 +144,44 @@ TEST_CASE("an invisible element takes no clicks")
     CHECK_FALSE(ui::hitTest(*fixture.world, fixture.service, Vec2{10.0f, 10.0f}).valid());
 }
 
+TEST_CASE("a button under a hidden frame takes no press, on a scaled screen laid out again and again")
+{
+    // **Asked for from play**: a hand of cards is three buttons in a row, and
+    // a card taken hides the row -- the buttons stay under it. On a phone the
+    // screen is drawn for half its lines, so every layout scales the tree
+    // (D551). A press where a card was must be the game's, however many
+    // layouts have passed: the hit test walks from the root and stops at what
+    // is not visible, whatever rectangle the things under it still hold.
+    Fixture fixture;
+    scene::ScreenGuiComponent* gui = fixture.world->screenGuis().find(fixture.screen);
+    REQUIRE(gui != nullptr);
+    gui->referenceHeight = 300.0f;
+    const InstanceId row = fixture.child("Frame", fixture.screen);
+    fixture.world->uiObjects().find(row)->size = core::UDim2{core::UDim{1.0f, 0.0f}, core::UDim{1.0f, 0.0f}};
+    const InstanceId card = fixture.box(row, 20.0f, 30.0f, 100.0f, 150.0f);
+    const auto laid = [&] {
+        gui->layoutDirty = true;
+        fixture.run();
+    };
+    laid();
+    // Shown: the card is where it was put, at twice its units, and takes it.
+    CHECK(ui::hitTest(*fixture.world, fixture.service, Vec2{100.0f, 200.0f}) == card);
+    fixture.interact(Vec2{100.0f, 200.0f});
+    CHECK(fixture.interact(Vec2{100.0f, 200.0f}).pointerOverUi);
+
+    fixture.world->uiObjects().find(row)->visible = false;
+    for (int pass = 0; pass < 300; ++pass)
+        laid();
+    // The card's own flag still says visible: it is its row that is not.
+    CHECK(fixture.world->uiObjects().find(card)->visible);
+    for (const Vec2 point : {Vec2{100.0f, 200.0f}, Vec2{41.0f, 61.0f}, Vec2{239.0f, 359.0f}, Vec2{400.0f, 300.0f}}) {
+        CAPTURE(point.x);
+        CHECK_FALSE(ui::hitTest(*fixture.world, fixture.service, point).valid());
+        CHECK_FALSE(fixture.interact(point, true).pointerOverUi);
+        CHECK_FALSE(fixture.interact(point, false, true).pointerOverUi);
+    }
+}
+
 TEST_CASE("a clipped-away element takes no clicks either")
 {
     Fixture fixture;

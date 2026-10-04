@@ -33,6 +33,7 @@
 #include <chrono>
 #include <doctest/doctest.h>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <span>
 #include <string>
@@ -218,6 +219,56 @@ TEST_CASE("D507: opening a project again reads none of its unchanged sources, an
     asset::ContentMounts third;
     const app::ContentImportReport changed = app::openProjectContent(project.root, project.content(), third);
     CHECK(changed.compiled == std::vector<std::string>{"textures/base.png"});
+}
+
+TEST_CASE("D554: a source the store has lost is compiled again, whatever the stamps remember")
+{
+    // Two processes opened one project at once -- two lanes of the gate, on
+    // one example -- and each merged what it compiled into the store's index
+    // from the index it had read: the second to write left out what the first
+    // had added. Both had stamped both sources as compiled. From then on the
+    // project opened with a mesh that "has no compiled form" and was never
+    // compiled again: the stamp said it was done.
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+    const Project project;
+    asset::ContentMounts first;
+    REQUIRE(app::openProjectContent(project.root, project.content(), first).compiled.size() == 2);
+
+    // The index as the process that lost the race left it: nothing of the
+    // mesh in it, the texture still there.
+    const std::filesystem::path index = project.root / ".engine" / "import" / "index.json";
+    std::string text;
+    REQUIRE(engine::platform::readTextFile(index, text));
+    const std::size_t entry = text.find("{\"urn\":\"asset://models/quad.gltf\"");
+    REQUIRE(entry != std::string::npos);
+    const std::size_t end = text.find('}', entry);
+    REQUIRE(end != std::string::npos);
+    // The entry and the comma that joined it to the next.
+    std::size_t stop = end + 1;
+    if (stop < text.size() && text[stop] == ',')
+        ++stop;
+    text.erase(entry, stop - entry);
+    {
+        std::ofstream out(index, std::ios::binary | std::ios::trunc);
+        out << text;
+    }
+
+    // Opened again: the mesh is compiled again, and only the mesh.
+    asset::ContentMounts second;
+    const app::ContentImportReport again = app::openProjectContent(project.root, project.content(), second);
+    CHECK(again.failed.empty());
+    CHECK(again.compiled == std::vector<std::string>{"models/quad.gltf"});
+    CHECK(second.resolve("asset://models/quad.gltf").found());
+    CHECK(second.resolve("asset://textures/base.png").found());
+
+    // And once more: nothing to do.
+    asset::ContentMounts third;
+    CHECK(app::openProjectContent(project.root, project.content(), third).compiled.empty());
 }
 
 TEST_CASE("D523: an import with no window says what it compiles while it does, every few seconds")

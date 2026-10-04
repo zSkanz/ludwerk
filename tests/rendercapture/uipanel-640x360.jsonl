@@ -111,7 +111,7 @@
 {"op":"upload","buffer":12,"bytes":864,"offset":0,"words":216,"packedWords":0,"packed":"14650fb0739d0383","mean":0.1373,"flow":0.5926}
 {"op":"upload","buffer":13,"bytes":96,"offset":0,"words":24,"packedWords":24,"packed":"b81b67e3e863d8c0","mean":0.0000,"flow":0.0000}
 {"op":"createTexture","texture":14,"format":"Rgba8Unorm","usage":1,"width":1024,"height":1024,"layers":1,"mips":1,"name":"ui-glyph-atlas"}
-{"op":"uploadTexture","texture":14,"bytes":4194304,"mip":0,"words":1048576,"packedWords":1048576,"packed":"ea71e72068d3f703","mean":0.0000,"flow":0.0000}
+{"op":"uploadTextureRegion","texture":14,"x":0,"y":0,"width":1024,"height":14,"bytes":57344,"words":14336,"packedWords":14336,"packed":"8b0bb494644e7703","mean":0.0000,"flow":0.0000}
 {"op":"uploadTexture","texture":2,"bytes":4,"mip":0,"words":1,"packedWords":1,"packed":"ca703d0b27b6baff","mean":0.0000,"flow":0.0000}
 {"op":"createBuffer","buffer":14,"usage":1,"size":376832,"name":"ui2d-vertices"}
 {"op":"upload","buffer":14,"bytes":14904,"offset":0,"words":3726,"packedWords":162,"packed":"e6ff596fa04efadf","mean":18.6310,"flow":29.2337}

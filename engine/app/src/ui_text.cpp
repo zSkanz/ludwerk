@@ -188,7 +188,7 @@ bool UiText::requestImage(std::string_view urn, ui::ResolvedImage& out)
         }
         entry->width = picture.width;
         entry->height = picture.height;
-        out.texture = static_cast<core::u32>(entry - imageEntries_.begin()) + 2u;
+        out.texture = static_cast<core::u32>(entry - imageEntries_.begin()) + ui::kFirstImageTexture;
         out.width = picture.width;
         out.height = picture.height;
         return true;
@@ -204,7 +204,7 @@ bool UiText::requestImage(std::string_view urn, ui::ResolvedImage& out)
         }
         // Index 0 is "no texture" and index 1 is the glyph atlas, so the first
         // picture is 2. The frame loop builds the table in exactly that order.
-        out.texture = static_cast<core::u32>(index) + 2u;
+        out.texture = static_cast<core::u32>(index) + ui::kFirstImageTexture;
         out.width = image.width;
         out.height = image.height;
         return true;
@@ -465,93 +465,90 @@ void UiText::sync(rhi::IDevice& device, rhi::ICmdList& cmd)
 {
     loadPendingImages(device, cmd);
 
-    const ui::GlyphAtlas source = ui::glyphAtlas();
-    if (source.pixels.empty() || source.width == 0 || source.height == 0) {
-        return;
-    }
-    if (atlas_.valid() && source.version == uploadedVersion_ && source.width == width_ && source.height == height_) {
-        return;
-    }
+    // **A page of the atlas a texture** (ADR 0169). A page that fills is
+    // followed by another, so nothing already sent is sent again; and one
+    // that was emptied to make room is sent as it is filled, a glyph's rows
+    // at a time (D543) -- what is left of the old pixels beside them is on no
+    // glyph's rows, and nothing samples it.
+    const core::u32 count = ui::glyphAtlasPages();
+    for (core::u32 index = 0; index < pages_.size(); ++index) {
+        AtlasPage& page = pages_[index];
+        if (index >= count) {
+            // A page the store no longer has: its texture goes with it.
+            if (page.texture.valid())
+                device.destroy(page.texture);
+            page = AtlasPage{};
+            continue;
+        }
+        const ui::GlyphAtlas source = ui::glyphAtlas(index);
+        if (source.pixels.empty() || source.width == 0 || source.height == 0)
+            continue;
+        if (page.texture.valid() && source.version == page.uploaded)
+            continue;
+        if (!page.texture.valid()) {
+            page.texture = device.createTexture({
+                .format = rhi::TextureFormat::Rgba8Unorm,
+                .usage = rhi::TextureUsage::Sampled,
+                .width = source.width,
+                .height = source.height,
+                .debugName = "ui-glyph-atlas",
+            });
+            page.uploaded = 0;
+            if (!page.texture.valid())
+                continue;
+        }
 
-    // **Whether the GPU holds what this atlas was** (D543): the same texture,
-    // of pixels not emptied since. Then a new glyph is the rows it was written
-    // on, and those are what goes up.
-    const bool rows = atlas_.valid() && source.width == width_ && source.height == height_ &&
-                      uploadedVersion_ >= source.clearedAt && source.rowVersions.size() == source.height;
-    if (!atlas_.valid() || source.width != width_ || source.height != height_) {
-        if (atlas_.valid()) {
-            device.destroy(atlas_);
-        }
-        atlas_ = device.createTexture({
-            .format = rhi::TextureFormat::Rgba8Unorm,
-            .usage = rhi::TextureUsage::Sampled,
-            .width = source.width,
-            .height = source.height,
-            .debugName = "ui-glyph-atlas",
-        });
-        width_ = source.width;
-        height_ = source.height;
-        if (!atlas_.valid()) {
-            return;
-        }
-    }
-
-    // **RGBA rather than R8**, and the reason is that there is one UI shader.
-    //
-    // A glyph is coverage, and what the shader wants is `tint * sample` with the
-    // coverage in ALPHA -- but the same multiplication has to serve a picture,
-    // which carries its own colour. An R8 texture samples as (r, 0, 0, 1), which
-    // is neither. Expanding to white-with-coverage-alpha makes one multiplication
-    // correct for both, and the four megabytes buys not having a second pipeline,
-    // a second sort and a state change per element.
-    //
-    // The CPU-side atlas stays one byte a texel, which is the honest storage;
-    // this is the upload.
-    const auto expand = [&](core::u32 firstRow, core::u32 rowCount) {
-        const core::usize texels = static_cast<core::usize>(source.width) * rowCount;
-        const core::u8* const from = source.pixels.data() + static_cast<core::usize>(firstRow) * source.width;
-        staging_.resize(texels * 4u);
-        for (core::usize i = 0; i < texels; ++i) {
-            staging_[i * 4 + 0] = std::byte{0xFF};
-            staging_[i * 4 + 1] = std::byte{0xFF};
-            staging_[i * 4 + 2] = std::byte{0xFF};
-            staging_[i * 4 + 3] = std::byte{from[i]};
-        }
-        atlasBytes_ += staging_.size();
-    };
-    if (rows) {
-        // Each run of rows written since, the width of the atlas: a shelf's
-        // worth for the glyphs of one frame, most often one run.
+        // **RGBA rather than R8**, and the reason is that there is one UI shader.
+        //
+        // A glyph is coverage, and what the shader wants is `tint * sample` with the
+        // coverage in ALPHA -- but the same multiplication has to serve a picture,
+        // which carries its own colour. An R8 texture samples as (r, 0, 0, 1), which
+        // is neither. Expanding to white-with-coverage-alpha makes one multiplication
+        // correct for both, and the four megabytes buys not having a second pipeline,
+        // a second sort and a state change per element.
+        //
+        // The CPU-side atlas stays one byte a texel, which is the honest storage;
+        // this is the upload.
+        const auto expand = [&](core::u32 firstRow, core::u32 rowCount) {
+            const core::usize texels = static_cast<core::usize>(source.width) * rowCount;
+            const core::u8* const from = source.pixels.data() + static_cast<core::usize>(firstRow) * source.width;
+            staging_.resize(texels * 4u);
+            for (core::usize i = 0; i < texels; ++i) {
+                staging_[i * 4 + 0] = std::byte{0xFF};
+                staging_[i * 4 + 1] = std::byte{0xFF};
+                staging_[i * 4 + 2] = std::byte{0xFF};
+                staging_[i * 4 + 3] = std::byte{from[i]};
+            }
+            atlasBytes_ += staging_.size();
+        };
+        // Each run of rows written since, the width of the page: a shelf's
+        // worth for the glyphs of one frame, most often one run. A page that
+        // is new on the GPU has every row it was written on to send, and
+        // those are the rows above its cursor -- never the whole of it.
         for (core::u32 row = 0; row < source.height;) {
-            if (source.rowVersions[row] <= uploadedVersion_) {
+            if (source.rowVersions[row] <= page.uploaded) {
                 row += 1;
                 continue;
             }
-            core::u32 end = row + 1;
-            while (end < source.height && source.rowVersions[end] > uploadedVersion_)
-                end += 1;
-            expand(row, end - row);
-            cmd.uploadTextureRegion(atlas_, 0, row, source.width, end - row, staging_);
-            row = end;
+            core::u32 last = row + 1;
+            while (last < source.height && source.rowVersions[last] > page.uploaded)
+                last += 1;
+            expand(row, last - row);
+            cmd.uploadTextureRegion(page.texture, 0, row, source.width, last - row, staging_);
+            row = last;
         }
+        page.uploaded = source.version;
     }
-    else {
-        expand(0, source.height);
-        cmd.uploadTexture(atlas_, staging_, 0);
-    }
-    uploadedVersion_ = source.version;
 }
 
 void UiText::destroy(rhi::IDevice& device)
 {
     releasePendingImages();
-    if (atlas_.valid()) {
-        device.destroy(atlas_);
+    for (AtlasPage& page : pages_) {
+        if (page.texture.valid())
+            device.destroy(page.texture);
+        page = AtlasPage{};
     }
-    atlas_ = {};
-    width_ = 0;
-    height_ = 0;
-    uploadedVersion_ = 0;
     staging_.clear();
     staging_.shrink_to_fit();
     for (const Image& image : imageEntries_) {

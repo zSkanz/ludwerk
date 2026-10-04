@@ -873,7 +873,7 @@ struct Signature
 [[nodiscard]] u64 signatureOf(const DrawList& list, usize first, usize end)
 {
     Signature signature;
-    signature.add(glyphAtlas().version);
+    signature.add(glyphAtlasVersion());
     for (usize index = first; index < end; ++index) {
         const DrawQuad& quad = list.quads[index];
         signature.add(quad.min);

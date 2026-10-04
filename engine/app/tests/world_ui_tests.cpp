@@ -172,6 +172,16 @@ TEST_CASE("a surface's children land on its part, back to front, in the world pa
     CHECK(out.worldUiVertices.back().z > -11.0f);
     REQUIRE_FALSE(out.worldUiRuns.empty());
     CHECK_FALSE(out.worldUiRuns.front().alwaysOnTop);
+
+    // **Built again, it is the same picture and not two of them** (D553). A
+    // frame whose text filled the glyph store is built twice (G6): the second
+    // build is the frame's, and what the first left -- glyphs at places that
+    // are other glyphs now -- was drawn under it. A name tag flickered black
+    // or in another label's letters for a frame, each time the store filled.
+    const core::usize runs = out.worldUiRuns.size();
+    app::buildWorldUi(world, workspace, core::InstanceId{}, core::Vec2{1280.0f, 720.0f}, {}, scratch, out);
+    CHECK(out.worldUiVertices.size() == 12);
+    CHECK(out.worldUiRuns.size() == runs);
 }
 
 TEST_CASE("the pointer presses a sign in the world, unless it is behind something or seen from behind")

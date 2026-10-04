@@ -7,6 +7,7 @@
 // which is exactly what an app is for.
 #pragma once
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -104,21 +105,30 @@ public:
     // Invalid until something has been rasterised, which is the state a build
     // with no font file stays in -- there the built-in vector face draws solid
     // rectangles and samples nothing.
-    [[nodiscard]] rhi::TextureHandle atlasTexture() const noexcept { return atlas_; }
+    // A page of it (ADR 0169): each its own texture, made when the page is.
+    [[nodiscard]] rhi::TextureHandle atlasTexture(core::u32 page = 0) const noexcept
+    {
+        return page < pages_.size() ? pages_[page].texture : rhi::TextureHandle{};
+    }
     // How many bytes of the atlas have gone up, in all: what a new glyph costs.
     [[nodiscard]] core::u64 atlasBytesUploaded() const noexcept { return atlasBytes_; }
 
     // Every image the UI has asked for, in the order it asked. The frame loop
-    // appends these after the atlas, so index 2 is the first picture -- which
-    // is the numbering `ui::ResolvedImage::texture` hands back.
+    // appends these after the atlas's pages, so `ui::kFirstImageTexture` is
+    // the first picture -- which is the numbering `ui::ResolvedImage::texture`
+    // hands back.
     [[nodiscard]] std::span<const rhi::TextureHandle> images() const noexcept { return images_; }
 
 private:
     const asset::ContentMounts* mounts_ = nullptr;
-    rhi::TextureHandle atlas_{};
-    core::u32 width_ = 0;
-    core::u32 height_ = 0;
-    core::u64 uploadedVersion_ = 0;
+    // The atlas's pages as the GPU holds them: the texture, and the version
+    // of the atlas its pixels are.
+    struct AtlasPage
+    {
+        rhi::TextureHandle texture{};
+        core::u64 uploaded = 0;
+    };
+    std::array<AtlasPage, ui::kGlyphPages> pages_{};
     core::u64 atlasBytes_ = 0;
     // The atlas expanded from coverage to RGBA. Kept between frames so a
     // re-upload does not allocate four megabytes every time a new glyph appears.

@@ -409,6 +409,15 @@ void scaleElement(scene::World& world, core::InstanceId id, Vec2 pivot, f32 scal
 void scaleTree(scene::World& world, core::InstanceId root, Vec2 pivot, f32 scale)
 {
     for (core::InstanceId child = world.firstChild(root); child.valid(); child = world.nextSibling(child)) {
+        // **Only what this pass placed** (D551). An element that is not
+        // visible is not placed, and neither is anything under it (`place`):
+        // their rectangles are the ones they last had, in pixels already.
+        // Scaled again here at every layout, a hidden row on a tree drawn
+        // for half the screen's lines doubled sixty times a second -- past
+        // any number in three seconds, and not a number after that.
+        if (const scene::UIObjectComponent* object = world.uiObjects().find(child);
+            object != nullptr && !object->visible)
+            continue;
         scaleElement(world, child, pivot, scale);
         scaleTree(world, child, pivot, scale);
     }
