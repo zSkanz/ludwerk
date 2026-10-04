@@ -110,6 +110,11 @@ enum class TextureFormat : u8
     // Two half floats: a screen-space motion vector (ADR 0158), which is
     // what every temporal pass reads. Added when the first one arrived.
     Rg16Float,
+    // One unsigned integer of thirty-two bits (ADR 0164): the one kind of
+    // image a compute shader may do an atomic on -- a minimum kept by many
+    // threads at once. Never sampled: read through the binding it is written
+    // by.
+    R32Uint,
 };
 
 [[nodiscard]] constexpr bool isDepthFormat(TextureFormat format) noexcept
@@ -124,6 +129,15 @@ enum class TextureUsage : u32
     Sampled = 1u << 0,
     ColorTarget = 1u << 1,
     DepthStencilTarget = 1u << 2,
+    // **Written by a compute shader** (ADR 0164): a pass names the textures
+    // it writes when it begins, a mip of each. What a temporal upscaler's
+    // passes are -- each reads a few images and writes a few more, and a
+    // render pass a write is a fullscreen triangle and a pipeline for each.
+    ComputeStorageWrite = 1u << 3,
+    // And read back by the pass that writes it -- an atomic is both -- where
+    // it is of one channel of thirty-two bits: the formats every device lets
+    // a shader do both to.
+    ComputeStorageReadWrite = 1u << 4,
 };
 
 [[nodiscard]] constexpr TextureUsage operator|(TextureUsage a, TextureUsage b) noexcept

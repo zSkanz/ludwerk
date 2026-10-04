@@ -24,8 +24,8 @@ bloom = true
 ambient_occlusion = true
 contact_shadows = true
 anti_aliasing = "smaa"    # off | fxaa | smaa | taa (true is fxaa)
-upscaling = "none"        # none | fsr1 -- how a render scale under 1 is brought up
-sharpness = 0.2           # 0 to 1, after an FSR 1 upscale and after TAA
+upscaling = "none"        # none | fsr1 | fsr2 -- how a render scale under 1 is brought up
+sharpness = 0.2           # 0 to 1, after an FSR 1 upscale, after TAA and in FSR 2
 auto_exposure = true
 ```
 
@@ -117,6 +117,61 @@ the window with AMD FidelityFX Super Resolution 1 -- an upscale that keeps
 edges, then sharpening -- where `none` stretches it. `sharpness` is how much
 RCAS sharpens after it, and after TAA, which softens.
 
+**`upscaling = "fsr2"`** is AMD FidelityFX Super Resolution 2 (ADR 0164). Where
+FSR 1 reads the one finished frame, FSR 2 builds each of the window's pixels
+from the frames before this one: every frame is drawn a fraction of a pixel
+off from the last, as under TAA, and over a few dozen of them every part of
+every pixel has been rendered. A bar one pixel wide at half the resolution,
+which no single frame holds, is put back.
+
+- **It is the anti-aliasing too.** On a frame FSR 2 upscales, `anti_aliasing`
+  is not read. At a `render_scale` of 1 it upscales nothing and smooths --
+  sharper than TAA, and dearer.
+- **The scale is `render_scale`**, and AMD's names for its modes are scales:
+
+  | AMD's name | `render_scale` |
+  |---|---|
+  | Native | 1 |
+  | Quality | 0.67 |
+  | Balanced | 0.59 |
+  | Performance | 0.5 |
+  | Ultra performance | 0.33 |
+
+- **`sharpness`** is FSR 2's own sharpening; 0 turns it off.
+- **Exposure, bloom and the tonemap read the upscaled picture**, at the
+  window's resolution. Depth of field, sun rays and a `BlurEffect` are done
+  before it, at the world's.
+- **What blends is handled for you.** Particles, glass and labels in the
+  world have no motion of their own for a temporal pass to follow; the engine
+  tells FSR 2 where they are, and they are drawn mostly from the current
+  frame instead of being dragged into streaks.
+
+It costs GPU time and memory that FSR 1 does not. On a GeForce RTX 4070 Ti
+SUPER, what it adds to a frame:
+
+| Window | At 1 | 0.67 | 0.5 | 0.33 |
+|---|---|---|---|---|
+| 1920 x 1080 | 0.5 ms | 0.4 | 0.3 | 0.25 |
+| 2560 x 1440 | 0.9 ms | 0.6 | 0.5 | 0.45 |
+| 3840 x 2160 | 1.9 ms | 1.3 | 1.1 | 0.9 |
+
+Its images take about 150 MB at 1920 x 1080, 275 MB at 2560 x 1440 and 615 MB
+at 3840 x 2160. A slower GPU pays more for the same pixels, which is why **no
+preset turns it on**: a machine on Low is short of exactly that time. Offer it
+in your settings screen -- the engine's own does -- or set it in the project's
+file for a game you have measured. What it buys is the world drawn at half the
+pixels or fewer: on a frame the GPU spends on the world, that is most of the
+frame back.
+
+**Where FSR 2 cannot run, FSR 1 does**, and the log says so once: a device
+without compute shaders, a camera without perspective, a `ViewportFrame` or a
+sub-world, and a picture of sprites alone.
+
+**One thing it does worse than TAA**: at a `render_scale` of 1, something
+thinner than a pixel in front of a far background -- a wire or a distant pole
+against the sky -- shimmers as the camera moves, where TAA blurs it steady.
+Below 1 such things are too thin to be drawn at all, by any upscale.
+
 Two of those are worth a sentence each.
 
 **Low turns down render scale first**, because it is the only dial that reduces
@@ -148,8 +203,9 @@ its own colours (`Part2D.ExactColor`, the default). Pixel art is never
 jittered or blended by TAA, never filtered by FSR 1 and never sharpened. Scaled
 up, it takes the nearest texel.
 
-The floor is 0.5 because below that the world is upscaled by more than two and
-the crisp UI drawn over it makes the difference impossible to ignore.
+The floor is a third, which is the furthest FSR 2 is made to bring a picture
+up from. Stretched, or through FSR 1, a world drawn below half looks like what
+it is under the crisp UI drawn over it: go below a half with FSR 2 only.
 
 ## Three layers, of six
 
@@ -195,7 +251,7 @@ apply, because they were typed by the same person as the preset.
 --ambient-occlusion / --no-ambient-occlusion
 --anti-aliasing    / --no-anti-aliasing
 --anti-aliasing=off|fxaa|smaa|taa
---upscaling=none|fsr1
+--upscaling=none|fsr1|fsr2
 --sharpness=F
 --auto-exposure    / --no-auto-exposure
 ```

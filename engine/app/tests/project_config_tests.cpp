@@ -333,6 +333,27 @@ TEST_CASE("numbers no setting can hold are ignored before they are converted (au
     CHECK(config.windowHeight == defaults.windowHeight);
 }
 
+TEST_CASE("a project names FSR 2 and a scale down to a third, and a flag names it over the file (ADR 0164)")
+{
+    const ProjectDir project("[project]\nname = \"Upscaled\"\n[graphics]\nupscaling = \"fsr2\"\nrender_scale = 0.1\n");
+    const app::ProjectConfig config = app::loadProjectConfig(project.path, {});
+    CHECK(config.graphics.upscaling == render::UpscalingMode::Fsr2);
+    // A third is the floor: FSR 2's furthest mode. It was a half.
+    CHECK(sameMetres(config.graphics.renderScale, 1.0f / 3.0f));
+
+    // No preset chooses it, on a desktop or in the hand.
+    for (const render::QualityLevel level : {render::QualityLevel::Low, render::QualityLevel::Medium,
+                                             render::QualityLevel::High, render::QualityLevel::Ultra}) {
+        CHECK(render::settingsFor(level).upscaling != render::UpscalingMode::Fsr2);
+        CHECK(render::handheldSettings(render::settingsFor(level)).upscaling != render::UpscalingMode::Fsr2);
+    }
+
+    app::GraphicsOverrides flags;
+    flags.upscaling = render::UpscalingMode::Fsr2;
+    const ProjectDir plain("[project]\nname = \"Plain\"\n[graphics]\nupscaling = \"fsr1\"\n");
+    CHECK(app::loadProjectConfig(plain.path, flags).graphics.upscaling == render::UpscalingMode::Fsr2);
+}
+
 TEST_CASE("a handheld starts a level lower and renders the world under a cap (ADR 0147, the mobile ledger)")
 {
     // The owner's phone ran the desktop's `High` at every one of its 1440

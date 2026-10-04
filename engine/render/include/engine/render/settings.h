@@ -49,11 +49,15 @@ enum class AntiAliasingMode : core::u8
 };
 
 // **How a world drawn below the output's resolution is brought up to it**
-// (ADR 0158), as `Enum.UpscalingMode` numbers them: filtered, or by FSR 1.
+// (ADR 0158), as `Enum.UpscalingMode` numbers them: filtered, by FSR 1, which
+// reads the one finished picture, or by FSR 2 (ADR 0164), which builds the
+// output's every pixel from the frames before it and is the anti-aliasing as
+// well -- at a render scale of 1 that is all it is.
 enum class UpscalingMode : core::u8
 {
     None,
     Fsr1,
+    Fsr2,
 };
 
 // **What the renderer draws in place of the picture** (terrain audit T0): a
@@ -159,10 +163,12 @@ struct GraphicsSettings
     AntiAliasingMode antiAliasing = AntiAliasingMode::Smaa;
     // How a world drawn smaller than the output is brought up to it -- which
     // only matters when it is: at a render scale of 1 there is nothing to
-    // upscale, and FSR 1 does nothing.
+    // upscale, and FSR 1 does nothing. **FSR 2 at a scale of 1 is the
+    // anti-aliasing alone** (ADR 0164), and at any scale it takes
+    // `antiAliasing`'s place on the frames it upscales.
     UpscalingMode upscaling = UpscalingMode::None;
     // **How much RCAS sharpens**, 0 to 1 (ADR 0158): after FSR 1's upscale,
-    // and after temporal anti-aliasing, which softens.
+    // after temporal anti-aliasing, which softens, and inside FSR 2.
     f32 sharpness = 0.2f;
     // Whether a world's `DepthOfFieldEffect` is drawn (ADR 0096). **The machine
     // wins over the world**, as it does for bloom: a scene that asks for focus

@@ -93,10 +93,11 @@ void applyFile(const core::TomlDocument& document, std::string_view table, Graph
         }
     }
     if (const std::optional<std::string_view> named = document.string(key("upscaling"))) {
-        if (*named == "none")
-            settings.upscaling = render::UpscalingMode::None;
-        else if (*named == "fsr1")
-            settings.upscaling = render::UpscalingMode::Fsr1;
+        const std::array<std::string_view, 3> names{"none", "fsr1", "fsr2"};
+        for (usize index = 0; index < names.size(); ++index) {
+            if (names[index] == *named)
+                settings.upscaling = static_cast<render::UpscalingMode>(index);
+        }
     }
     if (const std::optional<f64> value = number("sharpness", 0.0, 1.0))
         settings.sharpness = static_cast<f32>(*value);
@@ -341,7 +342,7 @@ void seedCommandLine(scene::GraphicsModel& model, const GraphicsOverrides& overr
 {
     static constexpr std::array<std::string_view, 5> Shadow{"off", "low", "medium", "high", "ultra"};
     static constexpr std::array<std::string_view, 4> Smoothing{"off", "fxaa", "smaa", "taa"};
-    static constexpr std::array<std::string_view, 2> Upscale{"none", "fsr1"};
+    static constexpr std::array<std::string_view, 3> Upscale{"none", "fsr1", "fsr2"};
     static constexpr std::array<std::string_view, 3> Texture{"low", "medium", "high"};
     static constexpr std::array<std::string_view, 3> Window{"windowed", "borderless", "fullscreen"};
     static constexpr std::array<std::string_view, 5> Level{"low", "medium", "high", "ultra", "cinematic"};

@@ -13881,6 +13881,10 @@
           "Value": 1
         },
         {
+          "Name": "FSR2",
+          "Value": 2
+        },
+        {
           "Name": "None",
           "Value": 0
         }

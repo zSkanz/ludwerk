@@ -19,6 +19,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **`GraphicsService.RenderScale` goes down to a third** (ADR 0164), where it
+  stopped at a half: FSR 2's furthest mode. A scale written below a half was
+  read back as a half and is now read back as written. The settings screen's
+  steps are a third, 50%, 59%, 67%, 80%, 90% and 100%.
+
 - **Scene files are version 3** (ADR 0155): a stamp's nodes carry sids, a
   copy's overrides are keyed by them, and a copy writes where it stands with
   its parts in its stamp's frame. A version 2 scene opens and converts; a build
@@ -194,6 +199,16 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
     instance, and the data model's services changed. The simulation did not.
 
 ### Added
+
+- **FSR 2** (ADR 0164): `Enum.UpscalingMode.FSR2`, `upscaling = "fsr2"` and
+  `--upscaling=fsr2`. The window's picture is built from the frames before
+  this one, each drawn a fraction of a pixel off from the last, so what half
+  the resolution cannot hold in one frame is put back; it is the
+  anti-aliasing as well, and at a `RenderScale` of 1 that alone. Exposure,
+  bloom and the tonemap read the upscaled picture. Particles, glass and
+  labels in the world are kept out of its history. The world's main camera
+  with perspective, on a device with compute shaders; FSR 1 upscales anywhere
+  else. No preset turns it on.
 
 - **`BasePart.ReceivesDecals`** (ADR 0160, amended): off, no decal paints the
   part -- a character standing on a scorch mark, an enemy inside a warning

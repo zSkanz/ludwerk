@@ -131,7 +131,8 @@ The shared shape:
      with atomics, which needs storage textures in compute. The RHI does not
      have them yet (ADR 0116 gave compute storage buffers only). That
      extension, and the present-path decision frame generation needs, come
-     with it.
+     with it. **FSR 2 is ADR 0164**, which gave the RHI those textures and
+     did without the atomics; frame generation is still to come.
 
 ## Consequences
 

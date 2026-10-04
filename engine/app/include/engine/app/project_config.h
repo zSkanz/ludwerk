@@ -41,7 +41,7 @@ struct GraphicsOverrides
     std::optional<bool> bloom;
     std::optional<bool> ambientOcclusion;
     std::optional<render::AntiAliasingMode> antiAliasing;
-    // `--upscaling=none|fsr1` and `--sharpness=X` (ADR 0158).
+    // `--upscaling=none|fsr1|fsr2` and `--sharpness=X` (ADRs 0158, 0164).
     std::optional<render::UpscalingMode> upscaling;
     std::optional<core::f32> sharpness;
     std::optional<bool> autoExposure;

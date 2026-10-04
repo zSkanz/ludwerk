@@ -4809,7 +4809,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .inert = false,
             .hostFact = true,
             .transient = true,
-            .doc = "The fraction of the window's resolution the world is drawn at, 0.5 to 1. The interface is drawn at the window's own, whatever this is.",
+            .doc = "The fraction of the window's resolution the world is drawn at, a third to 1. The interface is drawn at the window's own, whatever this is.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
             .get = native::getGraphicsServiceRenderScale,
             .set = native::setGraphicsServiceRenderScale,
@@ -4890,7 +4890,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .inert = false,
             .hostFact = true,
             .transient = true,
-            .doc = "How the world is brought up to the window's resolution when `RenderScale` is under 1 (ADR 0158). At a scale of 1 there is nothing to bring up, and it does nothing.",
+            .doc = "How the world is brought up to the window's resolution when `RenderScale` is under 1 (ADR 0158). At a scale of 1 there is nothing to bring up, and `FSR1` does nothing; `FSR2` is then the anti-aliasing alone (ADR 0164).",
             .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
             .get = native::getGraphicsServiceUpscaling,
             .set = native::setGraphicsServiceUpscaling,
@@ -4903,7 +4903,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .inert = false,
             .hostFact = true,
             .transient = true,
-            .doc = "How much the picture is sharpened, 0 to 1, after an FSR 1 upscale and after temporal anti-aliasing, which softens (ADR 0158).",
+            .doc = "How much the picture is sharpened, 0 to 1, after an FSR 1 upscale, after temporal anti-aliasing, which softens, and by FSR 2 (ADR 0158).",
             .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
             .get = native::getGraphicsServiceSharpness,
             .set = native::setGraphicsServiceSharpness,
@@ -9600,7 +9600,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(antiAliasingModeDesc);
 
     // --- UpscalingMode ---
-    static std::array<EnumItemDesc, 2> upscalingModeItems;
+    static std::array<EnumItemDesc, 3> upscalingModeItems;
     upscalingModeItems = {{
         EnumItemDesc{
             .name = atoms.intern("None"),
@@ -9610,6 +9610,11 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
         EnumItemDesc{
             .name = atoms.intern("FSR1"),
             .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("FSR2"),
+            .value = 2,
             .docKey = {},
         },
     }};

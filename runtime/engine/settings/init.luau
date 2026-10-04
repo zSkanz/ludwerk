@@ -163,7 +163,8 @@ end
 -- screen has is decided when it opens.
 local Rows: { Row } = {
     { Setting = "QualityLevel", Page = "Graphics", Caption = "engine.graphics.setting.quality_level", Kind = "Preset" },
-    scale("RenderScale", "engine.graphics.setting.render_scale", { 0.5, 0.6, 0.7, 0.8, 0.9, 1 }),
+    -- With the scales FSR 2 is tuned at (ADR 0164): a third, a half, 0.59, 0.67.
+    scale("RenderScale", "engine.graphics.setting.render_scale", { 1 / 3, 0.5, 0.59, 0.67, 0.8, 0.9, 1 }),
     choice(
         "AntiAliasing",
         "engine.graphics.setting.anti_aliasing",

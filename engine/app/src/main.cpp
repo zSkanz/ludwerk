@@ -762,10 +762,13 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
                 }
             }
             else if (arg.starts_with("--upscaling=")) {
-                known = value == "none" || value == "fsr1";
-                if (known)
-                    graphics.upscaling =
-                        value == "fsr1" ? engine::render::UpscalingMode::Fsr1 : engine::render::UpscalingMode::None;
+                const std::array<std::string_view, 3> names{"none", "fsr1", "fsr2"};
+                for (std::size_t index = 0; index < names.size(); ++index) {
+                    if (names[index] == value) {
+                        graphics.upscaling = static_cast<engine::render::UpscalingMode>(index);
+                        known = true;
+                    }
+                }
             }
             else {
                 char* end = nullptr;

@@ -518,6 +518,41 @@ struct GpuTaaUniforms
 };
 static_assert(sizeof(GpuTaaUniforms) == 48, "GpuTaaUniforms is a cbuffer layout");
 
+// Compute `b0 space2`: FSR 2's constants (ADR 0164) -- `cbFSR2` in the
+// callbacks header, field for field, which is `Fsr2Constants` in AMD's own
+// runtime.
+struct GpuFsr2Constants
+{
+    core::i32 renderSize[2]{};
+    core::i32 maxRenderSize[2]{};
+    core::i32 displaySize[2]{};
+    core::i32 inputColorResourceDimensions[2]{};
+    core::i32 lumaMipDimensions[2]{};
+    core::i32 lumaMipLevelToUse = 0;
+    core::i32 frameIndex = 0;
+    f32 deviceToViewDepth[4]{};
+    f32 jitterOffset[2]{};
+    f32 motionVectorScale[2]{};
+    f32 downscaleFactor[2]{};
+    f32 motionVectorJitterCancellation[2]{};
+    f32 preExposure = 1.0f;
+    f32 previousFramePreExposure = 1.0f;
+    f32 tanHalfFov = 0.0f;
+    f32 jitterPhaseCount = 0.0f;
+    f32 deltaTime = 0.0f;
+    f32 dynamicResChangeFactor = 0.0f;
+    f32 viewSpaceToMetersFactor = 1.0f;
+    f32 pad = 0.0f;
+};
+static_assert(sizeof(GpuFsr2Constants) == 128, "GpuFsr2Constants is a cbuffer layout");
+
+// Compute `b1 space2`: how much FSR 2's own RCAS sharpens.
+struct GpuFsr2RcasConstants
+{
+    core::u32 config[4]{};
+};
+static_assert(sizeof(GpuFsr2RcasConstants) == 16, "GpuFsr2RcasConstants is a cbuffer layout");
+
 // Fragment stage, `b0 space3`, for the sky pass. The sky is drawn as a
 // fullscreen triangle before any geometry, so it needs the inverse view
 // projection to turn a screen position back into a direction.

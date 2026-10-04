@@ -71,7 +71,7 @@ TEST_CASE("a write is checked against the setting's kind and clamped into its ra
     CHECK(model.write(GraphicsSetting::ShadowDistance, 5000.0));
     CHECK(model.effective(GraphicsSetting::ShadowDistance) == doctest::Approx(1000.0));
     CHECK(model.write(GraphicsSetting::RenderScale, 0.1));
-    CHECK(model.effective(GraphicsSetting::RenderScale) == doctest::Approx(0.5));
+    CHECK(model.effective(GraphicsSetting::RenderScale) == doctest::Approx(1.0 / 3.0));
     CHECK(model.write(GraphicsSetting::MaxFrameRate, 144.0));
     CHECK(model.effective(GraphicsSetting::MaxFrameRate) == doctest::Approx(144.0));
 

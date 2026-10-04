@@ -45,7 +45,7 @@ public:
 
     void bindStorageBuffers(ShaderStage, u32, std::span<const BufferHandle>) override {}
     void drawIndexedIndirect(BufferHandle, u32, u32) override {}
-    void beginComputePass(std::span<const BufferHandle>) override {}
+    void beginComputePass(std::span<const BufferHandle>, std::span<const ComputeTextureWrite>) override {}
     void endComputePass() override {}
     void setComputePipeline(ComputePipelineHandle) override {}
     void bindComputeStorageBuffers(u32, std::span<const BufferHandle>) override {}

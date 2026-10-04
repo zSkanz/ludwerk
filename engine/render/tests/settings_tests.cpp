@@ -69,7 +69,7 @@ TEST_CASE("a hand-edited project file cannot ask for something the renderer cann
     absurd.lightBudget = 1000000;
 
     const GraphicsSettings clamped = clampSettings(absurd);
-    CHECK(clamped.renderScale >= 0.5f);
+    CHECK(clamped.renderScale >= 0.33f);
     CHECK(clamped.shadowTileResolution >= 256u);
     CHECK(clamped.shadowCascades <= kShadowCascadeCount);
     CHECK(clamped.shadowDistance >= 10.0f);

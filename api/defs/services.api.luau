@@ -621,8 +621,8 @@ local Classes: { Schema.Class } = {
                 ErrorKey = "scene.err.graphics_setting",
                 Transient = true,
                 HostFact = true,
-                Doc = "The fraction of the window's resolution the world is drawn at, 0.5 to 1. The interface is "
-                    .. "drawn at the window's own, whatever this is.",
+                Doc = "The fraction of the window's resolution the world is drawn at, a third to 1. The interface "
+                    .. "is drawn at the window's own, whatever this is.",
             },
             {
                 Name = "ShadowQuality",
@@ -678,7 +678,8 @@ local Classes: { Schema.Class } = {
                 Transient = true,
                 HostFact = true,
                 Doc = "How the world is brought up to the window's resolution when `RenderScale` is under 1 "
-                    .. "(ADR 0158). At a scale of 1 there is nothing to bring up, and it does nothing.",
+                    .. "(ADR 0158). At a scale of 1 there is nothing to bring up, and `FSR1` does nothing; `FSR2` "
+                    .. "is then the anti-aliasing alone (ADR 0164).",
             },
             {
                 Name = "Sharpness",
@@ -687,8 +688,8 @@ local Classes: { Schema.Class } = {
                 ErrorKey = "scene.err.graphics_setting",
                 Transient = true,
                 HostFact = true,
-                Doc = "How much the picture is sharpened, 0 to 1, after an FSR 1 upscale and after temporal "
-                    .. "anti-aliasing, which softens (ADR 0158).",
+                Doc = "How much the picture is sharpened, 0 to 1, after an FSR 1 upscale, after temporal "
+                    .. "anti-aliasing, which softens, and by FSR 2 (ADR 0158).",
             },
             {
                 Name = "AmbientOcclusion",

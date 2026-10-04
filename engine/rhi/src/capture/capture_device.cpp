@@ -298,6 +298,8 @@ std::string_view name(TextureFormat value)
         return "Rgba32Float";
     case TextureFormat::Rg16Float:
         return "Rg16Float";
+    case TextureFormat::R32Uint:
+        return "R32Uint";
     case TextureFormat::D16Unorm:
         return "D16Unorm";
     case TextureFormat::D24UnormS8Uint:
@@ -730,11 +732,20 @@ public:
                        .finish();
     }
 
-    void beginComputePass(std::span<const BufferHandle> writes) override
+    void beginComputePass(std::span<const BufferHandle> writes,
+                          std::span<const ComputeTextureWrite> textureWrites) override
     {
         stream_ += Line("beginComputePass").num("writes", static_cast<u64>(writes.size())).finish();
         for (const BufferHandle buffer : writes)
             stream_ += Line("writtenBuffer").num("buffer", static_cast<u64>(buffer.id)).finish();
+        // Only where there are any: a pass that writes buffers alone is the
+        // stream it always was.
+        for (const ComputeTextureWrite& written : textureWrites) {
+            stream_ += Line("writtenTexture")
+                           .num("texture", static_cast<u64>(written.texture.id))
+                           .num("mip", static_cast<u64>(written.mipLevel))
+                           .finish();
+        }
     }
 
     void endComputePass() override { stream_ += Line("endComputePass").finish(); }

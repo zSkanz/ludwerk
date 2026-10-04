@@ -37,7 +37,10 @@ describe("GraphicsService", function()
         Graphics.ShadowDistance = 5000
         expect(Graphics.ShadowDistance):ToBe(1000)
         Graphics.RenderScale = 0.1
-        expect(Graphics.RenderScale):ToBe(0.5)
+        expect(math.abs(Graphics.RenderScale - 1 / 3) < 1e-4):ToBe(true)
+        -- FSR 2 is a way to upscale like the others (ADR 0164).
+        Graphics.Upscaling = Enum.UpscalingMode.FSR2
+        expect(Graphics.Upscaling):ToBe(Enum.UpscalingMode.FSR2)
         Graphics.MaxFrameRate = 144
         expect(Graphics.MaxFrameRate):ToBe(144)
         Graphics.FoliageDensity = 2

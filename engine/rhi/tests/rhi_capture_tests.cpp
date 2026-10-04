@@ -195,3 +195,39 @@ TEST_CASE("a packed colour is not summed as the enormous float its bits spell")
     // hold.
     CHECK(recorded.find(R"("mean":0.3333)") != std::string::npos);
 }
+
+TEST_CASE("a compute pass says which textures it writes, and one that writes none is the stream it was")
+{
+    // ADR 0164: a pass names the textures it writes when it begins. A pass
+    // that writes buffers alone records no line for a texture -- every golden
+    // recorded before texture writes existed is still the stream it was.
+    const auto record = [](bool withTexture) {
+        const auto device = createCaptureDevice({.backend = BackendId::Capture});
+        REQUIRE(device != nullptr);
+        const BufferHandle written = device->createBuffer({.usage = BufferUsage::Vertex, .sizeBytes = 64});
+        const TextureHandle image = device->createTexture({
+            .format = TextureFormat::Rgba16Float,
+            .usage = TextureUsage::Sampled | TextureUsage::ComputeStorageWrite,
+            .width = 8,
+            .height = 8,
+            .mipLevels = 2,
+        });
+        const std::array<BufferHandle, 1> buffers{written};
+        const std::array<ComputeTextureWrite, 1> textures{ComputeTextureWrite{.texture = image, .mipLevel = 1}};
+        ICmdList* cmd = device->beginFrame();
+        if (withTexture)
+            cmd->beginComputePass(buffers, textures);
+        else
+            cmd->beginComputePass(buffers);
+        cmd->dispatch(1, 1, 1);
+        cmd->endComputePass();
+        device->submitAndPresent();
+        return captureStream(*device);
+    };
+
+    const std::string plain = record(false);
+    const std::string textured = record(true);
+    CHECK(plain.find(R"({"op":"beginComputePass","writes":1})") != std::string::npos);
+    CHECK(plain.find("writtenTexture") == std::string::npos);
+    CHECK(textured.find(R"({"op":"writtenTexture","texture":1,"mip":1})") != std::string::npos);
+}

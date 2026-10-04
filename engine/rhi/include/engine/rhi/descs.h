@@ -76,11 +76,20 @@ struct ComputePipelineDesc
     u32 samplerCount = 0;
     u32 readonlyStorageBufferCount = 0;
     u32 readwriteStorageBufferCount = 0;
+    // The textures it writes (ADR 0164), bound when its pass begins.
+    u32 readwriteStorageTextureCount = 0;
     u32 uniformBufferCount = 0;
     u32 threadCountX = 1;
     u32 threadCountY = 1;
     u32 threadCountZ = 1;
     std::string_view debugName{};
+};
+
+// **A texture a compute pass writes** (ADR 0164): one mip of it.
+struct ComputeTextureWrite
+{
+    TextureHandle texture{};
+    u32 mipLevel = 0;
 };
 
 // One indexed draw read from a buffer by `drawIndexedIndirect`: five words,

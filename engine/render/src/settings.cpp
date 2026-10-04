@@ -155,10 +155,11 @@ GraphicsSettings clampSettings(GraphicsSettings settings) noexcept
     if (settings.renderResolutionCap != 0)
         settings.renderResolutionCap = std::clamp(settings.renderResolutionCap, 360u, 4320u);
 
-    // A floor of a half rather than a quarter: below that the world image is
-    // upscaled by more than two and the UI drawn crisply on top of it makes the
-    // difference impossible to ignore.
-    settings.renderScale = std::clamp(settings.renderScale, 0.5f, 1.0f);
+    // **A floor of a third** (ADR 0164): the furthest FSR 2 is made to bring a
+    // picture up from -- its "ultra performance", three to one a side. It was a
+    // half while the only upscales read one frame, and under those a third
+    // still looks like what it is; the scale is the game's to choose.
+    settings.renderScale = std::clamp(settings.renderScale, 1.0f / 3.0f, 1.0f);
 
     // Powers of two between 256 and 4096, and 4096 is the ceiling because it is
     // the 2D texture size the weakest conforming device is required to support

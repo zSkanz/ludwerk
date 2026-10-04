@@ -974,6 +974,7 @@ How a world drawn below the window's resolution -- `GraphicsService.RenderScale`
 |---|---|---|
 | `None` | 0 | Filtered, as a picture is stretched. |
 | `FSR1` | 1 | AMD FidelityFX Super Resolution 1: an upscale that keeps edges, then sharpening. |
+| `FSR2` | 2 | AMD FidelityFX Super Resolution 2 (ADR 0164): each of the window's pixels built from the frames before this one, each drawn a fraction of a pixel off from the last. It is the anti-aliasing as well -- `AntiAliasing` is not read on a frame it upscales -- and at a `RenderScale` of 1 it is that alone. AMD's own names for a scale: quality 0.67, balanced 0.59, performance 0.5, ultra performance 0.33. The world's main camera with perspective, on a device with compute shaders; anything else is upscaled by FSR 1. |
 
 ## Enum.UserInputType
 

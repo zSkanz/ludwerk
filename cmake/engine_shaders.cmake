@@ -97,7 +97,8 @@ function(engine_add_shaders target)
     # engine's own, since they are upstream's bytes (R13). Depended on like the
     # headers above.
     set(vendor_headers "")
-    foreach(vendored IN ITEMS "third_party/smaa" "third_party/fidelityfx_fsr1/ffx-fsr")
+    foreach(vendored IN ITEMS "third_party/smaa" "third_party/fidelityfx_fsr1/ffx-fsr"
+            "third_party/fidelityfx_fsr2/src/ffx-fsr2-api/shaders")
         if(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/${vendored}")
             file(GLOB vendored_files CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/${vendored}/*.h"
                  "${CMAKE_SOURCE_DIR}/${vendored}/*.hlsl")
@@ -248,8 +249,13 @@ ${format_block}
             set(output "${out_dir}/${relative}")
             add_custom_command(
                 OUTPUT "${output}"
+                # **The target, as a define** (ADR 0164): `ENG_SHADER_SPIRV`,
+                # `_DXIL` or `_MSL`, for the one thing a shader may not say the
+                # same way everywhere -- an atomic on an image, which Metal's
+                # language lacks. What a shader BINDS may not depend on it: the
+                # reflection below is made once, with none of them defined.
                 COMMAND shadercross "${source}" -s HLSL -d ${dest_${format}} -t compute -e ComputeMain
-                        ${include_args} -o "${output}"
+                        -DENG_SHADER_${dest_${format}} ${include_args} -o "${output}"
                 DEPENDS shadercross "${source}" ${headers} ${vendor_headers}
                 COMMENT "Shader ${name}.compute -> ${format}"
                 VERBATIM)

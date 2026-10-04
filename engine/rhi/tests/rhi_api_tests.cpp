@@ -53,3 +53,26 @@ TEST_CASE("descriptors default to the common case")
     CHECK(attachment.loadOp == LoadOp::Clear);
     CHECK(attachment.storeOp == StoreOp::Store);
 }
+
+TEST_CASE("a texture a compute pass writes says so, apart from one it only samples")
+{
+    // ADR 0164. Two flags and not one: a texture a pass reads back through the
+    // binding it writes it by is another kind of resource to every backend.
+    constexpr auto written = TextureUsage::Sampled | TextureUsage::ComputeStorageWrite;
+    constexpr auto readBack = TextureUsage::Sampled | TextureUsage::ComputeStorageReadWrite;
+
+    CHECK(hasUsage(written, TextureUsage::ComputeStorageWrite));
+    CHECK_FALSE(hasUsage(written, TextureUsage::ComputeStorageReadWrite));
+    CHECK(hasUsage(readBack, TextureUsage::ComputeStorageReadWrite));
+    CHECK_FALSE(hasUsage(readBack, TextureUsage::ComputeStorageWrite));
+    CHECK_FALSE(hasUsage(TextureUsage::Sampled | TextureUsage::ColorTarget, TextureUsage::ComputeStorageWrite));
+
+    // The image an atomic is done on is not a depth, whatever it holds.
+    CHECK_FALSE(isDepthFormat(TextureFormat::R32Uint));
+
+    const ComputePipelineDesc pipeline{};
+    CHECK(pipeline.readwriteStorageTextureCount == 0u);
+    const ComputeTextureWrite write{};
+    CHECK_FALSE(write.texture.valid());
+    CHECK(write.mipLevel == 0u);
+}

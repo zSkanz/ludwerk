@@ -136,7 +136,8 @@ public:
 
     void bindStorageBuffers(ShaderStage stage, u32 firstSlot, std::span<const BufferHandle> buffers) override;
     void drawIndexedIndirect(BufferHandle buffer, u32 offsetBytes, u32 drawCount) override;
-    void beginComputePass(std::span<const BufferHandle> writes) override;
+    void beginComputePass(std::span<const BufferHandle> writes,
+                          std::span<const ComputeTextureWrite> textureWrites) override;
     void endComputePass() override;
     void setComputePipeline(ComputePipelineHandle pipeline) override;
     void bindComputeStorageBuffers(u32 firstSlot, std::span<const BufferHandle> buffers) override;
@@ -505,7 +506,7 @@ public:
             .num_samplers = desc.samplerCount,
             .num_readonly_storage_textures = 0,
             .num_readonly_storage_buffers = desc.readonlyStorageBufferCount,
-            .num_readwrite_storage_textures = 0,
+            .num_readwrite_storage_textures = desc.readwriteStorageTextureCount,
             .num_readwrite_storage_buffers = desc.readwriteStorageBufferCount,
             .num_uniform_buffers = desc.uniformBufferCount,
             .threadcount_x = desc.threadCountX,
@@ -1518,11 +1519,29 @@ void SdlGpuCmdList::drawIndexedIndirect(BufferHandle buffer, u32 offsetBytes, u3
         SDL_DrawGPUIndexedPrimitivesIndirect(renderPass_, native, offsetBytes, drawCount);
 }
 
-void SdlGpuCmdList::beginComputePass(std::span<const BufferHandle> writes)
+void SdlGpuCmdList::beginComputePass(std::span<const BufferHandle> writes,
+                                     std::span<const ComputeTextureWrite> textureWrites)
 {
     endOpenPass();
     if (buffer_ == nullptr)
         return;
+    BindList<SDL_GPUStorageTextureReadWriteBinding> textures(textureWrites.size());
+    for (usize index = 0; index < textureWrites.size(); ++index) {
+        SDL_GPUStorageTextureReadWriteBinding binding{};
+        TextureEntry* entry = device_.texture(textureWrites[index].texture);
+        // A handle that names nothing is the pass not begun: SDL dereferences
+        // what it is given, and a null here is the process ending in it.
+        if (entry == nullptr || entry->texture == nullptr) {
+            device_.noteStaleBinding();
+            return;
+        }
+        binding.texture = entry->texture;
+        binding.mip_level = textureWrites[index].mipLevel;
+        binding.layer = 0;
+        // Never cycled: a pass that writes part of an image keeps the rest.
+        binding.cycle = false;
+        textures[index] = binding;
+    }
     BindList<SDL_GPUStorageBufferReadWriteBinding> bindings(writes.size());
     for (usize index = 0; index < writes.size(); ++index) {
         SDL_GPUStorageBufferReadWriteBinding binding{};
@@ -1531,7 +1550,8 @@ void SdlGpuCmdList::beginComputePass(std::span<const BufferHandle> writes)
         binding.cycle = false;
         bindings[index] = binding;
     }
-    computePass_ = SDL_BeginGPUComputePass(buffer_, nullptr, 0, bindings.data(), static_cast<Uint32>(bindings.size()));
+    computePass_ = SDL_BeginGPUComputePass(buffer_, textures.data(), static_cast<Uint32>(textures.size()),
+                                           bindings.data(), static_cast<Uint32>(bindings.size()));
 }
 
 void SdlGpuCmdList::endComputePass()

@@ -129,9 +129,14 @@ public:
     // `buffer` at `offsetBytes` -- the arguments a compute pass wrote.
     virtual void drawIndexedIndirect(BufferHandle buffer, u32 offsetBytes, u32 drawCount) = 0;
 
-    // **A compute pass**, which writes the buffers it names here and no others;
-    // it ends any pass open, and a render or copy pass ends it.
-    virtual void beginComputePass(std::span<const BufferHandle> writes) = 0;
+    // **A compute pass**, which writes the buffers and the textures it names
+    // here and no others; it ends any pass open, and a render or copy pass
+    // ends it. A texture is written a mip at a time (ADR 0164), and is made
+    // with `TextureUsage::ComputeStorageWrite`; the shader's first written
+    // texture is the first named.
+    virtual void beginComputePass(std::span<const BufferHandle> writes,
+                                  std::span<const ComputeTextureWrite> textureWrites) = 0;
+    void beginComputePass(std::span<const BufferHandle> writes) { beginComputePass(writes, {}); }
     virtual void endComputePass() = 0;
     virtual void setComputePipeline(ComputePipelineHandle pipeline) = 0;
     // The buffers the compute shader only reads.

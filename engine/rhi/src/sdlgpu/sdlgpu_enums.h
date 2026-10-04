@@ -58,6 +58,8 @@ namespace engine::rhi::sdlgpu {
         return SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM_SRGB;
     case TextureFormat::Rg16Float:
         return SDL_GPU_TEXTUREFORMAT_R16G16_FLOAT;
+    case TextureFormat::R32Uint:
+        return SDL_GPU_TEXTUREFORMAT_R32_UINT;
     }
     return SDL_GPU_TEXTUREFORMAT_INVALID;
 }
@@ -91,6 +93,10 @@ namespace engine::rhi::sdlgpu {
         flags |= SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
     if (hasUsage(usage, TextureUsage::DepthStencilTarget))
         flags |= SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
+    if (hasUsage(usage, TextureUsage::ComputeStorageWrite))
+        flags |= SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE;
+    if (hasUsage(usage, TextureUsage::ComputeStorageReadWrite))
+        flags |= SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE;
     return flags;
 }
 
@@ -375,6 +381,7 @@ namespace engine::rhi::sdlgpu {
     case TextureFormat::Bgra8UnormSrgb:
     case TextureFormat::R32Float:
     case TextureFormat::Rg16Float:
+    case TextureFormat::R32Uint:
     case TextureFormat::D24UnormS8Uint:
     case TextureFormat::D32Float:
         return 4;

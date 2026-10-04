@@ -38,13 +38,13 @@ namespace engine::scene {
 // lands, so a game's menu does not change shape (ADR 0147 section 2).
 #define ENG_GRAPHICS_SETTINGS(X)                                                                                       \
     X(QualityLevel, Choice, 0.0, 5.0, 2.0, false, true)                                                                \
-    X(RenderScale, Number, 0.5, 1.0, 1.0, true, true)                                                                  \
+    X(RenderScale, Number, 1.0 / 3.0, 1.0, 1.0, true, true)                                                            \
     X(ShadowQuality, Choice, 0.0, 4.0, 3.0, true, true)                                                                \
     X(ShadowResolution, Whole, 256.0, 2048.0, 2048.0, true, true)                                                      \
     X(ShadowCascades, Whole, 0.0, 4.0, 4.0, true, true)                                                                \
     X(ShadowDistance, Number, 10.0, 1000.0, 120.0, true, true)                                                         \
     X(AntiAliasing, Choice, 0.0, 3.0, 2.0, true, true)                                                                 \
-    X(Upscaling, Choice, 0.0, 1.0, 0.0, true, true)                                                                    \
+    X(Upscaling, Choice, 0.0, 2.0, 0.0, true, true)                                                                    \
     X(Sharpness, Number, 0.0, 1.0, 0.2, true, true)                                                                    \
     X(AmbientOcclusion, Flag, 0.0, 1.0, 1.0, true, true)                                                               \
     X(ContactShadows, Flag, 0.0, 1.0, 1.0, true, true)                                                                 \

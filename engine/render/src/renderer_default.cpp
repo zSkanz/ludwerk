@@ -96,6 +96,17 @@ constexpr f32 kContactThicknessMetres = 0.25f;
 constexpr f32 kContactFadeDistance = 60.0f;
 constexpr rhi::TextureFormat kLuminanceFormat = rhi::TextureFormat::R32Float;
 
+// **FSR 2's passes** (ADR 0164), in the order a frame runs them -- but for the
+// two accumulations, of which a frame runs one: the second sharpens after it.
+constexpr u32 kFsr2Luminance = 0;
+constexpr u32 kFsr2Reconstruct = 1;
+constexpr u32 kFsr2DepthClip = 2;
+constexpr u32 kFsr2Lock = 3;
+constexpr u32 kFsr2Accumulate = 4;
+constexpr u32 kFsr2AccumulateSharpen = 5;
+constexpr u32 kFsr2Rcas = 6;
+constexpr u32 kFsr2PassCount = 7;
+
 // Five levels, halving from half resolution: the coarsest is a thirty-second of
 // the frame, which is where a bloom's tail stops being distinguishable from a
 // flat lift.
@@ -660,6 +671,11 @@ public:
     // `cameraJitter` and `render` both ask, so a frame is never jittered
     // without the pass that takes the jitter out.
     [[nodiscard]] bool temporalFrame(const RenderWorld& world) const noexcept;
+    // Whether the world's main view, this frame, is upscaled by FSR 2
+    // (ADR 0164): the setting, a device that made its passes, and a camera
+    // with perspective -- the algorithm reads how far each pixel is from the
+    // eye out of the depth, which a camera without perspective does not say.
+    [[nodiscard]] bool fsr2Frame(const RenderWorld& world) const noexcept;
     // The fraction of the target the world is drawn at: the settings' scale
     // and cap, or the whole of it for a picture of sprites alone -- **and for
     // a view into a texture** (D528): a `ViewportFrame`, a sub-world's or a
@@ -1238,6 +1254,80 @@ private:
     // and whether this frame is a temporal one.
     u32 jitterIndex_ = 0;
     bool temporalNow_ = false;
+
+    // --- The temporal upscaler (ADR 0164) --------------------------------------
+    //
+    // **FSR 2**: AMD's algorithm, its passes compiled from its own headers
+    // (`shaders/compute/fsr2_*.hlsl`), and the images it keeps from one frame
+    // to the next. The main view's alone, as the temporal pass is, and made
+    // the first frame the setting asks for it. **It takes the temporal pass's
+    // place and the upscale's**: what it writes is the scene at the target's
+    // size, still unexposed, and exposure, bloom and the tonemap read that.
+    rhi::ComputePipelineHandle fsr2Pipelines_[kFsr2PassCount]{};
+    bool fsr2Tried_ = false;
+    // A device that could not make the passes or their images, said once.
+    bool fsr2Failed_ = false;
+    // Whether this frame is upscaled by it.
+    bool fsr2Now_ = false;
+    // At the render size: the colour as the accumulation reads it, the depth
+    // the last frame's geometry would have here, each pixel's motion and
+    // depth taken from the nearest of its neighbours -- this frame's motion
+    // and the last one's -- the luminance thin features are found in, the
+    // masks that say where history is not to be trusted, and the frame's
+    // luminance in patches thirty-two pixels a side.
+    rhi::TextureHandle fsr2Prepared_{};
+    rhi::TextureHandle fsr2PreviousDepth_{};
+    rhi::TextureHandle fsr2DilatedMotion_[2]{};
+    rhi::TextureHandle fsr2DilatedDepth_{};
+    rhi::TextureHandle fsr2LockLuma_{};
+    rhi::TextureHandle fsr2Masks_{};
+    rhi::TextureHandle fsr2Luminance_{};
+    // **And what the passes are told blends**: the scene as it was before
+    // anything that does, and how far each pixel of the finished one is from
+    // it (`fsr2_reactive.hlsl`). Made on a frame that has something blended,
+    // and for a few frames after, each keeping a part of the last one's mask:
+    // `fsr2ReactiveLive_` says this frame's mask is this frame's, and
+    // `fsr2ReactiveTail_` how many more frames the last one counts for.
+    rhi::TextureHandle fsr2Opaque_{};
+    rhi::TextureHandle fsr2Reactive_[2]{};
+    u32 fsr2ReactiveIndex_ = 0;
+    u32 fsr2ReactiveTail_ = 0;
+    bool fsr2OpaqueLive_ = false;
+    bool fsr2ReactiveLive_ = false;
+    LookPipeline fsr2ReactivePipeline_;
+    // At the output's: the locks on thin features and the ones this frame
+    // found, the history, its luminance over the last four frames, and what
+    // the frame reads.
+    rhi::TextureHandle fsr2LockStatus_[2]{};
+    rhi::TextureHandle fsr2NewLocks_{};
+    rhi::TextureHandle fsr2History_[2]{};
+    rhi::TextureHandle fsr2LumaHistory_[2]{};
+    rhi::TextureHandle fsr2Output_{};
+    u32 fsr2RenderWidth_ = 0;
+    u32 fsr2RenderHeight_ = 0;
+    u32 fsr2OutputWidth_ = 0;
+    u32 fsr2OutputHeight_ = 0;
+    // Which of each pair is read this frame, how many frames the history
+    // holds, and the length of the jitter's sequence as the passes are told
+    // it: a step a frame towards what the scale asks for.
+    u32 fsr2Parity_ = 0;
+    core::i32 fsr2FrameIndex_ = 0;
+    f32 fsr2Phases_ = 0.0f;
+    bool fsr2Fresh_ = true;
+    [[nodiscard]] bool ensureFsr2(rhi::IDevice& device);
+    [[nodiscard]] bool ensureFsr2Images(rhi::IDevice& device, u32 outputWidth, u32 outputHeight);
+    void releaseFsr2Images(rhi::IDevice& device);
+    void failFsr2();
+    // The scene before what blends, kept; and, the forward pass over, the mask.
+    void copyOpaqueForUpscaler(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world,
+                               const GpuFrameUniforms& frame);
+    void writeReactiveMask(rhi::IDevice& device, rhi::ICmdList& cmd);
+    // This frame and the ones before it, at the target's size -- or nothing,
+    // where the images could not be made.
+    [[nodiscard]] rhi::TextureHandle upscaleTemporal(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world,
+                                                     const RenderTarget& target, rhi::TextureHandle scene);
+    // What this frame was, for the next one's motion to be measured against.
+    void rememberCamera(const RenderCamera& camera);
     [[nodiscard]] bool ensureMotionPipelines(rhi::IDevice& device);
     [[nodiscard]] bool ensureSmaaTables(rhi::IDevice& device, rhi::ICmdList& cmd);
     [[nodiscard]] static bool aaTexture(rhi::IDevice& device, rhi::TextureHandle& slot, u32 width, u32 height,
@@ -1254,7 +1344,7 @@ private:
                         bool upscale, bool sharpen);
 
     // Every look pipeline, for `destroy`.
-    [[nodiscard]] std::array<LookPipeline*, 29> lookPipelines() noexcept
+    [[nodiscard]] std::array<LookPipeline*, 30> lookPipelines() noexcept
     {
         return {&gradedTonemap_,
                 &gradedTonemapWindow_,
@@ -1284,7 +1374,8 @@ private:
                 &rcas_,
                 &rcasWindow_,
                 &taaVelocity_,
-                &taaResolve_};
+                &taaResolve_,
+                &fsr2ReactivePipeline_};
     }
 
     [[nodiscard]] bool lookTexture(rhi::IDevice& device, rhi::TextureHandle& slot, u32 width, u32 height,
@@ -2292,6 +2383,14 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
             device.destroy(*pipeline);
         *pipeline = {};
     }
+    releaseFsr2Images(device);
+    for (rhi::ComputePipelineHandle& pipeline : fsr2Pipelines_) {
+        if (pipeline.valid())
+            device.destroy(pipeline);
+        pipeline = {};
+    }
+    fsr2Tried_ = false;
+    fsr2Failed_ = false;
     for (rhi::BufferHandle* buffer : {&foliageVisible_, &foliageCounters_, &foliageArguments_, &foliageCommands_}) {
         if (buffer->valid())
             device.destroy(*buffer);
@@ -3682,6 +3781,17 @@ namespace {
 
 constexpr u32 kJitterSamples = 8;
 
+// **How long the jitter's sequence is under FSR 2** (ADR 0164): eight samples
+// for each of the output's pixels a rendered one covers, which is AMD's rule
+// (`ffxFsr2GetJitterPhaseCount`) -- an output pixel sees every part of itself
+// rendered as often at any scale.
+[[nodiscard]] u32 fsr2JitterPhases(u32 renderWidth, u32 outputWidth) noexcept
+{
+    const f32 ratio = renderWidth > 0 ? static_cast<f32>(outputWidth) / static_cast<f32>(renderWidth) : 1.0f;
+    const auto phases = static_cast<u32>(static_cast<f32>(kJitterSamples) * ratio * ratio);
+    return phases > kJitterSamples ? phases : kJitterSamples;
+}
+
 // A float as the word a constant buffer carries it in.
 [[nodiscard]] u32 bitsOf(f32 value) noexcept
 {
@@ -3698,8 +3808,18 @@ bool DefaultRenderer::temporalFrame(const RenderWorld& world) const noexcept
     // its own colours among 3D surfaces is neither jittered nor blended: it
     // is drawn where the camera is without its jitter, and the resolve passes
     // its pixels through (ADR 0158).
-    return settings_.antiAliasing == AntiAliasingMode::Taa && world.camera.valid &&
+    //
+    // **And a frame FSR 2 upscales is one** (ADR 0164), whatever the
+    // anti-aliasing asked for: it is jittered and measured the same way, and
+    // the upscaler is the pass that takes the jitter out.
+    return (settings_.antiAliasing == AntiAliasingMode::Taa || fsr2Frame(world)) && world.camera.valid &&
            !world.environment.transparentBackground && !spritesOnly(world);
+}
+
+bool DefaultRenderer::fsr2Frame(const RenderWorld& world) const noexcept
+{
+    return settings_.upscaling == UpscalingMode::Fsr2 && !fsr2Failed_ && world.camera.valid &&
+           !core::isOrthographic(world.camera.projection);
 }
 
 core::Vec2 DefaultRenderer::cameraJitter(const RenderWorld& world, u32 targetWidth, u32 targetHeight) const
@@ -3712,7 +3832,8 @@ core::Vec2 DefaultRenderer::cameraJitter(const RenderWorld& world, u32 targetWid
         const auto result = static_cast<u32>(static_cast<f32>(value) * scale + 0.5f);
         return result > 0 ? result : 1u;
     };
-    const u32 sample = jitterIndex_ % kJitterSamples + 1;
+    const u32 phases = fsr2Frame(world) ? fsr2JitterPhases(scaled(targetWidth), targetWidth) : kJitterSamples;
+    const u32 sample = jitterIndex_ % phases + 1;
     const f32 x = halton(sample, 2) - 0.5f;
     const f32 y = halton(sample, 3) - 0.5f;
     return core::Vec2{2.0f * x / static_cast<f32>(scaled(targetWidth)),
@@ -3983,14 +4104,7 @@ rhi::TextureHandle DefaultRenderer::resolveTemporal(rhi::IDevice& device, rhi::I
     const RenderCamera& camera = world.camera;
     // What this frame was is what the next one is measured against, whatever
     // the resolve below manages.
-    const auto remember = [&]() {
-        previousViewProjection_ = camera.unjitteredViewProjection;
-        previousOrigin_ = camera.origin;
-        previousCamera_ = true;
-        placed_.swap(placing_);
-        placing_.clear();
-        jitterIndex_ += 1;
-    };
+    const auto remember = [&]() { rememberCamera(camera); };
     if (!velocity_.valid() || !ensureLookPipeline(device, taaResolve_, "taa_resolve", kHdrFormat) ||
         !aaTexture(device, history_[0], renderWidth_, renderHeight_, kHdrFormat, "history-a") ||
         !aaTexture(device, history_[1], renderWidth_, renderHeight_, kHdrFormat, "history-b")) {
@@ -4033,6 +4147,418 @@ rhi::TextureHandle DefaultRenderer::resolveTemporal(rhi::IDevice& device, rhi::I
     historyValid_ = true;
     remember();
     return history_[write];
+}
+
+void DefaultRenderer::rememberCamera(const RenderCamera& camera)
+{
+    previousViewProjection_ = camera.unjitteredViewProjection;
+    previousOrigin_ = camera.origin;
+    previousCamera_ = true;
+    placed_.swap(placing_);
+    placing_.clear();
+    jitterIndex_ += 1;
+}
+
+// --- The temporal upscaler (ADR 0164) ------------------------------------------
+
+void DefaultRenderer::failFsr2()
+{
+    if (fsr2Failed_)
+        return;
+    fsr2Failed_ = true;
+    core::log(core::LogLevel::Warn, ENG_TR("render.warn.fsr2_unavailable"), {});
+}
+
+bool DefaultRenderer::ensureFsr2(rhi::IDevice& device)
+{
+    const auto whole = [this]() {
+        for (const rhi::ComputePipelineHandle& pipeline : fsr2Pipelines_) {
+            if (!pipeline.valid())
+                return false;
+        }
+        return true;
+    };
+    if (fsr2Tried_)
+        return whole();
+    fsr2Tried_ = true;
+    if (shaderLibrary_ == nullptr || !device.caps().compute)
+        return false;
+    static constexpr std::array<const char*, kFsr2PassCount> Names{
+        "fsr2_luminance",  "fsr2_reconstruct",        "fsr2_depth_clip", "fsr2_lock",
+        "fsr2_accumulate", "fsr2_accumulate_sharpen", "fsr2_rcas",
+    };
+    core::EngineError error;
+    for (u32 pass = 0; pass < kFsr2PassCount; ++pass) {
+        fsr2Pipelines_[pass] = shaderLibrary_->createCompute(device, Names[pass], &error);
+        if (!fsr2Pipelines_[pass].valid()) {
+            core::logText(core::LogLevel::Warn, error.message);
+            return false;
+        }
+    }
+    return true;
+}
+
+void DefaultRenderer::releaseFsr2Images(rhi::IDevice& device)
+{
+    for (rhi::TextureHandle* texture :
+         {&fsr2Prepared_, &fsr2PreviousDepth_, &fsr2DilatedMotion_[0], &fsr2DilatedMotion_[1], &fsr2DilatedDepth_,
+          &fsr2LockLuma_, &fsr2Masks_, &fsr2Luminance_, &fsr2LockStatus_[0], &fsr2LockStatus_[1], &fsr2NewLocks_,
+          &fsr2History_[0], &fsr2History_[1], &fsr2LumaHistory_[0], &fsr2LumaHistory_[1], &fsr2Output_, &fsr2Opaque_,
+          &fsr2Reactive_[0], &fsr2Reactive_[1]}) {
+        if (texture->valid())
+            device.destroy(*texture);
+        *texture = {};
+    }
+    fsr2RenderWidth_ = 0;
+    fsr2RenderHeight_ = 0;
+    fsr2OutputWidth_ = 0;
+    fsr2OutputHeight_ = 0;
+    fsr2Fresh_ = true;
+    fsr2OpaqueLive_ = false;
+    fsr2ReactiveLive_ = false;
+    fsr2ReactiveTail_ = 0;
+}
+
+void DefaultRenderer::copyOpaqueForUpscaler(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world,
+                                            const GpuFrameUniforms& frame)
+{
+    // **Only a frame with something blended in it pays for the copy**, and
+    // the mask after it.
+    bool blends = particleCount_ > 0 || ribbonVertexCount_ > 0 || !world.gpuEmitters.empty() || worldUiVertexCount_ > 0;
+    for (usize index = 0; index < world.draws.size() && !blends; ++index)
+        blends = world.draws[index].transparent && world.draws[index].inCameraFrustum;
+    if (!blends || !ensureLookPipeline(device, resample_, "look_resample", kHdrFormat) ||
+        !aaTexture(device, fsr2Opaque_, renderWidth_, renderHeight_, kHdrFormat, "fsr2-opaque"))
+        return;
+    cmd.endRenderPass();
+    const std::array<rhi::TextureBinding, 1> color{rhi::TextureBinding{hdr_, pointSampler_}};
+    fullscreenPass(cmd, resample_.handle, fsr2Opaque_, renderWidth_, renderHeight_, "fsr2-opaque", color, {});
+    fsr2OpaqueLive_ = true;
+
+    const std::array<rhi::ColorAttachment, 1> resumeTarget{rhi::ColorAttachment{
+        .texture = hdr_,
+        .loadOp = rhi::LoadOp::Load,
+        .storeOp = rhi::StoreOp::Store,
+    }};
+    cmd.beginRenderPass({
+        .colorAttachments = resumeTarget,
+        .depthStencil = {.texture = depth_, .loadOp = rhi::LoadOp::Load, .storeOp = rhi::StoreOp::Store},
+        .debugName = "forward-after-opaque-copy",
+    });
+    cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
+    cmd.setScissor({.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
+    // The frame block again: the copy bound its own at the same slot.
+    cmd.setPipeline(pbrBlendPipeline_);
+    cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&frame, sizeof(frame)));
+}
+
+void DefaultRenderer::writeReactiveMask(rhi::IDevice& device, rhi::ICmdList& cmd)
+{
+    // A frame with something blended, or one of the few after it: what the
+    // last mask held is still in the history (`fsr2_reactive.hlsl`).
+    const bool tail = fsr2ReactiveTail_ > 0;
+    if ((!fsr2OpaqueLive_ && !tail) ||
+        !ensureLookPipeline(device, fsr2ReactivePipeline_, "fsr2_reactive", kSpriteMaskFormat) ||
+        !aaTexture(device, fsr2Reactive_[0], renderWidth_, renderHeight_, kSpriteMaskFormat, "fsr2-reactive-a") ||
+        !aaTexture(device, fsr2Reactive_[1], renderWidth_, renderHeight_, kSpriteMaskFormat, "fsr2-reactive-b"))
+        return;
+    const u32 write = fsr2ReactiveIndex_ ^ 1u;
+    const std::array<rhi::TextureBinding, 4> bindings{
+        // With nothing blended this frame the scene is its own "before".
+        rhi::TextureBinding{fsr2OpaqueLive_ ? fsr2Opaque_ : hdr_, pointSampler_},
+        rhi::TextureBinding{hdr_, pointSampler_},
+        rhi::TextureBinding{spriteExactLive_ ? spriteMask_ : blackPixel_, pointSampler_},
+        rhi::TextureBinding{tail ? fsr2Reactive_[fsr2ReactiveIndex_] : blackPixel_, pointSampler_},
+    };
+    fullscreenPass(cmd, fsr2ReactivePipeline_.handle, fsr2Reactive_[write], renderWidth_, renderHeight_,
+                   "fsr2-reactive", bindings, {});
+    fsr2ReactiveIndex_ = write;
+    fsr2ReactiveLive_ = true;
+    // Four frames at six tenths each is an eighth of the mask: nothing.
+    fsr2ReactiveTail_ = fsr2OpaqueLive_ ? 4u : fsr2ReactiveTail_ - 1u;
+}
+
+bool DefaultRenderer::ensureFsr2Images(rhi::IDevice& device, u32 outputWidth, u32 outputHeight)
+{
+    // At another size they were released when the frame began (`render`):
+    // another size is another history, and nothing of the old one is kept.
+    if (fsr2Output_.valid())
+        return true;
+    bool made = true;
+    // **Each a target as well as an image a pass writes**: a new history is
+    // cleared, and a clear is a render pass. `readBack` for the one a pass
+    // reads through the binding it writes it by.
+    const auto image = [&](rhi::TextureHandle& slot, u32 width, u32 height, rhi::TextureFormat format, bool readBack,
+                           const char* name) {
+        slot = device.createTexture({
+            .format = format,
+            .usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::ColorTarget |
+                     (readBack ? rhi::TextureUsage::ComputeStorageReadWrite : rhi::TextureUsage::ComputeStorageWrite),
+            .width = width,
+            .height = height,
+            .debugName = name,
+        });
+        made = made && slot.valid();
+    };
+    // **The previous depth is the one image that is neither**: an integer,
+    // kept by an atomic minimum, read only through the binding it is written
+    // by, and never cleared from here -- the lock pass leaves it at the
+    // furthest there is, for the next frame's reconstruction to bring nearer.
+    fsr2PreviousDepth_ = device.createTexture({
+        .format = rhi::TextureFormat::R32Uint,
+        .usage = rhi::TextureUsage::ComputeStorageReadWrite,
+        .width = renderWidth_,
+        .height = renderHeight_,
+        .debugName = "fsr2-previous-depth",
+    });
+    made = made && fsr2PreviousDepth_.valid();
+    // **Three formats and no others** (the callbacks header says why): what
+    // AMD keeps in two channels or one of sixteen bits is kept in four here,
+    // or in one of thirty-two.
+    const u32 lumaWidth = std::max(renderWidth_ / 32u, 1u);
+    const u32 lumaHeight = std::max(renderHeight_ / 32u, 1u);
+    image(fsr2Prepared_, renderWidth_, renderHeight_, kHdrFormat, false, "fsr2-prepared-colour");
+    image(fsr2DilatedMotion_[0], renderWidth_, renderHeight_, kHdrFormat, false, "fsr2-dilated-motion-a");
+    image(fsr2DilatedMotion_[1], renderWidth_, renderHeight_, kHdrFormat, false, "fsr2-dilated-motion-b");
+    image(fsr2DilatedDepth_, renderWidth_, renderHeight_, rhi::TextureFormat::R32Float, false, "fsr2-dilated-depth");
+    image(fsr2LockLuma_, renderWidth_, renderHeight_, rhi::TextureFormat::R32Float, false, "fsr2-lock-luma");
+    image(fsr2Masks_, renderWidth_, renderHeight_, kLdrFormat, false, "fsr2-reactive-masks");
+    image(fsr2Luminance_, lumaWidth, lumaHeight, kHdrFormat, false, "fsr2-luminance");
+    image(fsr2LockStatus_[0], outputWidth, outputHeight, kHdrFormat, false, "fsr2-lock-status-a");
+    image(fsr2LockStatus_[1], outputWidth, outputHeight, kHdrFormat, false, "fsr2-lock-status-b");
+    image(fsr2NewLocks_, outputWidth, outputHeight, rhi::TextureFormat::R32Float, true, "fsr2-new-locks");
+    image(fsr2History_[0], outputWidth, outputHeight, kHdrFormat, false, "fsr2-history-a");
+    image(fsr2History_[1], outputWidth, outputHeight, kHdrFormat, false, "fsr2-history-b");
+    image(fsr2LumaHistory_[0], outputWidth, outputHeight, kLdrFormat, false, "fsr2-luma-history-a");
+    image(fsr2LumaHistory_[1], outputWidth, outputHeight, kLdrFormat, false, "fsr2-luma-history-b");
+    image(fsr2Output_, outputWidth, outputHeight, kHdrFormat, false, "fsr2-output");
+    if (!made) {
+        releaseFsr2Images(device);
+        return false;
+    }
+    fsr2RenderWidth_ = renderWidth_;
+    fsr2RenderHeight_ = renderHeight_;
+    fsr2OutputWidth_ = outputWidth;
+    fsr2OutputHeight_ = outputHeight;
+    fsr2Fresh_ = true;
+    return true;
+}
+
+rhi::TextureHandle DefaultRenderer::upscaleTemporal(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world,
+                                                    const RenderTarget& target, rhi::TextureHandle scene)
+{
+    const RenderCamera& camera = world.camera;
+    if (!velocity_.valid())
+        return {};
+    if (!ensureFsr2Images(device, target.width, target.height)) {
+        failFsr2();
+        return {};
+    }
+    const u32 outputWidth = target.width;
+    const u32 outputHeight = target.height;
+    // **A history that is not this view's any more is begun again**: new
+    // images, or a camera that was cut (`writeVelocity`).
+    const bool reset = fsr2Fresh_ || !historyValid_;
+
+    // --- The frame's constants, after `fsr2Dispatch` in AMD's runtime ---------
+    GpuFsr2Constants constants;
+    constants.renderSize[0] = static_cast<core::i32>(renderWidth_);
+    constants.renderSize[1] = static_cast<core::i32>(renderHeight_);
+    constants.maxRenderSize[0] = constants.renderSize[0];
+    constants.maxRenderSize[1] = constants.renderSize[1];
+    constants.displaySize[0] = static_cast<core::i32>(outputWidth);
+    constants.displaySize[1] = static_cast<core::i32>(outputHeight);
+    constants.inputColorResourceDimensions[0] = constants.renderSize[0];
+    constants.inputColorResourceDimensions[1] = constants.renderSize[1];
+    constants.lumaMipDimensions[0] = static_cast<core::i32>(std::max(renderWidth_ / 32u, 1u));
+    constants.lumaMipDimensions[1] = static_cast<core::i32>(std::max(renderHeight_ / 32u, 1u));
+    // The level of AMD's chain the luminance image stands for; it is one
+    // image here and the number is only carried.
+    constants.lumaMipLevelToUse = 4;
+    fsr2FrameIndex_ = reset ? 0 : fsr2FrameIndex_ + 1;
+    constants.frameIndex = fsr2FrameIndex_;
+    // **From a depth to a distance, and from a pixel to a direction**: the
+    // projection's own four numbers, read out of the matrix the frame was
+    // drawn with -- AMD's runtime derives the same four from a near plane, a
+    // far one and an angle.
+    const Mat4& projection = camera.projection;
+    constants.deviceToViewDepth[0] = -projection.m[2][2];
+    constants.deviceToViewDepth[1] = projection.m[3][2];
+    constants.deviceToViewDepth[2] = 1.0f / projection.m[0][0];
+    constants.deviceToViewDepth[3] = 1.0f / projection.m[1][1];
+    constants.tanHalfFov = 1.0f / projection.m[0][0];
+    // **The jitter in pixels, down the screen**: the camera's is in clip
+    // space, where up is positive.
+    constants.jitterOffset[0] = camera.jitter.x * 0.5f * static_cast<f32>(renderWidth_);
+    constants.jitterOffset[1] = -camera.jitter.y * 0.5f * static_cast<f32>(renderHeight_);
+    // **`velocity_` is how far a pixel moved, in the picture's own unit, and
+    // where it was is where it is less that**; the algorithm adds.
+    constants.motionVectorScale[0] = -1.0f;
+    constants.motionVectorScale[1] = -1.0f;
+    constants.downscaleFactor[0] = static_cast<f32>(renderWidth_) / static_cast<f32>(outputWidth);
+    constants.downscaleFactor[1] = static_cast<f32>(renderHeight_) / static_cast<f32>(outputHeight);
+    // The sequence's length follows the scale a step a frame, as AMD's does.
+    const auto phases = static_cast<f32>(fsr2JitterPhases(renderWidth_, outputWidth));
+    if (reset || fsr2Phases_ == 0.0f)
+        fsr2Phases_ = phases;
+    else if (phases > fsr2Phases_)
+        fsr2Phases_ += 1.0f;
+    else if (phases < fsr2Phases_)
+        fsr2Phases_ -= 1.0f;
+    constants.jitterPhaseCount = fsr2Phases_;
+    // Read by AMD's own exposure alone, which the engine's replaces: a
+    // constant, so a frame's commands do not depend on the clock.
+    constants.deltaTime = 1.0f / 60.0f;
+
+    // --- Which of each pair -----------------------------------------------------
+    const u32 read = fsr2Parity_ & 1u;
+    const u32 write = read ^ 1u;
+    // This frame's dilated motion is the one the next frame calls the last.
+    const rhi::TextureHandle motion = fsr2DilatedMotion_[read];
+    const rhi::TextureHandle motionBefore = fsr2DilatedMotion_[write];
+
+    cmd.pushDebugGroup("fsr2");
+    if (reset) {
+        const rhi::ColorRgba none{0.0f, 0.0f, 0.0f, 0.0f};
+        for (const rhi::TextureHandle texture :
+             {fsr2Prepared_, fsr2DilatedMotion_[0], fsr2DilatedMotion_[1], fsr2Masks_, fsr2LockLuma_})
+            clearPass(cmd, texture, renderWidth_, renderHeight_, "fsr2-clear", none);
+        for (const rhi::TextureHandle texture : {fsr2LockStatus_[0], fsr2LockStatus_[1], fsr2NewLocks_, fsr2History_[0],
+                                                 fsr2History_[1], fsr2LumaHistory_[0], fsr2LumaHistory_[1]})
+            clearPass(cmd, texture, outputWidth, outputHeight, "fsr2-clear", none);
+        clearPass(cmd, fsr2Luminance_, static_cast<u32>(constants.lumaMipDimensions[0]),
+                  static_cast<u32>(constants.lumaMipDimensions[1]), "fsr2-clear", none);
+    }
+
+    // **The last frame's exposure**, which this frame's is made from after
+    // this pass -- or white, a luminance of one, with nothing metered yet.
+    const rhi::TextureHandle exposure = exposureInitialised_ ? exposure_[exposureIndex_] : whitePixel_;
+    // **Exactly the texel wherever a pass reads one, and filtered where it
+    // samples between them**: each texture has its own sampler here, and a
+    // thirty-two-bit float is not filtered on every device.
+    const rhi::SamplerHandle exact = pointSampler_;
+    const rhi::SamplerHandle filtered = environmentSampler_;
+    const auto pass = [&](u32 which, std::span<const rhi::TextureBinding> reads,
+                          std::span<const rhi::ComputeTextureWrite> writes, u32 width, u32 height, u32 tile,
+                          std::span<const std::byte> second = {}) {
+        cmd.beginComputePass(std::span<const rhi::BufferHandle>{}, writes);
+        cmd.setComputePipeline(fsr2Pipelines_[which]);
+        cmd.bindComputeTextures(0, reads);
+        cmd.bindComputeUniforms(0, asBytes(&constants, sizeof(constants)));
+        if (!second.empty())
+            cmd.bindComputeUniforms(1, second);
+        cmd.dispatch((width + tile - 1) / tile, (height + tile - 1) / tile, 1);
+        cmd.endComputePass();
+    };
+
+    // The frame's luminance in patches, which the accumulation compares with
+    // what a pixel's history remembers of it.
+    {
+        const std::array<rhi::TextureBinding, 1> reads{rhi::TextureBinding{scene, filtered}};
+        const std::array<rhi::ComputeTextureWrite, 1> writes{rhi::ComputeTextureWrite{fsr2Luminance_}};
+        pass(kFsr2Luminance, reads, writes, static_cast<u32>(constants.lumaMipDimensions[0]),
+             static_cast<u32>(constants.lumaMipDimensions[1]), 8);
+    }
+    // **A new history's previous depth is whatever the image was made
+    // with**, and the lock pass is what clears it: run once first, on the
+    // images just cleared, where it finds nothing to lock.
+    const auto lock = [&]() {
+        const std::array<rhi::TextureBinding, 1> reads{rhi::TextureBinding{fsr2LockLuma_, exact}};
+        const std::array<rhi::ComputeTextureWrite, 2> writes{
+            rhi::ComputeTextureWrite{fsr2NewLocks_},
+            rhi::ComputeTextureWrite{fsr2PreviousDepth_},
+        };
+        pass(kFsr2Lock, reads, writes, renderWidth_, renderHeight_, 8);
+    };
+    if (reset)
+        lock();
+    // Each pixel's motion and depth from its nearest neighbour, and that depth
+    // carried to where the pixel was.
+    {
+        const std::array<rhi::TextureBinding, 4> reads{
+            rhi::TextureBinding{velocity_, exact},
+            rhi::TextureBinding{depth_, exact},
+            rhi::TextureBinding{scene, exact},
+            rhi::TextureBinding{exposure, exact},
+        };
+        const std::array<rhi::ComputeTextureWrite, 4> writes{
+            rhi::ComputeTextureWrite{fsr2PreviousDepth_},
+            rhi::ComputeTextureWrite{motion},
+            rhi::ComputeTextureWrite{fsr2DilatedDepth_},
+            rhi::ComputeTextureWrite{fsr2LockLuma_},
+        };
+        pass(kFsr2Reconstruct, reads, writes, renderWidth_, renderHeight_, 8);
+    }
+    // What came out from behind something, and the colour prepared.
+    {
+        // **What blends, and a sprite drawn in its own colours**: neither
+        // has a motion of its own, and where one is the history is not to be
+        // trusted (`fsr2_reactive.hlsl`, which has the sprites in it).
+        const rhi::TextureHandle reactive = fsr2ReactiveLive_  ? fsr2Reactive_[fsr2ReactiveIndex_]
+                                            : spriteExactLive_ ? spriteMask_
+                                                               : blackPixel_;
+        const std::array<rhi::TextureBinding, 8> reads{
+            rhi::TextureBinding{motion, exact},          rhi::TextureBinding{fsr2DilatedDepth_, exact},
+            rhi::TextureBinding{reactive, exact},        rhi::TextureBinding{blackPixel_, exact},
+            rhi::TextureBinding{motionBefore, filtered}, rhi::TextureBinding{velocity_, exact},
+            rhi::TextureBinding{scene, exact},           rhi::TextureBinding{exposure, exact},
+        };
+        // The previous depth among what it "writes": it is read through
+        // that binding, an integer image being nothing a sampler reads.
+        const std::array<rhi::ComputeTextureWrite, 3> writes{
+            rhi::ComputeTextureWrite{fsr2Masks_},
+            rhi::ComputeTextureWrite{fsr2Prepared_},
+            rhi::ComputeTextureWrite{fsr2PreviousDepth_},
+        };
+        pass(kFsr2DepthClip, reads, writes, renderWidth_, renderHeight_, 8);
+    }
+    // The features thinner than a rendered pixel, locked so they stay -- and
+    // the previous depth left at the furthest there is, for the next frame.
+    lock();
+    // This frame into the history, at the output's size -- into the output
+    // itself with no sharpening after it.
+    const bool sharpen = settings_.sharpness > 0.0f;
+    {
+        const std::array<rhi::TextureBinding, 8> reads{
+            rhi::TextureBinding{exposure, exact},
+            rhi::TextureBinding{fsr2Masks_, filtered},
+            rhi::TextureBinding{motion, exact},
+            rhi::TextureBinding{fsr2History_[read], exact},
+            rhi::TextureBinding{fsr2LockStatus_[read], filtered},
+            rhi::TextureBinding{fsr2Prepared_, filtered},
+            rhi::TextureBinding{fsr2Luminance_, filtered},
+            rhi::TextureBinding{fsr2LumaHistory_[read], filtered},
+        };
+        const std::array<rhi::ComputeTextureWrite, 5> writes{
+            rhi::ComputeTextureWrite{fsr2History_[write]}, rhi::ComputeTextureWrite{fsr2LockStatus_[write]},
+            rhi::ComputeTextureWrite{fsr2NewLocks_},       rhi::ComputeTextureWrite{fsr2LumaHistory_[write]},
+            rhi::ComputeTextureWrite{fsr2Output_},
+        };
+        pass(sharpen ? kFsr2AccumulateSharpen : kFsr2Accumulate, reads,
+             std::span<const rhi::ComputeTextureWrite>{writes.data(), sharpen ? usize{4} : usize{5}}, outputWidth,
+             outputHeight, 8);
+    }
+    if (sharpen) {
+        // **AMD's own sharpening, on the scene before it is exposed**, with
+        // the setting as it means it: 0 to 1, and two stops of attenuation at
+        // nothing down to none at 1 (`FsrRcasCon`). The second word is the
+        // same in halves, which only a build with them reads.
+        GpuFsr2RcasConstants rcas;
+        rcas.config[0] = bitsOf(std::exp2(-(2.0f - 2.0f * std::clamp(settings_.sharpness, 0.0f, 1.0f))));
+        const std::array<rhi::TextureBinding, 2> reads{
+            rhi::TextureBinding{exposure, exact},
+            rhi::TextureBinding{fsr2History_[write], exact},
+        };
+        const std::array<rhi::ComputeTextureWrite, 1> writes{rhi::ComputeTextureWrite{fsr2Output_}};
+        pass(kFsr2Rcas, reads, writes, outputWidth, outputHeight, 16, asBytes(&rcas, sizeof(rcas)));
+    }
+    cmd.popDebugGroup();
+
+    fsr2Parity_ = write;
+    fsr2Fresh_ = false;
+    historyValid_ = true;
+    rememberCamera(camera);
+    return fsr2Output_;
 }
 
 void DefaultRenderer::resolvePicture(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target,
@@ -5913,6 +6439,27 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         previousCamera_ = false;
         placed_.clear();
     }
+    // **And the upscaler's, where the setting asks for it and the device made
+    // its passes** (ADR 0164). One that cannot says so once, and the frame is
+    // resolved and upscaled as it is without it from then on.
+    if (activeView_ == 0) {
+        fsr2Now_ = temporalNow_ && fsr2Frame(world);
+        if (fsr2Now_ && !ensureFsr2(device)) {
+            failFsr2();
+            fsr2Now_ = false;
+        }
+        // Its images are the size of several frames: with the setting off
+        // they are given back -- and at another size they are another
+        // history's, made again where each is first needed.
+        const bool held = fsr2Output_.valid() || fsr2Opaque_.valid();
+        const bool resized =
+            fsr2Output_.valid() && (fsr2RenderWidth_ != renderWidth_ || fsr2RenderHeight_ != renderHeight_ ||
+                                    fsr2OutputWidth_ != target.width || fsr2OutputHeight_ != target.height);
+        if (held && (!fsr2Now_ || resized))
+            releaseFsr2Images(device);
+        fsr2OpaqueLive_ = false;
+        fsr2ReactiveLive_ = false;
+    }
 
     if (!defaultsUploaded_) {
         // White multiplies to itself, (0.5, 0.5, 1) is the tangent-space normal
@@ -7110,6 +7657,11 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // otherwise: sorting is per draw, so two transparent surfaces that
         // intersect each other sort wrongly at the pixels where they cross.
         // Order-independent transparency is not on the v1 list.
+        //
+        // **And the upscaler is told what does** (ADR 0164): the scene as it
+        // is now, kept, for the mask made when the pass is over.
+        if (fsr2Now_ && activeView_ == 0)
+            copyOpaqueForUpscaler(device, cmd, world, frame);
         copySceneForSurfaces(device, cmd, world, frame);
         cmd.setPipeline(pbrBlendPipeline_);
         drawGeometry(cmd, world, meshes, world.camera.viewProjection, pbrBlendPipeline_, pbrSkinnedBlendPipeline_,
@@ -7304,6 +7856,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     }
 
     cmd.endRenderPass();
+    // Before the look's passes: a shaft of light or a blur over the whole
+    // picture is not something that blended.
+    if (fsr2Now_ && activeView_ == 0)
+        writeReactiveMask(device, cmd);
     cmd.popDebugGroup();
 
     // --- The look's scene passes (ADR 0096) ------------------------------------
@@ -7342,9 +7898,27 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
 
     // **The temporal pass** (ADR 0158), last of the passes on the scene and
     // before exposure and bloom: they read the picture it settled.
+    //
+    // **Or the upscaler in its place** (ADR 0164), after which "the frame" is
+    // the size of the target: `sceneWidth` by `sceneHeight` is what the
+    // passes below measure a texel of it by.
+    u32 sceneWidth = renderWidth_;
+    u32 sceneHeight = renderHeight_;
+    bool upscaledNow = false;
     if (temporalNow_) {
         ENG_PROFILE_NEXT(passes, "render.taa");
-        sceneColor = resolveTemporal(device, cmd, world, sceneColor);
+        rhi::TextureHandle upscaled{};
+        if (fsr2Now_ && activeView_ == 0)
+            upscaled = upscaleTemporal(device, cmd, world, target, sceneColor);
+        if (upscaled.valid()) {
+            sceneColor = upscaled;
+            sceneWidth = target.width;
+            sceneHeight = target.height;
+            upscaledNow = true;
+        }
+        else {
+            sceneColor = resolveTemporal(device, cmd, world, sceneColor);
+        }
     }
 
     // --- Automatic exposure -------------------------------------------------
@@ -7381,8 +7955,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             luminance.range[0] = range.lowest;
             luminance.range[1] = range.highest;
         }
-        luminance.texelRate[0] = 1.0f / static_cast<f32>(renderWidth_);
-        luminance.texelRate[1] = 1.0f / static_cast<f32>(renderHeight_);
+        luminance.texelRate[0] = 1.0f / static_cast<f32>(sceneWidth);
+        luminance.texelRate[1] = 1.0f / static_cast<f32>(sceneHeight);
         const std::array<rhi::TextureBinding, 1> hdrBinding{rhi::TextureBinding{sceneColor, linearSampler_}};
         fullscreenPass(cmd, luminanceDownPipeline_, luminance64_, 64, 64, "luminance-down", hdrBinding,
                        asBytes(&luminance, sizeof(luminance)));
@@ -7429,8 +8003,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                   rhi::ColorRgba{0.0f, 0.0f, 0.0f, 1.0f});
     }
     else {
-        u32 sourceWidth = renderWidth_;
-        u32 sourceHeight = renderHeight_;
+        u32 sourceWidth = sceneWidth;
+        u32 sourceHeight = sceneHeight;
         for (u32 level = 0; level < kBloomLevels; ++level) {
             GpuBloomUniforms bloom;
             bloom.texelRadius[0] = 1.0f / static_cast<f32>(sourceWidth);
@@ -7504,12 +8078,19 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // its target, FSR 1's upscale, and RCAS's sharpening after it or after the
     // temporal pass. Any of them, and the tonemap writes `ldr_` for them.
     const bool opaquePicture = !world.environment.transparentBackground;
-    const AntiAliasingMode spatial = settings_.antiAliasing == AntiAliasingMode::Taa
+    //
+    // **And none of them after FSR 2** (ADR 0164), which smoothed, upscaled
+    // and sharpened already: the tonemap writes the target. Where FSR 2 was
+    // asked for and this frame is not its -- a device without compute, a
+    // camera without perspective -- FSR 1 upscales in its place.
+    const AntiAliasingMode spatial = upscaledNow ? AntiAliasingMode::Off
+                                     : settings_.antiAliasing == AntiAliasingMode::Taa
                                          ? (temporalNow_ ? AntiAliasingMode::Off : AntiAliasingMode::Smaa)
                                          : settings_.antiAliasing;
-    const bool smaller = renderWidth_ < target.width || renderHeight_ < target.height;
-    const bool upscale = opaquePicture && settings_.upscaling == UpscalingMode::Fsr1 && smaller;
-    const bool sharpen = opaquePicture && !upscale && temporalNow_ && !smaller && settings_.sharpness > 0.0f;
+    const bool smaller = !upscaledNow && (renderWidth_ < target.width || renderHeight_ < target.height);
+    const bool upscale = opaquePicture && settings_.upscaling != UpscalingMode::None && smaller;
+    const bool sharpen =
+        opaquePicture && !upscaledNow && !upscale && temporalNow_ && !smaller && settings_.sharpness > 0.0f;
     const bool resolve = opaquePicture && (spatial != AntiAliasingMode::Off || upscale || sharpen);
     // **Written in the format of what it writes** (audit R2): the LDR texture
     // when a resolve follows, the target itself otherwise -- a window's

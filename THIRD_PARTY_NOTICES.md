@@ -40,6 +40,7 @@ vendored yet; the roadmap allows lazy vendoring so long as the row exists.
 | inter | 4.1 | `e3a3d4c57d5e` | OFL-1.1 | https://github.com/rsms/inter | `third_party/inter/` |
 | smaa | master-2013-11-06 | `71c806a838bd` | MIT | https://github.com/iryoku/smaa | `third_party/smaa/` |
 | fidelityfx_fsr1 | 1.0.2 | `a21ffb8f6c13` | MIT | https://github.com/GPUOpen-Effects/FidelityFX-FSR | `third_party/fidelityfx_fsr1/` |
+| fidelityfx_fsr2 | 2.2.1 | `1680d1edd5c0` | MIT | https://github.com/GPUOpen-Effects/FidelityFX-FSR2 | `third_party/fidelityfx_fsr2/` |
 
 ## Fetched binary artifacts
 
