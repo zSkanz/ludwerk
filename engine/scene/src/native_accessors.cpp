@@ -1930,6 +1930,26 @@ Value getNetworkServicePort(const World& world, core::InstanceId)
     return Value{static_cast<f64>(world.engineState().networkPort)};
 }
 
+Value getNetworkServiceMaxPlayers(const World& world, core::InstanceId)
+{
+    const EngineState& state = world.engineState();
+    // What the session takes now; before one, what a script asked the next
+    // to take.
+    return Value{
+        static_cast<f64>(state.networkMaxPlayers != 0 ? state.networkMaxPlayers : state.networkMaxPlayersWanted)};
+}
+
+bool setNetworkServiceMaxPlayers(World& world, core::InstanceId, const Value& value)
+{
+    const f64* players = std::get_if<f64>(&value);
+    // The machine that hosts says; one that joined does not.
+    if (players == nullptr || world.engineState().networkTopology == NetworkTopology::Replica ||
+        !(*players >= 1.0 && *players <= 4096.0) || *players != std::floor(*players))
+        return false;
+    world.engineState().networkMaxPlayersWanted = static_cast<u32>(*players);
+    return true;
+}
+
 Value getNetworkServicePeerCount(const World& world, core::InstanceId)
 {
     return Value{static_cast<f64>(world.engineState().networkPeerCount)};

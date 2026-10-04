@@ -891,6 +891,16 @@ The on-screen keyboard a phone raises for a `TextInput` (ADR 0139), and the hint
 | `Email` | 4 | An address, with `@` at hand. |
 | `Url` | 5 | A web address, with `/` and `.` at hand. |
 
+## Enum.TextOverflow
+
+What a `TextLabel` does with text its box does not hold (ADR 0168).
+
+| Item | Value | Description |
+|---|---|---|
+| `Overflow` | 0 | Drawn past the box, as it always was: what a label sized to its text never needs. |
+| `Clip` | 1 | Cut at the box's edges, wherever in a letter that falls. |
+| `Ellipsis` | 2 | Cut short at a whole character and ended with an ellipsis, so that what is drawn fits. |
+
 ## Enum.TextureFilter
 
 How a picture is sampled when it is drawn larger or smaller than it is.

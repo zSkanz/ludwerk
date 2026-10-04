@@ -55,6 +55,25 @@ describe("a swarm's agents, heard", function()
         swarm:Destroy()
     end)
 
+    it("lists its agents and their places into a table of the caller's own", function()
+        local swarm = horde()
+        local first = swarm:AddAgentAt(vector.create(1, 0, 0), { Speed = 0 })
+        local second = swarm:AddAgentAt(vector.create(2, 0, 0), { Speed = 0 })
+        local numbers = { 7, 7, 7, 7 }
+        local places: { vector } = {}
+        expect(swarm:GetAgents(numbers)):ToBe(numbers)
+        expect(swarm:GetPositions(places)):ToBe(places)
+        expect(#numbers):ToBe(2)
+        expect(numbers[1]):ToBe(first)
+        expect(numbers[2]):ToBe(second)
+        expect(#places):ToBe(2)
+        expect(places[2].x):ToBe(2)
+        -- And a new one each time when none is given, as it always was.
+        expect(swarm:GetAgents() ~= swarm:GetAgents()):ToBe(true)
+        expect(#swarm:GetPositions()):ToBe(2)
+        swarm:Destroy()
+    end)
+
     it("carries a tag for each agent, from 0 to 65535", function()
         local swarm = horde()
         local heard: { { number } } = {}

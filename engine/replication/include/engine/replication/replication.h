@@ -80,6 +80,19 @@ public:
     virtual void sendMessages(scene::World& world) = 0;
 
     [[nodiscard]] virtual Status status() const = 0;
+    // **How many peers an authority seats from now on** (ADR 0167), never
+    // more than it opened its transport for: one already seated stays. And
+    // the removal of the peer that is player `userId`, told `reason`. A
+    // replica does neither.
+    virtual void setMaxPeers(u32 peers) { (void)peers; }
+    virtual bool removePlayer(scene::World& world, core::InstanceId root, u32 userId, std::string_view reason)
+    {
+        (void)world;
+        (void)root;
+        (void)userId;
+        (void)reason;
+        return false;
+    }
     [[nodiscard]] virtual Stats stats() const = 0;
 
     // **This machine dropped simulated time** -- a frame owed more ticks than

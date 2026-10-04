@@ -59,6 +59,19 @@ void setF64(FieldValue& out, double value) noexcept;
 void setVec3(FieldValue& out, core::Vec3 value) noexcept;
 void setPosition(FieldValue& out, core::DVec3 value) noexcept;
 void setCFrame(FieldValue& out, const core::CFrameD& value) noexcept;
+// **A rotation as it crosses** (protocol 40): the three smallest components
+// of its quaternion at twenty bits each and which the fourth is, in a `u64`.
+// What a `CFrameD` cell holds after its position, so two cells are the same
+// rotation exactly when they are the same bytes.
+[[nodiscard]] core::u64 packRotation(const core::Mat3& rotation) noexcept;
+[[nodiscard]] core::Mat3 unpackRotation(core::u64 packed) noexcept;
+// A `CFrameD` cell's position alone: how many bytes it is, whether two cells
+// differ in nothing else, and its bytes onto a message and back into a cell
+// whose rotation is kept.
+inline constexpr core::usize CFramePositionBytes = 24;
+[[nodiscard]] bool sameRotation(const FieldValue& a, const FieldValue& b) noexcept;
+void encodePosition(std::vector<core::u8>& out, const FieldValue& value);
+[[nodiscard]] bool decodePosition(std::span<const core::u8> bytes, core::usize& at, FieldValue& out) noexcept;
 void setNetId(FieldValue& out, NetId value) noexcept;
 // **An instance reference before it is a network id** (NA34): what a component
 // holds, read whole. Only the session sees one -- it turns it into the peer's

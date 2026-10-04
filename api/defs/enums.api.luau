@@ -756,6 +756,23 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         {
+            Name = "TextOverflow",
+            Doc = "What a `TextLabel` does with text its box does not hold (ADR 0168).",
+            Items = {
+                {
+                    Name = "Overflow",
+                    Value = 0,
+                    Doc = "Drawn past the box, as it always was: what a label sized to its text never needs.",
+                },
+                { Name = "Clip", Value = 1, Doc = "Cut at the box's edges, wherever in a letter that falls." },
+                {
+                    Name = "Ellipsis",
+                    Value = 2,
+                    Doc = "Cut short at a whole character and ended with an ellipsis, so that what is drawn fits.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
             Name = "VerticalAlignment",
             Doc = "Alignment along the Y axis: a `TextLabel`'s `TextYAlignment` and a layout's "
                 .. "`VerticalAlignment`.",

@@ -74,6 +74,19 @@ constexpr u8 SwarmChannel = 5;
 
 // A snapshot record whose fields are the whole set rather than a diff.
 constexpr u8 FullRecord = 1;
+// **An intent as it crosses** (protocol 40). Its byte: the action's type in
+// the low three bits, whether it is pressed, and which of its three axes are
+// not zero -- only those follow. And, in place of a tick's count of intents,
+// "the same as the tick before it in this message": input held is most input,
+// and it went four times whole in every message.
+constexpr u8 IntentTypeMask = 0x07;
+constexpr u8 IntentPressed = 0x08;
+constexpr u8 IntentAxisX = 0x10;
+constexpr u16 SameIntents = 0xFFFF;
+// **On a field's id in a record that is not whole** (protocol 40): a `CFrameD`
+// that carries its position alone, because the rotation is the baseline's. A
+// body that walks without turning is most of what moves.
+constexpr u16 PositionAlone = 0x2000;
 
 // **The value a written-field record holds when the write could not happen yet**
 // -- a parent the replica has not been told about. No real field is all ones,
@@ -477,6 +490,40 @@ constexpr usize MaxReplicaTags = 1024;
     return body.size() > 4;
 }
 
+// **A name in an `AttributeEdits`** (D549, protocol 40): the number of one the
+// connection was told before; or, with the top bit, the telling of the next,
+// its text after it; or `LiteralName` and its text, told and not kept, once a
+// connection has been told every number there is.
+constexpr u16 DefineName = 0x8000;
+constexpr u16 LiteralName = 0xFFFF;
+constexpr usize MaxConnectionNames = 0x7FFF;
+
+// One owner's attributes-and-tags body, taken apart: each attribute's name
+// with the bytes of its value, and the tags, which are in name order.
+struct OwnedBody
+{
+    std::vector<std::pair<std::string_view, std::span<const u8>>> values;
+    std::vector<std::string_view> tags;
+};
+
+[[nodiscard]] bool splitAttributes(std::span<const u8> body, OwnedBody& out)
+{
+    Reader reader(body);
+    const u16 count = reader.u16v();
+    for (u16 at = 0; at < count && reader.ok(); ++at) {
+        const std::string_view name = reader.text();
+        const usize from = reader.at();
+        // Read for its length alone: an instance it names is nobody's here.
+        if (!readAttributeValue(reader, [](u32) { return InstanceId{}; }).has_value() || !reader.ok())
+            return false;
+        out.values.emplace_back(name, body.subspan(from, reader.at() - from));
+    }
+    const u16 tagCount = reader.u16v();
+    for (u16 at = 0; at < tagCount && reader.ok(); ++at)
+        out.tags.push_back(reader.text());
+    return reader.ok() && reader.done();
+}
+
 // `GlobalScriptService`, and its fixed `Shared` folder, under a data model.
 [[nodiscard]] InstanceId globalScriptsOf(const scene::World& world, InstanceId dataModel) noexcept
 {
@@ -551,6 +598,41 @@ constexpr usize MaxReplicaTags = 1024;
 // (NA1): a message too large for the transport was dropped in silence and
 // counted as sent, and the snapshot it was is the one a joining player waited
 // on for ever.
+// A message's bytes, under its kind and under what a game calls that kind.
+void countBytes(Stats& stats, std::span<const u8> bytes)
+{
+    if (bytes.empty() || bytes[0] >= MessageKinds)
+        return;
+    stats.bytesByMessage[bytes[0]] += bytes.size();
+    switch (static_cast<MessageType>(bytes[0])) {
+    case MessageType::Snapshot:
+    case MessageType::SnapshotPart:
+        stats.snapshotBytes += bytes.size();
+        break;
+    case MessageType::Attributes:
+    case MessageType::AttributeEdits:
+        stats.attributeBytes += bytes.size();
+        break;
+    case MessageType::RemoteToAuthority:
+    case MessageType::RemoteToReplica:
+        stats.remoteBytes += bytes.size();
+        break;
+    case MessageType::UnreliableToAuthority:
+    case MessageType::UnreliableToReplica:
+        stats.unreliableBytes += bytes.size();
+        break;
+    case MessageType::Intent:
+    case MessageType::IntentNames:
+    case MessageType::OwnedState:
+    case MessageType::DetectorInput:
+    case MessageType::Ack:
+        stats.inputBytes += bytes.size();
+        break;
+    default:
+        break;
+    }
+}
+
 bool sendBytes(net::ITransport& transport, net::PeerId peer, const std::vector<u8>& bytes, net::Delivery delivery,
                u8 channel, Stats& stats)
 {
@@ -567,6 +649,7 @@ bool sendBytes(net::ITransport& transport, net::PeerId peer, const std::vector<u
         return false;
     }
     stats.bytesSent += bytes.size();
+    countBytes(stats, bytes);
     return true;
 }
 
@@ -871,12 +954,50 @@ void AuthoritySession::diffAttributes(const scene::World& world, InstanceId root
     for (const auto& [owner, body] : now) {
         const auto found = m_attributeShadows.find(owner);
         if (found == m_attributeShadows.end()) {
-            if (owner.first != 0 && carriesAny(body))
-                m_attributeEdits.emplace_back(owner, body);
+            if (owner.first != 0 && carriesAny(body)) {
+                AttributeEdit whole;
+                whole.owner = owner;
+                whole.whole = body;
+                m_attributeEdits.push_back(std::move(whole));
+            }
             continue;
         }
-        if (found->second != body)
-            m_attributeEdits.emplace_back(owner, body);
+        if (found->second == body)
+            continue;
+        // **What of it changed, and nothing else** (D549). The whole body
+        // went again whenever one value did: a hero's eighteen attributes and
+        // its tags, by name, thirty times a second, because it turned.
+        AttributeEdit edit;
+        edit.owner = owner;
+        OwnedBody is;
+        OwnedBody was;
+        if (!splitAttributes(body, is) || !splitAttributes(found->second, was)) {
+            edit.whole = body;
+            m_attributeEdits.push_back(std::move(edit));
+            continue;
+        }
+        std::map<std::string_view, std::span<const u8>> before;
+        for (const auto& [name, value] : was.values)
+            before.emplace(name, value);
+        for (const auto& [name, value] : is.values) {
+            const auto held = before.find(name);
+            if (held == before.end() ||
+                !std::equal(value.begin(), value.end(), held->second.begin(), held->second.end()))
+                edit.values.emplace_back(std::string(name), std::vector<u8>(value.begin(), value.end()));
+            if (held != before.end())
+                before.erase(held);
+        }
+        // What is left was there and is not: in name order.
+        for (const auto& [name, value] : before)
+            edit.values.emplace_back(std::string(name), std::vector<u8>{});
+        // Both in name order: one walk finds what came and what went.
+        std::vector<std::string_view> came;
+        std::vector<std::string_view> went;
+        std::set_difference(is.tags.begin(), is.tags.end(), was.tags.begin(), was.tags.end(), std::back_inserter(came));
+        std::set_difference(was.tags.begin(), was.tags.end(), is.tags.begin(), is.tags.end(), std::back_inserter(went));
+        edit.tagsAdded.assign(came.begin(), came.end());
+        edit.tagsRemoved.assign(went.begin(), went.end());
+        m_attributeEdits.push_back(std::move(edit));
     }
     m_attributeShadows = std::move(now);
 }
@@ -1393,10 +1514,46 @@ void AuthoritySession::sendAttributes(Peer& peer, const std::vector<u32>& enteri
                 send(owner, body);
         }
     }
-    for (const auto& [owner, body] : m_attributeEdits) {
+    // A name as this peer is told it: its number, and its text the first time.
+    const auto name = [&peer](Writer& out, const std::string& text) {
+        if (const auto told = peer.names.find(text); told != peer.names.end()) {
+            out.u16v(told->second);
+            return;
+        }
+        if (peer.names.size() >= MaxConnectionNames) {
+            out.u16v(LiteralName);
+            out.text(text);
+            return;
+        }
+        const auto number = static_cast<u16>(peer.names.size());
+        peer.names.emplace(text, number);
+        out.u16v(static_cast<u16>(DefineName | number));
+        out.text(text);
+    };
+    for (const AttributeEdit& edit : m_attributeEdits) {
+        const AttributeOwner& owner = edit.owner;
         if (owner.first == 0 && (!knows(owner.second) || isEntering(owner.second)))
             continue;
-        send(owner, body);
+        if (!edit.whole.empty()) {
+            send(owner, edit.whole);
+            continue;
+        }
+        Writer message;
+        message.u8v(static_cast<u8>(MessageType::AttributeEdits));
+        message.u8v(owner.first);
+        message.u32v(owner.second);
+        message.u16v(static_cast<u16>(edit.values.size()));
+        for (const auto& [text, value] : edit.values) {
+            name(message, text);
+            message.u8v(value.empty() ? 0 : 1);
+            message.bytes.insert(message.bytes.end(), value.begin(), value.end());
+        }
+        for (const std::vector<std::string>* tags : {&edit.tagsAdded, &edit.tagsRemoved}) {
+            message.u16v(static_cast<u16>(tags->size()));
+            for (const std::string& tag : *tags)
+                name(message, tag);
+        }
+        sendBytes(m_transport, peer.id, message.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
     }
 }
 
@@ -1991,6 +2148,28 @@ void AuthoritySession::sendMessages(scene::World& world)
     }
 }
 
+bool AuthoritySession::removePlayer(scene::World& world, InstanceId root, u32 userId, std::string_view reason)
+{
+    const auto found = std::find_if(m_peers.begin(), m_peers.end(), [userId](const Peer& peer) {
+        return peer.welcomed && peer.userId == userId && userId != 0;
+    });
+    if (found == m_peers.end())
+        return false;
+    Writer refused;
+    refused.u8v(static_cast<u8>(MessageType::Refused));
+    refused.u8v(RefusedRemoved);
+    refused.text(reason.substr(0, MaxRemovedReasonBytes));
+    (void)sendBytes(m_transport, found->id, refused.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+    // As a peer that left is taken out: its player, then the peer -- and the
+    // token it would come back with is nobody's.
+    const InstanceId network = scene::networkServiceOf(world, world.parentOf(root));
+    if (found->player.valid())
+        scene::removePlayer(world, network, found->player);
+    m_transport.disconnect(found->id);
+    m_peers.erase(found);
+    return true;
+}
+
 void AuthoritySession::receive(scene::World& world, InstanceId root, bool ticking)
 {
     // Where players live. A world with no `NetworkService` -- a test's bare
@@ -2059,6 +2238,7 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 break;
             peer->quietTicks = 0;
             m_stats.bytesReceived += event.payload.size();
+            countBytes(m_stats, event.payload);
             Reader reader(event.payload);
             const auto type = static_cast<MessageType>(reader.u8v());
             if (event.channel == IntentChannel && type == MessageType::Intent && peer->welcomed) {
@@ -2087,25 +2267,50 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 }
                 std::vector<std::pair<u64, std::vector<scene::PlayerIntent>>> carried;
                 std::vector<Peer::UnnamedIntent> unnamed;
+                // A tick's intents as they were written: the action's number
+                // and what it reads. Kept from one tick of the message to the
+                // next, for the one that says "the same".
+                std::vector<std::pair<u16, scene::PlayerIntent>> written;
+                u64 reached = 0;
                 for (u8 slot = 0; slot < ticks && reader.ok(); ++slot) {
-                    const u64 tick = reader.u64v();
+                    // The first by its tick, each after by how far on it is.
+                    if (slot == 0) {
+                        reached = reader.u64v();
+                    }
+                    else {
+                        const u8 after = reader.u8v();
+                        if (after == 0)
+                            reader.fail();
+                        reached += after;
+                    }
+                    const u64 tick = reached;
                     std::vector<scene::PlayerIntent> intents;
                     const u16 count = reader.u16v();
-                    if (!reader.ok() || count > MaxIntentEntries) {
+                    if (!reader.ok() || (count == SameIntents ? slot == 0 : count > MaxIntentEntries)) {
                         reader.fail();
                         break;
                     }
-                    intents.reserve(count);
-                    for (u16 at = 0; at < count && reader.ok(); ++at) {
-                        const u16 id = reader.u16v();
-                        scene::PlayerIntent intent;
-                        intent.type = static_cast<core::i32>(reader.u8v());
-                        intent.axis.x = floatOf(reader.u32v());
-                        intent.axis.y = floatOf(reader.u32v());
-                        intent.axis.z = floatOf(reader.u32v());
-                        intent.pressed = reader.u8v() != 0;
+                    if (count != SameIntents) {
+                        written.clear();
+                        written.reserve(count);
+                        for (u16 at = 0; at < count && reader.ok(); ++at) {
+                            const u16 id = reader.u16v();
+                            const u8 bits = reader.u8v();
+                            scene::PlayerIntent intent;
+                            intent.type = static_cast<core::i32>(bits & IntentTypeMask);
+                            intent.pressed = (bits & IntentPressed) != 0;
+                            for (int axis = 0; axis < 3; ++axis) {
+                                if ((bits & (IntentAxisX << axis)) != 0)
+                                    (&intent.axis.x)[axis] = floatOf(reader.u32v());
+                            }
+                            written.emplace_back(id, intent);
+                        }
                         if (!reader.ok())
                             break;
+                    }
+                    intents.reserve(written.size());
+                    for (const auto& [id, read] : written) {
+                        scene::PlayerIntent intent = read;
                         // **A peer's numbers, made safe** (audit E3): a
                         // non-finite axis is none, and every axis is bounded --
                         // a direction is about 1, a pointer a few thousand pixels.
@@ -2448,6 +2653,7 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                         Writer refused;
                         refused.u8v(static_cast<u8>(MessageType::Refused));
                         refused.u8v(RefusedVersion);
+                        refused.text({});
                         (void)sendBytes(m_transport, peer->id, refused.bytes, net::Delivery::Reliable, ControlChannel,
                                         m_stats);
                     }
@@ -2491,6 +2697,7 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                         Writer refused;
                         refused.u8v(static_cast<u8>(MessageType::Refused));
                         refused.u8v(RefusedFull);
+                        refused.text({});
                         (void)sendBytes(m_transport, peer->id, refused.bytes, net::Delivery::Reliable, ControlChannel,
                                         m_stats);
                         m_transport.disconnect(peer->id);
@@ -3328,6 +3535,8 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         const EntityState* entity = nullptr;
         bool full = false;
         std::vector<usize> fields;
+        // What the peer holds of it, when the record is a diff.
+        const EntityState* before = nullptr;
     };
     std::vector<Record> records;
     std::set<u32> atoms;
@@ -3340,7 +3549,7 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
             baseline != nullptr && std::binary_search(heldThen->begin(), heldThen->end(), entity.id.value);
         const bool entered = std::binary_search(entering.begin(), entering.end(), entity.id.value);
         const EntityState* before = held && !entered ? findEntity(*baseline, entity.id.value) : nullptr;
-        Record record{&entity, before == nullptr || before->schema != entity.schema, {}};
+        Record record{&entity, before == nullptr || before->schema != entity.schema, {}, before};
         for (usize at = 0; at < entity.fields.size(); ++at) {
             if (record.full || !(before->fields[at] == entity.fields[at]))
                 record.fields.push_back(at);
@@ -3389,8 +3598,12 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
             for (const core::NameAtom name : body->predictedAttributes) {
                 if (count == MaxPredictedAttributes)
                     break;
+                // **Its name as a hash** (D549, protocol 40): the replica's own
+                // steps wrote the same attributes and it knows them by the
+                // same hash -- where the name itself was most of what every
+                // snapshot carried, thirty times a second.
                 Writer entry;
-                entry.text(m_world->atoms().text(name));
+                entry.u32v(core::hashTextKey(m_world->atoms().text(name)));
                 if (!writeAttributeValue(entry, m_world->getAttribute(player->character, name), netOf))
                     continue;
                 entries.bytes.insert(entries.bytes.end(), entry.bytes.begin(), entry.bytes.end());
@@ -3417,8 +3630,15 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         snapshot.u8v(record.full ? FullRecord : 0);
         snapshot.u16v(static_cast<u16>(record.fields.size()));
         for (const usize at : record.fields) {
+            const generated::Encoding encoding = fieldAt(desc, at)->encoding;
+            if (encoding == generated::Encoding::CFrameD && !record.full &&
+                sameRotation(record.before->fields[at], record.entity->fields[at])) {
+                snapshot.u16v(static_cast<u16>(wireIdAt(desc, at) | PositionAlone));
+                encodePosition(snapshot.bytes, record.entity->fields[at]);
+                continue;
+            }
             snapshot.u16v(wireIdAt(desc, at));
-            encodeField(snapshot.bytes, fieldAt(desc, at)->encoding, record.entity->fields[at]);
+            encodeField(snapshot.bytes, encoding, record.entity->fields[at]);
         }
     }
     peer.sentTicks.push_back(current.tick);
@@ -3514,6 +3734,7 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             continue;
         m_quietTicks = 0;
         m_stats.bytesReceived += event.payload.size();
+        countBytes(m_stats, event.payload);
         switch (static_cast<MessageType>(event.payload[0])) {
         case MessageType::Welcome: {
             Reader reader(event.payload);
@@ -3571,7 +3792,11 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             Reader reader(event.payload);
             (void)reader.u8v();
             const u8 reason = reader.u8v();
+            // Its words, from protocol 40: an authority of another version
+            // says only that it is one.
+            const std::string_view text = reader.remaining() >= 2 ? reader.text() : std::string_view{};
             m_refused = reader.ok() && reason != 0 ? reason : RefusedVersion;
+            m_refusedText.assign(reader.ok() ? text.substr(0, MaxRemovedReasonBytes) : std::string_view{});
             m_lost = true;
             m_welcomed = false;
             break;
@@ -3602,6 +3827,9 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             break;
         case MessageType::Attributes:
             onAttributes(world, root, event.payload);
+            break;
+        case MessageType::AttributeEdits:
+            onAttributeEdits(world, root, event.payload);
             break;
         case MessageType::CollisionGroups:
             onCollisionGroups(world, event.payload);
@@ -4281,33 +4509,8 @@ void ReplicaSession::resolveCharacters(scene::World& world, InstanceId root)
     }
 }
 
-void ReplicaSession::onAttributes(scene::World& world, InstanceId root, std::span<const u8> bytes)
+InstanceId ReplicaSession::attributeOwner(scene::World& world, InstanceId root, u8 owner, u32 id) const
 {
-    Reader reader(bytes);
-    (void)reader.u8v();
-    const u8 owner = reader.u8v();
-    const u32 id = reader.u32v();
-    const u16 count = reader.u16v();
-    const auto localOfNet = [this](u32 net) { return localOf(NetId{net}); };
-    std::vector<std::pair<std::string, scene::Value>> incoming;
-    for (u16 at = 0; at < count && reader.ok(); ++at) {
-        std::string name(reader.text());
-        std::optional<scene::Value> value = readAttributeValue(reader, localOfNet);
-        if (!value.has_value())
-            return;
-        incoming.emplace_back(std::move(name), std::move(*value));
-    }
-    // Its tags (G30), exactly these as its attributes are.
-    const u16 tagCount = reader.u16v();
-    if (!reader.ok() || tagCount > MaxReplicaTags)
-        return;
-    std::vector<std::string> tags;
-    tags.reserve(tagCount);
-    for (u16 at = 0; at < tagCount && reader.ok(); ++at)
-        tags.emplace_back(reader.text());
-    if (!reader.ok() || !reader.done())
-        return;
-
     InstanceId target;
     const InstanceId dataModel = world.parentOf(root);
     switch (owner) {
@@ -4343,8 +4546,117 @@ void ReplicaSession::onAttributes(scene::World& world, InstanceId root, std::spa
             target = world.findFirstChild(global, world.atoms().lookup("Shared"));
         break;
     default:
-        return;
+        break;
     }
+    return target;
+}
+
+void ReplicaSession::onAttributeEdits(scene::World& world, InstanceId root, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u8 owner = reader.u8v();
+    const u32 id = reader.u32v();
+    // **Read whole before any of it is applied -- and every name it tells is
+    // kept whatever becomes of the rest**: the authority counts a name told
+    // once it is sent, and the next message names it by number.
+    const auto name = [&]() -> std::string {
+        const u16 ref = reader.u16v();
+        if (ref == LiteralName)
+            return std::string(reader.text());
+        if ((ref & DefineName) != 0) {
+            std::string text(reader.text());
+            // Told in order from zero: any other number is not this protocol.
+            if (!reader.ok() || static_cast<usize>(ref & ~DefineName) != m_attributeNames.size()) {
+                reader.fail();
+                return {};
+            }
+            m_attributeNames.push_back(text);
+            return text;
+        }
+        if (ref >= m_attributeNames.size()) {
+            reader.fail();
+            return {};
+        }
+        return m_attributeNames[ref];
+    };
+    const auto localOfNet = [this](u32 net) { return localOf(NetId{net}); };
+    std::vector<std::pair<std::string, std::optional<scene::Value>>> values;
+    const u16 count = reader.u16v();
+    for (u16 at = 0; at < count && reader.ok(); ++at) {
+        std::string text = name();
+        if (reader.u8v() == 0) {
+            values.emplace_back(std::move(text), std::nullopt);
+            continue;
+        }
+        std::optional<scene::Value> value = readAttributeValue(reader, localOfNet);
+        if (!value.has_value()) {
+            reader.fail();
+            break;
+        }
+        values.emplace_back(std::move(text), std::move(value));
+    }
+    std::array<std::vector<std::string>, 2> tags;
+    for (std::vector<std::string>& list : tags) {
+        const u16 tagCount = reader.u16v();
+        if (tagCount > MaxReplicaTags)
+            reader.fail();
+        for (u16 at = 0; at < tagCount && reader.ok(); ++at)
+            list.push_back(name());
+    }
+    if (!reader.ok() || !reader.done())
+        return;
+
+    const InstanceId target = attributeOwner(world, root, owner, id);
+    if (!target.valid() || !world.alive(target))
+        return;
+    // What this replica predicts of its own character is the snapshot's to
+    // say (G37), as in `onAttributes`.
+    std::set<std::string_view> predicted;
+    if (owner == 0 && m_owned != 0 && localOf(NetId{m_owned}) == target) {
+        if (const scene::CharacterBodyComponent* body = world.characterBodies().find(target); body != nullptr) {
+            for (const core::NameAtom predictedName : body->predictedAttributes)
+                predicted.insert(world.atoms().text(predictedName));
+        }
+    }
+    for (const auto& [text, value] : values) {
+        if (!predicted.contains(text))
+            (void)world.setAttribute(target, world.atoms().intern(text), value.has_value() ? *value : scene::Value{});
+    }
+    for (const std::string& tag : tags[0])
+        (void)world.addTag(target, world.atoms().intern(tag));
+    for (const std::string& tag : tags[1])
+        (void)world.removeTag(target, world.atoms().intern(tag));
+}
+
+void ReplicaSession::onAttributes(scene::World& world, InstanceId root, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u8 owner = reader.u8v();
+    const u32 id = reader.u32v();
+    const u16 count = reader.u16v();
+    const auto localOfNet = [this](u32 net) { return localOf(NetId{net}); };
+    std::vector<std::pair<std::string, scene::Value>> incoming;
+    for (u16 at = 0; at < count && reader.ok(); ++at) {
+        std::string name(reader.text());
+        std::optional<scene::Value> value = readAttributeValue(reader, localOfNet);
+        if (!value.has_value())
+            return;
+        incoming.emplace_back(std::move(name), std::move(*value));
+    }
+    // Its tags (G30), exactly these as its attributes are.
+    const u16 tagCount = reader.u16v();
+    if (!reader.ok() || tagCount > MaxReplicaTags)
+        return;
+    std::vector<std::string> tags;
+    tags.reserve(tagCount);
+    for (u16 at = 0; at < tagCount && reader.ok(); ++at)
+        tags.emplace_back(reader.text());
+    if (!reader.ok() || !reader.done())
+        return;
+
+    const InstanceId target = attributeOwner(world, root, owner, id);
     if (!target.valid() || !world.alive(target))
         return;
 
@@ -5049,11 +5361,18 @@ void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
             named += 1;
         }
         entries.u16v(id->second);
-        entries.u8v(static_cast<u8>(each.type));
-        entries.u32v(bitsOf(each.axis.x));
-        entries.u32v(bitsOf(each.axis.y));
-        entries.u32v(bitsOf(each.axis.z));
-        entries.u8v(each.pressed ? 1 : 0);
+        u8 bits = static_cast<u8>(static_cast<u8>(each.type) & IntentTypeMask);
+        if (each.pressed)
+            bits |= IntentPressed;
+        for (int axis = 0; axis < 3; ++axis) {
+            if (bitsOf((&each.axis.x)[axis]) != 0)
+                bits |= static_cast<u8>(IntentAxisX << axis);
+        }
+        entries.u8v(bits);
+        for (int axis = 0; axis < 3; ++axis) {
+            if (bitsOf((&each.axis.x)[axis]) != 0)
+                entries.u32v(bitsOf((&each.axis.x)[axis]));
+        }
         count += 1;
     }
     if (named > 0) {
@@ -5064,20 +5383,42 @@ void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
         sendBytes(m_transport, m_authority, message.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
     }
     Writer one;
-    one.u64v(tick);
     one.u16v(count);
     one.bytes.insert(one.bytes.end(), entries.bytes.begin(), entries.bytes.end());
     m_sentIntents.emplace_back(tick, std::move(one.bytes));
     while (m_sentIntents.size() > IntentRedundancy)
         m_sentIntents.pop_front();
+    // A tick says how far it is past the one before in a byte: after a gap
+    // no byte holds -- this machine stood still for seconds -- what is older
+    // than the gap is not carried.
+    for (usize at = m_sentIntents.size(); at-- > 1;) {
+        if (m_sentIntents[at].first <= m_sentIntents[at - 1].first ||
+            m_sentIntents[at].first - m_sentIntents[at - 1].first > 255) {
+            m_sentIntents.erase(m_sentIntents.begin(), m_sentIntents.begin() + static_cast<std::ptrdiff_t>(at));
+            break;
+        }
+    }
     // **This tick and the three before it** (protocol 22): a lost message is
-    // a tick of input the next one still carries.
+    // a tick of input the next one still carries. **Each said once**
+    // (protocol 40): a tick whose intents are the tick before's says so in
+    // two bytes, where it said them again whole -- input held is most input.
     Writer intent;
     intent.u8v(static_cast<u8>(MessageType::Intent));
     intent.u32v(m_timeEpoch);
     intent.u8v(static_cast<u8>(m_sentIntents.size()));
-    for (const auto& [sentTick, bytes] : m_sentIntents)
-        intent.bytes.insert(intent.bytes.end(), bytes.begin(), bytes.end());
+    for (usize at = 0; at < m_sentIntents.size(); ++at) {
+        const auto& [sentTick, bytes] = m_sentIntents[at];
+        if (at == 0) {
+            intent.u64v(sentTick);
+            intent.bytes.insert(intent.bytes.end(), bytes.begin(), bytes.end());
+            continue;
+        }
+        intent.u8v(static_cast<u8>(sentTick - m_sentIntents[at - 1].first));
+        if (bytes == m_sentIntents[at - 1].second)
+            intent.u16v(SameIntents);
+        else
+            intent.bytes.insert(intent.bytes.end(), bytes.begin(), bytes.end());
+    }
     sendBytes(m_transport, m_authority, intent.bytes, net::Delivery::UnreliableSequenced, IntentChannel, m_stats);
     sendOwned(world, tick);
 }
@@ -5266,6 +5607,8 @@ void ReplicaSession::resetForRejoin(scene::World& world)
     m_ackedIntent = 0;
     m_reconciledAck = 0;
     m_applied = 0;
+    // Names are a connection's: the next one tells them from zero.
+    m_attributeNames.clear();
 }
 
 void ReplicaSession::forget(std::span<const u32> ids)
@@ -5314,15 +5657,29 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
         reader.fail();
     scene::PredictedAttributes predicted;
     {
+        // **Named by hash** (protocol 40): the attributes this machine's own
+        // steps have written on its character, which are the ones the
+        // authority's steps wrote. One it has not written yet has no name
+        // here and is passed over -- and, not being predicted here, is taken
+        // from `Attributes` like any other.
+        std::map<u32, core::NameAtom> known;
+        if (const auto local = m_owned != 0 ? m_locals.find(m_owned) : m_locals.end(); local != m_locals.end()) {
+            if (const scene::CharacterBodyComponent* body = world.characterBodies().find(local->second);
+                body != nullptr) {
+                for (const core::NameAtom name : body->predictedAttributes)
+                    known.emplace(core::hashTextKey(world.atoms().text(name)), name);
+            }
+        }
         const auto localOfNet = [this](u32 net) { return localOf(NetId{net}); };
         for (u16 at = 0; at < predictedCount && reader.ok(); ++at) {
-            const std::string_view name = reader.text();
+            const u32 hash = reader.u32v();
             std::optional<scene::Value> value = readAttributeValue(reader, localOfNet);
-            if (!reader.ok() || !value.has_value() || name.empty()) {
+            if (!reader.ok() || !value.has_value()) {
                 reader.fail();
                 break;
             }
-            predicted.emplace_back(world.atoms().intern(name), std::move(*value));
+            if (const auto named = known.find(hash); named != known.end())
+                predicted.emplace_back(named->second, std::move(*value));
         }
     }
     // Older than what the world already shows: a reordered straggler, and
@@ -5390,14 +5747,26 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
             at = &added.back();
         }
         for (u16 field = 0; field < fields && reader.ok(); ++field) {
-            const u16 wireId = reader.u16v();
-            const usize index = indexOfWireId(desc, wireId);
+            const u16 named = reader.u16v();
+            const bool positionAlone = (named & PositionAlone) != 0;
+            const usize index = indexOfWireId(desc, static_cast<u16>(named & ~PositionAlone));
             if (!reader.ok() || index >= at->fields.size()) {
                 reader.fail();
                 break;
             }
+            const generated::Encoding encoding = fieldAt(desc, index)->encoding;
+            if (positionAlone) {
+                // Over the cell the baseline left there, whose rotation
+                // stands: only a diff of a frame can say so.
+                if ((flags & FullRecord) != 0 || encoding != generated::Encoding::CFrameD ||
+                    !decodePosition(reader.bytes(), reader.at(), at->fields[index])) {
+                    reader.fail();
+                    break;
+                }
+                continue;
+            }
             FieldValue value;
-            if (!decodeField(reader.bytes(), reader.at(), fieldAt(desc, index)->encoding, value)) {
+            if (!decodeField(reader.bytes(), reader.at(), encoding, value)) {
                 reader.fail();
                 break;
             }

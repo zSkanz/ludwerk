@@ -103,6 +103,17 @@ public:
         m_transport->flush();
     }
 
+    void setMaxPeers(u32 peers) override
+    {
+        if (m_authority.has_value())
+            m_authority->setMaxPlayers(std::min(peers, m_config.maxPeers));
+    }
+
+    bool removePlayer(scene::World& world, core::InstanceId root, u32 userId, std::string_view reason) override
+    {
+        return m_authority.has_value() && m_authority->removePlayer(world, root, userId, reason);
+    }
+
     void noteTimeDropped() override
     {
         if (m_replica.has_value())
@@ -128,6 +139,7 @@ public:
             status.welcomed = m_replica->welcomed();
             status.lost = m_replica->lost();
             status.refused = m_replica->refused();
+            status.refusedText = m_replica->refusedText();
             status.token = m_replica->playerToken();
             status.freshJoins = m_replica->freshJoins();
             const net::PeerLink link = m_replica->link();

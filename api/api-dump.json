@@ -3846,6 +3846,12 @@
           "Transient": true
         },
         {
+          "Name": "MaxPlayers",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
           "Name": "PeerCount",
           "Type": "number",
           "ReadOnly": true,
@@ -3903,7 +3909,7 @@
         {
           "Name": "GetStats",
           "Parameters": [],
-          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number }"],
+          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number }"],
           "ThreadSafety": "Unsafe"
         },
         {
@@ -4490,6 +4496,18 @@
             }
           ],
           "Returns": ["boolean | number | Vector2 | vector"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Kick",
+          "Parameters": [
+            {
+              "Name": "reason",
+              "Type": "string?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": [],
           "ThreadSafety": "Unsafe"
         }
       ],
@@ -6147,12 +6165,22 @@
         },
         {
           "Name": "GetAgents",
-          "Parameters": [],
+          "Parameters": [
+            {
+              "Name": "into",
+              "Type": "{ number }?"
+            }
+          ],
           "Returns": ["{ number }"]
         },
         {
           "Name": "GetPositions",
-          "Parameters": [],
+          "Parameters": [
+            {
+              "Name": "into",
+              "Type": "{ vector }?"
+            }
+          ],
           "Returns": ["{ vector }"]
         },
         {
@@ -6982,6 +7010,11 @@
           "Name": "TextColor",
           "Type": "Color3",
           "Default": "Color3.new(0, 0, 0)"
+        },
+        {
+          "Name": "TextOverflow",
+          "Type": "Enum.TextOverflow",
+          "Default": "Enum.TextOverflow.Overflow"
         },
         {
           "Name": "TextScaled",
@@ -13737,6 +13770,23 @@
         {
           "Name": "Url",
           "Value": 5
+        }
+      ]
+    },
+    {
+      "Name": "TextOverflow",
+      "Items": [
+        {
+          "Name": "Clip",
+          "Value": 1
+        },
+        {
+          "Name": "Ellipsis",
+          "Value": 2
+        },
+        {
+          "Name": "Overflow",
+          "Value": 0
         }
       ]
     },

@@ -4917,6 +4917,24 @@ local Classes: { Schema.Class } = {
                     .. "overhangs.",
             },
             {
+                Name = "TextOverflow",
+                Type = "Enum.TextOverflow",
+                Default = "Enum.TextOverflow.Overflow",
+                Doc = "What is done with text the box does not hold (ADR 0168): a player's name in a row of "
+                    .. "a table, a description in a card.\n\n"
+                    .. "`Overflow` draws it past the box, as a label always has. `Clip` cuts it at the box's "
+                    .. "edges. `Ellipsis` cuts it short and ends it with an ellipsis: **measured with the "
+                    .. "label's own font at the size it is drawn**, so narrow letters keep more of a name than "
+                    .. "wide ones, which cutting a string by its length cannot do. On one line, each line "
+                    .. "wider than the box is ended; with `TextWrapped`, the lines the box is tall enough for "
+                    .. "are kept and the last of them is ended. `Text` itself is never changed -- a script "
+                    .. "reads back what it wrote.\n\n"
+                    .. "Nothing is cut from a label that `TextScaled` fits to its box, nor from an axis "
+                    .. "`AutomaticSize` grows. Under `RichText` an ellipsis is not placed -- markup has no one "
+                    .. "place to end -- and `Ellipsis` cuts at the box as `Clip` does. A `TextInput` scrolls "
+                    .. "its text and reads this for nothing.",
+            },
+            {
                 Name = "RichText",
                 Type = "boolean",
                 Default = "false",
@@ -7458,15 +7476,17 @@ local Classes: { Schema.Class } = {
             },
             {
                 Name = "GetAgents",
-                Parameters = {},
+                Parameters = { { Name = "into", Type = "{ number }?" } },
                 Returns = { "{ number }" },
-                Doc = "Every live agent's number, in slot order.",
+                Doc = "Every live agent's number, in slot order. `into`, when given, is emptied and filled "
+                    .. "and returned, as `QueryRadius`'s is: a horde read every tick makes no table.",
             },
             {
                 Name = "GetPositions",
-                Parameters = {},
+                Parameters = { { Name = "into", Type = "{ vector }?" } },
                 Returns = { "{ vector }" },
-                Doc = "Where each live agent stands, in the order `GetAgents` gives them.",
+                Doc = "Where each live agent stands, in the order `GetAgents` gives them. `into`, when given, "
+                    .. "is emptied and filled and returned.",
             },
             {
                 Name = "QueryRadius",

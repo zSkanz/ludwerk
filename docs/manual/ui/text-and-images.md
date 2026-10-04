@@ -26,6 +26,7 @@ title.Parent = screen
 | `TextLabel.TextYAlignment` | `Center` | `Enum.VerticalAlignment` |
 | `TextLabel.TextWrapped` | `false` | |
 | `TextLabel.TextScaled` | `false` | |
+| `TextLabel.TextOverflow` | `Overflow` | `Enum.TextOverflow`: `Overflow`, `Clip`, `Ellipsis` |
 
 **The text's alignment is named for the text**: `TextXAlignment` and
 `TextYAlignment`, so a label's words and a layout's children are never
@@ -76,6 +77,37 @@ like. The size that fills the box is drawn from the nearest of the sizes above
 (see Fonts), so a label in the world -- a name over a head, a different size at
 every distance -- costs those few sizes and not one for every step the camera
 takes.
+
+## Text that does not fit
+
+`TextOverflow` says what happens to text its box does not hold (ADR 0168):
+
+- **`Overflow`**, the default, draws it past the box.
+- **`Clip`** cuts it at the box's edges.
+- **`Ellipsis`** cuts it short at a whole character and ends it with an
+  ellipsis, so what is drawn fits.
+
+```luau
+--!strict
+local name = Instance.new("TextLabel")
+name.Size = UDim2.fromOffset(160, 24)
+name.TextXAlignment = Enum.HorizontalAlignment.Left
+name.TextOverflow = Enum.TextOverflow.Ellipsis
+name.Text = "Wolfgang Amadeus Mozart the Second"   -- drawn as "Wolfgang Amadeus M..."
+```
+
+**It is measured with the label's own font, at the size it is drawn** -- do not
+cut a string by its length, which no proportional font agrees with: narrow
+letters keep more of a name than wide ones. `Text` is not changed; a script
+reads back what it wrote.
+
+On one line, a line wider than the box is ended. With `TextWrapped`, the
+lines the box is tall enough for are kept and the last of them is ended -- a
+description in a card three lines tall shows three lines.
+
+Nothing is cut from a label `TextScaled` fits to its box, or along an axis
+`AutomaticSize` grows. Under `RichText`, `Ellipsis` cuts at the box as `Clip`
+does. A font without an ellipsis character gets three full stops.
 
 ## TextInput
 

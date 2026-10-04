@@ -1251,32 +1251,64 @@ int methodSwarmGetAgentPosition(lua_State* L)
     return 1;
 }
 
+// **The table a swarm's list goes into**: the caller's own, when it gave one
+// as `into` -- filled from the first place and emptied past the last, so a
+// script that asks every tick makes no table -- or a new one of that size.
+// Left on the stack, and its index answered with how long it was.
+int listTable(lua_State* L, int into, usize size, int& previous)
+{
+    if (lua_istable(L, into)) {
+        previous = static_cast<int>(lua_objlen(L, into));
+        lua_pushvalue(L, into);
+    }
+    else {
+        previous = 0;
+        lua_createtable(L, static_cast<int>(size), 0);
+    }
+    return lua_gettop(L);
+}
+
+// What a reused table held past what was just written is not there now.
+void emptyPast(lua_State* L, int table, int written, int previous)
+{
+    for (int index = written + 1; index <= previous; ++index) {
+        lua_pushnil(L);
+        lua_rawseti(L, table, index);
+    }
+}
+
+// `GetAgents(into?)`.
 int methodSwarmGetAgents(lua_State* L)
 {
     const scene::SwarmComponent& swarm = swarmOf(L);
-    lua_createtable(L, static_cast<int>(swarm.agents.size() - swarm.free.size()), 0);
+    int previous = 0;
+    const int table = listTable(L, 2, swarm.agents.size() - swarm.free.size(), previous);
     int written = 0;
     for (usize slot = 0; slot < swarm.agents.size(); ++slot) {
         if (!swarm.agents[slot].alive)
             continue;
         lua_pushnumber(L, static_cast<double>(slot + 1));
-        lua_rawseti(L, -2, ++written);
+        lua_rawseti(L, table, ++written);
     }
+    emptyPast(L, table, written, previous);
     return 1;
 }
 
+// `GetPositions(into?)`.
 int methodSwarmGetPositions(lua_State* L)
 {
     const scene::SwarmComponent& swarm = swarmOf(L);
-    lua_createtable(L, static_cast<int>(swarm.agents.size() - swarm.free.size()), 0);
+    int previous = 0;
+    const int table = listTable(L, 2, swarm.agents.size() - swarm.free.size(), previous);
     int written = 0;
     for (const scene::SwarmAgent& agent : swarm.agents) {
         if (!agent.alive)
             continue;
         pushVector3(L, core::Vec3{static_cast<f32>(agent.position.x), static_cast<f32>(agent.position.y),
                                   static_cast<f32>(agent.position.z)});
-        lua_rawseti(L, -2, ++written);
+        lua_rawseti(L, table, ++written);
     }
+    emptyPast(L, table, written, previous);
     return 1;
 }
 

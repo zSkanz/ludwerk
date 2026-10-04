@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 39;
+inline constexpr u32 ProtocolVersion = 40;
 
 // How a field's bytes are laid down. Every one is fixed-width and
 // little-endian, with no variable-length forms and no nesting -- a wire format
@@ -57,7 +57,7 @@ inline constexpr u8 EncodingBytes[] = {
     8, // F64
     12, // Vector3
     24, // Position
-    60, // CFrameD
+    32, // CFrameD
     12, // Color3
     4, // NameAtom
     4, // InstanceRef
@@ -670,6 +670,7 @@ enum class MessageType : u8
     TilemapBlocks = 13,
     SceneChange = 14,
     Attributes = 15,
+    AttributeEdits = 31,
     DetectorInput = 16,
     TerrainChunks = 17,
     TerrainLook = 18,
@@ -719,6 +720,7 @@ inline constexpr MessageDesc Messages[] = {
     {"TilemapBlocks", MessageType::TilemapBlocks, 0, Direction::ToReplica},
     {"SceneChange", MessageType::SceneChange, 0, Direction::ToReplica},
     {"Attributes", MessageType::Attributes, 0, Direction::ToReplica},
+    {"AttributeEdits", MessageType::AttributeEdits, 0, Direction::ToReplica},
     {"DetectorInput", MessageType::DetectorInput, 0, Direction::ToAuthority},
     {"TerrainChunks", MessageType::TerrainChunks, 0, Direction::ToReplica},
     {"TerrainLook", MessageType::TerrainLook, 0, Direction::ToReplica},

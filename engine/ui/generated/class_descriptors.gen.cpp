@@ -646,7 +646,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(viewportFrameDesc);
 
     // --- TextLabel ---
-    static std::array<scene::PropertyDesc, 10> textLabelProperties;
+    static std::array<scene::PropertyDesc, 11> textLabelProperties;
     textLabelProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Text"),
@@ -738,6 +738,18 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getTextLabelTextWrapped,
             .set = native::setTextLabelTextWrapped,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("TextOverflow"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("TextOverflow"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What is done with text the box does not hold (ADR 0168): a player's name in a row of a table, a description in a card.\012\012`Overflow` draws it past the box, as a label always has. `Clip` cuts it at the box's edges. `Ellipsis` cuts it short and ends it with an ellipsis: **measured with the label's own font at the size it is drawn**, so narrow letters keep more of a name than wide ones, which cutting a string by its length cannot do. On one line, each line wider than the box is ended; with `TextWrapped`, the lines the box is tall enough for are kept and the last of them is ended. `Text` itself is never changed -- a script reads back what it wrote.\012\012Nothing is cut from a label that `TextScaled` fits to its box, nor from an axis `AutomaticSize` grows. Under `RichText` an ellipsis is not placed -- markup has no one place to end -- and `Ellipsis` cuts at the box as `Clip` does. A `TextInput` scrolls its text and reads this for nothing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getTextLabelTextOverflow,
+            .set = native::setTextLabelTextOverflow,
         },
         scene::PropertyDesc{
             .name = atoms.intern("RichText"),

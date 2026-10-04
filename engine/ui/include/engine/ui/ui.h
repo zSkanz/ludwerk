@@ -402,6 +402,17 @@ struct TextLine
 // The height of one line, in pixels.
 [[nodiscard]] f32 textLineHeight(std::string_view font, f32 pixelSize);
 
+// **A text cut to what a box holds, and ended with an ellipsis** (ADR 0168,
+// `Enum.TextOverflow.Ellipsis`): measured with `font` at `pixelSize`, broken
+// at `maxWidth` as the drawing breaks it (zero for one line). Every line
+// wider than the box is cut at a whole character with room for the ellipsis,
+// and so is the last of the lines the box is tall enough for when there are
+// more after it; at least one line is kept. The text itself when it fits.
+// The ellipsis is the face's own character, or three full stops in a face
+// that has none.
+[[nodiscard]] std::string ellipsizedText(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth,
+                                         core::Vec2 box);
+
 // The quads one run draws, aligned inside `box`. Appended rather than returned,
 // because a draw list is built by appending and a label is one of many.
 // `stroke`, when it has a thickness, outlines every glyph (ADR 0110): the

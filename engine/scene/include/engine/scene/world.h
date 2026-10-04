@@ -402,6 +402,17 @@ struct EngineState
         u64 bytesSent = 0;
         u64 bytesReceived = 0;
         u64 swarmBytes = 0;
+        // **Where those bytes went**, sent and taken in together -- each kind
+        // travels one way: the world's state (snapshots), attributes, a
+        // game's `RemoteEvent`s and `RemoteFunction`s, its
+        // `UnreliableRemoteEvent`s, and what a client says of its own input
+        // and of what it owns. What is left of the total is the comings and
+        // goings of instances, the ground and the handshake.
+        u64 snapshotBytes = 0;
+        u64 attributeBytes = 0;
+        u64 remoteBytes = 0;
+        u64 unreliableBytes = 0;
+        u64 inputBytes = 0;
     };
     NetworkStats networkStats;
 
@@ -515,6 +526,15 @@ struct EngineState
         u16 port = 0;
     };
     std::optional<NetworkRequest> pendingNetwork;
+    // **How many play, the machine's own player among them**
+    // (`NetworkService.MaxPlayers`, ADR 0167): what a script wrote, or zero
+    // for the session's own limit; and what the session takes now, which is
+    // what the property reads on an authority.
+    u32 networkMaxPlayersWanted = 0;
+    u32 networkMaxPlayers = 0;
+    // Players a script removed (`Player:Kick`), each by its user id with the
+    // words for why, until the session lets them go at the frame's safe point.
+    std::vector<std::pair<u32, std::string>> pendingRemovals;
 };
 
 // Per-parent name index. Held in its own pool rather than inline in the record

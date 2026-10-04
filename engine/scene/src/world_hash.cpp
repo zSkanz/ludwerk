@@ -258,7 +258,16 @@ void hashValue(Hasher& hasher, const Value& value, const World& world)
         // Field by field: `EnumValue` is a u16 followed by an i32, and the two
         // bytes between them belong to no one.
         const EnumValue& item = std::get<EnumValue>(value);
-        hasher.pod(item.enumId);
+        // **The enum by its NAME, not by its number** (D550), for the reason
+        // a class is: an `EnumId` is the order the build registered its enums
+        // in. One enum more, declared before `WaterShape`, moved the water
+        // replay's trace at tick zero with nothing in the water changed --
+        // and a trace that moves for no reason is one that hides the day it
+        // moves for one.
+        if (const EnumDescriptor* descriptor = world.enums().find(item.enumId); descriptor != nullptr)
+            hasher.text(world.atoms().text(descriptor->name));
+        else
+            hasher.pod(item.enumId);
         hasher.pod(item.value);
         break;
     }

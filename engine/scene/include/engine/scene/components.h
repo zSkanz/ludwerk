@@ -1969,6 +1969,9 @@ struct TextLabelComponent
     bool textScaled = false;
     // `TextLabel.RichText` (F3): read `text` as markup.
     bool richText = false;
+    // `Enum.TextOverflow` (ADR 0168): what is done with text its box does not
+    // hold -- 0 shown past it, 1 cut at it, 2 cut short and ended "...".
+    i32 textOverflow = 0;
 };
 
 struct TextInputComponent

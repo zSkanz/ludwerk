@@ -1,5 +1,7 @@
 // One field's value, its bytes, and the two ways that can be silently wrong
 // (ADR 0069).
+#include <array>
+#include <cmath>
 #include <cstddef>
 #include <doctest/doctest.h>
 #include <iterator>
@@ -123,8 +125,66 @@ TEST_CASE("the wire is smaller than the cell it came out of")
     CHECK(wireBytes(generated::Encoding::Bool) == 1);
     CHECK(wireBytes(generated::Encoding::F32) == 4);
     CHECK(wireBytes(generated::Encoding::Vector3) == 12);
-    CHECK(wireBytes(generated::Encoding::CFrameD) == 60);
+    // A position and a rotation in eight bytes (protocol 40): it was sixty.
+    CHECK(wireBytes(generated::Encoding::CFrameD) == 32);
     CHECK(wireBytes(generated::Encoding::CFrameD) < FieldValue::Bytes);
+}
+
+TEST_CASE("a rotation crosses in eight bytes and comes back the rotation it was (protocol 40)")
+{
+    // The three smallest components of its quaternion at twenty bits each,
+    // and which the fourth is: nine floats were thirty-six bytes of every
+    // record of everything that moved.
+    const auto roundTrip = [](const core::Mat3& rotation) {
+        core::CFrameD frame;
+        frame.position = {12.5, -3.0, 4096.25};
+        frame.rotation = rotation;
+        FieldValue cell;
+        setCFrame(cell, frame);
+        std::vector<core::u8> bytes;
+        encodeField(bytes, generated::Encoding::CFrameD, cell);
+        CHECK(bytes.size() == 32u);
+        core::usize at = 0;
+        FieldValue back;
+        REQUIRE(decodeField(bytes, at, generated::Encoding::CFrameD, back));
+        CHECK(back == cell);
+        const core::CFrameD read = asCFrame(back);
+        // The position is the position, to the bit.
+        CHECK(read.position.x == frame.position.x);
+        CHECK(read.position.z == frame.position.z);
+        // **What is read back packs to the cell it came from**: an authority
+        // that applies a client's part and captures it again says nothing
+        // changed.
+        FieldValue again;
+        setCFrame(again, read);
+        CHECK(again == cell);
+        return read.rotation;
+    };
+
+    // No turn at all is no turn at all, exactly: most of what is in a world.
+    const core::Mat3 still = roundTrip(core::Mat3{});
+    for (int column = 0; column < 3; ++column) {
+        for (int row = 0; row < 3; ++row)
+            CHECK(still.m[column][row] == (column == row ? 1.0f : 0.0f));
+    }
+    // Anything else, to a few millionths.
+    const std::array<core::Mat3, 5> turns{
+        core::rotationY(1.5707964f),
+        core::rotationX(3.1415927f),
+        core::fromEulerYxz(core::Vec3{0.3f, -2.1f, 1.2f}),
+        core::fromAxisAngle(core::Vec3{0.57735f, 0.57735f, 0.57735f}, 2.0943952f),
+        core::fromEulerYxz(core::Vec3{-1.4f, 0.01f, 3.0f}),
+    };
+    for (const core::Mat3& turn : turns) {
+        const core::Mat3 read = roundTrip(turn);
+        for (int column = 0; column < 3; ++column) {
+            for (int row = 0; row < 3; ++row) {
+                CAPTURE(column);
+                CAPTURE(row);
+                CHECK(std::abs(read.m[column][row] - turn.m[column][row]) < 6e-6f);
+            }
+        }
+    }
 }
 
 TEST_CASE("every encoding is the size the published protocol says it is (ADR 0100)")

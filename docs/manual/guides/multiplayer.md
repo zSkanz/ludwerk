@@ -105,8 +105,41 @@ how many times this machine's own character was corrected (`Corrections`, and
 back when the link does), the authority's queue of this player's input, the
 unreliable messages this machine sent, took in and dropped, and everything it
 has sent and received in bytes (`BytesSent`, `BytesReceived` -- totals since
-the session began, so a rate is the difference over a second; `SwarmBytes` is
-the share of a replicated `Swarm`'s positions).
+the session began, so a rate is the difference over a second).
+
+**Where the bytes go.** Six more say what those bytes were, each sent and
+received together: `SnapshotBytes` (the world's state: what moves),
+`AttributeBytes` (attributes and tags), `RemoteBytes` (your `RemoteEvent`s and
+`RemoteFunction`s), `UnreliableBytes` (your `UnreliableRemoteEvent`s),
+`InputBytes` (what a client says of its own input and of the parts it owns),
+and `SwarmBytes` (a replicated `Swarm`'s positions). What is left of the total
+is instances coming and going, the ground, and the handshake. Read them a
+second apart on a client and you have the cost of a match to a relay, by
+cause:
+
+```luau
+--!strict
+local NetworkService = game:GetService("NetworkService")
+local Kinds = { "SnapshotBytes", "AttributeBytes", "RemoteBytes", "UnreliableBytes", "InputBytes", "SwarmBytes" }
+local last: { [string]: number } = {}
+while true do
+    task.wait(1)
+    local stats = NetworkService:GetStats() :: { [string]: number }
+    local line = ""
+    for _, kind in Kinds do
+        line ..= `{kind} {math.round((stats[kind] - (last[kind] or 0)) / 1024 * 10) / 10} KB/s  `
+        last[kind] = stats[kind]
+    end
+    print(line)
+end
+```
+
+**What each thing costs**, so a number can be read: a part that moves is its
+position each snapshot, 34 bytes, and 8 more when it turns; an attribute that
+changes is about 12 bytes each time it does, whatever else its instance
+carries -- its name crosses once a connection; a client's input is about 2 KB
+a second. An attribute written every tick with a new value -- a timer, an
+angle -- is sent thirty times a second: write it when it matters, or round it.
 
 **A worse network, on purpose.** To see a game the way a player far away does:
 
@@ -251,6 +284,31 @@ digging game digs on the server, and every player sees the hole.
 `PlayerRemoving` say when that changes. `NetworkService.LocalPlayer` is the
 player at this machine, and a dedicated server has none. `Player.UserId` is the
 same number on every machine.
+
+**How many play, and who stays** (ADR 0167). `NetworkService.MaxPlayers` is
+the most players the match takes, the machine's own among them: set it on the
+machine that hosts, before `Host` or at any time after, and somebody who
+joins a full match hears `JoinFailed` say so. Lowering it removes nobody.
+`player:Kick(reason)` does: the authority's to call, on a player who joined.
+Their machine goes solo and its `Disconnected` fires with your words.
+
+```luau
+--!strict
+local NetworkService = game:GetService("NetworkService")
+
+-- A room for four, and nobody holds the start for more than a minute.
+NetworkService.MaxPlayers = 4
+NetworkService:Host()
+task.wait(60)
+for _, player in NetworkService:GetPlayers() do
+    if player ~= NetworkService.LocalPlayer and not player:GetAttribute("Ready") then
+        player:Kick("The run began without you.")
+    end
+end
+```
+
+It is not a ban: a removed player may join again. A game that means one keeps
+the list and removes them in `PlayerAdded`.
 
 **What a player did reaches the authority as intent**: the values of their input
 actions, read with `player:GetIntent("Move")` exactly as `GetState` reads them
@@ -411,7 +469,9 @@ machine and on the server.
 **An attribute the authority sets reaches every replica that has the
 instance** (ADR 0106): on a part, a model, a `Player`, a `Team`, and on
 `GlobalScriptService`. `GetAttributeChangedSignal` and `AttributeChanged` fire
-on the replica when it arrives. A lobby is then a server script and attributes:
+on the replica when it arrives. **Only what changed is sent** (ADR 0166): an
+instance with twenty attributes and one that changes costs that one, and so
+does a tag put on or taken off. A lobby is then a server script and attributes:
 
 ```luau
 --!strict

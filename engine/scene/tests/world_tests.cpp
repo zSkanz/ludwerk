@@ -3,6 +3,7 @@
 // doctest stringifies whatever a CHECK compares, and that needs the stream
 // operators for std::string and std::string_view to be visible here.
 #include <algorithm>
+#include <array>
 #include <ostream>
 #include <string>
 #include <utility>
@@ -1106,6 +1107,67 @@ TEST_CASE("the world hash reads a player's intents by action name, not by atom n
         return fixture.world.worldHash();
     };
     CHECK(hashWith(false) == hashWith(true));
+}
+
+namespace {
+
+// A world of one class whose one property reads an item of the enum called
+// `SpecShape` -- whatever number this world's registry gave that enum.
+struct EnumWorld
+{
+    engine::core::AtomTable atoms;
+    engine::scene::ClassRegistry classes;
+    engine::scene::EnumRegistry enums;
+    std::vector<engine::scene::PropertyDesc> properties;
+    engine::scene::ClassId thing = engine::scene::InvalidClass;
+
+    explicit EnumWorld(bool registerFirst, std::string_view enumName)
+    {
+        static const std::array<engine::scene::EnumItemDesc, 2> Items{engine::scene::EnumItemDesc{},
+                                                                      engine::scene::EnumItemDesc{}};
+        if (registerFirst) {
+            (void)enums.registerEnum(
+                engine::scene::EnumDescriptor{atoms.intern("SomethingDeclaredEarlier"), {}, Items});
+        }
+        REQUIRE(enums.registerEnum(engine::scene::EnumDescriptor{atoms.intern(enumName), {}, Items}) !=
+                engine::scene::InvalidEnum);
+        properties = {engine::scene::PropertyDesc{
+            .name = atoms.intern("Kind"),
+            .type = engine::scene::ValueType::EnumItem,
+            .get =
+                [](const World& world, InstanceId) {
+                    // The enum registered last: the one this world is about.
+                    return Value{
+                        engine::scene::EnumValue{static_cast<engine::scene::EnumId>(world.enums().enumCount() - 1), 1}};
+                },
+        }};
+        engine::scene::ClassDescriptor desc;
+        desc.name = atoms.intern("Thing");
+        desc.defaultName = atoms.intern("Thing");
+        desc.properties = properties;
+        thing = classes.registerClass(desc);
+    }
+
+    [[nodiscard]] u64 hash()
+    {
+        World world{classes, enums, atoms, 1234u};
+        REQUIRE(world.create(thing).valid());
+        return world.worldHash();
+    }
+};
+
+} // namespace
+
+TEST_CASE("the world hash reads an enum's item by the enum's name, not by its number (D550)")
+{
+    // The same value in two worlds whose enums were registered in another
+    // order -- which is what one enum more in a build does to every enum
+    // declared after it, and what moved the water replay's trace at tick 0
+    // when nothing in the water had changed.
+    CHECK(EnumWorld(false, "SpecShape").hash() == EnumWorld(true, "SpecShape").hash());
+    // And it is still the enum that is hashed: the same item of an enum by
+    // another name is another value.
+    CHECK(EnumWorld(false, "SpecShape").hash() != EnumWorld(false, "SpecOther").hash());
 }
 
 TEST_CASE("the world hash changes when anything observable does")

@@ -246,6 +246,29 @@ describe("NetworkService", function()
         expect(typeof(network.PlayerRemoving)):ToBe("Signal")
     end)
 
+    it("takes a number of players from the machine that will host, and keeps its own player (ADR 0167)", function()
+        local network = game:GetService("NetworkService")
+        -- Nothing written, no match: nothing to say.
+        expect(network.MaxPlayers):ToBe(0)
+        network.MaxPlayers = 4
+        expect(network.MaxPlayers):ToBe(4)
+        expect(function()
+            network.MaxPlayers = 0
+        end):ToThrow()
+        expect(function()
+            network.MaxPlayers = 2.5
+        end):ToThrow()
+        expect(function()
+            (network :: any).MaxPlayers = "four"
+        end):ToThrow()
+        expect(network.MaxPlayers):ToBe(4)
+        -- The machine's own player leaves with Disconnect, not with Kick.
+        expect(function()
+            (network.LocalPlayer :: Player):Kick("no")
+        end):ToThrow()
+        expect(#network:GetPlayers()):ToBe(1)
+    end)
+
     it("reads a player's intent in the currency their action has, after the tick that captured it", function()
         local network = game:GetService("NetworkService")
         local me = network.LocalPlayer :: Player

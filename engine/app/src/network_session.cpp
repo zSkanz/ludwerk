@@ -87,13 +87,17 @@ constexpr core::u16 DefaultPort = 7777;
 }
 
 // The words for why an authority refused this machine (NA8).
-[[maybe_unused]] [[nodiscard]] std::string refusalText(core::u8 reason)
+[[maybe_unused]] [[nodiscard]] std::string refusalText(core::u8 reason, const std::string& words)
 {
 #if ENG_ENABLE_REPLICATION
     if (reason == replication::RefusedFull)
         return core::engineCatalog().format(ENG_TR("net.err.refused_full"));
+    // The game's own words for a removal, or the engine's where it gave none.
+    if (reason == replication::RefusedRemoved)
+        return words.empty() ? core::engineCatalog().format(ENG_TR("net.info.removed")) : words;
 #endif
     (void)reason;
+    (void)words;
     return core::engineCatalog().format(ENG_TR("net.err.refused_version"));
 }
 
@@ -434,9 +438,31 @@ void NetworkSession::update()
     if (m_replication == nullptr) {
         state.networkStats = {};
         state.networkPort = 0;
+        state.networkMaxPlayers = 0;
+        state.pendingRemovals.clear();
         m_rateStartedNs = 0;
         return;
     }
+    // --- Who plays (ADR 0167): the seats, and the players a script removed.
+    if (state.networkTopology != scene::NetworkTopology::Replica) {
+        // A limit is of players, and the machine's own is one of them; the
+        // session counts the peers it seats.
+        const core::u32 own = scene::localPlayerOf(host->world()).valid() ? 1u : 0u;
+        const core::u32 most = m_base.maxPeers + own;
+        const core::u32 players = state.networkMaxPlayersWanted == 0
+                                      ? most
+                                      : std::clamp<core::u32>(state.networkMaxPlayersWanted, std::max(own, 1u), most);
+        if (players != state.networkMaxPlayers) {
+            state.networkMaxPlayers = players;
+            m_replication->setMaxPeers(players - std::min(players, own));
+        }
+        for (const auto& [userId, reason] : state.pendingRemovals)
+            (void)m_replication->removePlayer(host->world(), host->workspace(), userId, reason);
+    }
+    else {
+        state.networkMaxPlayers = 0;
+    }
+    state.pendingRemovals.clear();
     const replication::Status status = m_replication->status();
     state.networkServerTick = status.serverTick;
     state.networkPeerCount = status.peerCount;
@@ -462,6 +488,11 @@ void NetworkSession::update()
         shown.bytesSent = stats.bytesSent;
         shown.bytesReceived = stats.bytesReceived;
         shown.swarmBytes = stats.swarmBytes;
+        shown.snapshotBytes = stats.snapshotBytes;
+        shown.attributeBytes = stats.attributeBytes;
+        shown.remoteBytes = stats.remoteBytes;
+        shown.unreliableBytes = stats.unreliableBytes;
+        shown.inputBytes = stats.inputBytes;
         const core::u64 now = m_clock ? m_clock() : platform::nowNs();
         const core::u64 snapshots = status.authority ? stats.snapshotsSent : stats.snapshotsReceived;
         if (m_rateStartedNs == 0 || now < m_rateStartedNs) {
@@ -502,7 +533,8 @@ void NetworkSession::update()
     // script's join is still the machine's own world until the welcome, so
     // this is asked whatever the topology says.
     if (m_connecting && status.refused != 0) {
-        goSolo("JoinFailed", refusalText(status.refused), state.networkTopology != scene::NetworkTopology::Replica);
+        goSolo("JoinFailed", refusalText(status.refused, status.refusedText),
+               state.networkTopology != scene::NetworkTopology::Replica);
         return;
     }
     if (!m_connecting && state.networkTopology != scene::NetworkTopology::Replica)
@@ -533,7 +565,7 @@ void NetworkSession::update()
     // A join from the command line dials again, as it always has (ADR 0085);
     // one a script made hands the decision back to the game.
     if (status.refused != 0) {
-        goSolo("Disconnected", refusalText(status.refused), false);
+        goSolo("Disconnected", refusalText(status.refused, status.refusedText), false);
         return;
     }
     if (status.lost && !m_redial) {

@@ -780,6 +780,87 @@ TEST_CASE("NA8: a full server says so, and the player who asked hears why")
     CHECK(log.contains("full"));
 }
 
+TEST_CASE("a host's script says how many play and removes a player, and each is told why (ADR 0167)")
+{
+    // A run takes two: the host and one friend. The limit was the command
+    // line's alone, and nothing a script could do removed a player who sat in
+    // the room and never readied.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/client/host.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.MaxPlayers = 2
+        NetworkService:Host(47121)
+        print(`host-limit:{NetworkService.MaxPlayers}`)
+        NetworkService.PlayerRemoving:Connect(function(player: Player)
+            print(`host-removing:{player.UserId}`)
+        end)
+        task.wait(1.5)
+        local own = NetworkService.LocalPlayer :: Player
+        print(`host-self:{pcall(function() own:Kick("no") end)}`)
+        for _, player in NetworkService:GetPlayers() do
+            if player ~= own then
+                player:Kick("The run is starting without you.")
+            end
+        end
+        task.wait(0.5)
+        print(`host-players:{#NetworkService:GetPlayers()}`)
+    )");
+    server.boot(wire);
+    Machine first;
+    first.project.write("src/client/join.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.Connected:Connect(function()
+            -- Neither is a client's to do.
+            local me = NetworkService.LocalPlayer :: Player
+            print(`first-kick:{pcall(function() me:Kick() end)}`)
+            print(`first-limit:{pcall(function() NetworkService.MaxPlayers = 8 end)}`)
+        end)
+        NetworkService.Disconnected:Connect(function(reason: string)
+            print(`first-out:{reason}`)
+        end)
+        NetworkService:Join("memory:47121")
+    )");
+    first.boot(wire);
+    Machine second;
+    second.project.write("src/client/join.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.JoinFailed:Connect(function(reason: string)
+            print(`second-refused:{reason}`)
+        end)
+        task.wait(0.5)
+        NetworkService:Join("memory:47121")
+    )");
+    second.boot(wire);
+    for (int at = 0; at < 60; ++at) {
+        server.frame();
+        first.frame();
+        second.frame();
+    }
+    CHECK(log.contains("host-limit:2"));
+    CHECK(first.state() == Connected);
+    // The room is the host and one: the second friend is told it is full.
+    CHECK(second.state() == Offline);
+    CHECK(log.contains("second-refused:"));
+    CHECK(log.contains("full"));
+    CHECK(log.contains("first-kick:false"));
+    CHECK(log.contains("first-limit:false"));
+
+    for (int at = 0; at < 120; ++at) {
+        server.frame();
+        first.frame();
+        second.frame();
+    }
+    // Removed, with the game's own words; and the host is nobody's to remove.
+    CHECK(log.contains("host-self:false"));
+    CHECK(log.contains("first-out:The run is starting without you."));
+    CHECK(first.state() == Offline);
+    CHECK(log.contains("host-removing:2"));
+    CHECK(log.contains("host-players:1"));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
 TEST_CASE("NA7: a host that cannot open its port says so to the game")
 {
     Captured log;

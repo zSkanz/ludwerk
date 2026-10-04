@@ -577,6 +577,26 @@ bool setTextLabelTextWrapped(scene::World& world, core::InstanceId id, const Val
     return true;
 }
 
+Value getTextLabelTextOverflow(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::TextOverflowEnumId, component->textOverflow}};
+}
+
+bool setTextLabelTextOverflow(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::TextOverflowEnumId, item))
+        return false;
+    component->textOverflow = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
 Value getTextLabelRichText(const scene::World& world, core::InstanceId id)
 {
     const scene::TextLabelComponent* component = world.textLabels().find(id);

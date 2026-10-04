@@ -326,3 +326,28 @@ describe("selection", function()
         second:Destroy()
     end)
 end)
+
+describe("TextLabel.TextOverflow", function()
+    it("is shown past its box until asked otherwise, and is one of three", function()
+        local label = Instance.new("TextLabel")
+        expect(label.TextOverflow):ToBe(Enum.TextOverflow.Overflow)
+        label.TextOverflow = Enum.TextOverflow.Ellipsis
+        expect(label.TextOverflow):ToBe(Enum.TextOverflow.Ellipsis)
+        label.TextOverflow = Enum.TextOverflow.Clip
+        expect(label.TextOverflow):ToBe(Enum.TextOverflow.Clip)
+        expect(function()
+            (label :: any).TextOverflow = Enum.HorizontalAlignment.Left
+        end):ToThrow()
+        -- What a script wrote is what it reads: the cut is in the drawing.
+        label.Size = UDim2.fromOffset(40, 20)
+        label.Text = "Wolfgang Amadeus Mozart the Second"
+        label.TextOverflow = Enum.TextOverflow.Ellipsis
+        expect(label.Text):ToBe("Wolfgang Amadeus Mozart the Second")
+        -- A button is a label.
+        local button = Instance.new("TextButton")
+        button.TextOverflow = Enum.TextOverflow.Ellipsis
+        expect(button.TextOverflow):ToBe(Enum.TextOverflow.Ellipsis)
+        label:Destroy()
+        button:Destroy()
+    end)
+end)

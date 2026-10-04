@@ -1448,6 +1448,63 @@ f32 textLineHeight(std::string_view font, f32 pixelSize)
     return lineHeightOf(faceFor(font), pixelSize);
 }
 
+std::string ellipsizedText(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth, Vec2 box)
+{
+    Face& face = faceFor(font);
+    const f32 scale = scaleFor(face, pixelSize);
+    // A copy: measuring a cut line below may refill the cache these came from.
+    const std::vector<Line> lines = linesOf(text, face, pixelSize, scale, maxWidth);
+    const f32 lineHeight = lineHeightOf(face, pixelSize);
+    // The lines the box is tall enough for, and never none: a box shorter
+    // than a line still says something. The hair is a height that is exactly
+    // some lines, which a sum of floats can find a thousandth short.
+    const usize room = lineHeight > 0.0f ? static_cast<usize>(std::fmax(1.0f, std::floor((box.y + 0.01f) / lineHeight)))
+                                         : lines.size();
+    const usize kept = std::min(lines.size(), std::max<usize>(room, 1));
+    bool cut = kept < lines.size();
+    for (usize at = 0; at < kept && !cut; ++at)
+        cut = lines[at].width > box.x + 0.01f;
+    if (!cut)
+        return std::string(text);
+
+    // The face's own ellipsis, or three full stops where it has none -- the
+    // built-in face, and a game's font that stops at ASCII, would draw the
+    // box a missing character is.
+    const bool own = face.ready && stbtt_FindGlyphIndex(&face.info, 0x2026) != 0;
+    const std::string_view ellipsis = own ? std::string_view{"\xE2\x80\xA6"} : std::string_view{"..."};
+    const f32 ellipsisWidth = widthOf(ellipsis, face, pixelSize) * scale;
+
+    std::string out;
+    out.reserve(text.size());
+    for (usize at = 0; at < kept; ++at) {
+        const Line& line = lines[at];
+        std::string_view run = text.substr(line.begin, line.end - line.begin);
+        const bool more = at + 1 == kept && kept < lines.size();
+        if (line.width > box.x + 0.01f || more) {
+            // Back a character at a time, and past the space a cut would
+            // leave before the ellipsis, until what is left fits with it.
+            usize end = run.size();
+            while (end > 0) {
+                const std::string_view head = run.substr(0, end);
+                if (head.back() != ' ' && widthOf(head, face, pixelSize) * scale + ellipsisWidth <= box.x + 0.01f)
+                    break;
+                // The start of the character before: never inside one.
+                do {
+                    --end;
+                } while (end > 0 && (static_cast<unsigned char>(run[end]) & 0xC0u) == 0x80u);
+            }
+            out.append(run.substr(0, end));
+            out.append(ellipsis);
+        }
+        else {
+            out.append(run);
+        }
+        if (at + 1 < kept)
+            out.push_back('\n');
+    }
+    return out;
+}
+
 TextRunMetrics measureText(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth)
 {
     ENG_PROFILE_SCOPE("ui.text.measure");

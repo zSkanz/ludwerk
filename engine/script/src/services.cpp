@@ -1459,6 +1459,11 @@ int networkServiceGetStats(lua_State* L)
     field("BytesSent", static_cast<double>(stats.bytesSent));
     field("BytesReceived", static_cast<double>(stats.bytesReceived));
     field("SwarmBytes", static_cast<double>(stats.swarmBytes));
+    field("SnapshotBytes", static_cast<double>(stats.snapshotBytes));
+    field("AttributeBytes", static_cast<double>(stats.attributeBytes));
+    field("RemoteBytes", static_cast<double>(stats.remoteBytes));
+    field("UnreliableBytes", static_cast<double>(stats.unreliableBytes));
+    field("InputBytes", static_cast<double>(stats.inputBytes));
     return 1;
 }
 
@@ -1692,6 +1697,29 @@ int networkServiceDisconnect(lua_State* L)
     refuseOnDedicated(L);
     world(L).engineState().pendingNetwork = scene::EngineState::NetworkRequest{
         .kind = scene::EngineState::NetworkRequest::Kind::Disconnect, .address = {}, .port = 0};
+    return 0;
+}
+
+// `Player:Kick(reason?)` (ADR 0167): asked here, done by the session at the
+// frame's safe point -- a player is not taken out of the world under the
+// script that is looping over the players.
+int playerKick(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    World& w = world(L);
+    scene::EngineState& state = w.engineState();
+    const scene::PlayerComponent* player = w.players().find(self);
+    if (state.networkTopology == scene::NetworkTopology::Replica)
+        raise(L, ENG_TR("scene.err.network_kick_authority"));
+    if (player == nullptr || self == scene::localPlayerOf(w))
+        raise(L, ENG_TR("scene.err.network_kick_self"));
+    std::string reason;
+    if (lua_gettop(L) >= 2 && !lua_isnil(L, 2)) {
+        size_t length = 0;
+        const char* text = luaL_checklstring(L, 2, &length);
+        reason.assign(text, std::min<size_t>(length, 512));
+    }
+    state.pendingRemovals.emplace_back(player->userId, std::move(reason));
     return 0;
 }
 
@@ -2670,6 +2698,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"CryptoService", "HashPasswordAsync", cryptoServiceHashPasswordAsync},
     {"CryptoService", "VerifyPasswordAsync", cryptoServiceVerifyPasswordAsync},
     {"Player", "GetIntent", playerGetIntent},
+    {"Player", "Kick", playerKick},
     {"ParticleEmitter", "Emit", particleEmitterEmit},
     {"Trail", "Clear", trailClear},
     {"InputAction", "GetPreferredBinding", inputActionGetPreferredBinding},

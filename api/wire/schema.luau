@@ -82,10 +82,16 @@ Schema.Encodings = {
     { Name = "Position", Bytes = 24, Layout = "f64 x, y, z: a world coordinate." },
     {
         Name = "CFrameD",
-        Bytes = 60,
-        Layout = "f64 position x, y, z; then the rotation as nine f32, column by column: the right vector "
-            .. "(x, y, z), the up vector, then the back vector. The look direction is the back vector negated. "
-            .. "Nothing is quantised.",
+        Bytes = 32,
+        Layout = "f64 position x, y, z; then the rotation as a u64 (protocol 40; nine f32 before): its unit "
+            .. "quaternion's three smallest components and which the fourth is. Bits 0-1 say which of x, y, z, w "
+            .. "was left out -- the largest in magnitude, with the quaternion negated if need be so that it is "
+            .. "positive; the other three follow in x, y, z, w order at bits 2, 22 and 42, twenty bits each, a "
+            .. "component c in [-1/sqrt 2, 1/sqrt 2] stored as round((c * sqrt 2 / 2 + 1/2) * 1048574). The fourth "
+            .. "is sqrt(1 - the sum of their squares). No turn is exactly no turn; any other is right to about "
+            .. "three millionths of a radian. **The position is not quantised.** In a `Snapshot` record that is "
+            .. "not whole, a field of this encoding whose id has bit 13 set carries the position alone, 24 "
+            .. "bytes: the rotation is the baseline's.",
     },
     { Name = "Color3", Bytes = 12, Layout = "f32 r, g, b, linear in [0, 1] by convention and not clamped." },
     {
@@ -249,6 +255,7 @@ local Primitives: { [string]: boolean } = {
     value = true,
     arguments = true,
     attribute = true,
+    name = true,
 }
 
 --- A layout names only types the specification defines, and a repeat names a

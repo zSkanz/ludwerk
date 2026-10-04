@@ -809,14 +809,33 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out, const Re
             }
         }
 
+        // **Text the box does not hold** (ADR 0168): shown past it, cut at
+        // it, or cut short and ended with an ellipsis -- by what the font
+        // measures, at the size it is drawn. Scaled text fits by what it is.
+        // Markup has no one place to end, so under it an ellipsis is a cut.
+        const f32 wrapWidth = label->textWrapped ? self->absoluteSize.x : 0.0f;
+        u32 scissor = entry.scissor;
+        std::string ended;
+        if (label->textOverflow != 0 && !label->textScaled) {
+            if (label->textOverflow == 2 && !rich) {
+                ended = ellipsizedText(text, label->font, size, wrapWidth, self->absoluteSize);
+                text = ended;
+            }
+            else {
+                const Rect outer = out.scissors[entry.scissor];
+                out.scissors.push_back(
+                    Rect{Vec2{std::fmax(box.min.x, outer.min.x), std::fmax(box.min.y, outer.min.y)},
+                         Vec2{std::fmin(box.max.x, outer.max.x), std::fmin(box.max.y, outer.max.y)}});
+                scissor = static_cast<u32>(out.scissors.size() - 1);
+            }
+        }
+
         if (rich)
-            buildRichTextGeometry(text, label->font, size, label->textWrapped ? self->absoluteSize.x : 0.0f, box,
-                                  label->horizontalAlignment, label->verticalAlignment, color, textAlpha, entry.scissor,
-                                  out.quads, textStroke);
+            buildRichTextGeometry(text, label->font, size, wrapWidth, box, label->horizontalAlignment,
+                                  label->verticalAlignment, color, textAlpha, scissor, out.quads, textStroke);
         else
-            buildTextGeometry(text, label->font, size, label->textWrapped ? self->absoluteSize.x : 0.0f, box,
-                              label->horizontalAlignment, label->verticalAlignment, color, textAlpha, entry.scissor,
-                              out.quads, textStroke);
+            buildTextGeometry(text, label->font, size, wrapWidth, box, label->horizontalAlignment,
+                              label->verticalAlignment, color, textAlpha, scissor, out.quads, textStroke);
     }
 }
 

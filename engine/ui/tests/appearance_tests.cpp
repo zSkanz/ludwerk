@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <doctest/doctest.h>
 #include <optional>
+#include <string>
 
 #include "class_descriptors.gen.h"
 #include "engine/scene/world.h"
@@ -252,6 +254,107 @@ TEST_CASE("rich text's stroke tag outlines what it encloses and nothing else")
     // A tag with a value it cannot read is text, as every other tag is.
     const std::string unreadable = "<stroke joins=\"wavy\">x</stroke>";
     CHECK(ui::plainTextOf(unreadable) == unreadable);
+}
+
+TEST_CASE("text that does not fit its box is shown, cut at the box, or ended with an ellipsis (ADR 0168)")
+{
+    // A player's name in a table's row: a game cut it by counting characters,
+    // which no proportional font agrees with.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId label = fixture.child("TextLabel", screen);
+    fixture.object(label).size = core::UDim2{core::UDim{0.0f, 120.0f}, core::UDim{0.0f, 24.0f}};
+    fixture.object(label).backgroundTransparency = 1.0f;
+    scene::TextLabelComponent& text = *fixture.world->textLabels().find(label);
+    text.text = "Wolfgang Amadeus Mozart the Second";
+    text.textSize = 16.0f;
+    text.horizontalAlignment = 0;
+    fixture.run();
+    const core::Rect box{fixture.object(label).absolutePosition,
+                         fixture.object(label).absolutePosition + fixture.object(label).absoluteSize};
+    const float whole = ui::measureText(text.text, text.font, 16.0f, 0.0f).size.x;
+    REQUIRE(whole > 120.0f);
+
+    struct Drawn
+    {
+        std::size_t quads = 0;
+        float right = 0.0f;
+        float bottom = 0.0f;
+        core::Rect scissor;
+    };
+    const auto draw = [&](int overflow) {
+        text.textOverflow = overflow;
+        ui::DrawList list;
+        ui::buildDrawList(*fixture.world, fixture.service, list);
+        Drawn drawn;
+        drawn.quads = list.quads.size();
+        for (const ui::DrawQuad& quad : list.quads) {
+            drawn.right = std::max(drawn.right, quad.max.x);
+            drawn.bottom = std::max(drawn.bottom, quad.max.y);
+            drawn.scissor = list.scissors[quad.scissor];
+        }
+        return drawn;
+    };
+
+    // Shown: over the edge, as it always was, and cut by nothing of its own.
+    const Drawn shown = draw(0);
+    CHECK(shown.right > box.max.x + 20.0f);
+    CHECK(shown.scissor.max.x > box.max.x);
+
+    // Cut at the box: every glyph still there, and none of them past it.
+    const Drawn clipped = draw(1);
+    CHECK(clipped.quads == shown.quads);
+    CHECK(clipped.scissor.min.x == box.min.x);
+    CHECK(clipped.scissor.max.x == box.max.x);
+    CHECK(clipped.scissor.max.y == box.max.y);
+
+    // Ended with an ellipsis: fewer glyphs, the last of them inside the box.
+    const Drawn ended = draw(2);
+    CHECK(ended.quads < shown.quads);
+    CHECK(ended.quads > 3);
+    CHECK(ended.right <= box.max.x + 0.5f);
+    const std::string cut = ui::ellipsizedText(text.text, text.font, 16.0f, 0.0f, Vec2{120.0f, 24.0f});
+    CHECK(cut.size() < text.text.size());
+    CHECK(cut.starts_with("Wolfgang"));
+    CHECK((cut.ends_with("...") || cut.ends_with("\xE2\x80\xA6")));
+    CHECK(ui::measureText(cut, text.font, 16.0f, 0.0f).size.x <= 120.0f);
+    // By what the font measures, not by a count: narrow letters keep more.
+    const std::string narrow =
+        ui::ellipsizedText("illlllllllllllllllllllllllllllllllllllllll", text.font, 16.0f, 0.0f, Vec2{120.0f, 24.0f});
+    const std::string wide =
+        ui::ellipsizedText("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW", text.font, 16.0f, 0.0f, Vec2{120.0f, 24.0f});
+    CHECK(narrow.size() >= wide.size());
+
+    // Text that fits is the text.
+    CHECK(ui::ellipsizedText("Ada", text.font, 16.0f, 0.0f, Vec2{120.0f, 24.0f}) == "Ada");
+
+    // **Wrapped**: the lines the box is tall enough for, the last of them
+    // ended -- and a box three lines tall keeps three.
+    text.textWrapped = true;
+    text.text = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen";
+    const float line = ui::textLineHeight(text.font, 16.0f);
+    fixture.object(label).size = core::UDim2{core::UDim{0.0f, 120.0f}, core::UDim{0.0f, line * 2.0f + 2.0f}};
+    fixture.dirty(screen);
+    fixture.run();
+    const Drawn wrappedShown = draw(0);
+    const Drawn wrappedEnded = draw(2);
+    const float top = fixture.object(label).absolutePosition.y;
+    CHECK(wrappedShown.bottom > top + line * 3.0f);
+    CHECK(wrappedEnded.quads < wrappedShown.quads);
+    const std::string two = ui::ellipsizedText(text.text, text.font, 16.0f, 120.0f, Vec2{120.0f, line * 2.0f + 2.0f});
+    CHECK(ui::measureText(two, text.font, 16.0f, 120.0f).lineCount == 2u);
+    CHECK(two.starts_with("one two"));
+    const std::string three = ui::ellipsizedText(text.text, text.font, 16.0f, 120.0f, Vec2{120.0f, line * 3.0f + 2.0f});
+    CHECK(ui::measureText(three, text.font, 16.0f, 120.0f).lineCount == 3u);
+    CHECK(three.size() > two.size());
+
+    // Scaled text fits by what it is: nothing to cut.
+    text.textWrapped = false;
+    text.textScaled = true;
+    text.text = "Wolfgang Amadeus Mozart the Second";
+    fixture.dirty(screen);
+    fixture.run();
+    CHECK(draw(2).quads == draw(0).quads);
 }
 
 TEST_CASE("D453: a picture has a see-through of its own, apart from its box's")

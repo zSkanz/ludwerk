@@ -1544,6 +1544,22 @@ local Classes: { Schema.Class } = {
                 Doc = "The player at this machine: there from boot solo, hosting or joining, and nil on a "
                     .. "dedicated server, which has nobody at it.",
             },
+            {
+                Name = "MaxPlayers",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.network_max_players",
+                Transient = true,
+                HostFact = true,
+                Doc = "The most players this machine's match takes, **the machine's own among them** -- what "
+                    .. "`#GetPlayers()` may reach (ADR 0167). Written by the machine that hosts or will host: a "
+                    .. "whole number from 1, before `Host` or at any time after. Somebody who joins a match "
+                    .. "that has that many is refused, and their `JoinFailed` says it is full. **Lowering it "
+                    .. "removes nobody**: a player already in stays until they leave or `Player:Kick` says so. "
+                    .. "Never more than the match was opened for -- thirty-two others, or `--max-players` -- "
+                    .. "which is what it reads while hosting when nothing was written. Zero on a machine that "
+                    .. "joined, which is not the one that says; writing it there is an error.",
+            },
         } :: { Schema.Property },
         Methods = {
             {
@@ -1576,7 +1592,9 @@ local Classes: { Schema.Class } = {
                         .. "PredictedParts: number, ResimulationsPerSecond: number, "
                         .. "ResimulatedTicksPerSecond: number, ResimulationTime: number, "
                         .. "UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, "
-                        .. "BytesSent: number, BytesReceived: number, SwarmBytes: number }",
+                        .. "BytesSent: number, BytesReceived: number, SwarmBytes: number, "
+                        .. "SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, "
+                        .. "UnreliableBytes: number, InputBytes: number }",
                 },
                 ThreadSafety = "Unsafe",
                 Doc = "**How the connection is doing**, for a game that shows a connection-quality mark: the "
@@ -1592,7 +1610,14 @@ local Classes: { Schema.Class } = {
                     .. "what it simulates itself: the loose parts near its character it predicts "
                     .. "(`PredictedParts`), the times a second a correction stepped them again and the ticks it "
                     .. "stepped, and what one took on average in milliseconds (`ResimulationTime`). On an "
-                    .. "authority, the worst peer's link and the deepest queue. All zero solo.",
+                    .. "authority, the worst peer's link and the deepest queue. All zero solo.\n\n"
+                    .. "**Where the bytes go.** `BytesSent` and `BytesReceived` are everything since the session "
+                    .. "began, and five more say what they were, sent and received together: the world's state "
+                    .. "(`SnapshotBytes`), attributes (`AttributeBytes`), a game's `RemoteEvent`s and "
+                    .. "`RemoteFunction`s (`RemoteBytes`), its `UnreliableRemoteEvent`s (`UnreliableBytes`), and "
+                    .. "what a client says of its own input and of what it owns (`InputBytes`); `SwarmBytes` is a "
+                    .. "replicated swarm's positions. What is left of the total is instances coming and going, "
+                    .. "the ground and the handshake. Read twice a second apart, the difference is the rate.",
             },
             {
                 Name = "Join",
@@ -1895,6 +1920,19 @@ local Classes: { Schema.Class } = {
                     .. "player at this machine it is this machine's own action; for a remote one it is what "
                     .. "their machine sent. An action they never sent reads `false`, which is what an "
                     .. "unpressed button reads.",
+            },
+            {
+                Name = "Kick",
+                Parameters = { { Name = "reason", Type = "string?", Default = "nil" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Removes this player from the match (ADR 0167). **The authority's to call**, on a player "
+                    .. "who joined: a client calling it, and the host removing its own player, are errors. "
+                    .. "Their machine goes solo and its `NetworkService.Disconnected` fires with `reason` -- "
+                    .. "the game's own words, at most 512 bytes, or the engine's when there are none; it does "
+                    .. "not dial again by itself. Here `PlayerRemoving` fires as for anybody who leaves, at "
+                    .. "the end of the frame. Nothing stops them joining again: a game that means a ban "
+                    .. "keeps the list and removes them when they arrive.",
             },
         } :: { Schema.Method },
     },

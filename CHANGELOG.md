@@ -19,6 +19,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **The wire protocol is 40** (ADR 0166, ADR 0167). Every machine in a match
+  must run a build that speaks it: one that does not is refused at the join,
+  by name. Nothing in the API changed for it. What it carries less of: an
+  instance's attributes and tags are sent as what changed, not whole; a
+  rotation is eight bytes where it was thirty-six, and is not sent at all for
+  a body that moves without turning; a client's held input is said once a
+  message. A friend in a run of the horde test game received 41 KB a second
+  and now receives 16 to 17, and sends 5.4 where it sent 7.9.
+
 - **`GraphicsService.RenderScale` goes down to a third** (ADR 0164), where it
   stopped at a half: FSR 2's furthest mode. A scale written below a half was
   read back as a half and is now read back as written. The settings screen's
@@ -199,6 +208,20 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
     instance, and the data model's services changed. The simulation did not.
 
 ### Added
+
+- **`NetworkService.MaxPlayers` and `Player:Kick`** (ADR 0167): a host says
+  how many players its match takes, its own among them, and removes one --
+  who is told why in `Disconnected`. Both from a script, on the authority.
+- **`NetworkService:GetStats()` says where the bytes go** (ADR 0166):
+  `SnapshotBytes`, `AttributeBytes`, `RemoteBytes`, `UnreliableBytes` and
+  `InputBytes`, beside `SwarmBytes`.
+- **`TextLabel.TextOverflow`** (ADR 0168), an `Enum.TextOverflow`: text its
+  box does not hold is drawn past it (`Overflow`, as before), cut at it
+  (`Clip`), or cut short and ended with an ellipsis (`Ellipsis`), measured
+  with the label's own font.
+- **`Swarm:GetAgents(into?)` and `Swarm:GetPositions(into?)`**: into a table
+  of the caller's own, as `QueryRadius` already took one, so a horde read
+  every tick makes no table.
 
 - **Frame generation** (ADR 0165): `GraphicsService.FrameGeneration`,
   `frame_generation = true` under `[display]` and `--frame-generation`. A frame is made between
@@ -1199,6 +1222,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   A size is now rasterised at the nearest of a few sizes at or above it and
   drawn smaller; text at a whole number of pixels up to 64 is drawn exactly as
   before, and text over 128 pixels is drawn up from 128.
+- **An attribute or a tag that changes no longer sends everything its
+  instance carries** (D549). One attribute written every tick on an instance
+  with eighteen sent all eighteen, by name, every snapshot -- most of what a
+  joined player received in a game that wrote a facing or a timer each tick.
 - **A moving part under TAA and FSR 2 no longer smears in patches** (D548).
   On about half the face of anything that moved, the temporal pass was told
   the pixel had moved as the background behind it and looked for it in the

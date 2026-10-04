@@ -25,3 +25,7 @@ offers is on the base's page, which is what keeps one added member on
 ### `GetIntent(action: string): boolean | number | Vector2 | vector`
 
 What this player's input action of that name reads this tick, in the currency `InputAction:GetState` uses: a boolean, a number, a `Vector2` or a `vector`. For the player at this machine it is this machine's own action; for a remote one it is what their machine sent. An action they never sent reads `false`, which is what an unpressed button reads.
+
+### `Kick(reason: string? = nil)`
+
+Removes this player from the match (ADR 0167). **The authority's to call**, on a player who joined: a client calling it, and the host removing its own player, are errors. Their machine goes solo and its `NetworkService.Disconnected` fires with `reason` -- the game's own words, at most 512 bytes, or the engine's when there are none; it does not dial again by itself. Here `PlayerRemoving` fires as for anybody who leaves, at the end of the frame. Nothing stops them joining again: a game that means a ban keeps the list and removes them when they arrive.

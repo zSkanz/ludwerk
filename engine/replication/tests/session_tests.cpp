@@ -25,6 +25,7 @@
 #include "engine/core/i18n.h"
 #include "engine/net/memory_transport.h"
 #include "engine/replication/extract.h"
+#include "engine/replication/field.h"
 #include "engine/replication/replication.h"
 #include "engine/replication/session.h"
 #include "engine/scene/class_registry.h"
@@ -2372,6 +2373,196 @@ TEST_CASE("G30: tags replicate -- there when a part is sent, added and taken off
     CHECK(match.replica->checksumFailures() == 0);
 }
 
+TEST_CASE("a client's input, held the same, is said once a message and not four times (protocol 40)")
+{
+    // Each tick's input goes with the three before it, so a lost message
+    // loses none. Four copies of the same stick, whole, were 110 bytes sixty
+    // times a second from every player -- 6.9 KB a second standing still.
+    PlayedMatch match;
+    const core::NameAtom move = match.client.atoms.intern("Move");
+    const core::NameAtom jump = match.client.atoms.intern("Jump");
+    (void)match.server.atoms.intern("Move");
+    (void)match.server.atoms.intern("Jump");
+    scene::PlayerComponent* me = match.client.world.players().find(match.me);
+    REQUIRE(me != nullptr);
+    const auto sent = [&match] { return match.replica->stats().bytesByMessage[7]; };
+    const auto perTick = [&](int ticks) {
+        const core::u64 mark = sent();
+        match.run(ticks);
+        return (sent() - mark) / static_cast<core::u64>(ticks);
+    };
+
+    // A stick at rest and a button up: an action's number and a byte, once.
+    me->intents = {scene::PlayerIntent{move, 2, core::Vec3{}, false},
+                   scene::PlayerIntent{jump, 0, core::Vec3{}, false}};
+    match.run(6);
+    CHECK(perTick(10) <= 28);
+    // Held over: the two axes once, and three "the same".
+    me->intents = {scene::PlayerIntent{move, 2, core::Vec3{0.6f, -0.8f, 0.0f}, false},
+                   scene::PlayerIntent{jump, 0, core::Vec3{}, false}};
+    match.run(6);
+    CHECK(perTick(10) <= 36);
+    const scene::PlayerComponent* theirs = match.server.world.players().find(match.remote());
+    REQUIRE(theirs != nullptr);
+    const auto heard = [&](core::NameAtom action) -> const scene::PlayerIntent* {
+        const std::string_view text = match.client.atoms.text(action);
+        for (const scene::PlayerIntent& intent : theirs->intents) {
+            if (match.server.atoms.text(intent.action) == text)
+                return &intent;
+        }
+        return nullptr;
+    };
+    const scene::PlayerIntent* stick = heard(move);
+    REQUIRE(stick != nullptr);
+    CHECK(stick->type == 2);
+    CHECK(stick->axis.x == 0.6f);
+    CHECK(stick->axis.y == -0.8f);
+
+    // A press in the middle of it is heard, with the stick as it is.
+    me->intents = {scene::PlayerIntent{move, 2, core::Vec3{0.6f, -0.8f, 0.0f}, false},
+                   scene::PlayerIntent{jump, 0, core::Vec3{}, true}};
+    match.run(8);
+    const scene::PlayerIntent* button = heard(jump);
+    REQUIRE(button != nullptr);
+    CHECK(button->pressed);
+    stick = heard(move);
+    REQUIRE(stick != nullptr);
+    CHECK(stick->axis.y == -0.8f);
+
+    // Changing every tick is every tick whole: nothing is the same as before.
+    for (int step = 0; step < 12; ++step) {
+        me->intents = {
+            scene::PlayerIntent{move, 2, core::Vec3{0.01f * static_cast<float>(step + 1), 1.0f, 0.0f}, false}};
+        match.run(1);
+    }
+    stick = heard(move);
+    REQUIRE(stick != nullptr);
+    CHECK(stick->axis.y == 1.0f);
+    CHECK(stick->axis.x > 0.0f);
+}
+
+TEST_CASE("a body that moves without turning sends where it is, and one that turns eight bytes more (protocol 40)")
+{
+    // A hero walking was eighty-four bytes of every snapshot, sixty-two of
+    // them its frame and thirty-six of those a rotation that had not changed.
+    Match match;
+    const core::InstanceId crate = match.server.part("Crate", {0.0, 0.0, 0.0}, match.server.root);
+    match.run(6);
+    const auto sent = [&match] { return match.authority->stats().snapshotBytes; };
+    core::u64 mark = sent();
+    match.run(4);
+    const core::u64 quiet = (sent() - mark) / 4;
+
+    // Walking: the record's eight bytes, the field's two and three doubles.
+    mark = sent();
+    for (int step = 1; step <= 10; ++step) {
+        match.server.world().parts().find(crate)->cframe.position = core::DVec3{0.25 * step, 0.0, -0.5 * step};
+        match.run(1);
+    }
+    CHECK((sent() - mark) / 10 <= quiet + 8 + 2 + 24);
+    const core::InstanceId seen = match.client.child(match.client.root, "Crate");
+    REQUIRE(seen.valid());
+    CHECK(match.client.world().parts().find(seen)->cframe.position.x == 2.5);
+    CHECK(match.client.world().parts().find(seen)->cframe.position.z == -5.0);
+
+    // Turning as it goes: the whole frame, which is thirty-two.
+    mark = sent();
+    for (int step = 1; step <= 10; ++step) {
+        scene::PartComponent* part = match.server.world().parts().find(crate);
+        part->cframe.position.x += 0.25;
+        part->cframe.rotation = core::rotationY(0.1f * static_cast<float>(step));
+        match.run(1);
+    }
+    CHECK((sent() - mark) / 10 <= quiet + 8 + 2 + 32);
+    const core::Mat3 turned = core::rotationY(1.0f);
+    const core::Mat3& read = match.client.world().parts().find(seen)->cframe.rotation;
+    CHECK(std::abs(read.m[0][0] - turned.m[0][0]) < 6e-6f);
+    CHECK(std::abs(read.m[2][0] - turned.m[2][0]) < 6e-6f);
+    CHECK(match.client.world().parts().find(seen)->cframe.position.x == 5.0);
+
+    // And walking again with the turn it has: the position alone, the turn kept.
+    mark = sent();
+    for (int step = 1; step <= 10; ++step) {
+        match.server.world().parts().find(crate)->cframe.position.y += 0.5;
+        match.run(1);
+    }
+    CHECK((sent() - mark) / 10 <= quiet + 8 + 2 + 24);
+    CHECK(match.client.world().parts().find(seen)->cframe.position.y == 5.0);
+    CHECK(std::abs(match.client.world().parts().find(seen)->cframe.rotation.m[0][0] - turned.m[0][0]) < 6e-6f);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("D549: one attribute or one tag that changes costs its own bytes, not everything its owner holds")
+{
+    // A hero with eighteen attributes, one of which is where it faces: every
+    // send carried all eighteen, by name, and every tag with them -- 24 KB a
+    // second to a friend, of a game that sent 3.
+    PlayedMatch match;
+    const core::InstanceId hero = match.part("Hero", core::DVec3{0.0, 1.0, 0.0});
+    scene::World& server = match.server.world;
+    scene::World& client = match.client.world;
+    for (int index = 1; index <= 12; ++index) {
+        REQUIRE(server.setAttribute(hero, server.atoms().intern("Stat" + std::to_string(index)),
+                                    scene::Value{static_cast<double>(index)}));
+        REQUIRE(server.addTag(hero, server.atoms().intern("Kind" + std::to_string(index))));
+    }
+    match.run(4);
+    const core::InstanceId seen = match.copyOf(hero);
+    REQUIRE(seen.valid());
+    const auto sent = [&match] { return match.authority->stats().attributeBytes; };
+
+    // **One attribute, every send.** Its name once, then a number for it.
+    const core::NameAtom facing = server.atoms().intern("Stat3");
+    REQUIRE(server.setAttribute(hero, facing, scene::Value{0.5}));
+    match.run(1);
+    const core::u64 before = sent();
+    for (int step = 1; step <= 10; ++step) {
+        REQUIRE(server.setAttribute(hero, facing, scene::Value{0.5 + step}));
+        match.run(1);
+    }
+    CHECK((sent() - before) / 10 <= 24);
+    CHECK(client.getAttribute(seen, client.atoms().intern("Stat3")) == scene::Value{10.5});
+    // The eleven that did not change are as they were, and so is every tag.
+    CHECK(client.getAttribute(seen, client.atoms().intern("Stat12")) == scene::Value{12.0});
+    CHECK(client.hasTag(seen, client.atoms().intern("Kind7")));
+
+    // **One tag on, one off**: each its own name, not the twelve.
+    core::u64 mark = sent();
+    REQUIRE(server.addTag(hero, server.atoms().intern("Burning")));
+    match.run(1);
+    CHECK(sent() - mark <= 32);
+    CHECK(client.hasTag(seen, client.atoms().intern("Burning")));
+    CHECK(client.hasTag(seen, client.atoms().intern("Kind1")));
+    mark = sent();
+    REQUIRE(server.removeTag(hero, server.atoms().intern("Kind5")));
+    match.run(1);
+    CHECK(sent() - mark <= 32);
+    CHECK_FALSE(client.hasTag(seen, client.atoms().intern("Kind5")));
+    CHECK(client.hasTag(seen, client.atoms().intern("Kind6")));
+    // And the same tag again is its number alone.
+    mark = sent();
+    REQUIRE(server.removeTag(hero, server.atoms().intern("Burning")));
+    match.run(1);
+    CHECK(sent() - mark <= 16);
+    CHECK_FALSE(client.hasTag(seen, client.atoms().intern("Burning")));
+
+    // **One removed**, and one of another kind in the same send.
+    mark = sent();
+    REQUIRE(server.setAttribute(hero, server.atoms().intern("Stat9"), scene::Value{}));
+    REQUIRE(server.setAttribute(hero, server.atoms().intern("Stat1"), scene::Value{std::string("one")}));
+    match.run(1);
+    CHECK(sent() - mark <= 48);
+    CHECK(client.getAttribute(seen, client.atoms().intern("Stat9")) == scene::Value{});
+    CHECK(client.getAttribute(seen, client.atoms().intern("Stat1")) == scene::Value{std::string("one")});
+    CHECK(client.getAttribute(seen, client.atoms().intern("Stat2")) == scene::Value{2.0});
+
+    // Nothing changed: nothing sent.
+    mark = sent();
+    match.run(3);
+    CHECK(sent() == mark);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
 TEST_CASE("D457: a client that joins late has the attributes as they stand, of the workspace and the services too")
 {
     // A round's server set `Workspace:SetAttribute("Round", 1)` when the round
@@ -2650,13 +2841,23 @@ struct Bytes
         return *this;
     }
     // A `CFrameD` on the wire: three f64 of position, nine f32 of rotation.
-    Bytes& cframe(core::DVec3 at, float scale = 1.0f)
+    // One intent as it crosses (protocol 40): its action's number; a byte --
+    // its type, whether it is pressed, which of its axes are not zero -- and
+    // the axes that are not.
+    Bytes& intent(core::u16 action, core::u8 type, float x, bool pressed)
+    {
+        u16v(action);
+        u8v(static_cast<core::u8>(type | (pressed ? 0x08 : 0) | (x != 0.0f ? 0x10 : 0)));
+        if (x != 0.0f)
+            f32v(x);
+        return *this;
+    }
+
+    // A frame as it crosses (protocol 40): where, and no turn, packed.
+    Bytes& cframe(core::DVec3 at)
     {
         f64v(at.x).f64v(at.y).f64v(at.z);
-        for (int row = 0; row < 3; ++row) {
-            for (int column = 0; column < 3; ++column)
-                f32v(row == column ? scale : 0.0f);
-        }
+        u64v(packRotation(core::Mat3{}));
         return *this;
     }
 };
@@ -2760,17 +2961,7 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
     const core::u64 droppedBefore = match.authority->stats().messagesDropped;
     for (core::u32 at = 1; at <= 40; ++at) {
         Bytes intent;
-        intent.u8v(7)
-            .u32v(0)
-            .u8v(1)
-            .u64v(100000 + at)
-            .u16v(1)
-            .u16v(0)
-            .u8v(2)
-            .f32v(static_cast<float>(at))
-            .f32v(0.0f)
-            .f32v(0.0f)
-            .u8v(1);
+        intent.u8v(7).u32v(0).u8v(1).u64v(100000 + at).u16v(1).intent(0, 2, static_cast<float>(at), true);
         REQUIRE_FALSE(
             match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
     }
@@ -2808,11 +2999,13 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
     match.authority->receive(match.server.world, match.server.workspace);
     CHECK(match.server.world.parts().find(ball)->cframe.position.x == doctest::Approx(6.0));
 
-    // A rotation that is a scale is not a rotation.
+    // A place that is not a number is not a place. (A rotation that was a
+    // scale was refused here too, until protocol 40: a packed rotation
+    // cannot be one.)
     Bytes scaled;
     scaled.u8v(12).u64v(500001).u16v(1);
     scaled.u32v(ballNet.value)
-        .cframe({9.0, 1.0, 0.0}, 2.0f)
+        .cframe({std::numeric_limits<double>::quiet_NaN(), 1.0, 0.0})
         .f32v(0.0f)
         .f32v(0.0f)
         .f32v(0.0f)
@@ -2871,7 +3064,7 @@ TEST_CASE("a press whose intent came after its tick was stood in for is applied 
         Bytes intent;
         intent.u8v(7).u32v(epoch).u8v(1).u64v(tick);
         if (jump)
-            intent.u16v(1).u16v(1).u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(1);
+            intent.u16v(1).intent(1, 0, 0.0f, true);
         else
             intent.u16v(0);
         REQUIRE_FALSE(
@@ -2915,7 +3108,7 @@ TEST_CASE("G38: an action's name crosses once, an intent that overtakes it waits
         Bytes intent;
         intent.u8v(7).u32v(0).u8v(1).u64v(tick);
         if (jump)
-            intent.u16v(1).u16v(5).u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(1);
+            intent.u16v(1).intent(5, 0, 0.0f, true);
         else
             intent.u16v(0);
         REQUIRE_FALSE(
@@ -3034,7 +3227,7 @@ struct MoveStream
     {
         Bytes intent;
         intent.u8v(7).u32v(epoch).u8v(1).u64v(tick);
-        intent.u16v(1).u16v(0).u8v(2).f32v(x).f32v(0.0f).f32v(0.0f).u8v(0);
+        intent.u16v(1).intent(0, 2, x, false);
         REQUIRE_FALSE(
             match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
     }
@@ -3206,7 +3399,7 @@ TEST_CASE("D480: a press made in the ticks before the stream is anchored again i
         Bytes intent;
         intent.u8v(7).u32v(epoch).u8v(1).u64v(tick);
         if (jump)
-            intent.u16v(1).u16v(1).u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(1);
+            intent.u16v(1).intent(1, 0, 0.0f, true);
         else
             intent.u16v(0);
         REQUIRE_FALSE(
@@ -3281,10 +3474,15 @@ struct FramedReplica
             sent.pop_front();
         Bytes intent;
         intent.u8v(7).u32v(epoch).u8v(static_cast<core::u8>(sent.size()));
+        core::u64 before = 0;
         for (const Sent& each : sent) {
-            intent.u64v(each.tick);
-            intent.u16v(2).u16v(0).u8v(2).f32v(each.x).f32v(0.0f).f32v(0.0f).u8v(0);
-            intent.u16v(1).u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(each.jump ? 1 : 0);
+            // The first by its tick, each after by how far on it is.
+            if (before == 0)
+                intent.u64v(each.tick);
+            else
+                intent.u8v(static_cast<core::u8>(each.tick - before));
+            before = each.tick;
+            intent.u16v(2).intent(0, 2, each.x, false).intent(1, 0, 0.0f, each.jump);
         }
         REQUIRE_FALSE(
             match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());

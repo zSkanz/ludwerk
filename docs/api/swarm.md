@@ -59,13 +59,13 @@ Where it stands, or nil when there is no such agent.
 
 The agent's tag, 0 for one that was never given any or that is not there.
 
-### `GetAgents(): { number }`
+### `GetAgents(into: { number }?): { number }`
 
-Every live agent's number, in slot order.
+Every live agent's number, in slot order. `into`, when given, is emptied and filled and returned, as `QueryRadius`'s is: a horde read every tick makes no table.
 
-### `GetPositions(): { vector }`
+### `GetPositions(into: { vector }?): { vector }`
 
-Where each live agent stands, in the order `GetAgents` gives them.
+Where each live agent stands, in the order `GetAgents` gives them. `into`, when given, is emptied and filled and returned.
 
 ### `Push(agent: number, velocity: vector)`
 

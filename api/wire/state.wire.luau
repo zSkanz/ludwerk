@@ -3245,7 +3245,13 @@ local Messages: { Schema.Message } = {
                     .. "`intentTick`. The replica checks its prediction against them and takes them; the "
                     .. "`Attributes` copy of them is not applied to its own character.",
                 Each = {
-                    { Name = "name", Type = "text" },
+                    {
+                        Name = "name",
+                        Type = "u32",
+                        Doc = "The FNV-1a hash of the attribute's name (protocol 40; its text before): the "
+                            .. "replica's own steps wrote the same attributes and finds each by its hash. One it "
+                            .. "has not written is passed over, and reaches it as any attribute does.",
+                    },
                     { Name = "value", Type = "attribute", Doc = 'See "Attribute values"; Nil for none.' },
                 },
             },
@@ -3334,11 +3340,18 @@ local Messages: { Schema.Message } = {
                 Count = "tickCount",
                 Doc = "Oldest first. A tick already applied or already queued is a copy, and dropped.",
                 Each = {
-                    { Name = "tick", Type = "u64", Doc = "The replica's tick." },
+                    {
+                        Name = "tick",
+                        Type = "u64",
+                        Doc = "The replica's tick. **Whole in the first of a message alone** (protocol 40): each "
+                            .. "tick after it is a `u8` here -- how many ticks past the one before it, never 0.",
+                    },
                     {
                         Name = "count",
                         Type = "u16",
-                        Doc = "A button not held is left out (protocol 37): it reads as an action not sent.",
+                        Doc = "A button not held is left out (protocol 37): it reads as an action not sent. "
+                            .. "**`0xFFFF` is the intents of the tick before it in this message, and nothing "
+                            .. "follows** (protocol 40) -- never in the first.",
                     },
                     {
                         Name = "intents",
@@ -3352,14 +3365,18 @@ local Messages: { Schema.Message } = {
                                     .. "(protocol 37). One whose name has not arrived waits for it.",
                             },
                             {
-                                Name = "type",
+                                Name = "bits",
                                 Type = "u8",
-                                Doc = "0 Bool, 1 Direction1D, 2 Direction2D, 3 Direction3D, 4 ViewportPosition.",
+                                Doc = "Bits 0-2 the action's type (0 Bool, 1 Direction1D, 2 Direction2D, 3 "
+                                    .. "Direction3D, 4 ViewportPosition); bit 3 whether it is pressed; bits 4, 5 "
+                                    .. "and 6 whether its x, y and z follow (protocol 40: a type byte, three "
+                                    .. "`f32` and a pressed byte before).",
                             },
-                            { Name = "x", Type = "f32" },
-                            { Name = "y", Type = "f32" },
-                            { Name = "z", Type = "f32" },
-                            { Name = "pressed", Type = "u8" },
+                            {
+                                Name = "axes",
+                                Type = "f32",
+                                Doc = "One for each of bits 4 to 6 that is set, x first: an axis left out is 0.",
+                            },
                         },
                     },
                 },
@@ -3368,7 +3385,9 @@ local Messages: { Schema.Message } = {
         Doc = "A client's input, as actions rather than as results. The client says what it did; a "
             .. "client that could assert what happened is a client that always hits. The authority "
             .. "queues it by tick and applies one tick a tick, in order, a few behind the newest "
-            .. "(protocol 22).",
+            .. "(protocol 22). **Each tick's input is said once a message** (protocol 40): it goes with the "
+            .. "three ticks before it so that a lost message loses none, and a tick whose intents are the "
+            .. "tick before's says so in two bytes -- a stick held is 36 bytes a tick where it was 110.",
     },
     {
         Name = "IntentNames",
@@ -3637,11 +3656,57 @@ local Messages: { Schema.Message } = {
             },
             { Name = "tags", Type = "repeat", Count = "tagCount", Each = { { Name = "tag", Type = "text" } } },
         },
-        Doc = "Every attribute and every tag one owner has now (ADR 0106, protocol 17; tags since 36), sent when any of them changed and "
-            .. "once to a replica that is sent the owner. **Whole, not a diff**: the replica makes the owner's "
-            .. "attributes exactly these, so a message received twice is simply the truth, and an attribute "
-            .. "missing from it is gone. Reliable and after the spawns, so it never names an instance the "
-            .. "replica has not been sent.",
+        Doc = "Every attribute and every tag one owner has now (ADR 0106, protocol 17; tags since 36), sent "
+            .. "once to a replica that is sent the owner. **Whole**: the replica makes the owner's "
+            .. "attributes and tags exactly these, and one missing from it is gone. Reliable and after the "
+            .. "spawns, so it never names an instance the replica has not been sent. What changes after it "
+            .. "travels as `AttributeEdits` (protocol 40): until then this was sent again whenever anything "
+            .. "of the owner's changed, every attribute and every tag of it for one number (D549).",
+    },
+    {
+        Name = "AttributeEdits",
+        Id = 31,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "owner", Type = "u8", Doc = "As in `Attributes`." },
+            { Name = "id", Type = "u32", Doc = "As in `Attributes`." },
+            { Name = "count", Type = "u16" },
+            {
+                Name = "attributes",
+                Type = "repeat",
+                Count = "count",
+                Doc = "Each attribute whose value is not what it was at the last send, and each that is gone.",
+                Each = {
+                    { Name = "name", Type = "name", Doc = 'See "Names".' },
+                    { Name = "present", Type = "u8", Doc = "1 with a value after it; 0 for one removed." },
+                    { Name = "value", Type = "attribute", Doc = "Only when `present` is 1." },
+                },
+            },
+            { Name = "addedCount", Type = "u16" },
+            {
+                Name = "added",
+                Type = "repeat",
+                Count = "addedCount",
+                Doc = "The tags put on since the last send.",
+                Each = { { Name = "tag", Type = "name" } },
+            },
+            { Name = "removedCount", Type = "u16" },
+            {
+                Name = "removed",
+                Type = "repeat",
+                Count = "removedCount",
+                Doc = "The tags taken off since the last send.",
+                Each = { { Name = "tag", Type = "name" } },
+            },
+        },
+        Doc = "What changed of one owner's attributes and tags since the last send (protocol 40, D549): the "
+            .. "attributes whose value is another, the ones removed, the tags put on and the ones taken off -- "
+            .. "and nothing else of the owner's. A hero's facing, written every tick, costs its own nine "
+            .. "bytes and a two-byte name, where it cost every attribute and tag the hero had. Reliable and "
+            .. "in order on the control channel, after the `Attributes` that told the replica what the owner "
+            .. "had, so applying each in turn leaves exactly what the authority has. Never sent for an owner "
+            .. "the replica has not been sent.",
     },
     {
         Name = "DetectorInput",
@@ -3871,12 +3936,20 @@ local Messages: { Schema.Message } = {
             {
                 Name = "reason",
                 Type = "u8",
-                Doc = "1: the replica speaks another protocol. 2: the server is full.",
+                Doc = "1: the replica speaks another protocol. 2: the server is full. 3: the host removed "
+                    .. "this player (protocol 40, `Player:Kick`).",
+            },
+            {
+                Name = "text",
+                Type = "text",
+                Doc = "The game's own words for a removal, at most 512 bytes; empty for the other reasons "
+                    .. "and for a removal that gave none (protocol 40).",
             },
         },
-        Doc = "Why the authority will not take this replica (protocol 33, NA8), sent before it lets the "
-            .. "connection go. Before it, a full server or one of another version answered nothing, and "
-            .. "the player waited out the join's timeout with no reason.",
+        Doc = "Why the authority will not take this replica (protocol 33, NA8), or will not keep it "
+            .. "(protocol 40), sent before it lets the connection go. Before it, a full server or one of "
+            .. "another version answered nothing, and the player waited out the join's timeout with no "
+            .. "reason. A replica that is refused does not dial again.",
     },
     {
         Name = "CollisionGroups",

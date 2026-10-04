@@ -4709,6 +4709,16 @@ TEST_CASE("Swarm:SetTargets and AddAgentAt: every player is chased by the agents
                 workspace:SetAttribute("West", w.x)
                 workspace:SetAttribute("East", e.x)
                 workspace:SetAttribute("Count", #swarm:GetPositions())
+                -- **Into the caller's own tables**: filled from the first
+                -- place, emptied past the last, and the same table back.
+                local numbers = { 9, 9, 9, 9, 9 }
+                local places = { vector.zero, vector.zero, vector.zero }
+                local sameNumbers = swarm:GetAgents(numbers) == numbers
+                local samePlaces = swarm:GetPositions(places) == places
+                workspace:SetAttribute("Into", sameNumbers and samePlaces)
+                workspace:SetAttribute("IntoCount", #numbers * 10 + #places)
+                workspace:SetAttribute("IntoFirst", numbers[1] == west and numbers[2] == east and places[1] == w)
+                workspace:SetAttribute("IntoRest", numbers[3] == nil and places[3] == nil)
             end
         end)
     )");
@@ -4727,5 +4737,14 @@ TEST_CASE("Swarm:SetTargets and AddAgentAt: every player is chased by the agents
     CHECK(number("West") < -6.0);
     CHECK(number("East") > 9.0);
     CHECK(number("Count") > 0.0);
+    const auto flag = [&](std::string_view name) {
+        const scene::Value value = world.getAttribute(host.workspace(), world.atoms().intern(name));
+        const bool* found = std::get_if<bool>(&value);
+        return found != nullptr && *found;
+    };
+    CHECK(flag("Into"));
+    CHECK(number("IntoCount") == 22.0);
+    CHECK(flag("IntoFirst"));
+    CHECK(flag("IntoRest"));
     CHECK_MESSAGE(log.firstError().empty(), log.firstError());
 }

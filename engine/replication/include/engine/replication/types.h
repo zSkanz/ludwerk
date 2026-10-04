@@ -6,6 +6,7 @@
 // header is a backend everything above it is compiled against.
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -157,8 +158,10 @@ struct Status
     // connection went and has not come back (ADR 0106).
     bool welcomed = false;
     bool lost = false;
-    // A replica: why the authority refused it, or 0 (`Refused`, NA8).
+    // A replica: why the authority refused it, or 0 (`Refused`, NA8) -- and
+    // the game's own words, when it was removed and the host gave some.
     u8 refused = 0;
+    std::string refusedText;
     // A replica: the player the authority welcomed it as, to present again on
     // the next join to the same server (D207). Invalid until a welcome.
     PlayerToken token;
@@ -169,6 +172,10 @@ struct Status
     u32 freshJoins = 0;
 };
 
+// One past the largest `MessageType` there will be for a while: the kinds a
+// message's bytes are counted under.
+inline constexpr core::usize MessageKinds = 64;
+
 // One tick's worth of what the module did, for the overlay and for a test that
 // wants to assert a send happened rather than infer it.
 struct Stats
@@ -177,6 +184,21 @@ struct Stats
     u64 snapshotsReceived = 0;
     u64 bytesSent = 0;
     u64 bytesReceived = 0;
+    // **Those bytes by the kind of message they were in** -- a message's first
+    // byte, `MessageType` -- sent and taken in together, since a kind travels
+    // one way: what a game reads to see where its traffic goes
+    // (`NetworkService:GetStats`), where before it had the total and had to
+    // find the rest by turning things off.
+    std::array<u64, MessageKinds> bytesByMessage{};
+    // And summed as a game is told them: the world's state, attributes, its
+    // reliable remotes, its unreliable ones, and a client's own input and
+    // what it owns. The rest of the total is instances coming and going, the
+    // ground and the handshake.
+    u64 snapshotBytes = 0;
+    u64 attributeBytes = 0;
+    u64 remoteBytes = 0;
+    u64 unreliableBytes = 0;
+    u64 inputBytes = 0;
     // Instances that entered and left interest this tick, summed over peers.
     // A replica's own character, corrected by the authority because the
     // prediction had drifted more than a centimetre (ADR 0076).

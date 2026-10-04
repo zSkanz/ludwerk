@@ -3980,13 +3980,13 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("GetAgents"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Every live agent's number, in slot order.",
+            .doc = "Every live agent's number, in slot order. `into`, when given, is emptied and filled and returned, as `QueryRadius`'s is: a horde read every tick makes no table.",
         },
         MethodDesc{
             .name = atoms.intern("GetPositions"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Where each live agent stands, in the order `GetAgents` gives them.",
+            .doc = "Where each live agent stands, in the order `GetAgents` gives them. `into`, when given, is emptied and filled and returned.",
         },
         MethodDesc{
             .name = atoms.intern("QueryRadius"),
@@ -5624,7 +5624,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(serverStorageDesc);
 
     // --- NetworkService ---
-    static std::array<PropertyDesc, 7> networkServiceProperties;
+    static std::array<PropertyDesc, 8> networkServiceProperties;
     networkServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Authority"),
@@ -5719,6 +5719,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getNetworkServiceLocalPlayer,
             .set = nullptr,
         },
+        PropertyDesc{
+            .name = atoms.intern("MaxPlayers"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The most players this machine's match takes, **the machine's own among them** -- what `#GetPlayers()` may reach (ADR 0167). Written by the machine that hosts or will host: a whole number from 1, before `Host` or at any time after. Somebody who joins a match that has that many is refused, and their `JoinFailed` says it is full. **Lowering it removes nobody**: a player already in stays until they leave or `Player:Kick` says so. Never more than the match was opened for -- thirty-two others, or `--max-players` -- which is what it reads while hosting when nothing was written. Zero on a machine that joined, which is not the one that says; writing it there is an error.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.network_max_players"),
+            .get = native::getNetworkServiceMaxPlayers,
+            .set = native::setNetworkServiceMaxPlayers,
+        },
     }};
     static std::array<MethodDesc, 6> networkServiceMethods;
     networkServiceMethods = {{
@@ -5738,7 +5751,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("GetStats"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "**How the connection is doing**, for a game that shows a connection-quality mark: the round trip in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets lost in percent (`Loss`), snapshots a second, corrections of this machine's own character a second, and in all since it joined (`Corrections`), and how far the last one moved it in metres (`LastCorrection`), and the authority's queue of this player's input -- how many ticks it holds (`InputBufferDepth`), how many times it ran dry (`InputStarvations`) and how many times it was started again because the player's clock had moved -- a long frame (`InputReanchors`). How far in the past the others are drawn, in milliseconds (`InterpolationDelay`): two snapshot intervals and the link's jitter, adapting as the link does. On a client, what it simulates itself: the loose parts near its character it predicts (`PredictedParts`), the times a second a correction stepped them again and the ticks it stepped, and what one took on average in milliseconds (`ResimulationTime`). On an authority, the worst peer's link and the deepest queue. All zero solo.",
+            .doc = "**How the connection is doing**, for a game that shows a connection-quality mark: the round trip in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets lost in percent (`Loss`), snapshots a second, corrections of this machine's own character a second, and in all since it joined (`Corrections`), and how far the last one moved it in metres (`LastCorrection`), and the authority's queue of this player's input -- how many ticks it holds (`InputBufferDepth`), how many times it ran dry (`InputStarvations`) and how many times it was started again because the player's clock had moved -- a long frame (`InputReanchors`). How far in the past the others are drawn, in milliseconds (`InterpolationDelay`): two snapshot intervals and the link's jitter, adapting as the link does. On a client, what it simulates itself: the loose parts near its character it predicts (`PredictedParts`), the times a second a correction stepped them again and the ticks it stepped, and what one took on average in milliseconds (`ResimulationTime`). On an authority, the worst peer's link and the deepest queue. All zero solo.\012\012**Where the bytes go.** `BytesSent` and `BytesReceived` are everything since the session began, and five more say what they were, sent and received together: the world's state (`SnapshotBytes`), attributes (`AttributeBytes`), a game's `RemoteEvent`s and `RemoteFunction`s (`RemoteBytes`), its `UnreliableRemoteEvent`s (`UnreliableBytes`), and what a client says of its own input and of what it owns (`InputBytes`); `SwarmBytes` is a replicated swarm's positions. What is left of the total is instances coming and going, the ground and the handshake. Read twice a second apart, the difference is the rate.",
         },
         MethodDesc{
             .name = atoms.intern("Join"),
@@ -5963,13 +5976,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setPlayerCharacter2D,
         },
     }};
-    static std::array<MethodDesc, 1> playerMethods;
+    static std::array<MethodDesc, 2> playerMethods;
     playerMethods = {{
         MethodDesc{
             .name = atoms.intern("GetIntent"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "What this player's input action of that name reads this tick, in the currency `InputAction:GetState` uses: a boolean, a number, a `Vector2` or a `vector`. For the player at this machine it is this machine's own action; for a remote one it is what their machine sent. An action they never sent reads `false`, which is what an unpressed button reads.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Kick"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Removes this player from the match (ADR 0167). **The authority's to call**, on a player who joined: a client calling it, and the host removing its own player, are errors. Their machine goes solo and its `NetworkService.Disconnected` fires with `reason` -- the game's own words, at most 512 bytes, or the engine's when there are none; it does not dial again by itself. Here `PlayerRemoving` fires as for anybody who leaves, at the end of the frame. Nothing stops them joining again: a game that means a ban keeps the list and removes them when they arrive.",
         },
     }};
     ClassDescriptor playerDesc;
@@ -8146,6 +8165,31 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     horizontalAlignmentDesc.docKey = {};
     horizontalAlignmentDesc.items = horizontalAlignmentItems;
     enums.registerEnum(horizontalAlignmentDesc);
+
+    // --- TextOverflow ---
+    static std::array<EnumItemDesc, 3> textOverflowItems;
+    textOverflowItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Overflow"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Clip"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Ellipsis"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor textOverflowDesc;
+    textOverflowDesc.name = atoms.intern("TextOverflow");
+    textOverflowDesc.docKey = {};
+    textOverflowDesc.items = textOverflowItems;
+    enums.registerEnum(textOverflowDesc);
 
     // --- VerticalAlignment ---
     static std::array<EnumItemDesc, 3> verticalAlignmentItems;

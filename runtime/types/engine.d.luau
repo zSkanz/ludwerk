@@ -90,6 +90,9 @@ end
 declare extern type EnumHorizontalAlignment extends EnumItem with
 end
 
+declare extern type EnumTextOverflow extends EnumItem with
+end
+
 declare extern type EnumVerticalAlignment extends EnumItem with
 end
 
@@ -2786,6 +2789,17 @@ declare extern type TextLabel extends UIObject with
     --- Whether lines break at the box's width. Breaks at spaces, and mid-word only for a word wider
     --- than the box -- a word cut in half at a random letter is worse than one that overhangs.
     TextWrapped: boolean
+    --- What is done with text the box does not hold (ADR 0168): a player's name in a row of a table, a
+    --- description in a card. `Overflow` draws it past the box, as a label always has. `Clip` cuts it
+    --- at the box's edges. `Ellipsis` cuts it short and ends it with an ellipsis: **measured with the
+    --- label's own font at the size it is drawn**, so narrow letters keep more of a name than wide
+    --- ones, which cutting a string by its length cannot do. On one line, each line wider than the box
+    --- is ended; with `TextWrapped`, the lines the box is tall enough for are kept and the last of them
+    --- is ended. `Text` itself is never changed -- a script reads back what it wrote. Nothing is cut
+    --- from a label that `TextScaled` fits to its box, nor from an axis `AutomaticSize` grows. Under
+    --- `RichText` an ellipsis is not placed -- markup has no one place to end -- and `Ellipsis` cuts at
+    --- the box as `Clip` does. A `TextInput` scrolls its text and reads this for nothing.
+    TextOverflow: EnumTextOverflow
     --- Whether `Text` is read as markup, so one label can change colour, size and weight part-way
     --- through (F3). The tags: `<b>` bold, `<i>` italic, `<u>` underlined, `<s>` struck through, `<font
     --- color="#rrggbb" size="20" transparency="0.5">` (any of the three, `color` also as `rgb(r, g,
@@ -3658,10 +3672,12 @@ declare extern type Swarm extends Instance with
     function Push(self, agent: number, velocity: vector): ()
     --- Where it stands, or nil when there is no such agent.
     function GetAgentPosition(self, agent: number): vector?
-    --- Every live agent's number, in slot order.
-    function GetAgents(self): { number }
-    --- Where each live agent stands, in the order `GetAgents` gives them.
-    function GetPositions(self): { vector }
+    --- Every live agent's number, in slot order. `into`, when given, is emptied and filled and
+    --- returned, as `QueryRadius`'s is: a horde read every tick makes no table.
+    function GetAgents(self, into: { number }?): { number }
+    --- Where each live agent stands, in the order `GetAgents` gives them. `into`, when given, is
+    --- emptied and filled and returned.
+    function GetPositions(self, into: { vector }?): { vector }
     --- Every live agent whose feet are within `radius` of `centre`, in slot order: what a weapon aims
     --- at, and who has reached `Target`. Answered from the swarm's grid, so its cost is the agents near
     --- `centre`, not all of them. `into`, when given, is emptied and filled and returned -- a weapon
@@ -4385,6 +4401,15 @@ declare extern type NetworkService extends Instance with
     --- The player at this machine: there from boot solo, hosting or joining, and nil on a dedicated
     --- server, which has nobody at it.
     read LocalPlayer: Player?
+    --- The most players this machine's match takes, **the machine's own among them** -- what
+    --- `#GetPlayers()` may reach (ADR 0167). Written by the machine that hosts or will host: a whole
+    --- number from 1, before `Host` or at any time after. Somebody who joins a match that has that many
+    --- is refused, and their `JoinFailed` says it is full. **Lowering it removes nobody**: a player
+    --- already in stays until they leave or `Player:Kick` says so. Never more than the match was opened
+    --- for -- thirty-two others, or `--max-players` -- which is what it reads while hosting when
+    --- nothing was written. Zero on a machine that joined, which is not the one that says; writing it
+    --- there is an error.
+    MaxPlayers: number
     --- The join succeeded: this machine is in the server's match.
     read Connected: Signal<()>
     --- The join did not succeed, and this machine is solo again. The reason is readable text: nothing
@@ -4425,8 +4450,14 @@ declare extern type NetworkService extends Instance with
     --- loose parts near its character it predicts (`PredictedParts`), the times a second a correction
     --- stepped them again and the ticks it stepped, and what one took on average in milliseconds
     --- (`ResimulationTime`). On an authority, the worst peer's link and the deepest queue. All zero
-    --- solo.
-    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number }
+    --- solo. **Where the bytes go.** `BytesSent` and `BytesReceived` are everything since the session
+    --- began, and five more say what they were, sent and received together: the world's state
+    --- (`SnapshotBytes`), attributes (`AttributeBytes`), a game's `RemoteEvent`s and `RemoteFunction`s
+    --- (`RemoteBytes`), its `UnreliableRemoteEvent`s (`UnreliableBytes`), and what a client says of its
+    --- own input and of what it owns (`InputBytes`); `SwarmBytes` is a replicated swarm's positions.
+    --- What is left of the total is instances coming and going, the ground and the handshake. Read
+    --- twice a second apart, the difference is the rate.
+    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number }
     --- Connects to a server at `address` (`host` or `host:port`), or to `[network] server` from
     --- `project.toml` with none. **Joining replaces this machine's scene with the server's**: what it
     --- replicates arrives, and server code stops, since this machine no longer decides the world.
@@ -4526,6 +4557,13 @@ declare extern type Player extends Instance with
     --- this machine it is this machine's own action; for a remote one it is what their machine sent. An
     --- action they never sent reads `false`, which is what an unpressed button reads.
     function GetIntent(self, action: string): boolean | number | Vector2 | vector
+    --- Removes this player from the match (ADR 0167). **The authority's to call**, on a player who
+    --- joined: a client calling it, and the host removing its own player, are errors. Their machine
+    --- goes solo and its `NetworkService.Disconnected` fires with `reason` -- the game's own words, at
+    --- most 512 bytes, or the engine's when there are none; it does not dial again by itself. Here
+    --- `PlayerRemoving` fires as for anybody who leaves, at the end of the frame. Nothing stops them
+    --- joining again: a game that means a ban keeps the list and removes them when they arrive.
+    function Kick(self, reason: string?): ()
 end
 
 declare extern type RunService extends Instance with
@@ -5396,6 +5434,12 @@ declare Enum: {
         Center: EnumHorizontalAlignment,
         Right: EnumHorizontalAlignment,
         GetEnumItems: (self: any) -> { EnumHorizontalAlignment },
+    },
+    TextOverflow: {
+        Overflow: EnumTextOverflow,
+        Clip: EnumTextOverflow,
+        Ellipsis: EnumTextOverflow,
+        GetEnumItems: (self: any) -> { EnumTextOverflow },
     },
     VerticalAlignment: {
         Top: EnumVerticalAlignment,

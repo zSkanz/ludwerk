@@ -212,6 +212,10 @@ inline constexpr u32 MaxUnwelcomedReceives = 180;
 // Why a replica was refused (`Refused`, NA8).
 inline constexpr u8 RefusedVersion = 1;
 inline constexpr u8 RefusedFull = 2;
+// The host removed this player (`Player:Kick`, ADR 0167), with words of the
+// game's own, at most this many bytes.
+inline constexpr u8 RefusedRemoved = 3;
+inline constexpr usize MaxRemovedReasonBytes = 512;
 // Players this authority remembers across connections (ADR 0085). Past it,
 // the longest-known one not connected now is forgotten: its next visit is a
 // new player, which is what an authority that restarted would say too.
@@ -305,6 +309,10 @@ public:
     // transport holds. Past it a replica is told `Refused` and let go -- the
     // transport keeps one slot over so that there is a connection to say it on.
     void setMaxPlayers(u32 players) noexcept { m_maxPlayers = players; }
+    // **Removes the peer that is player `userId`** (`Player:Kick`, ADR 0167):
+    // told why, let go, and its player taken out of the world as one who
+    // left is. False when no peer is that player -- the host's own is not.
+    bool removePlayer(scene::World& world, core::InstanceId root, u32 userId, std::string_view reason);
 
     explicit AuthoritySession(net::ITransport& transport) noexcept : m_transport(transport) {}
 
@@ -447,6 +455,10 @@ private:
         // Whether it has been sent the attributes of the owners that are not
         // spawned -- players, `GlobalScriptService` -- since it was welcomed.
         bool attributesSeeded = false;
+        // **The names this peer has been told, by number** (D549): an
+        // attribute's or a tag's name travels as text once a connection and
+        // as two bytes after.
+        std::map<std::string, u16, std::less<>> names;
         // **The ground it holds** (ADR 0135): sent every chunk that differs
         // from the scene, for the scene named here; a scene change sends it
         // again, since the peer then loads that scene's ground.
@@ -641,7 +653,19 @@ private:
     // `GlobalScriptService` and (3, 0) for its `Shared` folder.
     using AttributeOwner = std::pair<u8, u32>;
     std::map<AttributeOwner, std::vector<u8>> m_attributeShadows;
-    std::vector<std::pair<AttributeOwner, std::vector<u8>>> m_attributeEdits;
+    // **One owner's changes in a send** (D549): the attributes whose value is
+    // another -- a name and the value's bytes, none for one removed -- and
+    // the tags put on and taken off. `whole` instead, for an owner nothing
+    // spawns that the session had not seen: everything it has.
+    struct AttributeEdit
+    {
+        AttributeOwner owner;
+        std::vector<u8> whole;
+        std::vector<std::pair<std::string, std::vector<u8>>> values;
+        std::vector<std::string> tagsAdded;
+        std::vector<std::string> tagsRemoved;
+    };
+    std::vector<AttributeEdit> m_attributeEdits;
     // **The ground as last sent to every peer** (ADR 0135): its chunks,
     // SHARED -- an edit clones a chunk, so a chunk that is not the same one
     // here changed -- its look and its block types, encoded. One copy for all
@@ -762,6 +786,8 @@ public:
     // Why the authority refused this replica, or 0 (`RefusedVersion`,
     // `RefusedFull`).
     [[nodiscard]] u8 refused() const noexcept { return m_refused; }
+    // The words that came with it: a removal's, when the host gave some.
+    [[nodiscard]] const std::string& refusedText() const noexcept { return m_refusedText; }
     // The newest state applied to the world. Zero before the first.
     [[nodiscard]] u64 appliedTick() const noexcept { return m_applied; }
     // This replica's player number, as the authority's welcome named it.
@@ -826,6 +852,12 @@ private:
     void onCollisionGroups(scene::World& world, std::span<const u8> bytes);
     void onSceneChange(scene::World& world, std::span<const u8> bytes);
     void onAttributes(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
+    // What changed of one owner's attributes and tags (D549).
+    void onAttributeEdits(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
+    // Whose an `Attributes` or an `AttributeEdits` is, on this machine.
+    [[nodiscard]] core::InstanceId attributeOwner(scene::World& world, core::InstanceId root, u8 owner, u32 id) const;
+    // The names the authority has told this connection, by number.
+    std::vector<std::string> m_attributeNames;
     // An `UnreliableRemoteEvent` message (ADR 0161), into the world's inbox.
     void onUnreliable(scene::World& world, std::span<const u8> payload);
     // A replicated swarm's agents (ADR 0162): who came and went, and where
@@ -892,6 +924,7 @@ private:
     std::function<void(scene::World&, const std::string&, std::vector<core::u8>)> m_sceneChanger;
     std::function<void(scene::World&)> m_welcomeHandler;
     u8 m_refused = 0;
+    std::string m_refusedText;
     std::function<ScriptTemplates*()> m_templates;
     // Husks made since the host last drained them.
     std::vector<core::InstanceId> m_streamedOut;

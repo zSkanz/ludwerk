@@ -1,6 +1,8 @@
 #include "engine/replication/field.h"
 
+#include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 
@@ -118,9 +120,106 @@ void setCFrame(FieldValue& out, const core::CFrameD& value) noexcept
     //
     // Caught by a round-trip test: the wire carries sixty bytes, the decoder
     // zeroes the rest, and the result did not equal what went in.
+    //
+    // **And the rotation is held as it crosses** (protocol 40): packed. A
+    // cell is what is compared, checksummed and sent, so both ends hold the
+    // same eight bytes and each makes its own matrix of them -- no machine's
+    // arithmetic is in what the checksum covers.
     out.raw.fill(0);
     std::memcpy(out.raw.data(), &value.position, sizeof(value.position));
-    std::memcpy(out.raw.data() + sizeof(value.position), &value.rotation, sizeof(value.rotation));
+    const core::u64 packed = packRotation(value.rotation);
+    std::memcpy(out.raw.data() + sizeof(value.position), &packed, sizeof(packed));
+}
+
+namespace {
+
+// A quaternion's component left out is the largest; the others are within
+// this of zero either way.
+constexpr double RotationReach = 0.70710678118654752440;
+// An even count of steps, so that zero is a step: no turn is exactly no turn.
+constexpr double RotationSteps = 1048574.0;
+constexpr core::u64 RotationMask = 0xFFFFFu;
+
+} // namespace
+
+core::u64 packRotation(const core::Mat3& rotation) noexcept
+{
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float w = 1.0f;
+    core::toQuaternion(rotation, x, y, z, w);
+    double q[4] = {static_cast<double>(x), static_cast<double>(y), static_cast<double>(z), static_cast<double>(w)};
+    const double length = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    // Not a rotation -- a matrix of zeros, a NaN -- is no turn.
+    if (!(length > 1e-12) || !std::isfinite(length)) {
+        q[0] = q[1] = q[2] = 0.0;
+        q[3] = 1.0;
+    }
+    else {
+        for (double& component : q)
+            component /= length;
+    }
+    // **The largest, and `w` when it is as large as any**: two components the
+    // same size to the last bits must not take turns at being left out, or a
+    // rotation that did not change would read as one that had.
+    int largest = 3;
+    for (int at = 0; at < 3; ++at) {
+        if (std::fabs(q[at]) > std::fabs(q[largest]) + 1e-4)
+            largest = at;
+    }
+    // A quaternion and its negative are one rotation: the one whose left-out
+    // component is positive is the one sent.
+    const double sign = q[largest] < 0.0 ? -1.0 : 1.0;
+    core::u64 packed = static_cast<core::u64>(largest);
+    int shift = 2;
+    for (int at = 0; at < 4; ++at) {
+        if (at == largest)
+            continue;
+        const double unit = std::clamp(sign * q[at] / RotationReach * 0.5 + 0.5, 0.0, 1.0);
+        packed |= (static_cast<core::u64>(std::llround(unit * RotationSteps)) & RotationMask) << shift;
+        shift += 20;
+    }
+    return packed;
+}
+
+core::Mat3 unpackRotation(core::u64 packed) noexcept
+{
+    const int largest = static_cast<int>(packed & 3u);
+    double q[4] = {0.0, 0.0, 0.0, 0.0};
+    double sum = 0.0;
+    int shift = 2;
+    for (int at = 0; at < 4; ++at) {
+        if (at == largest)
+            continue;
+        const double unit = static_cast<double>((packed >> shift) & RotationMask) / RotationSteps;
+        q[at] = (unit - 0.5) * 2.0 * RotationReach;
+        sum += q[at] * q[at];
+        shift += 20;
+    }
+    q[largest] = std::sqrt(std::max(0.0, 1.0 - sum));
+    return core::fromQuaternion(static_cast<float>(q[0]), static_cast<float>(q[1]), static_cast<float>(q[2]),
+                                static_cast<float>(q[3]));
+}
+
+bool sameRotation(const FieldValue& a, const FieldValue& b) noexcept
+{
+    return std::memcmp(a.raw.data() + CFramePositionBytes, b.raw.data() + CFramePositionBytes,
+                       FieldValue::Bytes - CFramePositionBytes) == 0;
+}
+
+void encodePosition(std::vector<core::u8>& out, const FieldValue& value)
+{
+    out.insert(out.end(), value.raw.begin(), value.raw.begin() + static_cast<std::ptrdiff_t>(CFramePositionBytes));
+}
+
+bool decodePosition(std::span<const core::u8> bytes, core::usize& at, FieldValue& out) noexcept
+{
+    if (at + CFramePositionBytes > bytes.size())
+        return false;
+    std::memcpy(out.raw.data(), bytes.data() + at, CFramePositionBytes);
+    at += CFramePositionBytes;
+    return true;
 }
 
 void setNetId(FieldValue& out, NetId value) noexcept
@@ -164,7 +263,9 @@ core::CFrameD asCFrame(const FieldValue& value) noexcept
     // cell whose padding bytes are zero produces the same object either way.
     core::CFrameD result;
     std::memcpy(&result.position, value.raw.data(), sizeof(result.position));
-    std::memcpy(&result.rotation, value.raw.data() + sizeof(result.position), sizeof(result.rotation));
+    core::u64 packed = 0;
+    std::memcpy(&packed, value.raw.data() + sizeof(result.position), sizeof(packed));
+    result.rotation = unpackRotation(packed);
     return result;
 }
 
@@ -211,17 +312,21 @@ usize wireBytes(generated::Encoding encoding) noexcept
     case generated::Encoding::MaterialValues:
         return MaterialValuesBytes;
     case generated::Encoding::CFrameD:
-        // Three f64 of position and nine f32 of rotation.
+        // Three f64 of position, and the rotation packed in a u64.
         //
-        // **The rotation is not quantised, and that is this protocol version's
-        // decision rather than an oversight.** A quaternion at sixteen bits an
-        // axis would cost twenty of these sixty bytes -- a real saving -- and it
-        // would also introduce an error budget nobody has measured against a
-        // physics mirror that reads the result back. Version 2 can do it with a
-        // new encoding beside this one; shipping an unmeasured quantiser is the
-        // worse order, and it is the same argument `.lterrain` made about its
-        // compression byte.
-        return 24 + 36;
+        // **The rotation is quantised from protocol 40, and the position is
+        // not.** Nine floats were thirty-six of a moving body's sixty bytes
+        // in every snapshot; the three smallest components of its quaternion
+        // at twenty bits each are eight, and right to about three millionths
+        // of a radian -- a third of a millimetre at the end of a hundred
+        // metre beam. What was held against it at protocol 1 was an error
+        // budget nobody had measured against a physics mirror that reads the
+        // result back: it is measured now (`netcode_acceptance`, and the
+        // predicted-parts tests, which pass with it), and a replica's own
+        // simulation is corrected by position at a centimetre. A position
+        // quantised to the millimetre would be inside what a stopped
+        // character is held to, so it is not.
+        return 24 + 8;
     }
     return 0;
 }
