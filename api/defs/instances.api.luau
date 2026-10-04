@@ -2120,6 +2120,39 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Property },
         Methods = {
             {
+                Name = "IsMeshed",
+                Parameters = {
+                    { Name = "center", Type = "vector" },
+                    { Name = "radius", Type = "number" },
+                },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether the ground within `radius` of `center` is drawn as it will be: every piece of "
+                    .. "it the view wants there has its mesh built and on the GPU, at the detail it is to be "
+                    .. "drawn at, and the terrain is not still refining what the view sees -- detail comes a "
+                    .. "level at a time, and ground beside the area changes the detail in it. Ground a script "
+                    .. "has just written is resident at once and meshed a few "
+                    .. "frames later; this is the second. As of the last frame drawn. Always true where "
+                    .. "nothing is drawn -- a server, a run with no camera -- since there is nothing to wait "
+                    .. "for (ADR 0159).",
+            },
+            {
+                Name = "WaitForMeshAsync",
+                Parameters = {
+                    { Name = "center", Type = "vector" },
+                    { Name = "radius", Type = "number" },
+                    { Name = "timeout", Type = "number?", Default = "30" },
+                },
+                Returns = { "boolean" },
+                Yields = true,
+                ThreadSafety = "Unsafe",
+                Doc = "Yields until `IsMeshed(center, radius)`, and returns true; or until `timeout` seconds "
+                    .. "of simulation have passed, and returns false. Answered at the end of a frame, never "
+                    .. "inside the call. What a loading screen waits on after it builds a terrain, before it "
+                    .. "lets the player in -- with `SceneService:HoldLoading` round it, the engine's own "
+                    .. "curtain stays up until then (ADR 0159).",
+            },
+            {
                 Name = "FillBall",
                 Parameters = {
                     { Name = "center", Type = "vector" },

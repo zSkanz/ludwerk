@@ -9,6 +9,7 @@ using namespace engine;
 using engine::app::FrameLimiter;
 using engine::app::FramePacing;
 using engine::app::FrameWindowState;
+using engine::app::LoadingCurtain;
 using engine::app::SyncWatch;
 
 namespace {
@@ -175,4 +176,50 @@ TEST_CASE("NA4: a window in the background in a networked session runs at the si
     CHECK(app::frameCapFor(capped, window) == 30u);
     const app::FramePacing generous{.vsync = true, .maxFrameRate = 0, .backgroundFrameRate = 120};
     CHECK(app::frameCapFor(generous, window) == 120u);
+}
+
+TEST_CASE("the loading curtain lifts once the loaders are idle, the ground is meshed and no script holds it")
+{
+    // ADR 0159: a scene whose scripts build its terrain is not shown until
+    // the ground round the camera is drawn as it will be.
+    LoadingCurtain curtain;
+    CHECK_FALSE(curtain.up());
+    curtain.raise();
+    REQUIRE(curtain.up());
+    core::u64 now = 1;
+    const auto frame = [&](bool idle, bool meshed, core::u32 holds) {
+        now += 16 * Millisecond;
+        return curtain.update({.nowNs = now, .loadersIdle = idle, .groundMeshed = meshed, .holds = holds});
+    };
+    // The meshes are in; the ground is not.
+    for (int at = 0; at < 30; ++at)
+        CHECK(frame(true, false, 0) == LoadingCurtain::Lift::Kept);
+    CHECK(curtain.up());
+    // A script holds it, with everything in.
+    for (int at = 0; at < 30; ++at)
+        CHECK(frame(true, true, 1) == LoadingCurtain::Lift::Kept);
+    // Released: three frames running, then up.
+    CHECK(frame(true, true, 0) == LoadingCurtain::Lift::Kept);
+    CHECK(frame(true, true, 0) == LoadingCurtain::Lift::Kept);
+    CHECK(frame(true, true, 0) == LoadingCurtain::Lift::Ready);
+    CHECK_FALSE(curtain.up());
+    // Down, it stays down.
+    CHECK(frame(false, false, 2) == LoadingCurtain::Lift::Kept);
+    CHECK_FALSE(curtain.up());
+}
+
+TEST_CASE("the loading curtain gives up after ten seconds, or a minute while a script holds it")
+{
+    LoadingCurtain curtain;
+    curtain.raise();
+    // Never meshed, nothing held: ten seconds.
+    CHECK(curtain.update({.nowNs = 1, .groundMeshed = false}) == LoadingCurtain::Lift::Kept);
+    CHECK(curtain.update({.nowNs = 1 + 9'000 * Millisecond, .groundMeshed = false}) == LoadingCurtain::Lift::Kept);
+    CHECK(curtain.update({.nowNs = 1 + 10'001 * Millisecond, .groundMeshed = false}) == LoadingCurtain::Lift::TimedOut);
+    CHECK_FALSE(curtain.up());
+    // Held: a minute.
+    curtain.raise();
+    CHECK(curtain.update({.nowNs = 100, .holds = 1}) == LoadingCurtain::Lift::Kept);
+    CHECK(curtain.update({.nowNs = 100 + 30'000 * Millisecond, .holds = 1}) == LoadingCurtain::Lift::Kept);
+    CHECK(curtain.update({.nowNs = 100 + 60'001 * Millisecond, .holds = 1}) == LoadingCurtain::Lift::TimedOut);
 }

@@ -104,4 +104,46 @@ private:
     u32 m_fast = 0;
 };
 
+// **The loading curtain** (D507, ADR 0159): the backdrop a game's world is
+// shown from behind once it has arrived -- at the first scene and at every
+// scene after it. It lifts when, for three frames running, the loaders have
+// nothing in flight, the ground round the camera is drawn as it will be, and
+// no script holds it; or when it has waited long enough -- ten seconds, a
+// minute while a script holds it -- and then it says it gave up. The game's
+// own interface draws over it, so its loading screen is what a player sees.
+class LoadingCurtain
+{
+public:
+    struct Frame
+    {
+        u64 nowNs = 0;
+        // Nothing waiting to be read or put up: meshes, pictures.
+        bool loadersIdle = true;
+        // The ground round the camera drawn as it will be.
+        bool groundMeshed = true;
+        // `SceneService:HoldLoading` calls not yet released.
+        u32 holds = 0;
+    };
+    enum class Lift
+    {
+        Kept,
+        Ready,
+        TimedOut,
+    };
+
+    void raise() noexcept;
+    [[nodiscard]] bool up() const noexcept { return m_up; }
+    // One frame's word: whether the curtain lifts, and why.
+    Lift update(const Frame& frame) noexcept;
+
+    static constexpr u32 SettleFrames = 3;
+    static constexpr u64 TimeoutNs = 10'000'000'000ull;
+    static constexpr u64 HeldTimeoutNs = 60'000'000'000ull;
+
+private:
+    bool m_up = false;
+    u64 m_sinceNs = 0;
+    u32 m_settled = 0;
+};
+
 } // namespace engine::app

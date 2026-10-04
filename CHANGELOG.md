@@ -1120,6 +1120,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 - A snapshot no longer writes the authority's older velocity over the
   replica's own predicted character: a predicted step that read the body's
   speed was corrected on every fall (D530).
+- **A scene is shown once it has arrived** (ADR 0159). The loading curtain is
+  raised for every scene, not only the first, and lifts once the meshes and
+  pictures are in, the ground round the camera is meshed and no script holds
+  it; behind it the ground is built flat out. `Terrain:IsMeshed` and
+  `Terrain:WaitForMeshAsync` say when ground a script wrote is drawn, and
+  `SceneService:HoldLoading` / `ReleaseLoading` keep the curtain up while a
+  scene's scripts build its world.
 - A point light wholly to one side of the view -- a lamp on a wall -- lights
   every tile it reaches: its inner edge was projected at its nearest depth
   only, and the wall was lit up to a straight vertical band (D531).

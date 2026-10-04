@@ -1736,6 +1736,20 @@ declare extern type Terrain extends Instance with
     --- How many chunks of 32 by 32 by 32 voxels currently hold anything. Air is never stored, so zero
     --- is a terrain nobody has sculpted, which is what `Clear` returns it to.
     read CellCount: number
+    --- Whether the ground within `radius` of `center` is drawn as it will be: every piece of it the
+    --- view wants there has its mesh built and on the GPU, at the detail it is to be drawn at, and the
+    --- terrain is not still refining what the view sees -- detail comes a level at a time, and ground
+    --- beside the area changes the detail in it. Ground a script has just written is resident at once
+    --- and meshed a few frames later; this is the second. As of the last frame drawn. Always true where
+    --- nothing is drawn -- a server, a run with no camera -- since there is nothing to wait for (ADR
+    --- 0159).
+    function IsMeshed(self, center: vector, radius: number): boolean
+    --- Yields until `IsMeshed(center, radius)`, and returns true; or until `timeout` seconds of
+    --- simulation have passed, and returns false. Answered at the end of a frame, never inside the
+    --- call. What a loading screen waits on after it builds a terrain, before it lets the player in --
+    --- with `SceneService:HoldLoading` round it, the engine's own curtain stays up until then (ADR
+    --- 0159).
+    function WaitForMeshAsync(self, center: vector, radius: number, timeout: number?): boolean
     --- Adds a ball of ground, or removes one when `material` is zero. Returns how many voxels it
     --- changed. Adding never takes ground away and removing never adds it: a voxel ends up as full as
     --- the fuller of it and the ball (adding), or as empty as the ball leaves it (removing). An
@@ -4192,6 +4206,17 @@ declare extern type SceneService extends Instance with
     function SendToHost(self, ...: any): ()
     --- Whether this world runs inside another game's `SubWorld`.
     function IsSubWorld(self): boolean
+    --- Keeps the loading curtain up over a scene until `ReleaseLoading` is called as many times. The
+    --- curtain is the engine's backdrop while a scene arrives -- raised at the first scene and at every
+    --- `LoadScene` after it, and lifted once the scene's meshes and pictures are in and the ground
+    --- round the camera is meshed. A scene whose scripts build its world -- a terrain written at load,
+    --- a map of parts made from code -- holds it until what it builds is there. A `ScreenGui` with
+    --- `KeepOnSceneLoad`, or the new scene's own, draws over the curtain: the game's loading card. A
+    --- hold never released is let go after a minute, with a warning in the log (ADR 0159).
+    function HoldLoading(self): ()
+    --- Lets go of one `HoldLoading`. With none left, the curtain lifts as soon as the scene has
+    --- arrived. More releases than holds are ignored.
+    function ReleaseLoading(self): ()
 end
 
 declare extern type ServerStorage extends Instance with

@@ -310,6 +310,10 @@ public:
     // says, not where the socket did.
     void publishNetworkResults();
 
+    // **Whether ground is drawn as it will be** (ADR 0159): kept for
+    // `Terrain:IsMeshed`, and asked of every `Terrain:WaitForMeshAsync`
+    // parked, at the same safe point as the streaming results.
+    void publishTerrainMeshed(std::function<bool(core::InstanceId, core::DVec3, f64)> meshed);
     void publishStreamingResults(const std::vector<core::InstanceId>& streamedOut,
                                  const std::function<bool(core::DVec3, f64)>& areaResident);
 

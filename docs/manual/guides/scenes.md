@@ -245,6 +245,45 @@ loading:Activate() -- the switch: SceneLoading, the old scene's close, level 2
 - A message sent to `loading.Scene` waits until the scene opens and is
   delivered after its scripts start, before `SceneLoaded`.
 
+## Shown once it has arrived
+
+A new scene is not shown while it is still arriving. The engine raises a
+**curtain**, a plain backdrop the world is drawn behind, at the first scene and
+at every scene after it. It lifts once all of these hold:
+
+- the scene's meshes and pictures are in;
+- the ground within about a hundred metres of the camera is meshed, drawn at
+  the detail it will be drawn at;
+- no script holds it.
+
+Behind the curtain the ground is built as fast as the machine can build it.
+Your interface draws over the curtain, so a `ScreenGui` with `KeepOnSceneLoad`,
+or the new scene's own, is the loading card a player sees.
+
+A scene whose scripts build its world holds the curtain until what they build
+is there:
+
+```luau
+--!strict
+local SceneService = game:GetService("SceneService")
+
+SceneService:HoldLoading()
+buildTheMap() -- parts from code, heights written into the terrain
+local terrain = workspace:FindFirstChildOfClass("Terrain") :: Terrain
+terrain:WaitForMeshAsync(spawn.Position, 96)
+SceneService:ReleaseLoading() -- the curtain lifts
+```
+
+- `Terrain:IsMeshed(center, radius)` says whether the ground there is drawn as
+  it will be. `WaitForMeshAsync` yields until it is, and returns false if
+  `timeout` seconds (30 by default) pass first.
+- A hold left unreleased is let go after a minute, with a warning in the log.
+  Without a hold the curtain gives up after ten seconds.
+- `StreamingService:LoadAreaAsync` waits for the ground to be resident: loaded,
+  with a height to ask for. Ground a script has just written is resident at
+  once and meshed a few frames later, which is what `WaitForMeshAsync` waits
+  for.
+
 ## In a match
 
 **The scene is the authority's.** A host or a server calls `LoadScene`, and

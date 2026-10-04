@@ -4430,3 +4430,54 @@ TEST_CASE("D469: a screen the game's own code made is named when the scene takes
     CHECK_FALSE(log.contains("\"LevelMenu\""));
     CHECK_FALSE(log.contains("[script.err."));
 }
+
+TEST_CASE("Terrain:WaitForMeshAsync resumes only once the host says the ground is meshed, or at its timeout")
+{
+    // ADR 0159: what a loading card waits on after it builds a terrain.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local ground = Instance.new("Terrain")
+        ground.Name = "Ground"
+        ground.Parent = workspace
+        workspace:SetAttribute("Before", ground:IsMeshed(vector.create(0, 0, 0), 16))
+        task.spawn(function()
+            workspace:SetAttribute("Meshed", ground:WaitForMeshAsync(vector.create(0, 0, 0), 16))
+        end)
+        task.spawn(function()
+            workspace:SetAttribute("GaveUp", ground:WaitForMeshAsync(vector.create(500, 0, 0), 16, 0.1))
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    scene::World& world = host.world();
+    const auto attribute = [&](std::string_view name) {
+        return world.getAttribute(host.workspace(), world.atoms().intern(name));
+    };
+    // Near the origin it is meshed once `meshedNow` says so; far out, never.
+    bool meshedNow = false;
+    const auto publish = [&] {
+        host.publishTerrainMeshed(
+            [&meshedNow](core::InstanceId, core::DVec3 at, core::f64) { return meshedNow && at.x < 100.0; });
+    };
+    for (int frame = 0; frame < 3; ++frame) {
+        host.tick();
+        publish();
+    }
+    // With no host answer yet, a world that draws nothing is meshed.
+    CHECK(attribute("Before") == scene::Value{true});
+    CHECK(std::holds_alternative<std::monostate>(attribute("Meshed")));
+    // A tenth of a second of simulation, and the far one gives up.
+    for (int frame = 0; frame < 12; ++frame) {
+        host.tick();
+        publish();
+    }
+    CHECK(attribute("GaveUp") == scene::Value{false});
+    CHECK(std::holds_alternative<std::monostate>(attribute("Meshed")));
+    meshedNow = true;
+    publish();
+    host.tick();
+    CHECK(attribute("Meshed") == scene::Value{true});
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}

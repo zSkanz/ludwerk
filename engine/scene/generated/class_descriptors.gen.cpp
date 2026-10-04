@@ -2449,8 +2449,20 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 22> terrainMethods;
+    static std::array<MethodDesc, 24> terrainMethods;
     terrainMethods = {{
+        MethodDesc{
+            .name = atoms.intern("IsMeshed"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the ground within `radius` of `center` is drawn as it will be: every piece of it the view wants there has its mesh built and on the GPU, at the detail it is to be drawn at, and the terrain is not still refining what the view sees -- detail comes a level at a time, and ground beside the area changes the detail in it. Ground a script has just written is resident at once and meshed a few frames later; this is the second. As of the last frame drawn. Always true where nothing is drawn -- a server, a run with no camera -- since there is nothing to wait for (ADR 0159).",
+        },
+        MethodDesc{
+            .name = atoms.intern("WaitForMeshAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Yields until `IsMeshed(center, radius)`, and returns true; or until `timeout` seconds of simulation have passed, and returns false. Answered at the end of a frame, never inside the call. What a loading screen waits on after it builds a terrain, before it lets the player in -- with `SceneService:HoldLoading` round it, the engine's own curtain stays up until then (ADR 0159).",
+        },
         MethodDesc{
             .name = atoms.intern("FillBall"),
             .yields = false,
@@ -5411,7 +5423,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(contentProviderDesc);
 
     // --- SceneService ---
-    static std::array<MethodDesc, 5> sceneServiceMethods;
+    static std::array<MethodDesc, 7> sceneServiceMethods;
     sceneServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("LoadScene"),
@@ -5442,6 +5454,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::ReadParallel,
             .doc = "Whether this world runs inside another game's `SubWorld`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("HoldLoading"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Keeps the loading curtain up over a scene until `ReleaseLoading` is called as many times. The curtain is the engine's backdrop while a scene arrives -- raised at the first scene and at every `LoadScene` after it, and lifted once the scene's meshes and pictures are in and the ground round the camera is meshed. A scene whose scripts build its world -- a terrain written at load, a map of parts made from code -- holds it until what it builds is there. A `ScreenGui` with `KeepOnSceneLoad`, or the new scene's own, draws over the curtain: the game's loading card. A hold never released is let go after a minute, with a warning in the log (ADR 0159).",
+        },
+        MethodDesc{
+            .name = atoms.intern("ReleaseLoading"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Lets go of one `HoldLoading`. With none left, the curtain lifts as soon as the scene has arrived. More releases than holds are ignored.",
         },
     }};
     static std::array<EventDesc, 4> sceneServiceEvents;

@@ -94,6 +94,10 @@ The height of the top of the ground here, in metres, or nil where there is none.
 
 **Nil too where the ground has not streamed in yet**, which in a large world is everywhere at the first line of a script: wait for it with `StreamingService:LoadAreaAsync(position, radius)`.
 
+### `IsMeshed(center: vector, radius: number): boolean`
+
+Whether the ground within `radius` of `center` is drawn as it will be: every piece of it the view wants there has its mesh built and on the GPU, at the detail it is to be drawn at, and the terrain is not still refining what the view sees -- detail comes a level at a time, and ground beside the area changes the detail in it. Ground a script has just written is resident at once and meshed a few frames later; this is the second. As of the last frame drawn. Always true where nothing is drawn -- a server, a run with no camera -- since there is nothing to wait for (ADR 0159).
+
 ### `PaintBall(center: vector, radius: number, material: number, options: { Mode: Enum.TerrainPaintMode?, Strength: number?, Falloff: number? }? = nil): number`
 
 Changes what the ground is MADE OF in a ball, without moving it. Returns how many voxels it changed.
@@ -131,6 +135,12 @@ Sets the rules, as `GetRules` returns them: up to 16, painted in order. A missin
 ### `SmoothBall(center: vector, radius: number, strength: number?): number`
 
 Softens the ground in a ball: each surface moves towards the average of the same surface round it -- over a gaussian half the brush wide, at most four voxels -- by `strength` (0 to 1, default 0.5), less towards the rim. Flat ground stays where it is, a slab is never cut through, nothing sinks below the ground it smooths towards, and what comes off a bump goes round it: the ground's volume is kept to within a tenth over twenty stamps. Returns how many voxels it changed.
+
+### `WaitForMeshAsync(center: vector, radius: number, timeout: number? = 30): boolean`
+
+**Yields.** The calling thread parks until it completes.
+
+Yields until `IsMeshed(center, radius)`, and returns true; or until `timeout` seconds of simulation have passed, and returns false. Answered at the end of a frame, never inside the call. What a loading screen waits on after it builds a terrain, before it lets the player in -- with `SceneService:HoldLoading` round it, the engine's own curtain stays up until then (ADR 0159).
 
 ### `WorldToCell(position: vector): vector`
 

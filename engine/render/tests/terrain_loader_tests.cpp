@@ -377,6 +377,35 @@ TEST_CASE("built off the main thread, the ground is drawn once it is built, whol
     }
 }
 
+TEST_CASE("areaMeshed: the ground round a place is meshed only once every node wanted there is drawn")
+{
+    // ADR 0159: what `Terrain:WaitForMeshAsync` and the loading curtain wait
+    // for -- not that the field is resident, which it is from the start, but
+    // that what will be drawn there has its mesh built and put up.
+    LoaderFixture fixture;
+    fixture.loader.setAsync(true);
+    fixture.loader.setBuildsPerSync(2);
+    fixture.loader.setFocus(core::DVec3{8.0, 4.0, 8.0});
+    // Before anything is built, nothing is meshed where the ground is.
+    (void)fixture.sync();
+    REQUIRE(fixture.loader.pending());
+    CHECK_FALSE(fixture.loader.areaMeshed(fixture.world, core::InstanceId{}, core::DVec3{8.0, 4.0, 8.0}, 8.0));
+    // Never said while the loader still wants ground: the levels are refined
+    // one a `sync`, and ground with nothing missing in one frame can still be
+    // sharpening in the next.
+    int frames = 0;
+    for (; frames < 400 && fixture.loader.pending(); ++frames) {
+        CHECK_FALSE(fixture.loader.areaMeshed(fixture.world, core::InstanceId{}, core::DVec3{8.0, 4.0, 8.0}, 8.0));
+        (void)fixture.sync();
+    }
+    REQUIRE_FALSE(fixture.loader.pending());
+    CHECK(frames > 1);
+    CHECK(fixture.loader.areaMeshed(fixture.world, core::InstanceId{}, core::DVec3{8.0, 4.0, 8.0}, 8.0));
+    CHECK(fixture.loader.areaMeshed(fixture.world, core::InstanceId{}, core::DVec3{8.0, 4.0, 8.0}, 64.0));
+    // And far from all of it, where nothing is wanted.
+    CHECK(fixture.loader.areaMeshed(fixture.world, core::InstanceId{}, core::DVec3{5000.0, 0.0, 5000.0}, 8.0));
+}
+
 TEST_CASE("a brush stamp is drawn in the frame that finds it, built off the main thread or not")
 {
     // The owner's "everything in the terrain editor feels delayed": an edit

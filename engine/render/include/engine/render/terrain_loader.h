@@ -200,6 +200,9 @@ public:
 
     // How many meshes one `sync` may build. A count, never a clock.
     void setBuildsPerSync(core::u32 count) noexcept { m_buildsPerSync = count == 0 ? 1 : count; }
+    // **Everything a finished batch built goes up at once** (ADR 0159): behind
+    // the loading curtain there is no frame of play to keep smooth.
+    void setFastUploads(bool fast) noexcept { m_fastUploads = fast; }
 
     // **Built off the main thread** (terrain audit TA14): every mesh `sync`
     // wants -- a node loading, ground that changed, a node drawn beside new
@@ -230,6 +233,18 @@ public:
     [[nodiscard]] core::u32 lastBuilds() const noexcept { return m_lastBuilds; }
     // Whether the last `sync` left anything it wanted unbuilt.
     [[nodiscard]] bool pending() const noexcept { return m_pending; }
+    // **Whether the ground within `radius` of `centre` is drawn as it will be**
+    // (ADR 0159): every node the last `sync` of `world` wanted there -- of
+    // `terrain`, or of any terrain when it is invalid -- has its mesh built and
+    // put up, for the ground and the level it is to be drawn at -- **and the
+    // loader wants nothing more** (`pending()`). The levels are refined one a
+    // `sync`, and a node put up beside the area changes the levels and seams
+    // of the nodes in it: an area with nothing missing this frame could still
+    // be refined the next, and a loading screen that lifted then showed ground
+    // still sharpening. With no focus nothing is wanted, and the answer is
+    // yes: there is no view to build for.
+    [[nodiscard]] bool areaMeshed(const scene::World& world, core::InstanceId terrain, core::DVec3 centre,
+                                  double radius) const noexcept;
 
     // **How long an edit takes to be seen** (the owner's "everything in the
     // terrain editor feels delayed"): from the `sync` that first finds ground
@@ -330,6 +345,7 @@ private:
     std::unique_ptr<Batch> m_farBatch;
     TerrainLodSettings m_lod;
     core::u32 m_buildsPerSync = 4;
+    bool m_fastUploads = false;
     core::u32 m_lastBuilds = 0;
     bool m_pending = false;
     core::u64 m_frame = 0;
@@ -358,6 +374,16 @@ private:
         core::u8 slot = 0;
     };
     std::vector<Drawn> m_drawn;
+    // **What the last `sync` of each world wanted and could not draw yet**
+    // (ADR 0159): each node's box, in world space -- what `areaMeshed` asks.
+    struct Unmeshed
+    {
+        const scene::World* world = nullptr;
+        core::InstanceId terrain;
+        core::DVec3 low;
+        core::DVec3 high;
+    };
+    std::vector<Unmeshed> m_unmeshed;
     // **The ground as last put up** (TA14), per terrain: the snapshot the last
     // batch was built from. What is drawn is judged against it, not against
     // the ground now -- a batch holds every node its snapshot changed, so all

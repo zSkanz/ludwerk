@@ -245,6 +245,23 @@ public:
     };
     std::vector<AreaWaiter> areaWaiters;
 
+    // **`Terrain:WaitForMeshAsync`** (ADR 0159), parked the same way: whether
+    // the ground is drawn as it will be is the renderer's to know, and the
+    // host answers it at the frame's end. `meshed` is the same question asked
+    // at once, for `Terrain:IsMeshed`; unset, every area is meshed -- a world
+    // with no renderer has nothing to wait for.
+    struct MeshWaiter
+    {
+        core::InstanceId terrain;
+        core::DVec3 position;
+        core::f64 radius = 0.0;
+        // The tick it gives up at, answering false.
+        u64 deadlineTick = 0;
+        int threadRef = -1;
+    };
+    std::vector<MeshWaiter> meshWaiters;
+    std::function<bool(core::InstanceId, core::DVec3, core::f64)> meshed;
+
     // `GraphicsService:SaveAsync` and `LoadAsync` (ADR 0147), parked the same
     // way: the player's file is the host's to write and read, at the end of
     // the frame, and the caller is given whether it did.
@@ -439,6 +456,12 @@ void resumeGraphicsWaiters(lua_State* L, bool load, bool done);
 // region is loaded is a question only the streaming host can answer and this
 // module must not learn what a chunk is.
 void resumeAreaWaiters(lua_State* L, const std::function<bool(core::DVec3, core::f64)>& resident);
+
+// **The host's answer to "is this ground meshed"** (ADR 0159): kept for
+// `Terrain:IsMeshed`, and asked of every `WaitForMeshAsync` parked -- resumed
+// with true when its area is, false once its deadline passes.
+void setTerrainMeshed(lua_State* L, std::function<bool(core::InstanceId, core::DVec3, core::f64)> meshed);
+void resumeMeshWaiters(lua_State* L);
 
 // Enqueues one of `RunService`'s phase signals with its delta in seconds. The
 // scheduler calls this at each resumption point; the fire drains like any other.

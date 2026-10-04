@@ -1106,6 +1106,25 @@ TerrainLodSettings terrainLodFor(const TerrainLodSettings& base, const core::Mat
     return lod;
 }
 
+bool TerrainLoader::areaMeshed(const scene::World& world, core::InstanceId terrain, core::DVec3 centre,
+                               double radius) const noexcept
+{
+    if (m_pending)
+        return false;
+    const double reach = radius > 0.0 ? radius : 0.0;
+    for (const Unmeshed& node : m_unmeshed) {
+        if (node.world != &world || (terrain.valid() && !(node.terrain == terrain)))
+            continue;
+        // The box's nearest point to the centre, within the radius.
+        const double dx = std::max({node.low.x - centre.x, 0.0, centre.x - node.high.x});
+        const double dy = std::max({node.low.y - centre.y, 0.0, centre.y - node.high.y});
+        const double dz = std::max({node.low.z - centre.z, 0.0, centre.z - node.high.z});
+        if (dx * dx + dy * dy + dz * dz <= reach * reach)
+            return false;
+    }
+    return true;
+}
+
 u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::World& world, core::AtomTable& atoms,
                         MeshCache& cache, MeshLibrary& library)
 {
@@ -1116,11 +1135,12 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
     m_pending = false;
     // **A batch built off the main thread, done** (TA14): all of it goes up
     // now, before anything is chosen, so it is drawn this frame.
+    const bool paced = m_async && !m_fastUploads;
     if (m_batch != nullptr && batchFinished(m_batch))
         m_lastBuilds += integrate(device, cmd, cache, library,
-                                  m_async ? (m_batch->edit ? EditUploadsPerSync : UploadsPerSync) : ~usize{0}, m_batch);
+                                  paced ? (m_batch->edit ? EditUploadsPerSync : UploadsPerSync) : ~usize{0}, m_batch);
     if (m_farBatch != nullptr && batchFinished(m_farBatch))
-        m_lastBuilds += integrate(device, cmd, cache, library, m_async ? UploadsPerSync : ~usize{0}, m_farBatch);
+        m_lastBuilds += integrate(device, cmd, cache, library, paced ? UploadsPerSync : ~usize{0}, m_farBatch);
 
     struct Request
     {
@@ -1143,6 +1163,7 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                 before.push_back(drawn);
         }
         std::erase_if(m_drawn, [&](const Drawn& drawn) { return drawn.world == &world; });
+        std::erase_if(m_unmeshed, [&](const Unmeshed& unmeshed) { return unmeshed.world == &world; });
 
         world.terrains().forEach([&](core::InstanceId id, const scene::TerrainComponent& terrain) {
             const asset::TerrainField& field = terrain.field;
@@ -1323,6 +1344,16 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                 }
                 return m_lod.splitFactor * static_cast<f64>(across(key.level)) * chunkMetres;
             };
+            // **Wanted and not drawable yet** (ADR 0159), for `areaMeshed`.
+            const auto unmeshed = [&](TerrainNodeKey key) {
+                const f64 width = static_cast<f64>(across(key.level)) * chunkMetres;
+                const f64 x0 = static_cast<f64>(key.x) * width;
+                const f64 z0 = static_cast<f64>(key.z) * width;
+                const auto [bottom, top] = heightOf(key);
+                m_unmeshed.push_back(Unmeshed{
+                    &world, id, core::DVec3{x0 + terrain.origin.x, bottom + terrain.origin.y, z0 + terrain.origin.z},
+                    core::DVec3{x0 + width + terrain.origin.x, top + terrain.origin.y, z0 + width + terrain.origin.z}});
+            };
             // A node never built, wanted: a load. One built is rebuilt when it
             // is to be drawn with ground or seams it has no mesh for (below) --
             // or when all it has is nothing, built from ground that has since
@@ -1330,6 +1361,8 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
             const auto request = [&](TerrainNodeKey key, f64 distance) {
                 Node& node = nodeFor(key);
                 node.used = m_frame;
+                if (!node.built)
+                    unmeshed(key);
                 if (node.queued)
                     return;
                 if (!node.built) {
@@ -1629,6 +1662,8 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                             requests.push_back(Request{id, key, distanceTo(key), sides, true});
                     }
                     if (slot == 2) {
+                        if (round == 0)
+                            unmeshed(key);
                         unready.push_back(key);
                         continue;
                     }

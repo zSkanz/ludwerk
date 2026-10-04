@@ -26,6 +26,10 @@ offers is on the base's page, which is what keeps one added member on
 
 The `data` the last `LoadScene` passed, decoded afresh, or nil.
 
+### `HoldLoading()`
+
+Keeps the loading curtain up over a scene until `ReleaseLoading` is called as many times. The curtain is the engine's backdrop while a scene arrives -- raised at the first scene and at every `LoadScene` after it, and lifted once the scene's meshes and pictures are in and the ground round the camera is meshed. A scene whose scripts build its world -- a terrain written at load, a map of parts made from code -- holds it until what it builds is there. A `ScreenGui` with `KeepOnSceneLoad`, or the new scene's own, draws over the curtain: the game's loading card. A hold never released is let go after a minute, with a warning in the log (ADR 0159).
+
 ### `IsSubWorld(): boolean`
 
 Whether this world runs inside another game's `SubWorld`.
@@ -41,6 +45,10 @@ Unloads this scene and loads `path` (content-relative). **Returns at once**: the
 Starts preparing the scene at `path` (content-relative) while this one keeps running, and returns at once with a `SceneLoad` to watch (ADR 0125): its `Progress` for a loading bar, `Ready` when it is prepared, `Activate()` to switch. `options.Activate` (true by default) switches as soon as it is ready; false waits for `Activate()` -- a fade, a button. `options.Data` is `LoadScene`'s `data`.
 
 The switch itself is `LoadScene`'s, with the file already parsed and its meshes loaded. One load at a time: a second call cancels the first. A client connected to a match may not call it.
+
+### `ReleaseLoading()`
+
+Lets go of one `HoldLoading`. With none left, the curtain lifts as soon as the scene has arrived. More releases than holds are ignored.
 
 ### `SendToHost(arguments: ...any)`
 

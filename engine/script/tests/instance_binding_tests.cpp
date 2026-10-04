@@ -578,7 +578,9 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // eleven (ADR 0156); and 231 with `RunService`'s `BindToIntent` and
     // `UnbindFromIntent` (G38), its `BindToPredictedStep` and
     // `UnbindFromPredictedStep`, and `BasePart`'s `BindToPredictedTouch` and
-    // `UnbindFromPredictedTouch` (G37).
+    // `UnbindFromPredictedTouch` (G37). 235: `Terrain`'s `IsMeshed` and
+    // `WaitForMeshAsync`, and `SceneService`'s `HoldLoading` and
+    // `ReleaseLoading` (ADR 0159).
     // This number is what makes a
     // DECLARED-but-unbound method impossible to ship: the IDL would count it and the binding table would not, which is
     // `Inert` for a method.
@@ -586,8 +588,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // **It earned its keep at F1.** Five methods were declared in the IDL in one
     // commit and this failed on the next build, before anything could reach a
     // script and find a name that answered nothing.
-    CHECK(coverage.declared == 231);
-    CHECK(coverage.bound == 231);
+    CHECK(coverage.declared == 235);
+    CHECK(coverage.bound == 235);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

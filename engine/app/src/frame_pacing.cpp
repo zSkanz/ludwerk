@@ -98,4 +98,30 @@ void SyncWatch::sample(u64 frameNs, f32 refreshRate) noexcept
         m_fast = 0;
 }
 
+void LoadingCurtain::raise() noexcept
+{
+    m_up = true;
+    m_sinceNs = 0;
+    m_settled = 0;
+}
+
+LoadingCurtain::Lift LoadingCurtain::update(const Frame& frame) noexcept
+{
+    if (!m_up)
+        return Lift::Kept;
+    if (m_sinceNs == 0)
+        m_sinceNs = frame.nowNs;
+    const bool ready = frame.loadersIdle && frame.groundMeshed && frame.holds == 0;
+    m_settled = ready ? m_settled + 1 : 0;
+    if (m_settled >= SettleFrames) {
+        m_up = false;
+        return Lift::Ready;
+    }
+    if (frame.nowNs - m_sinceNs > (frame.holds > 0 ? HeldTimeoutNs : TimeoutNs)) {
+        m_up = false;
+        return Lift::TimedOut;
+    }
+    return Lift::Kept;
+}
+
 } // namespace engine::app

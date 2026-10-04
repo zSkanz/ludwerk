@@ -1896,6 +1896,12 @@ void WorldHost::publishStats(const script::FrameStats& stats)
     script::publishFrameStats(m_runtime->state(), stats);
 }
 
+void WorldHost::publishTerrainMeshed(std::function<bool(core::InstanceId, core::DVec3, f64)> meshed)
+{
+    script::setTerrainMeshed(m_runtime->state(), std::move(meshed));
+    script::resumeMeshWaiters(m_runtime->state());
+}
+
 void WorldHost::publishStreamingResults(const std::vector<core::InstanceId>& streamedOut,
                                         const std::function<bool(core::DVec3, f64)>& areaResident)
 {

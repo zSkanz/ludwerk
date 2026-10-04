@@ -611,6 +611,72 @@ int streamingLoadAreaAsync(lua_State* L)
     return lua_yield(L, 0);
 }
 
+// --- Terrain: is it drawn as it will be (ADR 0159) ---------------------------
+
+[[nodiscard]] bool meshedNow(lua_State* L, core::InstanceId terrain, core::DVec3 position, f64 radius)
+{
+    const ServiceState& state = services(L);
+    return !state.meshed || state.meshed(terrain, position, radius);
+}
+
+int terrainIsMeshed(lua_State* L)
+{
+    const core::InstanceId terrain = checkInstance(L, 1);
+    const core::Vec3 position = checkVector3(L, 2);
+    const f64 radius = luaL_checknumber(L, 3);
+    if (!(radius > 0.0))
+        raise(L, ENG_TR("scene.err.number_positive"));
+    lua_pushboolean(L, meshedNow(L, terrain, core::toDVec3(position), radius) ? 1 : 0);
+    return 1;
+}
+
+int terrainWaitForMeshAsync(lua_State* L)
+{
+    const core::InstanceId terrain = checkInstance(L, 1);
+    const core::Vec3 position = checkVector3(L, 2);
+    const f64 radius = luaL_checknumber(L, 3);
+    if (!(radius > 0.0))
+        raise(L, ENG_TR("scene.err.number_positive"));
+    // Thirty seconds unless it says: a wait that never ends is worse than one
+    // that answers no.
+    const f64 timeout = luaL_optnumber(L, 4, 30.0);
+    if (!(timeout >= 0.0))
+        raise(L, ENG_TR("scene.err.number_positive"));
+    requireYieldable(L, "WaitForMeshAsync");
+    const scene::EngineState& engine = world(L).engineState();
+    ServiceState::MeshWaiter waiter;
+    waiter.terrain = terrain;
+    waiter.position = core::toDVec3(position);
+    waiter.radius = radius;
+    const f64 step = engine.fixedTimestep > 0.0 ? engine.fixedTimestep : 1.0 / 60.0;
+    waiter.deadlineTick = engine.tick + static_cast<u64>(std::ceil(timeout / step));
+    lua_pushthread(L);
+    waiter.threadRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+    // Parked even when the ground is meshed already, as `LoadAreaAsync` is:
+    // answered at the end of this frame, never inside the call.
+    services(L).meshWaiters.push_back(waiter);
+    return lua_yield(L, 0);
+}
+
+// --- SceneService: the loading curtain (ADR 0159) ------------------------------
+
+int sceneServiceHoldLoading(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    world(L).engineState().loadingHolds += 1;
+    return 0;
+}
+
+int sceneServiceReleaseLoading(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    scene::EngineState& engine = world(L).engineState();
+    if (engine.loadingHolds > 0)
+        engine.loadingHolds -= 1;
+    return 0;
+}
+
 // --- Registration ------------------------------------------------------------
 
 // --- HotReloadService --------------------------------------------------------
@@ -2545,6 +2611,10 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"StreamingService", "AddFocus", streamingAddFocus},
     {"StreamingService", "RemoveFocus", streamingRemoveFocus},
     {"StreamingService", "LoadAreaAsync", streamingLoadAreaAsync},
+    {"Terrain", "IsMeshed", terrainIsMeshed},
+    {"Terrain", "WaitForMeshAsync", terrainWaitForMeshAsync},
+    {"SceneService", "HoldLoading", sceneServiceHoldLoading},
+    {"SceneService", "ReleaseLoading", sceneServiceReleaseLoading},
 
     {"NetworkService", "Join", networkServiceJoin},
     {"NetworkService", "Host", networkServiceHost},
@@ -2974,6 +3044,42 @@ void resumeGraphicsWaiters(lua_State* L, bool load, bool done)
         lua_State* co = lua_tothread(L, -1);
         if (co != nullptr) {
             lua_pushboolean(co, done ? 1 : 0);
+            (void)resumeScheduled(L, co, 1);
+        }
+        lua_pop(L, 1);
+        (void)lua_unref(L, waiter.threadRef);
+    }
+}
+
+void setTerrainMeshed(lua_State* L, std::function<bool(core::InstanceId, core::DVec3, f64)> meshed)
+{
+    services(L).meshed = std::move(meshed);
+}
+
+void resumeMeshWaiters(lua_State* L)
+{
+    ServiceState& state = services(L);
+    if (state.meshWaiters.empty())
+        return;
+    const u64 tick = world(L).engineState().tick;
+    // Collected first, for the reason `resumeAreaWaiters` gives.
+    std::vector<std::pair<ServiceState::MeshWaiter, bool>> ready;
+    for (usize index = 0; index < state.meshWaiters.size();) {
+        const ServiceState::MeshWaiter& waiter = state.meshWaiters[index];
+        const bool meshed =
+            world(L).alive(waiter.terrain) && meshedNow(L, waiter.terrain, waiter.position, waiter.radius);
+        if (!meshed && tick < waiter.deadlineTick && world(L).alive(waiter.terrain)) {
+            ++index;
+            continue;
+        }
+        ready.emplace_back(waiter, meshed);
+        state.meshWaiters.erase(state.meshWaiters.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+    for (const auto& [waiter, meshed] : ready) {
+        lua_getref(L, waiter.threadRef);
+        lua_State* co = lua_tothread(L, -1);
+        if (co != nullptr) {
+            lua_pushboolean(co, meshed ? 1 : 0);
             (void)resumeScheduled(L, co, 1);
         }
         lua_pop(L, 1);

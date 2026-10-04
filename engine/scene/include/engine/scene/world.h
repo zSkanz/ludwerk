@@ -407,6 +407,11 @@ struct EngineState
     // the same scene again included, so a replica can tell the next match in
     // the same scene from the scene it joined.
     u32 sceneLoads = 0;
+    // **How many holds the scripts have on the loading curtain** (ADR 0159):
+    // `SceneService:HoldLoading` raises it, `ReleaseLoading` lowers it, and
+    // the host lifts the curtain over a new scene only at none -- or when it
+    // has waited long enough, and then sets it back to none and says so.
+    u32 loadingHolds = 0;
 
     // **Stamp copies whose `Construct` is to run** (ADR 0155 §8): queued as a
     // copy is built, and run by the script runtime before any script sees it

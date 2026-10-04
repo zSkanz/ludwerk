@@ -121,6 +121,9 @@ namespace engine::app {
 
 // How many ticks a headless server runs back to back to catch up a long frame.
 constexpr core::u32 ServerCatchUpTicks = 30;
+// How far round the camera the ground is meshed before a scene is shown
+// (ADR 0159): as far as a player sees clearly from where they stand.
+constexpr f64 CurtainGroundMetres = 96.0;
 
 namespace {
 
@@ -2154,13 +2157,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // pictures of its first scene come in a few a frame, and until they had a
     // game started on an empty sky, its ground and buildings appearing over it.
     // The curtain is the backdrop -- the game's own interface still draws over
-    // it, so its loading screen is what a player sees -- and it lifts when the
-    // loaders have had nothing left to do for three frames, or after ten
-    // seconds whatever they say. Not the editor's: a person editing a world
-    // wants to see it arrive.
-    bool curtainUp = !options.headless && !options.editor;
-    core::u64 curtainSinceNs = 0;
-    core::u32 curtainSettled = 0;
+    // it, so its loading screen is what a player sees (`LoadingCurtain`).
+    // **Raised again for every scene after** (ADR 0159), and lifted only once
+    // the ground round the camera is meshed and no script holds it. Not the
+    // editor's: a person editing a world wants to see it arrive.
+    const bool curtains = !options.headless && !options.editor;
+    LoadingCurtain curtain;
+    if (curtains)
+        curtain.raise();
+    std::optional<core::u32> curtainScene;
     // **A server catches up rather than dropping time** (NA3): a frame of its
     // over four ticks long -- a garbage collection, a large join -- dropped the
     // rest, and every client's input queue was left that much deeper, silently,
@@ -4833,6 +4838,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         host->publishStreamingResults(streamedOut, [&streaming, &fields](core::DVec3 position, f64 radius) {
             return streaming.areaResident(position, radius) && fields.areaResident(position, radius);
         });
+        // **And whether the ground is drawn as it will be** (ADR 0159), as
+        // the last frame's terrain `sync` left it.
+        host->publishTerrainMeshed([&terrainLoader, &host](core::InstanceId terrain, core::DVec3 at, f64 radius) {
+            return terrainLoader.areaMeshed(host->world(), terrain, at, radius);
+        });
 
         ENG_PROFILE_NEXT(stretch, "frame.reload");
         // **The editor's own reload** (ADR 0057), which `ludwerk edit` has never
@@ -6426,13 +6436,36 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // camera nobody assigned -- the M1 debug path still draws, which is
             // what keeps every earlier example and the capture golden working.
             const bool useRenderer = renderer != nullptr && renderer->valid() && snapshot.camera.valid;
-            if (curtainUp) {
-                if (curtainSinceNs == 0)
-                    curtainSinceNs = nowNs;
-                curtainSettled =
-                    meshLoader.meshesWaiting() == 0 && meshLoader.texturesInFlight() == 0 ? curtainSettled + 1 : 0;
-                if (curtainSettled >= 3 || nowNs - curtainSinceNs > 10'000'000'000ull)
-                    curtainUp = false;
+            if (curtains) {
+                scene::EngineState& engineNow = host->world().engineState();
+                if (curtainScene.has_value() && *curtainScene != engineNow.sceneLoads)
+                    curtain.raise();
+                curtainScene = engineNow.sceneLoads;
+                if (curtain.up()) {
+                    const bool ground =
+                        !snapshot.camera.valid || terrainLoader.areaMeshed(host->world(), core::InstanceId{},
+                                                                           snapshot.camera.origin, CurtainGroundMetres);
+                    const LoadingCurtain::Lift lift = curtain.update({
+                        .nowNs = nowNs,
+                        .loadersIdle = meshLoader.meshesWaiting() == 0 && meshLoader.texturesInFlight() == 0,
+                        .groundMeshed = ground,
+                        .holds = engineNow.loadingHolds,
+                    });
+                    // **Given up on, and said** (ADR 0159): a hold never
+                    // released, or ground that never came, is the game's to
+                    // know about.
+                    if (lift == LoadingCurtain::Lift::TimedOut) {
+                        const std::array<core::I18nArg, 2> args{
+                            core::I18nArg{"holds", static_cast<core::i64>(engineNow.loadingHolds)},
+                            core::I18nArg{"ground", std::string_view{ground ? "yes" : "no"}}};
+                        core::log(LogLevel::Warn, ENG_TR("engine.warn.loading_timed_out"), args);
+                        engineNow.loadingHolds = 0;
+                    }
+                }
+                // **Behind the curtain the ground is built flat out**: there is
+                // no frame of play to keep smooth.
+                terrainLoader.setBuildsPerSync(curtain.up() || options.screenshotEvery != 0 ? 256u : 4u);
+                terrainLoader.setFastUploads(curtain.up());
             }
 #if ENG_DEBUG_UI
             // **A screenshot is of the world as it will look** (ADR 0091): the
@@ -6651,14 +6684,14 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 }
             }
 
-            if (useRenderer && curtainUp) {
-                const std::array<rhi::ColorAttachment, 1> curtain{rhi::ColorAttachment{
+            if (useRenderer && curtain.up()) {
+                const std::array<rhi::ColorAttachment, 1> backdrop{rhi::ColorAttachment{
                     .texture = target,
                     .loadOp = rhi::LoadOp::Clear,
                     .storeOp = rhi::StoreOp::Store,
                     .clearColor = {0.0f, 0.0f, 0.0f, 1.0f},
                 }};
-                cmd->beginRenderPass({.colorAttachments = curtain, .debugName = "curtain"});
+                cmd->beginRenderPass({.colorAttachments = backdrop, .debugName = "curtain"});
                 cmd->endRenderPass();
             }
             else if (useRenderer) {

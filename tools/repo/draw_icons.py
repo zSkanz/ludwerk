@@ -334,8 +334,10 @@ def editor_icon(group, name):
     elif name == "ThemeDark":
         i.arc(12,12,9,60,300).arc(16.5,12,7.794,270,90)
     elif name == "Snap":
-        i.line((4,3),(4,14)).arc(12,14,8,0,180).line((20,14),(20,3))
-        i.line((2,3),(6,3)).line((18,3),(22,3)).line((4,8),(7,8)).line((17,8),(20,8))
+        # A sparse grid and a diagonal arrow landing exactly on a grid point.
+        for x,y in ((4,5),(4,12),(4,19),(11,19),(18,19)):
+            i.circle(x,y,1.25,True)
+        i.line((21,2),(11,12)).line((11,6),(11,12),(17,12))
     elif name == "GenerateTerrain":
         i.line((2,21),(8,8),(14,21),(2,21),closed=True).line((12,17),(16,11),(22,21),(14,21))
         i.line((16,3),(22,3)).line((19,1),(19,6))
@@ -511,8 +513,9 @@ def draw_icon(group, name):
             if name == "Redo":
                 return mirror(i)
         elif name == "Rotate":
-            i.arc(12,12,8,45,315).line((13,6.34),(17.66,6.34),(17.66,2))
-            i.circle(12,12,1.5,True)
+            # One continuous turn around the object; arrowhead follows the tangent.
+            i.arc(12,12,8,0,270).line((8,1),(12,4),(8,7))
+            i.line((12,8.5),(15.5,12),(12,15.5),(8.5,12),closed=True)
         elif name == "Refresh":
             # Two open arcs with arrowheads attached to their endpoints.
             i.arc(12,12,8,195,330).line((14,8),(19,8),(19,3))
@@ -1067,6 +1070,21 @@ def preview(theme, images):
                 sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
             d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
     sheet.save(ART / "swarm-review.png")
+    additions = ("action.Snap", "action.Rotate", "action.Move", "action.Scale")
+    sheet = Image.new("RGB",(1040,240))
+    d = ImageDraw.Draw(sheet)
+    for row,(mode,bg) in enumerate((("dark","#1F1F1F"),("light","#FFFFFF"))):
+        d.rectangle((0,row*120,1040,(row+1)*120),fill=bg)
+        fg = "#CCCCCC" if mode == "dark" else "#3B3B3B"
+        d.text((20,row*120+8),"ORBIT / Snap and rotation / 32, 24, 16, 13 px",font=font,fill=fg)
+        for n,icon_id in enumerate(additions):
+            x,y = 20+n*260,row*120+35
+            color = theme["palette"][theme["roles"].get(icon_id,theme["defaultRole"])][mode]
+            for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size),Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
+    sheet.save(ART / "snap-rotation-review.png")
     cards=[]
     for path in images:
         cards.append(f'<figure><div><img src="{path.replace(".png", ".svg")}" width="48"><img src="{path.replace(".png", ".svg")}" width="24"><img src="{path.replace(".png", ".svg")}" width="16"></div><figcaption>{html.escape(path[:-4])}</figcaption></figure>')

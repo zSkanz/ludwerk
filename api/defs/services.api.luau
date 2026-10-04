@@ -1381,6 +1381,28 @@ local Classes: { Schema.Class } = {
                 ThreadSafety = "ReadParallel",
                 Doc = "Whether this world runs inside another game's `SubWorld`.",
             },
+            {
+                Name = "HoldLoading",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Keeps the loading curtain up over a scene until `ReleaseLoading` is called as many "
+                    .. "times. The curtain is the engine's backdrop while a scene arrives -- raised at the "
+                    .. "first scene and at every `LoadScene` after it, and lifted once the scene's meshes "
+                    .. "and pictures are in and the ground round the camera is meshed. A scene whose "
+                    .. "scripts build its world -- a terrain written at load, a map of parts made from code "
+                    .. "-- holds it until what it builds is there. A `ScreenGui` with `KeepOnSceneLoad`, or "
+                    .. "the new scene's own, draws over the curtain: the game's loading card. A hold never "
+                    .. "released is let go after a minute, with a warning in the log (ADR 0159).",
+            },
+            {
+                Name = "ReleaseLoading",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Lets go of one `HoldLoading`. With none left, the curtain lifts as soon as the scene "
+                    .. "has arrived. More releases than holds are ignored.",
+            },
         } :: { Schema.Method },
         Events = {
             {
