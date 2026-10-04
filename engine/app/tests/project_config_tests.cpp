@@ -468,6 +468,33 @@ TEST_CASE("a project asks for a line about its frames every few seconds")
     CHECK(app::loadProjectConfig(reporting.path, app::GraphicsOverrides{}).frameReportSeconds == 10.0);
 }
 
+TEST_CASE("a project asks for the measuring keys, and has none unless it does (ADR 0171)")
+{
+    const ProjectDir silent("[project]\nname = \"Silent\"\n");
+    const app::ProjectConfig none = app::loadProjectConfig(silent.path, app::GraphicsOverrides{});
+    CHECK_FALSE(none.gpuPassTimes);
+    CHECK(none.debugHide.empty());
+    CHECK(none.shadowTaps == 0);
+    CHECK_FALSE(none.logUiTouches);
+
+    const ProjectDir measuring("[debug]\ngpu_pass_times = true\nhide = \"foliage, terrain\"\n"
+                               "shadow_taps = 4\nlog_ui_touches = true\n");
+    const app::ProjectConfig asked = app::loadProjectConfig(measuring.path, app::GraphicsOverrides{});
+    CHECK(asked.gpuPassTimes);
+    CHECK(asked.debugHide == "foliage, terrain");
+    CHECK(asked.shadowTaps == 4);
+    CHECK(asked.logUiTouches);
+
+    // The taps are an instrument: the settings a player changes keep them.
+    engine::render::GraphicsSettings instruments;
+    instruments.shadowTaps = 4;
+    CHECK(app::graphicsSettingsOf(asked.graphicsModel, false, &instruments).shadowTaps == 4);
+    CHECK(app::graphicsSettingsOf(asked.graphicsModel, false, nullptr).shadowTaps == 0);
+    // Sixteen is the filter as it ships, which zero says.
+    instruments.shadowTaps = 16;
+    CHECK(engine::render::clampSettings(instruments).shadowTaps == 0);
+}
+
 TEST_CASE("D445: only the packaged game, run as a game, keeps its saves in the player's folder")
 {
     // `engine-host <project>` by hand wrote into `%APPDATA%/<company>/<name>`

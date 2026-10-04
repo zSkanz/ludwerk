@@ -173,6 +173,9 @@ GraphicsSettings clampSettings(GraphicsSettings settings) noexcept
     settings.shadowCascades = std::min(settings.shadowCascades, kShadowCascadeCount);
     settings.shadowDistance = std::clamp(settings.shadowDistance, 10.0f, 1000.0f);
     settings.lightBudget = std::min(settings.lightBudget, kMaxClusteredLights);
+    // Sixteen and more is the filter as it ships, which zero says.
+    if (settings.shadowTaps >= 16)
+        settings.shadowTaps = 0;
     return settings;
 }
 

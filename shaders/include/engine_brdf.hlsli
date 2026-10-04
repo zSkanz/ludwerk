@@ -454,6 +454,29 @@ float sampleCascade(Texture2D<float> atlas, SamplerState pointSampler, uint casc
     const float2 centre = tile + local * 0.5f;
 
     const float angle = shadowKernelAngle(pixel);
+
+    // **A measurement asked for fewer taps** (ADR 0171, `[debug] shadow_taps`):
+    // the same disc with fewer points on it, in a loop the driver cannot
+    // unroll. Kept apart from the sixteen below so that the filter as it ships
+    // is the code it was, to the bit.
+    const int asked = int(EnvironmentParams.w);
+    if (asked > 0 && asked < 16)
+    {
+        float few = 0.0f;
+        [loop]
+        for (int j = 0; j < asked; ++j)
+        {
+            const float r = sqrt((float(j) + 0.5f) / float(asked));
+            const float theta = float(j) * 2.39996323f + angle;
+            float s = 0.0f;
+            float c = 0.0f;
+            sincos(theta, s, c);
+            const float2 uv = clamp(centre + float2(c, s) * r * radiusUv, lowest, highest);
+            few += shadowTapPcf(atlas, pointSampler, uv, reference, atlasSize);
+        }
+        return few / float(asked);
+    }
+
     float lit = 0.0f;
     [unroll]
     for (int i = 0; i < 16; ++i)

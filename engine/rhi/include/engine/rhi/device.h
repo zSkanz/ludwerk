@@ -158,6 +158,18 @@ public:
     virtual void popDebugGroup() = 0;
 };
 
+// **What one pass took of the GPU, in the last frame submitted** (ADR 0171).
+// `name` is the debug group the pass was recorded in, and the pass's own name
+// after a slash where the two differ ("forward/decals"); `submits` is how many
+// times the frame was stopped to time it, each of which costs what the entry
+// named "floor" took: a stop whose pass clears one pixel.
+struct PassTime
+{
+    std::string_view name{};
+    f64 milliseconds = 0.0;
+    u32 submits = 0;
+};
+
 class IDevice
 {
 public:
@@ -234,6 +246,19 @@ public:
     // The same for a buffer: `out.size()` bytes from `offsetBytes`. Blocking
     // and for tests and tools -- what a compute pass wrote, checked by value.
     [[nodiscard]] virtual bool readBuffer(BufferHandle buffer, u32 offsetBytes, std::span<std::byte> out) = 0;
+
+    // **A frame timed pass by pass** (ADR 0171). The backend has no timer on
+    // the GPU to read, so a timed frame is recorded as one command buffer per
+    // pass and each is waited for: the GPU is idle when a pass starts and the
+    // wait is what the pass took. It is a measuring mode -- the frame rate under
+    // it is not the game's -- and it takes effect at the next `beginFrame`.
+    // Passes drawn to a window's own texture cannot leave the frame's buffer,
+    // so they are timed together, as one entry named after all of them.
+    // Nothing on a backend that draws nothing.
+    virtual void setPassTiming(bool on) { (void)on; }
+    // The last frame's, in the order the passes ran; empty when timing is off.
+    // Valid until the next `submitAndPresent`.
+    [[nodiscard]] virtual std::span<const PassTime> passTimes() const noexcept { return {}; }
 
     // **Whether the device is gone**: the driver reset it, most often because
     // a shader ran past the time the operating system allows one. Once true

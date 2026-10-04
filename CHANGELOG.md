@@ -209,6 +209,20 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **The GPU's time, pass by pass** (ADR 0171). `[debug] gpu_pass_times = true`
+  in `project.toml`, or `--gpu-pass-times`, adds a line under the frame
+  report: what each pass of the renderer took of the GPU, a frame's mean, the
+  costliest first. For a phone, which has no profiler attached. It is a
+  measuring mode -- the frame is stopped after every pass, so its frame rate
+  is not the game's; the picture is unchanged.
+- **Keys that take things out of a frame, to see what they cost** (ADR 0171):
+  `[debug] hide = "foliage,terrain"` (also `parts`, `skinned`, `voxels`,
+  `transparent`, `particles`, `ribbons`, `decals`, `sprites`, `world_ui`,
+  `ui`, `lights`, `highlights`), `[debug] shadow_taps = 4`, and their flags
+  `--hide=` and `--shadow-taps=`. Every frame report says which are in force.
+- **`[debug] log_ui_touches = true`** (ADR 0171): a log line for each finger
+  that comes down, naming the element of the interface that took it and its
+  rectangle, or saying the finger is the game's.
 - **A phone's back button is `Enum.KeyCode.Escape`** (ADR 0170). On Android
   the back button and gesture closed the game; they are now delivered to it,
   as the key a desktop game already answers. A game leaves with

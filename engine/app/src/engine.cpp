@@ -43,6 +43,7 @@
 #include "engine/app/brush_overlay.h"
 #include "engine/app/chunk_overlay.h"
 #include "engine/app/content_import.h"
+#include "engine/app/debug_measure.h"
 #include "engine/app/debug_overlay.h"
 #include "engine/app/dev_control.h"
 #include "engine/app/editor.h"
@@ -1353,6 +1354,44 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         const std::array<I18nArg, 2> adapterArgs{I18nArg{"adapter", adapter}, I18nArg{"driver", device->driverName()}};
         core::log(LogLevel::Info, ENG_TR("engine.info.graphics_adapter"), adapterArgs);
     }
+    // **The measuring keys** (ADR 0171): the GPU's time by pass, what is not
+    // drawn, and -- said once here and with every report -- which are in force.
+    device->setPassTiming(options.gpuPassTimes);
+    std::vector<std::string> unknownHidden;
+    const DebugHide debugHide = parseDebugHide(options.debugHide, &unknownHidden);
+    for (const std::string& name : unknownHidden) {
+        std::string known;
+        for (const std::string_view each : debugHideNames())
+            known += (known.empty() ? "" : ", ") + std::string(each);
+        const std::array<I18nArg, 2> hideArgs{I18nArg{"name", name}, I18nArg{"known", known}};
+        core::log(LogLevel::Warn, ENG_TR("engine.debug.warn.unknown_hide"), hideArgs);
+    }
+    const std::string debugKeys =
+        debugKeysInForce(options.gpuPassTimes, debugHide, options.graphics.shadowTaps, options.logUiTouches);
+    if (!debugKeys.empty()) {
+        const std::array<I18nArg, 1> keyArgs{I18nArg{"keys", debugKeys}};
+        core::log(LogLevel::Info, ENG_TR("engine.debug.info.keys"), keyArgs);
+    }
+    // The passes' times since the last report line, and over the run.
+    PassTimeLedger reportPasses;
+    PassTimeLedger runPasses;
+    const auto notePassTimes = [&] {
+        if (!options.gpuPassTimes)
+            return;
+        reportPasses.add(device->passTimes());
+        runPasses.add(device->passTimes());
+    };
+    const auto sayPassTimes = [](const PassTimeLedger& ledger) {
+        const PassTimeLedger::Line line = ledger.line();
+        const std::array<I18nArg, 5> passArgs{
+            I18nArg{"frames", static_cast<core::i64>(ledger.frames())},
+            I18nArg{"passes", line.passes},
+            I18nArg{"total", std::round(line.total * 100.0) / 100.0},
+            I18nArg{"submits", std::round(line.submits * 10.0) / 10.0},
+            I18nArg{"floor", std::round(line.floor * 1000.0) / 1000.0},
+        };
+        core::log(LogLevel::Info, ENG_TR("engine.frame.info.gpu_passes"), passArgs);
+    };
 
     if (!options.headless) {
         const std::array<I18nArg, 1> titleArgs{I18nArg{"version", ENG_VERSION_STRING}};
@@ -2891,6 +2930,16 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     I18nArg{"quality", render::qualityName(quality)},
                 };
                 core::log(LogLevel::Info, ENG_TR("engine.frame.info.report"), report);
+                if (reportPasses.frames() != 0) {
+                    sayPassTimes(reportPasses);
+                    reportPasses.clear();
+                }
+                // What the numbers above are numbers OF: a report read without
+                // it would be compared with one that hid something else.
+                if (!debugKeys.empty()) {
+                    const std::array<I18nArg, 1> keyArgs{I18nArg{"keys", debugKeys}};
+                    core::log(LogLevel::Info, ENG_TR("engine.debug.info.keys"), keyArgs);
+                }
                 reportFrameMs.clear();
                 reportStartNs = reportNs;
             }
@@ -5650,9 +5699,19 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // the rectangles the last frame laid out, because the tick
                 // that reports the finger runs before this frame's layout --
                 // and a finger, unlike a mouse, was nowhere the frame before.
-                if (event.type == platform::EventType::FingerDown &&
-                    ui::hitTest(host->world(), host->uiService(), core::Vec2{event.pointerX, event.pointerY}).valid())
-                    host->input().setFingerTakenByUi(event.fingerId);
+                if (event.type == platform::EventType::FingerDown) {
+                    const core::InstanceId under =
+                        ui::hitTest(host->world(), host->uiService(), core::Vec2{event.pointerX, event.pointerY});
+                    if (under.valid())
+                        host->input().setFingerTakenByUi(event.fingerId);
+                    // `[debug] log_ui_touches` (ADR 0171): which element took
+                    // the finger, by its whole name and its rectangle -- on a
+                    // phone, where "the stick stopped answering" is otherwise
+                    // a guess at what lies under the thumb.
+                    if (options.logUiTouches)
+                        logUiTouch(host->world(), under, static_cast<core::i64>(event.fingerId),
+                                   core::Vec2{event.pointerX, event.pointerY});
+                }
                 switch (event.type) {
                 case platform::EventType::TextEditing:
                     uiComposition = event.text;
@@ -5722,7 +5781,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // each shown with it (ADR 0165).
         const auto drawInterface = [&](rhi::ICmdList& list, rhi::TextureHandle onto, core::Vec2 viewport,
                                        bool groupPictures) {
-            if (!uiRenderer.valid() || uiVertices.empty() || !onto.valid())
+            if (!uiRenderer.valid() || uiVertices.empty() || !onto.valid() || debugHide.ui)
                 return;
             // The groups' pictures first, each in a pass of its own -- once a
             // frame, whichever picture of it is shown first.
@@ -5808,6 +5867,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     drawInterface(*early, screen.texture, madeFrames.waitingViewport, false);
                 }
                 device->submitAndPresent();
+                notePassTimes();
             }
             madeFrames.waiting = {};
         }
@@ -6453,6 +6513,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                              worldUiDrawList, snapshot, &uiGradients, &framePoses);
             });
 
+            // `[debug] hide` (ADR 0171): out of the frame before anything
+            // counts it or draws it.
+            applyDebugHide(snapshot, debugHide);
+
             ENG_PROFILE_NEXT(drawing, "draw.submit");
             frameVisibleObjects = 0;
             frameTriangles = 0;
@@ -6903,6 +6967,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         viewSnapshot.look.depthOfField = false;
                         viewSnapshot.look.sunRays = false;
                     }
+                    applyDebugHide(viewSnapshot, debugHide);
                     renderer->render(*device, *cmd,
                                      {.color = view->texture,
                                       .colorFormat = ViewFormat,
@@ -7015,6 +7080,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     drawInterface(*cmd, present, uiViewport, true);
                     groupPictures = false;
                     device->submitAndPresent();
+                    notePassTimes();
                     ++madeFrames.made;
                     if (auto shotError = pictureEvery(frame.index + madeFrames.made); shotError.has_value())
                         return shotError;
@@ -7118,6 +7184,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             ENG_PROFILE_SCOPE("wait.present");
             device->submitAndPresent();
         }
+        notePassTimes();
         phaseWaitMs += msSince(presentNs);
 
         // When the made frame was sent, and how long a frame is: what the
@@ -7340,6 +7407,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         const std::array<I18nArg, 1> made{I18nArg{"made", static_cast<core::i64>(madeFrames.made)}};
         core::log(LogLevel::Info, ENG_TR("engine.frame.info.made"), made);
     }
+    // The GPU's time by pass over the whole run (ADR 0171), where it was asked.
+    if (runPasses.frames() != 0)
+        sayPassTimes(runPasses);
 
     if (options.frameStats && !frameTimesMs.empty()) {
         // The first frames are warm-up -- shader creation, the first mesh load,

@@ -8039,6 +8039,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         frame.environmentParams[0] = static_cast<f32>(kEnvironmentMipCount);
         frame.environmentParams[1] = 1.0f;
         frame.environmentParams[2] = 1.0f;
+        // `[debug] shadow_taps` (ADR 0171); zero, and the bytes unchanged,
+        // unless a measurement asked.
+        frame.environmentParams[3] = static_cast<f32>(settings_.shadowTaps);
         // `Lighting.EnvironmentDiffuseScale` (ADR 0096) on the nine
         // coefficients -- linear in them, so the sky's diffuse light scales
         // with no shader knowing. One is one, and the bytes are unchanged.

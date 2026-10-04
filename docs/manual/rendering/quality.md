@@ -292,6 +292,10 @@ apply, because they were typed by the same person as the preset.
 --shadow-distance=F
 --light-budget=N
 --frame-report=SECONDS
+--gpu-pass-times
+--hide=LIST
+--shadow-taps=N
+--log-ui-touches
 --bloom            / --no-bloom
 --ambient-occlusion / --no-ambient-occlusion
 --anti-aliasing    / --no-anti-aliasing
@@ -310,6 +314,67 @@ median, 95th-percentile and worst frame, the draws and triangles, and the
 resolution and level the world was rendered at. It is how a phone, which has
 no profiler attached, says what it did in its first ten seconds and in its
 seventh.
+
+### Measuring a frame
+
+A phone takes no command line, so each of these is also a key of `[debug]` in
+the project's file. None is a setting of the game: they are off unless asked
+for, and every frame report ends with a line naming the ones in force.
+
+```toml
+[debug]
+frame_report_seconds = 10
+gpu_pass_times = true
+hide = "foliage,world_ui"
+shadow_taps = 4
+log_ui_touches = true
+```
+
+**`gpu_pass_times`** (`--gpu-pass-times`) adds a line under the frame report:
+what each pass of the renderer took of the GPU, a frame's mean in
+milliseconds, the costliest first.
+
+```text
+GPU milliseconds by pass, the mean of 412 frames ...: forward 6.21, shadow 3.02,
+depth-prepass 1.10, bloom/bloom-down 0.61, fxaa+ui 0.52, upload 0.31. In all
+11.77 ms, in 14 stops a frame; a stop whose pass clears one pixel takes 0.09 ms ...
+```
+
+A pass is named by the group it is drawn in, and by its own name after a
+slash where the two differ. Everything drawn to the window itself is one
+entry, named after all of it (`fxaa+ui`); hide `ui` to tell the two apart.
+
+The engine has no timer on the GPU to read, so a timed frame is stopped after
+every pass and the wait is the measure. Three things follow:
+
+- **The frame rate of a timed run is not the game's.** Read the frame rate
+  from a run without the key.
+- Every pass carries what a stop costs, which the line says: a pass that
+  reads near that floor cost nearly nothing.
+- On a phone the GPU may slow its clock while it waits. Compare the passes
+  with each other, and their sum with the median of an untimed run, rather
+  than reading them as absolutes.
+
+The picture is the one an untimed frame draws.
+
+**`hide`** (`--hide=LIST`) is a list of what is not drawn, separated by
+commas: `parts` (meshes that are none of the others), `skinned`, `terrain`,
+`voxels`, `foliage`, `transparent`, `particles`, `ribbons`, `decals`,
+`sprites`, `world_ui`, `ui`, `lights` (every light but the sun) and
+`highlights`. The simulation goes on -- a hidden enemy still walks -- so the
+difference in the frame's time is what drawing the thing cost.
+
+**`shadow_taps`** (`--shadow-taps=N`) is how many taps the sun's shadow filter
+takes at a pixel, 1 to 15; it ships with sixteen.
+
+**`log_ui_touches`** (`--log-ui-touches`) writes a line for each finger that
+comes down: the whole name and rectangle of the element of the interface that
+took it, or that none did and the finger is the game's.
+
+What `[graphics]` already sets needs no key here: `shadow_cascades = 0`,
+`contact_shadows`, `ambient_occlusion`, `bloom`, `anti_aliasing`, `upscaling`,
+`foliage_density` and `render_resolution_cap` each take a cost out of the
+frame the same way.
 
 ## Clamping
 

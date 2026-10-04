@@ -476,6 +476,7 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
         if (!instruments->instancing)
             carried.instancing = false;
         applyOverrides(carried, settings);
+        settings.shadowTaps = instruments->shadowTaps;
     }
     return render::clampSettings(settings);
 }
@@ -586,6 +587,13 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     if (const std::optional<f64> value = document.number("debug.frame_report_seconds");
         value.has_value() && *value >= 0.0 && *value <= 3600.0)
         config.frameReportSeconds = *value;
+    if (const std::optional<bool> value = document.boolean("debug.gpu_pass_times"))
+        config.gpuPassTimes = *value;
+    if (const std::optional<std::string_view> value = document.string("debug.hide"))
+        config.debugHide = std::string(*value);
+    count("debug.shadow_taps", 0, 16, config.shadowTaps);
+    if (const std::optional<bool> value = document.boolean("debug.log_ui_touches"))
+        config.logUiTouches = *value;
     if (const std::optional<std::string_view> value = document.string("debug.overlay_key"))
         config.overlayKey = std::string(*value);
     if (const std::optional<f64> value = document.number("scene.close_grace_seconds");

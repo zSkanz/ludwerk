@@ -42,6 +42,7 @@ engine_add_module(app
         src/terrain_import.cpp
         src/world_ui.cpp
         src/scene_definitions.cpp
+        src/debug_measure.cpp
         src/debug_overlay.cpp
         src/inspector.cpp
         src/launcher.cpp
@@ -343,6 +344,7 @@ engine_add_module_tests(app
         tests/editor_tests.cpp
         tests/content_tree_tests.cpp
         tests/content_import_tests.cpp
+        tests/debug_measure_tests.cpp
         tests/partition_cache_tests.cpp
         tests/soak_tests.cpp
         tests/streaming_host_tests.cpp

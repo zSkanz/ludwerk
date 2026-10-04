@@ -107,7 +107,9 @@ cbuffer GpuFrameUniforms : register(b0, space3)
     // `viewDepthOf`.
     float4 LightCountUnused;
     // x how many mip levels the prefiltered environment has, y how strongly it
-    // contributes, z and w unused.
+    // contributes, z how strongly ambient occlusion darkens it, w how many taps
+    // the sun's shadow filter takes when a measurement asks for fewer than
+    // sixteen (zero: sixteen).
     float4 EnvironmentParams;
     // x and y are the exponential depth slicing's scale and bias.
     float4 ClusterParams;

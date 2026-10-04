@@ -160,6 +160,15 @@ struct ProjectConfig
     // saying how the frames went -- for a machine nobody is sitting at with a
     // profiler, a phone above all. Zero, the default, says nothing.
     core::f64 frameReportSeconds = 0.0;
+    // **The measuring keys** (ADR 0171; `debug_measure.h`), each off unless the
+    // project's file asks: `[debug] gpu_pass_times` (the GPU's time by pass,
+    // under the frame report), `hide` (a list of what is not drawn),
+    // `shadow_taps` (the sun's shadow filter, 1 through 15 taps) and
+    // `log_ui_touches` (which element took each finger).
+    bool gpuPassTimes = false;
+    std::string debugHide;
+    core::u32 shadowTaps = 0;
+    bool logUiTouches = false;
     // `[debug] overlay_key`: the key that opens the host's overlay in a run of
     // the project being made, by `Enum.KeyCode`'s name for it -- "F3" unless
     // the project says, "None" for no key at all. The host takes that key: the

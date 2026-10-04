@@ -14,6 +14,7 @@
 
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_gpu.h>
+#include <SDL3/SDL_timer.h>
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -101,11 +102,34 @@ class SdlGpuCmdList final : public ICmdList
 public:
     explicit SdlGpuCmdList(SdlGpuDevice& device) noexcept : device_(device) {}
 
-    void begin(SDL_GPUCommandBuffer* buffer) noexcept;
+    // `timed`: this frame is recorded a pass to a command buffer (ADR 0171).
+    void begin(SDL_GPUCommandBuffer* buffer, bool timed = false) noexcept;
     // Releases the staging buffer. Called by the device before it goes.
     void releaseStaging() noexcept;
-    [[nodiscard]] SDL_GPUCommandBuffer* buffer() const noexcept { return buffer_; }
+    // The buffer the frame ends with: the one a swapchain texture is acquired
+    // on, and the one that presents it.
+    [[nodiscard]] SDL_GPUCommandBuffer* buffer() const noexcept { return frameBuffer_; }
+    // The buffer being recorded into now. The frame's own unless the frame is
+    // timed, when it is the buffer of the pass being recorded.
+    [[nodiscard]] SDL_GPUCommandBuffer* recording() const noexcept { return buffer_; }
     [[nodiscard]] SDL_GPURenderPass* renderPass() const noexcept { return renderPass_; }
+
+    // **The end of a timed frame's recording**: what is still open is submitted
+    // and waited for, and one buffer after it that clears a single pixel --
+    // "floor", what a stop costs whatever is in it, which every timed pass
+    // also paid. After this the frame's own buffer is all that is left.
+    void finishTimedPasses() noexcept;
+    [[nodiscard]] bool timed() const noexcept { return timed_; }
+    // The frame's own buffer was waited for: what was drawn to the window.
+    void noteScreenTime(f64 milliseconds);
+    // The frame's times, taken by the device when the frame is submitted.
+    struct Timed
+    {
+        std::string name;
+        f64 milliseconds = 0.0;
+        u32 submits = 0;
+    };
+    [[nodiscard]] const std::vector<Timed>& times() const noexcept { return times_; }
 
     // Closes whatever pass is open. Called before a pass of a different kind
     // starts and before submit, so no caller has to track pass state.
@@ -158,12 +182,25 @@ public:
         copyPass_ = nullptr;
         computePass_ = nullptr;
         buffer_ = nullptr;
+        frameBuffer_ = nullptr;
         staging_ = nullptr;
         stagingCapacity_ = 0;
     }
 
 private:
     [[nodiscard]] SDL_GPUCopyPass* ensureCopyPass() noexcept;
+
+    // --- a timed frame (ADR 0171) -------------------------------------------
+    // What a pass about to begin is counted under.
+    [[nodiscard]] std::string passLabel(std::string_view passName, std::string_view fallback) const;
+    // Called before a pass begins: the buffer it is recorded into is the one
+    // for its label, the buffer before it submitted and waited for.
+    void routePass(std::string label, bool toScreen);
+    // Submits what is recorded, waits for it and counts the wait under the
+    // label it was recorded for; then a new buffer, the uniforms pushed again.
+    void closeTimedBuffer();
+    void addTime(std::string_view name, f64 milliseconds);
+    void pushHeldUniforms() noexcept;
 
     // Where one upload's bytes were put: a range of the frame's staging buffer,
     // or -- for an upload that does not fit it -- a transfer buffer of its own,
@@ -179,6 +216,32 @@ private:
 
     SdlGpuDevice& device_;
     SDL_GPUCommandBuffer* buffer_ = nullptr;
+    // The frame's own buffer; `buffer_` is it unless the frame is timed.
+    SDL_GPUCommandBuffer* frameBuffer_ = nullptr;
+    bool timed_ = false;
+    // Something was recorded into `buffer_` since it was acquired, and under
+    // which label.
+    bool timedUsed_ = false;
+    std::string timedLabel_;
+    // **Once a pass has gone to the window, everything after it does too**: the
+    // frame's own buffer is submitted last, so a pass put in a buffer of its
+    // own after that point would run BEFORE what the frame recorded ahead of
+    // it. What the screen's entry is named after.
+    bool onScreen_ = false;
+    std::vector<std::string> screenLabels_;
+    std::vector<std::string> groups_;
+    std::vector<Timed> times_;
+    // What `bindUniforms` last pushed, by stage and slot: pushed data belongs
+    // to the command buffer, and a timed frame changes buffers under the
+    // renderer's feet.
+    struct HeldUniform
+    {
+        std::vector<std::byte> data;
+        bool set = false;
+    };
+    static constexpr usize UniformStages = 3;
+    static constexpr usize UniformSlots = 4;
+    std::array<std::array<HeldUniform, UniformSlots>, UniformStages> heldUniforms_{};
     SDL_GPURenderPass* renderPass_ = nullptr;
     SDL_GPUCopyPass* copyPass_ = nullptr;
     SDL_GPUComputePass* computePass_ = nullptr;
@@ -243,6 +306,8 @@ public:
                 SDL_ReleaseGPUBuffer(device_, buffer);
         if (fallbackTexture_ != nullptr)
             SDL_ReleaseGPUTexture(device_, fallbackTexture_);
+        if (timingProbe_ != nullptr)
+            SDL_ReleaseGPUTexture(device_, timingProbe_);
         if (fallbackSampler_ != nullptr)
             SDL_ReleaseGPUSampler(device_, fallbackSampler_);
 
@@ -595,9 +660,19 @@ public:
         SDL_GPUCommandBuffer* buffer = SDL_AcquireGPUCommandBuffer(device_);
         if (buffer == nullptr)
             noteFailure();
-        cmdList_.begin(lost_ ? nullptr : buffer);
+        cmdList_.begin(lost_ ? nullptr : buffer, passTiming_);
         return &cmdList_;
     }
+
+    void setPassTiming(bool on) override
+    {
+        passTiming_ = on;
+        if (!on) {
+            passTimes_.clear();
+            passTimeNames_.clear();
+        }
+    }
+    [[nodiscard]] std::span<const PassTime> passTimes() const noexcept override { return passTimes_; }
 
     [[nodiscard]] Swapchain acquireSwapchain(platform::Window& window) override;
 
@@ -607,6 +682,12 @@ public:
             return;
 
         cmdList_.endOpenPass();
+        const bool timed = cmdList_.timed();
+        if (timed)
+            cmdList_.finishTimedPasses();
+        if (cmdList_.buffer() == nullptr)
+            return;
+        const Uint64 submitNs = SDL_GetTicksNS();
         // **No more than `MaxFramesInFlight` frames ahead of the GPU** (audit
         // R8). A window's present waits for the display, which is what kept a
         // windowed run in step; a headless one had nothing to wait on, so the
@@ -618,6 +699,23 @@ public:
             noteFailure();
         else
             inFlight_.push_back(fence);
+        if (timed) {
+            // The frame's own buffer, waited for as every pass before it was:
+            // the next frame's first pass must find the GPU idle.
+            if (fence != nullptr && !lost_) {
+                (void)SDL_WaitForGPUFences(device_, true, &fence, 1);
+                cmdList_.noteScreenTime(static_cast<f64>(SDL_GetTicksNS() - submitNs) / 1'000'000.0);
+            }
+            passTimeNames_.clear();
+            passTimes_.clear();
+            for (const SdlGpuCmdList::Timed& entry : cmdList_.times())
+                passTimeNames_.push_back(entry.name);
+            for (usize index = 0; index < passTimeNames_.size(); ++index) {
+                const SdlGpuCmdList::Timed& entry = cmdList_.times()[index];
+                passTimes_.push_back(
+                    {.name = passTimeNames_[index], .milliseconds = entry.milliseconds, .submits = entry.submits});
+            }
+        }
         while (inFlight_.size() > MaxFramesInFlight) {
             SDL_GPUFence* oldest = inFlight_.front();
             inFlight_.erase(inFlight_.begin());
@@ -642,7 +740,7 @@ public:
     // Used by the command list, which lives inside this file, and by the
     // interop accessors at the bottom of it.
     [[nodiscard]] SDL_GPUDevice* handle() const noexcept { return device_; }
-    [[nodiscard]] SDL_GPUCommandBuffer* commandBuffer() const noexcept { return cmdList_.buffer(); }
+    [[nodiscard]] SDL_GPUCommandBuffer* commandBuffer() const noexcept { return cmdList_.recording(); }
     [[nodiscard]] SDL_GPURenderPass* renderPass() const noexcept { return cmdList_.renderPass(); }
     [[nodiscard]] SDL_GPUBuffer* buffer(BufferHandle handle) noexcept
     {
@@ -684,6 +782,23 @@ public:
             fallbackTexture_ = SDL_CreateGPUTexture(device_, &info);
         }
         return fallbackTexture_;
+    }
+    // **One pixel to clear** (ADR 0171): the smallest pass there is, timed
+    // once a timed frame -- what stopping the frame costs whatever is drawn.
+    [[nodiscard]] SDL_GPUTexture* timingProbe() noexcept
+    {
+        if (timingProbe_ == nullptr && device_ != nullptr) {
+            SDL_GPUTextureCreateInfo info{};
+            info.type = SDL_GPU_TEXTURETYPE_2D;
+            info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+            info.width = 1;
+            info.height = 1;
+            info.layer_count_or_depth = 1;
+            info.num_levels = 1;
+            timingProbe_ = SDL_CreateGPUTexture(device_, &info);
+        }
+        return timingProbe_;
     }
     [[nodiscard]] SDL_GPUSampler* fallbackSampler() noexcept
     {
@@ -731,6 +846,11 @@ private:
     ShaderFormat shaderFormat_ = ShaderFormat::Unknown;
     SdlGpuCmdList cmdList_;
     bool lost_ = false;
+    // ADR 0171: asked for, and the last timed frame's answer. The names are
+    // kept apart from the views of them, which the caller holds for a frame.
+    bool passTiming_ = false;
+    std::vector<std::string> passTimeNames_;
+    std::vector<PassTime> passTimes_;
 
     // The frames submitted and not yet known finished, oldest first.
     static constexpr std::size_t MaxFramesInFlight = 3;
@@ -749,6 +869,7 @@ private:
     std::vector<TextureEntry> textures_;
     std::vector<SDL_GPUSampler*> samplers_;
     SDL_GPUTexture* fallbackTexture_ = nullptr;
+    SDL_GPUTexture* timingProbe_ = nullptr;
     SDL_GPUSampler* fallbackSampler_ = nullptr;
     bool staleBindingSaid_ = false;
     std::vector<SDL_GPUShader*> shaders_;
@@ -1046,8 +1167,21 @@ SDL_GPUCopyPass* SdlGpuCmdList::ensureCopyPass() noexcept
         SDL_EndGPUComputePass(computePass_);
         computePass_ = nullptr;
     }
-    if (copyPass_ == nullptr && buffer_ != nullptr)
+    if (copyPass_ == nullptr && buffer_ != nullptr) {
+        // Timed: uploads outside every group are a pass of their own, named
+        // "upload"; inside one they are counted with the pass that follows.
+        if (timed_ && !onScreen_) {
+            if (groups_.empty())
+                routePass("upload", false);
+            else if (!timedUsed_) {
+                timedUsed_ = true;
+                timedLabel_ = groups_.back();
+            }
+            if (buffer_ == nullptr)
+                return nullptr;
+        }
         copyPass_ = SDL_BeginGPUCopyPass(buffer_);
+    }
     return copyPass_;
 }
 
@@ -1078,11 +1212,31 @@ constexpr u32 kBufferStagingAlignment = 16;
 
 } // namespace
 
-void SdlGpuCmdList::begin(SDL_GPUCommandBuffer* buffer) noexcept
+void SdlGpuCmdList::begin(SDL_GPUCommandBuffer* buffer, bool timed) noexcept
 {
     buffer_ = buffer;
+    frameBuffer_ = buffer;
+    timed_ = false;
+    timedUsed_ = false;
+    onScreen_ = false;
     if (buffer == nullptr)
         return;
+
+    if (timed) {
+        // The frame's own buffer waits for what is drawn to the window; what
+        // comes before that is recorded into buffers of its own.
+        timedLabel_.clear();
+        screenLabels_.clear();
+        groups_.clear();
+        times_.clear();
+        for (auto& stage : heldUniforms_)
+            for (HeldUniform& held : stage)
+                held.set = false;
+        if (SDL_GPUCommandBuffer* first = SDL_AcquireGPUCommandBuffer(device_.handle()); first != nullptr) {
+            buffer_ = first;
+            timed_ = true;
+        }
+    }
 
     // A new frame: the staging buffer's ranges are free again once it cycles.
     // It grows here, between frames, and never in the middle of one -- an upload
@@ -1176,11 +1330,191 @@ void SdlGpuCmdList::releaseStaged(const Staged& staged) noexcept
         SDL_ReleaseGPUTransferBuffer(device_.handle(), staged.transfer);
 }
 
+std::string SdlGpuCmdList::passLabel(std::string_view passName, std::string_view fallback) const
+{
+    const std::string_view group = groups_.empty() ? std::string_view{} : std::string_view{groups_.back()};
+    if (group.empty())
+        return std::string(passName.empty() ? fallback : passName);
+    if (passName.empty() || passName == group)
+        return std::string(group);
+    std::string label(group);
+    label += '/';
+    label += passName;
+    return label;
+}
+
+void SdlGpuCmdList::addTime(std::string_view name, f64 milliseconds)
+{
+    for (Timed& entry : times_) {
+        if (entry.name == name) {
+            entry.milliseconds += milliseconds;
+            ++entry.submits;
+            return;
+        }
+    }
+    times_.push_back({.name = std::string(name), .milliseconds = milliseconds, .submits = 1});
+}
+
+void SdlGpuCmdList::pushHeldUniforms() noexcept
+{
+    if (buffer_ == nullptr)
+        return;
+    for (usize stage = 0; stage < UniformStages; ++stage) {
+        for (usize index = 0; index < UniformSlots; ++index) {
+            const HeldUniform& held = heldUniforms_[stage][index];
+            if (!held.set)
+                continue;
+            const auto slotIndex = static_cast<Uint32>(index);
+            const auto size = static_cast<Uint32>(held.data.size());
+            if (stage == 0)
+                SDL_PushGPUVertexUniformData(buffer_, slotIndex, held.data.data(), size);
+            else if (stage == 1)
+                SDL_PushGPUFragmentUniformData(buffer_, slotIndex, held.data.data(), size);
+            else
+                SDL_PushGPUComputeUniformData(buffer_, slotIndex, held.data.data(), size);
+        }
+    }
+}
+
+void SdlGpuCmdList::closeTimedBuffer()
+{
+    endOpenPass();
+    if (buffer_ == nullptr || buffer_ == frameBuffer_)
+        return;
+    SDL_GPUDevice* device = device_.handle();
+    const Uint64 start = SDL_GetTicksNS();
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(buffer_);
+    buffer_ = nullptr;
+    if (fence == nullptr) {
+        device_.noteFailure();
+    }
+    else {
+        (void)SDL_WaitForGPUFences(device, true, &fence, 1);
+        SDL_ReleaseGPUFence(device, fence);
+        addTime(timedLabel_, static_cast<f64>(SDL_GetTicksNS() - start) / 1'000'000.0);
+    }
+    timedUsed_ = false;
+    timedLabel_.clear();
+    if (device_.lost()) {
+        abandon();
+        return;
+    }
+    buffer_ = SDL_AcquireGPUCommandBuffer(device);
+    if (buffer_ == nullptr) {
+        // Nothing to record into but the frame's own: the rest of the frame is
+        // untimed, and whole.
+        device_.noteFailure();
+        if (device_.lost()) {
+            abandon();
+            return;
+        }
+        buffer_ = frameBuffer_;
+        onScreen_ = true;
+    }
+    pushHeldUniforms();
+}
+
+void SdlGpuCmdList::routePass(std::string label, bool toScreen)
+{
+    if (!timed_ || buffer_ == nullptr)
+        return;
+    if (!onScreen_ && toScreen) {
+        // The first pass to the window: what was open is closed. The buffer
+        // acquired after it is submitted as it is, not cancelled -- the debug
+        // overlay records its uploads through the native handle, which this
+        // list does not see.
+        if (timedUsed_)
+            closeTimedBuffer();
+        if (buffer_ != nullptr && buffer_ != frameBuffer_) {
+            endOpenPass();
+            (void)SDL_SubmitGPUCommandBuffer(buffer_);
+        }
+        if (frameBuffer_ == nullptr)
+            return;
+        buffer_ = frameBuffer_;
+        onScreen_ = true;
+        pushHeldUniforms();
+    }
+    if (onScreen_) {
+        if (std::find(screenLabels_.begin(), screenLabels_.end(), label) == screenLabels_.end())
+            screenLabels_.push_back(std::move(label));
+        return;
+    }
+    if (timedUsed_ && label != timedLabel_)
+        closeTimedBuffer();
+    if (buffer_ == nullptr)
+        return;
+    timedUsed_ = true;
+    timedLabel_ = std::move(label);
+}
+
+void SdlGpuCmdList::finishTimedPasses() noexcept
+{
+    if (!timed_ || frameBuffer_ == nullptr)
+        return;
+    SDL_GPUDevice* device = device_.handle();
+    if (!onScreen_) {
+        if (timedUsed_)
+            closeTimedBuffer();
+        if (buffer_ != nullptr && buffer_ != frameBuffer_) {
+            endOpenPass();
+            (void)SDL_SubmitGPUCommandBuffer(buffer_);
+        }
+        if (frameBuffer_ == nullptr)
+            return;
+        buffer_ = frameBuffer_;
+    }
+    endOpenPass();
+    // **The floor**: what a stop costs when the pass in it clears one pixel --
+    // the submit, the GPU woken, the wait. Each timed pass carries this much
+    // that is not its own, and a pass that reads near it cost nearly nothing.
+    SDL_GPUTexture* probe = device_.timingProbe();
+    if (SDL_GPUCommandBuffer* least = SDL_AcquireGPUCommandBuffer(device); least != nullptr) {
+        if (probe != nullptr) {
+            SDL_GPUColorTargetInfo color{};
+            color.texture = probe;
+            color.load_op = SDL_GPU_LOADOP_CLEAR;
+            color.store_op = SDL_GPU_STOREOP_STORE;
+            if (SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(least, &color, 1, nullptr); pass != nullptr)
+                SDL_EndGPURenderPass(pass);
+        }
+        const Uint64 start = SDL_GetTicksNS();
+        if (SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(least); fence != nullptr) {
+            (void)SDL_WaitForGPUFences(device, true, &fence, 1);
+            SDL_ReleaseGPUFence(device, fence);
+            addTime("floor", static_cast<f64>(SDL_GetTicksNS() - start) / 1'000'000.0);
+        }
+    }
+}
+
+void SdlGpuCmdList::noteScreenTime(f64 milliseconds)
+{
+    if (screenLabels_.empty())
+        return;
+    std::string name;
+    for (const std::string& label : screenLabels_) {
+        if (!name.empty())
+            name += '+';
+        name += label;
+    }
+    addTime(name, milliseconds);
+}
+
 void SdlGpuCmdList::beginRenderPass(const RenderPassDesc& desc)
 {
     endOpenPass();
     if (buffer_ == nullptr)
         return;
+    if (timed_) {
+        bool toScreen = false;
+        for (const ColorAttachment& attachment : desc.colorAttachments) {
+            const TextureEntry* entry = device_.texture(attachment.texture);
+            toScreen = toScreen || (entry != nullptr && !entry->owned);
+        }
+        routePass(passLabel(desc.debugName, "pass"), toScreen);
+        if (buffer_ == nullptr)
+            return;
+    }
     boundVertex_.fill(nullptr);
     boundIndex_ = nullptr;
 
@@ -1293,6 +1627,11 @@ void SdlGpuCmdList::bindUniforms(ShaderStage stage, u32 slotIndex, std::span<con
 {
     if (buffer_ == nullptr)
         return;
+    if (timed_ && slotIndex < UniformSlots) {
+        HeldUniform& held = heldUniforms_[stage == ShaderStage::Vertex ? 0 : 1][slotIndex];
+        held.data.assign(data.begin(), data.end());
+        held.set = true;
+    }
 
     switch (stage) {
     case ShaderStage::Vertex:
@@ -1425,6 +1764,11 @@ void SdlGpuCmdList::blitTexture(TextureHandle source, TextureHandle destination,
         return;
     // A blit is a pass of its own in SDL: nothing may be open around it.
     endOpenPass();
+    if (timed_) {
+        routePass(passLabel({}, "blit"), !to->owned);
+        if (buffer_ == nullptr)
+            return;
+    }
     SDL_GPUBlitInfo info{};
     info.source = SDL_GPUBlitRegion{.texture = from->texture,
                                     .mip_level = 0,
@@ -1451,6 +1795,11 @@ void SdlGpuCmdList::generateMipmaps(TextureHandle texture)
     if (entry == nullptr || entry->texture == nullptr || buffer_ == nullptr)
         return;
     endOpenPass();
+    if (timed_) {
+        routePass(passLabel({}, "mipmaps"), false);
+        if (buffer_ == nullptr)
+            return;
+    }
     SDL_GenerateMipmapsForGPUTexture(buffer_, entry->texture);
 }
 
@@ -1526,6 +1875,11 @@ void SdlGpuCmdList::beginComputePass(std::span<const BufferHandle> writes,
     endOpenPass();
     if (buffer_ == nullptr)
         return;
+    if (timed_) {
+        routePass(passLabel({}, "compute"), false);
+        if (buffer_ == nullptr)
+            return;
+    }
     BindList<SDL_GPUStorageTextureReadWriteBinding> textures(textureWrites.size());
     for (usize index = 0; index < textureWrites.size(); ++index) {
         SDL_GPUStorageTextureReadWriteBinding binding{};
@@ -1628,8 +1982,14 @@ void SdlGpuCmdList::bindComputeStorageTextures(u32 firstSlot, std::span<const Te
 
 void SdlGpuCmdList::bindComputeUniforms(u32 slot, std::span<const std::byte> data)
 {
-    if (buffer_ != nullptr)
-        SDL_PushGPUComputeUniformData(buffer_, slot, data.data(), static_cast<Uint32>(data.size()));
+    if (buffer_ == nullptr)
+        return;
+    if (timed_ && slot < UniformSlots) {
+        HeldUniform& held = heldUniforms_[2][slot];
+        held.data.assign(data.begin(), data.end());
+        held.set = true;
+    }
+    SDL_PushGPUComputeUniformData(buffer_, slot, data.data(), static_cast<Uint32>(data.size()));
 }
 
 void SdlGpuCmdList::dispatch(u32 groupsX, u32 groupsY, u32 groupsZ)
@@ -1640,12 +2000,23 @@ void SdlGpuCmdList::dispatch(u32 groupsX, u32 groupsY, u32 groupsZ)
 
 void SdlGpuCmdList::pushDebugGroup(std::string_view name)
 {
+    // A timed frame keeps the names and tells the driver none: a group opened
+    // in one command buffer cannot be closed in the next.
+    if (timed_) {
+        groups_.emplace_back(name);
+        return;
+    }
     if (buffer_ != nullptr)
         SDL_PushGPUDebugGroup(buffer_, std::string(name).c_str());
 }
 
 void SdlGpuCmdList::popDebugGroup()
 {
+    if (timed_) {
+        if (!groups_.empty())
+            groups_.pop_back();
+        return;
+    }
     if (buffer_ != nullptr)
         SDL_PopGPUDebugGroup(buffer_);
 }

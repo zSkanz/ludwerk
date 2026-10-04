@@ -294,6 +294,29 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.frameReportSeconds = static_cast<engine::core::f64>(seconds);
             continue;
         }
+        // The measuring keys (ADR 0171).
+        if (arg == "--gpu-pass-times") {
+            options.gpuPassTimes = true;
+            continue;
+        }
+        if (arg == "--log-ui-touches") {
+            options.logUiTouches = true;
+            continue;
+        }
+        if (arg.starts_with("--hide=")) {
+            options.debugHide = std::string(arg.substr(7));
+            continue;
+        }
+        if (arg.starts_with("--shadow-taps=")) {
+            engine::core::u64 taps = 0;
+            if (!numericValue(arg.substr(14), taps) || taps == 0 || taps > 16) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.debugShadowTaps = static_cast<engine::core::u32>(taps);
+            continue;
+        }
         if (arg.starts_with("--pace=")) {
             engine::core::u64 hz = 0;
             if (!numericValue(arg.substr(7), hz) || hz == 0 || hz > 1000) {
@@ -1036,6 +1059,14 @@ int main(int argc, char** argv)
         }
 
         options.graphics = config.graphics;
+        // The measuring keys (ADR 0171): the flag beats the file, and what the
+        // file hides is added to what the flag does.
+        options.graphics.shadowTaps = options.debugShadowTaps != 0 ? options.debugShadowTaps : config.shadowTaps;
+        options.graphics = engine::render::clampSettings(options.graphics);
+        options.gpuPassTimes = options.gpuPassTimes || config.gpuPassTimes;
+        options.logUiTouches = options.logUiTouches || config.logUiTouches;
+        if (!config.debugHide.empty())
+            options.debugHide += (options.debugHide.empty() ? "" : ",") + config.debugHide;
         options.graphicsModel = config.graphicsModel;
         options.rememberPlayerSettings = config.rememberPlayerSettings;
         options.defaultLocale = config.defaultLocale;

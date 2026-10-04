@@ -211,6 +211,11 @@ struct GraphicsSettings
     // **A test instrument** (H2): `--no-instancing` draws every object alone,
     // the picture instancing has to match pixel for pixel.
     bool instancing = true;
+
+    // **A measuring instrument** (ADR 0171): `[debug] shadow_taps`. How many
+    // taps the sun's shadow filter takes at a fragment, 1 through 15, to see
+    // what the filter costs; zero is the filter as it ships, sixteen.
+    u32 shadowTaps = 0;
 };
 
 // The named set every preset is. `High` was exactly what the engine shipped

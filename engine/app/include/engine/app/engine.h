@@ -278,6 +278,14 @@ struct EngineOptions
     // `--frame-report=SECONDS` and `[debug] frame_report_seconds`: a line in
     // the log every so many seconds saying how the frames went. Zero is off.
     core::f64 frameReportSeconds = 0.0;
+    // **The measuring keys** (ADR 0171; `debug_measure.h`): `--gpu-pass-times`,
+    // `--hide=LIST`, `--shadow-taps=N` and `--log-ui-touches`, and `[debug]`'s
+    // keys of the same names. The taps travel in `graphics.shadowTaps`; this
+    // is what the flag said, which beats the file.
+    bool gpuPassTimes = false;
+    std::string debugHide;
+    core::u32 debugShadowTaps = 0;
+    bool logUiTouches = false;
     // `[debug] overlay_key`, as a key: what opens the overlay, and what the
     // game therefore never hears in a host that has one (D461). `Unknown` is
     // no key.

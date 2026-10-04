@@ -120,9 +120,11 @@ struct GpuFrameUniforms
     // the cluster lookup entirely.
     f32 lightCountUnused[4]{0.0f, 0.0f, 0.0f, 0.0f};
     // x how many mip levels the prefiltered environment has, y how strongly it
-    // contributes, z how strongly ambient occlusion darkens it, w unused. `y`
-    // and `z` are multipliers rather than switches so that a scene can dial
-    // either down without the shader gaining a branch nothing else needs.
+    // contributes, z how strongly ambient occlusion darkens it. `y` and `z`
+    // are multipliers rather than switches so that a scene can dial either
+    // down without the shader gaining a branch nothing else needs. w is how
+    // many taps the sun's shadow filter takes where a measurement asked for
+    // fewer than its sixteen (ADR 0171), and zero otherwise.
     f32 environmentParams[4]{6.0f, 1.0f, 1.0f, 0.0f};
     // x and y are the exponential depth slicing's scale and bias, so a fragment
     // turns its own view depth into a cluster slice with one multiply-add and a
