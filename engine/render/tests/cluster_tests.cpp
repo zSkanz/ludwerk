@@ -260,3 +260,87 @@ TEST_CASE("more lights than the budget are refused rather than wrapped")
     // exists for, so it must report having bound something.
     CHECK(clusters.overflowClusters > 0u);
 }
+
+TEST_CASE("D531: every point a light reaches is in a cluster that holds it, at any aspect")
+{
+    // The shading contract, asked of the grid directly: a fragment within a
+    // light's range finds the light in its own cluster. A light whose sphere
+    // lay to one side of the view axis had its screen extent projected at its
+    // nearest depth only -- but there its inner edge is the farthest from the
+    // centre of the screen, and the tiles between it and the inner edge seen at
+    // its far depth were never given the light. Lit up to a straight vertical
+    // edge, then not: the band across the lamp-lit wall.
+    const core::f32 aspects[]{16.0f / 9.0f, 1583.0f / 907.0f, 21.0f / 9.0f, 4.0f / 3.0f};
+    const core::Vec3 places[]{
+        core::Vec3{6.0f, 1.0f, -12.0f},
+        core::Vec3{-7.0f, -1.5f, -10.0f},
+        core::Vec3{12.0f, 2.0f, -20.0f},
+        core::Vec3{-3.0f, 0.5f, -5.0f},
+        core::Vec3{9.0f, -3.0f, -30.0f},
+        core::Vec3{0.5f, 0.2f, -8.0f},
+        core::Vec3{-15.0f, 4.0f, -25.0f},
+        // Wholly to one side of the view's axis, as lamps along a wall are.
+        core::Vec3{20.0f, 1.0f, -22.0f},
+        core::Vec3{-24.0f, 2.0f, -30.0f},
+        core::Vec3{17.0f, -1.0f, -40.0f},
+        core::Vec3{2.0f, 18.0f, -30.0f},
+    };
+    int checked = 0;
+    for (const core::f32 aspect : aspects) {
+        RenderCamera camera = testCamera();
+        camera.projection = core::perspective(70.0f * 3.14159265f / 180.0f, aspect, camera.nearPlane, camera.farPlane);
+        camera.viewProjection = camera.projection;
+        for (const core::Vec3 place : places) {
+            const core::f32 range = 14.0f;
+            ClusterGrid clusters;
+            const std::vector<RenderLight> lights{lightAt(place, range)};
+            buildClusters(camera, lights, clusters);
+            // Points through the sphere, on a lattice.
+            for (int a = -6; a <= 6; ++a) {
+                for (int b = -6; b <= 6; ++b) {
+                    for (int c = -6; c <= 6; ++c) {
+                        const core::Vec3 point{place.x + range * static_cast<core::f32>(a) / 6.5f,
+                                               place.y + range * static_cast<core::f32>(b) / 6.5f,
+                                               place.z + range * static_cast<core::f32>(c) / 6.5f};
+                        const core::f32 dx = point.x - place.x;
+                        const core::f32 dy = point.y - place.y;
+                        const core::f32 dz = point.z - place.z;
+                        if (dx * dx + dy * dy + dz * dz >= range * range * 0.98f)
+                            continue;
+                        // Where the shader finds it: the projection's column
+                        // vector convention, then the tile and the slice.
+                        const core::Mat4& m = camera.projection;
+                        const core::f32 clipX =
+                            m.m[0][0] * point.x + m.m[1][0] * point.y + m.m[2][0] * point.z + m.m[3][0];
+                        const core::f32 clipY =
+                            m.m[0][1] * point.x + m.m[1][1] * point.y + m.m[2][1] * point.z + m.m[3][1];
+                        const core::f32 clipW =
+                            m.m[0][3] * point.x + m.m[1][3] * point.y + m.m[2][3] * point.z + m.m[3][3];
+                        const core::f32 depth = -point.z;
+                        if (depth <= camera.nearPlane || clipW <= 0.0f)
+                            continue;
+                        const core::f32 ndcX = clipX / clipW;
+                        const core::f32 ndcY = clipY / clipW;
+                        if (ndcX <= -1.0f || ndcX >= 1.0f || ndcY <= -1.0f || ndcY >= 1.0f)
+                            continue;
+                        const auto tileX = static_cast<core::u32>((ndcX * 0.5f + 0.5f) * kClusterTilesX);
+                        const auto tileY = static_cast<core::u32>((0.5f - ndcY * 0.5f) * kClusterTilesY);
+                        const core::u32 slice = clusterSliceOf(depth, clusters.sliceScale, clusters.sliceBias);
+                        core::u32 offset = 0;
+                        core::u32 count = 0;
+                        unpackCluster(clusters, clusterIndexOf(tileX, tileY, slice), offset, count);
+                        CAPTURE(aspect);
+                        CAPTURE(place.x);
+                        CAPTURE(place.z);
+                        CAPTURE(tileX);
+                        CAPTURE(tileY);
+                        CAPTURE(slice);
+                        CHECK(count == 1u);
+                        ++checked;
+                    }
+                }
+            }
+        }
+    }
+    CHECK(checked > 2000);
+}

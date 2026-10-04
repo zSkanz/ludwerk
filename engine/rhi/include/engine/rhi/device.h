@@ -162,16 +162,26 @@ public:
 
     // **Whether a claimed window's frames wait for its display** (ADR 0147,
     // G0). On: each present is shown on a refresh, and the frame waits for
-    // one. Off: shown as soon as it is done -- the newest frame on the next
-    // refresh where the backend can, torn where it cannot. Answers whether
-    // the window presents the way that was asked; a backend with no display
-    // has nothing to set and says no.
+    // one. Off: shown as soon as it is done, torn where it lands mid-refresh
+    // -- what "VSync off" is in every engine (D528) -- or, where the backend
+    // cannot tear, the newest frame on the next refresh. Answers whether the
+    // window presents the way that was asked; a backend with no display has
+    // nothing to set and says no.
     virtual bool setVSync(platform::Window& window, bool on)
     {
         (void)window;
         (void)on;
         return false;
     }
+    // How a claimed window presents after the last `setVSync`, and which
+    // driver the device runs on ("vulkan", "direct3d12", "metal") -- the two
+    // facts a report of a frame rate held to the display is answered from.
+    [[nodiscard]] virtual PresentMode presentMode(platform::Window& window) const
+    {
+        (void)window;
+        return PresentMode::None;
+    }
+    [[nodiscard]] virtual std::string_view driverName() const noexcept { return {}; }
 
     [[nodiscard]] virtual BufferHandle createBuffer(const BufferDesc& desc) = 0;
     [[nodiscard]] virtual TextureHandle createTexture(const TextureDesc& desc) = 0;

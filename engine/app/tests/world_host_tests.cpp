@@ -633,6 +633,80 @@ TEST_CASE("D525: a replay from the tick a predicted touch launched or moved the 
     CHECK_MESSAGE(log.firstError().empty(), log.firstError());
 }
 
+TEST_CASE("D527: a predicted step stepped again is told the live step's DeltaTime, to the bit")
+{
+    // A replay stepped each tick with the command's own `dt`, a 32-bit float,
+    // and the live step with the world's 64-bit fixed step: a game counting
+    // time in its predicted step -- seconds in the air, a cooldown -- counted
+    // a few parts in a hundred million differently once replayed, and every
+    // snapshot after a correction answered with an attribute that differed.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        local RunService = game:GetService("RunService")
+        local ground = Instance.new("Part")
+        ground.Size = vector.create(200, 2, 200)
+        ground.Position = vector.create(0, -1, 0)
+        ground.Anchored = true
+        ground.Parent = workspace
+        local walker = Instance.new("CharacterBody")
+        walker.Name = "Walker"
+        walker.Position = vector.create(0, 3, 0)
+        walker.Parent = workspace
+        NetworkService:GetPlayers()[1].Character = walker
+        RunService:BindToPredictedStep("Clock", function(step)
+            local held = step.Character:GetAttribute("Clock")
+            step.Character:SetAttribute("Clock", (if typeof(held) == "number" then held else 0) + step.DeltaTime)
+        end)
+        local ticks = 0
+        RunService.Heartbeat:Connect(function()
+            ticks += 1
+            if ticks > 30 then
+                walker:Move(vector.create(1, 0, 0))
+            end
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 31; ++tick)
+        host.tick();
+    scene::World& world = host.world();
+    const core::InstanceId walker = world.findFirstChild(host.workspace(), world.atoms().lookup("Walker"));
+    REQUIRE(walker.valid());
+    scene::PhysicsSync* physics = host.physics();
+    REQUIRE(physics != nullptr);
+    const core::NameAtom clock = world.atoms().intern("Clock");
+
+    scene::CharacterReplayStart start;
+    start.tick = 3000;
+    start.transform = world.parts().find(walker)->cframe;
+    start.verticalVelocity = world.characterBodies().find(walker)->verticalVelocity;
+    start.grounded = world.characterBodies().find(walker)->grounded;
+    physics->remember(start.tick);
+    start.attributes = physics->rememberedAttributes(start.tick, walker);
+    REQUIRE(start.attributes.has_value());
+
+    std::vector<scene::CharacterCommand> commands;
+    for (int tick = 0; tick < 30; ++tick) {
+        host.tick();
+        const std::optional<scene::CharacterCommand> command = physics->lastCommand(walker);
+        REQUIRE(command.has_value());
+        commands.push_back(*command);
+        physics->remember(start.tick + 1 + static_cast<core::u64>(tick));
+    }
+    const scene::Value live = world.getAttribute(walker, clock);
+    REQUIRE(std::holds_alternative<core::f64>(live));
+
+    const std::vector<core::CFrameD> replayed = physics->replay(walker, start, commands);
+    REQUIRE(replayed.size() == commands.size());
+    const scene::Value again = world.getAttribute(walker, clock);
+    REQUIRE(std::holds_alternative<core::f64>(again));
+    CHECK(std::get<core::f64>(again) == std::get<core::f64>(live));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
 TEST_CASE("a replay of a character pushing crates is the live step again, to the bit (ADR 0133)")
 {
     Captured log;

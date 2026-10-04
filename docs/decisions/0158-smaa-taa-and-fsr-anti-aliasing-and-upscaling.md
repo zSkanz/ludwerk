@@ -164,6 +164,10 @@ anti-aliasing off and scales by whole numbers. Measured against that:
   phone game. Particles, decals and world UI do not make a picture 3D.
 - **Sprites among 3D surfaces follow the 3D picture**: its scale, its upscale
   and its temporal pass.
+- **A view into a texture is UI** (D528): a `ViewportFrame`, a sub-world's or
+  a camera's picture is drawn at its frame's own pixel size whatever the
+  render scale says. At the world's scale it came out at a fraction of that,
+  and the UI showed it in hard blocks.
 - **Except a sprite drawn in its own colours** (ADR 0153), which is never
   jittered, blended, filtered or sharpened:
   - it is placed by the camera without the jitter;
@@ -174,9 +178,11 @@ anti-aliasing off and scales by whole numbers. Measured against that:
   Such a frame used to fall to SMAA whole. The 3D around the pixel art now
   keeps its temporal pass.
 
-`anti_aliasing_2d` holds all three:
+`anti_aliasing_2d` holds all four:
 - the label is the same pixels at half scale through FSR 1 and TAA as at full
   scale with none;
+- a `ViewportFrame` is the same pixels at half scale through FSR 1 as at full
+  scale;
 - sprites alone at half scale through FSR 1 and TAA are the frame drawn at
   full scale through SMAA;
 - a one-pixel checkerboard among 3D surfaces is only its two colours through

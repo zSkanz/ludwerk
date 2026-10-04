@@ -66,6 +66,18 @@ ENG_RHI_HANDLE(ComputePipelineHandle);
 // formats the asset pipeline will transcode to (ADR 0010). It grows when
 // something actually uses a format -- an enumerator no backend has ever been
 // asked for is an untested branch pretending to be a feature.
+// How a window's frames reach its display (D528): `Vsync` waits for a refresh;
+// `Immediate` is shown at once and may tear; `Mailbox` replaces a frame still
+// waiting with the newest, shown on the next refresh. `None` for a window that
+// presents nothing.
+enum class PresentMode : u8
+{
+    None,
+    Vsync,
+    Immediate,
+    Mailbox,
+};
+
 enum class TextureFormat : u8
 {
     Undefined = 0,

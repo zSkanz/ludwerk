@@ -72,6 +72,11 @@ is `Ultra` until something is finer.
 and `GetRefreshRate()` its rate. A handheld's window is its display and its
 sync is always on, whatever these say.
 
+**`VSync` off presents each frame at once**, and a frame that lands in the
+middle of a refresh tears there, as in every engine. Where the backend cannot
+tear, the newest frame is shown on each refresh instead. The log names the
+present mode and the driver each time the sync is set.
+
 **What is drawn by yet.** A few settings are kept, saved and reported ahead of
 the renderer that reads them, so a menu written today does not change shape:
 `ViewDistance`, `TextureQuality`, `AnisotropicFiltering`, `LODBias`,

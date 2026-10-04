@@ -121,7 +121,24 @@ namespace engine::app {
 
 // How many ticks a headless server runs back to back to catch up a long frame.
 constexpr core::u32 ServerCatchUpTicks = 30;
+
 namespace {
+
+// **A window's sync, applied and said** (D528): which present mode the device
+// granted and on which driver, once each time it is set -- a frame rate held
+// to the display with VSync off is answered from the log, not guessed at.
+void applyVSync(rhi::IDevice& device, platform::Window& window, bool on)
+{
+    (void)device.setVSync(window, on);
+    const rhi::PresentMode mode = device.presentMode(window);
+    const std::string_view name = mode == rhi::PresentMode::Immediate ? "immediate"
+                                  : mode == rhi::PresentMode::Mailbox ? "mailbox"
+                                  : mode == rhi::PresentMode::Vsync   ? "vsync"
+                                                                      : "none";
+    const std::array<core::I18nArg, 3> args{core::I18nArg{"mode", name}, core::I18nArg{"driver", device.driverName()},
+                                            core::I18nArg{"asked", std::string_view{on ? "on" : "off"}}};
+    core::log(core::LogLevel::Info, ENG_TR("engine.info.present_mode"), args);
+}
 
 // **What was typed during play survives the stop** (the owner: a variable
 // changed while playing stayed changed in the tab, and the next play ran the
@@ -1408,9 +1425,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // **The display's sync, asked for by name** (ADR 0147, G0). A phone's
             // is always on: its compositor shows nothing between refreshes.
 #if defined(__ANDROID__)
-        (void)device->setVSync(*window, true);
+        applyVSync(*device, *window, true);
 #else
-        (void)device->setVSync(*window, livePacing.vsync);
+        applyVSync(*device, *window, livePacing.vsync);
 #endif
     }
 
@@ -3021,7 +3038,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 if (!options.editor) {
                     const FramePacing pacing = pacingOf(live);
                     if (window != nullptr && device != nullptr && pacing.vsync != livePacing.vsync)
-                        (void)device->setVSync(*window, pacing.vsync);
+                        applyVSync(*device, *window, pacing.vsync);
                     livePacing = pacing;
                     const WindowChoice choice = windowChoiceOf(live);
                     if (window != nullptr && !Handheld && !options.windowPlacement.has_value() &&

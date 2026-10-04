@@ -1106,6 +1106,23 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   FSR 1 and RCAS, and scaled by the nearest texel. The 3D around it keeps its
   temporal pass rather than falling to SMAA. `imgprobe` checks a region's
   palette, and a region against another image.
+- A view into a texture -- a `ViewportFrame`, a sub-world, a camera's
+  picture -- is drawn at its frame's own size whatever `RenderScale` says: the
+  first-person weapon of a game at a reduced 3D resolution came out in hard
+  blocks (D528).
+- `VSync` off is an immediate present, torn mid-refresh, as in every engine; a
+  mailbox only where the backend cannot tear. A machine was held to its
+  monitor's refresh with VSync off. The log names the present mode and the
+  driver (D529).
+- A corrected replica replays its ticks with the live step's 64-bit time, not
+  a 32-bit copy: a game counting seconds in its predicted step was corrected
+  at every snapshot while its player was in the air (D527).
+- A snapshot no longer writes the authority's older velocity over the
+  replica's own predicted character: a predicted step that read the body's
+  speed was corrected on every fall (D530).
+- A point light wholly to one side of the view -- a lamp on a wall -- lights
+  every tile it reaches: its inner edge was projected at its nearest depth
+  only, and the wall was lit up to a straight vertical band (D531).
 - **The local gate no longer ends other engines** (D523): it stopped every
   `engine-host` on the machine by name before its build -- a packaged game
   under test, another session's server -- with exit -1 and no log; it stops

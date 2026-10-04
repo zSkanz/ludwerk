@@ -312,18 +312,45 @@ public:
         if (lost_)
             return false;
         SDL_Window* native = platform::nativeWindow(window);
-        // Without the sync: the newest frame on the next refresh where the
-        // backend has that mode, and torn where it has only that.
+        // **Without the sync, at once and torn** (D528): what "VSync off" is
+        // in every engine. The newest frame on the next refresh only where the
+        // backend cannot tear -- a mailbox through a windowed swapchain is
+        // paced at the display's rate on some drivers, which held a machine
+        // with VSync off to its monitor's refresh.
         SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
         if (!on) {
-            if (SDL_WindowSupportsGPUPresentMode(device_, native, SDL_GPU_PRESENTMODE_MAILBOX))
-                mode = SDL_GPU_PRESENTMODE_MAILBOX;
-            else if (SDL_WindowSupportsGPUPresentMode(device_, native, SDL_GPU_PRESENTMODE_IMMEDIATE))
+            if (SDL_WindowSupportsGPUPresentMode(device_, native, SDL_GPU_PRESENTMODE_IMMEDIATE))
                 mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+            else if (SDL_WindowSupportsGPUPresentMode(device_, native, SDL_GPU_PRESENTMODE_MAILBOX))
+                mode = SDL_GPU_PRESENTMODE_MAILBOX;
             else
                 return false;
         }
-        return SDL_SetGPUSwapchainParameters(device_, native, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
+        if (!SDL_SetGPUSwapchainParameters(device_, native, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode))
+            return false;
+        for (ClaimedWindow& entry : windows_) {
+            if (entry.window == native)
+                entry.presentMode = mode == SDL_GPU_PRESENTMODE_IMMEDIATE ? PresentMode::Immediate
+                                    : mode == SDL_GPU_PRESENTMODE_MAILBOX ? PresentMode::Mailbox
+                                                                          : PresentMode::Vsync;
+        }
+        return true;
+    }
+
+    [[nodiscard]] PresentMode presentMode(platform::Window& window) const override
+    {
+        SDL_Window* native = platform::nativeWindow(window);
+        for (const ClaimedWindow& entry : windows_) {
+            if (entry.window == native)
+                return entry.presentMode;
+        }
+        return PresentMode::None;
+    }
+
+    [[nodiscard]] std::string_view driverName() const noexcept override
+    {
+        const char* name = device_ != nullptr ? SDL_GetGPUDeviceDriver(device_) : nullptr;
+        return name != nullptr ? std::string_view{name} : std::string_view{};
     }
 
     void releaseWindow(platform::Window& window) override
@@ -682,6 +709,8 @@ private:
     {
         SDL_Window* window = nullptr;
         u32 textureId = 0;
+        // SDL's own default until `setVSync` says otherwise.
+        PresentMode presentMode = PresentMode::Vsync;
     };
 
     SDL_GPUDevice* device_ = nullptr;

@@ -1143,6 +1143,50 @@ TEST_CASE("a character's speeds reach the replica that predicts it, so a faster 
     CHECK(match.replica->stats().corrections == settled);
 }
 
+TEST_CASE("D530: the replica's own character keeps the velocity its prediction gave it")
+{
+    // A character's velocity is its motion, and the replica's own is predicted
+    // a round trip ahead of the authority's word on it. The snapshot wrote the
+    // authority's -- older -- over it, and a predicted step that read the
+    // body's speed (a fall's, for a landing) read a past one, and differed from
+    // the authority's at every snapshot while the player fell.
+    PlayedMatch match;
+    const core::InstanceId faller =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("CharacterBody")));
+    REQUIRE(faller.valid());
+    match.server.world.parts().find(faller)->cframe.position = core::DVec3{0.0, 5.0, 0.0};
+    REQUIRE_FALSE(match.server.world.setParent(faller, match.server.workspace).has_value());
+    match.server.world.players().find(match.remote())->character = faller;
+    match.run(3);
+    core::InstanceId mine = match.copyOf(faller);
+    REQUIRE(mine.valid());
+    FlatReplay replay(match.client.world, mine);
+    match.replica->setCharacterReplay(&replay);
+
+    // The authority's, a round trip behind, and the replica's own.
+    match.server.world.rigidBodies().find(faller)->linearVelocity = core::Vec3{0.0f, -4.0f, 0.0f};
+    match.server.world.rigidBodies().find(faller)->angularVelocity = core::Vec3{0.0f, 1.0f, 0.0f};
+    scene::RigidBodyComponent* predicted = match.client.world.rigidBodies().find(mine);
+    REQUIRE(predicted != nullptr);
+    predicted->linearVelocity = core::Vec3{0.0f, -7.0f, 0.0f};
+    predicted->angularVelocity = core::Vec3{0.0f, 0.0f, 0.0f};
+    match.run(3);
+    CHECK(predicted->linearVelocity.y == -7.0f);
+    CHECK(predicted->angularVelocity.y == 0.0f);
+
+    // Anyone else's character is the authority's, as it always was.
+    const core::InstanceId other =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("CharacterBody")));
+    REQUIRE(other.valid());
+    match.server.world.parts().find(other)->cframe.position = core::DVec3{4.0, 5.0, 0.0};
+    REQUIRE_FALSE(match.server.world.setParent(other, match.server.workspace).has_value());
+    match.server.world.rigidBodies().find(other)->linearVelocity = core::Vec3{0.0f, -4.0f, 0.0f};
+    match.run(3);
+    const core::InstanceId theirs = match.copyOf(other);
+    REQUIRE(theirs.valid());
+    CHECK(match.client.world.rigidBodies().find(theirs)->linearVelocity.y == -4.0f);
+}
+
 TEST_CASE("a replica walking through jitter, reordering and loss is never corrected (multiplayer smoothness)")
 {
     // **A real connection, both ways**: each message held 0 to 2 ticks, some

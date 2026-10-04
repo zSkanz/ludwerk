@@ -7,6 +7,8 @@
 #   sprites a picture of sprites alone is drawn at the window's resolution and
 #           takes no temporal pass: half scale through FSR 1 and TAA is the
 #           same frame as full scale through SMAA.
+#   view    a view drawn into a texture is UI: a ViewportFrame at half scale
+#           through FSR 1 is the same pixels as at full scale (D528).
 #   mixed   pixel art among 3D surfaces is scaled by the nearest texel and never
 #           jittered, blended, filtered or sharpened: at half scale -- FSR 1 and
 #           TAA, TAA alone, FSR 1 and SMAA -- every pixel of a one-pixel
@@ -74,6 +76,13 @@ endif()
 draw(ui ui-full --render-scale=1 --upscaling=none --anti-aliasing=off)
 probe("the label at half scale, FSR 1 and TAA is the label at full scale" ui-scaled --tolerance=0
       "--against=${OUTPUT}/ui-full.png" "0.065625,0.116667:0.528125,0.327778==")
+
+# A view into a texture: the ViewportFrame, two pixels inside its edges, at
+# 200..440 by 60..300 (D528).
+draw(view view-scaled --render-scale=0.5 --upscaling=fsr1 --anti-aliasing=smaa)
+draw(view view-full --render-scale=1 --upscaling=none --anti-aliasing=smaa)
+probe("a ViewportFrame at half scale through FSR 1 is drawn as at full scale" view-scaled --tolerance=0
+      "--against=${OUTPUT}/view-full.png" "0.315625,0.172222:0.684375,0.827778==")
 
 # Sprites alone: the whole frame.
 draw(sprites sprites-scaled ${SCALED})

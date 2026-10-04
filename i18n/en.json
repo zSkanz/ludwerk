@@ -8,6 +8,7 @@
   "engine.boot.info.crash_artifact": "On a crash, a dump will be written to {path}.",
   "engine.boot.shutdown": "Shutting down (reason: {reason}).",
   "engine.info.priority_raised": "This game is scheduled ahead of ordinary work, so a busy machine does not freeze its frames.",
+  "engine.info.present_mode": "The window presents by {mode} on {driver}, with VSync asked {asked}.",
   "engine.info.gpu_debug": "The GPU debug layer is on: validation costs frame time, and a message from it can stop the engine. It is on in the debug and dev builds and with --gpu-debug.",
   "engine.cli.usage": "Usage: engine-host [script.luau | project | --launcher] [--headless --frames=N --exit] [network: --host[=PORT] | --serve[=PORT] --max-players=N | --join=ADDRESS:PORT [--net-delay=MS --net-jitter=MS --net-loss=PERCENT]] [--saves=DIR] [--frame-stats] [--gpu-debug] [--scene=PATH [--scene-data=JSON]] [--soak-report=FILE [--soak-ceiling-mb=N]] [--rhi=NAME] [graphics: --quality=low|medium|high|ultra --render-scale=F --shadow-resolution=N --shadow-cascades=N --shadow-distance=F --light-budget=N --[no-]bloom --[no-]ambient-occlusion --[no-]anti-aliasing --[no-]auto-exposure] | --run-tests=DIR | --replay=DIR [--record-replay] | --two-worlds=DIR [--two-worlds-out=DIR] | --version | --help",
   "engine.cli.err.no_script": "No script given. Usage: engine-host <script.luau>",

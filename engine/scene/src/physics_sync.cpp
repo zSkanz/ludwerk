@@ -1323,10 +1323,14 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
                 body->walkSpeed = command.walkSpeed;
                 body->jumpSpeed = command.jumpSpeed;
                 // The predicted step runs again in it (G37), with the input
-                // it first ran with.
+                // it first ran with -- **and the live step's own time**
+                // (D527): the world's fixed step, not the command's 32-bit
+                // copy of it. A game counting seconds in its predicted step
+                // counted them a few parts in a hundred million apart once
+                // replayed, and every snapshot after a correction differed.
                 m_replayCharacter = character;
                 m_replayCommand = &command;
-                stepQuietly(static_cast<f64>(command.dt));
+                stepQuietly(m_scene.engineState().fixedTimestep);
                 m_replayCommand = nullptr;
                 m_replayCharacter = core::InstanceId{};
                 frames.push_back(part->cframe);

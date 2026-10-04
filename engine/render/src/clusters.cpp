@@ -175,18 +175,28 @@ void buildClusters(const RenderCamera& camera, std::span<const RenderLight> ligh
             entry.sliceHigh = clusterSliceOf(std::max(highDepth, nearPlane), out.sliceScale, out.sliceBias);
         }
 
-        // The light's screen extent, from the bounding box of its sphere
-        // projected at the CLOSEST depth it reaches. Conservative: a sphere's
-        // silhouette is widest where it is nearest, and clamping that depth to
-        // the near plane is what keeps a light the camera is inside from
-        // projecting to nothing.
+        // The light's screen extent: the bounding box of its sphere, each edge
+        // projected at the nearest AND the farthest depth the sphere reaches,
+        // and the wider of the two kept (D531). Nearest alone is wide enough
+        // only for an edge on the far side of the view's axis: an edge on the
+        // near side of it -- the inner edge of a lamp on a wall to the right
+        // -- is seen nearest the screen's centre at its FAR depth, and the
+        // tiles between were never given the light, which lit a wall up to a
+        // straight vertical line. Clamping the near depth to the near plane is
+        // what keeps a light the camera is inside from projecting to nothing.
         const f32 projectionDepth = std::max(lowDepth, nearPlane);
-        const f32 halfWidth = spread.at(projectionDepth).x;
-        const f32 halfHeight = spread.at(projectionDepth).y;
-        const f32 lowX = (entry.position.x - entry.range) / std::max(halfWidth, 1e-6f);
-        const f32 highX = (entry.position.x + entry.range) / std::max(halfWidth, 1e-6f);
-        const f32 lowY = (entry.position.y - entry.range) / std::max(halfHeight, 1e-6f);
-        const f32 highY = (entry.position.y + entry.range) / std::max(halfHeight, 1e-6f);
+        const f32 farthestDepth = std::max(highDepth, projectionDepth);
+        const core::Vec2 nearHalf = spread.at(projectionDepth);
+        const core::Vec2 farHalf = spread.at(farthestDepth);
+        const auto widest = [](f32 edge, f32 nearSpan, f32 farSpan, bool low) {
+            const f32 atNear = edge / std::max(nearSpan, 1e-6f);
+            const f32 atFar = edge / std::max(farSpan, 1e-6f);
+            return low ? std::min(atNear, atFar) : std::max(atNear, atFar);
+        };
+        const f32 lowX = widest(entry.position.x - entry.range, nearHalf.x, farHalf.x, true);
+        const f32 highX = widest(entry.position.x + entry.range, nearHalf.x, farHalf.x, false);
+        const f32 lowY = widest(entry.position.y - entry.range, nearHalf.y, farHalf.y, true);
+        const f32 highY = widest(entry.position.y + entry.range, nearHalf.y, farHalf.y, false);
 
         const auto toTileX = [](f32 ndc) {
             const f32 scaled = (ndc * 0.5f + 0.5f) * static_cast<f32>(kClusterTilesX);

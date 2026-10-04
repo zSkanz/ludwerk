@@ -135,6 +135,9 @@ The **world** renders at that fraction and is upscaled into the target. The post
 chain and the UI are unaffected: the 2D pass draws at full resolution on top,
 which is the whole reason a render scale is worth having.
 
+**Nor is a view into a texture.** A `ViewportFrame`, a sub-world's picture
+or a camera's is UI, and is drawn at its frame's own pixel size.
+
 **A picture of sprites alone is not scaled.** A world with sprites and no mesh,
 terrain or foliage is drawn at the window's resolution whatever `render_scale`
 says, upscales nothing and takes no temporal pass. A 2D game is as sharp on a

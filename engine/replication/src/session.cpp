@@ -4803,6 +4803,14 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
                     (field->name == "VerticalVelocity" || field->name == "Grounded" || field->name == "State" ||
                      field->name == "PushVelocity"))
                     continue;
+                // **And its body's velocity is its motion too** (D530): the
+                // authority's, a round trip older than the prediction, was
+                // written over it, and a predicted step that read the body's
+                // speed -- a fall's, for a landing -- read a past one and
+                // differed from the authority at every snapshot of a fall.
+                if (field != nullptr && field->pool == "rigidBodies" &&
+                    (field->name == "LinearVelocity" || field->name == "AngularVelocity"))
+                    continue;
                 if (cframe)
                     continue;
                 // **A character on the plane, the same** (D434): where the

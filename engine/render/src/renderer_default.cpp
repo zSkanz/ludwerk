@@ -653,10 +653,14 @@ public:
     // without the pass that takes the jitter out.
     [[nodiscard]] bool temporalFrame(const RenderWorld& world) const noexcept;
     // The fraction of the target the world is drawn at: the settings' scale
-    // and cap, or the whole of it for a picture of sprites alone.
+    // and cap, or the whole of it for a picture of sprites alone -- **and for
+    // a view into a texture** (D528): a `ViewportFrame`, a sub-world's or a
+    // camera's picture is UI, drawn at its frame's own pixel size as the rest
+    // of the UI is. At the world's scale it came out at a fraction of that
+    // and the UI showed it in hard blocks.
     [[nodiscard]] f32 worldRenderScale(const RenderWorld& world, u32 width, u32 height) const noexcept
     {
-        return spritesOnly(world) ? 1.0f : effectiveRenderScale(settings_, width, height);
+        return activeView_ != 0 || spritesOnly(world) ? 1.0f : effectiveRenderScale(settings_, width, height);
     }
 
 private:
