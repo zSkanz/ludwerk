@@ -50,7 +50,7 @@ struct GraphicsOverrides
     std::optional<bool> contactShadows;
     // `--render-cap=N`: the most lines the world is rendered at, 0 for none.
     std::optional<core::u32> renderCap;
-    // `--terrain-surface=full|lean` (ADR 0175), over the level's and the file's.
+    // `--terrain-surface=full|lean|fast|flat` (ADR 0175, ADR 0179), over the level's and the file's.
     std::optional<render::GraphicsSettings::TerrainSurface> terrainSurface;
     // `--vsync`, `--no-vsync`, `--max-frame-rate=N`, `--background-frame-rate=N`
     // (ADR 0147, G0), over `[display]`.

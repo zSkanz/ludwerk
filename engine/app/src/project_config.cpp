@@ -108,6 +108,10 @@ void applyFile(const core::TomlDocument& document, std::string_view table, Graph
             settings.terrainSurface = GraphicsSettings::TerrainSurface::Full;
         else if (*named == "lean")
             settings.terrainSurface = GraphicsSettings::TerrainSurface::Lean;
+        else if (*named == "fast")
+            settings.terrainSurface = GraphicsSettings::TerrainSurface::Fast;
+        else if (*named == "flat")
+            settings.terrainSurface = GraphicsSettings::TerrainSurface::Flat;
     }
     // So each of the audit's suspects for the dots on distant terrain can be
     // turned off alone (terrain audit T0).

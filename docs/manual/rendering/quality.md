@@ -134,6 +134,17 @@ its repeat a little easier to find in the middle distance. A project says
 which in `[graphics]`, or under a platform's own table; a player has no
 setting for it.
 
+`"fast"` is a ground compiled apart from the others, with nothing in it but
+what a pixel of it does (ADR 0179): at most four layers -- the two heaviest
+of a triangle's corners, the heaviest painted over them, the rule that covers
+most -- by their colour alone, on the mesh's own normal, lit by the sun
+through four shadow taps, the sky and the lights near it with no gloss. It is
+for a phone, where a shader that holds every kind of ground behind switches
+can cost as if it drew them all. No level chooses it yet: name it under
+`[graphics.android]` and measure. `"flat"` is one colour with no light at
+all, and is not a look: with it the forward pass's time is what drawing the
+ground costs whatever is on it.
+
 **On a phone every level upscales with FSR 1**, since each but Ultra caps the
 resolution the world is drawn at, and uses FXAA below High and never TAA.
 Bloom reaches less far there -- three levels of it where a desktop has five,
@@ -338,7 +349,7 @@ apply, because they were typed by the same person as the preset.
 --light-budget=N
 --frame-report=SECONDS
 --render-cap=N
---terrain-surface=full|lean
+--terrain-surface=full|lean|fast|flat
 --gpu-pass-times
 --hide=LIST
 --skip=LIST

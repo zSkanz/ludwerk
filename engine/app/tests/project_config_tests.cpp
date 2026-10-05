@@ -606,6 +606,18 @@ TEST_CASE("the lean ground is Low's, and a handheld's Medium's, unless the proje
     flag.terrainSurface = GraphicsSettings::TerrainSurface::Full;
     CHECK_FALSE(app::loadProjectConfig(lean.path, flag).graphics.leanTerrain());
 
+    // The ground's compiled variants (ADR 0179) are the project's word too,
+    // and neither is the lean ground: each is a shader of its own.
+    const ProjectDir fast("[graphics]\nquality = \"low\"\nterrain_surface = \"fast\"\n");
+    const app::ProjectConfig saidFast = app::loadProjectConfig(fast.path, app::GraphicsOverrides{});
+    CHECK(saidFast.graphics.terrainSurface == GraphicsSettings::TerrainSurface::Fast);
+    CHECK(saidFast.graphics.compiledTerrain());
+    CHECK_FALSE(saidFast.graphics.leanTerrain());
+    flag.terrainSurface = GraphicsSettings::TerrainSurface::Flat;
+    CHECK(app::loadProjectConfig(lean.path, flag).graphics.terrainSurface == GraphicsSettings::TerrainSurface::Flat);
+    CHECK_FALSE(saidLean.graphics.compiledTerrain());
+    CHECK(app::graphicsSettingsOf(saidFast.graphicsModel, false, &saidFast.graphics).compiledTerrain());
+
     // No setting of a player's is it: what the project said outlives theirs.
     CHECK(app::graphicsSettingsOf(saidLean.graphicsModel, false, &saidLean.graphics).leanTerrain());
     CHECK_FALSE(app::graphicsSettingsOf(saidFull.graphicsModel, false, &saidFull.graphics).leanTerrain());

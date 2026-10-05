@@ -780,13 +780,16 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
         // `[graphics] terrain_surface`, as a flag (ADR 0175).
         if (arg.starts_with("--terrain-surface=")) {
             const std::string_view value = arg.substr(18);
-            if (value != "full" && value != "lean") {
+            using Surface = engine::render::GraphicsSettings::TerrainSurface;
+            if (value != "full" && value != "lean" && value != "fast" && value != "flat") {
                 const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
                 engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
                 return kExitUsage;
             }
-            graphics.terrainSurface = value == "full" ? engine::render::GraphicsSettings::TerrainSurface::Full
-                                                      : engine::render::GraphicsSettings::TerrainSurface::Lean;
+            graphics.terrainSurface = value == "full"   ? Surface::Full
+                                      : value == "lean" ? Surface::Lean
+                                      : value == "fast" ? Surface::Fast
+                                                        : Surface::Flat;
             continue;
         }
         // `[graphics] render_cap`, as a flag: zero is no cap.

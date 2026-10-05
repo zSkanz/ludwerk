@@ -1067,6 +1067,13 @@ private:
     bool terrainTried_ = false;
     bool terrainValid_ = false;
     rhi::PipelineHandle terrainPipeline_{};
+    // The ground's compiled variants (ADR 0179): made when a frame first asks
+    // for one, and the one a frame's terrain draws go through.
+    rhi::PipelineHandle terrainFastPipeline_{};
+    rhi::PipelineHandle terrainFlatPipeline_{};
+    bool terrainVariantsTried_ = false;
+    void ensureTerrainVariants(rhi::IDevice& device);
+    [[nodiscard]] rhi::PipelineHandle terrainForwardPipeline() const noexcept;
     rhi::PipelineHandle terrainShadowPipeline_{};
     // A terrain's layer arrays drawn from its materials' maps
     // (`terrain_pack.hlsl`): into the sRGB colour array, and into the normal
@@ -2505,7 +2512,10 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     voxelBlockBuffer_ = {};
     voxelBlocksSent_ = false;
 
+    terrainVariantsTried_ = false;
     for (rhi::PipelineHandle* pipeline : {&terrainPipeline_,
+                                          &terrainFastPipeline_,
+                                          &terrainFlatPipeline_,
                                           &terrainShadowPipeline_,
                                           &terrainPrepassPipeline_,
                                           &terrainPackColorPipeline_,
@@ -3521,7 +3531,7 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             : skinnedRun            ? unlessPrepassed(skinnedInstancedPipeline, pbrSkinnedInstancedPrepassedPipeline_)
             : batch != nullptr      ? unlessPrepassed(instancedPipeline, pbrInstancedPrepassedPipeline_)
             : skinnedDraw           ? unlessPrepassed(skinnedPipeline, pbrSkinnedPrepassedPipeline_)
-            : terrainDraw           ? terrainPipeline_
+            : terrainDraw           ? terrainForwardPipeline()
             : terrainShadow         ? terrainShadowPipeline_
             : terrainPrepass        ? terrainPrepassPipeline_
             : voxelDraw
@@ -3622,45 +3632,72 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                     const TerrainArrays* layers = terrainArraysOf(draw.terrainId);
                     static const GpuTerrainSurfaceUniforms flat{};
                     const GpuTerrainSurfaceUniforms& block = layers != nullptr ? layers->uniforms : flat;
-                    if (settings_.debugView == DebugView::None && !settings_.leanTerrain()) {
+                    // **A compiled variant binds what it reads and nothing
+                    // else** (ADR 0179): the layers' colours, the sun's shadow
+                    // map and the three light tables -- five textures where
+                    // the full ground's layout is sixteen -- and `Flat` none.
+                    const rhi::PipelineHandle forward = terrainForwardPipeline();
+                    if (forward.id != terrainPipeline_.id) {
                         cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&block, sizeof(block)));
+                        if (forward.id == terrainFastPipeline_.id) {
+                            const std::array<rhi::TextureBinding, 5> compact{
+                                layers != nullptr && layers->ready
+                                    ? rhi::TextureBinding{layers->arrays[0], linearSampler_}
+                                    : rhi::TextureBinding{whiteArray_, linearSampler_},
+                                rhi::TextureBinding{shadowMap_, shadowSampler_},
+                                rhi::TextureBinding{clusterGrid_, pointSampler_},
+                                rhi::TextureBinding{lightIndices_, pointSampler_},
+                                rhi::TextureBinding{lightData_, pointSampler_},
+                            };
+                            cmd.bindTextures(rhi::ShaderStage::Fragment, 0, compact);
+                        }
+                        const std::array<rhi::BufferHandle, 1> rows{layers != nullptr && layers->layerBuffer.valid()
+                                                                        ? layers->layerBuffer
+                                                                        : terrainPlainLayers_};
+                        cmd.bindStorageBuffers(rhi::ShaderStage::Fragment, 0, rows);
                     }
                     else {
-                        // A debug view (terrain audit T0) and the lean ground
-                        // (ADR 0175) ride in the block's last row, on a copy:
-                        // the terrain's own stays as built.
-                        GpuTerrainSurfaceUniforms viewed = block;
-                        viewed.debug[0] = static_cast<f32>(settings_.debugView);
-                        viewed.debug[1] = settings_.leanTerrain() ? 1.0f : 0.0f;
-                        cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&viewed, sizeof(viewed)));
+                        if (settings_.debugView == DebugView::None && !settings_.leanTerrain()) {
+                            cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&block, sizeof(block)));
+                        }
+                        else {
+                            // A debug view (terrain audit T0) and the lean ground
+                            // (ADR 0175) ride in the block's last row, on a copy:
+                            // the terrain's own stays as built.
+                            GpuTerrainSurfaceUniforms viewed = block;
+                            viewed.debug[0] = static_cast<f32>(settings_.debugView);
+                            viewed.debug[1] = settings_.leanTerrain() ? 1.0f : 0.0f;
+                            cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&viewed, sizeof(viewed)));
+                        }
+                        const auto layerArray = [&](usize slot, rhi::TextureHandle fallback) {
+                            return layers != nullptr && layers->ready
+                                       ? rhi::TextureBinding{layers->arrays[slot], linearSampler_}
+                                       : rhi::TextureBinding{fallback, linearSampler_};
+                        };
+                        const std::array<rhi::TextureBinding, 16> textures{
+                            rhi::TextureBinding{whitePixel_, linearSampler_},
+                            rhi::TextureBinding{flatNormalPixel_, linearSampler_},
+                            rhi::TextureBinding{whitePixel_, linearSampler_},
+                            rhi::TextureBinding{blackPixel_, linearSampler_},
+                            rhi::TextureBinding{shadowMap_, shadowSampler_},
+                            rhi::TextureBinding{environmentMap_, environmentSampler_},
+                            rhi::TextureBinding{brdfLut_, environmentSampler_},
+                            rhi::TextureBinding{clusterGrid_, pointSampler_},
+                            rhi::TextureBinding{lightIndices_, pointSampler_},
+                            rhi::TextureBinding{lightData_, pointSampler_},
+                            rhi::TextureBinding{occlusion_, linearSampler_},
+                            rhi::TextureBinding{localShadowMap_, shadowSampler_},
+                            rhi::TextureBinding{contact_, pointSampler_},
+                            layerArray(0, whiteArray_),
+                            layerArray(1, flatNormalArray_),
+                            layerArray(2, whiteArray_),
+                        };
+                        cmd.bindTextures(rhi::ShaderStage::Fragment, 0, textures);
+                        const std::array<rhi::BufferHandle, 1> layerRows{
+                            layers != nullptr && layers->layerBuffer.valid() ? layers->layerBuffer
+                                                                             : terrainPlainLayers_};
+                        cmd.bindStorageBuffers(rhi::ShaderStage::Fragment, 0, layerRows);
                     }
-                    const auto layerArray = [&](usize slot, rhi::TextureHandle fallback) {
-                        return layers != nullptr && layers->ready
-                                   ? rhi::TextureBinding{layers->arrays[slot], linearSampler_}
-                                   : rhi::TextureBinding{fallback, linearSampler_};
-                    };
-                    const std::array<rhi::TextureBinding, 16> textures{
-                        rhi::TextureBinding{whitePixel_, linearSampler_},
-                        rhi::TextureBinding{flatNormalPixel_, linearSampler_},
-                        rhi::TextureBinding{whitePixel_, linearSampler_},
-                        rhi::TextureBinding{blackPixel_, linearSampler_},
-                        rhi::TextureBinding{shadowMap_, shadowSampler_},
-                        rhi::TextureBinding{environmentMap_, environmentSampler_},
-                        rhi::TextureBinding{brdfLut_, environmentSampler_},
-                        rhi::TextureBinding{clusterGrid_, pointSampler_},
-                        rhi::TextureBinding{lightIndices_, pointSampler_},
-                        rhi::TextureBinding{lightData_, pointSampler_},
-                        rhi::TextureBinding{occlusion_, linearSampler_},
-                        rhi::TextureBinding{localShadowMap_, shadowSampler_},
-                        rhi::TextureBinding{contact_, pointSampler_},
-                        layerArray(0, whiteArray_),
-                        layerArray(1, flatNormalArray_),
-                        layerArray(2, whiteArray_),
-                    };
-                    cmd.bindTextures(rhi::ShaderStage::Fragment, 0, textures);
-                    const std::array<rhi::BufferHandle, 1> layerRows{
-                        layers != nullptr && layers->layerBuffer.valid() ? layers->layerBuffer : terrainPlainLayers_};
-                    cmd.bindStorageBuffers(rhi::ShaderStage::Fragment, 0, layerRows);
                     boundMaterial = kTerrainBinding;
                     boundTerrain = draw.terrainId;
                 }
@@ -7221,6 +7258,64 @@ bool DefaultRenderer::ensureTerrain(rhi::IDevice& device)
     return terrainValid_;
 }
 
+rhi::PipelineHandle DefaultRenderer::terrainForwardPipeline() const noexcept
+{
+    // A debug view is the full ground's to draw: the variants have none.
+    if (settings_.debugView != DebugView::None)
+        return terrainPipeline_;
+    using Surface = GraphicsSettings::TerrainSurface;
+    if (settings_.terrainSurface == Surface::Fast && terrainFastPipeline_.valid())
+        return terrainFastPipeline_;
+    if (settings_.terrainSurface == Surface::Flat && terrainFlatPipeline_.valid())
+        return terrainFlatPipeline_;
+    return terrainPipeline_;
+}
+
+void DefaultRenderer::ensureTerrainVariants(rhi::IDevice& device)
+{
+    if (terrainVariantsTried_ || !terrainValid_ || shaderLibrary_ == nullptr)
+        return;
+    terrainVariantsTried_ = true;
+    // The terrain's own vertex layout and state (`ensureTerrain`): a variant
+    // is another fragment over the same draw.
+    const std::array<rhi::VertexAttribute, 4> attributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 12},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 24},
+        rhi::VertexAttribute{.location = 3, .bufferSlot = 0, .format = rhi::VertexFormat::Float2, .offsetBytes = 40},
+    };
+    const std::array<rhi::VertexBufferLayout, 1> buffers{
+        rhi::VertexBufferLayout{.slot = 0, .strideBytes = 48},
+    };
+    const std::array<rhi::ColorTargetDesc, 1> hdrTarget{rhi::ColorTargetDesc{.format = kHdrFormat}};
+    const auto variant = [&](std::string_view name, const char* debugName) -> rhi::PipelineHandle {
+        core::EngineError error;
+        const rhi::ShaderHandle vertex = shaderLibrary_->create(device, name, rhi::ShaderStage::Vertex, &error);
+        const rhi::ShaderHandle fragment = shaderLibrary_->create(device, name, rhi::ShaderStage::Fragment, &error);
+        for (const rhi::ShaderHandle handle : {vertex, fragment})
+            if (handle.valid() && shaderCount_ < std::size(shaders_))
+                shaders_[shaderCount_++] = handle;
+        if (!vertex.valid() || !fragment.valid()) {
+            // Said, and the full ground draws in its place.
+            core::logText(core::LogLevel::Warn, error.message);
+            return {};
+        }
+        return device.createGraphicsPipeline({
+            .vertexShader = vertex,
+            .fragmentShader = fragment,
+            .vertexBuffers = buffers,
+            .vertexAttributes = attributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = debugName,
+        });
+    };
+    terrainFastPipeline_ = variant("terrain_fast", "terrain_fast");
+    terrainFlatPipeline_ = variant("terrain_flat", "terrain_flat");
+}
+
 void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target,
                              const RenderWorld& world, const MeshCache& meshes)
 {
@@ -7645,8 +7740,11 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // layers -- before any pass, because a pipeline made mid-pass is not, and
     // drawing a layer is a pass of its own. The pipelines first: the layers
     // are drawn with two of them.
-    if (!world.terrains.empty())
+    if (!world.terrains.empty()) {
         (void)ensureTerrain(device);
+        if (settings_.compiledTerrain())
+            ensureTerrainVariants(device);
+    }
     updateTerrainArrays(device, cmd, world);
 
     // The light budget, applied where the lights enter the frame. Truncation

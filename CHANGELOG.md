@@ -1081,6 +1081,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   it lifts, and the pipelines of particles, decals, name tags and their kin
   are made there: on a phone the frame after the loading screen took over a
   second, and a first spark or a first name tag another hitch.
+- **A ground for a phone, compiled apart** (ADR 0179).
+  `[graphics] terrain_surface = "fast"` draws the terrain with a shader that
+  holds nothing but what it does: at most four layers a pixel by their colour
+  alone, the mesh's own normal, diffuse light through four shadow taps. The
+  one shader for every ground keeps each kind behind a switch, and a phone's
+  driver can charge for all of them. No level chooses it yet. `"flat"` is one
+  colour, for measuring.
 - **A match is joined over the internet by a code, with no port opened and no
   VPN** (ADR 0178). `NetworkService:Host(port, { Relay = "host:port" })`
   registers the match with a relay -- `engine-relay`, a small program on one

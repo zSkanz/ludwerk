@@ -238,11 +238,21 @@ struct GraphicsSettings
         Level,
         Full,
         Lean,
+        // **The ground's compiled variants** (ADR 0179), each a shader of its
+        // own with nothing else in it: `Fast`, at most four layers a pixel by
+        // their colour alone, lit diffuse; and `Flat`, one colour and no
+        // light, which is what drawing the ground costs whatever it does.
+        Fast,
+        Flat,
     };
     TerrainSurface terrainSurface = TerrainSurface::Level;
     [[nodiscard]] bool leanTerrain() const noexcept
     {
         return terrainSurface == TerrainSurface::Level ? terrainLean : terrainSurface == TerrainSurface::Lean;
+    }
+    [[nodiscard]] bool compiledTerrain() const noexcept
+    {
+        return terrainSurface == TerrainSurface::Fast || terrainSurface == TerrainSurface::Flat;
     }
 
     // **How many levels the bloom's chain has** (ADR 0172), 2 through 5: each
