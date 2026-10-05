@@ -278,27 +278,6 @@ float layerHeight(float map)
     return 0.55f + 0.45f * map;
 }
 
-// **The ground's fragment, a piece at a time** (ADR 0171; `--skip=ground_*`):
-// bits of `ClusterParams.w` beside the lit fragment's own, set once per pixel
-// and zero on every frame nobody is measuring. Each takes one thing the
-// ground does before any light away, so a phone's timing of the pass says
-// which of them the frame is made of.
-static const uint EngineSkipGround = 2048u;
-static const uint EngineSkipGroundMaps = 4096u;
-static const uint EngineSkipGroundGradients = 8192u;
-static const uint EngineSkipGroundDetail = 16384u;
-static const uint EngineSkipGroundFar = 32768u;
-static const uint EngineSkipGroundBlend = 65536u;
-static const uint EngineSkipGroundPaint = 131072u;
-static const uint EngineSkipGroundRules = 262144u;
-static const uint EngineSkipGroundNoise = 524288u;
-static const uint EngineSkipGroundFlatRules = 1048576u;
-static uint s_groundSkips = 0u;
-
-// The layer arrays are this many texels across (`Size`, where the renderer
-// makes them): what turns a plane's derivatives into a mip level.
-static const float TerrainLayerTexels = 512.0f;
-
 // One projection of one layer: the plane's coordinates and their derivatives,
 // taken before any branch so the mip is the right one wherever it is read.
 struct Plane
@@ -317,42 +296,15 @@ Plane planeOf(float2 uv, float2 dx, float2 dy, float scale)
     return plane;
 }
 
-// The mip a plane's derivatives ask for, as the sampler works it out for a
-// read with no anisotropy: the longer of the two steps, in texels.
-float planeLevel(float2 dx, float2 dy)
-{
-    const float stepSquared = max(dot(dx, dx), dot(dy, dy)) * (TerrainLayerTexels * TerrainLayerTexels);
-    return max(0.5f * log2(max(stepSquared, 1e-12f)), 0.0f);
-}
-
-// One of the layer arrays at a plane, by the plane's gradients -- or, under
-// `ground_gradients`, at the level they come to, worked out by the caller
-// once for the plane's three reads.
-float4 readLayerMap(Texture2DArray map, SamplerState state, float3 at, float2 dx, float2 dy, float level)
-{
-    [branch] if ((s_groundSkips & EngineSkipGroundGradients) != 0u)
-        return map.SampleLevel(state, at, level);
-    return map.SampleGrad(state, at, dx, dy);
-}
-
 // The layer's three maps at one plane; the normal is the map's tangent-space
 // xy, scaled.
 void readPlainPlane(Plane plane, float slice, float normalScale, out float3 albedo, out float2 bend,
                     out float3 surface)
 {
     const float3 at = float3(plane.Uv, slice);
-    const float level = planeLevel(plane.Dx, plane.Dy);
-    albedo = readLayerMap(LayerColorTexture, LayerColorSampler, at, plane.Dx, plane.Dy, level).rgb;
-    // `ground_detail`: the colour alone, on the mesh's own normal, at the
-    // middle of a material's roughness and height.
-    bend = float2(0.0f, 0.0f);
-    surface = float3(0.5f, 1.0f, 1.0f);
-    [branch] if ((s_groundSkips & EngineSkipGroundDetail) == 0u)
-    {
-        bend = (readLayerMap(LayerNormalTexture, LayerNormalSampler, at, plane.Dx, plane.Dy, level).xy * 2.0f - 1.0f) *
-               normalScale;
-        surface = readLayerMap(LayerSurfaceTexture, LayerSurfaceSampler, at, plane.Dx, plane.Dy, level).rgb;
-    }
+    albedo = LayerColorTexture.SampleGrad(LayerColorSampler, at, plane.Dx, plane.Dy).rgb;
+    bend = (LayerNormalTexture.SampleGrad(LayerNormalSampler, at, plane.Dx, plane.Dy).xy * 2.0f - 1.0f) * normalScale;
+    surface = LayerSurfaceTexture.SampleGrad(LayerSurfaceSampler, at, plane.Dx, plane.Dy).rgb;
 }
 
 // **Hex tiling** (ADR 0113's amendment; after Mikkelsen, "Practical Real-Time
@@ -433,7 +385,7 @@ void readPlane(Plane plane, float slice, float normalScale, float4 tiling, out f
         readHexPlane(plane, slice, normalScale, albedo, bend, surface);
     else
         readPlainPlane(plane, slice, normalScale, albedo, bend, surface);
-    [branch] if (tiling.y < 0.999f && s_lean && (s_groundSkips & EngineSkipGroundFar) == 0u)
+    [branch] if (tiling.y < 0.999f && s_lean)
     {
         // **The colour alone at the far scale**: one read where the full
         // ground takes three and bends them by two noises. It is the colour's
@@ -442,14 +394,14 @@ void readPlane(Plane plane, float slice, float normalScale, float4 tiling, out f
         // the roughness's repeat it does not.
         const float2x2 turn = float2x2(0.82533561f, -0.56464247f, 0.56464247f, 0.82533561f);
         const float3 wide = float3(mul(turn, plane.Uv) * tiling.y + 0.37f, slice);
-        const float2 wideDx = mul(turn, plane.Dx) * tiling.y;
-        const float2 wideDy = mul(turn, plane.Dy) * tiling.y;
-        const float3 a =
-            readLayerMap(LayerColorTexture, LayerColorSampler, wide, wideDx, wideDy, planeLevel(wideDx, wideDy)).rgb;
+        const float3 a = LayerColorTexture
+                             .SampleGrad(LayerColorSampler, wide, mul(turn, plane.Dx) * tiling.y,
+                                         mul(turn, plane.Dy) * tiling.y)
+                             .rgb;
         const float far = smoothstep(2.0f, 24.0f, s_viewDepth * tiling.w);
         albedo = lerp(albedo, a, saturate(lerp(0.25f, 0.75f, far) + (s_leanPatch - 0.5f) * 1.5f));
     }
-    [branch] if (tiling.y < 0.999f && !s_lean && (s_groundSkips & EngineSkipGroundFar) == 0u)
+    [branch] if (tiling.y < 0.999f && !s_lean)
     {
         // Turned by 0.6 radians as well as scaled, so the two lattices never
         // line up: scaled alone, a sixth of the scale repeats every six fine
@@ -605,7 +557,7 @@ LayerSample flatLayer(uint id, float3 normal)
 
 LayerSample layerAt(uint id, float3 ground, float3 dx, float3 dy, float3 normal, float3 planes)
 {
-    if (TerrainParams.x > 0.5f && float(id) <= TerrainParams.z && (s_groundSkips & EngineSkipGroundMaps) == 0u)
+    if (TerrainParams.x > 0.5f && float(id) <= TerrainParams.z)
         return sampleLayer(id, ground, dx, dy, normal, planes);
     return flatLayer(id, normal);
 }
@@ -616,11 +568,6 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     const float4 debugColor = terrainDebugColor(input, normal);
     if (debugColor.a >= 0.0f)
         return debugColor;
-    s_groundSkips = uint(ClusterParams.w);
-    // `ground`: none of what follows. What is left of the pass's time is what
-    // drawing the ground costs whatever its fragment does.
-    if ((s_groundSkips & EngineSkipGround) != 0u)
-        return float4(TerrainLayers[input.Materials.x].Flat.rgb, 1.0f);
     s_viewDepth = viewDepthOf(input.ShadingPosition, input.ViewDepth);
     s_lean = TerrainDebug.y > 0.5f;
     const float3 dx = ddx(input.Ground);
@@ -635,8 +582,7 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     {
         planes *= step(float3(0.25f, 0.25f, 0.25f), planes);
         planes /= max(planes.x + planes.y + planes.z, 1e-5f);
-        [branch] if ((s_groundSkips & EngineSkipGroundNoise) == 0u)
-            s_leanPatch = terrainRuleNoise(input.Ground.x * (4.3f / 37.0f), input.Ground.z * (4.3f / 37.0f));
+        s_leanPatch = terrainRuleNoise(input.Ground.x * (4.3f / 37.0f), input.Ground.z * (4.3f / 37.0f));
     }
 
     // The triangle's layers, a repeat folded into the first corner that has it.
@@ -653,14 +599,6 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     else if (ids.z == ids.y) {
         corners.y += corners.z;
         corners.z = 0.0f;
-    }
-
-    // `ground_blend`: the heaviest corner's layer for the whole pixel.
-    if ((s_groundSkips & EngineSkipGroundBlend) != 0u) {
-        const uint heaviest = corners.x >= corners.y && corners.x >= corners.z ? ids.x
-                                                                                  : (corners.y >= corners.z ? ids.y : ids.z);
-        ids = uint3(heaviest, heaviest, heaviest);
-        corners = float3(1.0f, 0.0f, 0.0f);
     }
 
     // **How much of the pixel is plain ground**, a material no layer names
@@ -692,7 +630,7 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     // is under before it covers its tops, and the painted layer's material's
     // `BlendSharpness` says how hard that edge is. At no paint and at full cover it is exactly the one or the
     // other: the height only moves the middle.
-    [branch] if (any(input.Covers > 0u) && (s_groundSkips & EngineSkipGroundPaint) == 0u)
+    [branch] if (any(input.Covers > 0u))
     {
         uint3 tops = input.Tops;
         uint3 covers = input.Covers;
@@ -771,17 +709,11 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     // noise, and by how much of the pixel's triangle is a layer the rule may
     // cover -- and paints its own layer over what came before by that much.
     const TerrainVariation variation = terrainVariation(input.Ground, normal, s_lean);
-    uint ruleCount = (s_groundSkips & EngineSkipGroundRules) != 0u ? 0u : min(uint(TerrainParams.y + 0.5f), 16u);
-    // `ground_flat_rules`: ground flatter than the flattest rule begins at,
-    // its noise allowed for (`TerrainDebug.w`), is covered by none of them --
-    // so neither the rules nor their noise are worked out for it. The same
-    // picture: every rule's cover there is nothing.
-    if ((s_groundSkips & EngineSkipGroundFlatRules) != 0u && 1.0f - saturate(normal.y) < TerrainDebug.w)
-        ruleCount = 0u;
+    const uint ruleCount = min(uint(TerrainParams.y + 0.5f), 16u);
     const float worldY = input.Ground.y + TerrainParams.w;
     // The rules' own noise, where there is a rule to be ragged by it.
     float ruleNoise = 0.5f;
-    [branch] if (ruleCount > 0u && (s_groundSkips & EngineSkipGroundNoise) == 0u)
+    [branch] if (ruleCount > 0u)
         ruleNoise = terrainRuleNoise(input.Ground.x, input.Ground.z);
     [loop] for (uint rule = 0u; rule < ruleCount; ++rule)
     {

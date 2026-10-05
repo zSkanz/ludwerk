@@ -134,16 +134,22 @@ where the GPU is, and removing what it draws says why.
     nobody measures -- so the picture and its cost are unchanged without the
     key. `hide` by `skip` attributes the forward pass.
 
-    Amended 2026-10-05: **the ground's fragment has names of its own**
-    (`ground`, `ground_maps`, `ground_gradients`, `ground_detail`,
-    `ground_far`, `ground_blend`, `ground_paint`, `ground_rules`,
-    `ground_noise`, and `ground_flat_rules`, which leaves the rules out only
-    where none can cover -- the same picture, for less). On the phone the ground was four fifths of the forward
-    pass and `unlit` took an eighth of that away: what costs is what the
-    ground does before any light, and these take it apart. On the desktop,
-    at 7680 by 4320 where the ground is 2.8 ms of the pass: its lighting 1.2,
-    its map reads 0.9, the rules 0.5, its noise 0.1, and drawing it at all
-    0.2. A phone's numbers are its own, which is what the names are for.
+    Amended 2026-10-05, and taken back the same night: **the ground's
+    fragment was given names of its own** (`ground`, `ground_maps`,
+    `ground_gradients`, `ground_detail`, `ground_far`, `ground_blend`,
+    `ground_paint`, `ground_rules`, `ground_noise`, `ground_flat_rules`),
+    each a branch more in `terrain.hlsl`. They said what they were for on the
+    desktop -- at 7680 by 4320, where the ground is 2.8 ms of the forward
+    pass: its lighting 1.2, its map reads 0.9, the rules 0.5, its noise 0.1,
+    and drawing it at all 0.2 -- and went to the phone in one package. But
+    the shader that resulted is one Direct3D's software rasteriser could not
+    run: on the machines that build `main`, with no GPU, the ground's
+    pictures came out wrong and one run stopped on an access violation, where
+    a GPU and Vulkan's software rasteriser drew them as before. A shader with
+    every kind of ground behind branches was already the trouble (ADR 0179);
+    more branches in it to measure the first ones was the same mistake. What
+    takes the ground apart now is what replaced it: shaders compiled apart,
+    `terrain_fast.hlsl` and `terrain_flat.hlsl`.
 
 ## What it does not do
 

@@ -698,8 +698,8 @@ struct GpuTerrainSurfaceUniforms
     // x: the debug view drawn instead of the ground (`DebugView`, terrain
     // audit T0), zero for none. y: 1 for the lean ground (ADR 0175). z: never
     // set; the shader names its unread slots behind it. w: the slope under
-    // which no rule covers anything, whatever its noise (ADR 0171's
-    // `ground_flat_rules`).
+    // which no rule covers anything, whatever its noise: ground the fast
+    // ground asks no rule about (ADR 0179).
     f32 debug[4]{};
 };
 

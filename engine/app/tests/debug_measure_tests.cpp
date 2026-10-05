@@ -107,11 +107,6 @@ TEST_CASE("skip reads a list of lighting terms as the bits the shaders read")
     CHECK(app::debugSkipText(skip) == "shadow,environment,unlit");
     CHECK(app::parseDebugSkip("") == 0);
     CHECK(app::debugSkipText(0).empty());
-    // The ground's pieces are names of the same list (ADR 0171, amended).
-    CHECK(app::parseDebugSkip("ground") == Skip::Ground);
-    CHECK(app::parseDebugSkip("ground_maps,ground_rules") == (Skip::GroundMaps | Skip::GroundRules));
-    CHECK(app::debugSkipText(Skip::Unlit | Skip::GroundGradients | Skip::GroundDetail) ==
-          "unlit,ground_gradients,ground_detail");
 
     // Every name is one bit, and no two names share one.
     engine::core::u32 all = 0;
