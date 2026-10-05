@@ -67,6 +67,21 @@ screen.
 - Surface shaders a game compiles for a material first seen in play are made
   when they are first seen.
 
+## Amended 2026-10-05: what a report of a slow frame needs to be read
+
+On the phone the slowest frame of a run was still one of a second and a half,
+made of the frame's preparation (1.1 s) -- and nothing in the log said whether
+the loading screen was still up when it happened, nor which pipeline was being
+made. Three things, so the next report answers itself:
+
+- **The loading screen says when it lifts**: the frame, and how long it was up.
+- **A pipeline that takes over twenty milliseconds to make is said by name**,
+  with the time: making one is where a driver compiles its shaders.
+- **The frames behind the loading screen are not frames of play** in
+  `--frame-stats`' list of the slowest: the world is drawn there on purpose,
+  so that the cost of a first draw falls where nobody watches, and was then
+  listed as the run's worst frame.
+
 ## Consequences
 
 - The loading screen is up for as long as the world's first frame takes to

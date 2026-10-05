@@ -2264,6 +2264,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // editor's: a person editing a world wants to see it arrive.
     const bool curtains = !options.headless && !options.editor;
     LoadingCurtain curtain;
+    // When the curtain last went up, for the line that says how long it stayed.
+    core::u64 curtainRaisedNs = platform::nowNs();
     if (curtains)
         curtain.raise();
     // Whether the renderer has been warmed behind this raising of the curtain.
@@ -2992,7 +2994,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 settleLoads = loads;
                 settleUntilNs = nowNs + static_cast<core::u64>(options.frameStatsWarmupSeconds * 1.0e9);
             }
-            if (nowNs < settleUntilNs)
+            // And the frames behind the loading screen (ADR 0176): the world is
+            // drawn there on purpose, so that what a first draw costs is paid
+            // where nobody watches -- and it was then listed as the slowest
+            // frame of play.
+            if (nowNs < settleUntilNs || curtain.up())
                 core::profile::markSettling();
         }
 
@@ -6863,8 +6869,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             const bool useRenderer = renderer != nullptr && renderer->valid() && snapshot.camera.valid;
             if (curtains) {
                 scene::EngineState& engineNow = host->world().engineState();
-                if (curtainScene.has_value() && *curtainScene != engineNow.sceneLoads)
+                if (curtainScene.has_value() && *curtainScene != engineNow.sceneLoads) {
                     curtain.raise();
+                    curtainRaisedNs = nowNs;
+                }
                 curtainScene = engineNow.sceneLoads;
                 if (curtain.up()) {
                     const bool ground =
@@ -6883,6 +6891,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // **Given up on, and said** (ADR 0159): a hold never
                     // released, or ground that never came, is the game's to
                     // know about.
+                    // **Said when it lifts** (ADR 0176): a slow frame is the
+                    // player's only from here, and a report of one cannot be
+                    // read without knowing which side of this line it fell.
+                    if (lift != LoadingCurtain::Lift::Kept) {
+                        const std::array<core::I18nArg, 2> liftArgs{
+                            core::I18nArg{"frame", static_cast<core::i64>(frame.index)},
+                            core::I18nArg{"ms", static_cast<core::f64>(nowNs - curtainRaisedNs) / 1'000'000.0}};
+                        core::log(LogLevel::Info, ENG_TR("engine.info.curtain_lifted"), liftArgs);
+                    }
                     if (lift == LoadingCurtain::Lift::TimedOut) {
                         const std::array<core::I18nArg, 2> args{
                             core::I18nArg{"holds", static_cast<core::i64>(engineNow.loadingHolds)},

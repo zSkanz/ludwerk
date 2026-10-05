@@ -40,6 +40,22 @@ using sdlgpu::fromSdl;
 using sdlgpu::fromSdlShaderFormats;
 using sdlgpu::toSdl;
 
+// **A pipeline that took long to make is said** (ADR 0176). Making one is where
+// a driver compiles its shaders, and a phone's takes a second over a large
+// one: a frame that makes one in play is a frame the player waits for, and
+// which pipeline it was is what nobody could tell from "the frame took 1.5 s".
+// Twenty milliseconds is more than a frame's and less than any a desktop takes.
+constexpr double SlowPipelineMs = 20.0;
+
+void sayIfSlow(std::string_view name, Uint64 startedNs)
+{
+    const double ms = static_cast<double>(SDL_GetTicksNS() - startedNs) / 1'000'000.0;
+    if (ms < SlowPipelineMs)
+        return;
+    const core::I18nArg args[] = {{"name", name.empty() ? std::string_view{"unnamed"} : name}, {"ms", ms}};
+    core::log(core::LogLevel::Info, ENG_TR("rhi.info.pipeline_slow"), args);
+}
+
 // Ids are the slot index plus one, and a destroyed slot is never reused. That
 // costs a pointer per dead resource for the life of the device and buys the
 // property that a stale handle resolves to null rather than to whatever
@@ -580,7 +596,9 @@ public:
             .threadcount_z = desc.threadCountZ,
             .props = 0,
         };
+        const Uint64 startedNs = SDL_GetTicksNS();
         SDL_GPUComputePipeline* pipeline = SDL_CreateGPUComputePipeline(device_, &info);
+        sayIfSlow(desc.debugName, startedNs);
         if (pipeline == nullptr) {
             noteFailure();
             return {};
@@ -961,7 +979,9 @@ PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& 
         .padding3 = 0,
     };
 
+    const Uint64 startedNs = SDL_GetTicksNS();
     SDL_GPUGraphicsPipeline* pipeline = SDL_CreateGPUGraphicsPipeline(device_, &info);
+    sayIfSlow(desc.debugName, startedNs);
     if (pipeline == nullptr)
         noteFailure();
     return pipeline != nullptr ? PipelineHandle{addSlot(pipelines_, pipeline)} : PipelineHandle{};
