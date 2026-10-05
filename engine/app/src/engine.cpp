@@ -1726,6 +1726,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // is not the frame's work -- and the rate last said to the log and to the
     // display.
     RateGovernor rateGovernor;
+    // The rigs inside the frames a player can see, gathered each frame.
+    std::vector<render::SeenSkin> frameSkins;
     core::u32 heldRate = 0;
     core::u64 heldNs = 0;
     core::u32 saidRate = 0;
@@ -2262,6 +2264,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     LoadingCurtain curtain;
     if (curtains)
         curtain.raise();
+    // Whether the renderer has been warmed behind this raising of the curtain.
+    bool curtainWarmed = false;
     std::optional<core::u32> curtainScene;
     // **A server catches up rather than dropping time** (NA3): a frame of its
     // over four ticks long -- a garbage collection, a large join -- dropped the
@@ -5582,6 +5586,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // tick it is now, which is what the sample's `tick` field says.
         answerSamples();
 
+        // `InputService:SetClipboard` (ADR 0177): on the clipboard of the
+        // machine with a window. A server's and a headless run's is nobody's:
+        // taken, so it does not pile up, and dropped.
+        if (const std::optional<std::string> copied = host->takeClipboardText();
+            copied.has_value() && !options.headless && window != nullptr)
+            (void)platform::setClipboardText(*copied);
+
         if (host->shutdownRequested())
             quit = true;
         // Asked from outside (Ctrl+C, SIGTERM): closed exactly as a script's
@@ -6116,7 +6127,16 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // The camera textures of the game's own world -- not of a stamp
                 // being edited, which has no game running in it.
                 if (&world == &host->world() && stageOf() == nullptr) {
-                    viewHost.sync(*device, *cmd, world, workspace, textureLibrary, renderer.get(), &framePoses);
+                    // What a clip does to a mesh inside a frame is part of
+                    // the frame's picture (ADR 0107, amended).
+                    const FramePoseOf poseOf = [&](core::InstanceId meshPart) -> std::span<const core::Mat4> {
+                        const render::AnimationSystem* animation = host->animation();
+                        const render::Pose* pose = animation != nullptr ? animation->pose(meshPart) : nullptr;
+                        return pose != nullptr ? std::span<const core::Mat4>(pose->palette)
+                                               : std::span<const core::Mat4>{};
+                    };
+                    viewHost.sync(*device, *cmd, world, workspace, textureLibrary, renderer.get(), &framePoses,
+                                  &poseOf);
                     // The pictures the UI lends from those views, remade or
                     // gone, before anything copies the table.
                     uiText.refreshViews();
@@ -6322,6 +6342,16 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                 useEditorView ? &editorView : nullptr, outlined, &textureLibrary, terrainNodes);
                 // The rigs this frame reached, for how often each is posed (H3).
                 host->reportSeenSkins(snapshot.seenSkins, true);
+                // And the rigs inside the frames a player can see (ADR 0107,
+                // amended): looked at whether or not their frame was redrawn.
+                if (const render::AnimationSystem* animation = host->animation(); animation != nullptr) {
+                    frameSkins.clear();
+                    collectFrameSkins(
+                        host->world(), static_cast<f32>(targetHeight),
+                        [animation](core::InstanceId meshPart) { return animation->animates(meshPart); }, frameSkins);
+                    if (!frameSkins.empty())
+                        host->reportSeenSkins(frameSkins, false);
+                }
             }
             // The terrains' palettes, which their shader reads, for the same
             // world and the same root.
@@ -7037,6 +7067,27 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
             ENG_PROFILE_NEXT(drawing, "draw.render");
             if (useRenderer && curtain.up()) {
+                // **Drawn behind the curtain once nothing is left to wait for**
+                // (ADR 0176). The frame after the curtain lifted was the first
+                // the world was drawn in, and everything a renderer makes at
+                // first use was made in it: 1.3 seconds on the owner's phone,
+                // with the game already running under it. The curtain asks for
+                // three settled frames before it lifts; the world is drawn in
+                // those, and the backdrop over it.
+                if (curtain.settling()) {
+                    ENG_PROFILE_SCOPE("render.world");
+                    if (!curtainWarmed) {
+                        renderer->warm(*device);
+                        curtainWarmed = true;
+                    }
+                    renderer->render(
+                        *device, *cmd,
+                        {.color = target, .colorFormat = targetFormat, .width = targetWidth, .height = targetHeight},
+                        snapshot, meshCache);
+                }
+                else {
+                    curtainWarmed = false;
+                }
                 const std::array<rhi::ColorAttachment, 1> backdrop{rhi::ColorAttachment{
                     .texture = target,
                     .loadOp = rhi::LoadOp::Clear,

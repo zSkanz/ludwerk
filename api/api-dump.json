@@ -2903,6 +2903,17 @@
           "Returns": ["boolean"]
         },
         {
+          "Name": "SetClipboard",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "SetVirtualState",
           "Parameters": [
             {

@@ -77,6 +77,10 @@ end)
 - **What is inside is its world and nobody else's**: drawn in the frame and
   nowhere else, and not simulated -- no gravity, no collisions. A script
   moves it by setting `CFrame`.
+- **A clip plays in it**: an `AnimationPlayer` under a skinned mesh inside a
+  frame animates it, as it would in the world -- a hero standing in its idle
+  in a selection screen. A small frame's mesh is posed less often than a
+  large one's, as a far figure is.
 - **Framed for you**: with no `CurrentCamera`, it looks at everything inside
   from the front and a little above. Put a `Camera` inside it and set
   `CurrentCamera` to choose the angle yourself.
@@ -84,9 +88,9 @@ end)
   along `LightDirection`. No sky and no shadows; with
   `BackgroundTransparency = 1`, only what is inside shows, over whatever is
   behind the frame.
-- **Drawn only when something changes**: an item moved, its camera, its light,
-  its size. Forty still items are forty pictures once; one turning is one
-  picture a frame.
+- **Drawn only when something changes**: an item moved, a clip posed it, its
+  camera, its light, its size. Forty still items are forty pictures once; one
+  turning, or one breathing, is one picture a frame.
 
 ## Mirrors and portals
 

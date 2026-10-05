@@ -244,6 +244,22 @@ what a first-person camera wants. `InputService.PointerVisible` shows or hides
 the cursor. They are separate because hiding a cursor and capturing it are
 different decisions.
 
+## The clipboard
+
+```luau
+copyButton.Activated:Connect(function()
+    InputService:SetClipboard(roomCode)
+end)
+```
+
+`InputService:SetClipboard(text)` puts text on the player's clipboard: a
+room's code, a seed, a link. Call it from a client script, where the player
+is; on a server there is no clipboard and nothing happens. It takes up to
+64 KiB.
+
+There is no way to read the clipboard. What a player copied elsewhere is
+theirs, and a `TextInput` already pastes where they choose to.
+
 ## Window focus
 
 ```luau

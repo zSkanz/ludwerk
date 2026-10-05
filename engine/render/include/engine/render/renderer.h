@@ -165,6 +165,15 @@ public:
     virtual void setSurfaceSource(ISurfaceSource* source) { (void)source; }
     [[nodiscard]] virtual const GraphicsSettings& settings() const noexcept = 0;
 
+    // **Makes now what a game first asks for in the middle of play** (ADR
+    // 0176): the pipelines of particles, beams and trails, decals, the world's
+    // interface, highlights and skinned runs, each of which is otherwise made
+    // the first frame something of its kind is drawn -- a first shot's
+    // sparks, a first name tag -- and on a phone that frame is tens of
+    // milliseconds a pipeline. Called behind a loading curtain. What the scene
+    // itself shows is made by drawing it there; this is for what it will show.
+    virtual void warm(rhi::IDevice& device) { (void)device; }
+
     // What the last frame actually submitted.
     //
     // Counted by the renderer rather than derived from the snapshot, and that

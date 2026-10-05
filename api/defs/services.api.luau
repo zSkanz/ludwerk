@@ -2763,6 +2763,19 @@ local Classes: { Schema.Class } = {
                     .. "press cannot survive an alt-tab. Refuses any key code that is not one of the `Virtual` "
                     .. "family: writing to `Space` would be a script pretending to be a keyboard.",
             },
+            {
+                Name = "SetClipboard",
+                Parameters = { { Name = "text", Type = "string" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Puts text on the player's clipboard: a room's code, a seed, a link -- what a player "
+                    .. "clicks to copy rather than selects and copies (ADR 0177).\n\n**Written, never read.** "
+                    .. "There is no way to ask what the clipboard holds: what a player copied somewhere else "
+                    .. "is theirs, and no game needs it.\n\nThe text is the machine's that runs the script: "
+                    .. "call it from a client script, where the player is. On a server and in a headless run "
+                    .. "there is no clipboard and nothing happens. At most 64 KiB; longer text is cut at a "
+                    .. "character's boundary. The last call of a frame is the one the clipboard keeps.",
+            },
         } :: { Schema.Method },
         Events = {
             {

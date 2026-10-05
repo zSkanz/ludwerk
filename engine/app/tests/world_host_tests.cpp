@@ -3078,6 +3078,51 @@ TEST_CASE("D462: a script hears a swipe, a tap and a drag, and binds a swipe lik
     CHECK(log.contains("tapped 90,80"));
 }
 
+TEST_CASE("a script puts text on the clipboard, and the host takes it once (ADR 0177)")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/game.luau", R"(
+        local InputService = game:GetService("InputService")
+        local RunService = game:GetService("RunService")
+        local ticks = 0
+        RunService.PreSimulation:Connect(function()
+            ticks += 1
+            if ticks == 1 then
+                InputService:SetClipboard("first")
+                -- The last call of a frame is the one that is kept.
+                InputService:SetClipboard("ROOM-7QK2")
+            elseif ticks == 3 then
+                -- Longer than the most a script may copy, in three-byte
+                -- characters: cut at a character's boundary, never inside one.
+                InputService:SetClipboard(string.rep("\u{20AC}", 30000))
+            end
+        end)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    // Nothing asked yet.
+    CHECK_FALSE(host.takeClipboardText().has_value());
+
+    host.tick();
+    host.tick();
+    const std::optional<std::string> copied = host.takeClipboardText();
+    REQUIRE(copied.has_value());
+    CHECK(*copied == "ROOM-7QK2");
+    // Taken once: the host does not write the same text every frame.
+    CHECK_FALSE(host.takeClipboardText().has_value());
+
+    host.tick();
+    host.tick();
+    const std::optional<std::string> longText = host.takeClipboardText();
+    REQUIRE(longText.has_value());
+    CHECK(longText->size() <= 64u * 1024u);
+    CHECK(longText->size() > 64u * 1024u - 3u);
+    // Whole characters: the length is a multiple of the euro sign's three bytes.
+    CHECK(longText->size() % 3u == 0u);
+    CHECK(longText->substr(longText->size() - 3) == "\xE2\x82\xAC");
+}
+
 TEST_CASE("D459: PlayerRemoving hands over a player that can still be read")
 {
     // `player.UserId` in a `PlayerRemoving` handler raised: the player was

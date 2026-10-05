@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "engine/core/types.h"
+#include "engine/render/animation.h"
 #include "engine/render/render_world.h"
 #include "engine/render/renderer.h"
 #include "engine/rhi/device.h"
@@ -49,8 +50,25 @@ struct ViewCandidate
 // what they wear, and the frame's own light. The picture is redrawn when this
 // changes and at no other time -- forty still items in an inventory are forty
 // pictures once.
+//
+// **And how they are posed** (ADR 0107, amended): `poseOf` answers a skinned
+// mesh's joints as they stand, or nothing for a mesh no clip drives. A hero
+// breathing in a selection screen is a picture that changes; one standing in
+// its bind pose is a picture once, as before.
+using FramePoseOf = std::function<std::span<const core::Mat4>(core::InstanceId meshPart)>;
 [[nodiscard]] core::u64 frameSignature(const scene::World& world, core::InstanceId frame,
-                                       const render::DrawPoses* poses = nullptr);
+                                       const render::DrawPoses* poses = nullptr, const FramePoseOf* poseOf = nullptr);
+
+// **The skinned meshes inside the frames a player can see** (ADR 0107,
+// amended), each with the share of the screen's height its frame takes: what
+// the animation system is told it is looked at, every frame, whether or not
+// the frame was redrawn. Without it a mesh in a frame was posed once -- nothing
+// had seen it since, so it was not posed; it was not posed, so its picture did
+// not change; its picture did not change, so nothing drew it to see it.
+// `animates` says whether a mesh wears a skeleton something poses.
+void collectFrameSkins(const scene::World& world, float viewportHeight,
+                       const std::function<bool(core::InstanceId meshPart)>& animates,
+                       std::vector<render::SeenSkin>& out);
 
 // The camera a `ViewportFrame` looks through: its `CurrentCamera` when that is a
 // camera inside it, and otherwise one that frames everything inside from the
@@ -114,7 +132,8 @@ public:
     // gone gives its texture and its renderer state back. Records the first
     // clear of a new texture into `cmd`.
     void sync(rhi::IDevice& device, rhi::ICmdList& cmd, scene::World& world, core::InstanceId workspace,
-              render::TextureLibrary& library, render::IRenderer* renderer, const render::DrawPoses* poses = nullptr);
+              render::TextureLibrary& library, render::IRenderer* renderer, const render::DrawPoses* poses = nullptr,
+              const FramePoseOf* poseOf = nullptr);
 
     // The views to draw on frame `frame`, within the budget.
     // A `SubWorld`'s view is due only while `running` says its world is up

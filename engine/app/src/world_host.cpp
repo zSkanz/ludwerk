@@ -2023,6 +2023,11 @@ bool WorldHost::shutdownRequested()
     return script::shutdownRequested(m_runtime->state());
 }
 
+std::optional<std::string> WorldHost::takeClipboardText()
+{
+    return script::takeClipboardText(m_runtime->state());
+}
+
 void WorldHost::close(core::f64 graceSeconds, const std::function<void()>& pump)
 {
     // What this world runs closes before it does.

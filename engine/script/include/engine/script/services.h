@@ -190,6 +190,11 @@ public:
     std::vector<int> closePending;
     bool shutdown = false;
 
+    // `InputService:SetClipboard` (ADR 0177): what a script asked to be put on
+    // the clipboard, waiting for the host to take it -- the clipboard is the
+    // window system's, which this module never reaches.
+    std::optional<std::string> clipboard;
+
     // Scenes as scripts see them: which is open, `scene:BindToClose`, and the
     // two mailboxes (ADR 0124).
     SceneState scenes;
@@ -489,6 +494,11 @@ void resumeChildWaiters(lua_State* L);
 // Whether a `BindToClose` callback asked the run to end, or a script called
 // `Shutdown`. The host polls it; nothing here can end a process.
 [[nodiscard]] bool shutdownRequested(lua_State* L);
+
+// The text `InputService:SetClipboard` was last given, once: the host takes
+// it after the tick and hands it to the window system. Nothing where no script
+// asked.
+[[nodiscard]] std::optional<std::string> takeClipboardText(lua_State* L);
 
 // Runs the registered `BindToClose` callbacks. They are given their timeout by
 // the host and the shutdown proceeds when it expires, finished or not: a close

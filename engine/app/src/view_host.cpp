@@ -58,7 +58,8 @@ namespace {
 } // namespace
 
 void ViewHost::sync(rhi::IDevice& device, rhi::ICmdList& cmd, scene::World& world, core::InstanceId workspace,
-                    render::TextureLibrary& library, render::IRenderer* renderer, const render::DrawPoses* poses)
+                    render::TextureLibrary& library, render::IRenderer* renderer, const render::DrawPoses* poses,
+                    const FramePoseOf* poseOf)
 {
     std::vector<bool> seen(views_.size(), false);
 
@@ -126,7 +127,7 @@ void ViewHost::sync(rhi::IDevice& device, rhi::ICmdList& cmd, scene::World& worl
             view = views_.end() - 1;
         }
         seen[static_cast<core::usize>(view - views_.begin())] = true;
-        view->signature = frameSignature(world, id, poses);
+        view->signature = frameSignature(world, id, poses, poseOf);
         const core::Vec2 size = viewSize(element->absoluteSize, maxResolution_);
         auto width = static_cast<core::u32>(size.x);
         auto height = static_cast<core::u32>(size.y);
@@ -308,7 +309,29 @@ void forEachInside(const scene::World& world, core::InstanceId frame, Visit&& vi
 
 } // namespace
 
-core::u64 frameSignature(const scene::World& world, core::InstanceId frame, const render::DrawPoses* poses)
+void collectFrameSkins(const scene::World& world, float viewportHeight,
+                       const std::function<bool(core::InstanceId meshPart)>& animates,
+                       std::vector<render::SeenSkin>& out)
+{
+    if (!animates)
+        return;
+    world.viewportFrames().forEach([&](core::InstanceId frame, const scene::ViewportFrameComponent&) {
+        const scene::UIObjectComponent* element = world.uiObjects().find(frame);
+        if (element == nullptr || !element->visible || element->absoluteSize.x < 1.0f || element->absoluteSize.y < 1.0f)
+            return;
+        // As tall as its frame is on the screen: an icon is posed as seldom as
+        // a far figure, a preview that fills the screen every tick.
+        const float height =
+            viewportHeight >= 1.0f ? std::clamp(element->absoluteSize.y / viewportHeight, 0.0f, 1.0f) : 1.0f;
+        forEachInside(world, frame, [&](core::InstanceId id) {
+            if (world.meshParts().find(id) != nullptr && animates(id))
+                out.push_back({.meshPart = id, .screenHeight = height});
+        });
+    });
+}
+
+core::u64 frameSignature(const scene::World& world, core::InstanceId frame, const render::DrawPoses* poses,
+                         const FramePoseOf* poseOf)
 {
     render::DrawPoses still;
     const render::DrawPoses& posed =
@@ -338,8 +361,16 @@ core::u64 frameSignature(const scene::World& world, core::InstanceId frame, cons
             signature.pod(worn.metalness);
             signature.pod(worn.roughness);
         }
-        if (const scene::MeshPartComponent* mesh = world.meshParts().find(id); mesh != nullptr)
+        if (const scene::MeshPartComponent* mesh = world.meshParts().find(id); mesh != nullptr) {
             signature.pod(mesh->meshContent.id);
+            // Its joints, where a clip drives them: a pose that moved is a
+            // picture that changed.
+            if (poseOf != nullptr && *poseOf) {
+                const std::span<const core::Mat4> joints = (*poseOf)(id);
+                if (!joints.empty())
+                    signature.bytes(joints.data(), joints.size_bytes());
+            }
+        }
         if (const scene::CameraComponent* camera = world.cameras().find(id); camera != nullptr) {
             const core::CFrameD drawn = posed.camera(id);
             signature.pod(drawn.position);

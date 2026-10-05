@@ -401,7 +401,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<scene::MethodDesc, 3> inputServiceMethods;
+    static std::array<scene::MethodDesc, 4> inputServiceMethods;
     inputServiceMethods = {{
         scene::MethodDesc{
             .name = atoms.intern("GetPointerPosition"),
@@ -420,6 +420,12 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = scene::ThreadSafety::Unsafe,
             .doc = "Drives one of the `Virtual` key codes from something that is not hardware -- a HUD button, an on-screen thumbstick, an accessibility control for a player who cannot hold a key (\302\247" "2.4).\012\012**It writes into the same device snapshot a keyboard writes into**, which is what makes it one input model rather than two: the value binds through an ordinary `InputBinding`, resolves in the ordinary order, is eaten by an ordinary sinking context, and is carried by the recorded stream a replay hands back. A seam that reached past the snapshot would be a HUD button a recorded stream could not see.\012\012**It carries a value, not a press.** Write 1 and 0 for a button; write anything between for a slider or the axis of a thumbstick. Bound to a `Bool` action the value counts as pressed past half deflection, which is the rule every analogue source follows.\012\012The value STICKS until it is written again -- a button that is held is a 1 nobody has cleared -- and losing window focus clears it with everything else, so a press cannot survive an alt-tab. Refuses any key code that is not one of the `Virtual` family: writing to `Space` would be a script pretending to be a keyboard.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("SetClipboard"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Puts text on the player's clipboard: a room's code, a seed, a link -- what a player clicks to copy rather than selects and copies (ADR 0177).\012\012**Written, never read.** There is no way to ask what the clipboard holds: what a player copied somewhere else is theirs, and no game needs it.\012\012The text is the machine's that runs the script: call it from a client script, where the player is. On a server and in a headless run there is no clipboard and nothing happens. At most 64 KiB; longer text is cut at a character's boundary. The last call of a frame is the one the clipboard keeps.",
         },
     }};
     static std::array<scene::EventDesc, 10> inputServiceEvents;

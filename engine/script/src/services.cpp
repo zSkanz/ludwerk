@@ -1804,6 +1804,24 @@ int inputServiceSetVirtualState(lua_State* L)
     return 0;
 }
 
+// The most a script may put on the clipboard: a code, a seed, a link, a
+// paragraph -- not a megabyte handed to every program on the machine.
+constexpr std::size_t kClipboardMost = 64u * 1024u;
+
+int inputServiceSetClipboard(lua_State* L)
+{
+    std::size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    // Cut at a character's boundary: half a UTF-8 sequence is not text.
+    if (length > kClipboardMost) {
+        length = kClipboardMost;
+        while (length > 0 && (static_cast<unsigned char>(text[length]) & 0xC0u) == 0x80u)
+            --length;
+    }
+    services(L).clipboard = std::string(text, length);
+    return 0;
+}
+
 int inputServiceIsKeyDown(lua_State* L)
 {
     const scene::EnumValue item = checkEnumItem(L, 2);
@@ -2722,6 +2740,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"InputService", "GetPointerPosition", inputServiceGetPointerPosition},
     {"InputService", "IsKeyDown", inputServiceIsKeyDown},
     {"InputService", "SetVirtualState", inputServiceSetVirtualState},
+    {"InputService", "SetClipboard", inputServiceSetClipboard},
 
     {"AnimationPlayer", "LoadAnimation", animationPlayerLoadAnimation},
 
@@ -3275,6 +3294,11 @@ void resumeChildWaiters(lua_State* L)
 bool shutdownRequested(lua_State* L)
 {
     return services(L).shutdown;
+}
+
+std::optional<std::string> takeClipboardText(lua_State* L)
+{
+    return std::exchange(services(L).clipboard, std::nullopt);
 }
 
 void runCloseHandlers(lua_State* L)

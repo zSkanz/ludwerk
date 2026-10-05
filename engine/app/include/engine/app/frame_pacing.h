@@ -209,6 +209,12 @@ public:
 
     void raise() noexcept;
     [[nodiscard]] bool up() const noexcept { return m_up; }
+    // **Up, with nothing left to wait for** (ADR 0176): the frame before found
+    // the loaders idle, the ground meshed and no script holding, and the
+    // curtain is counting the frames it asks of that before it lifts. From
+    // here the world is drawn behind it, so what a first frame costs -- every
+    // pipeline it needs, made at first use -- is paid where nobody watches.
+    [[nodiscard]] bool settling() const noexcept { return m_up && m_settled > 0; }
     // One frame's word: whether the curtain lifts, and why.
     Lift update(const Frame& frame) noexcept;
 

@@ -38,6 +38,14 @@ It reads the device SNAPSHOT and ignores what the UI consumed, which is the oppo
 
 An analogue source counts as down past half deflection, which is the same rule a `Bool` action applies to one.
 
+### `SetClipboard(text: string)`
+
+Puts text on the player's clipboard: a room's code, a seed, a link -- what a player clicks to copy rather than selects and copies (ADR 0177).
+
+**Written, never read.** There is no way to ask what the clipboard holds: what a player copied somewhere else is theirs, and no game needs it.
+
+The text is the machine's that runs the script: call it from a client script, where the player is. On a server and in a headless run there is no clipboard and nothing happens. At most 64 KiB; longer text is cut at a character's boundary. The last call of a frame is the one the clipboard keeps.
+
 ### `SetVirtualState(keyCode: Enum.KeyCode, value: number)`
 
 Drives one of the `Virtual` key codes from something that is not hardware -- a HUD button, an on-screen thumbstick, an accessibility control for a player who cannot hold a key (§2.4).

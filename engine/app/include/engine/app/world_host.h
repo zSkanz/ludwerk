@@ -613,6 +613,9 @@ public:
     // scripts when somebody presses play.
     [[nodiscard]] std::optional<core::EngineError> restartRuntime();
     [[nodiscard]] bool shutdownRequested();
+    // What a script asked to be put on the clipboard since this was last
+    // asked (`InputService:SetClipboard`, ADR 0177), once.
+    [[nodiscard]] std::optional<std::string> takeClipboardText();
 
     // Read off `game`'s attributes, which is where the runner script puts them.
     // Attributes rather than a private channel, because the runner is an

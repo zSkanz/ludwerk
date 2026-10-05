@@ -220,6 +220,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   `transparent`, `particles`, `ribbons`, `decals`, `sprites`, `world_ui`,
   `ui`, `lights`, `highlights`), `[debug] shadow_taps = 4`, and their flags
   `--hide=` and `--shadow-taps=`. Every frame report says which are in force.
+- **`InputService:SetClipboard(text)`** (ADR 0177): a script puts text on the
+  player's clipboard -- a room's code copied at a click. There is no way to
+  read it.
+- **A clip plays inside a `ViewportFrame`** (ADR 0107, amended): an
+  `AnimationPlayer` under a skinned mesh in a frame animates it. It stood in
+  the clip's first pose for ever.
 - **`[debug] skip = "shadow,environment"`** and `--skip=` (ADR 0171): the
   terms of a lit surface left out of every frame -- `sun`, `shadow`,
   `contact`, `lights`, `environment`, `ambient`, `occlusion`, `fog`,
@@ -1070,6 +1076,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   again, which lets a tile-based GPU test depth before it runs the fragment;
   it could not, and shaded every hidden fragment in full. The picture is
   unchanged.
+- **The first frame of play no longer makes the renderer's pipelines** (ADR
+  0176). The world is drawn behind the loading curtain for the frames before
+  it lifts, and the pipelines of particles, decals, name tags and their kin
+  are made there: on a phone the frame after the loading screen took over a
+  second, and a first spark or a first name tag another hitch.
 - **A phone's frames are paced** (ADR 0173). A game that names no
   `max_frame_rate` is capped at sixty on a handheld, and its frames are held
   to the highest rate they fit that the display shows evenly -- 60, 40 or 30

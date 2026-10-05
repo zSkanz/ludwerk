@@ -262,3 +262,28 @@ promises:
 - **A sub-world's scene may be empty and its code build it** -- a small game
   usually is -- so D074's "two sources for one world" is not said of one: its
   scene is what `Load()` names and cannot be left out.
+
+## Amended: a clip plays inside a frame (2026-10-04)
+
+§2 says what is inside a `ViewportFrame` is not simulated and that the frame
+is drawn only when something inside changed. Both stand, and together they
+left out the first use §2 names: a character preview. An `AnimationPlayer`
+under a mesh in a frame played its clip and the mesh stood in the clip's
+first pose for ever -- found by a game that put twelve heroes in a selection
+screen, each playing its idle.
+
+The cause was a circle, not a rule. A skinned mesh is posed as often as it is
+seen (H3), and it is seen when a view that reaches it is drawn; a frame is
+drawn when its picture changes; its picture did not include the pose. Not
+posed because not seen, not seen because not drawn, not drawn because not
+posed.
+
+- **The pose is part of the frame's picture**: `frameSignature` reads the
+  joints of every mesh inside that a clip drives. A pose that moved is a
+  picture that changed.
+- **A skinned mesh inside a frame a player can see is seen** every frame,
+  whether or not the frame was redrawn (`collectFrameSkins`), at the share of
+  the screen's height its frame takes -- so an icon is posed as seldom as a
+  far figure, and a preview that fills the screen every tick.
+- A frame with nothing playing in it is still a picture once. Physics inside
+  a frame is still nothing.

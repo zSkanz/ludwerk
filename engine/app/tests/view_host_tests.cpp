@@ -106,6 +106,62 @@ TEST_CASE("a ViewportFrame's picture is redrawn when what is inside it changes, 
     CHECK(app::frameSignature(world, frame) != moved);
 }
 
+TEST_CASE("a clip playing on a mesh inside a ViewportFrame redraws it, and the mesh is seen while the frame is")
+{
+    // A hero in a selection screen stood in its clip's first pose for ever:
+    // nothing had seen the mesh since its frame was drawn, so it was not posed
+    // again; its pose did not change, so the frame's picture did not; the
+    // frame was not redrawn, so nothing saw the mesh.
+    core::AtomTable atoms;
+    scene::ClassRegistry classes;
+    scene::EnumRegistry enums;
+    scene::generated::registerEnums(enums, atoms);
+    scene::generated::registerClasses(classes, atoms);
+    engine::render::generated::registerClasses(classes, atoms);
+    engine::ui::generated::registerClasses(classes, atoms);
+    scene::World world(classes, enums, atoms, 7u);
+
+    const core::InstanceId frame = world.create(classes.findId(atoms.intern("ViewportFrame")));
+    const core::InstanceId hero = world.create(classes.findId(atoms.intern("MeshPart")));
+    const core::InstanceId prop = world.create(classes.findId(atoms.intern("MeshPart")));
+    REQUIRE(frame.valid());
+    REQUIRE(hero.valid());
+    REQUIRE_FALSE(world.setParent(hero, frame).has_value());
+    REQUIRE_FALSE(world.setParent(prop, frame).has_value());
+
+    // The hero's joints, as a clip leaves them; the prop has none.
+    std::vector<core::Mat4> joints(3);
+    const app::FramePoseOf poseOf = [&](core::InstanceId meshPart) -> std::span<const core::Mat4> {
+        return meshPart == hero ? std::span<const core::Mat4>(joints) : std::span<const core::Mat4>{};
+    };
+    const core::u64 still = app::frameSignature(world, frame, nullptr, &poseOf);
+    CHECK(app::frameSignature(world, frame, nullptr, &poseOf) == still);
+    // The clip moved a joint: a new picture.
+    joints[1].m[3][1] = 0.25f;
+    const core::u64 breathed = app::frameSignature(world, frame, nullptr, &poseOf);
+    CHECK(breathed != still);
+    // With nobody to ask, the frame is the picture it always was.
+    CHECK(app::frameSignature(world, frame) == app::frameSignature(world, frame));
+
+    // Seen: the skinned mesh of a frame that is laid out and shown, as tall as
+    // its frame is on the screen -- and nothing of a frame that is hidden.
+    const auto animates = [&](core::InstanceId meshPart) { return meshPart == hero; };
+    std::vector<engine::render::SeenSkin> seen;
+    scene::UIObjectComponent* element = world.uiObjects().find(frame);
+    REQUIRE(element != nullptr);
+    element->absoluteSize = core::Vec2{160.0f, 180.0f};
+    element->visible = true;
+    app::collectFrameSkins(world, 720.0f, animates, seen);
+    REQUIRE(seen.size() == 1);
+    CHECK(seen[0].meshPart == hero);
+    CHECK(static_cast<double>(seen[0].screenHeight) == doctest::Approx(0.25));
+
+    seen.clear();
+    element->visible = false;
+    app::collectFrameSkins(world, 720.0f, animates, seen);
+    CHECK(seen.empty());
+}
+
 TEST_CASE("a ViewportFrame with nothing inside has nothing to frame")
 {
     core::AtomTable atoms;

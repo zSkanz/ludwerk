@@ -703,6 +703,7 @@ public:
 
     void setSettings(const GraphicsSettings& settings) override;
     void setSurfaceSource(ISurfaceSource* source) override { surfaceSource_ = source; }
+    void warm(rhi::IDevice& device) override;
     [[nodiscard]] const GraphicsSettings& settings() const noexcept override { return settings_; }
     [[nodiscard]] core::Vec2 cameraJitter(const RenderWorld& world, u32 targetWidth, u32 targetHeight) const override;
     [[nodiscard]] bool generatesFrames(const RenderWorld& world) const noexcept override;
@@ -2178,6 +2179,22 @@ std::optional<core::EngineError> DefaultRenderer::ensureShadowMap(rhi::IDevice& 
     // against a lattice that no longer exists.
     shadowFitted_ = false;
     return std::nullopt;
+}
+
+void DefaultRenderer::warm(rhi::IDevice& device)
+{
+    if (!valid_)
+        return;
+    // Each makes its family once and answers from then on; one that cannot be
+    // made -- a shader the content does not carry -- is tried once here as it
+    // would have been in play, and draws nothing either way.
+    (void)ensureParticles(device);
+    (void)ensureGpuParticles(device);
+    (void)ensureRibbons(device);
+    (void)ensureDecals(device);
+    (void)ensureWorldUi(device);
+    (void)ensureHighlightMasks(device);
+    (void)ensureSkinnedInstancing(device);
 }
 
 void DefaultRenderer::setSettings(const GraphicsSettings& settings)

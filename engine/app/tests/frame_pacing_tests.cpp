@@ -335,6 +335,38 @@ TEST_CASE("the loading curtain lifts once the loaders are idle, the ground is me
     CHECK_FALSE(curtain.up());
 }
 
+TEST_CASE("the curtain is settling from the first frame with nothing to wait for until it lifts (ADR 0176)")
+{
+    LoadingCurtain curtain;
+    CHECK_FALSE(curtain.settling());
+    curtain.raise();
+    CHECK_FALSE(curtain.settling());
+
+    core::u64 now = Millisecond;
+    const auto frame = [&](bool idle) {
+        now += 16 * Millisecond;
+        return curtain.update({.nowNs = now, .loadersIdle = idle, .groundMeshed = true, .holds = 0});
+    };
+    // Still loading: up, and not settling.
+    CHECK(frame(false) == LoadingCurtain::Lift::Kept);
+    CHECK_FALSE(curtain.settling());
+    // Idle: the world is drawn behind it from here.
+    CHECK(frame(true) == LoadingCurtain::Lift::Kept);
+    CHECK(curtain.settling());
+    // Something arrives again: back to waiting.
+    CHECK(frame(false) == LoadingCurtain::Lift::Kept);
+    CHECK_FALSE(curtain.settling());
+    // Three settled frames and it lifts; the two before the lift are the ones
+    // the world is drawn in.
+    CHECK(frame(true) == LoadingCurtain::Lift::Kept);
+    CHECK(curtain.settling());
+    CHECK(frame(true) == LoadingCurtain::Lift::Kept);
+    CHECK(curtain.settling());
+    CHECK(frame(true) == LoadingCurtain::Lift::Ready);
+    CHECK_FALSE(curtain.up());
+    CHECK_FALSE(curtain.settling());
+}
+
 TEST_CASE("the loading curtain gives up after ten seconds, or a minute while a script holds it")
 {
     LoadingCurtain curtain;
