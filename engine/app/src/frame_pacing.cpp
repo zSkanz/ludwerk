@@ -115,79 +115,95 @@ void RateGovernor::restartWindow(u64 nowNs) noexcept
     m_windowStartNs = nowNs;
     m_frames = 0;
     m_late = 0;
-    m_fits = {};
+    m_cpuNs = 0;
 }
 
-u32 RateGovernor::sample(u64 nowNs, u64 workNs, f32 refreshRate, u32 ceilingHz) noexcept
+u32 RateGovernor::sample(u64 nowNs, const FrameCost& frame, f32 refreshRate, u32 ceilingHz) noexcept
 {
     // A second of frames is a judgement; fewer than these is not one.
     constexpr u64 WindowNs = NanosPerSecond;
     constexpr u32 FewestFrames = 8;
+    // How many seconds in a row must be late before a rate is given up.
+    constexpr u32 LateWindows = 2;
     // A step up taken back sooner than this was a step too far.
     constexpr u64 TakenBackNs = 10 * NanosPerSecond;
     // And one that has stood this long has earned the first wait back.
-    constexpr u64 SettledNs = 60 * NanosPerSecond;
+    constexpr u64 SettledNs = 30 * NanosPerSecond;
 
     const EvenRates ladder = evenRatesFor(refreshRate, ceilingHz);
-    if (ladder != m_ladder) {
-        // Another display mode, or another cap: every judgement so far was of
-        // rates that are no longer the choices.
+    if (!m_begun || ladder != m_ladder) {
+        // A start, another display mode, or another cap: every judgement so
+        // far was of rates that are no longer the choices.
         reset();
+        m_begun = true;
         m_ladder = ladder;
+        m_quietUntilNs = nowNs + WarmUpNs;
+        m_rungSinceNs = nowNs;
         restartWindow(nowNs);
+        return rate();
     }
-    if (m_windowStartNs == 0)
+
+    // **A hitch is not a rate** (D558): a scene's load, a shader made at first
+    // use. It is left out, and so is the second it fell in -- the frames round
+    // a hitch are its aftermath.
+    if (frame.intervalNs >= HitchNs) {
+        m_quietUntilNs = std::max(m_quietUntilNs, nowNs + WindowNs);
+        m_lateWindows = 0;
         restartWindow(nowNs);
+        return rate();
+    }
+    if (nowNs < m_quietUntilNs) {
+        restartWindow(nowNs);
+        return rate();
+    }
 
     const auto periodOf = [this](u32 rung) { return NanosPerSecond / m_ladder.hz[rung]; };
-    ++m_frames;
-    // Late by more than a twentieth of the period: a frame that took 16.9 ms
-    // of 16.7 was shown on time by any display.
     const u64 period = periodOf(m_rung);
-    if (workNs > period + period / 20)
-        ++m_late;
-    // With a fifth to spare: a rate held with nothing over is a rate lost at
-    // the first explosion.
-    for (u32 rung = 0; rung < m_rung; ++rung) {
-        if (workNs * 5 <= periodOf(rung) * 4)
-            ++m_fits[rung];
-    }
+    // At the display's own rate the display paces, and a late frame is one
+    // that was on the screen for a refresh more: by the interval. At a rate
+    // under it the frame is held to its place, and a late one is one whose
+    // work overran the place: by what it took before the hold.
+    const u32 refresh = refreshRate >= 1.0f ? static_cast<u32>(std::lround(refreshRate)) : AssumedRefresh;
+    const bool displayPaced = m_ladder.hz[m_rung] + 1 >= refresh;
+    const bool late = displayPaced ? frame.intervalNs > period + period / 4 : frame.workNs > period + period / 20;
+    ++m_frames;
+    m_late += late ? 1u : 0u;
+    m_cpuNs += frame.cpuNs;
 
     if (nowNs - m_windowStartNs < WindowNs || m_frames < FewestFrames)
         return rate();
 
-    const bool late = m_late * 5 > m_frames;
-    if (late) {
-        m_quiet = 0;
-        if (m_rung + 1 < m_ladder.count) {
+    // More than three in ten.
+    const bool lateWindow = m_late * 10 > m_frames * 3;
+    const u64 meanCpuNs = m_cpuNs / m_frames;
+    // No more than one in ten, for a rate to be called held.
+    const bool heldWindow = m_late * 10 <= m_frames;
+
+    if (lateWindow) {
+        if (++m_lateWindows >= LateWindows && m_rung + 1 < m_ladder.count) {
+            m_step = Step{m_ladder.hz[m_rung], m_ladder.hz[m_rung + 1], m_late, m_frames, meanCpuNs};
             ++m_rung;
             if (m_lastUpNs != 0 && nowNs - m_lastUpNs < TakenBackNs)
-                m_upDelay = std::min(m_upDelay * 2, MostUpDelay);
+                m_upDelayNs = std::min(m_upDelayNs * 2, MostUpDelayNs);
             m_lastUpNs = 0;
+            m_rungSinceNs = nowNs;
+            m_lateWindows = 0;
         }
     }
     else {
-        // The highest rate nineteen frames in twenty of this window fitted.
-        u32 candidate = m_rung;
-        for (u32 rung = 0; rung < m_rung; ++rung) {
-            if (m_fits[rung] * 20 >= m_frames * 19) {
-                candidate = rung;
-                break;
-            }
+        m_lateWindows = 0;
+        // The rate above is tried when this one has been held for the wait,
+        // is being held now, and the CPU's own part of a frame fits it with a
+        // tenth to spare. The rest is found out by running at it.
+        if (m_rung > 0 && heldWindow && nowNs - m_rungSinceNs >= m_upDelayNs &&
+            meanCpuNs * 10 <= periodOf(m_rung - 1) * 9) {
+            m_step = Step{m_ladder.hz[m_rung], m_ladder.hz[m_rung - 1], m_late, m_frames, meanCpuNs};
+            --m_rung;
+            m_lastUpNs = nowNs;
+            m_rungSinceNs = nowNs;
         }
-        if (candidate < m_rung) {
-            m_quietRung = m_quiet == 0 ? candidate : std::max(m_quietRung, candidate);
-            if (++m_quiet >= m_upDelay) {
-                m_rung = m_quietRung;
-                m_lastUpNs = nowNs;
-                m_quiet = 0;
-            }
-        }
-        else {
-            m_quiet = 0;
-        }
-        if (m_lastUpNs != 0 && nowNs - m_lastUpNs > SettledNs) {
-            m_upDelay = FirstUpDelay;
+        else if (m_lastUpNs != 0 && nowNs - m_lastUpNs > SettledNs) {
+            m_upDelayNs = FirstUpDelayNs;
             m_lastUpNs = 0;
         }
     }

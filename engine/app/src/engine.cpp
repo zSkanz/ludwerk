@@ -1731,6 +1731,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     core::u32 heldRate = 0;
     core::u64 heldNs = 0;
     core::u32 saidRate = 0;
+    // The cap the display was last asked for; none yet.
+    core::u32 saidCeiling = ~0u;
     bool framePresented = true;
     core::u64 pacedFrameNs = 0;
     const core::u32 baseCatchUpTicks = FrameTiming{}.maxCatchUpTicks;
@@ -3044,6 +3046,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // The frame that ended is accounted for: the warning above and the
         // statistics have both read what it spent.
         phaseSimMs = 0.0;
+        // What the frame that ended spent waiting -- for the GPU, the
+        // display's image, the present, its place in the rate: the pacing
+        // below takes it out of the frame to have the CPU's part.
+        const f64 endedFrameWaitMs = phaseWaitMs;
         phaseWaitMs = 0.0;
         phaseRenderScriptsMs = 0.0;
         // **`--pace`**: the rest of the frame's share of a second, waited out
@@ -3082,27 +3088,61 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // curtain, whose frames are a load's and not the game's.
             const bool governed = livePacing.adaptive && state.focused && !state.minimized && framePresented;
             if (governed && !curtain.up()) {
-                const core::u64 work =
-                    pacedFrameNs != 0 && now > pacedFrameNs + heldNs ? now - pacedFrameNs - heldNs : 0;
-                const core::u32 rate =
-                    rateGovernor.sample(now, work, state.refreshRate, lowerRate(livePacing.maxFrameRate, cap));
+                const core::u64 interval = pacedFrameNs != 0 && now > pacedFrameNs ? now - pacedFrameNs : 0;
+                const auto waited = static_cast<core::u64>(std::max(0.0, endedFrameWaitMs) * 1.0e6);
+                const FrameCost cost{.intervalNs = interval,
+                                     .workNs = interval > heldNs ? interval - heldNs : 0,
+                                     .cpuNs = interval > waited ? interval - waited : 0};
+                const core::u32 ceiling = lowerRate(livePacing.maxFrameRate, cap);
+                const core::u32 rate = rateGovernor.sample(now, cost, state.refreshRate, ceiling);
                 const core::u32 refresh =
                     state.refreshRate >= 1.0f ? static_cast<core::u32>(std::lround(state.refreshRate)) : 0;
                 // At the display's own rate the display is the pacer, and a
                 // second one beside it would only beat against it.
                 heldRate = refresh != 0 && rate + 1 >= refresh && state.syncHeld ? 0 : rate;
                 cap = rate;
+                // **The display is asked for the game's cap, once** (D558),
+                // and not for each rate held: a display told thirty may go to
+                // a mode that refreshes thirty times, and from there no rate
+                // above thirty is one of the choices again.
+                if (ceiling != saidCeiling) {
+                    saidCeiling = ceiling;
+                    platform::requestDisplayFrameRate(static_cast<float>(ceiling));
+                }
                 if (rate != saidRate) {
+                    // Every change says why, in the numbers that decided it.
+                    const RateGovernor::Step& step = rateGovernor.lastStep();
+                    const bool stepped = step.from != 0 && step.to == rate && step.from == saidRate;
                     saidRate = rate;
-                    platform::requestDisplayFrameRate(static_cast<float>(rate));
-                    const std::array<I18nArg, 2> pacedArgs{I18nArg{"rate", static_cast<core::i64>(rate)},
-                                                           I18nArg{"refresh", static_cast<core::i64>(refresh)}};
-                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.paced"), pacedArgs);
+                    if (!stepped) {
+                        const std::array<I18nArg, 2> pacedArgs{I18nArg{"rate", static_cast<core::i64>(rate)},
+                                                               I18nArg{"refresh", static_cast<core::i64>(refresh)}};
+                        core::log(LogLevel::Info, ENG_TR("engine.frame.info.paced"), pacedArgs);
+                    }
+                    else if (step.to < step.from) {
+                        const std::array<I18nArg, 5> downArgs{I18nArg{"rate", static_cast<core::i64>(step.to)},
+                                                              I18nArg{"from", static_cast<core::i64>(step.from)},
+                                                              I18nArg{"late", static_cast<core::i64>(step.lateFrames)},
+                                                              I18nArg{"frames", static_cast<core::i64>(step.frames)},
+                                                              I18nArg{"cpu", static_cast<f64>(step.meanCpuNs) / 1.0e6}};
+                        core::log(LogLevel::Info, ENG_TR("engine.frame.info.paced_down"), downArgs);
+                    }
+                    else {
+                        const std::array<I18nArg, 4> upArgs{I18nArg{"rate", static_cast<core::i64>(step.to)},
+                                                            I18nArg{"from", static_cast<core::i64>(step.from)},
+                                                            I18nArg{"cpu", static_cast<f64>(step.meanCpuNs) / 1.0e6},
+                                                            I18nArg{"period", 1000.0 / static_cast<f64>(step.to)}};
+                        core::log(LogLevel::Info, ENG_TR("engine.frame.info.paced_up"), upArgs);
+                    }
                 }
             }
             else {
-                if (governed)
+                // Behind the curtain a load's frames are not the game's: what
+                // comes after it is a start, judged as one.
+                if (governed) {
                     rateGovernor.reset();
+                    saidRate = 0;
+                }
                 heldRate = 0;
                 if (const core::u64 wait = frameLimiter.waitNs(now, cap); wait > 0)
                     platform::sleepNs(wait);

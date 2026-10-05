@@ -1294,6 +1294,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   as infinite or NaN** (D551). Under a `ScreenGui` with a `ReferenceHeight`,
   on a window of another height, the rectangle of anything not `Visible`
   grew at every layout. What is hidden keeps the rectangle it last had.
+- **A phone is not left at thirty frames a second** (D558). The pacing of
+  ADR 0173 judged a launch's long frames, stepped down on a fifth of one
+  second, and could not step back up: a phone that held sixty was put at
+  thirty three seconds in, for good. A rate is now given up only when more
+  than three frames in ten are late two seconds running; nothing is judged in
+  a start's first four seconds or round a long frame; the rate above is tried
+  again once the CPU's part of a frame fits it; and the display is asked for
+  the game's cap rather than the rate held. The log says why at every change.
 - **A second finger presses a button** (D557). The interface heard one finger,
   the first down: with a thumb resting on a game's own stick, no button
   anywhere on the screen could be pressed. Every finger now presses what is

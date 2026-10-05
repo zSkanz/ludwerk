@@ -2,6 +2,7 @@
 // that enforces it, and the watch that says whether the display's sync holds.
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <doctest/doctest.h>
 #include <vector>
 
@@ -202,107 +203,215 @@ TEST_CASE("the rates a display shows evenly are its refresh over one to four, un
 
 namespace {
 
-// A second of frames, each of `workMs`, told to the governor at `fps`: what it
-// holds after.
-core::u32 runFor(engine::app::RateGovernor& governor, core::u64& now, double seconds, double workMs,
-                 float refresh = 120.0f, core::u32 ceiling = 60)
+// **A device, as the governor sees one**: a display that shows a frame at its
+// first refresh once the frame's work is done, and no sooner than the rate
+// held allows.
+struct Device
 {
-    core::u32 rate = governor.rate();
-    const core::u64 end = now + static_cast<core::u64>(seconds * 1.0e9);
-    while (now < end) {
-        // A frame is shown no sooner than its rate allows and no sooner than
-        // its work is done.
-        const double period = rate != 0 ? 1000.0 / rate : workMs;
-        now += static_cast<core::u64>(std::max(period, workMs) * 1.0e6);
-        rate = governor.sample(now, static_cast<core::u64>(workMs * 1.0e6), refresh, ceiling);
+    float refresh = 120.0f;
+    core::u32 ceiling = 60;
+    engine::app::RateGovernor governor{};
+    core::u64 now = 1'000'000'000ull;
+
+    core::u32 frame(double workMs, double cpuMs = 6.0)
+    {
+        const core::u32 held = governor.rate();
+        const double refreshMs = 1000.0 / static_cast<double>(refresh);
+        const double placeMs = held != 0 ? 1000.0 / held : refreshMs;
+        const double intervalMs = std::ceil(std::max(placeMs, workMs) / refreshMs - 1.0e-6) * refreshMs;
+        now += static_cast<core::u64>(intervalMs * 1.0e6);
+        const engine::app::FrameCost cost{.intervalNs = static_cast<core::u64>(intervalMs * 1.0e6),
+                                          .workNs = static_cast<core::u64>(workMs * 1.0e6),
+                                          .cpuNs = static_cast<core::u64>(cpuMs * 1.0e6)};
+        return governor.sample(now, cost, refresh, ceiling);
     }
-    return rate;
-}
+
+    // `seconds` of frames of one cost: the rate held after them.
+    core::u32 run(double seconds, double workMs, double cpuMs = 6.0)
+    {
+        core::u32 rate = governor.rate();
+        const core::u64 end = now + static_cast<core::u64>(seconds * 1.0e9);
+        while (now < end)
+            rate = frame(workMs, cpuMs);
+        return rate;
+    }
+
+    // `seconds` at a display's own rate with one frame in `every` shown for
+    // two refreshes: the lowest rate held in them.
+    core::u32 runDoubling(double seconds, int every)
+    {
+        core::u32 lowest = governor.rate();
+        const core::u64 end = now + static_cast<core::u64>(seconds * 1.0e9);
+        for (int index = 0; now < end; ++index)
+            lowest = std::min(lowest, frame(index % every == 0 ? 20.0 : 10.0));
+        return lowest;
+    }
+};
 
 } // namespace
 
-TEST_CASE("the governor holds the highest rate the frames fit, and steps down within seconds when they do not")
+TEST_CASE("D558: a launch's long frames and a game that holds its rate do not put a phone at thirty for good")
 {
+    // The owner's phone, as its log has it: a display at sixty, a cap of
+    // sixty; two frames of a scene's load, 662 and 1595 ms; then a game that
+    // holds fifty-nine, one frame in twenty shown for two refreshes. The
+    // governor went to thirty three seconds in and never came back.
     engine::app::RateGovernor governor;
     core::u64 now = 1'000'000'000ull;
-    // Twelve milliseconds of work fits sixty.
-    CHECK(runFor(governor, now, 5.0, 12.0) == 60);
-    // Eighteen does not: forty, within two seconds.
-    CHECK(runFor(governor, now, 2.5, 18.0) == 40);
-    // And stays there: eighteen is not sixty's with room to spare.
-    CHECK(runFor(governor, now, 20.0, 18.0) == 40);
-    // Twenty-eight does not fit forty either: thirty.
-    CHECK(runFor(governor, now, 2.5, 28.0) == 30);
-    // The lowest rate is held however slow the frames are.
-    CHECK(runFor(governor, now, 5.0, 60.0) == 30);
-}
-
-TEST_CASE("the governor steps back up only once the frames have had room for three seconds, and to the rate they fit")
-{
-    engine::app::RateGovernor governor;
-    core::u64 now = 1'000'000'000ull;
-    CHECK(runFor(governor, now, 3.0, 12.0) == 60);
-    CHECK(runFor(governor, now, 5.0, 28.0) == 30);
-    // Twelve milliseconds again: not at once...
-    CHECK(runFor(governor, now, 1.5, 12.0) == 30);
-    // ...and then straight to sixty, not by way of forty.
-    CHECK(runFor(governor, now, 3.0, 12.0) == 60);
-
-    // Fifteen milliseconds fits sixty and has no fifth to spare: from forty it
-    // stays at forty rather than try a rate one explosion would lose.
-    CHECK(runFor(governor, now, 3.0, 18.0) == 40);
-    CHECK(runFor(governor, now, 20.0, 15.0) == 40);
-    // Thirteen has the room -- after six seconds this time, not three: the
-    // last step up was taken back within ten.
-    CHECK(runFor(governor, now, 5.0, 13.0) == 40);
-    CHECK(runFor(governor, now, 2.5, 13.0) == 60);
-}
-
-TEST_CASE("one slow frame is not a rate lost, and a rate that was a step too far is tried less often")
-{
-    engine::app::RateGovernor governor;
-    core::u64 now = 1'000'000'000ull;
-    CHECK(runFor(governor, now, 3.0, 12.0) == 60);
-    // A hitch: one frame of eighty milliseconds among sixty.
-    now += 80'000'000ull;
-    (void)governor.sample(now, 80'000'000ull, 120.0f, 60);
-    CHECK(runFor(governor, now, 3.0, 12.0) == 60);
-
-    // At the edge: light enough at forty to be let up, too heavy at sixty to
-    // stay. Each time it is taken back, the next try waits twice as long.
-    const auto triesIn = [&](double seconds) {
-        int ups = 0;
-        core::u32 before = governor.rate();
-        const core::u64 end = now + static_cast<core::u64>(seconds * 1.0e9);
-        while (now < end) {
-            // Work that depends on the rate held: thirteen at forty, eighteen
-            // at sixty -- a scene whose cost follows how often it is drawn.
-            const double work = governor.rate() >= 60 ? 18.0 : 13.0;
-            const double period = 1000.0 / governor.rate();
-            now += static_cast<core::u64>(std::max(period, work) * 1.0e6);
-            const core::u32 rate = governor.sample(now, static_cast<core::u64>(work * 1.0e6), 120.0f, 60);
-            if (rate > before)
-                ++ups;
-            before = rate;
-        }
-        return ups;
+    const auto frame = [&](double intervalMs) {
+        const auto ns = static_cast<core::u64>(intervalMs * 1.0e6);
+        now += ns;
+        return governor.sample(now, engine::app::FrameCost{.intervalNs = ns, .workNs = ns, .cpuNs = 10'000'000ull},
+                               60.0f, 60);
     };
-    CHECK(runFor(governor, now, 3.0, 18.0) == 40);
-    const int first = triesIn(30.0);
-    const int later = triesIn(30.0);
-    CHECK(first >= 2);
-    CHECK(later < first);
+    (void)frame(16.6);
+    (void)frame(662.0);
+    for (int index = 0; index < 20; ++index)
+        (void)frame(index % 3 == 0 ? 33.3 : 16.6);
+    (void)frame(1595.0);
+    core::u32 lowest = 60;
+    for (int index = 0; index < 60 * 60; ++index) {
+        const core::u32 rate = frame(index % 20 == 0 ? 33.3 : 16.6);
+        // Judged only once the launch is behind it.
+        if (index > 5 * 60)
+            lowest = std::min(lowest, rate);
+    }
+    CHECK(governor.rate() == 60);
+    CHECK(lowest == 60);
+}
+
+TEST_CASE("D558: nothing is judged in a start's first seconds, and a hitch is left out with the second it fell in")
+{
+    // Forty milliseconds a frame from the first one: for the four seconds a
+    // start is given, that is a start.
+    Device slow;
+    CHECK(slow.run(3.5, 40.0) == 60);
+    // And after them it is the game.
+    CHECK(slow.run(4.0, 40.0) < 60);
+
+    Device device;
+    CHECK(device.run(6.0, 12.0) == 60);
+    // A scene arriving: a third of a second in one frame, and the frames
+    // after it slow while what it brought is made.
+    (void)device.frame(300.0);
+    CHECK(device.run(0.9, 30.0) == 60);
+    CHECK(device.run(3.0, 12.0) == 60);
+    // Half a second of slow frames with no hitch before them is not a rate
+    // lost either: no second of it was late twice running.
+    CHECK(device.run(0.5, 30.0) == 60);
+    CHECK(device.run(3.0, 12.0) == 60);
+
+    // A curtain lifting is a start again.
+    CHECK(device.run(3.0, 18.0) == 40);
+    device.governor.reset();
+    CHECK(device.governor.rate() == 0);
+    CHECK(device.run(3.5, 40.0) == 60);
+}
+
+TEST_CASE("the governor gives a rate up on a sustained miss only, a step at a time, and says why in numbers")
+{
+    Device device;
+    // Twelve milliseconds of work fits sixty.
+    CHECK(device.run(6.0, 12.0) == 60);
+    CHECK(device.governor.lastStep().from == 0);
+    // Eighteen does not: forty, once two seconds running have said so.
+    CHECK(device.run(1.5, 18.0, 16.0) == 60);
+    CHECK(device.run(1.5, 18.0, 16.0) == 40);
+    const engine::app::RateGovernor::Step down = device.governor.lastStep();
+    CHECK(down.from == 60);
+    CHECK(down.to == 40);
+    CHECK(down.frames >= 40);
+    CHECK(down.lateFrames == down.frames);
+    CHECK(down.meanCpuNs == 16'000'000ull);
+    // And stays there: sixteen milliseconds on the CPU is not sixty's.
+    CHECK(device.run(30.0, 18.0, 16.0) == 40);
+    // Twenty-eight does not fit forty either: thirty.
+    CHECK(device.run(3.0, 28.0, 16.0) == 30);
+    // The lowest rate is held however slow the frames are.
+    CHECK(device.run(5.0, 60.0, 16.0) == 30);
+}
+
+TEST_CASE("D558: a phone that holds fifty-nine, and dips to fifty while its GPU's clock is down, stays at sixty")
+{
+    Device phone;
+    phone.refresh = 60.0f;
+    CHECK(phone.run(5.0, 10.0) == 60);
+    // One frame in twenty shown twice: fifty-seven.
+    CHECK(phone.runDoubling(10.0, 20) == 60);
+    // One in five, for ten seconds: fifty. A warm phone does this.
+    CHECK(phone.runDoubling(10.0, 5) == 60);
+    CHECK(phone.runDoubling(10.0, 20) == 60);
+    // One in two is forty: that is not sixty, and thirty shown evenly is the
+    // better game.
+    (void)phone.runDoubling(3.0, 2);
+    CHECK(phone.governor.rate() == 30);
+    CHECK(phone.governor.lastStep().from == 60);
+    CHECK(phone.governor.lastStep().lateFrames * 10 > phone.governor.lastStep().frames * 4);
+}
+
+TEST_CASE("D558: the rate above is tried once the CPU's part fits it, and one taken back is tried less often")
+{
+    // A scene the GPU cannot draw sixty times a second, on a CPU that could:
+    // eighteen milliseconds a frame, eight of them the CPU's. What a frame
+    // held at forty takes says nothing of whether sixty would fit, so the
+    // governor tries, and finds out.
+    Device device;
+    CHECK(device.run(7.0, 18.0, 8.0) == 40);
+
+    std::vector<double> tries;
+    core::u32 before = device.governor.rate();
+    const core::u64 start = device.now;
+    double longestAtSixty = 0.0;
+    core::u64 upAt = 0;
+    while (device.now < start + 150'000'000'000ull) {
+        const core::u32 rate = device.frame(18.0, 8.0);
+        if (rate > before) {
+            tries.push_back(static_cast<double>(device.now - start) / 1.0e9);
+            upAt = device.now;
+            CHECK(device.governor.lastStep().from == 40);
+            CHECK(device.governor.lastStep().to == 60);
+            CHECK(device.governor.lastStep().meanCpuNs == 8'000'000ull);
+        }
+        else if (rate < before) {
+            longestAtSixty = std::max(longestAtSixty, static_cast<double>(device.now - upAt) / 1.0e9);
+        }
+        before = rate;
+    }
+    // Five seconds, then ten after it was taken back, then twenty, forty, and
+    // a minute from there: five tries in two and a half minutes, each given up
+    // in a little over two seconds.
+    REQUIRE(tries.size() == 5);
+    CHECK(tries[0] < 6.0);
+    for (std::size_t index = 2; index < tries.size(); ++index)
+        CHECK(tries[index] - tries[index - 1] > (tries[index - 1] - tries[index - 2]) * 1.2);
+    CHECK(longestAtSixty < 3.0);
+
+    // The scene lightens: the next try stands...
+    CHECK(device.run(100.0, 12.0, 8.0) == 60);
+    // ...and having stood half a minute, it has earned the first wait back:
+    // given up again, sixty is tried five seconds on, not a minute.
+    CHECK(device.run(3.0, 18.0, 8.0) == 40);
+    const core::u64 givenUp = device.now;
+    while (device.governor.rate() == 40 && device.now < givenUp + 90'000'000'000ull)
+        (void)device.frame(18.0, 8.0);
+    CHECK(device.governor.rate() == 60);
+    CHECK(device.now - givenUp < 6'000'000'000ull);
+
+    // A CPU that does not fit the rate above is not sent to try it.
+    Device bound;
+    CHECK(bound.run(7.0, 18.0, 16.0) == 40);
+    CHECK(bound.run(60.0, 18.0, 16.0) == 40);
 }
 
 TEST_CASE("another display mode starts the governor over, from the highest rate")
 {
-    engine::app::RateGovernor governor;
-    core::u64 now = 1'000'000'000ull;
-    CHECK(runFor(governor, now, 4.0, 28.0) == 30);
+    Device device;
+    CHECK(device.run(10.0, 28.0) == 30);
     // The display went to sixty: the choices are sixty and thirty now.
-    CHECK(runFor(governor, now, 0.5, 12.0, 60.0f) == 60);
-    governor.reset();
-    CHECK(governor.rate() == 0);
+    device.refresh = 60.0f;
+    CHECK(device.run(0.5, 12.0) == 60);
+    device.governor.reset();
+    CHECK(device.governor.rate() == 0);
 }
 
 TEST_CASE("the loading curtain lifts once the loaders are idle, the ground is meshed and no script holds it")

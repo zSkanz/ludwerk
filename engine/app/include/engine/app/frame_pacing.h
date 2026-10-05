@@ -117,7 +117,7 @@ struct EvenRates
 };
 [[nodiscard]] EvenRates evenRatesFor(f32 refreshRate, u32 ceilingHz) noexcept;
 
-// **The rate a handheld holds** (ADR 0173).
+// **The rate a handheld holds** (ADR 0173, as D558 left it).
 //
 // A frame that takes 18 ms on a display that refreshes every 8.3 is shown for
 // three refreshes, the next -- 16 ms -- for two, and a game at "forty-five
@@ -125,43 +125,90 @@ struct EvenRates
 // about it is choose a rate the frames fit and hold every frame to it: fewer
 // frames, each on the screen as long as the last.
 //
-// Told every frame how long its work took -- the frame less what pacing made
-// it wait -- it answers the rate to pace at: one of `evenRatesFor`. It steps
-// DOWN a rate when more than a fifth of a second's frames did not fit the one
-// it holds, and UP to the highest rate that nineteen frames in twenty would
-// have fitted with a fifth to spare, once that has been so for three seconds
-// running. A step up that is taken back within ten seconds doubles the wait
-// before the next, so a scene at the edge of a rate does not flap between two.
+// Told every frame what it cost, it answers the rate to pace at, one of
+// `evenRatesFor`:
+//
+//   - **Nothing is judged at a start**: not for four seconds after it begins
+//     or is `reset` -- a launch, a scene arriving, a curtain lifting -- and a
+//     frame of a quarter of a second or more is a hitch, not a rate: it is
+//     left out and the second it fell in with it.
+//   - **Down on a sustained miss only**: more than three frames in ten late,
+//     in each of two seconds running. A game that holds fifty-nine with one
+//     frame in twenty doubled is a game at sixty.
+//   - **Up by trying**: after five seconds at a rate, when the frame's own
+//     work on the CPU fits the rate above, it steps up and sees. Whether the
+//     GPU has the room is not something a frame held at a lower rate can say
+//     -- a phone slows its GPU's clock when it idles -- so it is found out by
+//     running at the rate. A step up taken back within ten seconds doubles the
+//     wait before the next, to a minute; half a minute held gives the first
+//     wait back.
+struct FrameCost
+{
+    // From this frame's pacing point to the last one's.
+    u64 intervalNs = 0;
+    // The same, less what pacing itself made it wait: what the frame took,
+    // the wait for the display's image and for the GPU included.
+    u64 workNs = 0;
+    // The same, less every wait -- the image, the present, the pacing: the
+    // CPU's part alone.
+    u64 cpuNs = 0;
+};
+
 class RateGovernor
 {
 public:
-    [[nodiscard]] u32 sample(u64 nowNs, u64 workNs, f32 refreshRate, u32 ceilingHz) noexcept;
+    [[nodiscard]] u32 sample(u64 nowNs, const FrameCost& frame, f32 refreshRate, u32 ceilingHz) noexcept;
     // The rate held now; 0 before the first sample.
     [[nodiscard]] u32 rate() const noexcept { return m_rung < m_ladder.count ? m_ladder.hz[m_rung] : 0; }
-    // Forgets what it has seen and starts from the highest rate again: after a
-    // loading curtain, whose frames say nothing about the game's.
+    // Forgets what it has seen and starts from the highest rate again, judging
+    // nothing for a while: after a loading curtain, whose frames say nothing
+    // about the game's.
     void reset() noexcept;
+
+    // **Why the rate last changed**, in the numbers that decided it: a
+    // reading from a device should need no guessing. `from` is 0 until a rate
+    // has been given up or tried.
+    struct Step
+    {
+        u32 from = 0;
+        u32 to = 0;
+        // The second that decided it: how many of its frames were late.
+        u32 lateFrames = 0;
+        u32 frames = 0;
+        // The CPU's mean time in a frame over that second.
+        u64 meanCpuNs = 0;
+    };
+    [[nodiscard]] const Step& lastStep() const noexcept { return m_step; }
+
+    // In nanoseconds.
+    static constexpr u64 WarmUpNs = 4'000'000'000ull;
+    static constexpr u64 HitchNs = 250'000'000ull;
+    static constexpr u64 FirstUpDelayNs = 5'000'000'000ull;
+    static constexpr u64 MostUpDelayNs = 60'000'000'000ull;
 
 private:
     void restartWindow(u64 nowNs) noexcept;
 
-    static constexpr u32 FirstUpDelay = 3;
-    static constexpr u32 MostUpDelay = 48;
-
     EvenRates m_ladder{};
     u32 m_rung = 0;
+    // Nothing is judged before this.
+    u64 m_quietUntilNs = 0;
+    bool m_begun = false;
     u64 m_windowStartNs = 0;
     u32 m_frames = 0;
-    // Frames of the window that did not fit the rate held.
+    // Frames of the window that were late at the rate held, and the CPU's
+    // time over all of them.
     u32 m_late = 0;
-    // Frames that would have fitted each higher rate with room, by rung.
-    std::array<u32, 4> m_fits{};
-    // Windows in a row that could have run higher, and the lowest of the rates
-    // they could have.
-    u32 m_quiet = 0;
-    u32 m_quietRung = 0;
-    u32 m_upDelay = FirstUpDelay;
+    u64 m_cpuNs = 0;
+    // Seconds in a row that were late.
+    u32 m_lateWindows = 0;
+    // Since when the rate held has been held, the last step up that has not
+    // yet stood half a minute, and how long a rate is held before the one
+    // above is tried.
+    u64 m_rungSinceNs = 0;
     u64 m_lastUpNs = 0;
+    u64 m_upDelayNs = FirstUpDelayNs;
+    Step m_step{};
 };
 
 // **Whether vertical sync is holding** -- told the length of every presented

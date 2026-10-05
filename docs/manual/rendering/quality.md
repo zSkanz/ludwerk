@@ -72,13 +72,21 @@ felt long before the number is. So on a handheld:
 - a game that names no `max_frame_rate` is capped at sixty frames a second;
 - the frames are held to a rate the display shows evenly -- its refresh over
   one, two, three or four: 60, 40 or 30 on a display at 120 -- the highest
-  one they fit, stepped down within a second or two when they stop fitting
-  and back up after a few seconds of room;
-- the display is told that rate, so the system can run it to match.
+  one they fit;
+- a rate is given up only on a sustained miss: more than three frames in ten
+  late, two seconds running. A launch, a scene arriving and a single long
+  frame are not judged, and a game that dips from sixty to fifty for a while
+  stays at sixty;
+- the rate above is tried again after five seconds, when the CPU's part of a
+  frame fits it; a try that does not hold is made less and less often, up to
+  once a minute;
+- the display is told the game's cap, so the system can run it to match.
 
-The log says the rate each time it changes. `[display] max_frame_rate = 120`
-lifts the cap; `[display] adaptive_frame_rate = false` leaves the cap and
-turns the stepping off.
+The log says the rate each time it changes, and why: how many frames of the
+second were late, or the CPU time that was found to fit.
+`[display] max_frame_rate = 120` lifts the cap;
+`[display] adaptive_frame_rate = false` leaves the cap and turns the stepping
+off.
 
 ## The presets
 

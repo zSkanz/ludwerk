@@ -52,14 +52,30 @@ All of them: a rate that divides the refresh, held, and the display told.
    the cap of sixty; 60 and 30 on one at sixty -- never under twenty-four
    (`evenRatesFor`).
 
-3. **It is stepped to what the frames fit** (`RateGovernor`). Told each
-   frame's work -- the frame less what pacing made it wait -- it steps DOWN
-   one rate when more than a fifth of a second's frames did not fit the one
-   held, and UP to the highest rate that nineteen frames in twenty would have
-   fitted with a fifth of the period to spare, after three seconds of that. A
-   step up taken back within ten seconds doubles the wait before the next, to
-   forty-eight seconds at most, and a minute of holding gives the first wait
-   back. One slow frame changes nothing.
+3. **It is stepped to what the frames fit** (`RateGovernor`), as amended on
+   2026-10-04 by D558 -- the first writing put a phone at thirty three
+   seconds after launch and kept it there:
+
+   - **Nothing is judged at a start.** Not for four seconds after a launch,
+     a curtain lifting, another display mode; and a frame of a quarter of a
+     second or more is a hitch, not a rate -- it is left out, and the second
+     it fell in with it.
+   - **Down on a sustained miss only**: more than three frames in ten late,
+     in each of two seconds running, then one rate down. At the display's own
+     rate a late frame is one the display showed for a refresh more (its
+     interval over the period and a quarter); at a rate under it, one whose
+     work -- the frame less what pacing made it wait -- overran its place. A
+     game that holds fifty-nine, or dips to fifty for ten seconds while a
+     warm phone's GPU runs slower, is a game at sixty.
+   - **Up by trying.** After five seconds at a rate that is being held, when
+     the CPU's part of a frame -- the frame less every wait: the GPU, the
+     display's image, the present, the hold -- fits the rate above with a
+     tenth to spare, it steps up and sees. What the frame took before the
+     hold cannot say whether the rate above would fit: it carries the wait
+     for the display, and a phone slows its GPU's clock when the GPU idles,
+     so a frame held at thirty takes longer than the same frame at sixty. A
+     step up taken back within ten seconds doubles the wait before the next,
+     to a minute; half a minute held gives the first wait back.
 
 4. **The wait is at the present.** A paced frame is drawn, then held until
    its place in the rate's grid, then shown: frames a steady time apart. The
@@ -72,8 +88,10 @@ All of them: a rate that divides the refresh, held, and the display told.
 
 6. **The display is told** (`platform::requestDisplayFrameRate`, through
    `PlayerActivity.requestFrameRate` to `Surface.setFrameRate`, Android 11
-   and later) each time the rate changes, so the system may run the display
-   at the rate or a multiple of it.
+   and later) the game's CAP, once, so the system may run the display at it
+   or a multiple of it. Not the rate held (D558): a display told thirty may go
+   to a mode that refreshes thirty times, and from there the choices are
+   thirty and under -- sixty is not one of them again.
 
 7. **Not behind the loading curtain**, whose frames are a load's; the
    governor starts over when it lifts. Not in the background, where the
@@ -82,8 +100,9 @@ All of them: a rate that divides the refresh, held, and the display told.
 8. `[display] adaptive_frame_rate = false` turns 2 to 6 off for a handheld's
    game, leaving the cap. A desk's game cannot turn it on.
 
-9. The log says the rate each time it changes, with the refresh the display
-   reported: what a report from a phone is read against.
+9. The log says the rate each time it changes, and why in the numbers that
+   decided it: how many of the second's frames were late, or the CPU's time
+   that was found to fit. What a report from a phone is read against.
 
 ## What it does not do
 
