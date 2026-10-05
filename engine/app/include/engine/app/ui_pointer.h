@@ -13,15 +13,22 @@
 // moved or pressed it said -- a mouse's, one made from a finger, or the first
 // finger's own. The input system's pointer is the answer only before any
 // event has said.
+//
+// **And every other finger is heard too** (D557). The pointer follows one
+// finger, the first down, because the system makes its mouse of that one and
+// of no other. A second finger was "the game's own" and the interface did not
+// hear it at all -- so with a thumb resting on a game's stick, no button
+// anywhere on the screen could be pressed. Each finger that is not the
+// pointer's is kept here and handed to the interface as a press of its own
+// (`ui::InteractionTouch`).
 #pragma once
+
+#include <vector>
 
 #include "engine/core/math.h"
 #include "engine/core/types.h"
 #include "engine/platform/event.h"
-
-namespace engine::ui {
-struct InteractionInput;
-}
+#include "engine/ui/ui.h"
 
 namespace engine::app {
 
@@ -44,6 +51,9 @@ public:
     [[nodiscard]] bool down() const noexcept { return m_down; }
 
 private:
+    // The finger `finger` among the others, or null.
+    [[nodiscard]] ui::InteractionTouch* other(core::u64 finger) noexcept;
+
     core::Vec2 m_position;
     bool m_known = false;
     bool m_down = false;
@@ -59,6 +69,9 @@ private:
     // The finger the pointer follows: the first one down, until it lifts.
     bool m_fingerHeld = false;
     core::u64 m_finger = 0;
+    // Every other finger down, in the order they came, and the ones that
+    // lifted this frame -- forgotten at the next.
+    std::vector<ui::InteractionTouch> m_touches;
 };
 
 } // namespace engine::app

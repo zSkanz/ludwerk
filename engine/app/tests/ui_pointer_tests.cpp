@@ -137,6 +137,106 @@ TEST_CASE("D430: a tap presses a button and focuses a field")
     CHECK(log.contains("button-activated"));
 }
 
+namespace {
+
+// A finger that is not the system's mouse: a phone makes a mouse of the first
+// finger down and of no other.
+[[nodiscard]] platform::Event finger(platform::EventType type, core::u64 id, core::Vec2 at)
+{
+    platform::Event event;
+    event.type = type;
+    event.fingerId = id;
+    event.pointerX = at.x;
+    event.pointerY = at.y;
+    return event;
+}
+
+} // namespace
+
+TEST_CASE("D557: a second finger presses a button while the first is held somewhere else")
+{
+    // On a phone the left thumb rests on the stick for the whole run: it is
+    // the first finger down, the one the interface's pointer follows. The
+    // right thumb then taps a button -- the cross of a sheet, a card, RESUME
+    // -- and the tap was not heard at all: the interface heard one finger. A
+    // player could not close a sheet over a fight and died behind it.
+    app::testing::Captured log;
+    app::testing::Project project;
+    project.write("src/client/Main.luau", R"(
+        local UIService = game:GetService("UIService")
+        local screen = Instance.new("ScreenGui")
+        screen.Parent = UIService
+        local close = Instance.new("TextButton")
+        close.Name = "Close"
+        close.Position = UDim2.fromOffset(600, 40)
+        close.Size = UDim2.fromOffset(120, 80)
+        close.Parent = screen
+        local count = 0
+        close.Activated:Connect(function()
+            count += 1
+            print(`close-activated {count}`)
+        end)
+        local other = Instance.new("TextButton")
+        other.Name = "Other"
+        other.Position = UDim2.fromOffset(600, 300)
+        other.Size = UDim2.fromOffset(120, 80)
+        other.Parent = screen
+        other.Activated:Connect(function()
+            print("other-activated")
+        end)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(app::testing::bootOptions(project.root)).has_value());
+    host.tick();
+    ui::resetInteraction();
+    app::UiPointer pointer;
+    (void)frame(host, pointer, {});
+
+    // The first finger comes down on nothing -- the stick's corner of the
+    // glass -- and stays.
+    const core::Vec2 onStick{100.0f, 500.0f};
+    (void)frame(host, pointer, tapDown(onStick));
+    (void)frame(host, pointer, {});
+
+    // The second taps the button: down and up on it, a frame apart.
+    const core::Vec2 onClose{660.0f, 80.0f};
+    (void)frame(host, pointer, {finger(platform::EventType::FingerDown, 9, onClose)});
+    CHECK_FALSE(log.contains("close-activated"));
+    (void)frame(host, pointer, {finger(platform::EventType::FingerUp, 9, onClose)});
+    CHECK(log.contains("close-activated 1"));
+    CHECK_FALSE(log.contains("close-activated 2"));
+
+    // Down and up inside one frame is a tap too.
+    (void)frame(
+        host, pointer,
+        {finger(platform::EventType::FingerDown, 9, onClose), finger(platform::EventType::FingerUp, 9, onClose)});
+    CHECK(log.contains("close-activated 2"));
+
+    // Both ends on the same element, as for the first finger: a second finger
+    // that slides off what it pressed has changed its mind, and one that
+    // slides ONTO a button did not press it.
+    (void)frame(host, pointer, {finger(platform::EventType::FingerDown, 9, onClose)});
+    (void)frame(host, pointer, {finger(platform::EventType::FingerMoved, 9, core::Vec2{660.0f, 340.0f})});
+    (void)frame(host, pointer, {finger(platform::EventType::FingerUp, 9, core::Vec2{660.0f, 340.0f})});
+    CHECK_FALSE(log.contains("close-activated 3"));
+    CHECK_FALSE(log.contains("other-activated"));
+
+    // Two more fingers on two buttons at once: each its own press.
+    (void)frame(host, pointer,
+                {finger(platform::EventType::FingerDown, 9, onClose),
+                 finger(platform::EventType::FingerDown, 11, core::Vec2{660.0f, 340.0f})});
+    (void)frame(host, pointer,
+                {finger(platform::EventType::FingerUp, 11, core::Vec2{660.0f, 340.0f}),
+                 finger(platform::EventType::FingerUp, 9, onClose)});
+    CHECK(log.contains("close-activated 3"));
+    CHECK(log.contains("other-activated"));
+
+    // And the first finger is still the pointer: it lifts, and nothing it was
+    // never on is pressed by that.
+    (void)frame(host, pointer, tapUp(onStick));
+    CHECK_FALSE(log.contains("close-activated 4"));
+}
+
 TEST_CASE("D430: the interface's pointer follows the mouse, a mouse made of a finger, and the first finger")
 {
     app::UiPointer pointer;

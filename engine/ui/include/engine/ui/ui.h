@@ -550,9 +550,27 @@ struct TextCommand
     std::string_view text;
 };
 
+// **A finger that is not the pointer** (D557). The pointer is the mouse, or on
+// a touch screen the first finger down; every other finger on the glass is one
+// of these. It presses and releases what is under it as the pointer would --
+// a button's `Activated`, both ends on the same element -- and does nothing
+// else: it hovers nothing, drags nothing, scrolls nothing and takes no focus.
+// A thumb resting on a game's stick must not make the rest of the screen deaf.
+struct InteractionTouch
+{
+    core::u64 finger = 0;
+    core::Vec2 position;
+    // It came down this frame, and it lifted this frame; both, for a tap that
+    // began and ended between two frames.
+    bool pressed = false;
+    bool released = false;
+};
+
 struct InteractionInput
 {
     core::Vec2 pointer;
+    // The other fingers down or just lifted, in the order they came down.
+    std::span<const InteractionTouch> touches;
     // **`InputService.PointerLocked`** (G17): a first-person mouse, and the
     // game's -- nothing of the interface is under it, nothing it presses is a
     // press, and its motion is never sunk. The keyboard and the gamepad still

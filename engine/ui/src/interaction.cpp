@@ -41,6 +41,14 @@ struct InteractionState
     // cancelled press, which is what every UI in the world does and what people
     // rely on to change their minds.
     core::InstanceId pressedOn;
+    // **What each other finger's press started on** (D557), by finger: the
+    // same rule as `pressedOn`, once for every finger that is not the pointer.
+    struct TouchPress
+    {
+        core::u64 finger = 0;
+        core::InstanceId pressedOn;
+    };
+    std::vector<TouchPress> touchPresses;
     core::InstanceId focused;
 
     // **The focused field's editing session** (ADR 0139): its undo history
@@ -1502,8 +1510,35 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         }
     }
 
+    // **The other fingers** (D557): each presses what it came down on and
+    // activates it if it lifts there. After the pointer's own press and
+    // release, so two fingers lifting in one frame fire in a fixed order: the
+    // pointer's, then the others' as they came down. Of the screen only -- the
+    // host casts one ray into the world, and it is the pointer's.
+    for (const InteractionTouch& touch : input.touches) {
+        auto held =
+            std::find_if(g_state.touchPresses.begin(), g_state.touchPresses.end(),
+                         [&touch](const InteractionState::TouchPress& press) { return press.finger == touch.finger; });
+        if (touch.pressed) {
+            const core::InstanceId under = hitTest(world, uiService, touch.position);
+            if (held == g_state.touchPresses.end())
+                held = g_state.touchPresses.insert(g_state.touchPresses.end(), {touch.finger, under});
+            else
+                held->pressedOn = under;
+        }
+        if (touch.released && held != g_state.touchPresses.end()) {
+            const core::InstanceId pressedOn = held->pressedOn;
+            g_state.touchPresses.erase(held);
+            if (pressedOn.valid() && world.alive(pressedOn) && hitTest(world, uiService, touch.position) == pressedOn)
+                fire(world, pressedOn, "Activated");
+        }
+    }
+
     // A destroyed element stops being hovered, pressed or focused rather than
     // leaving a stale id that would fire an event at a corpse.
+    std::erase_if(g_state.touchPresses, [&world](const InteractionState::TouchPress& press) {
+        return press.pressedOn.valid() && !world.alive(press.pressedOn);
+    });
     if (!world.alive(g_state.hovered))
         g_state.hovered = {};
     if (!world.alive(g_state.pressedOn))

@@ -1294,6 +1294,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   as infinite or NaN** (D551). Under a `ScreenGui` with a `ReferenceHeight`,
   on a window of another height, the rectangle of anything not `Visible`
   grew at every layout. What is hidden keeps the rectangle it last had.
+- **A second finger presses a button** (D557). The interface heard one finger,
+  the first down: with a thumb resting on a game's own stick, no button
+  anywhere on the screen could be pressed. Every finger now presses what is
+  under it and fires its `Activated`; hovering, dragging and scrolling stay
+  the first finger's.
 - **A streamed world arrives however small its time budget** (D556). A frame
   whose budget was already spent landed no chunk at all; on a slow machine
   that could be every frame, and with a budget of zero it was. One chunk a

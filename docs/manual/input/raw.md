@@ -113,6 +113,12 @@ There are sixteen virtual keys, `Virtual1` to `Virtual16`. The first four are
 also the halves of `VirtualStick1` and `VirtualStick2`; the rest are for the
 buttons a HUD grows.
 
+**Every finger presses the interface.** A button's `Activated` fires for
+whichever finger tapped it, while others are down elsewhere: a thumb on the
+game's own stick does not stop the other thumb from closing a sheet, and two
+fingers can press two buttons at once. Dragging a slider and scrolling a list
+are done with the first finger down; the others press.
+
 **A finger that lands on the interface says so.** A tap presses the
 interface's buttons as a click does, and that finger's `InputBegan`, every
 `InputChanged` and its `InputEnded` arrive with the second argument true --
