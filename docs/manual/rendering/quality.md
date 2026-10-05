@@ -425,6 +425,17 @@ emissive), and `unlit` -- the base colour alone, which is what drawing the
 triangles and reading one texture costs. Where `hide` says which objects cost
 a frame its time, `skip` says which part of lighting them.
 
+The ground does a good deal before any light reaches it, and has names of its
+own: `ground` (all of it: one flat colour, which is what drawing the ground
+costs whatever its fragment does), `ground_maps` (every map read: each layer
+its flat colour), `ground_gradients` (the maps read at a level worked out
+once, where each read is handed its gradients), `ground_detail` (the normal
+and surface maps: the colour alone), `ground_far` (the colour's second read,
+at the far scale), `ground_blend` (every layer of a triangle but its
+heaviest), `ground_paint` (what is painted over the ground), `ground_rules`
+(the rules' layers), `ground_noise`, and `ground_flat_rules` (the rules
+where the ground is flatter than any of them begins: the same picture).
+
 **`log_ui_touches`** (`--log-ui-touches`) writes a line for each finger that
 comes down: the whole name and rectangle of the element of the interface that
 took it, or that none did and the finger is the game's.

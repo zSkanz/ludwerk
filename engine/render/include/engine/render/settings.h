@@ -267,6 +267,20 @@ inline constexpr u32 Fog = 128u;
 inline constexpr u32 NormalMap = 256u;
 inline constexpr u32 MaterialMaps = 512u; // metallic-roughness and emissive
 inline constexpr u32 Unlit = 1024u;       // base colour alone
+// **The ground's own** (ADR 0171): what its fragment does before any light,
+// a piece at a time, so a phone's timing says which piece is the frame.
+inline constexpr u32 Ground = 2048u;          // all of it: one flat colour, unlit
+inline constexpr u32 GroundMaps = 4096u;      // every map read: each layer its flat colour
+inline constexpr u32 GroundGradients = 8192u; // explicit gradients: a level worked out once a plane
+inline constexpr u32 GroundDetail = 16384u;   // the normal and surface maps: colour alone
+inline constexpr u32 GroundFar = 32768u;      // the colour's second read, at the far scale
+inline constexpr u32 GroundBlend = 65536u;    // every corner's layer but the heaviest
+inline constexpr u32 GroundPaint = 131072u;   // what is painted over the ground
+inline constexpr u32 GroundRules = 262144u;   // the rules' layers
+inline constexpr u32 GroundNoise = 524288u;   // the ground's noise
+// The rules, where the ground is flatter than any of them begins: the same
+// picture, and what it saves is what looking cost.
+inline constexpr u32 GroundFlatRules = 1048576u;
 } // namespace MeasureSkip
 
 // The taps a shadow quality filters with: `shadowTaps` for the level's place

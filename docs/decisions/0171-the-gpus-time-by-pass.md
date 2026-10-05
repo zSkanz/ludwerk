@@ -134,6 +134,17 @@ where the GPU is, and removing what it draws says why.
     nobody measures -- so the picture and its cost are unchanged without the
     key. `hide` by `skip` attributes the forward pass.
 
+    Amended 2026-10-05: **the ground's fragment has names of its own**
+    (`ground`, `ground_maps`, `ground_gradients`, `ground_detail`,
+    `ground_far`, `ground_blend`, `ground_paint`, `ground_rules`,
+    `ground_noise`, and `ground_flat_rules`, which leaves the rules out only
+    where none can cover -- the same picture, for less). On the phone the ground was four fifths of the forward
+    pass and `unlit` took an eighth of that away: what costs is what the
+    ground does before any light, and these take it apart. On the desktop,
+    at 7680 by 4320 where the ground is 2.8 ms of the pass: its lighting 1.2,
+    its map reads 0.9, the rules 0.5, its noise 0.1, and drawing it at all
+    0.2. A phone's numbers are its own, which is what the names are for.
+
 ## What it does not do
 
 - No depth prepass switch: the opaque pass draws at the prepass's depth and

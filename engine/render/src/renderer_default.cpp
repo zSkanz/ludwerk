@@ -7005,6 +7005,18 @@ void DefaultRenderer::updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& c
             for (u32 word = 0; word < 8; ++word)
                 block.ruleApplies[index][word] = rule.appliesTo[word];
         }
+        // **The slope under which no rule covers anything**: a rule's cover is
+        // nothing until the slope, its noise added, passes where its band
+        // begins -- and the noise adds half its strength at most. Ground
+        // flatter than the flattest rule's is ground the rules need not be
+        // asked about.
+        f32 flattest = 2.0f;
+        for (u32 index = 0; index < ruleCount; ++index) {
+            const asset::TerrainRuleShape& rule = terrain.rules[index];
+            if (rule.enabled >= 0.5f)
+                flattest = std::min(flattest, rule.slope[0] - 0.5f * std::abs(rule.noise));
+        }
+        block.debug[3] = flattest;
         block.params[1] = static_cast<f32>(ruleCount);
         block.params[2] = static_cast<f32>(layerCount);
         block.params[3] = static_cast<f32>(terrain.origin.y);
