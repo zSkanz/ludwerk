@@ -156,6 +156,12 @@ add_subdirectory(tools/iconpatch)
 # The surface shaders the engine ships, wrapped at build time (ADR 0091).
 add_subdirectory(tools/surfacewrap)
 
+# The relay a host behind a NAT is reached through (ADR 0178): a program of
+# its own, for a machine the internet can reach.
+if(NOT ANDROID)
+    add_subdirectory(tools/relay)
+endif()
+
 # Standalone native samples, after every module they may link. They consume the
 # engine and nothing in the engine consumes them, so they come last.
 add_subdirectory(samples)

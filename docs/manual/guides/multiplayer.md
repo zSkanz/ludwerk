@@ -22,7 +22,7 @@ NetworkService:Join("play.example.com:7777") -- or Join() for [network] server
 
 | Call | What it does |
 |---|---|
-| `Join(address?)` | Connects to a server. With no address, `[network] server` from `project.toml`. |
+| `Join(address?)` | Connects to a server. With no address, `[network] server` from `project.toml`. With a relay known, a join code works here too: see [Playing over the internet](#playing-over-the-internet). |
 | `Host(port?)` | Makes this machine the authority others join, on port 7777 by default. `HostFailed` says why when the port cannot be opened. |
 | `Disconnect()` | Leaves the match, or stops hosting, and goes back to solo. What was sent before it still arrives. |
 | `State` | `Offline`, `Connecting`, `Connected`, `Reconnecting`, `Hosting` or `Serving`. |
@@ -93,6 +93,76 @@ version.
 [network]
 timeout = 5
 ```
+
+## Playing over the internet
+
+A match hosted from somebody's home is behind their router, and nobody outside
+can send it a first packet: by its address it is joined from the same network,
+or through a port the host opened on the router by hand. **A relay** takes that
+away. It is a small program you run on a machine the internet reaches
+(`engine-relay`, in the engine's folder under `relay/`), and a host that names
+it is given a **join code** to hand out:
+
+```luau
+local NetworkService = game:GetService("NetworkService")
+
+-- The host. Or leave the option out and put the relay in project.toml:
+--   [network]
+--   relay = "relay.example.com:7789"
+NetworkService.RelayStateChanged:Connect(function()
+    if NetworkService.RelayState == Enum.RelayState.Ready then
+        codeLabel.Text = NetworkService.JoinCode -- eight characters, like K7QW-M2ZP
+    end
+end)
+NetworkService:Host(7777, { Relay = "relay.example.com:7789" })
+
+-- A friend, anywhere, types the code into the same box an address goes in.
+NetworkService:Join(typedText, { Relay = "relay.example.com:7789" })
+```
+
+- **A code is eight letters and digits** with no 0, 1, I or O to mistake. It
+  is read in either case, with spaces or a dash anywhere. It is the match's
+  for as long as the match is hosted, and another the next time.
+- **The engine finds the path**, and the game does nothing for it: two
+  machines on one network connect by their own addresses; across the internet
+  each knocks on the other's router at once, which opens a path between most
+  home connections; and where none opens -- some mobile carriers, some office
+  networks -- the relay carries the match. `GetStats().Path` says which:
+  `"lan"`, `"direct"` or `"relayed"`. Through the relay the round trip has the
+  relay's distance in it, so a relay near your players matters.
+- **Hosting does not wait for the relay, and does not need it.** `RelayState`
+  goes `Connecting`, then `Ready` when `JoinCode` is there, or `Unreachable`
+  while the relay does not answer -- and the match is joined by its address
+  all the while. The relay is asked again by itself.
+- **`JoinFailed` says why** in words: the relay did not answer, no match has
+  that code, the match is full, its host is keeping this machine away, or no
+  path opened in time.
+- `{ Direct = false }` on `Join` goes straight through the relay: for testing
+  that path, or for a network you know will not open.
+- `Join("relay://relay.example.com:7789/K7QWM2ZP")` says the relay and the
+  code in one string, for an invitation link.
+- A host whose *name* could be read as a code -- eight letters with no dot --
+  is written with its port, `gamehost:7777`, which no code has.
+
+**Running the relay.** One UDP port, 7789 unless `--port` says another, open
+to the internet on the machine's firewall. It keeps no file and needs no
+account:
+
+```
+engine-relay --port=7789
+```
+
+`--max-matches`, `--max-relayed` (carried players a match) and `--rate` (bytes
+a second each way for one carried player) bound what it will do, and
+`--report=60` says every minute what it carries. A carried player costs the
+relay what the match sends that player and nothing more; a player who
+connected `direct` costs it a few small packets when joining and none after.
+A relay that is restarted loses nothing a host cannot say again: codes resolve
+again within ten seconds, and a carried player is carried again within four.
+
+**What a relay sees.** What the match sends, as every router between two
+players does: a match is not encrypted yet (see [Accounts, tokens and
+passwords](#accounts-tokens-and-passwords)).
 
 ## How the connection is doing
 

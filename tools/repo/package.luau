@@ -22,6 +22,8 @@
 		  platforms/android/player/        the Gradle template an APK is assembled from,
 		                                   with its pins and SDL's Java beside it
 		  assetc  iconpatch                the tools `build` and `build-assets` run
+		  relay/<platform>/engine-relay    the relay a match is joined through (ADR 0178),
+		                                   for this platform and for Linux
 		  tools/cli/                       the CLI itself
 		  templates/                       what `ludwerk new` copies
 		  runtime/types/engine.d.luau      what it copies into a new project
@@ -451,6 +453,22 @@ local function run(): number
                 copyTree(content, joined(target, "content"), { i18n = true })
             end
         end
+    end
+
+    -- The relay (ADR 0178), for the machine it will run on: this platform's
+    -- beside the Linux one a server most often is.
+    local relay = executableName("engine-relay")
+    copyFile(
+        joined(buildRoot, editorPreset, "tools", "relay", relay),
+        joined(target, "relay", playerTag(), relay),
+        "the relay"
+    )
+    if flags["linux-player"] ~= nil and playerTag() ~= "linux-x64" then
+        copyFile(
+            joined(flags["linux-player"], "engine-relay"),
+            joined(target, "relay", "linux-x64", "engine-relay"),
+            "the Linux relay"
+        )
     end
 
     -- The interpreter that runs the CLI, taken from the one running this: a

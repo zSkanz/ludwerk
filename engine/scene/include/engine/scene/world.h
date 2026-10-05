@@ -413,6 +413,9 @@ struct EngineState
         u64 remoteBytes = 0;
         u64 unreliableBytes = 0;
         u64 inputBytes = 0;
+        // How the other end was reached (ADR 0178): 0 nobody, 1 the same
+        // network, 2 across the internet, 3 through the relay.
+        u8 path = 0;
     };
     NetworkStats networkStats;
 
@@ -513,6 +516,13 @@ struct EngineState
     // menu and its music live across every world.
     bool sceneClientHeld = false;
     std::string defaultServer;
+    // **Reaching a host behind a NAT** (ADR 0178): `[network] relay`, where a
+    // `Host` registers and a `Join` by code asks when the call names none;
+    // and, while hosting, where this machine stands with its relay
+    // (`Enum.RelayState`'s value) and the code its joiners type.
+    std::string defaultRelay;
+    i32 networkRelayState = 0;
+    std::string networkJoinCode;
     struct NetworkRequest
     {
         enum class Kind : u8
@@ -522,8 +532,15 @@ struct EngineState
             Disconnect,
         };
         Kind kind = Kind::Join;
+        // A join: `host`, `host:port`, or -- with `relay` set -- a host's code.
         std::string address;
         u16 port = 0;
+        // The relay to register with (`Host`) or to ask (`Join` by code);
+        // empty for neither.
+        std::string relay;
+        // A join by code: whether a path each to the other is tried before
+        // the relay carries the match.
+        bool relayDirect = true;
     };
     std::optional<NetworkRequest> pendingNetwork;
     // **How many play, the machine's own player among them**

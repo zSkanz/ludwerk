@@ -181,6 +181,9 @@ struct EngineOptions
     // `[network] server` (ADR 0106): where `NetworkService:Join()` goes with no
     // address.
     std::string defaultServer;
+    // `[network] relay`, or `--relay=` (ADR 0178): where `Host` registers and
+    // a `Join` by code asks when the call names no relay.
+    std::string defaultRelay;
     // `[render]` (ADR 0107): how many camera textures a frame draws, and the
     // largest side one may have.
     core::u32 maxViewsPerFrame = 4;

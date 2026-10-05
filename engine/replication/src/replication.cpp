@@ -40,7 +40,7 @@ public:
             if (auto error = m_transport->open(transport); error.has_value())
                 return error;
             net::PeerId authority;
-            if (auto error = m_transport->connect(m_config.address, m_config.port, authority); error.has_value())
+            if (auto error = dial(authority); error.has_value())
                 return error;
             m_replica.emplace(*m_transport, authority);
             m_replica->setCorrectionLog(m_config.logCorrections);
@@ -65,13 +65,35 @@ public:
             return error;
         m_authority.emplace(*m_transport);
         m_authority->setMaxPlayers(m_config.maxPeers);
+        // **A host is a host with or without its relay** (ADR 0178): one that
+        // cannot be found -- no internet, a name mistyped -- is said in the
+        // log and as `RelayState`, and the match is joined by address as ever.
+        if (!m_config.relay.empty()) {
+            if (auto error = m_transport->useRelay(m_config.relay); error.has_value()) {
+                core::logText(core::LogLevel::Warn, error->message);
+                m_relayRefused = true;
+            }
+        }
         return std::nullopt;
+    }
+
+    // A replica's dial: by the host's code where it was given one, by its
+    // address otherwise.
+    [[nodiscard]] std::optional<core::EngineError> dial(net::PeerId& authority)
+    {
+        if (!m_config.joinCode.empty())
+            return m_transport->connectByCode(m_config.relay, m_config.joinCode, m_config.relayDirect, authority);
+        return m_transport->connect(m_config.address, m_config.port, authority);
     }
 
     void receive(scene::World& world, core::InstanceId root, bool ticking) override
     {
         if (m_authority.has_value()) {
             m_authority->receive(world, root, ticking);
+            // What the relay tells a joiner before it tries: a host with no
+            // room is not knocked on.
+            if (!m_config.relay.empty() && !m_relayRefused)
+                m_transport->setOccupancy(m_authority->peerCount(), m_authority->maxPlayers());
         }
         else if (m_replica.has_value()) {
             m_replica->receive(world, root, ticking);
@@ -132,6 +154,10 @@ public:
             status.pingMs = worst.roundTripMs;
             status.jitterMs = worst.jitterMs;
             status.loss = worst.loss;
+            status.relayState = m_relayRefused ? static_cast<u8>(net::RelayState::Unreachable)
+                                               : static_cast<u8>(m_transport->relayState());
+            status.joinCode = m_transport->joinCode();
+            status.path = static_cast<u8>(m_authority->worstPath());
         }
         else if (m_replica.has_value()) {
             status.serverTick = m_replica->appliedTick();
@@ -146,6 +172,8 @@ public:
             status.pingMs = link.roundTripMs;
             status.jitterMs = link.jitterMs;
             status.loss = link.loss;
+            status.path = static_cast<u8>(m_replica->path());
+            status.joinFailure = static_cast<u8>(m_replica->joinFailure());
         }
         return status;
     }
@@ -257,7 +285,7 @@ private:
         if (m_receives < m_redialAt)
             return;
         net::PeerId authority;
-        if (!m_transport->connect(m_config.address, m_config.port, authority).has_value())
+        if (!dial(authority).has_value())
             m_replica->rebind(authority);
         m_attempts = std::min<u32>(m_attempts + 1, RedialDoublings);
         m_redialAt = m_receives + (RedialFirstTicks << m_attempts);
@@ -274,6 +302,8 @@ private:
     u32 m_attempts = 0;
     bool m_sayWhenWelcomed = false;
     u32 m_freshJoinsSaid = 0;
+    // The relay this authority was asked to register with could not be found.
+    bool m_relayRefused = false;
     std::optional<AuthoritySession> m_authority;
     std::optional<ReplicaSession> m_replica;
     std::function<bool(core::InstanceId)> m_probe;

@@ -397,7 +397,8 @@ if(ENG_BUILD_TESTS AND ENG_DEBUG_UI)
 endif()
 
 if(ENG_BUILD_TESTS AND ENG_ENABLE_REPLICATION)
-    target_sources(engine_app_tests PRIVATE tests/wire_hash_tests.cpp tests/network_session_tests.cpp)
+    target_sources(engine_app_tests PRIVATE tests/wire_hash_tests.cpp tests/network_session_tests.cpp
+                                            tests/network_relay_tests.cpp)
     target_link_libraries(engine_app_tests PRIVATE engine::replication)
 endif()
 

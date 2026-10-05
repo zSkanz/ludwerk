@@ -3850,6 +3850,13 @@
           "Transient": true
         },
         {
+          "Name": "JoinCode",
+          "Type": "string",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        },
+        {
           "Name": "LocalPlayer",
           "Type": "Player?",
           "ReadOnly": true,
@@ -3872,6 +3879,13 @@
         {
           "Name": "Port",
           "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        },
+        {
+          "Name": "RelayState",
+          "Type": "Enum.RelayState",
           "ReadOnly": true,
           "ThreadSafety": "Safe",
           "Transient": true
@@ -3920,7 +3934,7 @@
         {
           "Name": "GetStats",
           "Parameters": [],
-          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number }"],
+          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, Path: string }"],
           "ThreadSafety": "Unsafe"
         },
         {
@@ -3929,6 +3943,11 @@
             {
               "Name": "port",
               "Type": "number?",
+              "Default": "nil"
+            },
+            {
+              "Name": "options",
+              "Type": "{ Relay: string? }?",
               "Default": "nil"
             }
           ],
@@ -3941,6 +3960,11 @@
             {
               "Name": "address",
               "Type": "string?",
+              "Default": "nil"
+            },
+            {
+              "Name": "options",
+              "Type": "{ Relay: string?, Direct: boolean? }?",
               "Default": "nil"
             }
           ],
@@ -3997,6 +4021,10 @@
               "Type": "Player"
             }
           ]
+        },
+        {
+          "Name": "RelayStateChanged",
+          "Parameters": []
         }
       ]
     },
@@ -13395,6 +13423,27 @@
         {
           "Name": "Include",
           "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "RelayState",
+      "Items": [
+        {
+          "Name": "Connecting",
+          "Value": 1
+        },
+        {
+          "Name": "None",
+          "Value": 0
+        },
+        {
+          "Name": "Ready",
+          "Value": 2
+        },
+        {
+          "Name": "Unreachable",
+          "Value": 3
         }
       ]
     },

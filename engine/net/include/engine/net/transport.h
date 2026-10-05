@@ -30,6 +30,7 @@
 
 #include "engine/core/error.h"
 #include "engine/core/types.h"
+#include "engine/net/rendezvous.h"
 
 namespace engine::net {
 
@@ -72,6 +73,16 @@ struct PeerId
     friend constexpr bool operator==(PeerId, PeerId) noexcept = default;
 };
 
+// **Reaching a host behind a NAT** (ADR 0178), in the transport's own words:
+// whether a host's relay has it registered, how a peer was reached, and why a
+// join by code did not happen.
+using RelayState = rendezvous::RelayState;
+using PeerPath = rendezvous::Path;
+using ConnectFailure = rendezvous::JoinFailure;
+
+// The port a relay listens on where nobody says another.
+inline constexpr u16 DefaultRelayPort = 7789;
+
 struct TransportEvent
 {
     enum class Kind : u8
@@ -92,6 +103,10 @@ struct TransportEvent
 
     // The channel the message arrived on. Zero for connect and disconnect.
     u8 channel = 0;
+
+    // On a `Disconnected` for a peer that was being joined by its code and
+    // never connected: why. `None` for every other event.
+    ConnectFailure failure = ConnectFailure::None;
 };
 
 struct TransportConfig
@@ -212,6 +227,51 @@ public:
     {
         (void)peer;
         return {};
+    }
+
+    // --- Reaching a host behind a NAT (ADR 0178) -----------------------------
+    //
+    // A transport that has no such thing says so by the defaults below: no
+    // relay, no code, and a join by code that is an error.
+
+    // **A listening host registers with a relay** (`host` or `host:port`), and
+    // keeps registered: its `joinCode` is what a joiner anywhere types. The
+    // host goes on taking connections by address whether or not the relay
+    // ever answers.
+    [[nodiscard]] virtual std::optional<core::EngineError> useRelay(std::string_view relay);
+    virtual void leaveRelay() {}
+    [[nodiscard]] virtual RelayState relayState() const noexcept { return RelayState::None; }
+    // Empty until the relay has registered this host.
+    [[nodiscard]] virtual std::string joinCode() const { return {}; }
+    // What the relay tells a joiner before it tries: a host with no room is
+    // not knocked on.
+    virtual void setOccupancy(usize players, usize maxPlayers)
+    {
+        (void)players;
+        (void)maxPlayers;
+    }
+
+    // **Begins a connection to the host a code names**, by the best path
+    // there is: its own network, across the internet each to the other, or
+    // through the relay -- `direct` off goes straight to the relay. As with
+    // `connect`, the peer is usable from its `Connected`; a join that does not
+    // happen is a `Disconnected` whose `failure` says why.
+    [[nodiscard]] virtual std::optional<core::EngineError> connectByCode(std::string_view relay, std::string_view code,
+                                                                         bool direct, PeerId& outPeer);
+    // How `peer` was reached. `None` for a peer this transport does not know.
+    [[nodiscard]] virtual PeerPath path(PeerId peer) const noexcept
+    {
+        (void)peer;
+        return PeerPath::None;
+    }
+    // **Keeps a peer's address away for a while**, where the transport is what
+    // stands between it and the host: a relayed joiner's address is the
+    // relay's to refuse. Nothing for a peer that came by itself -- its address
+    // is the host's own to refuse.
+    virtual void ban(PeerId peer, u32 seconds)
+    {
+        (void)peer;
+        (void)seconds;
     }
 };
 

@@ -513,6 +513,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_resetStreaming = options.resetStreaming;
     m_world->engineState().currentScene = options.bootScenePath;
     m_world->engineState().defaultServer = options.defaultServer;
+    m_world->engineState().defaultRelay = options.defaultRelay;
     if (!options.projectPath.empty()) {
         if (std::optional<core::EngineError> error = mountProject(options.projectPath); error.has_value())
             return error;

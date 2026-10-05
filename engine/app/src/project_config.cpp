@@ -608,6 +608,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.windowTitle = *value;
     if (const std::optional<std::string_view> value = document.string("network.server"))
         config.networkServer = *value;
+    if (const std::optional<std::string_view> value = document.string("network.relay"))
+        config.networkRelay = *value;
     if (const std::optional<std::string_view> value = document.string("network.role"))
         config.serverRole = *value == "server";
     // Whole numbers in a sane range; anything else keeps the default.

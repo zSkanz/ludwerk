@@ -87,6 +87,65 @@ constexpr core::u16 DefaultPort = 7777;
 }
 
 // The words for why an authority refused this machine (NA8).
+// **What a join is to**, from what a player typed (ADR 0178): a host's code
+// where a relay is known and the text is one, or written whole as
+// `relay://host:port/CODE`; an address otherwise. A host whose NAME happens to
+// read as a code is written with its port, which no code has.
+struct JoinTarget
+{
+    bool byCode = false;
+    std::string relay;
+    std::string code;
+};
+
+[[nodiscard]] JoinTarget joinTargetOf(std::string_view typed, std::string_view relay)
+{
+    constexpr std::string_view Scheme = "relay://";
+    JoinTarget target;
+    if (typed.starts_with(Scheme)) {
+        typed.remove_prefix(Scheme.size());
+        const std::size_t slash = typed.rfind('/');
+        if (slash == std::string_view::npos)
+            return target;
+        relay = typed.substr(0, slash);
+        typed = typed.substr(slash + 1);
+        if (relay.empty() || !net::rendezvous::parseCode(typed).has_value())
+            return target;
+    }
+    else if (relay.empty() || typed.find_first_of(".:[") != std::string_view::npos ||
+             !net::rendezvous::parseCode(typed).has_value()) {
+        return target;
+    }
+    target.byCode = true;
+    target.relay = std::string(relay);
+    target.code = net::rendezvous::parseCode(typed)->str();
+    return target;
+}
+
+// Why a join by code did not reach its host, in the game's player's words.
+[[maybe_unused]] [[nodiscard]] std::string joinFailureText(core::u8 failure, const std::string& relay,
+                                                           const std::string& code)
+{
+    const std::array<core::I18nArg, 2> args{core::I18nArg{"relay", std::string_view{relay}},
+                                            core::I18nArg{"code", std::string_view{code}}};
+    switch (static_cast<net::ConnectFailure>(failure)) {
+    case net::ConnectFailure::RelayUnreachable:
+        return core::engineCatalog().format(ENG_TR("net.err.join_relay_unreachable"), args);
+    case net::ConnectFailure::NoSession:
+        return core::engineCatalog().format(ENG_TR("net.err.join_no_session"), args);
+    case net::ConnectFailure::Full:
+        return core::engineCatalog().format(ENG_TR("net.err.refused_full"));
+    case net::ConnectFailure::Refused:
+        return core::engineCatalog().format(ENG_TR("net.err.join_kept_away"), args);
+    case net::ConnectFailure::Busy:
+        return core::engineCatalog().format(ENG_TR("net.err.join_relay_busy"), args);
+    case net::ConnectFailure::None:
+    case net::ConnectFailure::TimedOut:
+        break;
+    }
+    return core::engineCatalog().format(ENG_TR("net.err.join_no_path"), args);
+}
+
 [[maybe_unused]] [[nodiscard]] std::string refusalText(core::u8 reason, const std::string& words)
 {
 #if ENG_ENABLE_REPLICATION
@@ -146,20 +205,50 @@ void NetworkSession::setState(core::i32 state)
         host->world().engineState().networkState = state;
 }
 
+void NetworkSession::noteRelay(core::i32 relayState, const std::string& joinCode)
+{
+    WorldHost* host = m_host();
+    if (host == nullptr)
+        return;
+    scene::EngineState& state = host->world().engineState();
+    state.networkRelayState = relayState;
+    state.networkJoinCode = joinCode;
+    if (relayState == m_relayState && joinCode == m_joinCode)
+        return;
+    const core::i32 before = m_relayState;
+    m_relayState = relayState;
+    m_joinCode = joinCode;
+    // Said once each way: the code when the relay has it, and the silence when
+    // a relay that was answering stops.
+    const std::array<core::I18nArg, 2> args{core::I18nArg{"relay", std::string_view{m_relay.relay}},
+                                            core::I18nArg{"code", std::string_view{joinCode}}};
+    if (relayState == static_cast<core::i32>(net::RelayState::Ready) && relayState != before)
+        core::log(core::LogLevel::Info, ENG_TR("net.info.relay_ready"), args);
+    else if (relayState == static_cast<core::i32>(net::RelayState::Unreachable) && relayState != before)
+        core::log(core::LogLevel::Warn, ENG_TR("net.warn.relay_unreachable"), args);
+    script::fireNetworkEvent(host->runtime().state(), "RelayStateChanged", std::nullopt);
+}
+
 std::optional<core::EngineError> NetworkSession::begin(replication::Topology topology, const std::string& address,
-                                                       core::u16 port, bool redial)
+                                                       core::u16 port, bool redial, const RelayUse& relay)
 {
     m_redial = redial;
     m_port = port;
+    m_relay = relay;
 #if ENG_ENABLE_REPLICATION
     replication::Config config = m_base;
     config.topology = topology;
     config.address = address;
     config.port = port;
     config.redial = redial;
+    config.relay = relay.relay;
+    config.joinCode = relay.code;
+    config.relayDirect = relay.direct;
     m_tokenKey.clear();
     if (topology == replication::Topology::Replica) {
-        m_tokenKey = address + ":" + std::to_string(port);
+        // A host is the same host by its code as by its address, to the
+        // player it welcomed before.
+        m_tokenKey = relay.code.empty() ? address + ":" + std::to_string(port) : relay.relay + "/" + relay.code;
         if (const auto known = m_tokens.find(m_tokenKey); known != m_tokens.end())
             config.token = known->second;
     }
@@ -174,6 +263,7 @@ std::optional<core::EngineError> NetworkSession::begin(replication::Topology top
     (void)topology;
     (void)address;
     (void)port;
+    (void)relay;
     (void)m_base;
     (void)m_transports;
     return core::makeError(ENG_TR("engine.cli.err.no_replication"));
@@ -245,8 +335,19 @@ std::optional<core::EngineError> NetworkSession::start(replication::Topology top
 {
     if (topology == replication::Topology::Solo)
         return std::nullopt;
-    if (std::optional<core::EngineError> error = begin(topology, address, port, true); error.has_value())
+    // `--join=CODE` with a relay known is a join by code, as it is from a
+    // script; and `--host` registers with the relay there is.
+    RelayUse relay{.relay = m_base.relay, .code = {}, .direct = true};
+    if (topology == replication::Topology::Replica) {
+        const JoinTarget target = joinTargetOf(address, m_base.relay);
+        relay = RelayUse{.relay = target.relay, .code = target.code, .direct = true};
+    }
+    if (std::optional<core::EngineError> error = begin(topology, address, port, true, relay); error.has_value())
         return error;
+    if (topology != replication::Topology::Replica && !relay.relay.empty()) {
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"relay", std::string_view{relay.relay}}};
+        core::log(core::LogLevel::Info, ENG_TR("net.info.relay_asked"), args);
+    }
     WorldHost* host = m_host();
     if (host == nullptr)
         return std::nullopt;
@@ -384,13 +485,16 @@ void NetworkSession::update()
                 goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.left")), wasAuthority);
             std::string address;
             core::u16 port = DefaultPort;
-            if (!splitAddress(request.address, address, port)) {
+            const JoinTarget target = joinTargetOf(request.address, request.relay);
+            if (!target.byCode && !splitAddress(request.address, address, port)) {
                 const std::array<core::I18nArg, 1> args{core::I18nArg{"address", std::string_view{request.address}}};
                 script::fireNetworkEvent(host->runtime().state(), "JoinFailed",
                                          core::engineCatalog().format(ENG_TR("net.err.bad_address"), args));
                 break;
             }
-            if (std::optional<core::EngineError> error = begin(replication::Topology::Replica, address, port, false);
+            const RelayUse relay{.relay = target.relay, .code = target.code, .direct = request.relayDirect};
+            if (std::optional<core::EngineError> error =
+                    begin(replication::Topology::Replica, address, port, false, relay);
                 error.has_value()) {
                 script::fireNetworkEvent(host->runtime().state(), "JoinFailed", reasonOf(*error));
                 break;
@@ -402,6 +506,12 @@ void NetworkSession::update()
             m_joinStartedNs = m_clock ? m_clock() : platform::nowNs();
             m_address = request.address;
             setState(StateConnecting);
+            if (target.byCode) {
+                const std::array<core::I18nArg, 2> args{core::I18nArg{"relay", std::string_view{target.relay}},
+                                                        core::I18nArg{"code", std::string_view{target.code}}};
+                core::log(core::LogLevel::Info, ENG_TR("net.info.joining_by_code"), args);
+                break;
+            }
             const std::array<core::I18nArg, 2> args{core::I18nArg{"address", std::string_view{address}},
                                                     core::I18nArg{"port", static_cast<core::i64>(port)}};
             core::log(core::LogLevel::Info, ENG_TR("net.info.joining"), args);
@@ -412,7 +522,9 @@ void NetworkSession::update()
                 break; // Hosting already.
             if (active())
                 goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.left")), wasAuthority);
-            if (std::optional<core::EngineError> error = begin(replication::Topology::Host, {}, request.port, false);
+            const RelayUse relay{.relay = request.relay, .code = {}, .direct = true};
+            if (std::optional<core::EngineError> error =
+                    begin(replication::Topology::Host, {}, request.port, false, relay);
                 error.has_value()) {
                 // **Said to the game, not only to the log** (NA7): a port in
                 // use left `State` at Offline and the script waiting.
@@ -425,6 +537,10 @@ void NetworkSession::update()
             setState(StateHosting);
             const std::array<core::I18nArg, 1> args{core::I18nArg{"port", static_cast<core::i64>(request.port)}};
             core::log(core::LogLevel::Info, ENG_TR("net.info.hosting"), args);
+            if (!request.relay.empty()) {
+                const std::array<core::I18nArg, 1> relayArgs{core::I18nArg{"relay", std::string_view{request.relay}}};
+                core::log(core::LogLevel::Info, ENG_TR("net.info.relay_asked"), relayArgs);
+            }
             break;
         }
         case Kind::Disconnect:
@@ -436,6 +552,7 @@ void NetworkSession::update()
 
 #if ENG_ENABLE_REPLICATION
     if (m_replication == nullptr) {
+        noteRelay(0, {});
         state.networkStats = {};
         state.networkPort = 0;
         state.networkMaxPlayers = 0;
@@ -467,6 +584,7 @@ void NetworkSession::update()
     state.networkServerTick = status.serverTick;
     state.networkPeerCount = status.peerCount;
     state.networkPort = m_port;
+    noteRelay(status.relayState, status.joinCode);
 
     // --- How the connection is doing (the multiplayer smoothness brief).
     {
@@ -493,6 +611,7 @@ void NetworkSession::update()
         shown.remoteBytes = stats.remoteBytes;
         shown.unreliableBytes = stats.unreliableBytes;
         shown.inputBytes = stats.inputBytes;
+        shown.path = status.path;
         const core::u64 now = m_clock ? m_clock() : platform::nowNs();
         const core::u64 snapshots = status.authority ? stats.snapshotsSent : stats.snapshotsReceived;
         if (m_rateStartedNs == 0 || now < m_rateStartedNs) {
@@ -556,8 +675,13 @@ void NetworkSession::update()
         else if (!m_redial &&
                  (status.lost || static_cast<core::f64>((m_clock ? m_clock() : platform::nowNs()) - m_joinStartedNs) >
                                      m_joinTimeoutSeconds * 1'000'000'000.0)) {
+            // By a code, the transport knows why: no such match, no room, no
+            // path. By an address there is one thing to say.
             const std::array<core::I18nArg, 1> args{core::I18nArg{"address", std::string_view{m_address}}};
-            goSolo("JoinFailed", core::engineCatalog().format(ENG_TR("net.err.join_failed"), args),
+            goSolo("JoinFailed",
+                   m_relay.code.empty() || (status.joinFailure == 0 && !status.lost)
+                       ? core::engineCatalog().format(ENG_TR("net.err.join_failed"), args)
+                       : joinFailureText(status.joinFailure, m_relay.relay, m_relay.code),
                    state.networkTopology != scene::NetworkTopology::Replica);
         }
         return;

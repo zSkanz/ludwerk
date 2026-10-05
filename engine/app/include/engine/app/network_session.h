@@ -101,13 +101,26 @@ public:
     // a minimised window. A join from the command line has no limit: it dials
     // until the server answers, as it does when a server goes away (ADR 0085).
     void setJoinTimeout(core::f64 seconds) noexcept { m_joinTimeoutSeconds = seconds; }
+    // The code this machine's join is by (ADR 0178); empty for one by address.
+    [[nodiscard]] const std::string& joinedByCode() const noexcept { return m_relay.code; }
     // The clock the timeout is read from; `platform::nowNs` unless a test
     // gives another.
     void setClock(std::function<core::u64()> nowNs) { m_clock = std::move(nowNs); }
 
 private:
+    // The relay a match is started with (ADR 0178): where a host registers,
+    // or, with `code`, where a join asks for the host that holds it.
+    struct RelayUse
+    {
+        std::string relay;
+        std::string code;
+        bool direct = true;
+    };
     [[nodiscard]] std::optional<core::EngineError> begin(replication::Topology topology, const std::string& address,
-                                                         core::u16 port, bool redial);
+                                                         core::u16 port, bool redial, const RelayUse& relay);
+    // What `RelayState` and `JoinCode` read, and `RelayStateChanged` when
+    // either is another.
+    void noteRelay(core::i32 relayState, const std::string& joinCode);
     void wire();
     void goSolo(std::string_view event, std::string_view reason, bool wasAuthority);
     void setState(core::i32 state);
@@ -137,6 +150,10 @@ private:
     core::u64 m_rateResimulatedTicks = 0;
     core::u64 m_rateResimulationMicros = 0;
     std::string m_address;
+    // The relay this match was started with, and the code it was joined by.
+    RelayUse m_relay;
+    core::i32 m_relayState = 0;
+    std::string m_joinCode;
     // The scene this machine was in when a script joined (N2): where it goes
     // back to when the match ends.
     std::string m_sceneBeforeJoin;

@@ -2081,6 +2081,35 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        -- ADR 0178. At the END: an enum's id is its position, and it travels.
+        {
+            Name = "RelayState",
+            Doc = "Where a host stands with its relay (ADR 0178): what `NetworkService.RelayState` says.",
+            Items = {
+                {
+                    Name = "None",
+                    Value = 0,
+                    Doc = "No relay was asked for, or this machine is not hosting: the match is joined by its "
+                        .. "address.",
+                },
+                {
+                    Name = "Connecting",
+                    Value = 1,
+                    Doc = "The relay was asked to register the match and has not answered yet.",
+                },
+                {
+                    Name = "Ready",
+                    Value = 2,
+                    Doc = "The relay has the match: `JoinCode` is what others join by.",
+                },
+                {
+                    Name = "Unreachable",
+                    Value = 3,
+                    Doc = "The relay is not answering, or refused. It is asked again, and the match is still "
+                        .. "joined by its address meanwhile.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

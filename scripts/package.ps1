@@ -66,7 +66,7 @@ try {
 chcp 65001 >nul
 call "$vcvars" >nul || exit /b 1
 cmake --preset win-msvc-editor || exit /b 1
-cmake --build --preset win-msvc-editor --target engine_host assetc iconpatch || exit /b 1
+cmake --build --preset win-msvc-editor --target engine_host assetc iconpatch engine_relay || exit /b 1
 cmake --preset win-msvc-player || exit /b 1
 cmake --build --preset win-msvc-player --target engine_host || exit /b 1
 "@
@@ -94,7 +94,7 @@ cmake --build --preset win-msvc-player --target engine_host || exit /b 1
         # Built into the gate's own volume, then copied out through a bind
         # mount: the volume is not a directory this machine can read.
         docker run --rm -v "${repo}:/repo" -v "engine-tier2-build:/build" -v "${players}:/out" engine-tier2:latest `
-            bash -c "cmake --preset linux-clang-player >/dev/null && cmake --build --preset linux-clang-player --target engine_host && mkdir -p /out/linux-x64 && cp /build/linux-clang-player/engine/app/engine-host /out/linux-x64/ && strip --strip-unneeded /out/linux-x64/engine-host && cp -r /build/linux-clang-player/engine/app/content /out/linux-x64/"
+            bash -c "cmake --preset linux-clang-player >/dev/null && cmake --build --preset linux-clang-player --target engine_host engine_relay && mkdir -p /out/linux-x64 && cp /build/linux-clang-player/engine/app/engine-host /build/linux-clang-player/tools/relay/engine-relay /out/linux-x64/ && strip --strip-unneeded /out/linux-x64/engine-host /out/linux-x64/engine-relay && cp -r /build/linux-clang-player/engine/app/content /out/linux-x64/"
         if ($LASTEXITCODE -ne 0) { throw "the Linux player failed to build in the container" }
     }
 

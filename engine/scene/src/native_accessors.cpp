@@ -1930,6 +1930,16 @@ Value getNetworkServicePort(const World& world, core::InstanceId)
     return Value{static_cast<f64>(world.engineState().networkPort)};
 }
 
+Value getNetworkServiceRelayState(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::RelayStateEnumId, world.engineState().networkRelayState}};
+}
+
+Value getNetworkServiceJoinCode(const World& world, core::InstanceId)
+{
+    return Value{std::string{world.engineState().networkJoinCode}};
+}
+
 Value getNetworkServiceMaxPlayers(const World& world, core::InstanceId)
 {
     const EngineState& state = world.engineState();

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -15,12 +16,21 @@
 #include <mutex>
 #include <queue>
 #include <random>
+#include <span>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
+#include "enet_internal.h"
+#include "engine/core/crypto.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
+#include "engine/net/local_address.h"
 #include "engine/net/transport.h"
+
+#if !defined(_WIN32)
+#include <poll.h>
+#endif
 
 #if defined(_WIN32)
 // `SIO_UDP_CONNRESET` is in <mstcpip.h> on new SDKs and nowhere on old ones:
@@ -33,6 +43,69 @@
 namespace engine::net {
 
 static_assert(EnetPeerCap == static_cast<usize>(ENET_PROTOCOL_MAXIMUM_PEER_ID), "the published cap is ENet's own");
+
+namespace detail {
+
+// ENet is initialised once per process and deinitialised never.
+//
+// Never, deliberately. `enet_deinitialize` calls `WSACleanup` on Windows, and
+// this process has other things holding sockets -- the dev-server control
+// connection (ADR 0035) among them. A transport going away must not take the
+// platform's networking down with it, and the cost is one refcount.
+bool ensureEnet()
+{
+    static const bool initialized = [] {
+        if (enet_initialize() != 0) {
+            core::log(core::LogLevel::Warn, ENG_TR("net.err.transport_init_failed"), {});
+            return false;
+        }
+        return true;
+    }();
+    return initialized;
+}
+
+bool resolve(std::string_view text, core::u16 defaultPort, ENetAddress& out)
+{
+    std::string host(text);
+    core::u16 port = defaultPort;
+    if (const usize colon = host.rfind(':'); colon != std::string::npos) {
+        core::u32 value = 0;
+        const char* const first = host.data() + colon + 1;
+        const char* const last = host.data() + host.size();
+        const auto [end, error] = std::from_chars(first, last, value);
+        if (first == last || error != std::errc{} || end != last || value == 0 || value > 65535)
+            return false;
+        port = static_cast<core::u16>(value);
+        host.resize(colon);
+    }
+    if (host.empty() || port == 0)
+        return false;
+    out = ENetAddress{};
+    out.port = port;
+    // Read as an address first, and looked up only where it is a name (NA11).
+    return enet_address_set_host_ip(&out, host.c_str()) == 0 || enet_address_set_host(&out, host.c_str()) == 0;
+}
+
+void ignorePortUnreachable(ENetSocket socket) noexcept
+{
+#if defined(_WIN32)
+    BOOL report = FALSE;
+    DWORD returned = 0;
+    (void)WSAIoctl(socket, SIO_UDP_CONNRESET, &report, sizeof(report), nullptr, 0, &returned, nullptr, nullptr);
+#else
+    (void)socket;
+#endif
+}
+
+core::u64 steadyMs() noexcept
+{
+    static const auto start = std::chrono::steady_clock::now();
+    const auto since = std::chrono::steady_clock::now() - start;
+    return static_cast<core::u64>(std::chrono::duration_cast<std::chrono::milliseconds>(since).count()) + 1;
+}
+
+} // namespace detail
+
 namespace {
 
 using core::f32;
@@ -59,23 +132,7 @@ constexpr enet_uint32 TransportMtu = 1200;
 // again.
 constexpr enet_uint32 ServiceWaitMs = 1;
 
-// ENet is initialised once per process and deinitialised never.
-//
-// Never, deliberately. `enet_deinitialize` calls `WSACleanup` on Windows, and
-// this process has other things holding sockets -- the dev-server control
-// connection (ADR 0035) among them. A transport going away must not take the
-// platform's networking down with it, and the cost is one refcount.
-[[nodiscard]] bool ensureEnet()
-{
-    static const bool initialized = [] {
-        if (enet_initialize() != 0) {
-            core::log(LogLevel::Warn, ENG_TR("net.err.transport_init_failed"), {});
-            return false;
-        }
-        return true;
-    }();
-    return initialized;
-}
+using detail::ensureEnet;
 
 // The ENet flags one `Delivery` asks for.
 //
@@ -281,6 +338,300 @@ private:
     std::atomic<bool> m_stopping{false};
 };
 
+// Many sockets waited on at once. Not `select`: its set holds sixty-four
+// sockets on Windows, and a host's pipes are two apiece.
+#if defined(_WIN32)
+using PollEntry = WSAPOLLFD;
+constexpr short PollReadable = POLLRDNORM;
+[[nodiscard]] int pollSockets(PollEntry* entries, usize count, int timeoutMs)
+{
+    return WSAPoll(entries, static_cast<ULONG>(count), timeoutMs);
+}
+#else
+using PollEntry = pollfd;
+constexpr short PollReadable = POLLIN;
+[[nodiscard]] int pollSockets(PollEntry* entries, usize count, int timeoutMs)
+{
+    return poll(entries, static_cast<nfds_t>(count), timeoutMs);
+}
+#endif
+
+void sendTo(ENetSocket socket, const ENetAddress& to, std::span<const u8> datagram)
+{
+    ENetBuffer buffer{};
+    buffer.data = const_cast<void*>(static_cast<const void*>(datagram.data()));
+    buffer.dataLength = datagram.size();
+    (void)enet_socket_send(socket, &to, &buffer, 1);
+}
+
+// 10/8, 172.16/12, 192.168/16, and a machine's own 127/8 and 169.254/16: an
+// address that means something only on the network it is on.
+[[nodiscard]] constexpr bool isLocalAddress(u32 address) noexcept
+{
+    return (address >> 24) == 10 || (address >> 24) == 127 || (address >> 20) == ((172u << 4) | 1u) ||
+           (address >> 16) == ((192u << 8) | 168u) || (address >> 16) == ((169u << 8) | 254u);
+}
+
+// **A host's sockets for the joiners a relay carries** (ADR 0178 §5). The
+// relay forwards by where a datagram came from and adds nothing to it, so on
+// the way back it must be told which joiner a datagram is for by the socket it
+// comes from: one UDP socket per relayed joiner, which says its slot to the
+// relay and from then on is that joiner's address there.
+//
+// Inside this process each is a pipe to ENet's own socket: what the relay
+// hands it goes in to ENet from a loopback address of its own -- so ENet sees
+// one peer per joiner, as it would across the internet -- and what ENet
+// answers to that address goes out to the relay. ENet is not patched and does
+// not know.
+class PipeSet
+{
+public:
+    ~PipeSet() { stop(); }
+
+    void start(const ENetAddress& relay, u16 hostPort, const rendezvous::Token& token)
+    {
+        stop();
+        m_relay = relay;
+        m_token = token;
+        m_inwardTo = ENetAddress{};
+        (void)enet_address_set_host_ip(&m_inwardTo, "127.0.0.1");
+        m_inwardTo.port = hostPort;
+        m_stopping.store(false);
+        m_thread = std::thread([this] { run(); });
+    }
+
+    void stop()
+    {
+        if (m_thread.joinable()) {
+            m_stopping.store(true);
+            m_thread.join();
+        }
+        std::lock_guard lock(m_mutex);
+        for (Pipe& pipe : m_pipes)
+            destroy(pipe);
+        m_pipes.clear();
+        m_lost.store(false);
+    }
+
+    // False where the system gave no socket; the joiner's wait for the relay
+    // then ends as a path that did not open.
+    bool open(const rendezvous::HostRendezvous::PipeRequest& request, u64 nowMs)
+    {
+        std::lock_guard lock(m_mutex);
+        for (const Pipe& pipe : m_pipes)
+            if (pipe.state.slot() == request.slot)
+                return true;
+        Pipe pipe;
+        pipe.outward = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+        pipe.inward = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+        ENetAddress any{};
+        any.host = ENET_HOST_ANY;
+        // **A loopback address of its own**, 127.a.b.1 with the slot in a and
+        // b: a host that limits the connections of one address
+        // (`maxPeersPerAddress`) would otherwise count every relayed joiner
+        // as 127.0.0.1. Where the system has only 127.0.0.1 -- macOS -- it is
+        // that, and the limit is the relay's to keep (`slotsPerAddress`).
+        ENetAddress own{};
+        own.host = ENET_HOST_TO_NET_32((127u << 24) | (static_cast<u32>(request.slot) << 8) | 1u);
+        ENetAddress plain{};
+        (void)enet_address_set_host_ip(&plain, "127.0.0.1");
+        const bool bound = pipe.outward != ENET_SOCKET_NULL && pipe.inward != ENET_SOCKET_NULL &&
+                           enet_socket_bind(pipe.outward, &any) == 0 &&
+                           (enet_socket_bind(pipe.inward, &own) == 0 || enet_socket_bind(pipe.inward, &plain) == 0) &&
+                           enet_socket_get_address(pipe.inward, &pipe.seenAs) == 0;
+        if (!bound) {
+            destroy(pipe);
+            return false;
+        }
+        for (const ENetSocket socket : {pipe.outward, pipe.inward}) {
+            (void)enet_socket_set_option(socket, ENET_SOCKOPT_NONBLOCK, 1);
+            detail::ignorePortUnreachable(socket);
+        }
+        pipe.state.start(detail::toEndpoint(m_relay), m_token, request, nowMs);
+        pipe.openedMs = nowMs;
+        m_pipes.push_back(std::move(pipe));
+        return true;
+    }
+
+    void close(u16 slot)
+    {
+        std::lock_guard lock(m_mutex);
+        for (auto pipe = m_pipes.begin(); pipe != m_pipes.end(); ++pipe) {
+            if (pipe->state.slot() != slot)
+                continue;
+            destroy(*pipe);
+            m_pipes.erase(pipe);
+            return;
+        }
+    }
+
+    // The slot whose joiner ENet sees at `address`; zero for an address that
+    // is nobody's pipe.
+    [[nodiscard]] u16 slotAt(const ENetAddress& address) const
+    {
+        std::lock_guard lock(m_mutex);
+        for (const Pipe& pipe : m_pipes)
+            if (pipe.seenAs.host == address.host && pipe.seenAs.port == address.port)
+                return pipe.state.slot();
+        return 0;
+    }
+
+    void attach(u16 slot, u32 peer)
+    {
+        std::lock_guard lock(m_mutex);
+        for (Pipe& pipe : m_pipes)
+            if (pipe.state.slot() == slot)
+                pipe.peer = peer;
+    }
+
+    [[nodiscard]] u16 slotOf(u32 peer) const
+    {
+        std::lock_guard lock(m_mutex);
+        for (const Pipe& pipe : m_pipes)
+            if (pipe.peer == peer && peer != 0)
+                return pipe.state.slot();
+        return 0;
+    }
+
+    // How long the relay is to keep the slot's joiner away once it is gone.
+    void setBan(u16 slot, u16 seconds)
+    {
+        std::lock_guard lock(m_mutex);
+        for (Pipe& pipe : m_pipes)
+            if (pipe.state.slot() == slot)
+                pipe.banSeconds = seconds;
+    }
+
+    [[nodiscard]] u16 banOf(u16 slot) const
+    {
+        std::lock_guard lock(m_mutex);
+        for (const Pipe& pipe : m_pipes)
+            if (pipe.state.slot() == slot)
+                return pipe.banSeconds;
+        return 0;
+    }
+
+    // Pipes the relay asked for that no joiner then came through: it found a
+    // better path, or gave up.
+    [[nodiscard]] std::vector<u16> unused(u64 nowMs) const
+    {
+        constexpr u64 UnusedAfterMs = 20'000;
+        std::vector<u16> out;
+        std::lock_guard lock(m_mutex);
+        for (const Pipe& pipe : m_pipes)
+            if (pipe.peer == 0 && nowMs - pipe.openedMs > UnusedAfterMs)
+                out.push_back(pipe.state.slot());
+        return out;
+    }
+
+    // True once after the relay said it knows no such session.
+    [[nodiscard]] bool takeLost() noexcept { return m_lost.exchange(false); }
+
+private:
+    struct Pipe
+    {
+        rendezvous::HostPipe state;
+        // To the relay, and to this process's ENet.
+        ENetSocket outward = ENET_SOCKET_NULL;
+        ENetSocket inward = ENET_SOCKET_NULL;
+        // The inward socket's own address: who ENet takes the joiner for.
+        ENetAddress seenAs{};
+        u32 peer = 0;
+        u64 openedMs = 0;
+        u16 banSeconds = 0;
+    };
+
+    static void destroy(Pipe& pipe)
+    {
+        if (pipe.outward != ENET_SOCKET_NULL)
+            enet_socket_destroy(pipe.outward);
+        if (pipe.inward != ENET_SOCKET_NULL)
+            enet_socket_destroy(pipe.inward);
+        pipe.outward = ENET_SOCKET_NULL;
+        pipe.inward = ENET_SOCKET_NULL;
+    }
+
+    void run()
+    {
+        constexpr int WaitMs = 10;
+        std::array<u8, ENET_PROTOCOL_MAXIMUM_MTU> bytes{};
+        std::vector<PollEntry> entries;
+        while (!m_stopping.load()) {
+            entries.clear();
+            {
+                std::lock_guard lock(m_mutex);
+                for (const Pipe& pipe : m_pipes) {
+                    for (const ENetSocket socket : {pipe.outward, pipe.inward}) {
+                        PollEntry entry{};
+                        entry.fd = socket;
+                        entry.events = PollReadable;
+                        entries.push_back(entry);
+                    }
+                }
+            }
+            if (entries.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(WaitMs));
+                continue;
+            }
+            (void)pollSockets(entries.data(), entries.size(), WaitMs);
+            // Every pipe is looked at, whatever the wait said: a pipe may have
+            // been opened or closed while it waited, and a look at a socket
+            // with nothing on it costs one call.
+            std::lock_guard lock(m_mutex);
+            const u64 now = detail::steadyMs();
+            for (Pipe& pipe : m_pipes) {
+                carry(pipe, true, bytes, now);
+                carry(pipe, false, bytes, now);
+                pipe.state.tick(now, [&](rendezvous::Endpoint, std::span<const u8> datagram) {
+                    sendTo(pipe.outward, m_relay, datagram);
+                });
+                if (pipe.state.takeLost())
+                    m_lost.store(true);
+            }
+        }
+    }
+
+    void carry(Pipe& pipe, bool fromRelay, std::array<u8, ENET_PROTOCOL_MAXIMUM_MTU>& bytes, u64 now)
+    {
+        constexpr int MostPerLook = 256;
+        for (int taken = 0; taken < MostPerLook; ++taken) {
+            ENetAddress from{};
+            ENetBuffer buffer{};
+            buffer.data = bytes.data();
+            buffer.dataLength = bytes.size();
+            const int got = enet_socket_receive(fromRelay ? pipe.outward : pipe.inward, &from, &buffer, 1);
+            if (got <= 0)
+                return;
+            const std::span<const u8> datagram(bytes.data(), static_cast<usize>(got));
+            if (fromRelay) {
+                // Only the relay speaks to this socket; anyone else who found
+                // its port is not carried in to the match.
+                if (from.host != m_relay.host || from.port != m_relay.port)
+                    continue;
+                if (!pipe.state.receive(detail::toEndpoint(from), datagram, now))
+                    sendTo(pipe.inward, m_inwardTo, datagram);
+            }
+            else if (from.port == m_inwardTo.port && (ENET_NET_TO_HOST_32(from.host) >> 24) == 127) {
+                sendTo(pipe.outward, m_relay, datagram);
+            }
+        }
+    }
+
+    mutable std::mutex m_mutex;
+    std::vector<Pipe> m_pipes;
+    std::thread m_thread;
+    std::atomic<bool> m_stopping{false};
+    std::atomic<bool> m_lost{false};
+    ENetAddress m_relay{};
+    ENetAddress m_inwardTo{};
+    rendezvous::Token m_token{};
+};
+
+class EnetTransport;
+// The transport whose host is being serviced on this thread: ENet's intercept
+// hook is handed the host and nothing of ours.
+thread_local EnetTransport* t_servicing = nullptr;
+
 class EnetTransport final : public ITransport
 {
 public:
@@ -330,20 +681,10 @@ public:
         if (config.maxPeersPerAddress != 0)
             m_host->duplicatePeers = config.maxPeersPerAddress;
         m_host->mtu = TransportMtu;
-#if defined(_WIN32)
-        // **A peer that went away is not a broken socket** (NA5). Windows
-        // reports the "port unreachable" a vanished peer's machine answers
-        // with as an error on the NEXT receive, which ended that service's
-        // receiving early and held every other peer's data a tick, until the
-        // gone one timed out. Every engine that runs UDP on Windows turns it
-        // off.
-        {
-            BOOL report = FALSE;
-            DWORD returned = 0;
-            (void)WSAIoctl(m_host->socket, SIO_UDP_CONNRESET, &report, sizeof(report), nullptr, 0, &returned, nullptr,
-                           nullptr);
-        }
-#endif
+        detail::ignorePortUnreachable(m_host->socket);
+        // What a relay, a host and a joiner say to find each other arrives on
+        // this same socket, marked (ADR 0178): taken before ENet reads it.
+        m_host->intercept = &EnetTransport::intercept;
         // **ENet is serviced on its own clock** (N9, NA4): a thread of its
         // own takes what arrives and answers it -- acknowledgements, pings --
         // the moment it does, whatever the frame loop is doing. Serviced once
@@ -387,11 +728,12 @@ public:
         // queues, so `FireServer(save)` then `Disconnect()` lost the save. A
         // disconnect after the queue is out, then a short wait for it to go
         // -- a tenth of a second, then whatever is left is reset.
+        m_joining.clear();
         for (const auto& entry : m_peers)
             enet_peer_disconnect_later(entry.second, 0);
         ENetEvent event{};
         for (int round = 0; round < 10 && !m_peers.empty(); ++round) {
-            while (enet_host_service(m_host, &event, 10) > 0) {
+            while (service(&event, 10) > 0) {
                 if (event.type == ENET_EVENT_TYPE_RECEIVE)
                     enet_packet_destroy(event.packet);
                 else if (event.type == ENET_EVENT_TYPE_DISCONNECT)
@@ -403,6 +745,13 @@ public:
             enet_peer_disconnect_now(entry.second, 0);
         }
         m_peers.clear();
+        m_paths.clear();
+        m_dialling.clear();
+        // The relay is told last: its joiners' goodbyes crossed it first.
+        if (m_hosting.active())
+            m_hosting.stop(sender());
+        m_pipes.stop();
+        m_codeKnown = false;
         enet_host_destroy(m_host);
         m_host = nullptr;
     }
@@ -450,12 +799,15 @@ public:
         // queued on a peer still connecting breaks the handshake.
         enet_peer_timeout(peer, 0, m_timeoutMs, m_timeoutMs);
         outPeer = track(peer);
+        m_paths[outPeer.value] = isLocalAddress(ENET_NET_TO_HOST_32(address.host)) ? PeerPath::Lan : PeerPath::Direct;
         return std::nullopt;
     }
 
     void disconnect(PeerId peer) override
     {
         std::lock_guard lock(m_mutex);
+        // A join by code that is given up before it found its host.
+        std::erase_if(m_joining, [peer](const Joining& joining) { return joining.id == peer.value; });
         const auto at = m_peers.find(peer.value);
         if (at == m_peers.end()) {
             return;
@@ -467,6 +819,7 @@ public:
     void drop(PeerId peer) override
     {
         std::lock_guard lock(m_mutex);
+        std::erase_if(m_joining, [peer](const Joining& joining) { return joining.id == peer.value; });
         const auto at = m_peers.find(peer.value);
         if (at == m_peers.end()) {
             return;
@@ -525,11 +878,11 @@ public:
             // call carries the timeout and the rest do not.
             ENetEvent event{};
             enet_uint32 wait = timeoutMs;
-            while (m_inbox.size() < MaxInboxEvents && m_inboxBytes < MaxInboxBytes &&
-                   enet_host_service(m_host, &event, wait) > 0) {
+            while (m_inbox.size() < MaxInboxEvents && m_inboxBytes < MaxInboxBytes && service(&event, wait) > 0) {
                 wait = 0;
                 (void)take(event);
             }
+            (void)attend();
         }
         // The wait is for something, not for each thing: one wait, then
         // whatever is there.
@@ -571,7 +924,237 @@ public:
                         .loss = static_cast<f32>(found->packetLoss) / static_cast<f32>(ENET_PEER_PACKET_LOSS_SCALE)};
     }
 
+    // --- Reaching a host behind a NAT (ADR 0178) -----------------------------
+
+    std::optional<core::EngineError> useRelay(std::string_view relay) override
+    {
+        if (m_host == nullptr)
+            return core::makeError(ENG_TR("net.err.transport_not_open"));
+        if (m_config.port == 0)
+            return core::makeError(ENG_TR("net.err.relay_needs_port"));
+        // Outside the lock: a name server is not waited for with ENet held.
+        ENetAddress address{};
+        if (!detail::resolve(relay, DefaultRelayPort, address))
+            return relayUnresolved(relay);
+        // Drawn once a session: its hash is the code, and nobody without it
+        // can register that code.
+        rendezvous::Token token{};
+        core::secureRandom(token);
+        const rendezvous::Locals locals = localsOf(m_config.port);
+        std::lock_guard lock(m_mutex);
+        if (m_hosting.active())
+            m_hosting.stop(sender());
+        m_codeKnown = false;
+        m_pipes.start(address, m_config.port, token);
+        m_hosting.start(detail::toEndpoint(address), token, locals, detail::steadyMs());
+        return std::nullopt;
+    }
+
+    void leaveRelay() override
+    {
+        std::lock_guard lock(m_mutex);
+        if (m_host != nullptr && m_hosting.active())
+            m_hosting.stop(sender());
+        m_pipes.stop();
+        m_codeKnown = false;
+    }
+
+    [[nodiscard]] RelayState relayState() const noexcept override
+    {
+        std::lock_guard lock(m_mutex);
+        return m_hosting.state();
+    }
+
+    [[nodiscard]] std::string joinCode() const override
+    {
+        std::lock_guard lock(m_mutex);
+        // Once the relay has said it, it is the session's for good: a relay
+        // that goes quiet for a while has not made the code another.
+        return m_codeKnown ? m_hosting.code().str() : std::string();
+    }
+
+    void setOccupancy(usize players, usize maxPlayers) override
+    {
+        // A byte each on the wire, and what the relay asks of them is one
+        // thing: is there room. Past 255 that answer is kept and the counts
+        // are not.
+        if (maxPlayers > 255) {
+            players = players >= maxPlayers ? 255 : std::min<usize>(players, 254);
+            maxPlayers = 255;
+        }
+        std::lock_guard lock(m_mutex);
+        m_hosting.setPlayers(static_cast<u8>(std::min<usize>(players, 255)), static_cast<u8>(maxPlayers));
+    }
+
+    std::optional<core::EngineError> connectByCode(std::string_view relay, std::string_view code, bool direct,
+                                                   PeerId& outPeer) override
+    {
+        outPeer = PeerId{};
+        if (m_host == nullptr)
+            return core::makeError(ENG_TR("net.err.transport_not_open"));
+        const std::optional<rendezvous::Code> parsed = rendezvous::parseCode(code);
+        if (!parsed) {
+            const I18nArg args[] = {{"code", std::string(code)}};
+            return core::makeError(ENG_TR("net.err.join_code_malformed"), args);
+        }
+        ENetAddress address{};
+        if (!detail::resolve(relay, DefaultRelayPort, address))
+            return relayUnresolved(relay);
+        std::array<u8, 8> random{};
+        core::secureRandom(random);
+        u64 nonce = 0;
+        for (const u8 byte : random)
+            nonce = (nonce << 8) | byte;
+
+        std::lock_guard lock(m_mutex);
+        // This socket's port, where the system has given it one yet: what a
+        // host on the same network knocks on.
+        ENetAddress bound{};
+        const u16 port = enet_socket_get_address(m_host->socket, &bound) == 0 ? bound.port : u16{0};
+        Joining& joining = m_joining.emplace_back();
+        joining.id = m_nextId++;
+        joining.rendezvous.start(detail::toEndpoint(address), *parsed, localsOf(port), nonce, detail::steadyMs(),
+                                 rendezvous::JoinRendezvous::Options{.direct = direct});
+        outPeer = PeerId{joining.id};
+        return std::nullopt;
+    }
+
+    [[nodiscard]] PeerPath path(PeerId peer) const noexcept override
+    {
+        std::lock_guard lock(m_mutex);
+        const auto at = m_paths.find(peer.value);
+        return at == m_paths.end() ? PeerPath::None : at->second;
+    }
+
+    void ban(PeerId peer, u32 seconds) override
+    {
+        std::lock_guard lock(m_mutex);
+        // Said to the relay when the peer is gone, not now: the goodbye the
+        // host is about to send it crosses the relay too.
+        if (const u16 slot = m_pipes.slotOf(peer.value); slot != 0)
+            m_pipes.setBan(slot, static_cast<u16>(std::min<u32>(seconds, 65535)));
+    }
+
 private:
+    struct Joining
+    {
+        u32 id = 0;
+        rendezvous::JoinRendezvous rendezvous;
+    };
+
+    [[nodiscard]] static std::optional<core::EngineError> relayUnresolved(std::string_view relay)
+    {
+        const I18nArg args[] = {{"relay", std::string(relay)}, {"port", static_cast<core::i64>(DefaultRelayPort)}};
+        return core::makeError(ENG_TR("net.err.relay_unresolved"), args);
+    }
+
+    // This machine's own addresses, for a peer on the same network to try.
+    [[nodiscard]] static rendezvous::Locals localsOf(u16 port)
+    {
+        rendezvous::Locals locals;
+        locals.port = port;
+        for (const std::string& dotted : localAddresses()) {
+            const std::optional<u32> address = rendezvous::parseAddress(dotted);
+            if (address && locals.count < rendezvous::MostLocal)
+                locals.address[locals.count++] = *address;
+        }
+        return locals;
+    }
+
+    // Every call that lets ENet read its socket goes through here, so the
+    // intercept hook knows whose host it was handed.
+    int service(ENetEvent* event, enet_uint32 waitMs)
+    {
+        t_servicing = this;
+        const int result = enet_host_service(m_host, event, waitMs);
+        t_servicing = nullptr;
+        return result;
+    }
+
+    static int ENET_CALLBACK intercept(ENetHost* host, ENetEvent* event)
+    {
+        (void)event;
+        EnetTransport* const self = t_servicing;
+        if (self == nullptr || self->m_host != host)
+            return 0;
+        const std::span<const u8> datagram(host->receivedData, host->receivedDataLength);
+        if (!rendezvous::marked(datagram))
+            return 0;
+        // Marked: never the match's, whoever it was for.
+        const rendezvous::Endpoint from = detail::toEndpoint(host->receivedAddress);
+        const u64 now = detail::steadyMs();
+        const rendezvous::Send send = self->sender();
+        if (self->m_hosting.active())
+            (void)self->m_hosting.receive(from, datagram, now, send);
+        for (Joining& joining : self->m_joining)
+            (void)joining.rendezvous.receive(from, datagram, now, send);
+        return 1;
+    }
+
+    // Out of ENet's own socket: the mapping a knock opens in a router is then
+    // the one the match uses. Called with the lock held.
+    [[nodiscard]] rendezvous::Send sender()
+    {
+        return [this](rendezvous::Endpoint to, std::span<const u8> datagram) {
+            sendTo(m_host->socket, detail::toAddress(to), datagram);
+        };
+    }
+
+    // The rendezvous's own clockwork: registrations and knocks sent, pipes
+    // opened, a join that found its host turned into ENet's connection and one
+    // that did not into the event that says why. Called with the lock held,
+    // wherever ENet is serviced. True when something was put in the inbox.
+    bool attend()
+    {
+        if (!m_hosting.active() && m_joining.empty())
+            return false;
+        const u64 now = detail::steadyMs();
+        const rendezvous::Send send = sender();
+        if (m_hosting.active()) {
+            if (m_pipes.takeLost())
+                m_hosting.refresh();
+            m_hosting.tick(now, send);
+            m_codeKnown = m_codeKnown || m_hosting.state() == RelayState::Ready;
+            for (const rendezvous::HostRendezvous::PipeRequest& request : m_hosting.takePipeRequests())
+                (void)m_pipes.open(request, now);
+            for (const u16 slot : m_pipes.unused(now)) {
+                m_pipes.close(slot);
+                m_hosting.close(slot, 0, send);
+            }
+        }
+        bool arrived = false;
+        for (auto joining = m_joining.begin(); joining != m_joining.end();) {
+            joining->rendezvous.tick(now, send);
+            ConnectFailure failure = joining->rendezvous.failure();
+            if (joining->rendezvous.found()) {
+                const ENetAddress address = detail::toAddress(joining->rendezvous.target());
+                ENetPeer* const peer = enet_host_connect(m_host, &address, m_channels, 0);
+                if (peer != nullptr) {
+                    enet_peer_timeout(peer, 0, m_timeoutMs, m_timeoutMs);
+                    peer->data = reinterpret_cast<void*>(static_cast<std::uintptr_t>(joining->id));
+                    m_peers.emplace(joining->id, peer);
+                    m_paths[joining->id] = joining->rendezvous.path();
+                    m_dialling.insert(joining->id);
+                    joining = m_joining.erase(joining);
+                    continue;
+                }
+                failure = ConnectFailure::Busy;
+            }
+            else if (!joining->rendezvous.failed()) {
+                ++joining;
+                continue;
+            }
+            m_inbox.push_back(TransportEvent{.kind = TransportEvent::Kind::Disconnected,
+                                             .peer = PeerId{joining->id},
+                                             .payload = {},
+                                             .channel = 0,
+                                             .failure = failure});
+            arrived = true;
+            joining = m_joining.erase(joining);
+        }
+        return arrived;
+    }
+
     // The service thread: everything ENet has, into the inbox, then a wait on
     // the socket -- outside the lock, so a send is never held behind it.
     void serviceLoop()
@@ -582,10 +1165,10 @@ private:
             {
                 std::lock_guard lock(m_mutex);
                 ENetEvent event{};
-                while (m_inbox.size() < MaxInboxEvents && m_inboxBytes < MaxInboxBytes &&
-                       enet_host_service(m_host, &event, 0) > 0) {
+                while (m_inbox.size() < MaxInboxEvents && m_inboxBytes < MaxInboxBytes && service(&event, 0) > 0) {
                     arrived = take(event) || arrived;
                 }
+                arrived = attend() || arrived;
             }
             if (arrived)
                 m_arrived.notify_all();
@@ -598,24 +1181,50 @@ private:
     bool take(ENetEvent& event)
     {
         switch (event.type) {
-        case ENET_EVENT_TYPE_CONNECT:
+        case ENET_EVENT_TYPE_CONNECT: {
             configurePeer(event.peer);
+            const PeerId id = track(event.peer);
+            m_dialling.erase(id.value);
+            // Through one of this host's pipes: a joiner the relay carries.
+            // Otherwise as it was dialled, or -- for one that dialled us --
+            // by what its address says.
+            if (const u16 slot = m_pipes.slotAt(event.peer->address); slot != 0) {
+                m_pipes.attach(slot, id.value);
+                m_paths[id.value] = PeerPath::Relayed;
+            }
+            else if (!m_paths.contains(id.value)) {
+                m_paths[id.value] =
+                    isLocalAddress(ENET_NET_TO_HOST_32(event.peer->address.host)) ? PeerPath::Lan : PeerPath::Direct;
+            }
             // Every field named, empty ones included. Clang counts a skipped
             // designator as a missing initializer under `-Werror`, and the
             // Tier-2 build is where that is discovered.
-            m_inbox.push_back(TransportEvent{
-                .kind = TransportEvent::Kind::Connected, .peer = track(event.peer), .payload = {}, .channel = 0});
+            m_inbox.push_back(TransportEvent{.kind = TransportEvent::Kind::Connected,
+                                             .peer = id,
+                                             .payload = {},
+                                             .channel = 0,
+                                             .failure = ConnectFailure::None});
             return true;
+        }
         case ENET_EVENT_TYPE_DISCONNECT: {
             const PeerId id = idOf(event.peer);
+            // A join by code that found a path and no host at the end of it:
+            // the path did not open in time.
+            const bool never = m_dialling.erase(id.value) != 0;
             forget(event.peer);
-            m_inbox.push_back(
-                TransportEvent{.kind = TransportEvent::Kind::Disconnected, .peer = id, .payload = {}, .channel = 0});
+            m_inbox.push_back(TransportEvent{.kind = TransportEvent::Kind::Disconnected,
+                                             .peer = id,
+                                             .payload = {},
+                                             .channel = 0,
+                                             .failure = never ? ConnectFailure::TimedOut : ConnectFailure::None});
             return true;
         }
         case ENET_EVENT_TYPE_RECEIVE: {
-            TransportEvent message{
-                .kind = TransportEvent::Kind::Message, .peer = idOf(event.peer), .payload = {}, .channel = 0};
+            TransportEvent message{.kind = TransportEvent::Kind::Message,
+                                   .peer = idOf(event.peer),
+                                   .payload = {},
+                                   .channel = 0,
+                                   .failure = ConnectFailure::None};
             message.channel = event.channelID;
             const auto* const data = reinterpret_cast<const u8*>(event.packet->data);
             message.payload.assign(data, data + event.packet->dataLength);
@@ -673,6 +1282,16 @@ private:
         const PeerId id = idOf(peer);
         peer->data = nullptr;
         m_peers.erase(id.value);
+        m_paths.erase(id.value);
+        m_dialling.erase(id.value);
+        // A relayed joiner that is gone: its socket is closed and the relay
+        // told to stop carrying it.
+        if (const u16 slot = m_pipes.slotOf(id.value); slot != 0) {
+            const u16 banSeconds = m_pipes.banOf(slot);
+            m_pipes.close(slot);
+            if (m_host != nullptr && m_hosting.active())
+                m_hosting.close(slot, banSeconds, sender());
+        }
     }
 
     ENetHost* m_host = nullptr;
@@ -692,6 +1311,17 @@ private:
     std::atomic<bool> m_stopping{false};
     TransportConfig m_config;
     LinkConditioner m_conditioner;
+
+    // Reaching a host behind a NAT (ADR 0178). All under `m_mutex`, the pipes'
+    // own sockets apart, which have a lock and a thread of their own.
+    rendezvous::HostRendezvous m_hosting;
+    bool m_codeKnown = false;
+    std::vector<Joining> m_joining;
+    std::unordered_map<u32, PeerPath> m_paths;
+    // Joins by code that found a path and are waiting for ENet's handshake
+    // along it.
+    std::unordered_set<u32> m_dialling;
+    PipeSet m_pipes;
 };
 
 } // namespace

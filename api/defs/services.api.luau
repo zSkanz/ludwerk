@@ -1536,6 +1536,30 @@ local Classes: { Schema.Class } = {
                     .. "Zero with no match. With `GetLocalAddresses`, what a host shows the friends who will join it.",
             },
             {
+                Name = "RelayState",
+                Type = "Enum.RelayState",
+                ReadOnly = true,
+                Transient = true,
+                ThreadSafety = "Safe",
+                HostFact = true,
+                Doc = "Where this machine's match stands with its relay (ADR 0178): `None` with no relay or no "
+                    .. "match hosted, `Connecting` until the relay answers, `Ready` once it has registered the "
+                    .. "match, `Unreachable` while it does not answer. `RelayStateChanged` fires when it changes.",
+            },
+            {
+                Name = "JoinCode",
+                Type = "string",
+                ReadOnly = true,
+                Transient = true,
+                ThreadSafety = "Safe",
+                HostFact = true,
+                Doc = "**The code others join this machine's match by** (ADR 0178): eight letters and digits, "
+                    .. "with no 0, 1, I or O to mistake, that a relay resolves to this host wherever it is -- "
+                    .. "behind a home router, on a phone's carrier. Empty until `RelayState` is `Ready`, and on "
+                    .. "a machine that is not hosting through a relay. The same for as long as the match is "
+                    .. "hosted, a relay that restarts included; another the next time `Host` is called.",
+            },
+            {
                 Name = "LocalPlayer",
                 Type = "Player?",
                 ReadOnly = true,
@@ -1594,7 +1618,7 @@ local Classes: { Schema.Class } = {
                         .. "UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, "
                         .. "BytesSent: number, BytesReceived: number, SwarmBytes: number, "
                         .. "SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, "
-                        .. "UnreliableBytes: number, InputBytes: number }",
+                        .. "UnreliableBytes: number, InputBytes: number, Path: string }",
                 },
                 ThreadSafety = "Unsafe",
                 Doc = "**How the connection is doing**, for a game that shows a connection-quality mark: the "
@@ -1617,25 +1641,47 @@ local Classes: { Schema.Class } = {
                     .. "`RemoteFunction`s (`RemoteBytes`), its `UnreliableRemoteEvent`s (`UnreliableBytes`), and "
                     .. "what a client says of its own input and of what it owns (`InputBytes`); `SwarmBytes` is a "
                     .. "replicated swarm's positions. What is left of the total is instances coming and going, "
-                    .. "the ground and the handshake. Read twice a second apart, the difference is the rate.",
+                    .. "the ground and the handshake. Read twice a second apart, the difference is the rate.\n\n"
+                    .. '**How the other end was reached** (`Path`): `"lan"` on the same network, '
+                    .. '`"direct"` across the internet each to the other, `"relayed"` through the relay -- '
+                    .. "which adds the relay's distance to the round trip, and is what a game may want to say "
+                    .. "beside its ping. On a host, the longest way any of its players came. Empty with nobody.",
             },
             {
                 Name = "Join",
-                Parameters = { { Name = "address", Type = "string?", Default = "nil" } },
+                Parameters = {
+                    { Name = "address", Type = "string?", Default = "nil" },
+                    { Name = "options", Type = "{ Relay: string?, Direct: boolean? }?", Default = "nil" },
+                },
                 Returns = {},
                 ThreadSafety = "Unsafe",
                 Doc = "Connects to a server at `address` (`host` or `host:port`), or to `[network] server` from "
                     .. "`project.toml` with none. **Joining replaces this machine's scene with the server's**: what "
                     .. "it replicates arrives, and server code stops, since this machine no longer decides the "
-                    .. "world. `Connected` or `JoinFailed` says how it went. A dedicated server may not join.",
+                    .. "world. `Connected` or `JoinFailed` says how it went. A dedicated server may not join.\n\n"
+                    .. "**Or to the match a join code names** (ADR 0178): where a relay is known -- "
+                    .. "`options.Relay`, or `[network] relay` -- and `address` is a code, as a player types one "
+                    .. "(either case, spaces or a dash between), the relay is asked for its host and the best "
+                    .. "path there is taken without the game's help: the same network, across the internet each "
+                    .. "to the other, or through the relay. `GetStats().Path` says which. `options.Direct = "
+                    .. "false` goes straight through the relay. `relay://host:port/CODE` says both in one "
+                    .. "string. A host whose name could be read as a code is written with its port.",
             },
             {
                 Name = "Host",
-                Parameters = { { Name = "port", Type = "number?", Default = "nil" } },
+                Parameters = {
+                    { Name = "port", Type = "number?", Default = "nil" },
+                    { Name = "options", Type = "{ Relay: string? }?", Default = "nil" },
+                },
                 Returns = {},
                 ThreadSafety = "Unsafe",
                 Doc = "Makes this machine the authority others join, on `port` (7777 with none), keeping the "
-                    .. "scene it is in. A dedicated server may not call it.",
+                    .. "scene it is in. A dedicated server may not call it.\n\n"
+                    .. '**With a relay** (ADR 0178) -- `options.Relay = "host:port"`, or `[network] relay` -- '
+                    .. "the match is registered there, and `JoinCode` is what a friend anywhere types to join "
+                    .. "it, with no port opened on anybody's router. Hosting does not wait for the relay and "
+                    .. "does not need it: `RelayState` says where that stands, and the match is joined by its "
+                    .. "address as ever.",
             },
             {
                 Name = "Disconnect",
@@ -1657,9 +1703,17 @@ local Classes: { Schema.Class } = {
                 Name = "JoinFailed",
                 Parameters = { { Name = "reason", Type = "string" } },
                 Doc = "The join did not succeed, and this machine is solo again. The reason is readable text: "
-                    .. "nothing answered, the server is full, or it runs another version. **The machine is "
+                    .. "nothing answered, the server is full, or it runs another version -- and by a join code: "
+                    .. "the relay did not answer, no match has that code, its host is keeping this machine away, "
+                    .. "or no path to it opened in time. **The machine is "
                     .. "as it was**: a join changes nothing until the server takes it, so the menu that "
                     .. "called `Join` is still there to hear this.",
+            },
+            {
+                Name = "RelayStateChanged",
+                Parameters = {},
+                Doc = "`RelayState` or `JoinCode` is another (ADR 0178): the relay registered the match, "
+                    .. "stopped answering, or answers again. Read the two properties.",
             },
             {
                 Name = "HostFailed",

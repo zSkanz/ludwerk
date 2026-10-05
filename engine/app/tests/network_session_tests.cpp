@@ -244,7 +244,7 @@ TEST_CASE("a solo game hosts, another joins it, and a server that goes puts the 
 
     // The host leaves.
     server.host->world().engineState().pendingNetwork =
-        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0};
+        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0, {}, true};
     run(server, client, 30);
     CHECK(server.state() == Offline);
     CHECK(client.state() == Offline);
@@ -285,7 +285,7 @@ TEST_CASE("back solo after a join, a machine runs what a solo boot of its scene 
     REQUIRE(client.topology() == scene::NetworkTopology::Replica);
 
     server.host->world().engineState().pendingNetwork =
-        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0};
+        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0, {}, true};
     run(server, client, 30);
     REQUIRE(client.topology() == scene::NetworkTopology::Solo);
     // The scene again, as a solo boot of it has it: its crate, and its script.
@@ -432,7 +432,7 @@ TEST_CASE("the audit's network run: two clients join, one leaves and comes back,
 
     // The second leaves: solo again, its own scene read again.
     second.host->world().engineState().pendingNetwork =
-        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0};
+        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0, {}, true};
     frames(60);
     REQUIRE(second.topology() == scene::NetworkTopology::Solo);
     REQUIRE(first.topology() == scene::NetworkTopology::Replica);
@@ -440,7 +440,7 @@ TEST_CASE("the audit's network run: two clients join, one leaves and comes back,
 
     // And comes back: its own copy again, under the server's door.
     second.host->world().engineState().pendingNetwork =
-        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Join, "memory:47104", 0};
+        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Join, "memory:47104", 0, {}, true};
     frames(90);
     REQUIRE(second.topology() == scene::NetworkTopology::Replica);
     CHECK(occurrences(log, "a-door-client:false") == 3);
@@ -911,7 +911,7 @@ TEST_CASE("N2: a client whose server goes is player 1 again, in its own world")
     REQUIRE(client.state() == Connected);
     CHECK(log.contains("joined-as:2"));
     server.host->world().engineState().pendingNetwork =
-        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0};
+        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0, {}, true};
     run(server, client, 30);
     CHECK(client.state() == Offline);
     CHECK(log.contains("solo-as:1"));

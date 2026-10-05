@@ -18,7 +18,10 @@ engine_add_module(net_api
         src/http.cpp
         src/local_address.cpp
         src/memory_transport.cpp
+        src/relay_service.cpp
+        src/rendezvous.cpp
         src/tcp.cpp
+        src/transport.cpp
         src/websocket.cpp
         src/websocket_protocol.cpp
     DEPS
@@ -75,6 +78,8 @@ engine_add_module_tests(net
         tests/https_tests.cpp
         tests/local_address_tests.cpp
         tests/memory_transport_tests.cpp
+        tests/relay_transport_tests.cpp
+        tests/rendezvous_tests.cpp
         tests/transport_tests.cpp
         tests/websocket_client_tests.cpp
         tests/websocket_protocol_tests.cpp

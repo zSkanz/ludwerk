@@ -334,6 +334,11 @@ public:
 
     [[nodiscard]] Stats stats() const noexcept { return m_stats; }
     [[nodiscard]] u32 peerCount() const noexcept;
+    // The most players this session seats now (`setMaxPlayers`).
+    [[nodiscard]] u32 maxPlayers() const noexcept { return m_maxPlayers; }
+    // The longest way any welcomed peer came: the relay over the internet over
+    // the same network (ADR 0178).
+    [[nodiscard]] net::PeerPath worstPath() const noexcept;
     // The worst of the welcomed peers' links: what an authority's overlay shows.
     [[nodiscard]] net::PeerLink worstLink() const noexcept;
     // The network id an instance travels under, or an invalid id when it has
@@ -743,6 +748,9 @@ public:
     // Whether the connection went and has not come back: the host's cue to
     // dial again (`rebind`).
     [[nodiscard]] bool lost() const noexcept { return m_lost; }
+    // Why a join by code did not reach its host (ADR 0178), or none.
+    [[nodiscard]] net::ConnectFailure joinFailure() const noexcept { return m_joinFailure; }
+    [[nodiscard]] net::PeerPath path() const noexcept { return m_transport.path(m_authority); }
     // A new connection to the authority, dialled after the last one was lost.
     // The handshake starts when it connects, and presents the token, so the
     // authority welcomes the same player back (ADR 0085).
@@ -892,6 +900,7 @@ private:
     u16 m_unreliableIn = 0;
     bool m_unreliableHeard = false;
     bool m_lost = false;
+    net::ConnectFailure m_joinFailure = net::ConnectFailure::None;
     // Welcomed at least once on any connection, so the next welcome is a rejoin.
     bool m_joinedBefore = false;
     // The authority's scene load this replica last followed (G18), and whether

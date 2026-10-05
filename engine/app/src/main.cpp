@@ -208,6 +208,16 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.network.address = std::string(target);
             continue;
         }
+        if (arg.starts_with("--relay=")) {
+            // Read where it is used: a name is looked up when the match
+            // starts, not while the arguments are.
+            options.defaultRelay = std::string(arg.substr(std::string_view("--relay=").size()));
+            if (options.defaultRelay.empty()) {
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_port"));
+                return kExitUsage;
+            }
+            continue;
+        }
         if (arg.starts_with("--max-players=")) {
             engine::core::u64 count = 0;
             if (!numericValue(arg.substr(std::string_view("--max-players=").size()), count) || count == 0 ||
@@ -1123,6 +1133,9 @@ int main(int argc, char** argv)
         if (!options.startupSceneFromFlag)
             options.startupScene = config.scene;
         options.defaultServer = config.networkServer;
+        // The run's own relay wins over the project's.
+        if (options.defaultRelay.empty())
+            options.defaultRelay = config.networkRelay;
         options.network.timeoutMs = config.networkTimeoutSeconds * 1000u;
         options.maxViewsPerFrame = config.maxViewsPerFrame;
         options.maxHighlights = config.maxHighlights;

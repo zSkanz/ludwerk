@@ -136,6 +136,14 @@ struct Config
     // in the hello so a game that joins again after a drop is welcomed back as
     // the same `UserId` rather than as a stranger. Invalid for a first join.
     PlayerToken token;
+    // **Reaching a host behind a NAT** (ADR 0178). An authority: the relay it
+    // registers with (`host` or `host:port`), or none. A replica: the relay
+    // that knows the host, with `joinCode` the host's code -- `address` and
+    // `port` are then not read -- and whether a path each to the other is
+    // tried before the relay carries the match.
+    std::string relay;
+    std::string joinCode;
+    bool relayDirect = true;
 };
 
 // What a script can see, and every field is a `HostFact`: it describes the
@@ -170,6 +178,18 @@ struct Status
     // (D432). A server that restarted knows nobody: its welcome is a fresh
     // join into a world that is not the one this machine held.
     u32 freshJoins = 0;
+    // **Reaching a host behind a NAT** (ADR 0178), as numbers: no transport
+    // type reaches this header. An authority: where it stands with its relay
+    // (`net::RelayState`), and the code its joiners type, empty until the relay
+    // has registered it. `path` is how the other end was reached
+    // (`net::PeerPath`: 1 the same network, 2 across the internet, 3 through
+    // the relay) -- on an authority, the longest way any of its peers came. A
+    // replica that joined by a code and did not get in: why
+    // (`net::ConnectFailure`), or 0.
+    u8 relayState = 0;
+    std::string joinCode;
+    u8 path = 0;
+    u8 joinFailure = 0;
 };
 
 // One past the largest `MessageType` there will be for a while: the kinds a

@@ -122,6 +122,7 @@ inline constexpr EnumId ParticleSimulationEnumId = 81;
 inline constexpr EnumId DecalBlendModeEnumId = 82;
 inline constexpr EnumId ParticleFlipbookModeEnumId = 83;
 inline constexpr EnumId SwarmAgentRemovalEnumId = 84;
+inline constexpr EnumId RelayStateEnumId = 85;
 
 } // namespace generated
 
@@ -943,6 +944,8 @@ Value getNetworkServiceServerTick(const World& world, core::InstanceId id);
 Value getNetworkServicePeerCount(const World& world, core::InstanceId id);
 Value getNetworkServiceState(const World& world, core::InstanceId id);
 Value getNetworkServicePort(const World& world, core::InstanceId id);
+Value getNetworkServiceRelayState(const World& world, core::InstanceId id);
+Value getNetworkServiceJoinCode(const World& world, core::InstanceId id);
 Value getNetworkServiceLocalPlayer(const World& world, core::InstanceId id);
 Value getNetworkServiceMaxPlayers(const World& world, core::InstanceId id);
 bool setNetworkServiceMaxPlayers(World& world, core::InstanceId id, const Value& value);

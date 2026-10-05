@@ -1081,6 +1081,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   it lifts, and the pipelines of particles, decals, name tags and their kin
   are made there: on a phone the frame after the loading screen took over a
   second, and a first spark or a first name tag another hitch.
+- **A match is joined over the internet by a code, with no port opened and no
+  VPN** (ADR 0178). `NetworkService:Host(port, { Relay = "host:port" })`
+  registers the match with a relay -- `engine-relay`, a small program on one
+  UDP port that the game's maker runs -- and `NetworkService.JoinCode` is the
+  eight characters a friend types into `Join`. The engine finds the path: the
+  same network, across the internet each to the other, or through the relay
+  where nothing shorter opens; `GetStats().Path` says which. `RelayState`,
+  `RelayStateChanged`, `[network] relay`, `--relay=`. A match's own bytes are
+  unchanged.
 - **A phone's frames are paced** (ADR 0173). A game that names no
   `max_frame_rate` is capped at sixty on a handheld, and its frames are held
   to the highest rate they fit that the display shows evenly -- 60, 40 or 30

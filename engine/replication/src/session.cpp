@@ -818,6 +818,15 @@ u32 AuthoritySession::peerCount() const noexcept
         std::count_if(m_peers.begin(), m_peers.end(), [](const Peer& peer) { return peer.welcomed; }));
 }
 
+net::PeerPath AuthoritySession::worstPath() const noexcept
+{
+    net::PeerPath worst = net::PeerPath::None;
+    for (const Peer& peer : m_peers)
+        if (peer.welcomed)
+            worst = std::max(worst, m_transport.path(peer.id));
+    return worst;
+}
+
 net::PeerLink AuthoritySession::worstLink() const noexcept
 {
     net::PeerLink worst;
@@ -3728,6 +3737,8 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             m_connected = false;
             m_welcomed = false;
             m_lost = true;
+            if (event.failure != net::ConnectFailure::None)
+                m_joinFailure = event.failure;
             continue;
         }
         if (event.kind != net::TransportEvent::Kind::Message || event.payload.empty())

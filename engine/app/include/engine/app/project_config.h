@@ -109,6 +109,10 @@ struct ProjectConfig
     // `[network] server` -- where `NetworkService:Join()` with no address goes
     // (ADR 0106): `play.example.com:7777`.
     std::string networkServer;
+    // `[network] relay` -- the relay a host registers with and a join by code
+    // asks (ADR 0178): `relay.example.com:7789`. Empty: no relay, and a match
+    // is joined by its address.
+    std::string networkRelay;
 
     // `[network] role = "server"`: the project is a dedicated server's package,
     // and the player given no posture starts as `--serve` (ADR 0105). Written

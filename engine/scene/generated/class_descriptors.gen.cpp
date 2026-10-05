@@ -5624,7 +5624,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(serverStorageDesc);
 
     // --- NetworkService ---
-    static std::array<PropertyDesc, 8> networkServiceProperties;
+    static std::array<PropertyDesc, 10> networkServiceProperties;
     networkServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Authority"),
@@ -5707,6 +5707,33 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
         PropertyDesc{
+            .name = atoms.intern("RelayState"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("RelayState"),
+            .threadSafety = ThreadSafety::Safe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Where this machine's match stands with its relay (ADR 0178): `None` with no relay or no match hosted, `Connecting` until the relay answers, `Ready` once it has registered the match, `Unreachable` while it does not answer. `RelayStateChanged` fires when it changes.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getNetworkServiceRelayState,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("JoinCode"),
+            .type = ValueType::String,
+            .threadSafety = ThreadSafety::Safe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "**The code others join this machine's match by** (ADR 0178): eight letters and digits, with no 0, 1, I or O to mistake, that a relay resolves to this host wherever it is -- behind a home router, on a phone's carrier. Empty until `RelayState` is `Ready`, and on a machine that is not hosting through a relay. The same for as long as the match is hosted, a relay that restarts included; another the next time `Host` is called.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getNetworkServiceJoinCode,
+            .set = nullptr,
+        },
+        PropertyDesc{
             .name = atoms.intern("LocalPlayer"),
             .type = ValueType::Instance,
             .instanceClass = atoms.intern("Player"),
@@ -5751,19 +5778,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("GetStats"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "**How the connection is doing**, for a game that shows a connection-quality mark: the round trip in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets lost in percent (`Loss`), snapshots a second, corrections of this machine's own character a second, and in all since it joined (`Corrections`), and how far the last one moved it in metres (`LastCorrection`), and the authority's queue of this player's input -- how many ticks it holds (`InputBufferDepth`), how many times it ran dry (`InputStarvations`) and how many times it was started again because the player's clock had moved -- a long frame (`InputReanchors`). How far in the past the others are drawn, in milliseconds (`InterpolationDelay`): two snapshot intervals and the link's jitter, adapting as the link does. On a client, what it simulates itself: the loose parts near its character it predicts (`PredictedParts`), the times a second a correction stepped them again and the ticks it stepped, and what one took on average in milliseconds (`ResimulationTime`). On an authority, the worst peer's link and the deepest queue. All zero solo.\012\012**Where the bytes go.** `BytesSent` and `BytesReceived` are everything since the session began, and five more say what they were, sent and received together: the world's state (`SnapshotBytes`), attributes (`AttributeBytes`), a game's `RemoteEvent`s and `RemoteFunction`s (`RemoteBytes`), its `UnreliableRemoteEvent`s (`UnreliableBytes`), and what a client says of its own input and of what it owns (`InputBytes`); `SwarmBytes` is a replicated swarm's positions. What is left of the total is instances coming and going, the ground and the handshake. Read twice a second apart, the difference is the rate.",
+            .doc = "**How the connection is doing**, for a game that shows a connection-quality mark: the round trip in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets lost in percent (`Loss`), snapshots a second, corrections of this machine's own character a second, and in all since it joined (`Corrections`), and how far the last one moved it in metres (`LastCorrection`), and the authority's queue of this player's input -- how many ticks it holds (`InputBufferDepth`), how many times it ran dry (`InputStarvations`) and how many times it was started again because the player's clock had moved -- a long frame (`InputReanchors`). How far in the past the others are drawn, in milliseconds (`InterpolationDelay`): two snapshot intervals and the link's jitter, adapting as the link does. On a client, what it simulates itself: the loose parts near its character it predicts (`PredictedParts`), the times a second a correction stepped them again and the ticks it stepped, and what one took on average in milliseconds (`ResimulationTime`). On an authority, the worst peer's link and the deepest queue. All zero solo.\012\012**Where the bytes go.** `BytesSent` and `BytesReceived` are everything since the session began, and five more say what they were, sent and received together: the world's state (`SnapshotBytes`), attributes (`AttributeBytes`), a game's `RemoteEvent`s and `RemoteFunction`s (`RemoteBytes`), its `UnreliableRemoteEvent`s (`UnreliableBytes`), and what a client says of its own input and of what it owns (`InputBytes`); `SwarmBytes` is a replicated swarm's positions. What is left of the total is instances coming and going, the ground and the handshake. Read twice a second apart, the difference is the rate.\012\012**How the other end was reached** (`Path`): `\"lan\"` on the same network, `\"direct\"` across the internet each to the other, `\"relayed\"` through the relay -- which adds the relay's distance to the round trip, and is what a game may want to say beside its ping. On a host, the longest way any of its players came. Empty with nobody.",
         },
         MethodDesc{
             .name = atoms.intern("Join"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Connects to a server at `address` (`host` or `host:port`), or to `[network] server` from `project.toml` with none. **Joining replaces this machine's scene with the server's**: what it replicates arrives, and server code stops, since this machine no longer decides the world. `Connected` or `JoinFailed` says how it went. A dedicated server may not join.",
+            .doc = "Connects to a server at `address` (`host` or `host:port`), or to `[network] server` from `project.toml` with none. **Joining replaces this machine's scene with the server's**: what it replicates arrives, and server code stops, since this machine no longer decides the world. `Connected` or `JoinFailed` says how it went. A dedicated server may not join.\012\012**Or to the match a join code names** (ADR 0178): where a relay is known -- `options.Relay`, or `[network] relay` -- and `address` is a code, as a player types one (either case, spaces or a dash between), the relay is asked for its host and the best path there is taken without the game's help: the same network, across the internet each to the other, or through the relay. `GetStats().Path` says which. `options.Direct = false` goes straight through the relay. `relay://host:port/CODE` says both in one string. A host whose name could be read as a code is written with its port.",
         },
         MethodDesc{
             .name = atoms.intern("Host"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Makes this machine the authority others join, on `port` (7777 with none), keeping the scene it is in. A dedicated server may not call it.",
+            .doc = "Makes this machine the authority others join, on `port` (7777 with none), keeping the scene it is in. A dedicated server may not call it.\012\012**With a relay** (ADR 0178) -- `options.Relay = \"host:port\"`, or `[network] relay` -- the match is registered there, and `JoinCode` is what a friend anywhere types to join it, with no port opened on anybody's router. Hosting does not wait for the relay and does not need it: `RelayState` says where that stands, and the match is joined by its address as ever.",
         },
         MethodDesc{
             .name = atoms.intern("Disconnect"),
@@ -5772,7 +5799,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "Leaves the match, or stops hosting, and goes back to solo in the scene it is in; the game's code decides what next. Server code starts again, fresh, since this machine decides the world again. `Disconnected` fires. A dedicated server may not call it.",
         },
     }};
-    static std::array<EventDesc, 6> networkServiceEvents;
+    static std::array<EventDesc, 7> networkServiceEvents;
     networkServiceEvents = {{
         EventDesc{
             .name = atoms.intern("Connected"),
@@ -5782,26 +5809,31 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
         EventDesc{
             .name = atoms.intern("JoinFailed"),
             .slot = 8,
-            .doc = "The join did not succeed, and this machine is solo again. The reason is readable text: nothing answered, the server is full, or it runs another version. **The machine is as it was**: a join changes nothing until the server takes it, so the menu that called `Join` is still there to hear this.",
+            .doc = "The join did not succeed, and this machine is solo again. The reason is readable text: nothing answered, the server is full, or it runs another version -- and by a join code: the relay did not answer, no match has that code, its host is keeping this machine away, or no path to it opened in time. **The machine is as it was**: a join changes nothing until the server takes it, so the menu that called `Join` is still there to hear this.",
+        },
+        EventDesc{
+            .name = atoms.intern("RelayStateChanged"),
+            .slot = 9,
+            .doc = "`RelayState` or `JoinCode` is another (ADR 0178): the relay registered the match, stopped answering, or answers again. Read the two properties.",
         },
         EventDesc{
             .name = atoms.intern("HostFailed"),
-            .slot = 9,
+            .slot = 10,
             .doc = "`Host` could not open its port -- something else holds it -- and this machine is still what it was. The reason is readable text.",
         },
         EventDesc{
             .name = atoms.intern("Disconnected"),
-            .slot = 10,
+            .slot = 11,
             .doc = "The connection ended -- the server left, the network dropped, or `Disconnect` was called -- and this machine is solo again.",
         },
         EventDesc{
             .name = atoms.intern("PlayerAdded"),
-            .slot = 11,
+            .slot = 12,
             .doc = "Somebody joined. Deferred like every signal (ADR 0015), so a script that connects in its file scope and then walks `GetPlayers()` sees each player exactly once.",
         },
         EventDesc{
             .name = atoms.intern("PlayerRemoving"),
-            .slot = 12,
+            .slot = 13,
             .doc = "Somebody is leaving: the player still resolves inside the handler, for the reason `Destroying` does, so a game can save what it needs from them.",
         },
     }};
@@ -9985,6 +10017,36 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     swarmAgentRemovalDesc.docKey = {};
     swarmAgentRemovalDesc.items = swarmAgentRemovalItems;
     enums.registerEnum(swarmAgentRemovalDesc);
+
+    // --- RelayState ---
+    static std::array<EnumItemDesc, 4> relayStateItems;
+    relayStateItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("None"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Connecting"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Ready"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Unreachable"),
+            .value = 3,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor relayStateDesc;
+    relayStateDesc.name = atoms.intern("RelayState");
+    relayStateDesc.docKey = {};
+    relayStateDesc.items = relayStateItems;
+    enums.registerEnum(relayStateDesc);
 }
 
 } // namespace engine::scene::generated

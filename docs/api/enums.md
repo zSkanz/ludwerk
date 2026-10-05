@@ -691,6 +691,17 @@ Whether a `RaycastParams` filter list names what a cast may hit or what it must 
 | `Exclude` | 0 | Everything except the listed instances and their descendants. |
 | `Include` | 1 | Only the listed instances and their descendants. |
 
+## Enum.RelayState
+
+Where a host stands with its relay (ADR 0178): what `NetworkService.RelayState` says.
+
+| Item | Value | Description |
+|---|---|---|
+| `None` | 0 | No relay was asked for, or this machine is not hosting: the match is joined by its address. |
+| `Connecting` | 1 | The relay was asked to register the match and has not answered yet. |
+| `Ready` | 2 | The relay has the match: `JoinCode` is what others join by. |
+| `Unreachable` | 3 | The relay is not answering, or refused. It is asked again, and the match is still joined by its address meanwhile. |
+
 ## Enum.RenderPriority
 
 Where a render step runs in the frame (ADR 0136): `RunService:BindToRenderStep` takes a number, and these are the landmarks -- `Enum.RenderPriority.Camera.Value + 1` runs just after the camera.

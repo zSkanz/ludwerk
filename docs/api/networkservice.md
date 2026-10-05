@@ -19,10 +19,12 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `Authority` | `boolean` | — | read-only | Whether this process decides the world: true solo, hosting or serving; false on a replica, which shows what it is sent. |
+| `JoinCode` | `string` | — | read-only | **The code others join this machine's match by** (ADR 0178): eight letters and digits, with no 0, 1, I or O to mistake, that a relay resolves to this host wherever it is -- behind a home router, on a phone's carrier. Empty until `RelayState` is `Ready`, and on a machine that is not hosting through a relay. The same for as long as the match is hosted, a relay that restarts included; another the next time `Host` is called. |
 | `LocalPlayer` | `Player?` | — | read-only | The player at this machine: there from boot solo, hosting or joining, and nil on a dedicated server, which has nobody at it. |
 | `MaxPlayers` | `number` | `0` | read/write | The most players this machine's match takes, **the machine's own among them** -- what `#GetPlayers()` may reach (ADR 0167). Written by the machine that hosts or will host: a whole number from 1, before `Host` or at any time after. Somebody who joins a match that has that many is refused, and their `JoinFailed` says it is full. **Lowering it removes nobody**: a player already in stays until they leave or `Player:Kick` says so. Never more than the match was opened for -- thirty-two others, or `--max-players` -- which is what it reads while hosting when nothing was written. Zero on a machine that joined, which is not the one that says; writing it there is an error. |
 | `PeerCount` | `number` | — | read-only | Connected peers, not counting this process: the replicas an authority is serving, or 1 on a replica that is connected to its authority. |
 | `Port` | `number` | — | read-only | The port this machine's match is on: the one it hosts or serves on, or the one it joined. Zero with no match. With `GetLocalAddresses`, what a host shows the friends who will join it. |
+| `RelayState` | `Enum.RelayState` | — | read-only | Where this machine's match stands with its relay (ADR 0178): `None` with no relay or no match hosted, `Connecting` until the relay answers, `Ready` once it has registered the match, `Unreachable` while it does not answer. `RelayStateChanged` fires when it changes. |
 | `ServerTick` | `number` | — | read-only | The authority's tick: its own on an authority, the newest one applied on a replica. Zero solo. **A count of ticks and never a time**, because two machines agree on the first and never on the second. |
 | `State` | `Enum.NetworkState` | — | read-only | Where this machine stands: `Offline`, `Connecting`, `Connected`, `Hosting` or `Serving`. |
 | `Topology` | `Enum.NetworkTopology` | — | read-only | Which posture this process runs in. Branch on `Authority` for gameplay; this is for a menu that wants to say which one it is. |
@@ -41,19 +43,25 @@ Leaves the match, or stops hosting, and goes back to solo in the scene it is in;
 
 Everybody taking part, in the order they joined. **The same call solo** -- one player -- so a game that loops over its players is already a multiplayer game.
 
-### `GetStats(): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number }`
+### `GetStats(): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, Path: string }`
 
 **How the connection is doing**, for a game that shows a connection-quality mark: the round trip in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets lost in percent (`Loss`), snapshots a second, corrections of this machine's own character a second, and in all since it joined (`Corrections`), and how far the last one moved it in metres (`LastCorrection`), and the authority's queue of this player's input -- how many ticks it holds (`InputBufferDepth`), how many times it ran dry (`InputStarvations`) and how many times it was started again because the player's clock had moved -- a long frame (`InputReanchors`). How far in the past the others are drawn, in milliseconds (`InterpolationDelay`): two snapshot intervals and the link's jitter, adapting as the link does. On a client, what it simulates itself: the loose parts near its character it predicts (`PredictedParts`), the times a second a correction stepped them again and the ticks it stepped, and what one took on average in milliseconds (`ResimulationTime`). On an authority, the worst peer's link and the deepest queue. All zero solo.
 
 **Where the bytes go.** `BytesSent` and `BytesReceived` are everything since the session began, and five more say what they were, sent and received together: the world's state (`SnapshotBytes`), attributes (`AttributeBytes`), a game's `RemoteEvent`s and `RemoteFunction`s (`RemoteBytes`), its `UnreliableRemoteEvent`s (`UnreliableBytes`), and what a client says of its own input and of what it owns (`InputBytes`); `SwarmBytes` is a replicated swarm's positions. What is left of the total is instances coming and going, the ground and the handshake. Read twice a second apart, the difference is the rate.
 
-### `Host(port: number? = nil)`
+**How the other end was reached** (`Path`): `"lan"` on the same network, `"direct"` across the internet each to the other, `"relayed"` through the relay -- which adds the relay's distance to the round trip, and is what a game may want to say beside its ping. On a host, the longest way any of its players came. Empty with nobody.
+
+### `Host(port: number? = nil, options: { Relay: string? }? = nil)`
 
 Makes this machine the authority others join, on `port` (7777 with none), keeping the scene it is in. A dedicated server may not call it.
 
-### `Join(address: string? = nil)`
+**With a relay** (ADR 0178) -- `options.Relay = "host:port"`, or `[network] relay` -- the match is registered there, and `JoinCode` is what a friend anywhere types to join it, with no port opened on anybody's router. Hosting does not wait for the relay and does not need it: `RelayState` says where that stands, and the match is joined by its address as ever.
+
+### `Join(address: string? = nil, options: { Relay: string?, Direct: boolean? }? = nil)`
 
 Connects to a server at `address` (`host` or `host:port`), or to `[network] server` from `project.toml` with none. **Joining replaces this machine's scene with the server's**: what it replicates arrives, and server code stops, since this machine no longer decides the world. `Connected` or `JoinFailed` says how it went. A dedicated server may not join.
+
+**Or to the match a join code names** (ADR 0178): where a relay is known -- `options.Relay`, or `[network] relay` -- and `address` is a code, as a player types one (either case, spaces or a dash between), the relay is asked for its host and the best path there is taken without the game's help: the same network, across the internet each to the other, or through the relay. `GetStats().Path` says which. `options.Direct = false` goes straight through the relay. `relay://host:port/CODE` says both in one string. A host whose name could be read as a code is written with its port.
 
 ## Events
 
@@ -74,7 +82,7 @@ The connection ended -- the server left, the network dropped, or `Disconnect` wa
 
 ### `JoinFailed(reason: string)`
 
-The join did not succeed, and this machine is solo again. The reason is readable text: nothing answered, the server is full, or it runs another version. **The machine is as it was**: a join changes nothing until the server takes it, so the menu that called `Join` is still there to hear this.
+The join did not succeed, and this machine is solo again. The reason is readable text: nothing answered, the server is full, or it runs another version -- and by a join code: the relay did not answer, no match has that code, its host is keeping this machine away, or no path to it opened in time. **The machine is as it was**: a join changes nothing until the server takes it, so the menu that called `Join` is still there to hear this.
 
 ### `PlayerAdded(player: Player)`
 
@@ -83,3 +91,7 @@ Somebody joined. Deferred like every signal (ADR 0015), so a script that connect
 ### `PlayerRemoving(player: Player)`
 
 Somebody is leaving: the player still resolves inside the handler, for the reason `Destroying` does, so a game can save what it needs from them.
+
+### `RelayStateChanged()`
+
+`RelayState` or `JoinCode` is another (ADR 0178): the relay registered the match, stopped answering, or answers again. Read the two properties.

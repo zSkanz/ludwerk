@@ -177,6 +177,8 @@ struct WorldHostOptions
     std::function<std::optional<std::string>(std::string_view)> readContent = nullptr;
     // `[network] server`, which `NetworkService:Join()` with no address dials.
     std::string defaultServer = {};
+    // `[network] relay` (ADR 0178).
+    std::string defaultRelay = {};
 
     // **Whether boot starts the entry scripts, or only mounts them** (ADR 0058).
     //

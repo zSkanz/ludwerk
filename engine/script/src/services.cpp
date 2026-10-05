@@ -1464,6 +1464,10 @@ int networkServiceGetStats(lua_State* L)
     field("RemoteBytes", static_cast<double>(stats.remoteBytes));
     field("UnreliableBytes", static_cast<double>(stats.unreliableBytes));
     field("InputBytes", static_cast<double>(stats.inputBytes));
+    // How the other end was reached (ADR 0178).
+    static constexpr std::array<const char*, 4> Paths{"", "lan", "direct", "relayed"};
+    lua_pushstring(L, Paths[std::min<usize>(stats.path, Paths.size() - 1)]);
+    lua_setfield(L, -2, "Path");
     return 1;
 }
 
@@ -1654,6 +1658,41 @@ void refuseOnDedicated(lua_State* L)
         raise(L, ENG_TR("scene.err.network_dedicated"));
 }
 
+// `{ Relay = "host:port", Direct = false }`, the last argument of `Host` and
+// `Join` (ADR 0178): the relay a call names over `[network] relay`, and
+// whether a join tries a path each to the other before the relay carries it.
+struct RelayOptions
+{
+    std::string relay;
+    bool direct = true;
+};
+
+RelayOptions relayOptions(lua_State* L, int index)
+{
+    RelayOptions options;
+    options.relay = world(L).engineState().defaultRelay;
+    if (lua_gettop(L) < index || lua_isnil(L, index))
+        return options;
+    luaL_checktype(L, index, LUA_TTABLE);
+    lua_getfield(L, index, "Relay");
+    if (!lua_isnil(L, -1)) {
+        if (lua_type(L, -1) != LUA_TSTRING)
+            raise(L, ENG_TR("scene.err.network_relay_option"));
+        size_t length = 0;
+        const char* text = lua_tolstring(L, -1, &length);
+        options.relay.assign(text, length);
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, index, "Direct");
+    if (!lua_isnil(L, -1)) {
+        if (!lua_isboolean(L, -1))
+            raise(L, ENG_TR("scene.err.network_relay_option"));
+        options.direct = lua_toboolean(L, -1) != 0;
+    }
+    lua_pop(L, 1);
+    return options;
+}
+
 int networkServiceJoin(lua_State* L)
 {
     (void)checkInstance(L, 1);
@@ -1670,8 +1709,12 @@ int networkServiceJoin(lua_State* L)
     }
     if (address.empty())
         raise(L, ENG_TR("scene.err.network_no_address"));
-    state.pendingNetwork = scene::EngineState::NetworkRequest{
-        .kind = scene::EngineState::NetworkRequest::Kind::Join, .address = std::move(address), .port = 0};
+    RelayOptions options = relayOptions(L, 3);
+    state.pendingNetwork = scene::EngineState::NetworkRequest{.kind = scene::EngineState::NetworkRequest::Kind::Join,
+                                                              .address = std::move(address),
+                                                              .port = 0,
+                                                              .relay = std::move(options.relay),
+                                                              .relayDirect = options.direct};
     return 0;
 }
 
@@ -1686,8 +1729,13 @@ int networkServiceHost(lua_State* L)
             raise(L, ENG_TR("scene.err.network_bad_port"));
         port = static_cast<u16>(requested);
     }
-    world(L).engineState().pendingNetwork = scene::EngineState::NetworkRequest{
-        .kind = scene::EngineState::NetworkRequest::Kind::Host, .address = {}, .port = port};
+    RelayOptions options = relayOptions(L, 3);
+    world(L).engineState().pendingNetwork =
+        scene::EngineState::NetworkRequest{.kind = scene::EngineState::NetworkRequest::Kind::Host,
+                                           .address = {},
+                                           .port = port,
+                                           .relay = std::move(options.relay),
+                                           .relayDirect = true};
     return 0;
 }
 
@@ -1695,8 +1743,12 @@ int networkServiceDisconnect(lua_State* L)
 {
     (void)checkInstance(L, 1);
     refuseOnDedicated(L);
-    world(L).engineState().pendingNetwork = scene::EngineState::NetworkRequest{
-        .kind = scene::EngineState::NetworkRequest::Kind::Disconnect, .address = {}, .port = 0};
+    world(L).engineState().pendingNetwork =
+        scene::EngineState::NetworkRequest{.kind = scene::EngineState::NetworkRequest::Kind::Disconnect,
+                                           .address = {},
+                                           .port = 0,
+                                           .relay = {},
+                                           .relayDirect = true};
     return 0;
 }
 

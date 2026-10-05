@@ -2459,6 +2459,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             return packed(*safe);
         },
         .defaultServer = options.defaultServer,
+        .defaultRelay = options.defaultRelay,
         // **The editor mounts and does not start** (ADR 0058). Every other way
         // of running this binary starts scripts at boot exactly as it always
         // did, and that asymmetry is the whole decision: a tool shows the world
@@ -2563,14 +2564,23 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // **One owner for the connection** (ADR 0106): the command line's posture
     // is its `start`, and a script's `Join`, `Host` and `Disconnect` are carried
     // out by its `update` at the safe point after the frame's ticks.
-    NetworkSession network([&host]() { return host.get(); }, options.network);
+    // The relay of the run (`--relay=`, `[network] relay`) is the command
+    // line's match's too: `--host` registers with it, `--join=CODE` asks it.
+    replication::Config networkBase = options.network;
+    if (networkBase.relay.empty())
+        networkBase.relay = options.defaultRelay;
+    NetworkSession network([&host]() { return host.get(); }, networkBase);
     if (options.network.topology != replication::Topology::Solo) {
 #if ENG_ENABLE_REPLICATION
         if (std::optional<core::EngineError> networkError =
                 network.start(options.network.topology, options.network.address, options.network.port);
             networkError.has_value())
             return networkError;
-        if (options.network.topology == replication::Topology::Replica) {
+        if (options.network.topology == replication::Topology::Replica && !network.joinedByCode().empty()) {
+            const core::I18nArg args[] = {{"relay", networkBase.relay}, {"code", network.joinedByCode()}};
+            core::log(core::LogLevel::Info, ENG_TR("net.info.joining_by_code"), args);
+        }
+        else if (options.network.topology == replication::Topology::Replica) {
             const core::I18nArg args[] = {{"address", options.network.address},
                                           {"port", static_cast<core::i64>(options.network.port)}};
             core::log(core::LogLevel::Info, ENG_TR("net.info.joining"), args);
