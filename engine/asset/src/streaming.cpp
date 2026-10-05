@@ -304,9 +304,16 @@ void StreamingManager::tick(const StreamingBudget& budget)
         // materialising cost it. Wall clock alone is wrong and the test found
         // it: `materialize` may hand its work to a queue and return, in which
         // case the frame's real cost is a number only the host knows.
+        //
+        // **The first chunk of a frame is owed** (D556): the budget is what
+        // stops the second. Asked before the first as well, a frame whose own
+        // bookkeeping had already spent it landed nothing -- on a slow machine
+        // every frame, and with a budget of nothing, ever: a world that never
+        // arrives.
         f64 charged = 0.0;
+        u32 landed = 0;
         for (const usize slot : pending) {
-            if ((nowMs() - started) + charged >= budget.milliseconds) {
+            if (landed > 0 && (nowMs() - started) + charged >= budget.milliseconds) {
                 break;
             }
             Entry& entry = m_entries[slot];
@@ -326,6 +333,7 @@ void StreamingManager::tick(const StreamingBudget& budget)
                     continue;
                 }
                 charged += cost;
+                landed += 1;
                 entry.state = ChunkState::Resident;
                 m_stats.chunksLoaded += 1;
                 m_stats.bytesResident += entry.bytes;
@@ -340,6 +348,7 @@ void StreamingManager::tick(const StreamingBudget& budget)
                 // three milliseconds spends the whole frame's budget and the
                 // next chunk waits -- which is the entire point.
                 charged += m_callbacks.materialize(indexEntry.id, entry.decoded);
+                landed += 1;
                 entry.state = ChunkState::Resident;
                 entry.decoded = Chunk{};
                 m_stats.chunksLoaded += 1;

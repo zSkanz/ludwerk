@@ -101,6 +101,14 @@ void applyFile(const core::TomlDocument& document, std::string_view table, Graph
     }
     if (const std::optional<f64> value = number("sharpness", 0.0, 1.0))
         settings.sharpness = static_cast<f32>(*value);
+    // `terrain_surface = "full" | "lean"` (ADR 0175): the ground's material
+    // as the level draws it unless the project says.
+    if (const std::optional<std::string_view> named = document.string(key("terrain_surface"))) {
+        if (*named == "full")
+            settings.terrainSurface = GraphicsSettings::TerrainSurface::Full;
+        else if (*named == "lean")
+            settings.terrainSurface = GraphicsSettings::TerrainSurface::Lean;
+    }
     // So each of the audit's suspects for the dots on distant terrain can be
     // turned off alone (terrain audit T0).
     if (const std::optional<bool> value = flag("contact_shadows"))
@@ -167,6 +175,8 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         settings.contactShadows = *overrides.contactShadows;
     if (overrides.renderCap)
         settings.renderResolutionCap = *overrides.renderCap;
+    if (overrides.terrainSurface)
+        settings.terrainSurface = *overrides.terrainSurface;
     if (overrides.forcedSurface)
         settings.forcedSurface = *overrides.forcedSurface;
     if (overrides.instancing)
@@ -486,6 +496,10 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
             carried.instancing = false;
         applyOverrides(carried, settings);
         settings.measuredShadowTaps = instruments->measuredShadowTaps;
+        // Not an instrument, and carried the same way: the project's word on
+        // the ground's material is no setting a player has.
+        settings.terrainSurface = instruments->terrainSurface;
+        settings.measuredSkip = instruments->measuredSkip;
     }
     return render::clampSettings(settings);
 }
@@ -503,7 +517,7 @@ FramePacing pacingOf(const scene::GraphicsModel& model, bool handheld) noexcept
     pacing.vsync = handheld || model.effective(GraphicsSetting::VSync) != 0.0;
     pacing.maxFrameRate = static_cast<core::u32>(model.effective(GraphicsSetting::MaxFrameRate));
     pacing.backgroundFrameRate = static_cast<core::u32>(model.effective(GraphicsSetting::BackgroundFrameRate));
-    return pacing;
+    return handheldPacing(pacing, handheld);
 }
 
 render::GraphicsSettings resolveGraphics(const GraphicsOverrides& overrides, bool handheld)
@@ -535,6 +549,18 @@ namespace {
 
 } // namespace
 
+FramePacing handheldPacing(FramePacing pacing, bool handheld) noexcept
+{
+    if (!handheld)
+        return pacing;
+    // **A handheld with no cap of its own is capped** (ADR 0173): no cap on a
+    // phone is its display's hundred and twenty, and the heat of them.
+    if (pacing.maxFrameRate == 0)
+        pacing.maxFrameRate = HandheldFrameRate;
+    pacing.adaptive = true;
+    return pacing;
+}
+
 FramePacing pacingWith(FramePacing file, const GraphicsOverrides& overrides) noexcept
 {
     if (overrides.vsync.has_value())
@@ -551,6 +577,9 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
 {
     ProjectConfig config;
     seedGraphicsModel(config.graphicsModel, overrides, handheld);
+    // A handheld's cap and its pacing (ADR 0173) are a project's whether or
+    // not it has a file: said here, and again below once the file has spoken.
+    config.pacing = handheldPacing(config.pacing, handheld);
 
     std::string text;
     if (projectRoot.empty() || !readFile(projectRoot / "project.toml", text)) {
@@ -607,6 +636,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.gpuPassTimes = *value;
     if (const std::optional<std::string_view> value = document.string("debug.hide"))
         config.debugHide = std::string(*value);
+    if (const std::optional<std::string_view> value = document.string("debug.skip"))
+        config.debugSkip = std::string(*value);
     count("debug.shadow_taps", 0, 16, config.shadowTaps);
     if (const std::optional<bool> value = document.boolean("debug.log_ui_touches"))
         config.logUiTouches = *value;
@@ -628,6 +659,11 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.pacing.maxFrameRate = static_cast<core::u32>(*value);
     if (const std::optional<f64> value = numberIn(document, "display.background_frame_rate", 0.0, 1000.0))
         config.pacing.backgroundFrameRate = static_cast<core::u32>(*value);
+    config.pacing = handheldPacing(config.pacing, handheld);
+    // Said after, so a handheld's game can turn it off and a desk's cannot
+    // turn it on by saying `true`: it is a handheld's.
+    if (const std::optional<bool> value = document.boolean("display.adaptive_frame_rate"))
+        config.pacing.adaptive = handheld && *value;
     if (const std::optional<bool> value = document.boolean("window.fullscreen"))
         config.fullscreen = *value;
     if (const std::optional<bool> value = document.boolean("window.resizable"))

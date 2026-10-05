@@ -357,10 +357,30 @@ TEST_CASE("text that does not fit its box is shown, cut at the box, or ended wit
     CHECK(draw(2).quads == draw(0).quads);
 }
 
+namespace {
+
+// A picture for the icon below: any name resolves, as texture 2.
+bool provideAnyImage(void* user, std::string_view urn, engine::ui::ResolvedImage& out)
+{
+    (void)user;
+    (void)urn;
+    out.texture = 2;
+    out.width = 64;
+    out.height = 64;
+    return true;
+}
+
+} // namespace
+
 TEST_CASE("D453: a picture has a see-through of its own, apart from its box's")
 {
     // An icon could not be faded: a label's words had `TextTransparency`, and
     // a picture had only the background's.
+    struct ProviderGuard
+    {
+        ProviderGuard() { engine::ui::setImageProvider(&provideAnyImage, nullptr); }
+        ~ProviderGuard() { engine::ui::setImageProvider(nullptr, nullptr); }
+    } provider;
     Fixture fixture;
     const InstanceId screen = fixture.child("ScreenGui", fixture.service);
     const InstanceId icon = fixture.child("ImageLabel", screen);
@@ -368,7 +388,7 @@ TEST_CASE("D453: a picture has a see-through of its own, apart from its box's")
     fixture.object(icon).backgroundTransparency = 1.0f;
     scene::ImageLabelComponent* image = fixture.world->imageLabels().find(icon);
     REQUIRE(image != nullptr);
-    // No provider resolves it, so it draws as its flat tint: one quad.
+    // Stretched over its box: one quad.
     image->image = "asset://icons/star.png";
     fixture.run();
 

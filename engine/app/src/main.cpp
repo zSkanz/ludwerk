@@ -17,6 +17,7 @@
 
 #include "engine/app/backends.h"
 #include "engine/app/bench.h"
+#include "engine/app/debug_measure.h"
 #include "engine/app/engine.h"
 #include "engine/app/project_config.h"
 #include "engine/app/replay.h"
@@ -305,6 +306,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
         }
         if (arg.starts_with("--hide=")) {
             options.debugHide = std::string(arg.substr(7));
+            continue;
+        }
+        if (arg.starts_with("--skip=")) {
+            options.debugSkip = std::string(arg.substr(7));
             continue;
         }
         if (arg.starts_with("--shadow-taps=")) {
@@ -762,6 +767,18 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             graphics.contactShadows = arg == "--contact-shadows";
             continue;
         }
+        // `[graphics] terrain_surface`, as a flag (ADR 0175).
+        if (arg.starts_with("--terrain-surface=")) {
+            const std::string_view value = arg.substr(18);
+            if (value != "full" && value != "lean") {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            graphics.terrainSurface = value == "full" ? engine::render::GraphicsSettings::TerrainSurface::Full
+                                                      : engine::render::GraphicsSettings::TerrainSurface::Lean;
+            continue;
+        }
         // `[graphics] render_cap`, as a flag: zero is no cap.
         if (arg.starts_with("--render-cap=")) {
             engine::core::u64 lines = 0;
@@ -1094,6 +1111,9 @@ int main(int argc, char** argv)
         options.logUiTouches = options.logUiTouches || config.logUiTouches;
         if (!config.debugHide.empty())
             options.debugHide += (options.debugHide.empty() ? "" : ",") + config.debugHide;
+        if (!config.debugSkip.empty())
+            options.debugSkip += (options.debugSkip.empty() ? "" : ",") + config.debugSkip;
+        options.graphics.measuredSkip = engine::app::parseDebugSkip(options.debugSkip);
         options.graphicsModel = config.graphicsModel;
         options.rememberPlayerSettings = config.rememberPlayerSettings;
         options.defaultLocale = config.defaultLocale;

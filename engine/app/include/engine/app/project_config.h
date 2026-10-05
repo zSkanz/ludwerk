@@ -50,6 +50,8 @@ struct GraphicsOverrides
     std::optional<bool> contactShadows;
     // `--render-cap=N`: the most lines the world is rendered at, 0 for none.
     std::optional<core::u32> renderCap;
+    // `--terrain-surface=full|lean` (ADR 0175), over the level's and the file's.
+    std::optional<render::GraphicsSettings::TerrainSurface> terrainSurface;
     // `--vsync`, `--no-vsync`, `--max-frame-rate=N`, `--background-frame-rate=N`
     // (ADR 0147, G0), over `[display]`.
     std::optional<bool> vsync;
@@ -169,6 +171,8 @@ struct ProjectConfig
     // `log_ui_touches` (which element took each finger).
     bool gpuPassTimes = false;
     std::string debugHide;
+    // `[debug] skip`: a list of the lighting terms left out (`debug_measure.h`).
+    std::string debugSkip;
     core::u32 shadowTaps = 0;
     bool logUiTouches = false;
     // **`[debug] launch_arguments`: whether a phone's build takes arguments
@@ -295,6 +299,11 @@ inline constexpr bool Handheld = false;
 // arguments: its `[debug] launch_arguments`. A folder with no project file
 // does not.
 [[nodiscard]] bool launchArgumentsAllowed(const std::filesystem::path& packagedProject);
+
+// **What a handheld adds to a game's pacing** (ADR 0173): a cap of
+// `HandheldFrameRate` where the game names none, and the adaptive rate. A
+// desk's is returned as it came.
+[[nodiscard]] FramePacing handheldPacing(FramePacing pacing, bool handheld) noexcept;
 
 [[nodiscard]] render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, bool handheld = Handheld,
                                                           const render::GraphicsSettings* instruments = nullptr);

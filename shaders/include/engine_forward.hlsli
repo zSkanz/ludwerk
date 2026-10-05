@@ -298,8 +298,33 @@ float3x3 tangentFrame(float3 normal, float4 tangent)
 // pass does, and for the same reason touches neither the sun (which has a
 // shadow map) nor a lamp. Only a surface that knows it is underground -- a
 // cave -- passes anything but one.
+// **What a measurement leaves out of a lit surface** (ADR 0171, `[debug]
+// skip`): a set of bits in `ClusterParams.w`, zero on every frame nobody is
+// measuring. Each is a term of the lighting below, taken out by a branch on a
+// uniform, so a frame's time with it and without it is what the term costs --
+// on the phone, where nothing else can say. `render::MeasureSkip` is the same
+// list.
+static const uint EngineSkipSun = 1u;
+static const uint EngineSkipShadow = 2u;
+static const uint EngineSkipContact = 4u;
+static const uint EngineSkipLights = 8u;
+static const uint EngineSkipEnvironment = 16u;
+static const uint EngineSkipAmbient = 32u;
+static const uint EngineSkipOcclusion = 64u;
+static const uint EngineSkipFog = 128u;
+static const uint EngineSkipNormalMap = 256u;
+static const uint EngineSkipMaterialMaps = 512u;
+static const uint EngineSkipUnlit = 1024u;
+
 float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, float viewDepth, float2 pixel, float sky)
 {
+    const uint skipped = uint(ClusterParams.w);
+    // `unlit`: what the surface is, and nothing that lights it.
+    [branch]
+    if ((skipped & EngineSkipUnlit) != 0u)
+    {
+        return surface.DiffuseColor;
+    }
     viewDepth = viewDepthOf(shadingPosition, viewDepth);
     const float3 sunDirection = normalize(SunDirectionBrightness.xyz);
     float3 color = float3(0.0f, 0.0f, 0.0f);
@@ -308,22 +333,34 @@ float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, floa
     // light, and a sun of no brightness lights nothing, so what the lookups
     // would have said was multiplied by zero: half the faces of a scene, and
     // every face of a night. Skipped, the picture is the same.
-    if (SunDirectionBrightness.w > 0.0f && dot(surface.Normal, sunDirection) > 0.0f)
+    if ((skipped & EngineSkipSun) == 0u && SunDirectionBrightness.w > 0.0f && dot(surface.Normal, sunDirection) > 0.0f)
     {
         const float sunNol = saturate(dot(normal, sunDirection));
-        const float shadow =
-            sampleSunShadow(ShadowMap, ShadowSampler, shadingPosition, normal, sunNol, viewDepth, pixel);
+        float shadow = 1.0f;
+        [branch]
+        if ((skipped & EngineSkipShadow) == 0u)
+        {
+            shadow = sampleSunShadow(ShadowMap, ShadowSampler, shadingPosition, normal, sunNol, viewDepth, pixel);
+        }
         // The darker of the shadow map and the contact mask: the map knows what
         // is off screen and loses the last few centimetres to its biases; the
         // mask has those centimetres and knows nothing off screen.
-        const float contact =
-            ContactShadowTexture.SampleLevel(ContactShadowSampler, pixel * ViewportParams.zw, 0.0f);
+        float contact = 1.0f;
+        [branch]
+        if ((skipped & EngineSkipContact) == 0u)
+        {
+            contact = ContactShadowTexture.SampleLevel(ContactShadowSampler, pixel * ViewportParams.zw, 0.0f);
+        }
         const float sunShadow = min(shadow, contact);
         const float3 sunRadiance = SunColorUnused.rgb * (SunDirectionBrightness.w * sunShadow);
         color = shadeDirect(surface, sunDirection, sunRadiance);
     }
 
-    color += evaluateClusteredLights(surface, pixel, viewDepth);
+    [branch]
+    if ((skipped & EngineSkipLights) == 0u)
+    {
+        color += evaluateClusteredLights(surface, pixel, viewDepth);
+    }
 
     // The environment, on both lobes, and this is what M7.5 exists for: until
     // now `Lighting.Ambient` was applied flat to both, which `pbr.hlsl`'s own
@@ -340,14 +377,23 @@ float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, floa
     // exactly that; applying it to direct light is the most common way an
     // ambient-occlusion pass ends up looking like dirt.
     const float2 screenUv = pixel * ViewportParams.zw;
-    const float rawOcclusion = OcclusionTexture.SampleLevel(OcclusionSampler, screenUv, 0.0f);
+    float rawOcclusion = 1.0f;
+    [branch]
+    if ((skipped & EngineSkipOcclusion) == 0u)
+    {
+        rawOcclusion = OcclusionTexture.SampleLevel(OcclusionSampler, screenUv, 0.0f);
+    }
     const float screenOcclusion = lerp(1.0f, rawOcclusion, EnvironmentParams.z);
     const float occlusion = screenOcclusion * sky;
 
     // The sky's own light -- its irradiance and its reflection -- reaches only
     // as much of the surface as sees the sky.
-    color += evaluateEnvironment(surface, EnvironmentMap, EnvironmentSampler, BrdfLut, BrdfSampler, IrradianceSh,
-                                 EnvironmentParams.x, EnvironmentParams.y, occlusion);
+    [branch]
+    if ((skipped & EngineSkipEnvironment) == 0u)
+    {
+        color += evaluateEnvironment(surface, EnvironmentMap, EnvironmentSampler, BrdfLut, BrdfSampler, IrradianceSh,
+                                     EnvironmentParams.x, EnvironmentParams.y, occlusion);
+    }
     // And `Ambient` on the DIFFUSE lobe only, which is a change of side rather
     // than a change of mind. M4's comment argued for putting it on both, and the
     // argument was right at the time: "a mirror in a uniformly lit white room is
@@ -364,8 +410,11 @@ float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, floa
     // term, which zeroed it in exactly the places a stand-in for bounced light
     // exists for, and a cave came out black wherever a lamp did not reach (the
     // owner's terrain report). The screen-space occlusion still darkens it.
-    const float3 ambient = lerp(Ambient.rgb, OutdoorAmbient.rgb, sky);
-    color += ambient * surface.DiffuseColor * screenOcclusion;
+    if ((skipped & EngineSkipAmbient) == 0u)
+    {
+        const float3 ambient = lerp(Ambient.rgb, OutdoorAmbient.rgb, sky);
+        color += ambient * surface.DiffuseColor * screenOcclusion;
+    }
     return color;
 }
 
@@ -413,16 +462,28 @@ float4 shadeForward(Interpolants input)
     // unless the same texture is also referenced as the occlusion map, and
     // `MaterialDef` has no occlusion strength to gate it with, so reading it
     // would darken correct materials at random.
-    const float3 sampledMetallicRoughness = MetallicRoughnessTexture.Sample(MetallicRoughnessSampler, uv).rgb;
+    // `[debug] skip` (ADR 0171): the maps a measurement leaves unread.
+    const uint skipped = uint(ClusterParams.w);
+    float3 sampledMetallicRoughness = float3(1.0f, 1.0f, 1.0f);
+    [branch]
+    if ((skipped & EngineSkipMaterialMaps) == 0u)
+    {
+        sampledMetallicRoughness = MetallicRoughnessTexture.Sample(MetallicRoughnessSampler, uv).rgb;
+    }
     const float roughness = roughnessFactor * lerp(1.0f, sampledMetallicRoughness.g, TextureFlags.z);
     const float metallic = metallicFactor * lerp(1.0f, sampledMetallicRoughness.b, TextureFlags.z);
 
     const float3 geometricNormal = normalize(input.Normal);
-    const float3x3 frame = tangentFrame(geometricNormal, input.Tangent);
-    float3 tangentNormal = NormalTexture.Sample(NormalSampler, uv).xyz * 2.0f - 1.0f;
-    tangentNormal.xy *= normalScale;
-    const float3 mappedNormal = normalize(mul(normalize(tangentNormal), frame));
-    const float3 normal = normalize(lerp(geometricNormal, mappedNormal, TextureFlags.y));
+    float3 normal = geometricNormal;
+    [branch]
+    if ((skipped & EngineSkipNormalMap) == 0u)
+    {
+        const float3x3 frame = tangentFrame(geometricNormal, input.Tangent);
+        float3 tangentNormal = NormalTexture.Sample(NormalSampler, uv).xyz * 2.0f - 1.0f;
+        tangentNormal.xy *= normalScale;
+        const float3 mappedNormal = normalize(mul(normalize(tangentNormal), frame));
+        normal = normalize(lerp(geometricNormal, mappedNormal, TextureFlags.y));
+    }
 
     Surface surface = makeSurface(input.ShadingPosition, normal, baseColor.rgb, metallic, roughness);
     // Widened by the normal variation this pixel covers, before anything reads
@@ -438,13 +499,20 @@ float4 shadeForward(Interpolants input)
     float3 color = lightSurface(surface, input.ShadingPosition, normal, input.ViewDepth, input.Position.xy);
 
     float3 emissive = EmissiveFactor.rgb;
-    emissive *= lerp(float3(1.0f, 1.0f, 1.0f), EmissiveTexture.Sample(EmissiveSampler, uv).rgb, TextureFlags.w);
+    [branch]
+    if ((skipped & EngineSkipMaterialMaps) == 0u)
+    {
+        emissive *= lerp(float3(1.0f, 1.0f, 1.0f), EmissiveTexture.Sample(EmissiveSampler, uv).rgb, TextureFlags.w);
+    }
     color += emissive;
 
     // The eye is this space's origin, so the distance to it is the length of the
     // shading position. Fog is applied to emissive too: something glowing behind
     // fog is still behind fog.
-    color = applyFog(color, FogColor.rgb, FogRange, length(input.ShadingPosition));
+    if ((skipped & EngineSkipFog) == 0u)
+    {
+        color = applyFog(color, FogColor.rgb, FogRange, length(input.ShadingPosition));
+    }
 
     return float4(color, baseColor.a);
 }

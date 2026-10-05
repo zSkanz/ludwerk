@@ -22,6 +22,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.shadowTileResolution = 512;
         settings.shadowCascades = 2;
         settings.shadowTaps = shadowTapsFor(QualityLevel::Low);
+        settings.terrainLean = true;
         settings.shadowDistance = 70.0f;
         settings.lightBudget = 32;
         settings.bloom = false;
@@ -140,6 +141,10 @@ GraphicsSettings handheldSettings(GraphicsSettings settings) noexcept
     settings.bloomLevels = 3;
     if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium)
         settings.contactShadows = false;
+    // And the lean ground at Medium as well as at Low (ADR 0175): the terrain's
+    // fragment was two thirds of a phone's frame.
+    if (settings.quality == QualityLevel::Medium)
+        settings.terrainLean = true;
     if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium)
         settings.antiAliasing = AntiAliasingMode::Fxaa;
     else if (settings.antiAliasing == AntiAliasingMode::Taa)

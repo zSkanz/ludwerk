@@ -123,6 +123,17 @@ where the GPU is, and removing what it draws says why.
     are ignored, and the log says so. `--render-cap=N` is added as the flag of
     `[graphics] render_cap`, the one key of the matrix that had none.
 
+12. **`[debug] skip = "shadow,environment"` / `--skip=LIST`: the terms of a
+    lit surface that are left out** (amended the same day, on the phone's
+    first numbers: the forward pass was two thirds of the frame, and `hide`
+    says which objects cost it and not which part of lighting them). Any of
+    `sun`, `shadow`, `contact`, `lights`, `environment`, `ambient`,
+    `occlusion`, `fog`, `normal_map`, `material_maps`, and `unlit` for the
+    base colour alone. Each is a branch on a uniform in the forward shaders --
+    a lane of the frame's uniforms that was unused, zero on every frame
+    nobody measures -- so the picture and its cost are unchanged without the
+    key. `hide` by `skip` attributes the forward pass.
+
 ## What it does not do
 
 - No depth prepass switch: the opaque pass draws at the prepass's depth and

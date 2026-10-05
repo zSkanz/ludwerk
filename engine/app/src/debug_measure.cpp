@@ -46,6 +46,33 @@ constexpr std::array<std::string_view, 14> kNames = [] {
     return names;
 }();
 
+struct SkipName
+{
+    std::string_view name;
+    u32 bit;
+};
+
+constexpr std::array<SkipName, 11> kSkipNames{{
+    {"sun", render::MeasureSkip::Sun},
+    {"shadow", render::MeasureSkip::Shadow},
+    {"contact", render::MeasureSkip::Contact},
+    {"lights", render::MeasureSkip::Lights},
+    {"environment", render::MeasureSkip::Environment},
+    {"ambient", render::MeasureSkip::Ambient},
+    {"occlusion", render::MeasureSkip::Occlusion},
+    {"fog", render::MeasureSkip::Fog},
+    {"normal_map", render::MeasureSkip::NormalMap},
+    {"material_maps", render::MeasureSkip::MaterialMaps},
+    {"unlit", render::MeasureSkip::Unlit},
+}};
+
+constexpr std::array<std::string_view, 11> kSkips = [] {
+    std::array<std::string_view, 11> names{};
+    for (std::size_t index = 0; index < names.size(); ++index)
+        names[index] = kSkipNames[index].name;
+    return names;
+}();
+
 [[nodiscard]] std::string_view trimmed(std::string_view text) noexcept
 {
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t'))
@@ -148,7 +175,44 @@ void applyDebugHide(render::RenderWorld& world, const DebugHide& hide)
         world.highlights.clear();
 }
 
-std::string debugKeysInForce(bool gpuPassTimes, const DebugHide& hide, u32 shadowTaps, bool logUiTouches)
+std::span<const std::string_view> debugSkipNames() noexcept
+{
+    return kSkips;
+}
+
+u32 parseDebugSkip(std::string_view list, std::vector<std::string>* unknown)
+{
+    u32 skip = 0;
+    while (!list.empty()) {
+        const std::size_t comma = list.find(',');
+        const std::string_view name = trimmed(list.substr(0, comma));
+        list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
+        if (name.empty())
+            continue;
+        const auto found = std::find_if(kSkipNames.begin(), kSkipNames.end(),
+                                        [name](const SkipName& entry) { return entry.name == name; });
+        if (found != kSkipNames.end())
+            skip |= found->bit;
+        else if (unknown != nullptr)
+            unknown->emplace_back(name);
+    }
+    return skip;
+}
+
+std::string debugSkipText(u32 skip)
+{
+    std::string text;
+    for (const SkipName& entry : kSkipNames) {
+        if ((skip & entry.bit) == 0)
+            continue;
+        if (!text.empty())
+            text += ',';
+        text += entry.name;
+    }
+    return text;
+}
+
+std::string debugKeysInForce(bool gpuPassTimes, const DebugHide& hide, u32 shadowTaps, bool logUiTouches, u32 skip)
 {
     std::string keys;
     const auto add = [&keys](std::string_view key) {
@@ -160,6 +224,8 @@ std::string debugKeysInForce(bool gpuPassTimes, const DebugHide& hide, u32 shado
         add("gpu_pass_times");
     if (hide.any())
         add("hide=" + debugHideText(hide));
+    if (skip != 0)
+        add("skip=" + debugSkipText(skip));
     if (shadowTaps != 0)
         add("shadow_taps=" + std::to_string(shadowTaps));
     if (logUiTouches)

@@ -15,6 +15,7 @@
 
 #include "engine/core/types.h"
 #include "engine/render/render_world.h"
+#include "engine/render/settings.h"
 #include "engine/rhi/device.h"
 #include "engine/scene/world.h"
 
@@ -69,10 +70,19 @@ struct DebugHide
 // Takes what is hidden out of a frame's world.
 void applyDebugHide(render::RenderWorld& world, const DebugHide& hide);
 
+// `[debug] skip = "shadow,environment"`: the terms of a lit surface that are
+// left out, as `render::MeasureSkip` bits -- `sun`, `shadow`, `contact`,
+// `lights`, `environment`, `ambient`, `occlusion`, `fog`, `normal_map`,
+// `material_maps`, and `unlit` for the base colour alone. Where `hide` says
+// which objects cost a frame its time, this says which part of lighting them.
+[[nodiscard]] std::span<const std::string_view> debugSkipNames() noexcept;
+[[nodiscard]] core::u32 parseDebugSkip(std::string_view list, std::vector<std::string>* unknown = nullptr);
+[[nodiscard]] std::string debugSkipText(core::u32 skip);
+
 // **What the report says is in force**: "gpu_pass_times, hide=foliage,terrain,
-// shadow_taps=4". Empty when nothing is.
+// skip=shadow, shadow_taps=4". Empty when nothing is.
 [[nodiscard]] std::string debugKeysInForce(bool gpuPassTimes, const DebugHide& hide, core::u32 shadowTaps,
-                                           bool logUiTouches);
+                                           bool logUiTouches, core::u32 skip = 0);
 
 // `[debug] log_ui_touches`: a line for a finger that came down, saying which
 // element of the interface took it -- by its whole name and its rectangle --

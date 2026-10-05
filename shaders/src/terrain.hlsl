@@ -47,7 +47,8 @@ cbuffer GpuTerrainSurfaceUniforms : register(b1, space3)
     float4 TerrainParams;
     // x: the debug view drawn instead of the ground (`render::DebugView`,
     // terrain audit T0): 0 none, 1 holes, 2 level, 3 sky, 4 shadow, 5
-    // occlusion, 6 bend, 7 albedo, 8 material.
+    // occlusion, 6 bend, 7 albedo, 8 material. y: 1 for the lean ground
+    // (ADR 0175). z: never set -- see where the stand-ins are named.
     float4 TerrainDebug;
 };
 
@@ -361,17 +362,46 @@ void readHexPlane(Plane plane, float slice, float normalScale, out float3 albedo
 // by distance.
 static float s_viewDepth = 0.0f;
 
+// **The lean ground** (ADR 0175), set once per pixel from `TerrainDebug.y`: the
+// level's -- Low, and a handheld's Medium -- or the project's own word
+// (`[graphics] terrain_surface`). A layer's maps are read once at a plane and
+// its colour once more at the far scale: no hexagonal cells, no normal or
+// surface at the far scale, one noise for the whole pixel where there were
+// eleven, a plane only where the ground faces it by a quarter, and none of the
+// procedural variation over it. The ground is the largest thing on a phone's
+// screen, and its fragment was the frame.
+static bool s_lean = false;
+// The lean ground's one noise, 37 m across: the colour's drift and how much of
+// the far scale shows, both. Set once per pixel.
+static float s_leanPatch = 0.5f;
+
 // The maps at one plane, with the repeat broken up: hex tiling where the
 // material asks for it, and the same maps again at `tiling.y` of the scale,
 // blended in with distance -- a quarter near, three quarters far.
 void readPlane(Plane plane, float slice, float normalScale, float4 tiling, out float3 albedo, out float2 bend,
                out float3 surface)
 {
-    [branch] if (tiling.z > 0.5f)
+    [branch] if (tiling.z > 0.5f && !s_lean)
         readHexPlane(plane, slice, normalScale, albedo, bend, surface);
     else
         readPlainPlane(plane, slice, normalScale, albedo, bend, surface);
-    [branch] if (tiling.y < 0.999f)
+    [branch] if (tiling.y < 0.999f && s_lean)
+    {
+        // **The colour alone at the far scale**: one read where the full
+        // ground takes three and bends them by two noises. It is the colour's
+        // repeat the eye finds across a field -- drawn without this, a grass
+        // texture is a grid of its own yellow patches -- and the normal's and
+        // the roughness's repeat it does not.
+        const float2x2 turn = float2x2(0.82533561f, -0.56464247f, 0.56464247f, 0.82533561f);
+        const float3 wide = float3(mul(turn, plane.Uv) * tiling.y + 0.37f, slice);
+        const float3 a = LayerColorTexture
+                             .SampleGrad(LayerColorSampler, wide, mul(turn, plane.Dx) * tiling.y,
+                                         mul(turn, plane.Dy) * tiling.y)
+                             .rgb;
+        const float far = smoothstep(2.0f, 24.0f, s_viewDepth * tiling.w);
+        albedo = lerp(albedo, a, saturate(lerp(0.25f, 0.75f, far) + (s_leanPatch - 0.5f) * 1.5f));
+    }
+    [branch] if (tiling.y < 0.999f && !s_lean)
     {
         // Turned by 0.6 radians as well as scaled, so the two lattices never
         // line up: scaled alone, a sixth of the scale repeats every six fine
@@ -412,8 +442,19 @@ void readPlane(Plane plane, float slice, float normalScale, float4 tiling, out f
 // Not on plain ground, which stays plain (TA12).
 float3 tilingVariation(float3 albedo, float3 ground, float strength)
 {
-    const float broad = terrainRuleNoise(ground.x * (4.3f / 37.0f), ground.z * (4.3f / 37.0f));
-    const float fine = terrainRuleNoise(ground.x * (4.3f / 13.0f) + 71.0f, ground.z * (4.3f / 13.0f) - 29.0f);
+    // A material that asks for none is not given two noises to multiply by
+    // one.
+    [branch] if (strength <= 0.0f)
+        return albedo;
+    // The lean ground has the broad octave already -- it is the pixel's one
+    // noise -- and takes it for both.
+    float broad = s_leanPatch;
+    float fine = s_leanPatch;
+    [branch] if (!s_lean)
+    {
+        broad = terrainRuleNoise(ground.x * (4.3f / 37.0f), ground.z * (4.3f / 37.0f));
+        fine = terrainRuleNoise(ground.x * (4.3f / 13.0f) + 71.0f, ground.z * (4.3f / 13.0f) - 29.0f);
+    }
     const float n = broad * 0.7f + fine * 0.3f - 0.5f;
     // Brighter and a little warmer one way, darker and cooler the other.
     const float3 shift = float3(1.0f + 0.55f * n, 1.0f + 0.45f * n, 1.0f + 0.3f * n);
@@ -528,12 +569,21 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     if (debugColor.a >= 0.0f)
         return debugColor;
     s_viewDepth = viewDepthOf(input.ShadingPosition, input.ViewDepth);
+    s_lean = TerrainDebug.y > 0.5f;
     const float3 dx = ddx(input.Ground);
     const float3 dy = ddy(input.Ground);
     float3 planes = abs(normal);
     planes *= planes;
     planes *= planes;
     planes /= max(planes.x + planes.y + planes.z, 1e-5f);
+    // Lean: a plane only where the ground faces it by a quarter. A slope of
+    // thirty degrees is then one plane's, where it was two at nine to one.
+    [branch] if (s_lean)
+    {
+        planes *= step(float3(0.25f, 0.25f, 0.25f), planes);
+        planes /= max(planes.x + planes.y + planes.z, 1e-5f);
+        s_leanPatch = terrainRuleNoise(input.Ground.x * (4.3f / 37.0f), input.Ground.z * (4.3f / 37.0f));
+    }
 
     // The triangle's layers, a repeat folded into the first corner that has it.
     uint3 ids = input.Materials;
@@ -658,10 +708,13 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     // it is inside the rule's slope and height bands, ragged by the rule's
     // noise, and by how much of the pixel's triangle is a layer the rule may
     // cover -- and paints its own layer over what came before by that much.
-    const TerrainVariation variation = terrainVariation(input.Ground, normal);
+    const TerrainVariation variation = terrainVariation(input.Ground, normal, s_lean);
     const uint ruleCount = min(uint(TerrainParams.y + 0.5f), 16u);
     const float worldY = input.Ground.y + TerrainParams.w;
-    const float ruleNoise = terrainRuleNoise(input.Ground.x, input.Ground.z);
+    // The rules' own noise, where there is a rule to be ragged by it.
+    float ruleNoise = 0.5f;
+    [branch] if (ruleCount > 0u)
+        ruleNoise = terrainRuleNoise(input.Ground.x, input.Ground.z);
     [loop] for (uint rule = 0u; rule < ruleCount; ++rule)
     {
         const float4 misc = RuleMisc[rule];
@@ -691,25 +744,36 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
         }
     }
 
-    // **The forward layout's four material slots are still read**, as the
-    // neutral stand-ins the renderer binds there -- white, flat, white, black --
-    // so the texture slots stay the contiguous run SDL_GPU binds from zero.
-    const float2 standIn = input.Ground.xz;
+    // **The forward layout's four material slots stay in the shader and are
+    // never read** (ADR 0175). The renderer binds its neutral stand-ins there
+    // -- white, flat, white, black -- so the texture slots stay the contiguous
+    // run SDL_GPU binds from zero, and a slot the shader does not name is a
+    // slot the compiler removes. They were read to keep them: four texture
+    // reads at every pixel of the ground, to multiply by one and add nothing.
+    // Named inside a branch no frame takes -- `TerrainDebug.z` is never set --
+    // they are kept and cost nothing.
+    float3 standInColor = float3(1.0f, 1.0f, 1.0f);
+    float standInRoughness = 1.0f;
+    float3 standInGlow = float3(0.0f, 0.0f, 0.0f);
+    [branch] if (TerrainDebug.z > 0.5f)
+    {
+        const float2 standIn = input.Ground.xz;
+        standInColor = BaseColorTexture.SampleLevel(BaseColorSampler, standIn, 0.0f).rgb;
+        standInRoughness = MetallicRoughnessTexture.SampleLevel(MetallicRoughnessSampler, standIn, 0.0f).g;
+        standInColor *= NormalTexture.SampleLevel(NormalSampler, standIn, 0.0f).z;
+        standInGlow = EmissiveTexture.SampleLevel(EmissiveSampler, standIn, 0.0f).rgb;
+    }
     const float3 shade = lerp(variation.Shade, float3(1.0f, 1.0f, 1.0f), saturate(plain));
-    const float3 albedo = mix.Albedo * shade * BaseColorTexture.Sample(BaseColorSampler, standIn).rgb;
-    const float roughness = mix.Roughness * MetallicRoughnessTexture.Sample(MetallicRoughnessSampler, standIn).g;
-    // The normal stand-in is flat, and read so its slot stays bound; laid on
-    // the ground plane, as a stand-in it bends nothing.
-    const float2 flat = NormalTexture.Sample(NormalSampler, standIn).xy * 2.0f - 1.0f;
-    const float3 bend = variation.Bend + float3(flat.x, 0.0f, -flat.y);
-    const float3 shadingNormal = terrainUnit(terrainUnit(mix.Normal, normal) + bend, normal);
+    const float3 albedo = mix.Albedo * shade * standInColor;
+    const float roughness = mix.Roughness * standInRoughness;
+    const float3 shadingNormal = terrainUnit(terrainUnit(mix.Normal, normal) + variation.Bend, normal);
 
     Surface surface = makeSurface(input.ShadingPosition, shadingNormal, albedo, mix.Metalness, roughness);
     // The shadow's lookup is offset along the MESH's normal (TA8): the map
     // holds the mesh, and a normal a layer bends points the offset off it.
     float3 color = lightSurface(surface, input.ShadingPosition, normal, input.ViewDepth, input.Position.xy,
                                 input.Sky * lerp(1.0f, mix.Occlusion, 0.6f));
-    color += EmissiveTexture.Sample(EmissiveSampler, standIn).rgb;
+    color += standInGlow;
     color = applyFog(color, FogColor.rgb, FogRange, length(input.ShadingPosition));
     // The bend view, drawn here rather than with the others: it is what all of
     // the above did to the mesh's normal, four times over so a crease shows.

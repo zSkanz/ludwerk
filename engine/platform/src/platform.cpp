@@ -16,6 +16,9 @@
 #include <SDL3/SDL_system.h>
 #include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_touch.h>
+#ifdef SDL_PLATFORM_ANDROID
+#include <jni.h>
+#endif
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -445,6 +448,35 @@ void* androidJavaEnv()
     return SDL_GetAndroidJNIEnv();
 #else
     return nullptr;
+#endif
+}
+
+void requestDisplayFrameRate(float hz) noexcept
+{
+#ifdef SDL_PLATFORM_ANDROID
+    auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    if (env == nullptr)
+        return;
+    // A local reference of the caller's, given back below.
+    auto* activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (activity == nullptr)
+        return;
+    if (jclass type = env->GetObjectClass(activity); type != nullptr) {
+        // Looked up each time: it is asked a few times a minute at most, and a
+        // method id kept across an activity's recreation is a way to crash.
+        if (jmethodID method = env->GetMethodID(type, "requestFrameRate", "(F)V"); method != nullptr)
+            // A float through the ellipsis travels as a double, and the
+            // virtual machine reads it back as the `F` the signature names.
+            env->CallVoidMethod(activity, method, static_cast<jdouble>(hz));
+        env->DeleteLocalRef(type);
+    }
+    // An activity without the method, or one that threw: no answer, and the
+    // exception must not be left pending for the next call into Java.
+    if (env->ExceptionCheck() == JNI_TRUE)
+        env->ExceptionClear();
+    env->DeleteLocalRef(activity);
+#else
+    (void)hz;
 #endif
 }
 

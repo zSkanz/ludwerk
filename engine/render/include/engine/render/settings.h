@@ -221,6 +221,29 @@ struct GraphicsSettings
     // not measuring. Carried across a player's settings changes, as the two
     // instruments above are.
     u32 measuredShadowTaps = 0;
+    // **A measuring instrument** (ADR 0171): `[debug] skip`, the terms of a
+    // lit surface that are left out, as `MeasureSkip` bits. Zero is none.
+    u32 measuredSkip = 0;
+
+    // **The lean ground** (ADR 0175): the terrain's material drawn from one
+    // read of each layer's maps at a plane -- no second sample at the far
+    // scale, no hexagonal cells, no procedural variation over it. The level's:
+    // Low, and a handheld's Medium.
+    bool terrainLean = false;
+    // What the project said of it (`[graphics] terrain_surface`, or
+    // `--terrain-surface=`), over the level: `Level` is nothing said. Carried
+    // across a player's settings changes, since no setting of theirs is it.
+    enum class TerrainSurface : core::u8
+    {
+        Level,
+        Full,
+        Lean,
+    };
+    TerrainSurface terrainSurface = TerrainSurface::Level;
+    [[nodiscard]] bool leanTerrain() const noexcept
+    {
+        return terrainSurface == TerrainSurface::Level ? terrainLean : terrainSurface == TerrainSurface::Lean;
+    }
 
     // **How many levels the bloom's chain has** (ADR 0172), 2 through 5: each
     // is a pass down and a pass up, and each reaches twice as far as the one
@@ -228,6 +251,23 @@ struct GraphicsSettings
     // bloom costs and the widest two are the least seen.
     u32 bloomLevels = 5;
 };
+
+// **The terms `[debug] skip` can leave out of a lit surface** (ADR 0171),
+// and the bits the forward shaders read them by (`engine_forward.hlsli` has
+// the same list).
+namespace MeasureSkip {
+inline constexpr u32 Sun = 1u;          // the sun's direct light, its shadow with it
+inline constexpr u32 Shadow = 2u;       // the sun's shadow map: every lit face is in the sun
+inline constexpr u32 Contact = 4u;      // the contact shadow mask
+inline constexpr u32 Lights = 8u;       // every light but the sun
+inline constexpr u32 Environment = 16u; // the sky's reflection and its irradiance
+inline constexpr u32 Ambient = 32u;
+inline constexpr u32 Occlusion = 64u; // the screen-space occlusion's picture
+inline constexpr u32 Fog = 128u;
+inline constexpr u32 NormalMap = 256u;
+inline constexpr u32 MaterialMaps = 512u; // metallic-roughness and emissive
+inline constexpr u32 Unlit = 1024u;       // base colour alone
+} // namespace MeasureSkip
 
 // The taps a shadow quality filters with: `shadowTaps` for the level's place
 // in Low, Medium, High, Ultra.

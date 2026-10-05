@@ -478,10 +478,12 @@ TEST_CASE("a project asks for the measuring keys, and has none unless it does (A
     CHECK_FALSE(none.logUiTouches);
 
     const ProjectDir measuring("[debug]\ngpu_pass_times = true\nhide = \"foliage, terrain\"\n"
-                               "shadow_taps = 4\nlog_ui_touches = true\n");
+                               "skip = \"shadow,fog\"\nshadow_taps = 4\nlog_ui_touches = true\n");
     const app::ProjectConfig asked = app::loadProjectConfig(measuring.path, app::GraphicsOverrides{});
     CHECK(asked.gpuPassTimes);
     CHECK(asked.debugHide == "foliage, terrain");
+    CHECK(asked.debugSkip == "shadow,fog");
+    CHECK(none.debugSkip.empty());
     CHECK(asked.shadowTaps == 4);
     CHECK(asked.logUiTouches);
 
@@ -550,6 +552,69 @@ TEST_CASE("a phone's launch arguments are read only by a game whose project allo
     CHECK(app::launchArgumentsAllowed(measured.path));
     // No packaged game at all is no permission.
     CHECK_FALSE(app::launchArgumentsAllowed(std::filesystem::path{}));
+}
+
+TEST_CASE("a handheld's frames are capped at sixty and paced at a rate they hold, unless the game says (ADR 0173)")
+{
+    const ProjectDir plain("[project]\nname = \"Plain\"\n");
+    const app::FramePacing desk = app::loadProjectConfig(plain.path, app::GraphicsOverrides{}, nullptr, false).pacing;
+    CHECK(desk.maxFrameRate == 0);
+    CHECK_FALSE(desk.adaptive);
+    const app::ProjectConfig hand = app::loadProjectConfig(plain.path, app::GraphicsOverrides{}, nullptr, true);
+    CHECK(hand.pacing.maxFrameRate == app::HandheldFrameRate);
+    CHECK(hand.pacing.adaptive);
+    // The settings a player changes keep both.
+    CHECK(app::pacingOf(hand.graphicsModel, true).maxFrameRate == app::HandheldFrameRate);
+    CHECK(app::pacingOf(hand.graphicsModel, true).adaptive);
+    CHECK(app::pacingOf(hand.graphicsModel, false).maxFrameRate == 0);
+
+    // A game that names a cap keeps it, and one that wants no pacing has none.
+    const ProjectDir fast("[display]\nmax_frame_rate = 120\nadaptive_frame_rate = false\n");
+    const app::FramePacing asked = app::loadProjectConfig(fast.path, app::GraphicsOverrides{}, nullptr, true).pacing;
+    CHECK(asked.maxFrameRate == 120);
+    CHECK_FALSE(asked.adaptive);
+    // And a desk's game cannot ask for a handheld's pacing.
+    const ProjectDir wishful("[display]\nadaptive_frame_rate = true\n");
+    CHECK_FALSE(app::loadProjectConfig(wishful.path, app::GraphicsOverrides{}, nullptr, false).pacing.adaptive);
+}
+
+TEST_CASE("the lean ground is Low's, and a handheld's Medium's, unless the project says (ADR 0175)")
+{
+    using engine::render::GraphicsSettings;
+    using engine::render::QualityLevel;
+    CHECK(engine::render::settingsFor(QualityLevel::Low).leanTerrain());
+    CHECK_FALSE(engine::render::settingsFor(QualityLevel::Medium).leanTerrain());
+    CHECK_FALSE(engine::render::settingsFor(QualityLevel::High).leanTerrain());
+    CHECK_FALSE(engine::render::settingsFor(QualityLevel::Ultra).leanTerrain());
+    const auto hand = [](QualityLevel level) {
+        return engine::render::handheldSettings(engine::render::settingsFor(level));
+    };
+    CHECK(hand(QualityLevel::Low).leanTerrain());
+    CHECK(hand(QualityLevel::Medium).leanTerrain());
+    CHECK_FALSE(hand(QualityLevel::High).leanTerrain());
+
+    // The project's word, over the level's.
+    const ProjectDir full("[graphics]\nquality = \"low\"\nterrain_surface = \"full\"\n");
+    const app::ProjectConfig saidFull = app::loadProjectConfig(full.path, app::GraphicsOverrides{});
+    CHECK(saidFull.graphics.terrainSurface == GraphicsSettings::TerrainSurface::Full);
+    CHECK_FALSE(saidFull.graphics.leanTerrain());
+    const ProjectDir lean("[graphics]\nquality = \"ultra\"\nterrain_surface = \"lean\"\n");
+    const app::ProjectConfig saidLean = app::loadProjectConfig(lean.path, app::GraphicsOverrides{});
+    CHECK(saidLean.graphics.leanTerrain());
+    // And the flag over the file.
+    app::GraphicsOverrides flag;
+    flag.terrainSurface = GraphicsSettings::TerrainSurface::Full;
+    CHECK_FALSE(app::loadProjectConfig(lean.path, flag).graphics.leanTerrain());
+
+    // No setting of a player's is it: what the project said outlives theirs.
+    CHECK(app::graphicsSettingsOf(saidLean.graphicsModel, false, &saidLean.graphics).leanTerrain());
+    CHECK_FALSE(app::graphicsSettingsOf(saidFull.graphicsModel, false, &saidFull.graphics).leanTerrain());
+    // With nothing said, a player who turns the level down gets the lean ground.
+    const ProjectDir plain("[project]\nname = \"Plain\"\n");
+    app::ProjectConfig config = app::loadProjectConfig(plain.path, app::GraphicsOverrides{}, nullptr, false);
+    CHECK_FALSE(app::graphicsSettingsOf(config.graphicsModel, false, &config.graphics).leanTerrain());
+    REQUIRE(config.graphicsModel.write(engine::scene::GraphicsSetting::QualityLevel, 0.0));
+    CHECK(app::graphicsSettingsOf(config.graphicsModel, false, &config.graphics).leanTerrain());
 }
 
 TEST_CASE("--render-cap is the project's render_cap, said over it")
@@ -673,7 +738,11 @@ TEST_CASE("the model's layers resolve to exactly what the loader resolved")
                 const app::FramePacing pacing = app::pacingOf(config.graphicsModel, false);
                 const app::FramePacing expected = app::pacingWith(config.pacing, flags);
                 CHECK(pacing.vsync == expected.vsync);
-                CHECK(pacing.maxFrameRate == expected.maxFrameRate);
+                // The model holds what the game said; a handheld's cap of
+                // sixty where it said none (ADR 0173) is the loader's and
+                // `pacingOf`'s to add.
+                CHECK(app::handheldPacing(pacing, handheld).maxFrameRate == expected.maxFrameRate);
+                CHECK(app::pacingOf(config.graphicsModel, handheld).maxFrameRate == expected.maxFrameRate);
                 CHECK(pacing.backgroundFrameRate == expected.backgroundFrameRate);
                 // In the hand the display's sync is on whatever anybody says.
                 CHECK(app::pacingOf(config.graphicsModel, true).vsync);

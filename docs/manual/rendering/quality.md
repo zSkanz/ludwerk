@@ -64,6 +64,22 @@ resolution, so text stays sharp. `render_cap` in the project's file, or in
 detail is chosen in the pixels the world is rendered at, so a capped picture
 also builds and draws less ground.
 
+**And its frames are paced** (ADR 0173). A phone's display refreshes up to a
+hundred and twenty times a second; a frame that takes 18 ms is shown for
+three of those refreshes and the next, at 16, for two, and that unevenness is
+felt long before the number is. So on a handheld:
+
+- a game that names no `max_frame_rate` is capped at sixty frames a second;
+- the frames are held to a rate the display shows evenly -- its refresh over
+  one, two, three or four: 60, 40 or 30 on a display at 120 -- the highest
+  one they fit, stepped down within a second or two when they stop fitting
+  and back up after a few seconds of room;
+- the display is told that rate, so the system can run it to match.
+
+The log says the rate each time it changes. `[display] max_frame_rate = 120`
+lifts the cap; `[display] adaptive_frame_rate = false` leaves the cap and
+turns the stepping off.
+
 ## The presets
 
 `high` is exactly what the engine ships with, to the value — a project that says
@@ -80,6 +96,7 @@ nothing gets it.
 | `ambient_occlusion` | false | false | **true** | true |
 | `contact_shadows` | false | true | **true** | true |
 | shadow filter taps | 4 | 8 | **16** | 16 |
+| `terrain_surface` | lean | full | **full** | full |
 | `anti_aliasing` | fxaa | smaa | **smaa** | taa |
 | `upscaling` | fsr1 | none | **none** | none |
 | `auto_exposure` | true | true | **true** | true |
@@ -100,12 +117,22 @@ times the sun's shadow map is read at a pixel to soften its edge. They have no
 key of their own -- `shadow_quality = "low"` is the small map, two cascades
 and four taps together.
 
+**`terrain_surface`** is how much of a terrain layer's material is drawn
+(ADR 0175). `"full"` reads each layer's maps at its repeat and again at its
+far scale, on hexagonal cells where the material asks, with the procedural
+variation over it. `"lean"` reads them once, and the colour once more at the
+far scale, with none of the rest: the same field at a fraction of the cost,
+its repeat a little easier to find in the middle distance. A project says
+which in `[graphics]`, or under a platform's own table; a player has no
+setting for it.
+
 **On a phone every level upscales with FSR 1**, since each but Ultra caps the
 resolution the world is drawn at, and uses FXAA below High and never TAA.
 Bloom reaches less far there -- three levels of it where a desktop has five,
 five passes where there were nine -- and contact shadows start at High
 (ADR 0172); `contact_shadows = true` under `[graphics.android]` says
-otherwise.
+otherwise. The ground is lean at Medium as well as at Low (ADR 0175);
+`terrain_surface = "full"` under `[graphics.android]` says otherwise.
 
 ## Anti-aliasing and upscaling
 
@@ -303,8 +330,10 @@ apply, because they were typed by the same person as the preset.
 --light-budget=N
 --frame-report=SECONDS
 --render-cap=N
+--terrain-surface=full|lean
 --gpu-pass-times
 --hide=LIST
+--skip=LIST
 --shadow-taps=N
 --log-ui-touches
 --bloom            / --no-bloom
@@ -378,6 +407,15 @@ difference in the frame's time is what drawing the thing cost.
 **`shadow_taps`** (`--shadow-taps=N`) is how many taps the sun's shadow filter
 takes at a pixel, 1 to 16, said over the level's own count (4 at low, 8 at
 medium, 16 above).
+
+**`skip`** (`--skip=LIST`) is a list of the terms of a lit surface that are
+left out: `sun` (its direct light, shadow and all), `shadow` (the shadow map:
+every lit face is in the sun), `contact`, `lights` (every light but the sun),
+`environment` (the sky's reflection and its irradiance), `ambient`,
+`occlusion`, `fog`, `normal_map`, `material_maps` (metallic-roughness and
+emissive), and `unlit` -- the base colour alone, which is what drawing the
+triangles and reading one texture costs. Where `hide` says which objects cost
+a frame its time, `skip` says which part of lighting them.
 
 **`log_ui_touches`** (`--log-ui-touches`) writes a line for each finger that
 comes down: the whole name and rectangle of the element of the interface that

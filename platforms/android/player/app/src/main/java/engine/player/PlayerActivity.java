@@ -2,6 +2,8 @@ package engine.player;
 
 import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
+import android.view.Surface;
 
 import org.libsdl.app.SDLActivity;
 import org.libsdl.app.SDLSurface;
@@ -30,6 +32,37 @@ public class PlayerActivity extends SDLActivity {
     @Override
     protected SDLSurface createSDLSurface(Context context) {
         return new PlayerSurface(context);
+    }
+
+    /**
+     * How often the game will show a frame (ADR 0173), asked by the host --
+     * {@code platform::requestDisplayFrameRate} -- when the rate it paces at
+     * changes. The system then runs the display at that rate or a multiple of
+     * it; zero withdraws the request. Android 11 and later; before it there is
+     * nothing to ask.
+     */
+    public void requestFrameRate(final float hz) {
+        if (Build.VERSION.SDK_INT < 30 /* Android 11 (R) */) {
+            return;
+        }
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final SDLSurface view = mSurface;
+                    if (view == null || view.getHolder() == null) {
+                        return;
+                    }
+                    final Surface surface = view.getHolder().getSurface();
+                    if (surface != null && surface.isValid()) {
+                        surface.setFrameRate(hz, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
+                    }
+                } catch (RuntimeException ignored) {
+                    // A surface going away under the call: the next change of
+                    // rate asks again.
+                }
+            }
+        });
     }
 
     /**

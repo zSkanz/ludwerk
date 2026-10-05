@@ -128,7 +128,8 @@ struct GpuFrameUniforms
     f32 environmentParams[4]{6.0f, 1.0f, 1.0f, 0.0f};
     // x and y are the exponential depth slicing's scale and bias, so a fragment
     // turns its own view depth into a cluster slice with one multiply-add and a
-    // logarithm (clusters.h). z and w unused.
+    // logarithm (clusters.h). z unused; w is `GraphicsSettings::measuredSkip`,
+    // the lighting terms a measurement leaves out, and zero otherwise.
     f32 clusterParams[4]{};
     // x width in pixels, y height, z 1/width, w 1/height. The fragment stage
     // needs it to turn `SV_Position` into a cluster tile, and it is the first
@@ -695,7 +696,8 @@ struct GpuTerrainSurfaceUniforms
     // terrain's height in the world.
     f32 params[4]{};
     // x: the debug view drawn instead of the ground (`DebugView`, terrain
-    // audit T0), zero for none.
+    // audit T0), zero for none. y: 1 for the lean ground (ADR 0175). z: never
+    // set; the shader names its unread slots behind it.
     f32 debug[4]{};
 };
 

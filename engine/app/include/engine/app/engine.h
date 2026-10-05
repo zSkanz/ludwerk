@@ -284,6 +284,9 @@ struct EngineOptions
     // is what the flag said, which beats the file.
     bool gpuPassTimes = false;
     std::string debugHide;
+    // `--skip=LIST` and `[debug] skip`, joined; its bits travel in
+    // `graphics.measuredSkip`.
+    std::string debugSkip;
     core::u32 debugShadowTaps = 0;
     bool logUiTouches = false;
     // `[debug] overlay_key`, as a key: what opens the overlay, and what the

@@ -26,6 +26,11 @@ constexpr u32 AssumedRefresh = 60;
 // networked session: the simulation's own sixty a second.
 constexpr u32 NetworkedBackgroundRate = 60;
 
+u32 lowerRate(u32 a, u32 b) noexcept
+{
+    return lowerCap(a, b);
+}
+
 u32 frameCapFor(const FramePacing& pacing, const FrameWindowState& window) noexcept
 {
     if ((!window.focused || window.minimized) && pacing.backgroundFrameRate != 0) {
@@ -83,6 +88,111 @@ u64 FrameLimiter::waitNs(u64 nowNs, u32 capHz) noexcept
     const u64 wait = m_deadline - nowNs;
     m_deadline += period;
     return wait;
+}
+
+EvenRates evenRatesFor(f32 refreshRate, u32 ceilingHz) noexcept
+{
+    const u32 refresh = refreshRate >= 1.0f ? static_cast<u32>(std::lround(refreshRate)) : AssumedRefresh;
+    EvenRates rates;
+    for (u32 divisor = 1; divisor <= 4; ++divisor) {
+        const u32 rate = static_cast<u32>(std::lround(static_cast<f64>(refresh) / static_cast<f64>(divisor)));
+        if (rate < 24 || (ceilingHz != 0 && rate > ceilingHz))
+            continue;
+        rates.hz[rates.count++] = rate;
+    }
+    if (rates.count == 0)
+        rates.hz[rates.count++] = ceilingHz != 0 ? std::min(ceilingHz, refresh) : refresh;
+    return rates;
+}
+
+void RateGovernor::reset() noexcept
+{
+    *this = RateGovernor{};
+}
+
+void RateGovernor::restartWindow(u64 nowNs) noexcept
+{
+    m_windowStartNs = nowNs;
+    m_frames = 0;
+    m_late = 0;
+    m_fits = {};
+}
+
+u32 RateGovernor::sample(u64 nowNs, u64 workNs, f32 refreshRate, u32 ceilingHz) noexcept
+{
+    // A second of frames is a judgement; fewer than these is not one.
+    constexpr u64 WindowNs = NanosPerSecond;
+    constexpr u32 FewestFrames = 8;
+    // A step up taken back sooner than this was a step too far.
+    constexpr u64 TakenBackNs = 10 * NanosPerSecond;
+    // And one that has stood this long has earned the first wait back.
+    constexpr u64 SettledNs = 60 * NanosPerSecond;
+
+    const EvenRates ladder = evenRatesFor(refreshRate, ceilingHz);
+    if (ladder != m_ladder) {
+        // Another display mode, or another cap: every judgement so far was of
+        // rates that are no longer the choices.
+        reset();
+        m_ladder = ladder;
+        restartWindow(nowNs);
+    }
+    if (m_windowStartNs == 0)
+        restartWindow(nowNs);
+
+    const auto periodOf = [this](u32 rung) { return NanosPerSecond / m_ladder.hz[rung]; };
+    ++m_frames;
+    // Late by more than a twentieth of the period: a frame that took 16.9 ms
+    // of 16.7 was shown on time by any display.
+    const u64 period = periodOf(m_rung);
+    if (workNs > period + period / 20)
+        ++m_late;
+    // With a fifth to spare: a rate held with nothing over is a rate lost at
+    // the first explosion.
+    for (u32 rung = 0; rung < m_rung; ++rung) {
+        if (workNs * 5 <= periodOf(rung) * 4)
+            ++m_fits[rung];
+    }
+
+    if (nowNs - m_windowStartNs < WindowNs || m_frames < FewestFrames)
+        return rate();
+
+    const bool late = m_late * 5 > m_frames;
+    if (late) {
+        m_quiet = 0;
+        if (m_rung + 1 < m_ladder.count) {
+            ++m_rung;
+            if (m_lastUpNs != 0 && nowNs - m_lastUpNs < TakenBackNs)
+                m_upDelay = std::min(m_upDelay * 2, MostUpDelay);
+            m_lastUpNs = 0;
+        }
+    }
+    else {
+        // The highest rate nineteen frames in twenty of this window fitted.
+        u32 candidate = m_rung;
+        for (u32 rung = 0; rung < m_rung; ++rung) {
+            if (m_fits[rung] * 20 >= m_frames * 19) {
+                candidate = rung;
+                break;
+            }
+        }
+        if (candidate < m_rung) {
+            m_quietRung = m_quiet == 0 ? candidate : std::max(m_quietRung, candidate);
+            if (++m_quiet >= m_upDelay) {
+                m_rung = m_quietRung;
+                m_lastUpNs = nowNs;
+                m_quiet = 0;
+            }
+        }
+        else {
+            m_quiet = 0;
+        }
+        if (m_lastUpNs != 0 && nowNs - m_lastUpNs > SettledNs) {
+            m_upDelay = FirstUpDelay;
+            m_lastUpNs = 0;
+        }
+    }
+    restartWindow(nowNs);
+    return rate();
 }
 
 void SyncWatch::sample(u64 frameNs, f32 refreshRate) noexcept

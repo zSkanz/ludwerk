@@ -12,6 +12,8 @@
 // same ticks it would have owed.
 #pragma once
 
+#include <array>
+
 #include "engine/core/types.h"
 
 namespace engine::app {
@@ -32,7 +34,17 @@ struct FramePacing
     u32 maxFrameRate = 0;
     // The cap while the window is unfocused or minimised; 0 is no throttle.
     u32 backgroundFrameRate = 10;
+    // **Paced at a rate the frames can hold** (ADR 0173, `RateGovernor`): a
+    // display's refresh over one, two, three or four, stepped down while the
+    // frames do not fit and up again when they do with room. A handheld's,
+    // unless `[display] adaptive_frame_rate = false`; never a desk's.
+    bool adaptive = false;
 };
+
+// What a handheld is capped at when its game names no cap (ADR 0173): a
+// phone's display refreshes a hundred and twenty times a second, and a game
+// drawn that often is a phone too hot to hold in ten minutes.
+inline constexpr u32 HandheldFrameRate = 60;
 
 // What the loop knows about its window this frame.
 struct FrameWindowState
@@ -62,6 +74,9 @@ struct FrameWindowState
 // the driver does.
 [[nodiscard]] u32 frameCapFor(const FramePacing& pacing, const FrameWindowState& window) noexcept;
 
+// The lower of two caps, where zero is no cap.
+[[nodiscard]] u32 lowerRate(u32 a, u32 b) noexcept;
+
 // **How many ticks a capped frame may run to catch up**: `base`, or as many
 // as one frame at `capHz` owes and one more. A window throttled to ten frames
 // a second owes six ticks a frame at sixty hertz; clamped at the usual four,
@@ -86,6 +101,67 @@ public:
 private:
     u64 m_deadline = 0;
     u32 m_hz = 0;
+};
+
+// **The rates a display shows evenly**: its refresh over one, two, three and
+// four, so every frame is on the screen for the same number of refreshes --
+// none above `ceilingHz` (0: none above the refresh), none under 24, the
+// highest first. A display that will not say its refresh is taken for sixty.
+// Where the ceiling is under every one of them, the ceiling alone.
+struct EvenRates
+{
+    std::array<u32, 4> hz{};
+    u32 count = 0;
+
+    [[nodiscard]] bool operator==(const EvenRates&) const noexcept = default;
+};
+[[nodiscard]] EvenRates evenRatesFor(f32 refreshRate, u32 ceilingHz) noexcept;
+
+// **The rate a handheld holds** (ADR 0173).
+//
+// A frame that takes 18 ms on a display that refreshes every 8.3 is shown for
+// three refreshes, the next -- 16 ms -- for two, and a game at "forty-five
+// frames a second" is one that stutters. What every engine's frame pacer does
+// about it is choose a rate the frames fit and hold every frame to it: fewer
+// frames, each on the screen as long as the last.
+//
+// Told every frame how long its work took -- the frame less what pacing made
+// it wait -- it answers the rate to pace at: one of `evenRatesFor`. It steps
+// DOWN a rate when more than a fifth of a second's frames did not fit the one
+// it holds, and UP to the highest rate that nineteen frames in twenty would
+// have fitted with a fifth to spare, once that has been so for three seconds
+// running. A step up that is taken back within ten seconds doubles the wait
+// before the next, so a scene at the edge of a rate does not flap between two.
+class RateGovernor
+{
+public:
+    [[nodiscard]] u32 sample(u64 nowNs, u64 workNs, f32 refreshRate, u32 ceilingHz) noexcept;
+    // The rate held now; 0 before the first sample.
+    [[nodiscard]] u32 rate() const noexcept { return m_rung < m_ladder.count ? m_ladder.hz[m_rung] : 0; }
+    // Forgets what it has seen and starts from the highest rate again: after a
+    // loading curtain, whose frames say nothing about the game's.
+    void reset() noexcept;
+
+private:
+    void restartWindow(u64 nowNs) noexcept;
+
+    static constexpr u32 FirstUpDelay = 3;
+    static constexpr u32 MostUpDelay = 48;
+
+    EvenRates m_ladder{};
+    u32 m_rung = 0;
+    u64 m_windowStartNs = 0;
+    u32 m_frames = 0;
+    // Frames of the window that did not fit the rate held.
+    u32 m_late = 0;
+    // Frames that would have fitted each higher rate with room, by rung.
+    std::array<u32, 4> m_fits{};
+    // Windows in a row that could have run higher, and the lowest of the rates
+    // they could have.
+    u32 m_quiet = 0;
+    u32 m_quietRung = 0;
+    u32 m_upDelay = FirstUpDelay;
+    u64 m_lastUpNs = 0;
 };
 
 // **Whether vertical sync is holding** -- told the length of every presented

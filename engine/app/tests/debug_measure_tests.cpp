@@ -97,6 +97,32 @@ TEST_CASE("what is hidden is taken out of the frame, and nothing else")
     CHECK(many.worldUiRuns.empty());
 }
 
+TEST_CASE("skip reads a list of lighting terms as the bits the shaders read")
+{
+    namespace Skip = render::MeasureSkip;
+    std::vector<std::string> unknown;
+    const engine::core::u32 skip = app::parseDebugSkip("shadow, environment ,gloss,unlit", &unknown);
+    CHECK(skip == (Skip::Shadow | Skip::Environment | Skip::Unlit));
+    CHECK(unknown == std::vector<std::string>{"gloss"});
+    CHECK(app::debugSkipText(skip) == "shadow,environment,unlit");
+    CHECK(app::parseDebugSkip("") == 0);
+    CHECK(app::debugSkipText(0).empty());
+
+    // Every name is one bit, and no two names share one.
+    engine::core::u32 all = 0;
+    for (const std::string_view name : app::debugSkipNames()) {
+        const engine::core::u32 bit = app::parseDebugSkip(name);
+        CHECK(bit != 0);
+        CHECK((bit & (bit - 1)) == 0);
+        CHECK((all & bit) == 0);
+        all |= bit;
+    }
+    // What the shader is given is a float: every bit together is still exact.
+    CHECK(static_cast<engine::core::u32>(static_cast<float>(all)) == all);
+
+    CHECK(app::debugKeysInForce(false, app::DebugHide{}, 0, false, Skip::Sun | Skip::Fog) == "skip=sun,fog");
+}
+
 TEST_CASE("the report names every measuring key in force, and nothing when none is")
 {
     CHECK(app::debugKeysInForce(false, app::DebugHide{}, 0, false).empty());

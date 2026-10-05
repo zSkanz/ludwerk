@@ -205,6 +205,36 @@ TEST_CASE("the nearest chunk is asked for first")
     }
 }
 
+TEST_CASE("D556: a budget already spent still lands one chunk a frame")
+{
+    // The budget was asked before the first chunk as well as between them, so
+    // a frame whose own bookkeeping had used it up landed nothing -- and a
+    // budget of nothing landed nothing, ever: a world that never arrives. On a
+    // loaded machine the gate's own test of the budget met it, half a
+    // millisecond gone before the loop began. The first chunk of a frame is
+    // owed; the budget is what stops the second.
+    seedRealCatalog();
+    Harness harness(gridIndex(4));
+
+    const StreamingFocus foci[] = {focusAt(CellCentre, 256.0, 1200.0)};
+    harness.manager.setFoci(foci);
+
+    StreamingBudget generous;
+    generous.milliseconds = 1000.0;
+    generous.maxInFlight = 256;
+    harness.manager.tick(generous);
+    harness.deliverAllRequested();
+    REQUIRE(harness.materialized.empty());
+
+    // No time at all: one chunk a frame, every frame, until all have landed.
+    StreamingBudget none;
+    none.milliseconds = 0.0;
+    for (usize frame = 1; frame <= 4; ++frame) {
+        harness.manager.tick(none);
+        CHECK(harness.materialized.size() == frame);
+    }
+}
+
 TEST_CASE("the time budget stops the work and the next frame resumes it")
 {
     seedRealCatalog();

@@ -1,7 +1,9 @@
 // How fast frames are made (ADR 0147, G0): the cap a frame gets, the wait
 // that enforces it, and the watch that says whether the display's sync holds.
+#include <algorithm>
 #include <array>
 #include <doctest/doctest.h>
+#include <vector>
 
 #include "engine/app/frame_pacing.h"
 
@@ -176,6 +178,131 @@ TEST_CASE("NA4: a window in the background in a networked session runs at the si
     CHECK(app::frameCapFor(capped, window) == 30u);
     const app::FramePacing generous{.vsync = true, .maxFrameRate = 0, .backgroundFrameRate = 120};
     CHECK(app::frameCapFor(generous, window) == 120u);
+}
+
+TEST_CASE("the rates a display shows evenly are its refresh over one to four, under the game's cap")
+{
+    using engine::app::evenRatesFor;
+    const auto rates = [](float refresh, core::u32 ceiling) {
+        const engine::app::EvenRates even = evenRatesFor(refresh, ceiling);
+        return std::vector<core::u32>(even.hz.begin(), even.hz.begin() + even.count);
+    };
+    CHECK(rates(120.0f, 0) == std::vector<core::u32>{120, 60, 40, 30});
+    CHECK(rates(120.0f, 60) == std::vector<core::u32>{60, 40, 30});
+    // Nothing under twenty-four: sixty over three is a slide show.
+    CHECK(rates(60.0f, 0) == std::vector<core::u32>{60, 30});
+    CHECK(rates(59.94f, 60) == std::vector<core::u32>{60, 30});
+    CHECK(rates(90.0f, 60) == std::vector<core::u32>{45, 30});
+    CHECK(rates(144.0f, 0) == std::vector<core::u32>{144, 72, 48, 36});
+    // A display that will not say is taken for sixty.
+    CHECK(rates(0.0f, 0) == std::vector<core::u32>{60, 30});
+    // A cap under every even rate is held as it is.
+    CHECK(rates(60.0f, 20) == std::vector<core::u32>{20});
+}
+
+namespace {
+
+// A second of frames, each of `workMs`, told to the governor at `fps`: what it
+// holds after.
+core::u32 runFor(engine::app::RateGovernor& governor, core::u64& now, double seconds, double workMs,
+                 float refresh = 120.0f, core::u32 ceiling = 60)
+{
+    core::u32 rate = governor.rate();
+    const core::u64 end = now + static_cast<core::u64>(seconds * 1.0e9);
+    while (now < end) {
+        // A frame is shown no sooner than its rate allows and no sooner than
+        // its work is done.
+        const double period = rate != 0 ? 1000.0 / rate : workMs;
+        now += static_cast<core::u64>(std::max(period, workMs) * 1.0e6);
+        rate = governor.sample(now, static_cast<core::u64>(workMs * 1.0e6), refresh, ceiling);
+    }
+    return rate;
+}
+
+} // namespace
+
+TEST_CASE("the governor holds the highest rate the frames fit, and steps down within seconds when they do not")
+{
+    engine::app::RateGovernor governor;
+    core::u64 now = 1'000'000'000ull;
+    // Twelve milliseconds of work fits sixty.
+    CHECK(runFor(governor, now, 5.0, 12.0) == 60);
+    // Eighteen does not: forty, within two seconds.
+    CHECK(runFor(governor, now, 2.5, 18.0) == 40);
+    // And stays there: eighteen is not sixty's with room to spare.
+    CHECK(runFor(governor, now, 20.0, 18.0) == 40);
+    // Twenty-eight does not fit forty either: thirty.
+    CHECK(runFor(governor, now, 2.5, 28.0) == 30);
+    // The lowest rate is held however slow the frames are.
+    CHECK(runFor(governor, now, 5.0, 60.0) == 30);
+}
+
+TEST_CASE("the governor steps back up only once the frames have had room for three seconds, and to the rate they fit")
+{
+    engine::app::RateGovernor governor;
+    core::u64 now = 1'000'000'000ull;
+    CHECK(runFor(governor, now, 3.0, 12.0) == 60);
+    CHECK(runFor(governor, now, 5.0, 28.0) == 30);
+    // Twelve milliseconds again: not at once...
+    CHECK(runFor(governor, now, 1.5, 12.0) == 30);
+    // ...and then straight to sixty, not by way of forty.
+    CHECK(runFor(governor, now, 3.0, 12.0) == 60);
+
+    // Fifteen milliseconds fits sixty and has no fifth to spare: from forty it
+    // stays at forty rather than try a rate one explosion would lose.
+    CHECK(runFor(governor, now, 3.0, 18.0) == 40);
+    CHECK(runFor(governor, now, 20.0, 15.0) == 40);
+    // Thirteen has the room -- after six seconds this time, not three: the
+    // last step up was taken back within ten.
+    CHECK(runFor(governor, now, 5.0, 13.0) == 40);
+    CHECK(runFor(governor, now, 2.5, 13.0) == 60);
+}
+
+TEST_CASE("one slow frame is not a rate lost, and a rate that was a step too far is tried less often")
+{
+    engine::app::RateGovernor governor;
+    core::u64 now = 1'000'000'000ull;
+    CHECK(runFor(governor, now, 3.0, 12.0) == 60);
+    // A hitch: one frame of eighty milliseconds among sixty.
+    now += 80'000'000ull;
+    (void)governor.sample(now, 80'000'000ull, 120.0f, 60);
+    CHECK(runFor(governor, now, 3.0, 12.0) == 60);
+
+    // At the edge: light enough at forty to be let up, too heavy at sixty to
+    // stay. Each time it is taken back, the next try waits twice as long.
+    const auto triesIn = [&](double seconds) {
+        int ups = 0;
+        core::u32 before = governor.rate();
+        const core::u64 end = now + static_cast<core::u64>(seconds * 1.0e9);
+        while (now < end) {
+            // Work that depends on the rate held: thirteen at forty, eighteen
+            // at sixty -- a scene whose cost follows how often it is drawn.
+            const double work = governor.rate() >= 60 ? 18.0 : 13.0;
+            const double period = 1000.0 / governor.rate();
+            now += static_cast<core::u64>(std::max(period, work) * 1.0e6);
+            const core::u32 rate = governor.sample(now, static_cast<core::u64>(work * 1.0e6), 120.0f, 60);
+            if (rate > before)
+                ++ups;
+            before = rate;
+        }
+        return ups;
+    };
+    CHECK(runFor(governor, now, 3.0, 18.0) == 40);
+    const int first = triesIn(30.0);
+    const int later = triesIn(30.0);
+    CHECK(first >= 2);
+    CHECK(later < first);
+}
+
+TEST_CASE("another display mode starts the governor over, from the highest rate")
+{
+    engine::app::RateGovernor governor;
+    core::u64 now = 1'000'000'000ull;
+    CHECK(runFor(governor, now, 4.0, 28.0) == 30);
+    // The display went to sixty: the choices are sixty and thirty now.
+    CHECK(runFor(governor, now, 0.5, 12.0, 60.0f) == 60);
+    governor.reset();
+    CHECK(governor.rate() == 0);
 }
 
 TEST_CASE("the loading curtain lifts once the loaders are idle, the ground is meshed and no script holds it")

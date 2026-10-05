@@ -220,6 +220,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   `transparent`, `particles`, `ribbons`, `decals`, `sprites`, `world_ui`,
   `ui`, `lights`, `highlights`), `[debug] shadow_taps = 4`, and their flags
   `--hide=` and `--shadow-taps=`. Every frame report says which are in force.
+- **`[debug] skip = "shadow,environment"`** and `--skip=` (ADR 0171): the
+  terms of a lit surface left out of every frame -- `sun`, `shadow`,
+  `contact`, `lights`, `environment`, `ambient`, `occlusion`, `fog`,
+  `normal_map`, `material_maps`, or `unlit` -- to see what each costs.
 - **An Android build can be handed the host's flags at launch** (ADR 0171):
   with `[debug] launch_arguments = true` in `project.toml`,
   `adb shell am start -n <id>/engine.player.PlayerActivity --es args "--gpu-pass-times --hide=ui"`
@@ -1054,6 +1058,24 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **The lean ground** (ADR 0175). At `Low`, and at `Medium` on a phone, a
+  terrain's material is drawn from one read of each layer's maps and one more
+  of its colour at the far scale, with one noise a pixel where there were
+  eleven: on the owner's phone the terrain's fragment was two thirds of the
+  frame. `High` and `Ultra` draw the ground as they did.
+  `[graphics] terrain_surface = "full"` (or `"lean"`) says otherwise for a
+  project, and `--terrain-surface=` for a run.
+- **The forward pass no longer shades what is hidden, on a phone** (ADR
+  0174). What the depth prepass drew is now drawn without writing depth
+  again, which lets a tile-based GPU test depth before it runs the fragment;
+  it could not, and shaded every hidden fragment in full. The picture is
+  unchanged.
+- **A phone's frames are paced** (ADR 0173). A game that names no
+  `max_frame_rate` is capped at sixty on a handheld, and its frames are held
+  to the highest rate they fit that the display shows evenly -- 60, 40 or 30
+  on a display at 120 -- each frame shown for as long as the last. The
+  display is told the rate. `[display] adaptive_frame_rate = false` turns the
+  stepping off; `max_frame_rate = 120` lifts the cap.
 - **`Low` and `Medium` filter the sun's shadow with fewer taps** (ADR 0172):
   four and eight, where every level took sixteen. `High` and `Ultra` are the
   picture they were. The filter follows `ShadowQuality`.
@@ -1261,6 +1283,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   as infinite or NaN** (D551). Under a `ScreenGui` with a `ReferenceHeight`,
   on a window of another height, the rectangle of anything not `Visible`
   grew at every layout. What is hidden keeps the rectangle it last had.
+- **A streamed world arrives however small its time budget** (D556). A frame
+  whose budget was already spent landed no chunk at all; on a slow machine
+  that could be every frame, and with a budget of zero it was. One chunk a
+  frame is now always landed, and the budget limits the rest.
+- **A panel no longer opens as a white slab** (D555). An image whose picture
+  had not arrived yet drew a flat rectangle in its `ImageColor3`; it draws
+  nothing of itself now, and the element's own background shows meanwhile.
 - **A model the project's cache had lost is compiled again** (D554). A
   project opened by two processes at once could be left with a model that
   "has no compiled form" at every open after, until its cache was deleted.

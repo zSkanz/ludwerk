@@ -206,7 +206,7 @@ struct AppearanceStamp
 
 // Set by the app, which is the only thing that can see both a content mount and
 // a GPU. Null is the ordinary state of a test and of a headless run with no
-// content: every image then draws as its flat tint.
+// content: no image then has a picture, and none draws one (D555).
 ImageProvider g_imageProvider = nullptr;
 void* g_imageProviderUser = nullptr;
 
@@ -325,19 +325,13 @@ void appendImageQuads(core::Rect box, const ResolvedImage& image, bool ready, i3
                       core::Color3 tint, u32 scissor, f32 cornerRadius, std::vector<DrawQuad>& out,
                       core::Vec2 rectOffset = {}, core::Vec2 rectSize = {})
 {
-    if (!ready) {
-        // The flat tint, which is what M6 drew for every image and is now what a
-        // picture looks like while it is still arriving.
-        DrawQuad quad;
-        quad.min = box.min;
-        quad.max = box.max;
-        quad.color = tint;
-        quad.alpha = 1.0f;
-        quad.scissor = scissor;
-        quad.cornerRadius = cornerRadius;
-        out.push_back(quad);
+    // **A picture that has not arrived draws nothing** (D555). It drew a flat
+    // quad in its tint, "better than a hole" -- and a panel's tint is near
+    // white, so an interface whose pictures were a frame behind it opened as
+    // white slabs and then drew itself. What an element is without its picture
+    // is its own background, which is drawn before this like any element's.
+    if (!ready)
         return;
-    }
 
     switch (scaleType) {
     case 1:
@@ -736,9 +730,9 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out, const Re
 
     if (const scene::ImageLabelComponent* image = world.imageLabels().find(entry.id); image != nullptr) {
         if (!image->image.empty()) {
-            // A picture the provider cannot resolve -- not loaded, or a URI that
-            // names nothing -- draws as the flat tint. That is what an image
-            // still arriving looks like, and it is better than a hole.
+            // A picture the provider cannot resolve -- not loaded yet, or a
+            // URI that names nothing -- draws nothing of itself (D555): the
+            // element's own background is what shows meanwhile.
             ResolvedImage resolved;
             const bool ready = resolveImage(image->image, resolved);
             // **The picture's own see-through** (`ImageTransparency`, D453):

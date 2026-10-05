@@ -565,28 +565,43 @@ TEST_CASE("a stretched image is one quad covering the whole source")
     CHECK(list.quads[0].max.x == doctest::Approx(200.0));
 }
 
-TEST_CASE("an image nothing can resolve draws as its tint rather than as a hole")
+TEST_CASE("D555: a picture that has not arrived draws nothing of itself -- no slab in its tint")
 {
-    // No provider installed, so nothing resolves. This is also what a picture
-    // still being loaded looks like -- the app records the request on the first
-    // frame and the texture exists on the next.
+    // An image the provider cannot resolve yet drew a flat quad in its
+    // `ImageColor3`, "rather than a hole". A panel is a nine-sliced picture
+    // tinted near white, and a picture is asked for on the frame it is first
+    // shown and arrives a frame or more later: every panel of an interface
+    // opened white and then drew itself, on a desk and on a phone. What an
+    // element is without its picture is its own background.
+    //
+    // No provider installed, so nothing resolves: what a picture still being
+    // loaded looks like to this code.
     Fixture fixture;
     const InstanceId screen = fixture.child("ScreenGui", fixture.service);
     const InstanceId label = fixture.child("ImageLabel", screen);
     fixture.object(label).size = core::UDim2{core::UDim{0.0f, 40.0f}, core::UDim{0.0f, 40.0f}};
-    // No background, so the list is the IMAGE's quads and nothing else. An
-    // `ImageLabel` draws its background first like every other `UIObject`, and
-    // counting that here would be counting a different feature.
     fixture.object(label).backgroundTransparency = 1.0f;
     scene::ImageLabelComponent* image = fixture.world->imageLabels().find(label);
     REQUIRE(image != nullptr);
     image->image = "asset://ui/nothing.png";
+    image->imageColor = core::Color3{1.0f, 1.0f, 1.0f};
     fixture.run();
 
+    // With no background of its own: nothing at all.
     ui::DrawList list;
     ui::buildDrawList(*fixture.world, fixture.service, list);
-    REQUIRE(list.quads.size() == 1);
-    CHECK(list.quads[0].texture == 0);
+    CHECK(list.quads.empty());
+
+    // With one: the background, in the background's colour, and nothing over it.
+    fixture.object(label).backgroundTransparency = 0.0f;
+    fixture.object(label).backgroundColor = core::Color3{0.1f, 0.2f, 0.3f};
+    fixture.run();
+    ui::DrawList backed;
+    ui::buildDrawList(*fixture.world, fixture.service, backed);
+    REQUIRE(backed.quads.size() == 1);
+    CHECK(backed.quads[0].texture == 0);
+    CHECK(static_cast<double>(backed.quads[0].color.r) == doctest::Approx(0.1));
+    CHECK(static_cast<double>(backed.quads[0].color.b) == doctest::Approx(0.3));
 }
 
 TEST_CASE("a nine-slice keeps its corners at their own size")

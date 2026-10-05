@@ -182,11 +182,23 @@ float3 terrainUnit(float3 v, float3 fallback)
     return lengthSquared > 1e-12f ? v * rsqrt(lengthSquared) : fallback;
 }
 
-TerrainVariation terrainVariation(float3 ground, float3 normal)
+// `lean` (ADR 0175): none of it. Five noises of four hashes each for every
+// plane the pixel faces, to tilt a textured layer's shade by a twentieth and
+// its normal by the grain -- what a phone's screen at seven hundred lines
+// shows least and pays for at every pixel of the ground.
+TerrainVariation terrainVariation(float3 ground, float3 normal, bool lean = false)
 {
     const float3 span = fwidth(ground);
     const float footprint = max(span.x, max(span.y, span.z));
     const float grainFade = saturate(1.0f - footprint / 0.25f);
+    [branch] if (lean)
+    {
+        TerrainVariation none;
+        none.Shade = float3(1.0f, 1.0f, 1.0f);
+        none.Rockiness = 0.0f;
+        none.Bend = float3(0.0f, 0.0f, 0.0f);
+        return none;
+    }
 
     float3 weights = abs(normal);
     weights *= weights;

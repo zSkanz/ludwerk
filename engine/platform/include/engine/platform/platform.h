@@ -199,6 +199,15 @@ struct Paths
 // platform's own HTTPS stack is reached through (ADR 0063).
 [[nodiscard]] void* androidJavaEnv();
 
+// **Says how often the game will show a frame, on Android** (ADR 0173), so the
+// system can run the display at that rate or a multiple of it -- a display at
+// sixty for a game at sixty paces every frame by itself, and one at a hundred
+// and twenty for a game at forty shows each for three refreshes. Asks the
+// activity (`PlayerActivity.requestFrameRate`); a system older than Android 11
+// and an activity that has no such method are both no answer, and so is every
+// other platform. `hz` of zero withdraws the request.
+void requestDisplayFrameRate(float hz) noexcept;
+
 // Starts another program and does not wait for it. Used by the launcher to
 // start the editor on the project somebody chose (ADR 0055), which is a
 // relaunch rather than a load: everything a project decides is resolved at boot.

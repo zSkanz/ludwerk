@@ -801,6 +801,9 @@ private:
         rhi::PipelineHandle forward{};
         rhi::PipelineHandle blended{};
         rhi::PipelineHandle instanced{};
+        // `forward` and `instanced` for a draw the prepass drew (ADR 0174).
+        rhi::PipelineHandle forwardPrepassed{};
+        rhi::PipelineHandle instancedPrepassed{};
         rhi::PipelineHandle shadow{};
         rhi::PipelineHandle shadowInstanced{};
         rhi::PipelineHandle prepass{};
@@ -916,6 +919,18 @@ private:
 
     rhi::PipelineHandle shadowPipeline_{};
     rhi::PipelineHandle pbrPipeline_{};
+    // **The same pipeline for a draw the depth prepass has already drawn**
+    // (ADR 0174): it tests against that depth and writes none. The forward
+    // fragment can discard -- its alpha cutoff -- and a pipeline that both
+    // discards and writes depth cannot have its depth test run before its
+    // fragment: a tile-based GPU then shades every fragment of every triangle,
+    // hidden or not, which is the whole of what the prepass was drawn to
+    // prevent. With nothing to write, the test is early again. A cutout is not
+    // in the prepass and keeps the pipeline above.
+    rhi::PipelineHandle pbrPrepassedPipeline_{};
+    rhi::PipelineHandle pbrSkinnedPrepassedPipeline_{};
+    rhi::PipelineHandle pbrInstancedPrepassedPipeline_{};
+    rhi::PipelineHandle pbrSkinnedInstancedPrepassedPipeline_{};
     // The skinned variants. Same shading, same state; what differs is the vertex
     // input layout and one more uniform block, both of which are pipeline
     // description rather than code (M6 brief, Decision 11).
@@ -1067,6 +1082,9 @@ private:
     // The block world's forward pipeline, made the first frame a block is
     // drawn, and the palette it reads, filled each frame from the registry.
     rhi::PipelineHandle voxelPipeline_{};
+    // The blocks the prepass drew -- every one but a leaf's cutout -- tested
+    // against its depth and writing none (ADR 0174).
+    rhi::PipelineHandle voxelPrepassedPipeline_{};
     // The same shader, blended and not writing depth, for glass and water.
     rhi::PipelineHandle voxelBlendPipeline_{};
     // The cutout faces' shadow: depth only, with the forward pass's hole test,
@@ -1695,6 +1713,17 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .depthStencilFormat = kDepthFormat,
         .debugName = "pbr",
     });
+    pbrPrepassedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = pbrVertex,
+        .fragmentShader = pbrFragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = attributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = hdrTarget,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "pbr_prepassed",
+    });
 
     // The blended pass. Depth-tested against what the opaque pass wrote, and
     // depth-write OFF -- two transparent surfaces must both contribute, so
@@ -1739,6 +1768,17 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .colorTargets = hdrTarget,
         .depthStencilFormat = kDepthFormat,
         .debugName = "pbr_skinned",
+    });
+    pbrSkinnedPrepassedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = pbrSkinnedVertex,
+        .fragmentShader = pbrSkinnedFragment,
+        .vertexBuffers = skinnedBuffers,
+        .vertexAttributes = skinnedAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = hdrTarget,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "pbr_skinned_prepassed",
     });
 
     pbrSkinnedBlendPipeline_ = device.createGraphicsPipeline({
@@ -1889,6 +1929,17 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .colorTargets = hdrTarget,
         .depthStencilFormat = kDepthFormat,
         .debugName = "pbr_instanced",
+    });
+    pbrInstancedPrepassedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = pbrInstancedVertex,
+        .fragmentShader = pbrInstancedFragment,
+        .vertexBuffers = instancedBuffers,
+        .vertexAttributes = instancedAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = hdrTarget,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "pbr_instanced_prepassed",
     });
 
     ssaoPipeline_ = fullscreen(ssaoVertex, ssaoFragment, occlusionTarget, "ssao");
@@ -2383,6 +2434,9 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
 
     for (rhi::PipelineHandle* pipeline : {&shadowPipeline_,
                                           &pbrPipeline_,
+                                          &pbrPrepassedPipeline_,
+                                          &pbrSkinnedPrepassedPipeline_,
+                                          &pbrInstancedPrepassedPipeline_,
                                           &pbrBlendPipeline_,
                                           &skyPipeline_,
                                           &tonemapPipeline_,
@@ -2440,6 +2494,7 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
                                           &terrainPackColorPipeline_,
                                           &terrainPackLinearPipeline_,
                                           &voxelPipeline_,
+                                          &voxelPrepassedPipeline_,
                                           &particlePipeline_,
                                           &voxelTilePipeline_,
                                           &voxelBlendPipeline_,
@@ -2455,6 +2510,7 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
                                           &highlightMaskPipeline_,
                                           &highlightMaskSkinnedPipeline_,
                                           &pbrSkinnedInstancedPipeline_,
+                                          &pbrSkinnedInstancedPrepassedPipeline_,
                                           &shadowSkinnedInstancedPipeline_,
                                           &depthPrepassSkinnedInstancedPipeline_}) {
         if (pipeline->valid())
@@ -2580,8 +2636,9 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
 
 void DefaultRenderer::releaseSurface(rhi::IDevice& device, SurfaceSet& set)
 {
-    for (rhi::PipelineHandle* pipeline : {&set.forward, &set.blended, &set.instanced, &set.shadow, &set.shadowInstanced,
-                                          &set.prepass, &set.prepassInstanced}) {
+    for (rhi::PipelineHandle* pipeline :
+         {&set.forward, &set.blended, &set.instanced, &set.shadow, &set.shadowInstanced, &set.prepass,
+          &set.prepassInstanced, &set.forwardPrepassed, &set.instancedPrepassed}) {
         if (pipeline->valid())
             device.destroy(*pipeline);
         *pipeline = rhi::PipelineHandle{};
@@ -2759,6 +2816,19 @@ bool DefaultRenderer::buildSurfacePipelines(rhi::IDevice& device, SurfaceSet& se
         .depthStencilFormat = kDepthFormat,
         .debugName = "surface_forward",
     });
+    const rhi::DepthStencilState depthTesting{
+        .depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual};
+    set.forwardPrepassed = device.createGraphicsPipeline({
+        .vertexShader = shader(0, false),
+        .fragmentShader = shader(0, true),
+        .vertexBuffers = buffers,
+        .vertexAttributes = attributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = depthTesting,
+        .colorTargets = hdrTarget,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "surface_forward_prepassed",
+    });
     set.instanced = device.createGraphicsPipeline({
         .vertexShader = shader(1, false),
         .fragmentShader = shader(1, true),
@@ -2769,6 +2839,17 @@ bool DefaultRenderer::buildSurfacePipelines(rhi::IDevice& device, SurfaceSet& se
         .colorTargets = hdrTarget,
         .depthStencilFormat = kDepthFormat,
         .debugName = "surface_forward_instanced",
+    });
+    set.instancedPrepassed = device.createGraphicsPipeline({
+        .vertexShader = shader(1, false),
+        .fragmentShader = shader(1, true),
+        .vertexBuffers = instancedBuffers,
+        .vertexAttributes = instancedAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = depthTesting,
+        .colorTargets = hdrTarget,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "surface_forward_instanced_prepassed",
     });
     set.blended = device.createGraphicsPipeline({
         .vertexShader = shader(2, false),
@@ -3403,23 +3484,35 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         if (selection == Selection::Prepass && surface != nullptr && world.materials[draw.material].masked &&
             !decalMaskPass_)
             continue;
+        // **What the prepass drew is tested against its depth and writes none**
+        // (ADR 0174): every opaque draw but a cutout and a masked surface,
+        // which the prepass leaves out above and which write their own.
+        const bool prepassed = selection == Selection::Opaque && !draw.cutout &&
+                               !(surface != nullptr && world.materials[draw.material].masked);
+        const auto unlessPrepassed = [prepassed](rhi::PipelineHandle writing, rhi::PipelineHandle testing) {
+            return prepassed && testing.valid() ? testing : writing;
+        };
         const rhi::PipelineHandle surfacePipeline =
             surface == nullptr                    ? rhi::PipelineHandle{}
             : selection == Selection::Shadow      ? (batch != nullptr ? surface->shadowInstanced : surface->shadow)
             : selection == Selection::Prepass     ? (batch != nullptr ? surface->prepassInstanced : surface->prepass)
             : selection == Selection::Transparent ? surface->blended
-                                                  : (batch != nullptr ? surface->instanced : surface->forward);
+            : batch != nullptr                    ? unlessPrepassed(surface->instanced, surface->instancedPrepassed)
+                                                  : unlessPrepassed(surface->forward, surface->forwardPrepassed);
         const rhi::PipelineHandle wanted =
             surfacePipeline.valid() ? surfacePipeline
-            : skinnedRun            ? skinnedInstancedPipeline
-            : batch != nullptr      ? instancedPipeline
-            : skinnedDraw           ? skinnedPipeline
+            : skinnedRun            ? unlessPrepassed(skinnedInstancedPipeline, pbrSkinnedInstancedPrepassedPipeline_)
+            : batch != nullptr      ? unlessPrepassed(instancedPipeline, pbrInstancedPrepassedPipeline_)
+            : skinnedDraw           ? unlessPrepassed(skinnedPipeline, pbrSkinnedPrepassedPipeline_)
             : terrainDraw           ? terrainPipeline_
             : terrainShadow         ? terrainShadowPipeline_
             : terrainPrepass        ? terrainPrepassPipeline_
-            : voxelDraw             ? (selection == Selection::Transparent ? voxelBlendPipeline_ : voxelPipeline_)
-            : leafShadow            ? voxelShadowPipeline_
-                                    : staticPipeline;
+            : voxelDraw
+                ? (selection == Selection::Transparent ? voxelBlendPipeline_
+                                                       : unlessPrepassed(voxelPipeline_, voxelPrepassedPipeline_))
+            : leafShadow                     ? voxelShadowPipeline_
+            : selection == Selection::Opaque ? unlessPrepassed(staticPipeline, pbrPrepassedPipeline_)
+                                             : staticPipeline;
         if (!(wanted == currentPipeline)) {
             cmd.setPipeline(wanted);
             currentPipeline = wanted;
@@ -3512,14 +3605,16 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                     const TerrainArrays* layers = terrainArraysOf(draw.terrainId);
                     static const GpuTerrainSurfaceUniforms flat{};
                     const GpuTerrainSurfaceUniforms& block = layers != nullptr ? layers->uniforms : flat;
-                    if (settings_.debugView == DebugView::None) {
+                    if (settings_.debugView == DebugView::None && !settings_.leanTerrain()) {
                         cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&block, sizeof(block)));
                     }
                     else {
-                        // A debug view (terrain audit T0) rides in the block's
-                        // last row, on a copy: the terrain's own stays as built.
+                        // A debug view (terrain audit T0) and the lean ground
+                        // (ADR 0175) ride in the block's last row, on a copy:
+                        // the terrain's own stays as built.
                         GpuTerrainSurfaceUniforms viewed = block;
                         viewed.debug[0] = static_cast<f32>(settings_.debugView);
+                        viewed.debug[1] = settings_.leanTerrain() ? 1.0f : 0.0f;
                         cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&viewed, sizeof(viewed)));
                     }
                     const auto layerArray = [&](usize slot, rhi::TextureHandle fallback) {
@@ -5716,6 +5811,17 @@ bool DefaultRenderer::ensureSkinnedInstancing(rhi::IDevice& device)
         .depthStencilFormat = kDepthFormat,
         .debugName = "pbr_skinned_instanced",
     });
+    pbrSkinnedInstancedPrepassedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = forwardVertex,
+        .fragmentShader = forwardFragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = forwardAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = hdrTarget,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "pbr_skinned_instanced_prepassed",
+    });
     shadowSkinnedInstancedPipeline_ = device.createGraphicsPipeline({
         .vertexShader = depthVertex,
         .fragmentShader = depthFragment,
@@ -6717,6 +6823,17 @@ bool DefaultRenderer::ensureVoxel(rhi::IDevice& device)
         .colorTargets = hdrTarget,
         .depthStencilFormat = kDepthFormat,
         .debugName = "voxel",
+    });
+    voxelPrepassedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = vertex,
+        .fragmentShader = fragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = attributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = hdrTarget,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "voxel_prepassed",
     });
     // **Both sides, blended, depth tested and not written**: from under water
     // the surface is seen from below, and a pane of glass is a pane from either
@@ -8083,6 +8200,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // sixteen, and the bytes High always sent.
         frame.environmentParams[3] =
             static_cast<f32>(settings_.measuredShadowTaps != 0 ? settings_.measuredShadowTaps : settings_.shadowTaps);
+        // `[debug] skip` (ADR 0171): zero unless a measurement asked.
+        frame.clusterParams[3] = static_cast<f32>(settings_.measuredSkip);
         // `Lighting.EnvironmentDiffuseScale` (ADR 0096) on the nine
         // coefficients -- linear in them, so the sky's diffuse light scales
         // with no shader knowing. One is one, and the bytes are unchanged.

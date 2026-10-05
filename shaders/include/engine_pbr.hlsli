@@ -111,7 +111,9 @@ cbuffer GpuFrameUniforms : register(b0, space3)
     // the sun's shadow filter takes -- the quality level's, or a measurement's
     // (zero: sixteen).
     float4 EnvironmentParams;
-    // x and y are the exponential depth slicing's scale and bias.
+    // x and y are the exponential depth slicing's scale and bias. w is the
+    // terms of the lighting a measurement leaves out (`[debug] skip`, ADR
+    // 0171), as bits, and zero on every other frame.
     float4 ClusterParams;
     // x width in pixels, y height, z 1/width, w 1/height.
     float4 ViewportParams;

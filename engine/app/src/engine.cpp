@@ -1215,6 +1215,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         if (graphicsHost.revision() != before) {
             liveGraphics = graphicsSettingsOf(graphicsHost, Handheld, &options.graphics);
             livePacing = pacingOf(graphicsHost);
+            // The project's word on the adaptive rate is not a setting a
+            // player has: it stays what the file said.
+            livePacing.adaptive = options.pacing.adaptive;
         }
     }
     // What the window was last put in, so only a change moves it.
@@ -1366,8 +1369,17 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         const std::array<I18nArg, 2> hideArgs{I18nArg{"name", name}, I18nArg{"known", known}};
         core::log(LogLevel::Warn, ENG_TR("engine.debug.warn.unknown_hide"), hideArgs);
     }
-    const std::string debugKeys =
-        debugKeysInForce(options.gpuPassTimes, debugHide, options.graphics.measuredShadowTaps, options.logUiTouches);
+    std::vector<std::string> unknownSkipped;
+    (void)parseDebugSkip(options.debugSkip, &unknownSkipped);
+    for (const std::string& name : unknownSkipped) {
+        std::string known;
+        for (const std::string_view each : debugSkipNames())
+            known += (known.empty() ? "" : ", ") + std::string(each);
+        const std::array<I18nArg, 2> skipArgs{I18nArg{"name", name}, I18nArg{"known", known}};
+        core::log(LogLevel::Warn, ENG_TR("engine.debug.warn.unknown_skip"), skipArgs);
+    }
+    const std::string debugKeys = debugKeysInForce(options.gpuPassTimes, debugHide, options.graphics.measuredShadowTaps,
+                                                   options.logUiTouches, options.graphics.measuredSkip);
     if (!debugKeys.empty()) {
         const std::array<I18nArg, 1> keyArgs{I18nArg{"keys", debugKeys}};
         core::log(LogLevel::Info, ENG_TR("engine.debug.info.keys"), keyArgs);
@@ -1708,6 +1720,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     const bool paced = !options.headless && options.paceHz == 0 && window != nullptr;
     FrameLimiter frameLimiter;
     SyncWatch syncWatch;
+    // **The rate a handheld holds** (ADR 0173): what the frames have been
+    // fitting, the rate the frame being drawn is held to at its present (zero:
+    // the display paces it, or nothing does), how long that hold was -- which
+    // is not the frame's work -- and the rate last said to the log and to the
+    // display.
+    RateGovernor rateGovernor;
+    core::u32 heldRate = 0;
+    core::u64 heldNs = 0;
+    core::u32 saidRate = 0;
     bool framePresented = true;
     core::u64 pacedFrameNs = 0;
     const core::u32 baseCatchUpTicks = FrameTiming{}.maxCatchUpTicks;
@@ -3049,9 +3070,40 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             if (pacedFrameNs != 0 && framePresented && state.focused)
                 syncWatch.sample(now - pacedFrameNs, state.refreshRate);
             state.syncHeld = syncWatch.held();
-            const core::u32 cap = frameCapFor(livePacing, state);
-            if (const core::u64 wait = frameLimiter.waitNs(now, cap); wait > 0)
-                platform::sleepNs(wait);
+            core::u32 cap = frameCapFor(livePacing, state);
+            // **A handheld in front is paced at a rate it holds** (ADR 0173),
+            // and the wait is at the frame's PRESENT, not here: frames shown a
+            // steady time apart, where a wait after the present leaves each
+            // shown whenever its work happened to end. Not behind the loading
+            // curtain, whose frames are a load's and not the game's.
+            const bool governed = livePacing.adaptive && state.focused && !state.minimized && framePresented;
+            if (governed && !curtain.up()) {
+                const core::u64 work =
+                    pacedFrameNs != 0 && now > pacedFrameNs + heldNs ? now - pacedFrameNs - heldNs : 0;
+                const core::u32 rate =
+                    rateGovernor.sample(now, work, state.refreshRate, lowerRate(livePacing.maxFrameRate, cap));
+                const core::u32 refresh =
+                    state.refreshRate >= 1.0f ? static_cast<core::u32>(std::lround(state.refreshRate)) : 0;
+                // At the display's own rate the display is the pacer, and a
+                // second one beside it would only beat against it.
+                heldRate = refresh != 0 && rate + 1 >= refresh && state.syncHeld ? 0 : rate;
+                cap = rate;
+                if (rate != saidRate) {
+                    saidRate = rate;
+                    platform::requestDisplayFrameRate(static_cast<float>(rate));
+                    const std::array<I18nArg, 2> pacedArgs{I18nArg{"rate", static_cast<core::i64>(rate)},
+                                                           I18nArg{"refresh", static_cast<core::i64>(refresh)}};
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.paced"), pacedArgs);
+                }
+            }
+            else {
+                if (governed)
+                    rateGovernor.reset();
+                heldRate = 0;
+                if (const core::u64 wait = frameLimiter.waitNs(now, cap); wait > 0)
+                    platform::sleepNs(wait);
+            }
+            heldNs = 0;
             pacedFrameNs = platform::nowNs();
             // A frame held to ten a second owes six ticks, not four.
             scheduler.setMaxCatchUpTicks(catchUpTicksFor(baseCatchUpTicks, scheduler.timing().fixedDt, cap));
@@ -3131,7 +3183,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // editor's: a game's options menu tried in Play does not put
                 // the editor fullscreen or take its frame rate.
                 if (!options.editor) {
-                    const FramePacing pacing = pacingOf(live);
+                    FramePacing pacing = pacingOf(live);
+                    pacing.adaptive = options.pacing.adaptive;
                     // (Not while frame generation holds the display's sync on:
                     // it is put back from this setting when that lets go.)
                     if (window != nullptr && device != nullptr && pacing.vsync != livePacing.vsync &&
@@ -7179,6 +7232,18 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // contract already describes.
         host->setGizmoTarget(nullptr);
 
+        // **Held to its place in the rate's grid** (ADR 0173): the frame is
+        // drawn, and is shown when the one before it has had its share of the
+        // screen. Counted apart from the frame's work, which is what the rate
+        // is judged by.
+        if (heldRate != 0) {
+            ENG_PROFILE_SCOPE("wait.pace");
+            const core::u64 holdNs = platform::nowNs();
+            if (const core::u64 wait = frameLimiter.waitNs(holdNs, heldRate); wait > 0)
+                platform::sleepNs(wait);
+            heldNs = platform::nowNs() - holdNs;
+            phaseWaitMs += static_cast<f64>(heldNs) / 1'000'000.0;
+        }
         const core::u64 presentNs = platform::nowNs();
         {
             ENG_PROFILE_SCOPE("wait.present");
