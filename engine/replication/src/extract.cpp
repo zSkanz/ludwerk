@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <span>
+#include <type_traits>
 
 #include "engine/replication/script_templates.h"
 #include "engine/scene/class_registry.h"
@@ -2129,6 +2130,162 @@ namespace {
 }
 
 } // namespace
+
+namespace {
+
+// A word at a time, as `hashOf` does an entity's fields.
+[[nodiscard]] core::u64 mixWord(core::u64 hash, core::u64 word) noexcept
+{
+    hash = (hash ^ word) * 0xFF51AFD7ED558CCDull;
+    return hash ^ (hash >> 29);
+}
+
+// A component's bytes, four words abreast: each lane is a chain of its own, so
+// the four multiplies of a step do not wait for each other. This is read on
+// one machine and compared with what that machine read a tick ago -- it is on
+// no wire, and has only to be quick and to notice a change.
+[[nodiscard]] core::u64 mixBytes(core::u64 hash, const void* data, usize size) noexcept
+{
+    const auto* bytes = static_cast<const core::u8*>(data);
+    constexpr core::u64 Prime = 0xFF51AFD7ED558CCDull;
+    core::u64 lane[4]{hash, hash ^ 0x9E3779B97F4A7C15ull, hash ^ 0xC2B2AE3D27D4EB4Full, hash ^ 0x165667B19E3779F9ull};
+    usize at = 0;
+    for (; at + 4 * sizeof(core::u64) <= size; at += 4 * sizeof(core::u64)) {
+        core::u64 word[4];
+        std::memcpy(word, bytes + at, sizeof(word));
+        for (int index = 0; index < 4; ++index) {
+            lane[index] = (lane[index] ^ word[index]) * Prime;
+            lane[index] ^= lane[index] >> 29;
+        }
+    }
+    hash = mixWord(mixWord(mixWord(lane[0], lane[1]), lane[2]), lane[3]);
+    for (; at + sizeof(core::u64) <= size; at += sizeof(core::u64)) {
+        core::u64 word = 0;
+        std::memcpy(&word, bytes + at, sizeof(word));
+        hash = mixWord(hash, word);
+    }
+    if (at < size) {
+        core::u64 word = 0;
+        std::memcpy(&word, bytes + at, size - at);
+        hash = mixWord(hash, word);
+    }
+    return hash;
+}
+
+// One pool's part of an instance's digest. False when the component cannot be
+// read as bytes: it holds memory of its own (a list, a string), and what that
+// holds can change with every byte of the component the same.
+template <class T>
+[[nodiscard]] bool digestIn(const scene::ComponentPool<T>& pool, InstanceId id, core::u64& hash) noexcept
+{
+    if constexpr (!std::is_trivially_copyable_v<T>) {
+        (void)pool;
+        (void)id;
+        (void)hash;
+        return false;
+    }
+    else {
+        const T* found = pool.find(id);
+        // None is a fact too: a component taken away changes what is read.
+        hash = found != nullptr ? mixBytes(hash, found, sizeof(T)) : mixWord(hash, 0x6E6F6E65ull);
+        return true;
+    }
+}
+
+using DigestIn = bool (*)(const scene::World&, InstanceId, core::u64&) noexcept;
+struct NamedPool
+{
+    std::string_view name;
+    DigestIn digest;
+};
+#define ENG_REPLICATION_POOL_DIGEST(name)                                                                              \
+    NamedPool{#name, [](const scene::World& world, InstanceId id, core::u64& hash) noexcept -> bool {                  \
+                  return digestIn(world.name(), id, hash);                                                             \
+              }},
+// Every pool `readComponent` reads, by the name the wire schema has for it. A
+// field of a pool that is not here makes its class one that is always read
+// -- slower, never wrong -- and a test says so.
+constexpr NamedPool Pools[] = {
+    ENG_REPLICATION_POOL_DIGEST(attachments) ENG_REPLICATION_POOL_DIGEST(constraints) ENG_REPLICATION_POOL_DIGEST(
+        movers) ENG_REPLICATION_POOL_DIGEST(welds) ENG_REPLICATION_POOL_DIGEST(noCollisions)
+        ENG_REPLICATION_POOL_DIGEST(parts) ENG_REPLICATION_POOL_DIGEST(meshParts) ENG_REPLICATION_POOL_DIGEST(
+            rigidBodies) ENG_REPLICATION_POOL_DIGEST(characterBodies) ENG_REPLICATION_POOL_DIGEST(workspaces)
+            ENG_REPLICATION_POOL_DIGEST(lighting) ENG_REPLICATION_POOL_DIGEST(postEffects) ENG_REPLICATION_POOL_DIGEST(
+                waters) ENG_REPLICATION_POOL_DIGEST(waterWaves) ENG_REPLICATION_POOL_DIGEST(waterPoints)
+                ENG_REPLICATION_POOL_DIGEST(clickDetectors) ENG_REPLICATION_POOL_DIGEST(bloomEffects)
+                    ENG_REPLICATION_POOL_DIGEST(colorCorrectionEffects) ENG_REPLICATION_POOL_DIGEST(blurEffects)
+                        ENG_REPLICATION_POOL_DIGEST(swarms) ENG_REPLICATION_POOL_DIGEST(depthOfFieldEffects)
+                            ENG_REPLICATION_POOL_DIGEST(sunRaysEffects) ENG_REPLICATION_POOL_DIGEST(atmospheres)
+                                ENG_REPLICATION_POOL_DIGEST(skies) ENG_REPLICATION_POOL_DIGEST(decals)
+                                    ENG_REPLICATION_POOL_DIGEST(particleEmitters) ENG_REPLICATION_POOL_DIGEST(models)
+                                        ENG_REPLICATION_POOL_DIGEST(parts2d) ENG_REPLICATION_POOL_DIGEST(tilemaps2d)};
+#undef ENG_REPLICATION_POOL_DIGEST
+
+// What each class reads from, found once: the distinct pools its fields name,
+// its base's and the common set's among them, and whether a part is among
+// them. `unknown` when one names a pool that is not in the list above.
+struct ClassPools
+{
+    bool built = false;
+    bool unknown = false;
+    bool parts = false;
+    std::vector<DigestIn> pools;
+};
+
+[[nodiscard]] const ClassPools& poolsOf(const ClassDesc& desc)
+{
+    static std::array<ClassPools, std::size(generated::Classes)> all;
+    const auto at = static_cast<usize>(&desc - generated::Classes);
+    static ClassPools none{true, true, false, {}};
+    if (at >= all.size())
+        return none;
+    ClassPools& mine = all[at];
+    if (mine.built)
+        return mine;
+    for (usize index = 0, count = fieldCount(desc); index < count; ++index) {
+        const FieldDesc* field = fieldAt(desc, index);
+        if (field == nullptr || field->source != Source::Component)
+            continue;
+        const auto known = std::find_if(std::begin(Pools), std::end(Pools),
+                                        [&](const NamedPool& pool) { return pool.name == field->pool; });
+        if (known == std::end(Pools)) {
+            mine.unknown = true;
+            continue;
+        }
+        if (field->pool == "parts")
+            mine.parts = true;
+        if (std::find(mine.pools.begin(), mine.pools.end(), known->digest) == mine.pools.end())
+            mine.pools.push_back(known->digest);
+    }
+    mine.built = true;
+    return mine;
+}
+
+} // namespace
+
+bool digestKnowsPoolsOf(const ClassDesc& desc) noexcept
+{
+    return !poolsOf(desc).unknown;
+}
+
+core::u64 sourceDigestOf(const scene::World& world, InstanceId id, const ClassDesc& desc) noexcept
+{
+    const ClassPools& pools = poolsOf(desc);
+    if (pools.unknown)
+        return 0;
+    core::u64 hash = 0x9E3779B97F4A7C15ull;
+    for (const DigestIn digest : pools.pools) {
+        if (!digest(world, id, hash))
+            return 0;
+    }
+    // A part wearing a material copy changes when the copy does, and the copy
+    // is the world's, in no component.
+    if (pools.parts) {
+        if (const scene::PartComponent* part = world.parts().find(id); part != nullptr && part->materialClone != 0)
+            hash = mixWord(hash, world.materialClonesRevision());
+    }
+    return hash != 0 ? hash : 1;
+}
 
 bool carriesField(const scene::World& world, InstanceId id, std::string_view name)
 {

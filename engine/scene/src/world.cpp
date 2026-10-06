@@ -1293,6 +1293,7 @@ u32 World::cloneMaterial(core::NameAtom source, asset::MaterialFieldMask set, co
 {
     const u32 id = ++m_lastMaterialClone;
     m_materialClones.emplace(id, MaterialClone{source, set, values});
+    ++m_materialClonesRevision;
     // Nothing holds it yet. The caller that made it takes a hold at once; if
     // it does not, the next sweep is right to drop it.
     m_sweepMaterials = true;
@@ -1304,6 +1305,7 @@ MaterialClone& World::adoptMaterialClone(u32 id, core::NameAtom source)
 {
     MaterialClone& clone = m_materialClones[id];
     clone.source = source;
+    ++m_materialClonesRevision;
     ++m_mutations;
     return clone;
 }
@@ -1364,6 +1366,7 @@ MaterialClone* World::writeMaterialClone(u32 id) noexcept
     const auto found = m_materialClones.find(id);
     if (found == m_materialClones.end())
         return nullptr;
+    ++m_materialClonesRevision;
     ++m_mutations;
     return &found->second;
 }
@@ -1404,10 +1407,13 @@ void World::sweepMaterialClones()
     std::sort(worn.begin(), worn.end());
     for (auto at = m_materialClones.begin(); at != m_materialClones.end();) {
         const bool held = m_materialHolds.contains(at->first);
-        if (!held && !std::binary_search(worn.begin(), worn.end(), at->first))
+        if (!held && !std::binary_search(worn.begin(), worn.end(), at->first)) {
             at = m_materialClones.erase(at);
-        else
+            ++m_materialClonesRevision;
+        }
+        else {
             ++at;
+        }
     }
 }
 

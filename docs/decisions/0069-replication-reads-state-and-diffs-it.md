@@ -233,3 +233,45 @@ what changed, not what there is"): in 120 ticks of that world, only what moved
 is compared field by field, one attribute body is encoded a tick, and no field
 set is allocated. `net.send` has three scopes under it: `net.capture`,
 `net.changes`, `net.peers`.
+
+## Amendment, 2026-10-06, the second: a capture reads what may have changed
+
+What the first amendment left was the reading itself -- 1.7 ms of the 1.8,
+and in a game the whole of `net.send`'s p95 (1.9 ms of 2.4, a host with one
+friend).
+
+- **An instance is kept from the capture before when the components its
+  fields are read from are the same bytes** (`sourceDigestOf`,
+  `EntityState::source`). The components' own bytes, so it does not matter
+  who wrote them or how. Stamping a component when it is handed out to be
+  written was tried first and says nothing here: the engine's own systems
+  hand out every part and every body every tick, to read them. An instance
+  is read again when its bytes differ, when it was renamed or moved in the
+  tree, when it names another instance (whose leaving changes it and no byte
+  of its own), when one of its components holds memory of its own (a
+  character, a swarm), and **one tick in eight whatever the bytes say** --
+  what a field is read from that is none of these is late by that much, and
+  no more. One such thing is known and counted in: a material copy is the
+  world's, in no component, and a part wearing one has the world's count of
+  changes to those in its number (`World::materialClonesRevision`).
+- **States share the field sets they have in common** (`SharedFields`). A
+  kept instance is the very set the state before holds; a state takes a set
+  of its own only to write to it. On the authority that is the copy a kept
+  instance still cost. On a replica it is every snapshot: applying one copied
+  the whole state before it, four megabytes for a world of 2,700 instances,
+  and now copies the entities the snapshot changes. And a history of
+  sixty-four states holds one set an unchanged instance, where it held
+  sixty-four.
+- **A class's schema is found once a world**, not asked of every instance
+  every tick up its ancestors by name.
+
+After: **under a millisecond a send** in the same measure with sixty moving a
+tick (0.95; 6.4 before either amendment), and in a hosted match of two
+processes 27 instances read a tick and 173 kept, of 200. The wire is what the
+first amendment made it: protocol 42.
+
+Held by counts (`Stats::entitiesRead`, `entitiesKept`): of 2,700 instances a
+tick, the sixty that moved and an eighth of the rest are read, the others
+kept, and no more than a field set a tick is allocated. And "every pool the
+wire reads is one a capture can tell has not changed" fails when a pool is
+added to the wire and not to the digest's list.

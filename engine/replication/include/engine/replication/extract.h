@@ -85,6 +85,25 @@ void diffFields(const generated::ClassDesc& desc, std::span<const FieldValue> ba
 // The field descriptor at a flat index, common set first. Null past the end.
 [[nodiscard]] const generated::FieldDesc* fieldAt(const generated::ClassDesc& desc, core::usize index);
 
+// **What the components this class's fields are read from come to, byte for
+// byte**, for `id` -- or 0 when that cannot be said: a field read from a pool
+// this does not know, or from a component that holds memory of its own, whose
+// bytes do not say what it holds.
+//
+// The same number as the capture before means every field reads as it did,
+// and the instance is kept without being read: an authority read every field
+// of every instance every tick to find the few that had changed. It is the
+// components' own bytes, so it does not matter who wrote them or how -- and a
+// part wearing a material copy, which is the world's and in no component,
+// has the world's count of changes to those in its number.
+[[nodiscard]] core::u64 sourceDigestOf(const scene::World& world, core::InstanceId id,
+                                       const generated::ClassDesc& desc) noexcept;
+
+// Whether every pool this class's fields are read from is one the digest
+// knows. False is not wrong -- the class is read every tick -- but it is a
+// pool added to the wire and not to the digest's list, which a test catches.
+[[nodiscard]] bool digestKnowsPoolsOf(const generated::ClassDesc& desc) noexcept;
+
 // Whether the property `name` of `id` is one the wire carries: what a write
 // to it on the authority sends to every machine. False for an instance with
 // no schema. What `--net-log-client-writes` asks (ADR 0186 section 5).

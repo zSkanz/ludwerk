@@ -95,6 +95,7 @@ void World::restore(const WorldSnapshot& snapshot)
     // The clones the restored parts wear come back with them. The holds do
     // not: they are the VM's, and the caller rebuilds the VM.
     m_materialClones = snapshot.materialClones;
+    ++m_materialClonesRevision;
     m_lastMaterialClone = snapshot.lastMaterialClone;
     m_partShaderParameters = snapshot.partShaderParameters;
     m_sweepMaterials = true;

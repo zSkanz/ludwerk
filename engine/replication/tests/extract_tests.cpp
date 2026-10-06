@@ -245,3 +245,16 @@ TEST_CASE("a delta naming a field this class does not have is refused")
     setU32(value, 42);
     CHECK_FALSE(applyField(rig.world(), id, *desc, FieldDelta{9999, value}));
 }
+
+TEST_CASE("every pool the wire reads is one a capture can tell has not changed")
+{
+    // A capture keeps an instance from the tick before when the components
+    // its fields are read from are the same bytes (`sourceDigestOf`). A field
+    // of a pool the digest does not know makes its whole class one that is
+    // read every tick: never wrong, and exactly the cost this was written to
+    // take away -- so a pool added to the wire is added to the digest's list.
+    for (const generated::ClassDesc& desc : generated::Classes) {
+        CAPTURE(desc.name);
+        CHECK(digestKnowsPoolsOf(desc));
+    }
+}

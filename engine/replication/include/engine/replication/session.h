@@ -283,17 +283,73 @@ inline constexpr usize PredictionHistory = 128;
 // One instance as the wire sees it: its network id, which of the schema's
 // classes describes it, and its fields in schema order. Values are in the
 // AUTHORITY'S terms -- its name atoms, its network ids -- on both ends.
+// **An entity's fields, shared by every state that has the same ones.** A
+// field is sixty-four bytes and an entity a kilobyte and more; a state was a
+// copy of all of them, a history sixty-four states deep, and each tick copied
+// every entity nothing had happened to -- on the authority into its capture,
+// and on a replica into each snapshot it applied. A state holds the set by
+// reference, and takes a set of its own only to write to it (`write`).
+class SharedFields
+{
+public:
+    SharedFields() = default;
+    explicit SharedFields(FieldSet set) : m_set(std::make_shared<FieldSet>(std::move(set))) {}
+    // A set somebody is done with, given again: its storage with it.
+    explicit SharedFields(std::shared_ptr<FieldSet> set) noexcept : m_set(std::move(set)) {}
+
+    [[nodiscard]] const FieldValue& operator[](usize at) const noexcept { return (*m_set)[at]; }
+    [[nodiscard]] usize size() const noexcept { return m_set != nullptr ? m_set->size() : 0; }
+    // The whole set, to copy: what a caller that changes a copy starts from.
+    [[nodiscard]] FieldSet copy() const { return m_set != nullptr ? *m_set : FieldSet{}; }
+    [[nodiscard]] FieldSet::const_iterator begin() const noexcept
+    {
+        return m_set != nullptr ? m_set->cbegin() : FieldSet::const_iterator{};
+    }
+    [[nodiscard]] FieldSet::const_iterator end() const noexcept
+    {
+        return m_set != nullptr ? m_set->cend() : FieldSet::const_iterator{};
+    }
+
+    // **The set to write to**: this state's own from here on. Copied first
+    // when another state holds the same one, so no state is changed under its
+    // holder.
+    [[nodiscard]] FieldSet& write()
+    {
+        if (m_set == nullptr)
+            m_set = std::make_shared<FieldSet>();
+        else if (m_set.use_count() > 1)
+            m_set = std::make_shared<FieldSet>(*m_set);
+        return *m_set;
+    }
+
+    // The set itself, for whoever takes it back when its state goes -- only
+    // when no other state holds it, and empty otherwise.
+    [[nodiscard]] std::shared_ptr<FieldSet> release() noexcept
+    {
+        std::shared_ptr<FieldSet> mine = std::move(m_set);
+        m_set = nullptr;
+        return mine.use_count() == 1 ? mine : std::shared_ptr<FieldSet>{};
+    }
+
+private:
+    std::shared_ptr<FieldSet> m_set;
+};
+
 struct EntityState
 {
     NetId id;
     u8 schema = 0;
-    FieldSet fields;
+    SharedFields fields;
     // **What its id, schema and field bytes come to** (`hashOf`), kept beside
     // them by whoever makes or changes the entity; 0 is "not taken yet". A
     // state's checksum is read from these, and so is a diff's "nothing of it
     // changed" -- an entity is a kilobyte and more of field bytes, and both
     // read every byte of every entity for every peer, every tick.
     u64 hash = 0;
+    // **What the components it was read from came to** (`sourceDigestOf`), on
+    // the authority: the same next tick and the instance is kept, not read
+    // again. 0 is "always read". Not on the wire, and nothing to a replica.
+    u64 source = 0;
 };
 
 // A world at one tick, entities sorted by network id.
@@ -659,7 +715,14 @@ private:
     };
     std::vector<std::pair<u64, u32>> m_seenScratch;
     std::vector<Walked> m_walkScratch;
-    std::vector<FieldSet> m_fieldPool;
+    std::vector<std::shared_ptr<FieldSet>> m_fieldPool;
+    // The world the last capture read: another one is read whole.
+    const scene::World* m_readWorld = nullptr;
+    // **Each class's schema, found once a world** (`schemaFor` walks up the
+    // class's ancestors comparing names, and a capture asked it of every
+    // instance every tick): by class id, with whether it has been asked.
+    std::vector<const generated::ClassDesc*> m_schemaOfClass;
+    std::vector<u8> m_schemaAsked;
     u32 m_nextNetId = RootNetId.value + 1;
     // Player numbers. 1 is whoever sits at a solo or hosting machine, so peers
     // start at 2 -- on a dedicated server too, so a number means the same kind

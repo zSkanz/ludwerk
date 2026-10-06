@@ -290,6 +290,11 @@ struct Stats
     u64 entitiesCompared = 0;
     u64 attributeBodiesEncoded = 0;
     u64 fieldSetsAllocated = 0;
+    // The instances a capture read field by field, and the ones it kept from
+    // the capture before because the components they are read from were the
+    // same bytes.
+    u64 entitiesRead = 0;
+    u64 entitiesKept = 0;
 };
 
 // **Where the own character is drawn, against where it is** (the multiplayer

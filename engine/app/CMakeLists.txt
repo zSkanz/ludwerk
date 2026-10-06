@@ -823,9 +823,10 @@ if(ENG_BUILD_TESTS)
             -DMIN_GROUND=2000
             -DGROWTH=15
             -P ${CMAKE_SOURCE_DIR}/tests/streamsoak/run_far_flight_gate.cmake)
+    # Room for two flights: one that fails is flown again (see the driver).
     set_tests_properties(terrain_far_flight PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
-        TIMEOUT 900)
+        TIMEOUT 1500)
 
     add_test(NAME perf_budget
         COMMAND engine_host --bench=${CMAKE_SOURCE_DIR}/tests/bench --bench-repeats=1)

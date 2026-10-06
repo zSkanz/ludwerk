@@ -1085,6 +1085,11 @@ public:
     // Counted as a mutation: every part wearing the clone changes with it.
     [[nodiscard]] MaterialClone* writeMaterialClone(u32 id) noexcept;
     [[nodiscard]] const MaterialClones& materialClones() const noexcept { return m_materialClones; }
+    // Counted on each time a material copy is made, handed out to be written,
+    // dropped or put back. Every part wearing one changes with it, and nothing
+    // of the part's own says so: what reads parts and keeps what it read asks
+    // this too.
+    [[nodiscard]] u32 materialClonesRevision() const noexcept { return m_materialClonesRevision; }
 
     // **A script's handle keeps a clone alive**; a part wearing it does too,
     // and the sweep asks the parts. Holds are not world state -- they are the
@@ -1625,6 +1630,7 @@ private:
     const Localization* m_localization = nullptr;
     MaterialClones m_materialClones;
     u32 m_lastMaterialClone = 0;
+    u32 m_materialClonesRevision = 0;
     PartShaderParameters m_partShaderParameters;
     std::map<u32, u32> m_materialHolds;
     bool m_sweepMaterials = false;

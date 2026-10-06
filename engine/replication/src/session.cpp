@@ -539,11 +539,9 @@ struct OwnedBody
 
 [[nodiscard]] u8 schemaIndexOf(const generated::ClassDesc* desc) noexcept
 {
-    for (usize at = 0; at < schemaCount(); ++at) {
-        if (&generated::Classes[at] == desc)
-            return static_cast<u8>(at);
-    }
-    return 0;
+    // One of the table's own, so its place is its distance from the first.
+    const auto at = desc - generated::Classes;
+    return at >= 0 && static_cast<usize>(at) < schemaCount() ? static_cast<u8>(at) : u8{0};
 }
 
 // The flat index of a common field by name, which is fixed by the schema.
@@ -3190,13 +3188,28 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
     m_order.clear();
     std::vector<Walked>& stack = m_walkScratch;
     const auto byKey = [](const std::pair<u64, u32>& entry, u64 wanted) { return entry.first < wanted; };
+    // The capture before, which an instance nothing has touched is kept from
+    // -- of this same world: a world changed under the session is read whole.
+    const WorldState* before = m_readWorld == &world && !m_history.empty() ? m_history.back().get() : nullptr;
+    // Another world has classes of its own.
+    if (m_readWorld != &world) {
+        m_schemaAsked.clear();
+        m_schemaOfClass.clear();
+    }
+    const usize nameField = commonIndex("Name");
+    // How often an instance is read whatever its stamps say, in ticks, each on
+    // a tick of its own.
+    constexpr u64 RereadEvery = 8;
+    // A set to read an instance into: one a state the history let go was
+    // holding alone, or a new one.
     const auto fieldSet = [this] {
-        FieldSet fields;
+        std::shared_ptr<FieldSet> fields;
         if (!m_fieldPool.empty()) {
             fields = std::move(m_fieldPool.back());
             m_fieldPool.pop_back();
         }
         else {
+            fields = std::make_shared<FieldSet>();
             m_stats.fieldSetsAllocated += 1;
         }
         return fields;
@@ -3225,32 +3238,73 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
             // 0186), and takes its subtree with it as below.
             if (world.local(id))
                 continue;
-            const generated::ClassDesc* desc = schemaFor(world, id);
+            const scene::ClassId classId = world.classOf(id);
+            if (classId >= m_schemaAsked.size()) {
+                m_schemaAsked.resize(static_cast<usize>(classId) + 1, u8{0});
+                m_schemaOfClass.resize(static_cast<usize>(classId) + 1, nullptr);
+            }
+            if (m_schemaAsked[classId] == 0) {
+                m_schemaAsked[classId] = 1;
+                m_schemaOfClass[classId] = schemaFor(world, id);
+            }
+            const generated::ClassDesc* desc = m_schemaOfClass[classId];
             // **An instance the schema does not describe takes its subtree with
             // it.** A replica could not parent the children to anything.
             if (desc == nullptr)
                 continue;
-            FieldSet fields = fieldSet();
-            if (!extractFieldsInto(world, id, *desc, fields)) {
-                m_fieldPool.push_back(std::move(fields));
-                continue;
-            }
-
             const u64 key = packed(id);
             u32 netId = 0;
+            bool known = false;
             if (const auto found = std::lower_bound(m_netIds.begin(), m_netIds.end(), key, byKey);
                 found != m_netIds.end() && found->first == key) {
                 netId = found->second;
+                known = true;
+            }
+            const u8 schema = schemaIndexOf(desc);
+
+            // **Kept from the capture before, when the components it is read
+            // from are the same bytes** -- most of a world, every tick: its
+            // props, its walls, whatever stands still. Read again when they
+            // are not (`sourceDigestOf`), when it was renamed or moved in the
+            // tree, when it names another instance (whose leaving changes it
+            // and no byte of its own), and one tick in `RereadEvery` whatever
+            // the bytes say: what a field is read from that is neither is late
+            // by that much, and no more.
+            // Kept, it is the very set the state before holds: nothing is
+            // copied, and nothing is read.
+            SharedFields fields;
+            u64 keptHash = 0;
+            const u64 source = referencesOf(schema).empty() ? sourceDigestOf(world, id, *desc) : 0;
+            if (known && before != nullptr && source != 0 && (tick + netId) % RereadEvery != 0) {
+                const EntityState* held = findEntity(*before, netId);
+                if (held != nullptr && held->schema == schema && held->hash != 0 && held->source == source &&
+                    asU32(held->fields[nameField]) == world.name(id).id &&
+                    asU32(held->fields[parentField]) == next.parentNet) {
+                    fields = held->fields;
+                    keptHash = held->hash;
+                }
+            }
+            if (keptHash != 0) {
+                m_stats.entitiesKept += 1;
             }
             else {
+                std::shared_ptr<FieldSet> read = fieldSet();
+                if (!extractFieldsInto(world, id, *desc, *read)) {
+                    m_fieldPool.push_back(std::move(read));
+                    continue;
+                }
+                m_stats.entitiesRead += 1;
+                setNetId((*read)[parentField], NetId{next.parentNet});
+                fields = SharedFields(std::move(read));
+            }
+
+            if (!known) {
                 netId = m_nextNetId++;
                 m_classNames[netId] = world.classes().find(world.classOf(id))->name;
             }
             seen.emplace_back(key, netId);
 
-            setNetId(fields[parentField], NetId{next.parentNet});
-
-            state->entities.push_back(EntityState{NetId{netId}, schemaIndexOf(desc), std::move(fields)});
+            state->entities.push_back(EntityState{NetId{netId}, schema, std::move(fields), keptHash, source});
             const auto order = static_cast<i32>(m_order.size());
             m_order.push_back(Captured{netId, id, next.parentOrder, pinned});
             pushChildren(id, netId, order);
@@ -3269,14 +3323,14 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
         for (InstanceId child = world.firstChild(dataModel); child.valid(); child = world.nextSibling(child)) {
             if (world.atoms().text(world.classes().find(world.classOf(child))->name) != desc.name)
                 continue;
-            FieldSet fields = fieldSet();
-            if (!extractFieldsInto(world, child, desc, fields)) {
-                m_fieldPool.push_back(std::move(fields));
+            std::shared_ptr<FieldSet> read = fieldSet();
+            if (!extractFieldsInto(world, child, desc, *read)) {
+                m_fieldPool.push_back(std::move(read));
                 break;
             }
-            setNetId(fields[parentField], RootNetId);
+            setNetId((*read)[parentField], RootNetId);
             const u32 netId = ServiceNetIdBase + static_cast<u32>(index);
-            state->entities.push_back(EntityState{NetId{netId}, static_cast<u8>(index), std::move(fields)});
+            state->entities.push_back(EntityState{NetId{netId}, static_cast<u8>(index), SharedFields(std::move(read))});
             m_order.push_back(Captured{netId, child, -1, desc.contents});
             if (desc.contents)
                 walk(child, netId, static_cast<i32>(m_order.size() - 1), true);
@@ -3302,12 +3356,16 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
                     found != seen.end() && found->first == key)
                     named = found->second;
             }
-            setNetId(entity.fields[at], NetId{named});
+            // Read this tick, never kept: an instance that names another is.
+            setNetId(entity.fields.write()[at], NetId{named});
         }
         // What it comes to, once and for every peer: after the references,
-        // which are fields like any other.
-        entity.hash = hashOf(entity);
+        // which are fields like any other. One kept from the capture before
+        // comes to what it came to then.
+        if (entity.hash == 0)
+            entity.hash = hashOf(entity);
     }
+    m_readWorld = &world;
 
     // Instances gone since the last capture give their ids up for good: both
     // lists are in id order, so one walk of the two finds them.
@@ -3339,8 +3397,11 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
             // Made here, by `make_shared<WorldState>()`, and held by nobody
             // else: taking it apart is this function's to do.
             WorldState& spent = const_cast<WorldState&>(*gone);
-            for (EntityState& entity : spent.entities)
-                m_fieldPool.push_back(std::move(entity.fields));
+            for (EntityState& entity : spent.entities) {
+                // The sets no later state holds: those are free to read into.
+                if (std::shared_ptr<FieldSet> freed = entity.fields.release(); freed != nullptr)
+                    m_fieldPool.push_back(std::move(freed));
+            }
         }
     }
 }
@@ -5899,7 +5960,7 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
         if (const auto held = findEntity(state->entities, id); held != state->entities.end() && held->id.value == id) {
             at = &*held;
             if ((flags & FullRecord) != 0)
-                *at = EntityState{NetId{id}, schema, FieldSet(fieldCount(desc))};
+                *at = EntityState{NetId{id}, schema, SharedFields(FieldSet(fieldCount(desc)))};
             // Changed by this record: what it comes to is taken again below.
             at->hash = 0;
         }
@@ -5911,7 +5972,7 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
                 reader.fail();
                 break;
             }
-            added.push_back(EntityState{NetId{id}, schema, FieldSet(fieldCount(desc))});
+            added.push_back(EntityState{NetId{id}, schema, SharedFields(FieldSet(fieldCount(desc)))});
             at = &added.back();
         }
         for (u16 field = 0; field < fields && reader.ok(); ++field) {
@@ -5927,7 +5988,7 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
                 // Over the cell the baseline left there, whose rotation
                 // stands: only a diff of a frame can say so.
                 if ((flags & FullRecord) != 0 || encoding != generated::Encoding::CFrameD ||
-                    !decodePosition(reader.bytes(), reader.at(), at->fields[index])) {
+                    !decodePosition(reader.bytes(), reader.at(), at->fields.write()[index])) {
                     reader.fail();
                     break;
                 }
@@ -5938,7 +5999,7 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
                 reader.fail();
                 break;
             }
-            at->fields[index] = value;
+            at->fields.write()[index] = value;
         }
     }
     if (!reader.ok() || !reader.done())
@@ -6378,7 +6439,7 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
             continue; // its spawn has not arrived yet; the next apply writes it whole
         const generated::ClassDesc& desc = generated::Classes[entity.schema];
         const auto written = m_written.find(entity.id.value);
-        FieldSet next = entity.fields;
+        FieldSet next = entity.fields.copy();
         // **The own character is checked against every answer, moved or not.**
         // Only what changed is written, and an authority that stopped the
         // character -- against a wall the prediction walked through -- sends

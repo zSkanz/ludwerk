@@ -5169,31 +5169,38 @@ TEST_CASE("an authority's send costs what changed, not what there is (protocol 4
     // One of them tagged and carrying an attribute, the rest carrying nothing.
     match.server.world.addTag(bricks[0], match.server.atoms.intern("Marked"));
     (void)match.server.world.setAttribute(bricks[0], match.server.atoms.intern("Health"), scene::Value{5.0});
-    // Past the history's length, so a capture has states to take its field
-    // sets back from.
-    match.run(static_cast<int>(StateHistory) + 40);
-    REQUIRE(match.copyOf(bricks[2399]).valid());
-
-    const Stats before = match.authority->stats();
-    std::vector<double> took;
     constexpr int Ticks = 120;
     constexpr int Moved = 60;
-    for (int tick = 0; tick < Ticks; ++tick) {
+    std::vector<double> took;
+    int moves = 0;
+    const auto tick = [&](bool timed) {
         // Sixty of them move every tick, as a horde's bodies do.
         for (int index = 0; index < Moved; ++index)
             match.server.world.parts()
-                .find(bricks[static_cast<std::size_t>((tick * 7 + index * 37) % 2400)])
+                .find(bricks[static_cast<std::size_t>((moves * 7 + index * 37) % 2400)])
                 ->cframe.position.x += 0.01;
+        ++moves;
         match.tick += 1;
         match.authority->receive(match.server.world, match.server.workspace);
         const auto from = std::chrono::steady_clock::now();
         match.authority->send(match.server.world, match.server.workspace, match.tick);
-        took.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - from).count());
+        if (timed)
+            took.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - from).count());
         match.authority->sendMessages(match.server.world);
         match.replica->receive(match.client.world, match.client.workspace);
         match.replica->sendIntent(match.client.world, match.tick);
         match.replica->sendMessages(match.client.world);
-    }
+    };
+    // Twice past the history's length, moving as it will be measured: a
+    // capture takes its field sets back from the states the history lets go,
+    // and those are in step with what it reads once the first lap has gone.
+    for (int warm = 0; warm < 2 * static_cast<int>(StateHistory) + 40; ++warm)
+        tick(false);
+    REQUIRE(match.copyOf(bricks[2399]).valid());
+
+    const Stats before = match.authority->stats();
+    for (int measured = 0; measured < Ticks; ++measured)
+        tick(true);
     const Stats after = match.authority->stats();
     std::sort(took.begin(), took.end());
     MESSAGE("a send, in milliseconds: median " << took[took.size() / 2] << ", p95 " << took[took.size() * 95 / 100]
@@ -5207,11 +5214,24 @@ TEST_CASE("an authority's send costs what changed, not what there is (protocol 4
     CHECK(compared <= static_cast<core::u64>(Ticks) * Moved * 4);
     // The one instance that carries anything, each tick, and no other.
     CHECK(after.attributeBodiesEncoded - before.attributeBodiesEncoded == static_cast<core::u64>(Ticks));
-    // Not a field set allocated: each is one a state the history let go held.
-    CHECK(after.fieldSetsAllocated - before.fieldSetsAllocated == 0);
+    // **Read, only what may have changed**: the sixty that moved, and each
+    // instance one tick in eight whatever its bytes say -- an eighth of the
+    // rest. The others are kept from the capture before, their field sets
+    // shared with it and not copied.
+    const core::u64 read = after.entitiesRead - before.entitiesRead;
+    const core::u64 kept = after.entitiesKept - before.entitiesKept;
+    CAPTURE(read);
+    CAPTURE(kept);
+    CHECK(read + kept >= static_cast<core::u64>(Ticks) * 2700u);
+    CHECK(kept >= static_cast<core::u64>(Ticks) * 2200u);
+    CHECK(read >= static_cast<core::u64>(Ticks) * Moved);
+    CHECK(read <= static_cast<core::u64>(Ticks) * (2700u / 8u + Moved + 8u));
+    // And hardly a field set allocated: what is read goes into the sets the
+    // history let go, give or take a tick that reads more than was let go.
+    CHECK(after.fieldSetsAllocated - before.fieldSetsAllocated <= static_cast<core::u64>(Ticks));
     // And the replica has what the authority has, proved by every snapshot.
     CHECK(match.replica->checksumFailures() == 0);
-    const core::InstanceId moved = bricks[static_cast<std::size_t>(((Ticks - 1) * 7) % 2400)];
+    const core::InstanceId moved = bricks[static_cast<std::size_t>(((moves - 1) * 7) % 2400)];
     const core::InstanceId copy = match.copyOf(moved);
     REQUIRE(copy.valid());
     // Within a step of where the authority has it: a replica draws a moving
