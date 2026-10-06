@@ -1150,6 +1150,12 @@ CompileResult compile(const CompileOptions& options)
                 compiled.targets.emplace_back(target, std::move(build.code));
             }
         }
+        else if (options.requireSurfaces) {
+            result.diagnostic =
+                source->relative.generic_string() + ": cannot be compiled: there is no shader compiler at " +
+                options.shadercross.generic_string() + ", and a game cannot compile a surface shader for itself";
+            return result;
+        }
         else {
             result.surfacesUncompiled += 1;
         }

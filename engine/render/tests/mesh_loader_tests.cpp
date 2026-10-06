@@ -515,14 +515,25 @@ TEST_CASE("meshes arrive one frame at a time, or all at once, and it is a decisi
         loader.setContentMounts(&mounts);
         loader.setDeferredMeshes(true);
 
+        // **The frame that asks uploads nothing** (D571): each mesh is decoded
+        // and parked while a job makes the images it carries ready -- they
+        // were transcoded here, in the frame, one after another -- and every
+        // one of them is waited for.
         (void)loader.sync(*fixture.device, *fixture.cmd, world, workspace, cache, library);
-        CHECK(library.size() == 1);
+        CHECK(library.size() == 0);
+        CHECK(loader.meshesWaiting() == named);
 
-        // **And it drains.** A budget that never finishes is a world whose
-        // geometry never appears, which is worse than the hitch it replaced.
-        for (core::usize call = 0; call < named + 4 && library.size() < named; ++call)
+        // **One a call from there, never more, and it drains.** A budget that
+        // never finishes is a world whose geometry never appears, which is
+        // worse than the hitch it replaced.
+        for (int call = 0; call < 20000 && library.size() < named; ++call) {
+            const core::usize before = library.size();
             (void)loader.sync(*fixture.device, *fixture.cmd, world, workspace, cache, library);
+            CHECK(library.size() - before <= 1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
         CHECK(library.size() == named);
+        CHECK(loader.meshesWaiting() == 0);
 
         loader.destroy(*fixture.device);
         cache.destroy(*fixture.device);

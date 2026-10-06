@@ -263,6 +263,39 @@ TEST_CASE("a directory that is not there is a diagnostic rather than an empty bu
     CHECK_FALSE(result.diagnostic.empty());
 }
 
+TEST_CASE("D572: a build to be shipped does not pack a surface shader as its source and say nothing")
+{
+    std::error_code ec;
+    const std::filesystem::path root = std::filesystem::temp_directory_path(ec) / "engine-assetc-require-surfaces";
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root / "shaders", ec);
+    {
+        std::ofstream shader(root / "shaders" / "field.surface.hlsl", std::ios::binary);
+        shader << "#include \"engine/surface.hlsli\"\nvoid surface(inout Surface s, SurfaceInputs i) {}\n";
+    }
+
+    // A machine with no shader compiler -- a package copied without one. As a
+    // project's own pack is made, the shader goes in as its source and the
+    // count says so: the editor compiles it when it is drawn.
+    CompileOptions options;
+    options.inputRoot = root;
+    options.shadercross = root / "no-such-compiler";
+    const CompileResult packed = compile(options);
+    CHECK(packed.ok);
+    CHECK(packed.surfaceCount == 1);
+    CHECK(packed.surfacesUncompiled == 1);
+
+    // A build that will be given to players asks for it compiled, and is
+    // refused by name: a game has no compiler, and drew the error surface.
+    options.requireSurfaces = true;
+    const CompileResult refused = compile(options);
+    CHECK_FALSE(refused.ok);
+    CHECK(refused.diagnostic.find("shaders/field.surface.hlsl") != std::string::npos);
+    CHECK(refused.diagnostic.find("no-such-compiler") != std::string::npos);
+
+    std::filesystem::remove_all(root, ec);
+}
+
 // ---------------------------------------------------------------------------
 // The exotic importer (roadmap M7: "assimp as the offline-CLI-only importer for
 // exotic formats").

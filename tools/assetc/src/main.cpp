@@ -33,7 +33,7 @@ using engine::assetc::CompileResult;
 void usage()
 {
     std::cout << "usage: assetc --input <content-dir> --output <pack> --manifest <json> [--jobs N]\n"
-                 "              [--shadercross <exe>] [--shader-include <dir>]\n"
+                 "              [--shadercross <exe>] [--shader-include <dir>] [--require-surfaces]\n"
                  "\n"
                  "  Compiles a content directory into one .lpack and its manifest.\n"
                  "  Deterministic: the same inputs produce the same bytes, and --jobs 1 is how\n"
@@ -257,10 +257,15 @@ int main(int argc, char** argv)
     std::string shadercross;
     std::string shaderInclude;
 
+    bool requireSurfaces = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0) {
             usage();
             return 0;
+        }
+        if (std::strcmp(argv[i], "--require-surfaces") == 0) {
+            requireSurfaces = true;
+            continue;
         }
         if (flagValue(argc, argv, i, "--input", input) || flagValue(argc, argv, i, "--output", output) ||
             flagValue(argc, argv, i, "--manifest", manifest) || flagValue(argc, argv, i, "--jobs", jobsArgument) ||
@@ -305,6 +310,7 @@ int main(int argc, char** argv)
 
     CompileOptions options;
     options.inputRoot = input;
+    options.requireSurfaces = requireSurfaces;
     // **The surface shader compiler** (ADR 0091): given, or beside this binary
     // as a packaged editor carries it, or the build tree's own. The engine's
     // headers the same way: given, staged beside the binary, or the source

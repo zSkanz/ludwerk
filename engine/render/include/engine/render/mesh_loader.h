@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "engine/asset/content.h"
+#include "engine/asset/mesh_format.h"
 #include "engine/asset/texture.h"
 #include "engine/core/id.h"
 #include "engine/jobs/jobs.h"
@@ -201,6 +202,9 @@ public:
     // the pictures somebody is looking at now are worth more than the ones two
     // rooms away, which a queue of four hundred cannot express.
     static constexpr core::usize MaxTexturesInFlight = 4;
+    // And compiled meshes whose images are being made ready (D571): each is a
+    // mesh decoded and held, with its images' bytes beside it.
+    static constexpr core::usize MaxMeshesInFlight = 4;
 
     // Builds and uploads the five `Enum.PartShape` solids and registers them in
     // `library` under their reserved URNs (`primitiveContent`). Idempotent: the
@@ -293,6 +297,34 @@ private:
         std::unique_ptr<TextureWork> work;
     };
     std::vector<PendingTexture> pendingTextures_;
+
+    // **A compiled mesh on its way in** (D571). The images a mesh carries were
+    // transcoded in the frame the mesh arrived in, one after another -- 23 ms
+    // of a phone's frame for one character. With meshes deferred a mesh is
+    // decoded when it is first asked for and parked here while a job makes its
+    // images ready; the frame that finds the job done uploads it, one mesh a
+    // frame as before. On the heap for the reason `TextureWork` is.
+    struct MeshWork
+    {
+        asset::CompiledMesh compiled;
+        // Each image's blob, copied: a mount's bytes are a mount's to take
+        // away, and an object store's are read by the frame's thread alone.
+        std::vector<std::vector<std::byte>> blobs;
+        std::vector<asset::TextureAsset> textures;
+        // One an image: whether it transcoded. A byte, not a bit: the job
+        // writes them from another thread than reads them.
+        std::vector<core::u8> ok;
+        asset::TranscodeOptions options;
+    };
+    struct PendingMesh
+    {
+        core::NameAtom content;
+        // Not valid for a mesh with no images: there is nothing to wait for.
+        jobs::JobHandle images;
+        std::unique_ptr<MeshWork> work;
+    };
+    std::vector<PendingMesh> pendingMeshes_;
+    void releasePendingMeshes() noexcept;
     // Content URNs that failed to load, so a broken file costs one attempt and
     // one message rather than one of each per frame forever. Sorted, for the
     // same reason `MeshLibrary` is: R10 forbids an unordered container's order

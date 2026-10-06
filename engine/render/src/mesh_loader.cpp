@@ -207,6 +207,7 @@ void MeshLoader::destroy(rhi::IDevice& device)
     // machine and never on a slow one, at shutdown, where a crash reads as "the
     // editor crashed when I closed it" and points at nothing.
     releasePendingTextures();
+    releasePendingMeshes();
 
     for (const rhi::TextureHandle texture : textures_) {
         if (texture.valid())
@@ -226,6 +227,17 @@ MeshLoader::~MeshLoader()
     // be left is a job still writing into memory this object is about to
     // release, so that much happens unconditionally.
     releasePendingTextures();
+    releasePendingMeshes();
+}
+
+void MeshLoader::releasePendingMeshes() noexcept
+{
+    // Waited for, as a texture's decode is: the job writes into what these own.
+    for (PendingMesh& pending : pendingMeshes_) {
+        if (pending.images.valid())
+            jobs::wait(pending.images);
+    }
+    pendingMeshes_.clear();
 }
 
 void MeshLoader::releasePendingTextures() noexcept
@@ -806,6 +818,74 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
         // folder of five models dropped in at once would still put all of it in
         // one frame. Raising it is a measurement, not a deletion, and there is
         // no measurement here yet.
+        // **A compiled mesh's images are made ready off the frame** (D571).
+        // First asked for, the mesh is decoded -- which is small -- and
+        // parked while a job transcodes what it carries; asked for again with
+        // the job done, it is uploaded under the budget above, images and
+        // all. Only with meshes deferred: a headless run and a capture load
+        // in the frame that asks, as they did.
+        std::unique_ptr<MeshWork> ready;
+        if (deferredMeshes_ && resolved.source == asset::ResolvedContent::Source::Pack &&
+            resolved.kind == asset::AssetKind::Mesh) {
+            const auto parked = std::find_if(pendingMeshes_.begin(), pendingMeshes_.end(),
+                                             [&](const PendingMesh& pending) { return pending.content == content; });
+            if (parked == pendingMeshes_.end()) {
+                ++meshesWaiting_;
+                if (pendingMeshes_.size() >= MaxMeshesInFlight)
+                    return;
+                PendingMesh pending;
+                pending.content = content;
+                pending.work = std::make_unique<MeshWork>();
+                MeshWork* work = pending.work.get();
+                if (auto error = asset::decodeMesh(resolved.bytes, work->compiled); error.has_value()) {
+                    core::logText(core::LogLevel::Warn, error->message);
+                    markFailed();
+                    return;
+                }
+                work->options = transcode_;
+                work->blobs.resize(work->compiled.images.size());
+                work->textures.resize(work->compiled.images.size());
+                work->ok.assign(work->compiled.images.size(), core::u8{0});
+                for (usize index = 0; index < work->compiled.images.size(); ++index) {
+                    const std::span<const std::byte> blob = mounts_->blob(work->compiled.images[index].hash);
+                    work->blobs[index].assign(blob.begin(), blob.end());
+                }
+                if (!work->blobs.empty()) {
+                    pending.images = jobs::schedule("mesh-images", jobs::Domain::AssetIo, [work]() noexcept {
+                        for (usize index = 0; index < work->blobs.size(); ++index) {
+                            work->ok[index] = !work->blobs[index].empty() &&
+                                                      !asset::transcodeTexture(work->blobs[index], work->options,
+                                                                               work->textures[index])
+                                                           .has_value()
+                                                  ? core::u8{1}
+                                                  : core::u8{0};
+                            work->blobs[index].clear();
+                            work->blobs[index].shrink_to_fit();
+                        }
+                    });
+                    // No job to be had: made ready here, as with nothing deferred.
+                    if (!pending.images.valid()) {
+                        for (usize index = 0; index < work->blobs.size(); ++index) {
+                            work->ok[index] = !work->blobs[index].empty() &&
+                                                      !asset::transcodeTexture(work->blobs[index], work->options,
+                                                                               work->textures[index])
+                                                           .has_value()
+                                                  ? core::u8{1}
+                                                  : core::u8{0};
+                        }
+                    }
+                }
+                pendingMeshes_.push_back(std::move(pending));
+                return;
+            }
+            if ((parked->images.valid() && !jobs::finished(parked->images)) || meshesThisCall > 0) {
+                ++meshesWaiting_;
+                return;
+            }
+            ready = std::move(parked->work);
+            pendingMeshes_.erase(parked);
+        }
+
         if (deferredMeshes_) {
             if (meshesThisCall > 0) {
                 ++meshesWaiting_;
@@ -820,7 +900,10 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
 
         if (resolved.source == asset::ResolvedContent::Source::Pack && resolved.kind == asset::AssetKind::Mesh) {
             asset::CompiledMesh compiled;
-            if (auto error = asset::decodeMesh(resolved.bytes, compiled); error.has_value()) {
+            if (ready != nullptr) {
+                compiled = std::move(ready->compiled);
+            }
+            else if (auto error = asset::decodeMesh(resolved.bytes, compiled); error.has_value()) {
                 core::logText(core::LogLevel::Warn, error->message);
                 markFailed();
                 return;
@@ -884,10 +967,21 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
 
             std::vector<rhi::TextureHandle> images;
             images.reserve(compiled.images.size());
-            for (const asset::TextureSlot& slot : compiled.images) {
+            for (usize slotIndex = 0; slotIndex < compiled.images.size(); ++slotIndex) {
+                const asset::TextureSlot& slot = compiled.images[slotIndex];
                 asset::TextureAsset texture;
-                const std::span<const std::byte> blob = mounts_->blob(slot.hash);
-                if (blob.empty() || asset::transcodeTexture(blob, transcode_, texture).has_value()) {
+                bool transcoded = false;
+                if (ready != nullptr) {
+                    // Made ready by the job (D571).
+                    transcoded = slotIndex < ready->ok.size() && ready->ok[slotIndex] != 0;
+                    if (transcoded)
+                        texture = std::move(ready->textures[slotIndex]);
+                }
+                else {
+                    const std::span<const std::byte> blob = mounts_->blob(slot.hash);
+                    transcoded = !blob.empty() && !asset::transcodeTexture(blob, transcode_, texture).has_value();
+                }
+                if (!transcoded) {
                     // A material without its texture still draws, tinted. A
                     // mesh refused for a missing texture would take the whole
                     // world with it.
@@ -1069,6 +1163,15 @@ core::u32 MeshLoader::forget(rhi::IDevice& device, std::span<const core::NameAto
         if (const rhi::TextureHandle held = textures.take(urn); held.valid() && held != viewBlack_) {
             device.destroy(held);
             ++dropped;
+        }
+
+        // One on its way in is another file's by the time it lands (D571).
+        if (const auto parked = std::find_if(pendingMeshes_.begin(), pendingMeshes_.end(),
+                                             [&](const PendingMesh& pending) { return pending.content == urn; });
+            parked != pendingMeshes_.end()) {
+            if (parked->images.valid())
+                jobs::wait(parked->images);
+            pendingMeshes_.erase(parked);
         }
 
         // The mesh, and its GPU buffers with it. `MeshLibrary::remove` drops the

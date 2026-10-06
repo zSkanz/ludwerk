@@ -40,8 +40,22 @@ export type Side = "all" | "client" | "server"
 --- partition cache, and none of these.
 --- And `session`: a run's own cache of changed ground (ADR 0149), which a run
 --- that died leaves behind -- tens of thousands of files of nobody's.
-local EditorOnly =
-    { "editor.json", "import", "check", "types", "match", "export", "trash", "conflicts", "saves", "session" }
+--- And `settings.json`: the settings of whoever last ran the project from its
+--- folder -- a language, a window, a quality -- which were shipped to every
+--- player as the game's own (D573). A player's are kept in the player's folder.
+local EditorOnly = {
+    "editor.json",
+    "import",
+    "check",
+    "types",
+    "match",
+    "export",
+    "trash",
+    "conflicts",
+    "saves",
+    "session",
+    "settings.json",
+}
 local EditorOnlyPrefixes = { "editor-layout" }
 
 local function editorOnly(name: string): boolean

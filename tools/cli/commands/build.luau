@@ -336,9 +336,27 @@ local function run(options: Options): number
             end
             local pack = projectlib.joined(stage, "content.lpack")
             local manifest = projectlib.joined(stage, "content.manifest.json")
-            local built = process.run({ assetc, "--input", staged, "--output", pack, "--manifest", manifest })
+            -- `--require-surfaces`: a surface shader that cannot be compiled
+            -- stops the build (D572). Packed as source it drew as the error
+            -- surface in every copy of the game, and the build said nothing.
+            local built = process.run({
+                assetc,
+                "--input",
+                staged,
+                "--output",
+                pack,
+                "--manifest",
+                manifest,
+                "--require-surfaces",
+            })
             if not built.ok then
                 return built.stdout .. built.stderr .. "\n" .. tr("cli.assets.err.failed")
+            end
+            -- What went into the pack, in the compiler's own count: meshes,
+            -- textures, materials, surface shaders.
+            local summary = string.match(built.stdout, "(assetc: %d+ mesh[^\r\n]*)")
+            if summary ~= nil then
+                progress.note(reporter, summary)
             end
             sidePack = pack
             sideManifest = manifest

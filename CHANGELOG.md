@@ -1120,6 +1120,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   over 33 ms.
 - **`--frame-stats` counts the frame cap's wait as waiting** (D561), under
   the scope `wait.cap`. It was reported as drawing on the CPU.
+- **A build does not ship a surface shader it could not compile** (D572).
+  `ludwerk build` stops, naming the shader and the compiler it looked for,
+  where it packed the source and said nothing -- and every copy of the game
+  drew the error surface. A compiler that fails without an error of its own
+  now says how: not started, or ended with a code (a library missing beside
+  it), with its path.
+- **A build no longer ships the settings of whoever last ran the project**
+  (D573): `.engine/settings.json`, written by a run from the project's folder,
+  went into `game/` and was every player's language, window and quality.
+- **A model's own pictures no longer cost the frame it is first shown in**
+  (D571): they are made ready on the worker threads, as loose and compiled
+  maps already were. 23 ms of a phone's frame for one character.
 - **A swarm the host has disabled stands still on every other machine**
   (D570). `Swarm.Enabled = false` on the authority was not told to a replica,
   which went on carrying every agent along its last walk and being corrected

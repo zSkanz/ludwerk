@@ -5,6 +5,14 @@
 #include <SDL3/SDL_properties.h>
 #include <SDL3/SDL_stdinc.h>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace engine::platform {
 namespace {
 
@@ -41,6 +49,15 @@ namespace {
 }
 
 } // namespace
+
+unsigned long processId() noexcept
+{
+#if defined(_WIN32)
+    return static_cast<unsigned long>(GetCurrentProcessId());
+#else
+    return static_cast<unsigned long>(getpid());
+#endif
+}
 
 ProcessResult runProcess(const std::vector<std::string>& arguments)
 {

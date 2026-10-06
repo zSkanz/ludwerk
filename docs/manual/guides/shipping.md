@@ -250,6 +250,12 @@ editor's files: layouts, `editor.json`, the import and check caches.
   <folder>` writes the files back out. It keeps your project from being
   handed over as a folder to browse; it does not keep a determined person out.
 
+**A surface shader goes in compiled, for every backend, or the build stops.**
+A game cannot compile one for itself, so `ludwerk build` refuses to pack a
+`*.surface.hlsl` it could not compile and names the compiler it looked for:
+`shadercross`, with `dxcompiler` and `dxc` beside it, in the engine's folder.
+The pack step says how many went in.
+
 To ship the folder of files instead -- `project.toml`, `src/`, `i18n/` and
 the pack with its manifest, as every build before this made:
 

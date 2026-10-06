@@ -413,6 +413,30 @@ type "$ctestLog"
     # no arguments, and the icon read back out of the artifact. Here rather than
     # in ctest because it drives the CLI, which is a Lute application -- and
     # because `--target win64` is a Windows artifact, which is this stage.
+    #
+    # **A player tree that is on this machine is brought up to date first.**
+    # `ludwerk build` packages the player it finds, with the asset compiler
+    # from the same tree (D517) -- and a `win-msvc-player` tree is built by the
+    # profiles stage, not by this one, so it sat days behind: the suite then
+    # packaged a player that could not read what the build had just learned
+    # to write, with an `assetc` that did not know the command it was given.
+    # A machine with no such tree packages the dev host, as CI does.
+    $playerTree = Join-Path $env:ENG_BUILD_ROOT 'win-msvc-player'
+    if (Test-Path (Join-Path $playerTree 'build.ninja')) {
+        $playerScript = @"
+chcp 65001 >nul
+call "$vcvars" >nul || exit /b 1
+cmake --build --preset win-msvc-player --target engine_host assetc || exit /b 1
+"@
+        $playerTemp = Join-Path $env:TEMP "engine-player-$PID.cmd"
+        Set-Content -Path $playerTemp -Value $playerScript -Encoding ascii
+        try {
+            & cmd.exe /c $playerTemp
+            if ($LASTEXITCODE -ne 0) { throw "the player tree on this machine did not build" }
+        } finally {
+            Remove-Item $playerTemp -ErrorAction SilentlyContinue
+        }
+    }
     & lute test tests/packaging
     if ($LASTEXITCODE -ne 0) { throw "the packaging gate failed" }
 }

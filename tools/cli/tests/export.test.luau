@@ -211,6 +211,9 @@ test.suite("export", function(suite)
         for _, name in { "editor.json", "import", "check", "types", "match", "export", "editor-layout.v3.ini" } do
             assert.that(game.editorOnly(name), `{name} would ship`)
         end
+        -- D573: the settings of the last person to run the project from its
+        -- folder are theirs, not every player's.
+        assert.that(game.editorOnly("settings.json"), "a developer's settings would ship")
         for _, name in { "content.lpack", "content.manifest.json", "partition" } do
             assert.that(not game.editorOnly(name), `{name} would not ship`)
         end

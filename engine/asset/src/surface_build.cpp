@@ -192,39 +192,89 @@ SurfaceBuild buildSurface(const SurfaceBuildInputs& inputs, SurfaceTarget target
     for (u32 variant = 0; variant < VariantStems.size(); ++variant) {
         for (const bool fragment : {false, true}) {
             const std::string stem = std::string(VariantStems[variant]) + (fragment ? ".fragment" : ".vertex");
-            const std::filesystem::path wrapper = directory / (stem + ".hlsl");
-            const std::filesystem::path output = directory / (stem + ".bin");
+            // **A stage is compiled under a name of this process's own and
+            // moved into place whole** (D572): two processes asked for one
+            // shader at once -- two copies of a game started together --
+            // otherwise meet in one file, one reading what the other has half
+            // written or refused the file the other holds open.
+            const std::string own = stem + "." + std::to_string(platform::processId());
+            const std::filesystem::path wrapper = directory / (own + ".hlsl");
+            const std::filesystem::path output = directory / (own + ".bin");
+            const std::filesystem::path placed = directory / (stem + ".bin");
             std::vector<std::byte>& code = build.code[variant * 2 + (fragment ? 1 : 0)];
-            if (platform::readFile(output, code) && !code.empty())
+            if (platform::readFile(placed, code) && !code.empty())
                 continue;
             if (!platform::writeTextFile(wrapper, wrapperOf(variant, fragment))) {
                 build.errors.push_back(SurfaceBuildError{wrapper.generic_string(), 0, "cannot be written"});
                 return build;
             }
-            const platform::ProcessResult result = platform::runProcess({
-                inputs.shadercross.string(),
-                wrapper.string(),
-                "-s",
-                "HLSL",
-                "-d",
-                std::string(surfaceTargetName(target)),
-                "-t",
-                fragment ? "fragment" : "vertex",
-                "-e",
-                fragment ? "FragmentMain" : "VertexMain",
-                "-I",
-                inputs.include.string(),
-                "-o",
-                output.string(),
-            });
+            const auto compile = [&] {
+                return platform::runProcess({
+                    inputs.shadercross.string(),
+                    wrapper.string(),
+                    "-s",
+                    "HLSL",
+                    "-d",
+                    std::string(surfaceTargetName(target)),
+                    "-t",
+                    fragment ? "fragment" : "vertex",
+                    "-e",
+                    fragment ? "FragmentMain" : "VertexMain",
+                    "-I",
+                    inputs.include.string(),
+                    "-o",
+                    output.string(),
+                });
+            };
+            platform::ProcessResult result = compile();
+            const auto made = [&] {
+                return result.started && result.exitCode == 0 && platform::readFile(output, code) && !code.empty();
+            };
+            // Once more where it failed with no word about the shader: what
+            // is left is the machine's -- a file held a moment by something
+            // else -- and a second try is cheaper than a game with a surface
+            // missing.
+            if (!made() && parseSurfaceErrors(result.output).empty())
+                result = compile();
             ++build.compiled;
-            if (!result.started || result.exitCode != 0 || !platform::readFile(output, code) || code.empty()) {
+            std::error_code moveError;
+            if (!made()) {
                 build.errors = parseSurfaceErrors(result.output);
-                if (build.errors.empty())
-                    build.errors.push_back(SurfaceBuildError{"", 0, "the shader compiler did not run"});
+                // **What happened, where the compiler gave no error to read**
+                // (D572). "The shader compiler did not run" was said of all of
+                // it -- a compiler that is not there, one whose library is
+                // missing beside it, one that ran and wrote nothing -- and the
+                // commonest, a package copied without `dxcompiler`, read as a
+                // fault of the shader.
+                if (build.errors.empty()) {
+                    std::string what = "the shader compiler at " + inputs.shadercross.generic_string();
+                    if (!result.started) {
+                        what += " could not be started";
+                    }
+                    else if (result.exitCode != 0) {
+                        what += " ended with code " + std::to_string(result.exitCode) +
+                                " and no error to read: a library it needs may be missing beside it";
+                    }
+                    else {
+                        what += " ran and wrote nothing";
+                    }
+                    const usize line = result.output.find_first_not_of(" \t\r\n");
+                    if (line != std::string::npos) {
+                        const usize end = result.output.find_first_of("\r\n", line);
+                        what += " (" + result.output.substr(line, end == std::string::npos ? end : end - line) + ")";
+                    }
+                    build.errors.push_back(SurfaceBuildError{"", 0, std::move(what)});
+                }
                 std::filesystem::remove(output, fsError);
                 return build;
             }
+            // Into place: over nothing, or over the same bytes another
+            // process put there first.
+            std::filesystem::rename(output, placed, moveError);
+            if (moveError)
+                std::filesystem::remove(output, moveError);
+            // The wrapper stays only where the compile failed, to be read.
+            std::filesystem::remove(wrapper, moveError);
         }
     }
     build.ok = true;

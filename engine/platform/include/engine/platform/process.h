@@ -40,6 +40,10 @@ struct ProcessOptions
 };
 
 [[nodiscard]] ProcessResult runProcess(const std::vector<std::string>& arguments);
+
+// This process's number, as the system counts them: what makes a file's name
+// one no other process running now would choose.
+[[nodiscard]] unsigned long processId() noexcept;
 [[nodiscard]] ProcessResult runProcess(const std::vector<std::string>& arguments, const ProcessOptions& options);
 
 // **A program that runs beside this one, and whose output is read while it

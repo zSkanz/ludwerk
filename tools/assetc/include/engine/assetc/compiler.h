@@ -97,6 +97,10 @@ struct ManifestEntry
 struct CompileOptions
 {
     std::filesystem::path inputRoot;
+    // **A surface shader that cannot be compiled is a failure** (D572), where
+    // it is otherwise packed as its source and said in a warning: what a
+    // build to be shipped asks for, since a game cannot compile one.
+    bool requireSurfaces = false;
     asset::MeshCompileOptions mesh;
 
     // Where compiled blobs are remembered between runs, or empty for no cache.
