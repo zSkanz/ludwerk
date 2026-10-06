@@ -2624,6 +2624,15 @@ local Classes: { Schema.Class } = {
                 Doc = "How far from a player's focus an agent is sent, so a replica's script can read what "
                     .. "the authority decided.",
             },
+            {
+                Name = "Enabled",
+                Id = 3,
+                Encoding = "Bool",
+                Source = "Component",
+                Component = "swarms",
+                Doc = "Whether the authority's swarm steps (D570, protocol 41). Off, a replica carries no "
+                    .. "agent forward: they stand where they were last told, as the authority's stand.",
+            },
         },
     },
     {

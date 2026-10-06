@@ -7,6 +7,7 @@
 #include <span>
 #include <sstream>
 
+#include "engine/asset/seal.h"
 #include "engine/core/i18n.h"
 #include "engine/core/toml.h"
 #include "engine/core/toml_edit.h"
@@ -585,8 +586,15 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     // not it has a file: said here, and again below once the file has spoken.
     config.pacing = handheldPacing(config.pacing, handheld);
 
+    // Off the disk, or out of the pack of a game that is sealed (ADR 0183):
+    // the settings are the first thing a game is asked for, before anything
+    // of it is mounted.
     std::string text;
-    if (projectRoot.empty() || !readFile(projectRoot / "project.toml", text)) {
+    const auto sealedText = [&]() {
+        const std::shared_ptr<const asset::SealedGame> sealed = asset::SealedGame::open(projectRoot);
+        return sealed != nullptr && sealed->readText("project.toml", text);
+    };
+    if (projectRoot.empty() || (!readFile(projectRoot / "project.toml", text) && !sealedText())) {
         config.graphics = resolveGraphics(overrides, handheld);
         return config;
     }

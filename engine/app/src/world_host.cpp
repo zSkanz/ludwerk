@@ -16,6 +16,7 @@
 #include "class_descriptors.gen.h"
 #include "engine/asset/gltf.h"
 #include "engine/asset/mesh_format.h"
+#include "engine/asset/seal.h"
 #include "engine/audio/scene_types.h"
 #include "engine/core/build_info.h"
 #include "engine/core/content_path.h"
@@ -120,11 +121,34 @@ constexpr std::string_view ConformanceRunnerPath = "runtime/conformance/runner.l
 }
 
 // Every `.luau` file under `folder`, as entries for `container` (ADR 0105), or
-// its compiled `.luauc`.
+// its compiled `.luauc` -- off the disk, or out of the pack of a game that is
+// sealed (ADR 0183): the same files under the same names, in the order the
+// mount sorts them into either way.
 void collectScriptFiles(const std::filesystem::path& root, const std::filesystem::path& folder, std::string container,
-                        bool module, std::vector<script::MountedScript>& entries)
+                        bool module, std::vector<script::MountedScript>& entries,
+                        const asset::SealedGame* sealed = nullptr)
 {
     std::error_code ec;
+    if (sealed != nullptr) {
+        const std::string under = toProjectPath(std::filesystem::relative(folder, root, ec));
+        for (const std::string& file : sealed->filesUnder(under)) {
+            const std::filesystem::path path(file);
+            if (path.extension() != ".luau" && path.extension() != script::CompiledExtension)
+                continue;
+            std::string source;
+            if (!sealed->readText(file, source))
+                continue;
+            const std::filesystem::path named = sourceNameOf(path);
+            entries.push_back(script::MountedScript{
+                .path = toProjectPath(named),
+                .mountPath = toProjectPath(named.lexically_relative(std::filesystem::path(under))),
+                .source = std::move(source),
+                .container = container,
+                .module = module,
+            });
+        }
+        return;
+    }
     if (!std::filesystem::is_directory(folder, ec))
         return;
     // **`increment(ec)`, not the range-for.** The error-code CONSTRUCTOR only
@@ -229,6 +253,8 @@ struct WorldHostLoader
         // depends on which file was created first -- each as source, then
         // compiled (ADR 0112), under the source's name either way.
         const auto present = [&](const std::string& path) {
+            if (host.m_sealed != nullptr)
+                return host.m_sealed->has(path) || host.m_sealed->has(path + "c");
             return std::filesystem::is_regular_file(host.m_root / path) ||
                    std::filesystem::is_regular_file(host.m_root / (path + "c"));
         };
@@ -258,6 +284,13 @@ struct WorldHostLoader
     static bool read(void* user, std::string_view path, std::string& outSource)
     {
         auto& host = *static_cast<WorldHost*>(user);
+        if (host.m_sealed != nullptr) {
+            // A sealed game's scripts are in its pack, compiled, under the
+            // names their sources had (ADR 0183).
+            if (host.m_sealed->readText(path, outSource))
+                return true;
+            return path.ends_with(".luau") && host.m_sealed->readText(std::string(path) + "c", outSource);
+        }
         const std::filesystem::path file = host.m_root / std::filesystem::path(path);
         if (readFile(file, outSource))
             return true;
@@ -815,9 +848,12 @@ std::optional<core::EngineError> WorldHost::mountProject(const std::filesystem::
         // A directory is a project root and gets the full mount (M2 brief,
         // Decision 9).
         m_root = path;
+        // Sealed, the folder has no `src/` to walk: its pack says what is
+        // there (ADR 0183).
+        m_sealed = asset::SealedGame::open(m_root);
 
         std::string config;
-        if (readFile(m_root / ".luaurc", config)) {
+        if (m_sealed != nullptr ? m_sealed->readText(".luaurc", config) : readFile(m_root / ".luaurc", config)) {
             core::JsonDocument document;
             if (document.parse(config, ".luaurc")) {
                 const core::JsonValue aliases = document.root()["aliases"];
@@ -839,14 +875,14 @@ std::optional<core::EngineError> WorldHost::mountProject(const std::filesystem::
         // two under the scene's own services. `src/scripts/` is the one before
         // it, read as `src/client/` for one release and said out loud.
         const auto mountFolder = [&](const std::filesystem::path& folder, std::string container, bool module) {
-            collectScriptFiles(m_root, folder, std::move(container), module, entries);
+            collectScriptFiles(m_root, folder, std::move(container), module, entries, m_sealed.get());
         };
         const std::filesystem::path source = m_root / "src";
         const std::filesystem::path legacy = source / "scripts";
         // A sub-world is a scene played alone inside the game, not the game:
         // `GlobalScriptService` is the host's (ADR 0107 §3).
         if (!m_world->engineState().subWorld) {
-            if (std::filesystem::is_directory(legacy, ec)) {
+            if (m_sealed != nullptr ? m_sealed->hasUnder("src/scripts") : std::filesystem::is_directory(legacy, ec)) {
                 core::log(LogLevel::Warn, ENG_TR("engine.boot.warn.src_scripts_moved"));
                 mountFolder(legacy, "GlobalScriptService/Client", false);
             }
@@ -1827,10 +1863,10 @@ void WorldHost::restartServerCode()
     w.retireDestroyed();
 
     std::vector<script::MountedScript> entries;
-    collectScriptFiles(m_root, m_root / "src" / "server", "GlobalScriptService/Server", false, entries);
+    collectScriptFiles(m_root, m_root / "src" / "server", "GlobalScriptService/Server", false, entries, m_sealed.get());
     if (!m_sceneName.empty()) {
         collectScriptFiles(m_root, m_root / "src" / "scenes" / m_sceneName / "server", "ServerScriptService", false,
-                           entries);
+                           entries, m_sealed.get());
     }
     for (const core::InstanceId made : script::mountScripts(m_runtime->state(), entries))
         (void)script::startScript(m_runtime->state(), made);
@@ -1863,8 +1899,8 @@ void WorldHost::remountSceneScripts(std::string_view path)
     m_sceneName = sceneFolderName(std::filesystem::path(std::string(path)));
     std::vector<script::MountedScript> entries;
     const std::filesystem::path scene = m_root / "src" / "scenes" / m_sceneName;
-    collectScriptFiles(m_root, scene / "server", "ServerScriptService", false, entries);
-    collectScriptFiles(m_root, scene / "client", "ClientScriptService", false, entries);
+    collectScriptFiles(m_root, scene / "server", "ServerScriptService", false, entries, m_sealed.get());
+    collectScriptFiles(m_root, scene / "client", "ClientScriptService", false, entries, m_sealed.get());
     script::mountScripts(m_runtime->state(), entries);
 }
 

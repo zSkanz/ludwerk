@@ -143,6 +143,7 @@ Lines that are not JSON are the tools' own output. The steps, in order:
 | `pack` | the content pack -- per side, for a dedicated game |
 | `layout` | the player, the engine's content and the game, into the folder |
 | `partition` | the streaming cells, pre-warmed into the package |
+| `seal` | the scripts, the catalogues and the settings into the pack, unless `[export] packed = false` |
 | `icon` | one PNG, every size the target needs |
 | `stamp` | the icon and the version, into a Windows executable |
 | `archive` | the `.zip` or `.tar.gz` beside the folder |

@@ -230,10 +230,33 @@ What each service is, on each side (solo and a host have both columns):
 
 ## What goes into `game/`
 
-Every target's `game/` holds `project.toml` and `.luaurc`, the scripts
-(compiled, below), the content pack, and the partition cache -- made on the package itself, so a
-dedicated side's cache holds only its own scene. It does **not** hold the
+**One pack**, `game/.engine/content.lpack`: the game's content, its scripts
+(compiled, below), its catalogues, `project.toml` and `.luaurc`, sealed into
+one file (ADR 0183). Beside it, only what is streamed from files of its own --
+a streamed terrain's cells, the partition cache, made on the package itself so
+a dedicated side's cache holds only its own scene. It does **not** hold the
 editor's files: layouts, `editor.json`, the import and check caches.
+
+- **No name is readable in it.** What a script asks for as
+  `asset://textures/base.png` is found by the hash of that name; the list of
+  the game's files, and every scene, stamp, material, script and catalogue,
+  is compressed.
+- **A damaged copy says so.** Every entry is checked against the hash it is
+  filed under while the game loads; a download cut short, or a file changed
+  since, is "this game's files are damaged" and not a game that half runs.
+- **Nothing in your game changes.** Content resolves by the names it always
+  had, errors name the script and the line, and saves are not in this folder.
+- **It is not a lock.** The format is public and `assetc unseal <game> --out
+  <folder>` writes the files back out. It keeps your project from being
+  handed over as a folder to browse; it does not keep a determined person out.
+
+To ship the folder of files instead -- `project.toml`, `src/`, `i18n/` and
+the pack with its manifest, as every build before this made:
+
+```toml
+[export]
+packed = false
+```
 
 If no content pack was built, the loose `content/` and `assets/` trees are
 copied instead -- shipping both would double the size of every game, and
@@ -241,10 +264,10 @@ shipping neither would be a game with no art.
 
 ## It ships bytecode, not source
 
-Every script in `game/src/` is compiled to Luau bytecode as the game is laid
+Every script under `src/` is compiled to Luau bytecode as the game is laid
 out, by the engine's own compiler with the options it runs scripts with, and
-the source is removed: `init.luau` ships as `init.luauc`. No `.luau` is in the
-package (ADR 0112).
+the source is removed: `init.luau` ships as `init.luauc`, inside the pack. No
+`.luau` is in the package (ADR 0112).
 
 - **An error still names the script and the line.** The bytecode keeps line
   information, so a player's log says `src/client/init.luau:42` as your own
@@ -265,6 +288,9 @@ source** in the Export window, or:
 [export]
 ship_source = true
 ```
+
+A game that ships its source is left as files, for the same reason; add
+`packed = true` to seal it all the same.
 
 ## Before you ship
 

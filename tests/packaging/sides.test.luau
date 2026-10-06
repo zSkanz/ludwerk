@@ -22,6 +22,7 @@
 local assert = require("@std/test/assert")
 local fs = require("@std/fs")
 local platform = require("@std/system/platform")
+local process = require("@std/process")
 local test = require("@std/test")
 
 local build = require("../../tools/cli/commands/build")
@@ -295,9 +296,41 @@ local function everyFile(root: string, out: { [string]: string })
     end
 end
 
-local function checkSide(output: string, own: { string }, foreign: { string })
+--- **What a sealed game holds, as files to search** (ADR 0183): its own
+--- files at the paths they had, and every scene, stamp and material by its
+--- hash -- written beside the output by `assetc unseal`. A sealed pack is
+--- compressed, so a string that leaked into one would be found here or nowhere;
+--- the raw files are searched as well, which is what says the sealing worked.
+local function unsealed(output: string): string?
+    local game = projectlib.joined(output, "game")
+    if fs.exists(projectlib.joined(game, "src")) or fs.exists(projectlib.joined(game, "project.toml")) then
+        return nil
+    end
+    local assetc = projectlib.findTool("assetc")
+    assert.that(assetc ~= nil, "no asset compiler was found to unseal the game with")
+    local into = output .. "-unsealed"
+    removeTree(into)
+    local opened = process.run({ assetc :: string, "unseal", game, "--out", into })
+    assert.that(opened.ok, `the game at {game} could not be unsealed:\n{opened.stdout}{opened.stderr}`)
+    return into
+end
+
+local function checkSide(output: string, own: { string }, foreign: { string }, sealed: boolean?)
     local files: { [string]: string } = {}
     everyFile(projectlib.joined(output, "game"), files)
+    local opened = unsealed(output)
+    assert.eq(opened ~= nil, sealed ~= false)
+    if opened ~= nil then
+        -- Sealed: nothing of the game is a file of its own, and nothing of
+        -- either side is readable in what is.
+        for file, text in files do
+            assert.that(string.sub(file, -6) ~= ".luauc", `{file} is a script beside a sealed pack`)
+            for _, sentinel in own do
+                assert.that(string.find(text, sentinel, 1, true) == nil, `{sentinel} can be read in {file}`)
+            end
+        end
+        everyFile(opened, files)
+    end
     for _, sentinel in foreign do
         for file, text in files do
             assert.that(string.find(text, sentinel, 1, true) == nil, `{sentinel} leaked into {file}`)
@@ -343,7 +376,8 @@ test.suite("dedicated sides", function(suite)
         )
 
         -- The server's package says what it is, so it serves with no arguments.
-        local toml = fs.readFileToString(projectlib.joined(project, "dist", `{desktop}-server`, "game", "project.toml"))
+        local toml =
+            fs.readFileToString(projectlib.joined(project, "dist", `{desktop}-server-unsealed`, "project.toml"))
         assert.that(string.find(toml, 'role = "server"', 1, true) ~= nil, "the server package has no role")
 
         -- And a server target of a game that is not dedicated is refused.
@@ -368,6 +402,29 @@ test.suite("dedicated sides", function(suite)
             assert.eq(build.run({ path = project, output = nil, target = desktop, force = true, devHost = true }), 0)
             checkSide(projectlib.joined(project, "dist", desktop), everything, NowhereStrings)
         end
+
+        -- **And a game that says `packed = false` is the folder of files it
+        -- was** (ADR 0183): every script compiled under its own name, the
+        -- settings and the manifest beside them, the same strings in them.
+        local keyed, added = string.gsub(
+            fs.readFileToString(config),
+            '(multiplayer = "[a-z]+")',
+            "%1" .. string.char(10) .. "packed = false",
+            1
+        )
+        assert.eq(added, 1)
+        fs.writeStringToFile(config, keyed)
+        assert.eq(build.run({ path = project, output = nil, target = desktop, force = true, devHost = true }), 0)
+        checkSide(projectlib.joined(project, "dist", desktop), everything, NowhereStrings, false)
+        local looseGame = projectlib.joined(project, "dist", desktop, "game")
+        assert.that(
+            fs.exists(projectlib.joined(looseGame, "project.toml")),
+            "a game that is not packed lost its settings"
+        )
+        assert.that(
+            fs.exists(projectlib.joined(looseGame, ".engine", "content.manifest.json")),
+            "a game that is not packed lost its manifest"
+        )
 
         removeTree(parent)
     end)

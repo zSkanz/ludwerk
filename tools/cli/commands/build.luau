@@ -134,6 +134,19 @@ local function shipsSource(project: projectlib.Project): boolean
     return typeof(section) == "table" and section.ship_source == true
 end
 
+--- `[export] packed`: the game sealed into its pack (ADR 0183) -- its
+--- scripts, its catalogues, its settings and its content's names inside one
+--- file, none of them a file of its own. What a build does unless the author
+--- says otherwise; a game that ships its source ships it to be read, and is
+--- left as files unless `packed = true` says to seal it all the same.
+local function sealsGame(project: projectlib.Project): boolean
+    local section = project.config.export
+    if typeof(section) == "table" and typeof(section.packed) == "boolean" then
+        return section.packed
+    end
+    return not shipsSource(project)
+end
+
 --- `[export] multiplayer`, or `none`.
 local function multiplayerMode(project: projectlib.Project): (string?, string?)
     local mode = stringField(project.config.export, "multiplayer") or "none"
@@ -379,6 +392,30 @@ local function run(options: Options): number
         end)
     end
 
+    -- **seal**: last of what is done to `game/`, after the partition has
+    -- booted it: the scripts, the catalogues, `project.toml` and `.luaurc`
+    -- into the pack, the pack's names hashed, and the loose files gone
+    -- (ADR 0183).
+    local sealGame = function(gameDir: string): boolean
+        if not sealsGame(project) then
+            return true
+        end
+        return progress.step(reporter, "seal", function(): string?
+            local assetc = projectlib.findToolFor("assetc", player)
+            if assetc == nil then
+                return tr("cli.build.err.no_sealer")
+            end
+            local sealed = process.run({ assetc, "seal", gameDir })
+            if not sealed.ok then
+                -- Named, because the commonest cause is not in what it said:
+                -- an asset compiler from before there was a `seal`, which
+                -- answers with its usage.
+                return sealed.stdout .. sealed.stderr .. "\n" .. tr("cli.build.err.seal_failed", { compiler = assetc })
+            end
+            return nil
+        end)
+    end
+
     -- **compile**: every script in the laid-out game to bytecode, by the
     -- engine's own compiler (ADR 0112) -- before the partition, which boots
     -- the game and so reads what it will ship.
@@ -419,6 +456,9 @@ local function run(options: Options): number
             return 1
         end
         partitionGame(projectlib.joined(stage, "assets", "game"))
+        if not sealGame(projectlib.joined(stage, "assets", "game")) then
+            return 1
+        end
 
         local resources: string? = nil
         local iconMade = progress.step(reporter, "icon", function(): string?
@@ -548,6 +588,9 @@ local function run(options: Options): number
         return 1
     end
     partitionGame(projectlib.joined(output, "game"))
+    if not sealGame(projectlib.joined(output, "game")) then
+        return 1
+    end
 
     -- A server has no face: no icon, and no launcher entry.
     local ico: string? = nil

@@ -14,9 +14,11 @@
 #include "../../scene/generated/class_descriptors.gen.h"
 #include "engine/app/editor.h"
 #include "engine/app/inspector.h"
+#include "engine/app/project_config.h"
 #include "engine/app/script_complete.h"
 #include "engine/app/script_package.h"
 #include "engine/app/world_host.h"
+#include "engine/asset/seal.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/input/input.h"
@@ -4792,4 +4794,59 @@ TEST_CASE("Swarm:SetTargets and AddAgentAt: every player is chased by the agents
     CHECK(flag("IntoFirst"));
     CHECK(flag("IntoRest"));
     CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
+TEST_CASE("ADR 0183: a sealed game's scripts are found, required and run out of its pack, and its settings read")
+{
+    Captured log;
+    Project project;
+    project.write("project.toml", "[project]\nname = \"Sealed Game\"\n");
+    project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    project.write("src/shared/Words.luau", "return { hello = \"hi\" }\n");
+    project.write("src/client/Lib/Helper/init.luau", "return { value = 7 }\n");
+    project.write("src/client/Lib/Tool.module.luau", "return { name = \"tool\" }\n");
+    project.write("src/client/Main.luau", R"(
+        local words = require("@shared/Words")
+        local helper = require("./Lib/Helper")
+        local tool = require("./Lib/Tool")
+        local folder = Instance.new("Folder")
+        folder.Name = `ran-{words.hello}-{helper.value}-{tool.name}-{script.Name}`
+        folder.Parent = workspace
+    )");
+    project.write("src/server/Rules.luau", R"(
+        local folder = Instance.new("Folder")
+        folder.Name = "server-ran"
+        folder.Parent = workspace
+    )");
+
+    // Off the disk first: what the sealed game must do the same.
+    {
+        app::WorldHost host;
+        REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+        host.tick();
+        CHECK(engine::app::testing::hasChildNamed(host, "ran-hi-7-tool-Main"));
+        CHECK(engine::app::testing::hasChildNamed(host, "server-ran"));
+        CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    }
+
+    REQUIRE_FALSE(asset::sealGame(project.root).has_value());
+    std::error_code ec;
+    REQUIRE_FALSE(std::filesystem::exists(project.root / "src", ec));
+    REQUIRE_FALSE(std::filesystem::exists(project.root / "project.toml", ec));
+    REQUIRE_FALSE(std::filesystem::exists(project.root / ".luaurc", ec));
+
+    {
+        app::WorldHost host;
+        REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+        host.tick();
+        // The same scripts, under the same names, with every kind of require:
+        // an alias from `.luaurc`, a folder's `init`, a module named as one.
+        CHECK(engine::app::testing::hasChildNamed(host, "ran-hi-7-tool-Main"));
+        CHECK(engine::app::testing::hasChildNamed(host, "server-ran"));
+        CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    }
+
+    // And the settings, which are asked for before anything is mounted.
+    const app::ProjectConfig config = app::loadProjectConfig(project.root, {});
+    CHECK(config.name == "Sealed Game");
 }

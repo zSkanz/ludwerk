@@ -242,7 +242,7 @@ test.suite("export", function(suite)
     suite:case("the step names are the documented list", function()
         assert.eq(
             table.concat(progress.Steps, ","),
-            "check,pack,layout,compile,partition,icon,stamp,archive,assemble,sign"
+            "check,pack,layout,compile,partition,seal,icon,stamp,archive,assemble,sign"
         )
     end)
 end)

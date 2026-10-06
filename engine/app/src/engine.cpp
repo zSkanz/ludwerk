@@ -78,6 +78,7 @@
 #include "engine/app/world_ui.h"
 #include "engine/asset/content.h"
 #include "engine/asset/image.h"
+#include "engine/asset/seal.h"
 #include "engine/asset/texture.h"
 #include "engine/core/build_info.h"
 #include "engine/core/json_writer.h"
@@ -1266,9 +1267,42 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // Each catalog file and when it was last written, so a changed one is the
     // only one read again.
     std::map<std::filesystem::path, std::filesystem::file_time_type> catalogFiles;
+    // A sealed game's catalogues are in its pack (ADR 0183): read once, as a
+    // game's that nobody is making are.
+    const std::shared_ptr<const asset::SealedGame> sealedGame =
+        options.conformanceRoot.empty() ? asset::SealedGame::open(options.scriptPath) : nullptr;
+    // **Every entry of a sealed game's pack against its own name, once, off
+    // the frame** (ADR 0183): a file cut short on its way to a player, or
+    // changed since, is said to be damaged instead of read for as far as it
+    // goes. 0 while it is being checked, 1 whole, 2 damaged.
+    struct PackCheck
+    {
+        std::atomic<int> state{0};
+        core::EngineError error;
+    };
+    const std::shared_ptr<PackCheck> packCheck = std::make_shared<PackCheck>();
     const auto readCatalogs = [&]() {
         bool changed = false;
         std::error_code error;
+        if (sealedGame != nullptr) {
+            if (!catalogFiles.empty())
+                return changed;
+            for (const std::string& file : sealedGame->filesUnder("i18n")) {
+                const std::filesystem::path path(file);
+                if (path.extension() != ".json" || path.parent_path() != "i18n")
+                    continue;
+                catalogFiles[path] = {};
+                std::string text;
+                std::string diagnostic;
+                if (!sealedGame->readText(file, text) || !localization.load(path.stem().string(), text, &diagnostic)) {
+                    const std::array<I18nArg, 2> args{I18nArg{"file", file}, I18nArg{"reason", diagnostic}};
+                    core::log(LogLevel::Warn, ENG_TR("app.warn.catalog_unreadable"), args);
+                    continue;
+                }
+                changed = true;
+            }
+            return changed;
+        }
         if (catalogRoot.empty() || !std::filesystem::is_directory(catalogRoot, error))
             return changed;
         // In name order: what a directory lists first is the system's business.
@@ -2079,6 +2113,29 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             else {
                 const std::array<core::I18nArg, 1> mountArgs{core::I18nArg{"path", pack.string()}};
                 core::log(LogLevel::Info, ENG_TR("app.info.pack_mounted"), mountArgs);
+                // The job holds the game it checks, through what it is handed
+                // and lets go of when it is done: it may outlast this run.
+                if (sealedGame != nullptr) {
+                    struct Held
+                    {
+                        std::shared_ptr<const asset::SealedGame> game;
+                        std::shared_ptr<PackCheck> check;
+                    };
+                    Held* const held = new Held{sealedGame, packCheck};
+                    const jobs::JobHandle checking =
+                        jobs::schedule("pack-verify", jobs::Domain::AssetIo, [held]() noexcept {
+                            if (std::optional<core::EngineError> damage = held->game->pack().verify()) {
+                                held->check->error = std::move(*damage);
+                                held->check->state.store(2);
+                            }
+                            else {
+                                held->check->state.store(1);
+                            }
+                            delete held;
+                        });
+                    if (!checking.valid())
+                        delete held;
+                }
             }
         }
     }
@@ -2836,6 +2893,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     FrameClock frameClock;
 
     while (!quit) {
+        // A damaged game is not played on (ADR 0183).
+        if (packCheck->state.load(std::memory_order_relaxed) == 2)
+            break;
         // The last frame's scopes become one sample each, before this one's
         // begin: every scope of a frame is under `frame`, and what none of
         // them covers is the frame's own.
@@ -7457,6 +7517,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             quit = true;
     }
 
+    if (packCheck->state.load() == 2) {
+        host->close();
+        return core::makeError(ENG_TR("engine.err.game_damaged"), {}, packCheck->error.message);
+    }
     if (device->lost()) {
         control.stop();
 #if ENG_DEBUG_UI

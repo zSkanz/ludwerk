@@ -4353,6 +4353,74 @@ TEST_CASE("ADR 0162: an agent walking a straight line is carried forward, not co
     CHECK(worst < 0.8);
 }
 
+TEST_CASE("D570: a swarm disabled on the authority stands still on a replica, where the authority's stands")
+{
+    // A game holds its horde while a player chooses: `Swarm.Enabled = false`
+    // on the host. On a machine that had joined, every agent shook for as
+    // long as the hold lasted -- carried forward by the walk it was last told,
+    // corrected back, carried forward again: 214,029 moves of more than two
+    // millimetres in a twelve-second hold of nine hundred bodies.
+    SwarmMatch crowd(nullptr, 80.0f);
+    std::vector<core::u32> agents;
+    for (int index = 0; index < 40; ++index) {
+        agents.push_back(crowd.add(
+            core::DVec3{30.0 + static_cast<double>(index % 8) * 2.0, 0.0, -9.0 + static_cast<double>(index / 8) * 2.5},
+            1, 3.0f));
+    }
+    crowd.server().target = core::DVec3{-70.0, 0.0, 0.0};
+    crowd.run(120);
+    scene::SwarmComponent* copy = crowd.client();
+    REQUIRE(copy != nullptr);
+    const auto drawn = [&](core::u32 agent) {
+        const scene::SwarmAgent* row = scene::swarmAgent(*copy, agent);
+        REQUIRE(row != nullptr);
+        return row->position;
+    };
+    const auto apart = [](const core::DVec3& a, const core::DVec3& b) {
+        return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+    };
+    // They walk, on both machines.
+    const core::DVec3 walkedFrom = drawn(agents.front());
+    crowd.run(30);
+    CHECK(apart(drawn(agents.front()), walkedFrom) > 1.0);
+
+    crowd.server().enabled = false;
+    // A moment for the word to cross, and for each agent to be told where it
+    // stopped and eased there.
+    crowd.run(60);
+    CHECK_FALSE(copy->enabled);
+
+    // Twelve seconds of the hold: nothing moves on the replica, and every
+    // agent is where the authority's is.
+    std::vector<core::DVec3> last;
+    for (const core::u32 agent : agents)
+        last.push_back(drawn(agent));
+    int moves = 0;
+    double farthest = 0.0;
+    for (int tick = 0; tick < 720; ++tick) {
+        crowd.step();
+        for (std::size_t index = 0; index < agents.size(); ++index) {
+            const core::DVec3 now = drawn(agents[index]);
+            const double moved = apart(now, last[index]);
+            farthest = std::max(farthest, moved);
+            moves += moved > 0.002 ? 1 : 0;
+            last[index] = now;
+        }
+    }
+    CAPTURE(farthest);
+    CHECK(moves == 0);
+    for (const core::u32 agent : agents)
+        CHECK(crowd.off(agent) < 0.1);
+
+    // And let go, they walk again, on both.
+    const core::DVec3 heldAt = drawn(agents.front());
+    crowd.server().enabled = true;
+    crowd.run(120);
+    CHECK(copy->enabled);
+    CHECK(apart(drawn(agents.front()), heldAt) > 3.0);
+    CHECK(crowd.off(agents.front()) < 0.8);
+}
+
 TEST_CASE("N10: a fifteen-kilobyte unreliable message crosses the real transport whole, both ways")
 {
     // Past a packet the transport sends it in fragments, on the channel that

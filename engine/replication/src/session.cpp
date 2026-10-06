@@ -1692,8 +1692,12 @@ void AuthoritySession::sendSwarms(scene::World& world)
             const usize count = std::min<usize>(swarm->agents.size(), 65535);
             truths.resize(count);
             for (usize slot = 0; slot < count; ++slot) {
+                // A swarm that is not stepped is where it stands (D570): "where
+                // its walk carries it" is a place it never went.
                 if (swarm->agents[slot].alive)
-                    truths[slot] = scene::swarmAgentAt(swarm->agents[slot], static_cast<f64>(m_tick), dt);
+                    truths[slot] = swarm->enabled
+                                       ? scene::swarmAgentAt(swarm->agents[slot], static_cast<f64>(m_tick), dt)
+                                       : swarm->agents[slot].position;
             }
             for (Peer& peer : m_peers) {
                 // A peer that has not been told of the swarm has nothing to
@@ -1729,6 +1733,12 @@ void AuthoritySession::sendSwarmTo(scene::World& world, Peer& peer, scene::Swarm
     const scene::PlayerComponent* player = peer.player.valid() ? world.players().find(peer.player) : nullptr;
     const std::optional<core::DVec3> focus = focusOf(world, player);
     const f64 reach = std::clamp(static_cast<f64>(swarm.replicationRadius), 1.0, MaxSwarmReach);
+    // **What a replica is told of a swarm that stands** (D570): that it does
+    // not walk. An agent's own walk is what it will do when the swarm steps
+    // again, and told as it is, a replica would carry a standing agent along
+    // it.
+    const bool standing = !swarm.enabled;
+    const auto walkOf = [standing](const scene::SwarmAgent& agent) { return standing ? 0.0f : agent.walk; };
     const f64 keep = reach * 1.25;
 
     struct Gone
@@ -1801,7 +1811,7 @@ void AuthoritySession::sendSwarmTo(scene::World& world, Peer& peer, scene::Swarm
                                    .born = agent->born,
                                    .tag = agent->tag,
                                    .yaw = agent->yaw,
-                                   .walk = agent->walk,
+                                   .walk = walkOf(*agent),
                                    .lift = 0.0f,
                                    .tick = tick,
                                    .position = truth,
@@ -1845,6 +1855,10 @@ void AuthoritySession::sendSwarmTo(scene::World& world, Peer& peer, scene::Swarm
             ratio = std::max(ratio, 2.0);
         if (sent.lost)
             ratio = std::max(ratio, 3.0);
+        // Told once that it stands, the tick the swarm stops: not when the
+        // replica has carried it far enough to be called wrong.
+        if (standing && sent.walk != 0.0f)
+            ratio = std::max(ratio, 2.0);
         if (ratio >= 1.0)
             wrong.push_back(Told{static_cast<f32>(ratio), static_cast<u32>(slot), truth});
     }
@@ -1910,7 +1924,7 @@ void AuthoritySession::sendSwarmTo(scene::World& world, Peer& peer, scene::Swarm
             writeSwarmF32(out, where.z);
             writeSwarmF32(out, sent.lift);
             out.u8v(packYaw(agent.yaw));
-            out.u8v(packWalk(agent.walk));
+            out.u8v(packWalk(walkOf(agent)));
         }
         addedAt += addedCount;
         (void)sendBytes(m_transport, peer.id, out.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
@@ -1993,7 +2007,7 @@ void AuthoritySession::sendSwarmTo(scene::World& world, Peer& peer, scene::Swarm
         body.push_back(static_cast<u8>(packed >> 8));
         body.push_back(static_cast<u8>(packed >> 16));
         const u8 yaw = packYaw(agent.yaw);
-        const u8 walk = packWalk(agent.walk);
+        const u8 walk = packWalk(walkOf(agent));
         bool onTerrain = false;
         const f64 liftEighths =
             std::clamp(static_cast<f64>(liftOf(told.position, onTerrain)) * 8.0 + 0.5, 0.0, 65535.0);

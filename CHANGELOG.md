@@ -19,9 +19,19 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
-- **The wire protocol is 40** (ADR 0166, ADR 0167). Every machine in a match
-  must run a build that speaks it: one that does not is refused at the join,
-  by name. Nothing in the API changed for it. What it carries less of: an
+- **The wire protocol is 41** (D570): `Swarm.Enabled` replicates. Every
+  machine in a match must run a build that speaks it: one that does not is
+  refused at the join, by name. Nothing in the API changed for it.
+
+- **An exported game is one sealed pack** (ADR 0183), where it was a folder of
+  its scripts, its catalogues, `project.toml` and a manifest of every asset's
+  path beside the content pack. `ludwerk build` makes it for every target;
+  nothing in a game changes, and `[export] packed = false` makes the folder
+  of files as before. A tool or a script of your own that read files out of
+  `game/` reads them out of the pack now: `assetc unseal <game> --out
+  <folder>` writes them back.
+
+- **Protocol 40** (ADR 0166, ADR 0167). What it carries less of: an
   instance's attributes and tags are sent as what changed, not whole; a
   rotation is eight bytes where it was thirty-six, and is not sent at all for
   a body that moves without turning; a client's held input is said once a
@@ -1110,6 +1120,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   over 33 ms.
 - **`--frame-stats` counts the frame cap's wait as waiting** (D561), under
   the scope `wait.cap`. It was reported as drawing on the CPU.
+- **A swarm the host has disabled stands still on every other machine**
+  (D570). `Swarm.Enabled = false` on the authority was not told to a replica,
+  which went on carrying every agent along its last walk and being corrected
+  back: a held horde shook on a joined machine for as long as it was held.
+- **A sealed game checks its own files** (ADR 0183): a pack cut short or
+  changed is "this game's files are damaged", said in a dialog, where a game
+  read as far as it could.
 - **A phone whose GPU lacks a feature the engine never used is no longer
   refused** (D567). The graphics device was asked for clip distances,
   anisotropic filtering and a first instance in indirect draws, none of which

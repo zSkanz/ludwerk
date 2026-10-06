@@ -90,6 +90,18 @@ using core::I18nArg;
 
 } // namespace
 
+std::optional<core::EngineError> readContentManifest(const std::filesystem::path& manifest,
+                                                     std::vector<ManifestRow>& out)
+{
+    out.clear();
+    return readManifest(manifest,
+                        [&out](std::string_view urn, const core::ContentHash& hash,
+                               AssetKind kind) -> std::optional<core::EngineError> {
+                            out.push_back(ManifestRow{std::string(urn), hash, kind});
+                            return std::nullopt;
+                        });
+}
+
 bool isValidUrn(std::string_view urn)
 {
     if (urn.size() <= AssetScheme.size() || urn.substr(0, AssetScheme.size()) != AssetScheme) {
@@ -139,6 +151,23 @@ std::optional<core::EngineError> ContentMounts::mountPack(const std::filesystem:
     mount.pack = std::make_unique<Pack>();
     if (auto error = openPackFile(pack, *mount.pack)) {
         return error;
+    }
+
+    // **A sealed pack is its own manifest** (ADR 0183).
+    if (const PackEntry* const table = mount.pack->names(); table != nullptr) {
+        if (!decodePackNames(mount.pack->blob(table->hash), mount.names)) {
+            const I18nArg args[] = {{"hash", table->hash.toHex()}};
+            return core::makeError(ENG_TR("asset.pack.err.hash_mismatch"), args);
+        }
+        for (const PackName& name : mount.names) {
+            if (!mount.pack->contains(name.content)) {
+                const I18nArg args[] = {{"content", name.content.toHex()}};
+                return core::makeError(ENG_TR("asset.manifest.err.missing_blob"), args);
+            }
+        }
+        mount.sealed = true;
+        m_mounts.push_back(std::move(mount));
+        return std::nullopt;
     }
 
     if (auto error = readManifest(manifestPath,
@@ -240,6 +269,16 @@ ResolvedContent ContentMounts::resolve(std::string_view urn) const
     // Reverse order: a later mount wins, so a project overrides engine content
     // by mounting after it.
     for (auto mount = m_mounts.rbegin(); mount != m_mounts.rend(); ++mount) {
+        if (mount->sealed) {
+            if (const PackName* const name = findPackName(mount->names, urn); name != nullptr) {
+                result.source = ResolvedContent::Source::Pack;
+                result.kind = name->kind;
+                result.hash = name->content;
+                result.bytes = mount->pack->blob(name->content);
+                return result;
+            }
+            continue;
+        }
         if (mount->kind != MountKind::Directory) {
             const auto entry = mount->byUrn.find(std::string(urn));
             if (entry != mount->byUrn.end()) {
@@ -297,6 +336,27 @@ std::span<const std::byte> ContentMounts::blob(const core::ContentHash& hash) co
         }
     }
     return {};
+}
+
+std::span<const std::byte> ContentMounts::named(std::string_view name) const
+{
+    for (auto mount = m_mounts.rbegin(); mount != m_mounts.rend(); ++mount) {
+        if (!mount->sealed)
+            continue;
+        if (const PackName* const row = findPackName(mount->names, name); row != nullptr)
+            return mount->pack->blob(row->content);
+    }
+    return {};
+}
+
+std::vector<const Pack*> ContentMounts::packs() const
+{
+    std::vector<const Pack*> out;
+    for (auto mount = m_mounts.rbegin(); mount != m_mounts.rend(); ++mount) {
+        if (mount->kind == MountKind::Pack && mount->pack != nullptr)
+            out.push_back(mount->pack.get());
+    }
+    return out;
 }
 
 std::vector<std::string> ContentMounts::packedUrns() const

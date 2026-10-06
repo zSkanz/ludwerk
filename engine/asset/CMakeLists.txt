@@ -35,6 +35,7 @@ engine_add_module(asset
         src/mesh_format.cpp
         src/model_split.cpp
         src/pack.cpp
+        src/seal.cpp
         src/primitives.cpp
         src/streaming.cpp
         src/surface_build.cpp
@@ -93,6 +94,7 @@ engine_add_module_tests(asset
         tests/mesh_format_tests.cpp
         tests/model_split_tests.cpp
         tests/pack_tests.cpp
+        tests/seal_tests.cpp
         tests/primitive_tests.cpp
         tests/streaming_tests.cpp
         tests/surface_shader_tests.cpp

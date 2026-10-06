@@ -133,13 +133,30 @@ test.suite("packaging", function(suite)
         assert.that(fs.exists(executable), `no executable at {executable}`)
         assert.that(fs.exists(projectlib.joined(output, "content", "i18n", "en.json")), "no engine catalog")
         assert.that(fs.exists(projectlib.joined(output, "content", "shaders")), "no engine shaders")
-        assert.that(fs.exists(projectlib.joined(output, "game", "project.toml")), "no project file in the game")
         -- The content pack, which carries the starter's scene -- and with it
         -- its scripts (ADR 0092). The engine reads the scene out of it.
         assert.that(
             fs.exists(projectlib.joined(output, "game", ".engine", "content.lpack")),
             "no content pack in the game"
         )
+        -- **Sealed** (ADR 0183): the game's settings, its scripts, its
+        -- catalogues and the names of its content are in that pack, and none
+        -- of them is a file beside it. That the game then runs -- below -- is
+        -- what says it reads them there.
+        for _, loose in { "project.toml", ".luaurc", "src", "i18n" } do
+            assert.that(
+                not fs.exists(projectlib.joined(output, "game", loose)),
+                `{loose} is a file of its own in a sealed game`
+            )
+        end
+        assert.that(
+            not fs.exists(projectlib.joined(output, "game", ".engine", "content.manifest.json")),
+            "a sealed game carries a manifest of its content's names"
+        )
+        local pack = fs.readFileToString(projectlib.joined(output, "game", ".engine", "content.lpack"))
+        for _, word in { "asset://", "main.scene", "packagetest", "Packaging Test Co" } do
+            assert.that(string.find(pack, word, 1, true) == nil, `"{word}" can be read in the sealed pack`)
+        end
         -- **No shader compiler** (ADR 0091). A game's surface shaders are
         -- compiled when it is built and read out of its pack when it runs; a
         -- player that carried the compiler could be made to compile.
@@ -250,9 +267,20 @@ test.suite("packaging", function(suite)
             end
         end
         assert.that(count >= 256, `the game carries {count} cells of its terrain`)
-        local manifest = fs.readFileToString(projectlib.joined(game, ".engine", "content.manifest.json"))
-        assert.that(string.find(manifest, ".lterrain", 1, true) == nil, "the pack carries the terrain's cells")
-        assert.that(string.find(manifest, "main.scene.json", 1, true) ~= nil, "the pack lost the scene")
+        -- The pack is sealed and lists nothing (ADR 0183), so it is weighed:
+        -- a pack that had taken the cells in would be as large as they are.
+        local cellBytes = 0
+        for _, entry in fs.listDirectory(shipped) do
+            if string.sub(entry.name, -9) == ".lterrain" then
+                cellBytes += #fs.readFileToString(projectlib.joined(shipped, entry.name))
+            end
+        end
+        local packBytes = #fs.readFileToString(projectlib.joined(game, ".engine", "content.lpack"))
+        assert.that(packBytes < cellBytes, `the pack is {packBytes} bytes beside {cellBytes} of cells: it carries them`)
+        assert.that(
+            not fs.exists(projectlib.joined(game, ".engine", "content.manifest.json")),
+            "a sealed game carries a manifest"
+        )
         -- The far ground's files (ADR 0150) go with it, made by the import.
         assert.that(
             fs.exists(projectlib.joined(game, ".engine", "terrain-pyramid")),

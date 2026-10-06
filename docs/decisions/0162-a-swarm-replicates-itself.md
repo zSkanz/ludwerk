@@ -148,6 +148,12 @@ what the client would otherwise get wrong.
     than the agent's own arrival -- a number is reused when an agent dies, and
     a late message for the one that had it before must not move the new one.
 
+**Amended 2026-10-06 (D570, protocol 41): a replica's swarm has the
+authority's `Enabled` too** (decision 2). It was not sent, and a replica
+carried forward the agents of a swarm its authority had stopped. A swarm that is not enabled stands on every machine:
+the replica's clock for it stops, and the authority tells each agent where it
+stands with no walk.
+
 ### What a replica draws
 
 13. **Carried forward, and eased.** A replica draws an agent where its last

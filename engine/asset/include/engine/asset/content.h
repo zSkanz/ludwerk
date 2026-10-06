@@ -82,6 +82,19 @@ struct ResolvedContent
     [[nodiscard]] bool found() const noexcept { return source != Source::Missing; }
 };
 
+// One row of the manifest a pack or an object store has beside it: a name,
+// and the hash and kind of what it names.
+struct ManifestRow
+{
+    std::string urn;
+    core::ContentHash hash;
+    AssetKind kind = AssetKind::Unknown;
+};
+
+// The rows of a `content-manifest` file, as it gives them.
+[[nodiscard]] std::optional<core::EngineError> readContentManifest(const std::filesystem::path& manifest,
+                                                                   std::vector<ManifestRow>& out);
+
 class ContentMounts
 {
 public:
@@ -94,6 +107,11 @@ public:
     // the pack does not hold is refused at mount rather than at first use,
     // because a game that starts and then cannot find its world is worse than
     // one that says why it will not start.
+    //
+    // **A sealed pack carries its names and reads no manifest** (ADR 0183):
+    // each as a hash of the name, so what it answers to is asked for by name
+    // and listed by nobody. The same refusal holds: a name whose blob the
+    // pack does not hold is no mount.
     [[nodiscard]] std::optional<core::EngineError> mountPack(const std::filesystem::path& pack,
                                                              const std::filesystem::path& manifest = {});
 
@@ -121,6 +139,16 @@ public:
 
     [[nodiscard]] ResolvedContent resolve(std::string_view urn) const;
     [[nodiscard]] bool contains(std::string_view urn) const { return resolve(urn).found(); }
+
+    // **What a sealed pack holds under a name that is not an asset's** (ADR
+    // 0183): a game's own files -- `game://src/client/Main.luauc` -- which a
+    // sealed game carries in its pack. Empty where no sealed pack mounted
+    // answers to the name. The same lifetime as `resolve`'s bytes.
+    [[nodiscard]] std::span<const std::byte> named(std::string_view name) const;
+
+    // The mounted packs, newest first: for the one check a shipped game makes
+    // of them off the frame (`Pack::verify`).
+    [[nodiscard]] std::vector<const Pack*> packs() const;
 
     // By content hash rather than by name, which is what a chunk payload
     // referencing a shared mesh needs. Searches packs and object stores only: a
@@ -165,6 +193,10 @@ private:
         std::unique_ptr<Pack> pack;
         std::filesystem::path objects;
         std::unordered_map<std::string, PackEntry> byUrn;
+        // A sealed pack's names (ADR 0183), sorted by the hash of the name:
+        // what it answers to in place of `byUrn`.
+        std::vector<PackName> names;
+        bool sealed = false;
 
         // `Objects` only. Mutable because reading a blob is what a lookup does
         // here; see `blob`. An entry that is present and empty is a file this

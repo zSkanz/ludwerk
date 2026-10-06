@@ -12,6 +12,7 @@
 #include "engine/asset/icon_set.h"
 #include "engine/asset/image.h"
 #include "engine/asset/mesh_format.h"
+#include "engine/asset/seal.h"
 #include "engine/assetc/compiler.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
@@ -179,6 +180,50 @@ void usage()
     return 0;
 }
 
+// **`assetc seal`** (ADR 0183): a game's folder -- what `ludwerk build` lays
+// out -- with its scripts, its catalogues, its settings and its content's
+// names taken into its pack, and the loose files gone. `unseal` is the way
+// back, for a test and for anybody who wants to look.
+//
+//   assetc seal <game-folder>
+//   assetc unseal <game-folder> --out <folder>
+[[nodiscard]] int runSeal(int argc, char** argv, bool unseal)
+{
+    std::string folder;
+    std::string output;
+    for (int i = 2; i < argc; ++i) {
+        if (unseal && flagValue(argc, argv, i, "--out", output))
+            continue;
+        if (argv[i][0] != '-' && folder.empty()) {
+            folder = argv[i];
+            continue;
+        }
+        std::cout << "assetc: unknown option " << argv[i] << "\n";
+        return 2;
+    }
+    if (folder.empty() || (unseal && output.empty())) {
+        std::cout << "usage: assetc seal <game-folder>\n"
+                     "       assetc unseal <game-folder> --out <folder>\n";
+        return 2;
+    }
+    if (unseal) {
+        if (const std::optional<engine::core::EngineError> error = engine::asset::unsealGame(folder, output)) {
+            std::cout << "assetc: " << error->message << "\n";
+            return 1;
+        }
+        std::cout << "assetc: unsealed " << folder << " -> " << output << "\n";
+        return 0;
+    }
+    engine::asset::SealReport report;
+    if (const std::optional<engine::core::EngineError> error = engine::asset::sealGame(folder, &report)) {
+        std::cout << "assetc: " << error->message << "\n";
+        return 1;
+    }
+    std::cout << "assetc: sealed " << report.assets << " asset(s) and " << report.files << " file(s), "
+              << report.bytesBefore << " -> " << report.bytesAfter << " bytes\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -193,6 +238,11 @@ int main(int argc, char** argv)
         (void)engine::core::engineCatalog().loadFromFile(
             (engine::platform::paths().contentDir / "i18n" / "en.json").string());
         return runIcon(argc, argv);
+    }
+    if (argc > 1 && (std::strcmp(argv[1], "seal") == 0 || std::strcmp(argv[1], "unseal") == 0)) {
+        (void)engine::core::engineCatalog().loadFromFile(
+            (engine::platform::paths().contentDir / "i18n" / "en.json").string());
+        return runSeal(argc, argv, std::strcmp(argv[1], "unseal") == 0);
     }
     if (argc > 1 && std::strcmp(argv[1], "archive") == 0) {
         (void)engine::core::engineCatalog().loadFromFile(

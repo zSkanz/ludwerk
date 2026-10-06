@@ -124,8 +124,20 @@ test.suite("android export", function(suite)
         )
         assert.that(string.find(listed, "/session/", 1, true) == nil, "the payload carries a run's session cache")
         -- And the pack, which the engine never reads a cell through, has none.
-        local manifest = fs.readFileToString(projectlib.joined(assets, "game", ".engine", "content.manifest.json"))
-        assert.that(string.find(manifest, ".lterrain", 1, true) == nil, "the pack carries the terrain's cells")
+        -- The pack is sealed and lists nothing (ADR 0183): no manifest, no
+        -- script and no settings beside it, in the folder or in the list.
+        assert.that(
+            not fs.exists(projectlib.joined(assets, "game", ".engine", "content.manifest.json")),
+            "a sealed game carries a manifest"
+        )
+        assert.that(fs.exists(projectlib.joined(assets, "game", ".engine", "content.lpack")), "the game has no pack")
+        for _, loose in { "game/src/", "game/i18n/", "game/project.toml", "game/.luaurc", "content.manifest.json" } do
+            assert.that(string.find(listed, loose, 1, true) == nil, `the payload lists {loose}, of a sealed game`)
+        end
+        assert.that(
+            string.find(listed, "game/.engine/content.lpack", 1, true) ~= nil,
+            "the payload does not list the game's pack"
+        )
 
         -- The APK itself, read back with the JDK's own tool: the template
         -- drops what it is not told to keep, and a dot-folder is one.

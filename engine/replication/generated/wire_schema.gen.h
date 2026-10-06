@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 40;
+inline constexpr u32 ProtocolVersion = 41;
 
 // How a field's bytes are laid down. Every one is fixed-width and
 // little-endian, with no variable-length forms and no nesting -- a wire format
@@ -295,6 +295,7 @@ inline constexpr FieldDesc BlurEffectFields[] = {
 inline constexpr FieldDesc SwarmFields[] = {
     {"Replicates", 1, Encoding::Bool, Source::Component, "swarms"},
     {"ReplicationRadius", 2, Encoding::F32, Source::Component, "swarms"},
+    {"Enabled", 3, Encoding::Bool, Source::Component, "swarms"},
 };
 
 inline constexpr FieldDesc DepthOfFieldEffectFields[] = {

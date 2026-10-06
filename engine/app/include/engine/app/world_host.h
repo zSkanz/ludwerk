@@ -53,6 +53,10 @@ namespace engine::replication {
 class ScriptTemplates;
 } // namespace engine::replication
 
+namespace engine::asset {
+class SealedGame;
+} // namespace engine::asset
+
 namespace engine::app {
 
 using core::f32;
@@ -791,6 +795,10 @@ private:
     scene::StampSource m_stampSource;
 
     std::filesystem::path m_root;
+    // **A sealed game's own files** (ADR 0183): set where the project folder
+    // has its scripts in its pack and not on the disk. Scripts are found,
+    // `require` resolved and `.luaurc` read through it then.
+    std::shared_ptr<const asset::SealedGame> m_sealed;
     core::InstanceId m_workspace;
     core::InstanceId m_lighting;
     core::InstanceId m_uiService;

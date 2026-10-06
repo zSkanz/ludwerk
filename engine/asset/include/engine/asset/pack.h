@@ -34,6 +34,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "engine/core/content_hash.h"
@@ -74,6 +75,11 @@ enum class AssetKind : u32
     // A compiled surface shader (ADR 0091): its source and its bytecode for
     // each target the build could compile (`surface_build.h`).
     Surface = 7,
+    // **What a sealed pack answers to** (ADR 0183): a table of the names it
+    // holds, each as the hash of the name beside the hash of what it names
+    // (`PackName`). One a pack at most, and a pack with one needs no manifest
+    // beside it -- nor carries a single name anybody can read.
+    Names = 8,
 };
 
 // Stable, lowercase, and written into the content manifest -- so it is a name
@@ -86,12 +92,22 @@ enum class AssetKind : u32
 // container, so a second general-purpose pass over them would spend CPU to save
 // almost nothing. The field exists so adding one later is a version bump rather
 // than a format break.
+//
+// **`Deflate`, in format 2** (ADR 0183): a zlib stream, for what is text and
+// was stored as text -- a scene, a stamp, a material, a script's bytecode, a
+// catalogue, the names. An entry's hash is the hash of what it holds once
+// inflated, so a compressed entry is named as the same bytes stored plain.
 enum class BlobCodec : u32
 {
     None = 0,
+    Deflate = 1,
 };
 
-inline constexpr u32 PackFormatVersion = 1;
+// The newest format this build writes and reads. **A pack that uses nothing
+// of format 2 is written as format 1**, byte for byte what it always was: a
+// project's own pack, every pack a test holds.
+inline constexpr u32 PackFormatVersion = 2;
+inline constexpr u32 PackFormatPlain = 1;
 
 // "LGPK". Written and compared as bytes, never as a u32, so the file does not
 // mean something different on a big-endian machine.
@@ -148,7 +164,14 @@ public:
     // order it was added in.
     [[nodiscard]] std::vector<std::byte> build() const;
 
+    // **The same, sealed** (ADR 0183): what is text is deflated where that
+    // makes it smaller -- `Raw`, `Material`, `Surface` and `Names` entries --
+    // and the file is format 2. Still a pure function of what was added.
+    [[nodiscard]] std::vector<std::byte> buildSealed() const;
+
 private:
+    [[nodiscard]] std::vector<std::byte> write(bool sealed) const;
+
     struct Blob
     {
         ContentHash hash;
@@ -192,11 +215,32 @@ public:
 
     // A view into this Pack's own storage: valid while the Pack is, and empty
     // for a hash it does not hold.
+    //
+    // **A deflated entry is inflated the first time it is asked for, checked
+    // against its name, and kept** (ADR 0183): the view is into what the pack
+    // keeps, valid while the Pack is, as any other. One that does not inflate
+    // to its own hash is empty, and `damaged` says so from then on. Safe from
+    // any thread.
     [[nodiscard]] std::span<const std::byte> blob(const ContentHash& hash) const noexcept;
+
+    // The pack's one `Names` entry, or null: what makes it a sealed pack.
+    [[nodiscard]] const PackEntry* names() const noexcept;
+
+    // **Every entry against its own name**: each blob hashed -- inflated first
+    // where it is deflated -- and compared with the hash it is filed under.
+    // What `openVerified` does at open, for a pack already open: a shipped game
+    // runs it on a worker while it loads, and a file that was cut short or
+    // changed on the way is said to be damaged instead of read. Keeps nothing.
+    [[nodiscard]] std::optional<core::EngineError> verify() const;
+
+    // Whether an entry has been found not to be what its name says.
+    [[nodiscard]] bool damaged() const noexcept;
 
 private:
     [[nodiscard]] static std::optional<core::EngineError> validate(std::span<const std::byte> bytes, bool verify,
                                                                    std::vector<PackEntry>& entries);
+    [[nodiscard]] static std::optional<core::EngineError> verifyEntries(std::span<const std::byte> bytes,
+                                                                        std::span<const PackEntry> entries);
     [[nodiscard]] std::span<const std::byte> storage() const noexcept;
 
     // What the pack's bytes are: a buffer it owns, or a file mapped into
@@ -204,7 +248,28 @@ private:
     std::vector<std::byte> m_bytes;
     std::shared_ptr<platform::MappedFile> m_mapped;
     std::vector<PackEntry> m_entries;
+    // What has been inflated, and whether anything was found damaged. Apart,
+    // behind a pointer, so a Pack is still a thing that can be moved.
+    struct Inflated;
+    std::shared_ptr<Inflated> m_inflated;
 };
+
+// **One name a sealed pack answers to** (ADR 0183): the hash of the name --
+// `asset://textures/base.png`, as the game says it -- and the hash and kind
+// of what it names. The name itself is nowhere in the pack.
+struct PackName
+{
+    ContentHash name;
+    ContentHash content;
+    AssetKind kind = AssetKind::Unknown;
+};
+
+// The bytes of a `Names` entry for these rows, sorted by name; and the rows of
+// one, refused where it is not what `encodePackNames` writes.
+[[nodiscard]] std::vector<std::byte> encodePackNames(std::vector<PackName> names);
+[[nodiscard]] bool decodePackNames(std::span<const std::byte> bytes, std::vector<PackName>& out);
+// The row for `name` in rows sorted as `decodePackNames` leaves them, or null.
+[[nodiscard]] const PackName* findPackName(std::span<const PackName> names, std::string_view name) noexcept;
 
 // Reads a pack file from disk through `platform::readFile`, so an APK entry
 // works exactly as a loose file does.

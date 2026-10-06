@@ -28,6 +28,7 @@ local Steps = {
     "layout", -- the player, the engine's content and the game, into the folder
     "compile", -- the game's scripts to bytecode, unless it ships source (ADR 0112)
     "partition", -- the streaming cells, pre-warmed into the package's `.engine/`
+    "seal", -- the scripts, the text and the settings into the pack (ADR 0183)
     "icon", -- one PNG, every size the target needs
     "stamp", -- the icon and the version into the executable
     "archive", -- the `.zip` or the `.tar.gz` beside the folder
@@ -49,6 +50,9 @@ local Labels: { [string]: () -> string } = {
     end,
     partition = function()
         return tr("cli.build.step.partition")
+    end,
+    seal = function()
+        return tr("cli.build.step.seal")
     end,
     layout = function()
         return tr("cli.build.step.layout")

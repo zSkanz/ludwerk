@@ -343,6 +343,16 @@ void stepMirror(World& world, SwarmComponent& swarm, f64 dt, core::NameAtom cfra
         swarm.mirrorClock = swarm.mirrorNewest;
         swarm.mirrorClockSet = true;
     }
+    else if (!swarm.enabled) {
+        // **A swarm the authority has stopped stands** (D570). Its clock
+        // stands with it: nothing is carried further along the walk it was
+        // last told, and what is told from here -- where each agent stopped
+        // -- is drawn where it says, eased to and not walked from. The clock
+        // ran on, every agent was carried forward a tick and told back the
+        // next, and a held horde shook for as long as it was held. When the
+        // swarm steps again the clock is far behind the first word it hears,
+        // and jumps to it.
+    }
     else {
         // **It runs on its own, a tick a tick, and is set against a message
         // only when one arrives.** Pulled towards the newest tick every tick,

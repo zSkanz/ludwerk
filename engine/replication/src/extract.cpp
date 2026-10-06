@@ -807,6 +807,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setF32(out, component->replicationRadius);
             return true;
         }
+        if (field.name == "Enabled") {
+            setBool(out, component->enabled);
+            return true;
+        }
         return false;
     }
 
@@ -1450,6 +1454,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "ReplicationRadius") {
             component->replicationRadius = asF32(value);
+            return true;
+        }
+        if (field.name == "Enabled") {
+            component->enabled = asBool(value);
             return true;
         }
         return false;
