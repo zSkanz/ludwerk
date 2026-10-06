@@ -2404,6 +2404,16 @@ bool setGraphicsServiceFoliageDensity(World& world, core::InstanceId, const Valu
     return writeGraphicsNumber(world, GraphicsSetting::FoliageDensity, value);
 }
 
+Value getGraphicsServiceFoliageDecals(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::FoliageDecals) != 0.0};
+}
+
+bool setGraphicsServiceFoliageDecals(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsFlag(world, GraphicsSetting::FoliageDecals, value);
+}
+
 Value getGraphicsServiceAnimationDetail(const World& world, core::InstanceId)
 {
     return Value{graphicsValue(world, GraphicsSetting::AnimationDetail)};

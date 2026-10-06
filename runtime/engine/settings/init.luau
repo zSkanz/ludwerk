@@ -203,6 +203,7 @@ local Rows: { Row } = {
     scale("FoliageDensity", "engine.graphics.setting.foliage_density", { 0, 0.25, 0.5, 0.75, 1 }),
     toggle("AmbientOcclusion", "engine.graphics.setting.ambient_occlusion", "Graphics"),
     toggle("ContactShadows", "engine.graphics.setting.contact_shadows", "Graphics"),
+    toggle("FoliageDecals", "engine.graphics.setting.foliage_decals", "Graphics"),
     toggle("Bloom", "engine.graphics.setting.bloom", "Graphics"),
     toggle("DepthOfField", "engine.graphics.setting.depth_of_field", "Graphics"),
     toggle("SunRays", "engine.graphics.setting.sun_rays", "Graphics"),

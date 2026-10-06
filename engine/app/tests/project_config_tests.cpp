@@ -533,6 +533,13 @@ TEST_CASE("a handheld's levels spend less on what a small screen shows least (AD
             CHECK_FALSE(hand.contactShadows);
         else
             CHECK(hand.contactShadows == desk.contactShadows);
+        // And no grass drawn again under a decal below High (ADR 0185): on a
+        // desk only the lowest level leaves it out.
+        CHECK(desk.foliageDecals == (level != QualityLevel::Low));
+        if (level == QualityLevel::Low || level == QualityLevel::Medium)
+            CHECK_FALSE(hand.foliageDecals);
+        else
+            CHECK(hand.foliageDecals);
         // The filter's taps are the level's on both.
         CHECK(hand.shadowTaps == desk.shadowTaps);
     }

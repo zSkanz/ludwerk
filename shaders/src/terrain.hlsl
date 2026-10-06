@@ -77,6 +77,9 @@ struct TerrainLayer
     // scale against the first (1 none); z 1 when the maps are laid on a
     // hexagonal grid of random cells.
     float4 Tiling;
+    // **The light the layer gives off** (`Material.Emissive`) in rgb: added
+    // to the lit ground, by as much of the pixel as the layer is.
+    float4 Emissive;
 };
 StructuredBuffer<TerrainLayer> TerrainLayers : register(t16, space2);
 
@@ -257,6 +260,8 @@ struct LayerSample
     // For the height blend where a painted layer meets what is under it
     // (ADR 0114).
     float Height;
+    // The light it gives off: its material's `Emissive`, and no map of it.
+    float3 Emissive;
 };
 
 LayerSample weighted(LayerSample sum, LayerSample value, float weight)
@@ -267,6 +272,7 @@ LayerSample weighted(LayerSample sum, LayerSample value, float weight)
     sum.Metalness += value.Metalness * weight;
     sum.Occlusion += value.Occlusion * weight;
     sum.Height += value.Height * weight;
+    sum.Emissive += value.Emissive * weight;
     return sum;
 }
 
@@ -538,6 +544,7 @@ LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 nor
     result.Occlusion = (flags & 2u) != 0u ? result.Height : 1.0f;
     result.Roughness = saturate(surface.g * settings.x);
     result.Metalness = saturate(surface.b * settings.y);
+    result.Emissive = TerrainLayers[id].Emissive.rgb;
     return result;
 }
 
@@ -552,6 +559,7 @@ LayerSample flatLayer(uint id, float3 normal)
     result.Metalness = saturate(TerrainLayers[id].Surface.y);
     result.Occlusion = 1.0f;
     result.Height = layerHeight(0.5f);
+    result.Emissive = TerrainLayers[id].Emissive.rgb;
     return result;
 }
 
@@ -680,6 +688,7 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
             over.Metalness *= inverse;
             over.Occlusion *= inverse;
             over.Height *= inverse;
+            over.Emissive *= inverse;
             const float lift = (over.Height - mix.Height) * cover * (1.0f - cover) * 4.0f;
             const uint lead = shares.x >= shares.y && shares.x >= shares.z ? tops.x : (shares.y >= shares.z ? tops.y : tops.z);
             // **The sharpness is of the edge the heights draw** (D329): where
@@ -701,6 +710,7 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
             mix.Metalness = lerp(mix.Metalness, over.Metalness, shows);
             mix.Occlusion = lerp(mix.Occlusion, over.Occlusion, shows);
             mix.Height = lerp(mix.Height, over.Height, shows);
+            mix.Emissive = lerp(mix.Emissive, over.Emissive, shows);
         }
     }
 
@@ -741,6 +751,7 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
             mix.Metalness = lerp(mix.Metalness, painted.Metalness, cover);
             mix.Occlusion = lerp(mix.Occlusion, painted.Occlusion, cover);
             mix.Height = lerp(mix.Height, painted.Height, cover);
+            mix.Emissive = lerp(mix.Emissive, painted.Emissive, cover);
         }
     }
 
@@ -774,6 +785,9 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     float3 color = lightSurface(surface, input.ShadingPosition, normal, input.ViewDepth, input.Position.xy,
                                 input.Sky * lerp(1.0f, mix.Occlusion, 0.6f));
     color += standInGlow;
+    // What the ground gives off, as a mesh's emission is added: after the
+    // light, before the fog -- a glow far off is behind the air too.
+    color += mix.Emissive;
     color = applyFog(color, FogColor.rgb, FogRange, length(input.ShadingPosition));
     // The bend view, drawn here rather than with the others: it is what all of
     // the above did to the mesh's normal, four times over so a crease shows.

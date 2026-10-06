@@ -103,6 +103,7 @@ nothing gets it.
 | `bloom` | false | true | **true** | true |
 | `ambient_occlusion` | false | false | **true** | true |
 | `contact_shadows` | false | true | **true** | true |
+| `foliage_decals` | false | true | **true** | true |
 | shadow filter taps | 4 | 8 | **16** | 16 |
 | `terrain_surface` | lean | full | **full** | full |
 | `anti_aliasing` | fxaa | smaa | **smaa** | taa |
@@ -150,7 +151,9 @@ resolution the world is drawn at, and uses FXAA below High and never TAA.
 Bloom reaches less far there -- three levels of it where a desktop has five,
 five passes where there were nine -- and contact shadows start at High
 (ADR 0172); `contact_shadows = true` under `[graphics.android]` says
-otherwise. The ground is the fast one at Low and at Medium (ADR 0179: on the
+otherwise. So do decals on foliage (`foliage_decals`): below High a decal is
+on the ground under the grass and the grass is not drawn again for it. The
+ground is the fast one at Low and at Medium (ADR 0179: on the
 phone it was measured on, sixty frames a second where the lean ground held
 fifty-six and forty-one); `terrain_surface = "lean"` or `"full"` under
 `[graphics.android]` says otherwise.
@@ -454,8 +457,8 @@ took it, or that none did and the finger is the game's.
 
 What `[graphics]` already sets needs no key here: `shadow_cascades = 0`,
 `contact_shadows`, `ambient_occlusion`, `bloom`, `anti_aliasing`, `upscaling`,
-`foliage_density` and `render_cap` each take a cost out of the frame the same
-way.
+`foliage_density`, `foliage_decals` and `render_cap` each take a cost out of
+the frame the same way.
 
 **On a phone, without a build for every setting.** A game exported with
 `[debug] launch_arguments = true` takes the host's flags when it is launched,

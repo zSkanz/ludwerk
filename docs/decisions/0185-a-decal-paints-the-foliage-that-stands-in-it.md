@@ -118,3 +118,20 @@ mask instead. What costs nothing is a frame with no decal in it.
   the refusing field's are the same pixels as before the mark);
   `decalCoverage` and `decalReach` by arithmetic; a bucket takes its layer's
   flag and regrows nothing for it.
+
+## Amendment, 2026-10-06: a setting says whether it is done at all
+
+`GraphicsService.FoliageDecals` (`[graphics] foliage_decals`,
+`--[no-]foliage-decals`), on by default. Off, neither of the two foliage
+passes a decal asks for is drawn -- not the depth the receiving layers are
+painted through, not the mask of the refusing ones -- and a decal meets
+foliage as it met it before this decision: by the way a blade faces. The
+decal is on the ground under the grass.
+
+Off at the low quality level, and on a handheld below high: a pass over the
+grass a decal covers is what a phone's frame has least room for, and the
+grass under a scorch mark is the last thing a phone's screen shows. A game
+that wants it there says `foliage_decals = true` under `[graphics.android]`.
+
+**`FoliageLayer.ReceivesDecals` is not honoured while it is off**: a layer
+that refuses decals is refused by the same second pass.

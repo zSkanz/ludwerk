@@ -7167,6 +7167,7 @@ void DefaultRenderer::updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& c
                 row.tint[channel] = layer.tint[channel];
                 row.surface[channel] = layer.surface[channel];
                 row.tiling[channel] = layer.tiling[channel];
+                row.emissive[channel] = layer.emissive[channel];
             }
             waiting = waiting || layer.waiting;
             for (const rhi::TextureHandle map : layer.maps)
@@ -8582,7 +8583,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 decalCoverage(world.decals, world.camera.viewProjection, renderWidth_, renderHeight_);
             bool foliageRefuses = false;
             bool foliageReceives = false;
-            if (foliageCulled_ && foliageDecalPipeline_.valid() && decalsCover.width > 0 && decalsCover.height > 0) {
+            // Neither where the setting says a decal does not paint foliage
+            // (`GraphicsSettings::foliageDecals`): no blade is drawn again.
+            if (settings_.foliageDecals && foliageCulled_ && foliageDecalPipeline_.valid() && decalsCover.width > 0 &&
+                decalsCover.height > 0) {
                 for (const RenderFoliageBucket& bucket : world.foliageBuckets) {
                     if (bucket.capacity == 0)
                         continue;

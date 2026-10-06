@@ -161,6 +161,13 @@ struct GraphicsSettings
     // centimetres at the base of a caster that the shadow map's biases give
     // away, recovered from the depth buffer.
     bool contactShadows = true;
+    // **Whether a decal paints the foliage in it** (ADR 0185): the foliage
+    // under a decal drawn again into a depth of its own, so the decal lands
+    // on a blade whichever way it faces -- or into the mask, for a layer that
+    // takes none. Off, neither is drawn and a decal meets foliage as it meets
+    // any surface: by the way it faces. A pass over the grass a decal covers,
+    // which a phone's frame has no room for.
+    bool foliageDecals = true;
     // **How many pixels a terrain cell may cover** before its node shows its
     // children (ADR 0140): 4 at low, 3 at medium, 2 at high, 1.5 at ultra, at
     // the viewport's own height. Smaller is finer ground further out, and

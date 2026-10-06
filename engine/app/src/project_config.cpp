@@ -118,6 +118,8 @@ void applyFile(const core::TomlDocument& document, std::string_view table, Graph
     // turned off alone (terrain audit T0).
     if (const std::optional<bool> value = flag("contact_shadows"))
         settings.contactShadows = *value;
+    if (const std::optional<bool> value = flag("foliage_decals"))
+        settings.foliageDecals = *value;
     if (const std::optional<bool> value = flag("auto_exposure"))
         settings.autoExposure = *value;
     if (const std::optional<bool> value = flag("depth_of_field"))
@@ -178,6 +180,8 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         settings.autoExposure = *overrides.autoExposure;
     if (overrides.contactShadows)
         settings.contactShadows = *overrides.contactShadows;
+    if (overrides.foliageDecals)
+        settings.foliageDecals = *overrides.foliageDecals;
     if (overrides.renderCap)
         settings.renderResolutionCap = *overrides.renderCap;
     if (overrides.terrainSurface)
@@ -227,6 +231,7 @@ void saySettings(GraphicsLayer& layer, const GraphicsSettings& settings)
     say(layer, GraphicsSetting::Bloom, settings.bloom ? 1.0 : 0.0);
     say(layer, GraphicsSetting::AmbientOcclusion, settings.ambientOcclusion ? 1.0 : 0.0);
     say(layer, GraphicsSetting::ContactShadows, settings.contactShadows ? 1.0 : 0.0);
+    say(layer, GraphicsSetting::FoliageDecals, settings.foliageDecals ? 1.0 : 0.0);
     say(layer, GraphicsSetting::AntiAliasing, static_cast<f64>(settings.antiAliasing));
     say(layer, GraphicsSetting::Upscaling, static_cast<f64>(settings.upscaling));
     // In hundredths: a float's 0.2 is 0.20000000298 as a double, and a script
@@ -321,6 +326,8 @@ void seedCommandLine(scene::GraphicsModel& model, const GraphicsOverrides& overr
         say(layer, GraphicsSetting::AutoExposure, *overrides.autoExposure ? 1.0 : 0.0);
     if (overrides.contactShadows)
         say(layer, GraphicsSetting::ContactShadows, *overrides.contactShadows ? 1.0 : 0.0);
+    if (overrides.foliageDecals)
+        say(layer, GraphicsSetting::FoliageDecals, *overrides.foliageDecals ? 1.0 : 0.0);
     if (overrides.renderCap)
         say(layer, GraphicsSetting::RenderResolutionCap, static_cast<f64>(*overrides.renderCap));
     if (overrides.vsync)
@@ -478,6 +485,7 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
     settings.bloom = value(GraphicsSetting::Bloom) != 0.0;
     settings.ambientOcclusion = value(GraphicsSetting::AmbientOcclusion) != 0.0;
     settings.contactShadows = value(GraphicsSetting::ContactShadows) != 0.0;
+    settings.foliageDecals = value(GraphicsSetting::FoliageDecals) != 0.0;
     settings.antiAliasing =
         static_cast<render::AntiAliasingMode>(std::clamp(static_cast<int>(value(GraphicsSetting::AntiAliasing)), 0, 3));
     settings.upscaling =

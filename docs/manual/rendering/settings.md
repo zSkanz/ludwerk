@@ -59,7 +59,7 @@ settings are no one level's:
 | `Reflections` | `Reflections` |
 | `Textures` | `TextureQuality`, `AnisotropicFiltering`, `TextureStreamingBudget` |
 | `Effects` | `ParticleBudget`, `SoftParticles` |
-| `Foliage` | `FoliageDensity` |
+| `Foliage` | `FoliageDensity`, `FoliageDecals` |
 | `Shading` | `LightBudget`, `SkinWeights`, `AnimationDetail`, `FogQuality` |
 
 `Enum.GraphicsLevel` is `Low`, `Medium`, `High`, `Ultra` and `Cinematic`, which

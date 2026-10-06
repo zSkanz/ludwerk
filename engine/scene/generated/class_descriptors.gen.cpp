@@ -4822,7 +4822,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(localizationServiceDesc);
 
     // --- GraphicsService ---
-    static std::array<PropertyDesc, 42> graphicsServiceProperties;
+    static std::array<PropertyDesc, 43> graphicsServiceProperties;
     graphicsServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("QualityLevel"),
@@ -5061,6 +5061,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
             .get = native::getGraphicsServiceFoliageDensity,
             .set = native::setGraphicsServiceFoliageDensity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("FoliageDecals"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether a decal paints the foliage standing in it (`FoliageLayer.ReceivesDecals`). Off, the foliage under a decal is not drawn a second time for it: the decal is on the ground and on whatever of a blade faces it, as on any surface. Off at the low quality level, and on a handheld below high.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceFoliageDecals,
+            .set = native::setGraphicsServiceFoliageDecals,
         },
         PropertyDesc{
             .name = atoms.intern("AnimationDetail"),

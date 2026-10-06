@@ -1255,6 +1255,7 @@
   "engine.graphics.setting.auto_exposure": "Automatic exposure",
   "engine.graphics.setting.light_budget": "Lights in a frame",
   "engine.graphics.setting.terrain_detail": "Terrain detail",
+  "engine.graphics.setting.foliage_decals": "Decals on foliage",
   "engine.graphics.setting.foliage_density": "Foliage density",
   "engine.graphics.setting.view_distance": "View distance",
   "engine.graphics.setting.texture_quality": "Texture quality",

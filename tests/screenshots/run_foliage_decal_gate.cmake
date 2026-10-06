@@ -9,6 +9,10 @@
 # step's side -- and that fade left every card clean but for a line of pixels
 # where one card's edge met the next.
 #
+# And a third time with the mark down and `--no-foliage-decals`
+# (`GraphicsService.FoliageDecals`): no card is drawn again for the mark, and
+# the receiving field's cards are as clean as they were before ADR 0185.
+#
 # The project is copied with the card the foliage cards' test draws, whole.
 #
 # Invoked as:
@@ -31,14 +35,15 @@ file(MAKE_DIRECTORY "${project}/content/models")
 file(COPY_FILE "${CARDS}/content/models/card.gltf" "${project}/content/models/card.gltf")
 file(COPY_FILE "${CARDS}/variants/solid.png" "${project}/content/models/card.png")
 
-foreach(shot IN ITEMS "before|10" "after|40")
+foreach(shot IN ITEMS "before|10|--foliage-decals" "after|40|--foliage-decals" "off|40|--no-foliage-decals")
     string(REPLACE "|" ";" fields "${shot}")
     list(GET fields 0 name)
     list(GET fields 1 frames)
+    list(GET fields 2 setting)
     execute_process(
         COMMAND "${HOST}" "${project}" --headless "--frames=${frames}" --exit "--screenshot=${OUTPUT}/${name}.png"
                 --width=1000 --height=500 --no-auto-exposure --no-bloom --no-ambient-occlusion --no-contact-shadows
-                --no-anti-aliasing
+                --no-anti-aliasing "${setting}"
         RESULT_VARIABLE host_result
         OUTPUT_VARIABLE host_output
         ERROR_VARIABLE host_output)
@@ -78,4 +83,21 @@ execute_process(
 message("${probe_output}")
 if(NOT probe_result EQUAL 0)
     message(FATAL_ERROR "foliage decal gate: a probe disagreed (see above); the frames are in ${OUTPUT}")
+endif()
+
+# **With the setting off the cards are not painted as a field**: the mark is
+# on whatever of a card faces it -- its top edge, a line of pixels -- as it
+# was before a decal painted foliage, so of the six places that are all darker
+# above, some are not. Asked as "the six claims together do not hold".
+execute_process(
+    COMMAND "${PROBE}" "${OUTPUT}/off.png" --tolerance=12
+        "0.13,0.22<0.04,0.22" "0.18,0.41<0.04,0.41" "0.24,0.57<0.04,0.57"
+        "0.30,0.73<0.04,0.73" "0.35,0.12<0.04,0.12" "0.21,0.80<0.04,0.80"
+    RESULT_VARIABLE probe_result
+    OUTPUT_VARIABLE probe_output
+    ERROR_VARIABLE probe_output)
+if(probe_result EQUAL 0)
+    message("${probe_output}")
+    message(FATAL_ERROR "foliage decal gate: the cards are painted with decals on foliage off; "
+                        "the frames are in ${OUTPUT}")
 endif()

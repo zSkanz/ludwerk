@@ -28,6 +28,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.bloom = false;
         settings.ambientOcclusion = false;
         settings.contactShadows = false;
+        settings.foliageDecals = false;
         settings.terrainPixelError = 4.0f;
         settings.antiAliasing = AntiAliasingMode::Fxaa;
         // The world at three quarters, brought up by FSR 1 rather than
@@ -48,6 +49,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.bloom = true;
         settings.ambientOcclusion = false;
         settings.contactShadows = true;
+        settings.foliageDecals = true;
         settings.terrainPixelError = 3.0f;
         settings.antiAliasing = AntiAliasingMode::Smaa;
         settings.autoExposure = true;
@@ -65,6 +67,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.bloom = true;
         settings.ambientOcclusion = true;
         settings.contactShadows = true;
+        settings.foliageDecals = true;
         settings.terrainPixelError = 2.0f;
         // SMAA rather than FXAA (ADR 0158): an edge found by its shape and
         // blended by the area it covers, which keeps what FXAA blurs.
@@ -95,6 +98,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.bloom = true;
         settings.ambientOcclusion = true;
         settings.contactShadows = true;
+        settings.foliageDecals = true;
         settings.terrainPixelError = 1.5f;
         // The temporal pass: what still crawls in motion under SMAA -- a fence,
         // a wire, the far grass -- is sampled at eight places over eight frames.
@@ -139,8 +143,12 @@ GraphicsSettings handheldSettings(GraphicsSettings settings) noexcept
     // for a few centimetres of shadow under what a phone's screen shows a
     // finger wide.
     settings.bloomLevels = 3;
-    if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium)
+    if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium) {
         settings.contactShadows = false;
+        // And no second pass over the grass a decal covers (ADR 0185): the
+        // decal is on the ground under it.
+        settings.foliageDecals = false;
+    }
     // And the lean ground at Medium as well as at Low (ADR 0175): the terrain's
     // fragment was two thirds of a phone's frame.
     if (settings.quality == QualityLevel::Medium)

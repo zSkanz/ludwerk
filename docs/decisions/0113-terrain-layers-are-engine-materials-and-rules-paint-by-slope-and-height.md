@@ -212,3 +212,26 @@ tiling's work, and it is the owner's to make a default.
 from its runs' spread -- it waits on the GPU a quarter of a millisecond --
 and, with ground filling half a 4K picture on an RTX 4070 Ti SUPER, about
 0.1 ms a frame for the default and 0.2 for hex tiling.
+
+## Amendment, 2026-10-06: a layer glows
+
+Asked by a game for a volcano's seams and a waystone's ring: a layer's
+material said `Emissive` and the ground did not read it.
+
+- **A layer's row has a fifth entry, its material's `Emissive`**
+  (`GpuTerrainLayer::emissive`; the row is 80 bytes). It is blended exactly as
+  the layer's colour is -- by the corners' weights, under the paint's height
+  blend, under each rule's cover -- and added to the lit ground before the
+  fog, as a mesh's emission is.
+- **On the full, the lean and the fast ground alike.** The fast ground is a
+  phone's default (ADR 0179), and a volcano dark on a phone is not the
+  feature. There it is a row of the layers' buffer a layer it already reads
+  -- four at the most -- and a lerp beside each of the colour's: no texture,
+  no branch.
+- **Not `EmissiveMap`.** The layers' arrays hold four maps a layer, and a
+  fifth is a fifth array bound and read at every pixel of the ground for
+  every game that has no glowing layer. The glow is even across the layer;
+  where it must have a pattern, the pattern is where the layer is painted.
+
+`terrain_glow` draws rock and lava with no light in the world, three times:
+the rock black, the lava its `Emissive`, on each of the three grounds.

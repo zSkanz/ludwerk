@@ -159,6 +159,12 @@ terrain:SetLayers(layers)
   from three axes, on by default, so a cliff is not a smear). `HeightMap` and
   `BlendSharpness` are for where two layers meet. A surface shader is not read
   on terrain.
+- **A layer glows by its material's `Emissive`**: lava, a rune ring, embers in
+  ash. The colour is added to the lit ground by as much of a pixel as the
+  layer is -- through the blend at a painted edge and under a rule -- on every
+  quality level and on a phone. It lights nothing else, as on a mesh; for
+  light on what stands near, put a `PointLight` there. `EmissiveMap` is not
+  read on terrain: the glow is the layer's, even.
 - **A layer's repeat is broken up** by default: the same small patch every
   `TileSize` metres is a carpet near and a grid far, so a textured layer's
   colour drifts over tens of metres (`TilingVariation`), and a second, larger

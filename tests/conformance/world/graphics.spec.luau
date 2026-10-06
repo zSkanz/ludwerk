@@ -172,6 +172,11 @@ describe("a group", function()
         expect(Graphics.ShadowDistance):ToBe(70)
         expect(Graphics.ContactShadows):ToBe(false)
         -- The rest is where it was.
+        expect(Graphics.FoliageDecals):ToBe(true)
+        Graphics:SetGroupLevel(Enum.GraphicsGroup.Foliage, Enum.GraphicsLevel.Low)
+        expect(Graphics.FoliageDecals):ToBe(false)
+        Graphics.FoliageDecals = true
+        expect(Graphics.FoliageDecals):ToBe(true)
         expect(Graphics:GetGroupLevel(Enum.GraphicsGroup.PostProcessing)):ToBe(Enum.GraphicsLevel.High)
         expect(Graphics.Bloom):ToBe(true)
         expect(Graphics.QualityLevel):ToBe(Enum.GraphicsQuality.Custom)

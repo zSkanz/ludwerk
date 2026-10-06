@@ -2164,6 +2164,12 @@ void TerrainLoader::appendRenderTerrains(const scene::World& world, core::Instan
             layer.tiling[0] = std::clamp(p.tilingVariation, 0.0f, 1.0f);
             layer.tiling[1] = 1.0f / std::clamp(p.tilingFarScale, 1.0f, 32.0f);
             layer.tiling[2] = p.hexTiling ? 1.0f : 0.0f;
+            // What the layer gives off: the material's `Emissive`, as a mesh
+            // wearing it would add. Not its `EmissiveMap` -- the layers' arrays
+            // hold four maps a layer, and a fifth is another array.
+            layer.emissive[0] = p.emissive.r;
+            layer.emissive[1] = p.emissive.g;
+            layer.emissive[2] = p.emissive.b;
             const std::array<const std::string*, 4> maps{&p.colorMap, &p.normalMap, &p.metallicRoughnessMap,
                                                          &p.heightMap};
             for (usize slot = 0; slot < maps.size(); ++slot) {

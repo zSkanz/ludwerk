@@ -48,6 +48,7 @@ struct GraphicsOverrides
     std::optional<bool> frameGeneration;
     std::optional<bool> autoExposure;
     std::optional<bool> contactShadows;
+    std::optional<bool> foliageDecals;
     // `--render-cap=N`: the most lines the world is rendered at, 0 for none.
     std::optional<core::u32> renderCap;
     // `--terrain-surface=full|lean|fast|flat` (ADR 0175, ADR 0179), over the level's and the file's.

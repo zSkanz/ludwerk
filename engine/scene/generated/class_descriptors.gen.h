@@ -895,6 +895,8 @@ Value getGraphicsServiceTerrainDetail(const World& world, core::InstanceId id);
 bool setGraphicsServiceTerrainDetail(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceFoliageDensity(const World& world, core::InstanceId id);
 bool setGraphicsServiceFoliageDensity(World& world, core::InstanceId id, const Value& value);
+Value getGraphicsServiceFoliageDecals(const World& world, core::InstanceId id);
+bool setGraphicsServiceFoliageDecals(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceAnimationDetail(const World& world, core::InstanceId id);
 bool setGraphicsServiceAnimationDetail(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceViewDistance(const World& world, core::InstanceId id);

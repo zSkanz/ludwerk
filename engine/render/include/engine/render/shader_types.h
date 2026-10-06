@@ -678,9 +678,12 @@ struct GpuTerrainLayer
     // large-scale variation, the second sample's scale against the first (1
     // none), 1 for hex tiling, and a spare.
     f32 tiling[4]{0.0f, 1.0f, 0.0f, 0.0f};
+    // The light the layer gives off (`Material.Emissive`), added to the lit
+    // ground as a mesh's is; a spare.
+    f32 emissive[4]{};
 };
 
-static_assert(sizeof(GpuTerrainLayer) == 64, "GpuTerrainLayer is a structured buffer's stride");
+static_assert(sizeof(GpuTerrainLayer) == 80, "GpuTerrainLayer is a structured buffer's stride");
 
 // Fragment stage, `b1 space3`, for `terrain`.
 struct GpuTerrainSurfaceUniforms

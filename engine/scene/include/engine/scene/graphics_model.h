@@ -55,6 +55,7 @@ namespace engine::scene {
     X(LightBudget, Whole, 0.0, 65536.0, 256.0, true, true)                                                             \
     X(TerrainDetail, Number, 0.25, 4.0, 1.0, true, true)                                                               \
     X(FoliageDensity, Number, 0.0, 1.0, 1.0, true, true)                                                               \
+    X(FoliageDecals, Flag, 0.0, 1.0, 1.0, true, true)                                                                  \
     X(ViewDistance, Number, 0.25, 4.0, 1.0, true, false)                                                               \
     X(TextureQuality, Choice, 0.0, 2.0, 2.0, true, false)                                                              \
     X(AnisotropicFiltering, Whole, 1.0, 16.0, 8.0, true, false)                                                        \

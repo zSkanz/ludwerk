@@ -4175,6 +4175,11 @@ declare extern type GraphicsService extends Instance with
     TerrainDetail: number
     --- How much of the foliage a `FoliageLayer` grows is drawn, 0 to 1, over the project's own density.
     FoliageDensity: number
+    --- Whether a decal paints the foliage standing in it (`FoliageLayer.ReceivesDecals`). Off, the
+    --- foliage under a decal is not drawn a second time for it: the decal is on the ground and on
+    --- whatever of a blade faces it, as on any surface. Off at the low quality level, and on a handheld
+    --- below high.
+    FoliageDecals: boolean
     --- How small on the screen a skinned mesh may be and still be posed every tick, as a scale on the
     --- size it is taken to be: at 1 a rig is posed every tick while it is 12% of the picture's height
     --- or more, every second tick down to 6%, every fourth down to 3% and every eighth below; at 2

@@ -108,6 +108,8 @@ struct TerrainLayer
     // x how much a pattern tens of metres across varies the colour; y the
     // second sample's scale against the first (1 none); z hexagonal cells.
     float4 Tiling;
+    // The light the layer gives off (`Material.Emissive`) in rgb.
+    float4 Emissive;
 };
 
 #endif // ENG_TERRAIN_VERTEX_HLSLI

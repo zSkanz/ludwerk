@@ -1507,6 +1507,20 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # **A terrain layer whose material gives off light glows** (ADR 0113,
+    # amended): rock and lava with no light in the world, on the full, the
+    # lean and the fast ground. See the driver.
+    add_test(NAME terrain_glow
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/terrainglow
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/terrain-glow
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_terrain_glow.cmake)
+    set_tests_properties(terrain_glow PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 180)
+
     # **A card's shadow has the card's holes** (terrain audit T3): foliage
     # cast solid rectangles, whatever its image's alpha. See the driver.
     add_test(NAME foliage_card_shadows
@@ -1968,7 +1982,7 @@ if(ENG_BUILD_TESTS)
         surface_contract_proof_meshes surface_contract_proof_specular user_surface_proof
         graphics_settings_differential graphics_runtime_differential options_screen_gate local_shadow_differential
         terrain_gallery_holes terrain_shadow_acne mesh_shadow_acne skinned_crowd_runs
-        terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels
+        terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels terrain_glow
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
         editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived
         decal_blend_gate decal_receives_gate foliage_decal_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d

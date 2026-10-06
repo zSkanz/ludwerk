@@ -247,6 +247,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A terrain layer glows** (ADR 0113, amended): a layer whose material has
+  an `Emissive` colour gives that light off -- lava, a rune ring -- on every
+  quality level and on a phone. Not `EmissiveMap`.
+- **`GraphicsService.FoliageDecals`** (ADR 0185, amended), `[graphics]
+  foliage_decals` and `--[no-]foliage-decals`: whether a decal paints the
+  foliage standing in it. **Off at the low quality level, and on a handheld
+  below high** -- there a decal is on the ground under the grass, as it was
+  before decals painted foliage. A game that wants it on a phone sets
+  `foliage_decals = true` under `[graphics.android]`.
 - **`Instance.Local`** (ADR 0186), read-only: whether the instance was made by
   a script that does not run on the server side, and so is never sent.
 - **`--net-log-client-writes`**: on a machine that is hosting, a client-side

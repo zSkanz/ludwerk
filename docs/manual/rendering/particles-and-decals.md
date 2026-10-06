@@ -303,6 +303,13 @@ It costs something only where it is used: on a frame that has both a decal
 and a part that receives none in view, those parts are drawn once more, depth
 only -- and so is the foliage near a decal, receiving or not.
 
+**A quality setting can leave the foliage out**: `GraphicsService.FoliageDecals`
+(`foliage_decals` under `[graphics]`). Off, the foliage is not drawn again for
+a decal, the mark is on the ground under the grass and on whatever of a blade
+happens to face it, and a layer's `ReceivesDecals` does nothing. It is off at
+the low quality level, and on a phone below high
+([Quality](manual:rendering/quality)).
+
 Both decals and particle emitters replicate: on every machine of a match, the
 same emitters run and the same marks are painted -- and `ReceivesDecals` with
 them.

@@ -865,6 +865,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             graphics.contactShadows = arg == "--contact-shadows";
             continue;
         }
+        if (arg == "--foliage-decals" || arg == "--no-foliage-decals") {
+            graphics.foliageDecals = arg == "--foliage-decals";
+            continue;
+        }
         // `[graphics] terrain_surface`, as a flag (ADR 0175).
         if (arg.starts_with("--terrain-surface=")) {
             const std::string_view value = arg.substr(18);

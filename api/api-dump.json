@@ -2103,6 +2103,12 @@
           "Transient": true
         },
         {
+          "Name": "FoliageDecals",
+          "Type": "boolean",
+          "Default": "true",
+          "Transient": true
+        },
+        {
           "Name": "FoliageDensity",
           "Type": "number",
           "Default": "1",

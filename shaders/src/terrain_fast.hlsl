@@ -288,8 +288,15 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     const float lightShare = min(firstShare, secondShare) / max(firstShare + secondShare, 1e-5f);
 
     float3 albedo = fastLayer(heavy, ground, true);
+    // **What the ground gives off** (`Material.Emissive`), carried beside the
+    // colour through every blend below: a row of the layers' buffer a layer,
+    // no texture and no branch of its own.
+    float3 glow = TerrainLayers[heavy].Emissive.rgb;
     [branch] if (lightShare > 0.001f)
+    {
         albedo = lerp(albedo, fastLayer(light, ground, false), lightShare);
+        glow = lerp(glow, TerrainLayers[light].Emissive.rgb, lightShare);
+    }
 
     // **What is painted over it** (ADR 0114): the layer that shows most, by
     // how much of the pixel is painted. A crossfade: no height to blend by.
@@ -325,7 +332,11 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
         const float cover = saturate(shares.x + shares.y + shares.z);
         const uint lead = shares.x >= shares.y && shares.x >= shares.z ? tops.x : (shares.y >= shares.z ? tops.y : tops.z);
         [branch] if (cover > 0.001f)
-            albedo = lerp(albedo, fastLayer(lead, ground, false), smoothstep(0.0f, 1.0f, cover));
+        {
+            const float shows = smoothstep(0.0f, 1.0f, cover);
+            albedo = lerp(albedo, fastLayer(lead, ground, false), shows);
+            glow = lerp(glow, TerrainLayers[lead].Emissive.rgb, shows);
+        }
     }
 
     // **The rules** (ADR 0113 §2), each by how far the pixel is inside its
@@ -362,7 +373,10 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
             }
         }
         [branch] if (most > 0.001f)
+        {
             albedo = lerp(albedo, fastLayer(mostLayer, ground, false), most);
+            glow = lerp(glow, TerrainLayers[mostLayer].Emissive.rgb, most);
+        }
     }
 
     // --- Lit: the sun through its shadow, the sky's irradiance, the ambient,
@@ -384,6 +398,7 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     // ambient is the outdoor one there, the indoor one under a roof (ADR 0084).
     color += albedo * evaluateIrradiance(IrradianceSh, normal) * (EnvironmentParams.y * input.Sky);
     color += lerp(Ambient.rgb, OutdoorAmbient.rgb, input.Sky) * albedo;
+    color += glow;
     color = applyFog(color, FogColor.rgb, FogRange, length(input.ShadingPosition));
     return float4(color, 1.0f);
 }

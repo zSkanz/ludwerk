@@ -776,6 +776,18 @@ local Classes: { Schema.Class } = {
                     .. "density.",
             },
             {
+                Name = "FoliageDecals",
+                Type = "boolean",
+                Default = "true",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether a decal paints the foliage standing in it (`FoliageLayer.ReceivesDecals`). Off, "
+                    .. "the foliage under a decal is not drawn a second time for it: the decal is on the ground "
+                    .. "and on whatever of a blade faces it, as on any surface. Off at the low quality level, "
+                    .. "and on a handheld below high.",
+            },
+            {
                 Name = "AnimationDetail",
                 Type = "number",
                 Default = "1",
