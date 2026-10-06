@@ -185,8 +185,16 @@ bool UiText::requestImage(std::string_view urn, ui::ResolvedImage& out)
             // copies the table before that, and the texture this replaces was
             // destroyed when its view was remade -- a renderer given it binds a
             // texture that is gone (the 26-security-cameras crash).
-            if (const auto slot = static_cast<core::usize>(entry - imageEntries_.begin()); slot < images_.size())
-                images_[slot] = picture.texture;
+            //
+            // **And a picture asked for the first time is given its place in
+            // the table here** (D575). The table had one for it only from the
+            // next `sync`, a frame on: the draw list named a place past the
+            // table's end, which is "no texture", and a `ViewportFrame` was a
+            // white square for the frame it was first shown in.
+            const auto slot = static_cast<core::usize>(entry - imageEntries_.begin());
+            if (slot >= images_.size())
+                images_.resize(slot + 1);
+            images_[slot] = picture.texture;
         }
         entry->width = picture.width;
         entry->height = picture.height;

@@ -1428,6 +1428,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A `ViewportFrame` is no longer a white square the frame it is first
+  shown** (D575). Each time one became visible it drew solid white for a frame
+  before its instances -- every preview in a menu, each time the menu opened.
+  A frame with no picture yet shows its own background.
 - **A character moving fast over terrain no longer stands still** (D574). A
   `CharacterBody` whose step in a tick was long enough to reach from one facet
   of the ground on to the next -- a dash, a mount, a knock-back -- could stop

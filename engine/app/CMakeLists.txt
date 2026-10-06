@@ -1546,6 +1546,20 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # **A ViewportFrame is never a white square** (D575), the frame it is first
+    # shown least of all: seven pictures round the frame three of them are
+    # made in, and no slot white in any.
+    add_test(NAME viewport_frame_first_shown
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/viewportfirst
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/viewport-first
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_viewport_first_gate.cmake)
+    set_tests_properties(viewport_frame_first_shown PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
     # **Every part of an instanced run drawn where it is** (D484): on D3D12 a
     # run drawn after single draws on other meshes read every instance from
     # the first, the vertex buffer views keeping the single draws' stride of

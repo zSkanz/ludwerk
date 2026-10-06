@@ -203,6 +203,52 @@ TEST_CASE("tearing down while a picture is on its way in leaves nothing behind")
     }
 }
 
+TEST_CASE("D575: a view's picture is in the frame's table the first time it is asked for, not the frame after")
+{
+    // A `ViewportFrame` drew a WHITE square for one frame, each time it was
+    // first shown: the draw list named the view's picture by a place in the
+    // table, the table was copied for the renderer straight after -- and the
+    // place was not in it until the next frame's `sync`. A place past the
+    // table's end is "no texture", which is drawn white.
+    Fixture fixture;
+    UiText text;
+    text.setMounts(&fixture.mounts);
+    const rhi::TextureHandle portrait = fixture.device->createTexture(
+        {.format = rhi::TextureFormat::Rgba8Unorm, .usage = rhi::TextureUsage::Sampled, .width = 4, .height = 4});
+    const rhi::TextureHandle other = fixture.device->createTexture(
+        {.format = rhi::TextureFormat::Rgba8Unorm, .usage = rhi::TextureUsage::Sampled, .width = 4, .height = 4});
+    text.setViewLookup([&](std::string_view name, UiText::ViewPicture& out) {
+        if (name != "#7" && name != "#9")
+            return false;
+        out.texture = name == "#7" ? portrait : other;
+        out.width = 4;
+        out.height = 4;
+        return true;
+    });
+    // A frame under way: the table as the last `sync` left it, and a draw
+    // list asking for two pictures nobody has asked for before.
+    text.sync(*fixture.device, *fixture.cmd);
+    REQUIRE(text.images().empty());
+    ui::ResolvedImage first{};
+    ui::ResolvedImage second{};
+    REQUIRE(text.requestImage("view://#7", first));
+    REQUIRE(text.requestImage("view://#9", second));
+    // What the frame copies now, before any `sync`: both, where they were named.
+    const auto place = [](const ui::ResolvedImage& image) {
+        return static_cast<core::usize>(image.texture - ui::kFirstImageTexture);
+    };
+    REQUIRE(place(first) < text.images().size());
+    REQUIRE(place(second) < text.images().size());
+    CHECK(text.images()[place(first)] == portrait);
+    CHECK(text.images()[place(second)] == other);
+    // And the next `sync` leaves them where they are.
+    text.sync(*fixture.device, *fixture.cmd);
+    CHECK(text.images()[place(first)] == portrait);
+    CHECK(text.images()[place(second)] == other);
+    fixture.device->destroy(portrait);
+    fixture.device->destroy(other);
+}
+
 TEST_CASE("a view's picture remade in a frame is the one that frame draws (the 26-security-cameras crash)")
 {
     // What `ViewHost` does when a camera texture's size changes: the old

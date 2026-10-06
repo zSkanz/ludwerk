@@ -315,15 +315,40 @@ TEST_CASE("D448: taking what is due costs the budget, not the queue")
     for (const scene::FluidWakes::Position& at : first)
         CHECK((at[0] + at[2]) % 3 != 0);
 
-    const auto began = std::chrono::steady_clock::now();
     std::size_t taken = first.size();
     for (int tick = 0; tick < 20; ++tick)
         taken += wakes.takeDue(10, scene::MaxFluidUpdatesPerTick).size();
-    const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began);
     CHECK(taken == 1000 + 20u * scene::MaxFluidUpdatesPerTick);
     CHECK(wakes.size() == total - taken);
-    // Twenty ticks' worth. Copying and sorting the backlog each time was half
-    // a second of this; taking the budget is a few milliseconds, and the
-    // bound is loose enough for a machine doing everything else at once.
-    CHECK(took.count() < 250);
+
+    // **Twenty ticks' worth costs the same out of four times the queue.**
+    // Copying and sorting the backlog each time, it cost four times as much;
+    // taking the budget, about the same. A ratio and not a bound in
+    // milliseconds: this ran in a tenth of a second alone and in three tenths
+    // beside two other builds, and a clock on a busy machine says how busy it
+    // is. The least of three runs each, since one can still be interrupted.
+    const auto twentyTicks = [](core::i32 side) {
+        double least = 1.0e9;
+        for (int run = 0; run < 3; ++run) {
+            scene::FluidWakes queue;
+            for (core::i32 z = 0; z < side; ++z) {
+                for (core::i32 x = 0; x < side; ++x)
+                    queue.schedule(scene::FluidWakes::Position{x, 0, z}, 0u);
+            }
+            const auto began = std::chrono::steady_clock::now();
+            std::size_t out = 0;
+            for (int tick = 0; tick < 20; ++tick)
+                out += queue.takeDue(10, scene::MaxFluidUpdatesPerTick).size();
+            const double took =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - began).count();
+            REQUIRE(out == 20u * scene::MaxFluidUpdatesPerTick);
+            least = std::min(least, took);
+        }
+        return least;
+    };
+    const double ofTheQueue = twentyTicks(Side);
+    const double ofFourTimesIt = twentyTicks(Side * 2);
+    CAPTURE(ofTheQueue);
+    CAPTURE(ofFourTimesIt);
+    CHECK(ofFourTimesIt < 2.0 * ofTheQueue + 5.0);
 }
