@@ -574,6 +574,11 @@ TEST_CASE("everything the sandbox really has is left alone")
     CHECK(lintsOf("print(game, workspace, script, task)").empty());
     CHECK(lintsOf("local ok = pcall(function() end)\nprint(ok, _VERSION)").empty());
     CHECK(lintsOf("print(Vector3.new(1, 2, 3), CFrame.identity, Enum.PartShape.Ball)").empty());
+    // The curve types and the scene, which joined the engine and not the list
+    // (2026-10-06): seventeen "unknown global" on a game that builds a
+    // particle's curve.
+    CHECK(lintsOf("print(NumberSequence.new(1), NumberSequenceKeypoint.new(0, 1))").empty());
+    CHECK(lintsOf("print(ColorSequence, ColorSequenceKeypoint, scene)").empty());
 }
 
 TEST_CASE("a local nobody reads is reported")
@@ -588,6 +593,25 @@ TEST_CASE("a local nobody reads is reported")
 
     // `local function` is a declaration too.
     CHECK(mentions(lintsOf("local function helper() end\nprint(1)"), "helper"));
+}
+
+TEST_CASE("a module required for its types is used")
+{
+    // **The owner's game, opened in the editor** (2026-10-06): thirty-seven
+    // files require a module and name it only in a type -- `context:
+    // MatchLoader.Context` -- and each was "`MatchLoader` is never used", in a
+    // project `ludwerk check` called clean. A type names its module by name,
+    // and that is a use.
+    CHECK(lintsOf("local Loader = require(\"./Loader\")\nlocal function f(context: Loader.Context) return context end\n"
+                  "print(f)")
+              .empty());
+    // In an alias, a generic's argument, a function type and a cast alike.
+    CHECK(lintsOf("local A = require(\"./A\")\ntype Held = { A.Item }\nlocal held: Held = {}\nprint(held)").empty());
+    CHECK(lintsOf("local A = require(\"./A\")\nlocal f: (A.Item) -> () = print\nf(nil :: any)").empty());
+    CHECK(lintsOf("local A = require(\"./A\")\nprint((1 :: any) :: A.Item)").empty());
+    // And one named nowhere at all still is not.
+    CHECK(mentions(lintsOf("local A = require(\"./A\")\ntype Held = { number }\nlocal held: Held = {}\nprint(held)"),
+                   "A"));
 }
 
 TEST_CASE("the lints stay out of the way where staying out of the way is the point")

@@ -26,6 +26,7 @@
 #include "engine/app/script_editor_panel.h"
 
 #include "engine/app/language_service.h"
+#include "engine/app/script_check.h"
 #include "engine/app/script_editor.h"
 #include "engine/app/script_editor_settings.h"
 #include "engine/app/script_sides.h"
@@ -562,12 +563,19 @@ void typeText(OpenScript& tab, ScriptEditorCommands& out, std::size_t index, std
 // writes to `Source` land through the inspector at the next frame's safe point,
 // so the world is a keystroke behind -- and a signature asked about a call the
 // checker could not yet see was never shown.
+//
+// **And the files** (`paneEditor`): a require by path is resolved against the
+// file each script was mounted from, which the editor knows and the world does
+// not.
+const ScriptEditor* paneEditor = nullptr;
+
 [[nodiscard]] LanguageTree languageTreeOf(const scene::World& world, core::InstanceId root, const OpenScript& tab)
 {
     core::InstanceId top = root;
     while (world.alive(top) && world.parentOf(top).valid())
         top = world.parentOf(top);
-    LanguageTree tree = captureLanguageTree(world, top);
+    const LanguageFiles files = paneEditor != nullptr ? paneEditor->languageFiles(world) : LanguageFiles{};
+    LanguageTree tree = captureLanguageTree(world, top, &files);
     for (LanguageTree::Node& node : tree.nodes) {
         if (node.id == tab.instance && node.script)
             node.source = tab.document.text();
@@ -2559,6 +2567,7 @@ void drawPane(OpenScript& tab, ScriptEditor& editor, const DebugView& debug, con
     // colours, folds, finds and edits, and nothing offers it a Part.
     const bool luau = tab.document.language() == ScriptLanguage::Luau;
     const scene::World* world = luau ? shown : nullptr;
+    paneEditor = &editor;
     const ThemePalette& p = currentTheme().palette;
     PaneMetrics m = metricsFor(tab.document, editor.zoom());
     refreshFolds(tab);
@@ -2575,29 +2584,10 @@ void drawPane(OpenScript& tab, ScriptEditor& editor, const DebugView& debug, con
         // child can only be told from a plain table field by resolving the
         // path, so it is a second pass in the same breath and lands in the same
         // list.
+        // `appendTreeDiagnostics` is that pass, and `--check-scripts` runs
+        // the same one over every script of a project.
         if (world != nullptr) {
-            std::vector<Diagnostic> reached;
-            lintInstanceAccess(tab.document, world->classes(), world->atoms(),
-                               CompletionWorld{world, root, tab.instance}, reached);
-            // **Where it runs** (ADR 0138 §8): a client script reaching for the
-            // server's storage, a server script for a player's camera, a script
-            // for both that never asks which one it is on.
-            if (world->alive(tab.instance) &&
-                world->classOf(tab.instance) == world->classes().findId(world->atoms().lookup("Script"))) {
-                const bool decided = script::serviceSideOf(*world, tab.instance).has_value();
-                const std::string text = tab.document.text();
-                for (const SideFinding& finding : lintScriptSide(text, script::scriptSideOf(*world, tab.instance),
-                                                                 decided, projectIsMultiplayer(editor.projectRoot()))) {
-                    const core::I18nArg args[] = {{"word", std::string_view{finding.word}}};
-                    reached.push_back(Diagnostic{
-                        .at = Position{finding.line, finding.column},
-                        .length = finding.length,
-                        .message = core::engineCatalog().format(finding.key, args),
-                        .severity = Severity::Warning,
-                    });
-                }
-            }
-            tab.document.appendDiagnostics(reached);
+            appendTreeDiagnostics(tab.document, *world, root, tab.instance, editor.projectRoot());
             // And the type checker's, which land when it answers (ADR 0093).
             if (LanguageService* service = languageService(); service != nullptr) {
                 LanguageTree snapshot = languageTreeOf(*world, root, tab);

@@ -828,6 +828,24 @@ public:
         return true;
     }
 
+    // **A module required for its TYPES is used** (the owner's game, opened
+    // in the editor: `local MatchLoader = require(...)` and then only
+    // `context: MatchLoader.Context` was "never used" on thirty-seven files).
+    // A type names the module it comes from by NAME -- the tree has no local
+    // behind it -- so that is how it is counted, as Luau's own lint counts
+    // it. Types are not walked unless a visitor asks, which is how the walk
+    // above never reached one.
+    bool visit(Luau::AstType*) override { return true; }
+    bool visit(Luau::AstTypePack*) override { return true; }
+    bool visit(Luau::AstTypeReference* node) override
+    {
+        if (node->prefixLocal != nullptr)
+            m_used.insert(node->prefixLocal);
+        if (node->prefix.has_value())
+            m_typePrefixes.insert(std::string(node->prefix->value));
+        return true;
+    }
+
     bool visit(Luau::AstStatLocal* node) override
     {
         for (Luau::AstLocal* local : node->vars)
@@ -849,6 +867,8 @@ public:
             if (m_used.contains(local))
                 continue;
             const std::string_view name = local->name.value;
+            if (m_typePrefixes.contains(std::string(name)))
+                continue;
             // The universal "I know, and I meant it" marker. Warning through it
             // would leave somebody no way to say so.
             if (!name.empty() && name.front() == '_')
@@ -858,24 +878,7 @@ public:
     }
 
 private:
-    [[nodiscard]] static bool known(std::string_view name)
-    {
-        for (const script::StdName& global : script::stdGlobals()) {
-            if (global.name == name)
-                return true;
-        }
-        for (const script::StdLibrary& library : script::stdLibraries()) {
-            if (library.name == name)
-                return true;
-        }
-        // The same list the completion offers, so this never underlines a name
-        // the editor itself just suggested.
-        for (const std::string_view global : engineGlobals()) {
-            if (global == name)
-                return true;
-        }
-        return false;
-    }
+    [[nodiscard]] static bool known(std::string_view name) { return knownGlobal(name); }
 
     void warn(const Luau::Location& where, std::string message)
     {
@@ -907,6 +910,7 @@ private:
     std::vector<Diagnostic>& m_out;
     std::vector<Luau::AstLocal*> m_declared;
     std::unordered_set<const Luau::AstLocal*> m_used;
+    std::unordered_set<std::string> m_typePrefixes;
 };
 
 #endif

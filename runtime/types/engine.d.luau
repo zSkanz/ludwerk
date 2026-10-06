@@ -6207,110 +6207,114 @@ declare task: {
 
 declare function warn(...: any): ()
 
+type InstanceClasses = {
+    Folder: Folder,
+    Model: Model,
+    Script: Script,
+    ModuleScript: ModuleScript,
+    Part: Part,
+    MeshPart: MeshPart,
+    Attachment: Attachment,
+    Bone: Bone,
+    BallSocketConstraint: BallSocketConstraint,
+    HingeConstraint: HingeConstraint,
+    FixedConstraint: FixedConstraint,
+    PrismaticConstraint: PrismaticConstraint,
+    RopeConstraint: RopeConstraint,
+    RodConstraint: RodConstraint,
+    SpringConstraint: SpringConstraint,
+    LinearVelocity: LinearVelocity,
+    AngularVelocity: AngularVelocity,
+    AlignPosition: AlignPosition,
+    AlignOrientation: AlignOrientation,
+    VectorForce: VectorForce,
+    Torque: Torque,
+    NoCollisionConstraint: NoCollisionConstraint,
+    Ragdoll: Ragdoll,
+    Weld: Weld,
+    Terrain: Terrain,
+    WeldConstraint: WeldConstraint,
+    CharacterBody: CharacterBody,
+    Camera: Camera,
+    PointLight: PointLight,
+    Decal: Decal,
+    CameraTexture: CameraTexture,
+    SubWorld: SubWorld,
+    ParticleEmitter: ParticleEmitter,
+    Highlight: Highlight,
+    Beam: Beam,
+    Trail: Trail,
+    SpotLight: SpotLight,
+    BloomEffect: BloomEffect,
+    ColorCorrectionEffect: ColorCorrectionEffect,
+    BlurEffect: BlurEffect,
+    DepthOfFieldEffect: DepthOfFieldEffect,
+    SunRaysEffect: SunRaysEffect,
+    Atmosphere: Atmosphere,
+    Sky: Sky,
+    InputContext: InputContext,
+    InputAction: InputAction,
+    InputBinding: InputBinding,
+    ScreenGui: ScreenGui,
+    BillboardGui: BillboardGui,
+    SurfaceGui: SurfaceGui,
+    Frame: Frame,
+    ViewportFrame: ViewportFrame,
+    TextLabel: TextLabel,
+    TextButton: TextButton,
+    TextInput: TextInput,
+    ImageLabel: ImageLabel,
+    ImageButton: ImageButton,
+    ScrollFrame: ScrollFrame,
+    UIListLayout: UIListLayout,
+    UIGridLayout: UIGridLayout,
+    UIPageLayout: UIPageLayout,
+    UIFlexItem: UIFlexItem,
+    UIScale: UIScale,
+    UIAspectRatioConstraint: UIAspectRatioConstraint,
+    UISizeConstraint: UISizeConstraint,
+    UITextSizeConstraint: UITextSizeConstraint,
+    UIDragDetector: UIDragDetector,
+    CanvasGroup: CanvasGroup,
+    UIPadding: UIPadding,
+    UICorner: UICorner,
+    UIGradient: UIGradient,
+    UIStroke: UIStroke,
+    AudioGroup: AudioGroup,
+    ReverbSoundEffect: ReverbSoundEffect,
+    EchoSoundEffect: EchoSoundEffect,
+    EqualizerSoundEffect: EqualizerSoundEffect,
+    LowPassSoundEffect: LowPassSoundEffect,
+    HighPassSoundEffect: HighPassSoundEffect,
+    DistortionSoundEffect: DistortionSoundEffect,
+    CompressorSoundEffect: CompressorSoundEffect,
+    ChorusSoundEffect: ChorusSoundEffect,
+    PitchShiftSoundEffect: PitchShiftSoundEffect,
+    Sound: Sound,
+    AnimationPlayer: AnimationPlayer,
+    Part2D: Part2D,
+    Tilemap2D: Tilemap2D,
+    HingeConstraint2D: HingeConstraint2D,
+    SpringConstraint2D: SpringConstraint2D,
+    WeldConstraint2D: WeldConstraint2D,
+    SpriteAnimator: SpriteAnimator,
+    NavigationArea: NavigationArea,
+    NavigationLink: NavigationLink,
+    Swarm: Swarm,
+    NavigationAgent: NavigationAgent,
+    FoliageLayer: FoliageLayer,
+    FoliageMesh: FoliageMesh,
+    ClickDetector: ClickDetector,
+    Water: Water,
+    WaterWave: WaterWave,
+    WaterPoint: WaterPoint,
+    RemoteEvent: RemoteEvent,
+    UnreliableRemoteEvent: UnreliableRemoteEvent,
+    RemoteFunction: RemoteFunction,
+}
+
 declare Instance: {
-    new: (("Folder") -> Folder)
-        & (("Model") -> Model)
-        & (("Script") -> Script)
-        & (("ModuleScript") -> ModuleScript)
-        & (("Part") -> Part)
-        & (("MeshPart") -> MeshPart)
-        & (("Attachment") -> Attachment)
-        & (("Bone") -> Bone)
-        & (("BallSocketConstraint") -> BallSocketConstraint)
-        & (("HingeConstraint") -> HingeConstraint)
-        & (("FixedConstraint") -> FixedConstraint)
-        & (("PrismaticConstraint") -> PrismaticConstraint)
-        & (("RopeConstraint") -> RopeConstraint)
-        & (("RodConstraint") -> RodConstraint)
-        & (("SpringConstraint") -> SpringConstraint)
-        & (("LinearVelocity") -> LinearVelocity)
-        & (("AngularVelocity") -> AngularVelocity)
-        & (("AlignPosition") -> AlignPosition)
-        & (("AlignOrientation") -> AlignOrientation)
-        & (("VectorForce") -> VectorForce)
-        & (("Torque") -> Torque)
-        & (("NoCollisionConstraint") -> NoCollisionConstraint)
-        & (("Ragdoll") -> Ragdoll)
-        & (("Weld") -> Weld)
-        & (("Terrain") -> Terrain)
-        & (("WeldConstraint") -> WeldConstraint)
-        & (("CharacterBody") -> CharacterBody)
-        & (("Camera") -> Camera)
-        & (("PointLight") -> PointLight)
-        & (("Decal") -> Decal)
-        & (("CameraTexture") -> CameraTexture)
-        & (("SubWorld") -> SubWorld)
-        & (("ParticleEmitter") -> ParticleEmitter)
-        & (("Highlight") -> Highlight)
-        & (("Beam") -> Beam)
-        & (("Trail") -> Trail)
-        & (("SpotLight") -> SpotLight)
-        & (("BloomEffect") -> BloomEffect)
-        & (("ColorCorrectionEffect") -> ColorCorrectionEffect)
-        & (("BlurEffect") -> BlurEffect)
-        & (("DepthOfFieldEffect") -> DepthOfFieldEffect)
-        & (("SunRaysEffect") -> SunRaysEffect)
-        & (("Atmosphere") -> Atmosphere)
-        & (("Sky") -> Sky)
-        & (("InputContext") -> InputContext)
-        & (("InputAction") -> InputAction)
-        & (("InputBinding") -> InputBinding)
-        & (("ScreenGui") -> ScreenGui)
-        & (("BillboardGui") -> BillboardGui)
-        & (("SurfaceGui") -> SurfaceGui)
-        & (("Frame") -> Frame)
-        & (("ViewportFrame") -> ViewportFrame)
-        & (("TextLabel") -> TextLabel)
-        & (("TextButton") -> TextButton)
-        & (("TextInput") -> TextInput)
-        & (("ImageLabel") -> ImageLabel)
-        & (("ImageButton") -> ImageButton)
-        & (("ScrollFrame") -> ScrollFrame)
-        & (("UIListLayout") -> UIListLayout)
-        & (("UIGridLayout") -> UIGridLayout)
-        & (("UIPageLayout") -> UIPageLayout)
-        & (("UIFlexItem") -> UIFlexItem)
-        & (("UIScale") -> UIScale)
-        & (("UIAspectRatioConstraint") -> UIAspectRatioConstraint)
-        & (("UISizeConstraint") -> UISizeConstraint)
-        & (("UITextSizeConstraint") -> UITextSizeConstraint)
-        & (("UIDragDetector") -> UIDragDetector)
-        & (("CanvasGroup") -> CanvasGroup)
-        & (("UIPadding") -> UIPadding)
-        & (("UICorner") -> UICorner)
-        & (("UIGradient") -> UIGradient)
-        & (("UIStroke") -> UIStroke)
-        & (("AudioGroup") -> AudioGroup)
-        & (("ReverbSoundEffect") -> ReverbSoundEffect)
-        & (("EchoSoundEffect") -> EchoSoundEffect)
-        & (("EqualizerSoundEffect") -> EqualizerSoundEffect)
-        & (("LowPassSoundEffect") -> LowPassSoundEffect)
-        & (("HighPassSoundEffect") -> HighPassSoundEffect)
-        & (("DistortionSoundEffect") -> DistortionSoundEffect)
-        & (("CompressorSoundEffect") -> CompressorSoundEffect)
-        & (("ChorusSoundEffect") -> ChorusSoundEffect)
-        & (("PitchShiftSoundEffect") -> PitchShiftSoundEffect)
-        & (("Sound") -> Sound)
-        & (("AnimationPlayer") -> AnimationPlayer)
-        & (("Part2D") -> Part2D)
-        & (("Tilemap2D") -> Tilemap2D)
-        & (("HingeConstraint2D") -> HingeConstraint2D)
-        & (("SpringConstraint2D") -> SpringConstraint2D)
-        & (("WeldConstraint2D") -> WeldConstraint2D)
-        & (("SpriteAnimator") -> SpriteAnimator)
-        & (("NavigationArea") -> NavigationArea)
-        & (("NavigationLink") -> NavigationLink)
-        & (("Swarm") -> Swarm)
-        & (("NavigationAgent") -> NavigationAgent)
-        & (("FoliageLayer") -> FoliageLayer)
-        & (("FoliageMesh") -> FoliageMesh)
-        & (("ClickDetector") -> ClickDetector)
-        & (("Water") -> Water)
-        & (("WaterWave") -> WaterWave)
-        & (("WaterPoint") -> WaterPoint)
-        & (("RemoteEvent") -> RemoteEvent)
-        & (("UnreliableRemoteEvent") -> UnreliableRemoteEvent)
-        & (("RemoteFunction") -> RemoteFunction),
+    new: <K>(className: K & keyof<InstanceClasses>) -> index<InstanceClasses, K>,
     stamp: (name: string, linked: boolean?, parameters: { [string]: string | number | boolean | vector | Color3 }?) -> Instance,
 }
 

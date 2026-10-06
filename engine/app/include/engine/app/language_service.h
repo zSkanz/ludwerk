@@ -15,6 +15,8 @@
 // Analysis (ADR 0002).
 
 #include <condition_variable>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -23,6 +25,7 @@
 #include <thread>
 #include <vector>
 
+#include "engine/app/require_paths.h"
 #include "engine/app/script_complete.h"
 #include "engine/app/script_document.h"
 #include "engine/core/id.h"
@@ -40,6 +43,14 @@ namespace engine::app {
 // `Parent` and `GetService` / `WaitForChild` / `FindFirstChild` -- and every
 // step of such a walk is an ancestor of the module it reaches or of the script
 // it starts from, so nothing else is needed.
+//
+// **And what a require by PATH needs** (`require("../shared/ring")`,
+// `require("@engine/settings")`), which is how a project laid out as files
+// names its modules: the file each script was mounted from, the project's
+// folder for a module no scene mounts, its `.luaurc` aliases, and where the
+// engine's own modules are. The rule is `resolveRequire`'s, the one the world
+// host runs a require by -- the checker took a path for something it could not
+// know, and a project that requires by path was a page of unknown types.
 struct LanguageTree
 {
     struct Node
@@ -57,17 +68,40 @@ struct LanguageTree
         std::string source;
         // The instance it was taken from, which is how a tab finds its module.
         core::InstanceId id;
+        // The file it was mounted from, relative to the project
+        // (`src/shared/ring.luau`), or empty for a script a scene carries.
+        std::string file;
     };
     std::vector<Node> nodes;
+
+    // The project's folder; empty when there is none, and a path then names
+    // nothing.
+    std::filesystem::path projectRoot;
+    RequireAliases aliases;
+    // `content/runtime`: `@engine/camera` is `engine/camera/init.luau` under
+    // it, and `@std/net` is `std/net/init.luau`.
+    std::filesystem::path libraryRoot;
 
     [[nodiscard]] std::optional<core::u32> find(std::string_view path) const;
     // The module name of `id`, or empty when it is not a script in the tree.
     [[nodiscard]] std::string pathOf(core::InstanceId id) const;
 };
 
+// What the tree cannot be asked: see `LanguageTree`.
+struct LanguageFiles
+{
+    std::filesystem::path projectRoot;
+    RequireAliases aliases;
+    std::filesystem::path libraryRoot;
+    // The file a script was mounted from, relative to the project, or empty.
+    std::function<std::string(core::InstanceId)> fileOf;
+};
+
 // Walks `world` from `dataModel`. A tab writes `Source` as it is typed (ADR
-// 0057), so the world's text is the buffer's.
-[[nodiscard]] LanguageTree captureLanguageTree(const scene::World& world, core::InstanceId dataModel);
+// 0057), so the world's text is the buffer's. With no `files`, a require by
+// path names nothing, which is a world with no project.
+[[nodiscard]] LanguageTree captureLanguageTree(const scene::World& world, core::InstanceId dataModel,
+                                               const LanguageFiles* files = nullptr);
 
 // What one check of one module found.
 struct LanguageCheck

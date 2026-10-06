@@ -495,12 +495,25 @@ for _, class in Classes do
 end
 
 if #Creatable > 0 then
-    local overloads: { string } = {}
+    -- **`Instance.new` as the new solver reads it** (R2; 2026-10-06). This was
+    -- an intersection of one overload per creatable class -- `(("Folder") ->
+    -- Folder) & (("Model") -> Model) & ...` -- which the old solver reads and
+    -- the new one gives up on as "code too complex", taking the whole file
+    -- with it. So `ludwerk check` rewrote the file into a copy before it
+    -- analysed, the editor rewrote it another way in memory, and an editor
+    -- extension pointed at the file as written loaded nothing: three readers
+    -- and three files. The new solver has what the intersection spelled out
+    -- -- a table from name to class, read with `index<>` over a name
+    -- constrained to `keyof<>` of it, so a literal keeps its class and a wrong
+    -- name is an error -- and this writes that, once, for all three.
+    table.insert(Lines, "type InstanceClasses = {")
     for _, name in Creatable do
-        table.insert(overloads, `(("{name}") -> {name})`)
+        table.insert(Lines, `    {name}: {name},`)
     end
+    table.insert(Lines, "}")
+    table.insert(Lines, "")
     table.insert(Lines, "declare Instance: {")
-    table.insert(Lines, `    new: {table.concat(overloads, "\n        & ")},`)
+    table.insert(Lines, "    new: <K>(className: K & keyof<InstanceClasses>) -> index<InstanceClasses, K>,")
     -- `Instance.stamp` places a prefab by name (ADR 0051). Typed by hand rather
     -- than from a class list, because what it returns depends on the FILE and
     -- not on anything the schema knows -- so `Instance` is the honest answer,

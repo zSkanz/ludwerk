@@ -522,6 +522,13 @@ local function run(): number
     copyRequiredTree("tools/cli", joined(target, "tools", "cli"), "the CLI", { tests = true })
     copyRequiredTree("templates", joined(target, "templates"), "the project template")
     copyRequiredTree("runtime/types", joined(target, "runtime", "types"), "the engine definitions")
+    -- And the modules a script requires by name (`@engine/settings`,
+    -- `@std/net`), which `ludwerk setup` copies into a project's
+    -- `.engine/types/` for the analyser to follow the require into. They were
+    -- left out, so in an installation `setup` wrote the definitions and
+    -- neither folder, and every such require was unknown to `ludwerk check`.
+    copyRequiredTree("runtime/engine", joined(target, "runtime", "engine"), "the engine's Luau modules")
+    copyRequiredTree("runtime/std", joined(target, "runtime", "std"), "the declarations of the native modules")
 
     -- The attributions this repository already generates and already audits.
     for _, file in { "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md" } do

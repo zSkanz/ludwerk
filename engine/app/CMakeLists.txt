@@ -18,6 +18,7 @@ engine_add_module(app
         src/preserved.cpp
         src/project_config.cpp
         src/reload.cpp
+        src/require_paths.cpp
         src/replay.cpp
         src/script_package.cpp
         src/script_sides.cpp
@@ -156,8 +157,13 @@ if(ENG_DEBUG_UI)
     # Luau at the pin, so this is a component of an approved dependency and not
     # a new one; `cmake/engine_luau.cmake` keeps it out of `all` so nothing else
     # compiles it.
-    target_sources(engine_app PRIVATE src/language_service.cpp)
+    target_sources(engine_app PRIVATE src/language_service.cpp src/script_check.cpp)
     target_link_libraries(engine_app PRIVATE Luau.Analysis)
+    # The flags the checker runs with: the ones Luau's own analyser runs with,
+    # read from the vendored sources (see the file for why, and why only its).
+    include(${CMAKE_SOURCE_DIR}/cmake/engine_luau_analysis_flags.cmake)
+    engine_luau_analysis_flags("${CMAKE_CURRENT_BINARY_DIR}/generated/luau_analysis_flags.gen.h")
+    target_include_directories(engine_app PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
     # **The surface shader compiler** (ADR 0091), and only here: it RUNS
     # `shadercross` rather than linking it, so the editor carries no compiler
@@ -260,6 +266,15 @@ add_custom_target(engine_host_runtime ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
         "${CMAKE_SOURCE_DIR}/runtime/conformance"
         "${CMAKE_CURRENT_BINARY_DIR}/content/runtime/conformance"
+    # What `@std/net` and `@std/json` ARE, as types: the modules are native,
+    # and these are their declarations, which the script editor's checker
+    # reads to follow a require of one (`LanguageTree::libraryRoot`). Beside
+    # the host, because the checker is the host's: read from a project's
+    # `.engine/types/`, a project whose copy was a version old was a page of
+    # errors about a module the engine has.
+    COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
+        "${CMAKE_SOURCE_DIR}/runtime/std"
+        "${CMAKE_CURRENT_BINARY_DIR}/content/runtime/std"
     COMMENT "Staging the engine's Luau modules")
 add_dependencies(engine_host engine_host_runtime)
 
@@ -1065,6 +1080,21 @@ if(ENG_BUILD_TESTS)
     set_tests_properties(ui_minify_gate PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
+
+    # **A project `ludwerk check` calls clean is clean in the editor** (ADR
+    # 0093): the script pane's checker, with no pane, over a project that
+    # requires by path, over every example, and over two mistakes it must say.
+    # See the driver. No window and no device: it is not one of the drawn.
+    add_test(NAME script_check_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/tests/scriptcheck/project
+            -DEXAMPLES=${CMAKE_SOURCE_DIR}/examples
+            -DSCRATCH=${CMAKE_CURRENT_BINARY_DIR}/script-check-broken
+            -P ${CMAKE_SOURCE_DIR}/tests/scriptcheck/run_script_check_gate.cmake)
+    set_tests_properties(script_check_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
 
     # ADR 0107: a mirror shows what a mirror would, and a portal what is
     # beyond it (`@engine/views`, `Camera.ClipPlane`).

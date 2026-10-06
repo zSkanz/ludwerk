@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "engine/app/language_service.h"
+#include "engine/app/require_paths.h"
 #include "engine/platform/file.h"
 #include "engine/scene/world.h"
 #include "inspector_fixture.h"
@@ -489,4 +490,220 @@ TEST_CASE("inside a function passed as an argument there is no signature of the 
     (void)builder.add(service, "Main", "Script", source);
     core.update(builder.tree);
     CHECK_FALSE(core.signature("game.ScriptService.Main", caret).has_value());
+}
+
+// --- Requires by path (api-design.md section 1.3) ----------------------------
+
+namespace {
+
+// A mounted script: its place in the tree and the file it came from.
+core::u32 mount(TreeBuilder& builder, core::u32 parent, std::string name, std::string className, std::string file,
+                std::string source)
+{
+    const core::u32 index = builder.add(parent, std::move(name), std::move(className), std::move(source));
+    builder.tree.nodes[index].file = std::move(file);
+    return index;
+}
+
+constexpr std::string_view LoaderModule = R"(--!strict
+export type Context = { Round: number, Players: { string } }
+
+local Loader = {}
+
+function Loader.make(): Context
+    return { Round = 1, Players = {} }
+end
+
+return Loader
+)";
+
+[[nodiscard]] std::string messagesOf(const app::LanguageCheck& check)
+{
+    std::string all;
+    for (const app::Diagnostic& diagnostic : check.diagnostics)
+        all += std::to_string(diagnostic.at.line + 1) + ": " + diagnostic.message + "\n";
+    return all;
+}
+
+} // namespace
+
+TEST_CASE("a module required by path is followed, and its types are known")
+{
+    // **The owner's game, opened in the editor** (2026-10-06): a hundred files
+    // that require each other by path -- `require("../../../shared/MatchLoader")`
+    // -- and 193 errors, 115 of them "Unknown type", in a project `ludwerk
+    // check` called clean. The checker followed a require only through the
+    // tree, so a path was something it could not know and every type the
+    // module exported was unknown.
+    LanguageCore core(definitions());
+    TreeBuilder builder;
+    builder.tree.projectRoot = std::filesystem::temp_directory_path() / "engine-language-no-such-project";
+    const core::u32 global = builder.add(0, "GlobalScriptService", "GlobalScriptService");
+    const core::u32 shared = builder.add(global, "Shared", "Folder");
+    (void)mount(builder, shared, "MatchLoader", "ModuleScript", "src/shared/MatchLoader.luau",
+                std::string(LoaderModule));
+    const core::u32 server = builder.add(global, "Server", "Folder");
+    const core::u32 rules = builder.add(server, "Rules", "Folder");
+    (void)mount(builder, rules, "Cards", "ModuleScript", "src/server/Rules/Cards.module.luau", R"(--!strict
+local MatchLoader = require("../../shared/MatchLoader")
+
+local function round(context: MatchLoader.Context): number
+    return context.Round
+end
+
+return round(MatchLoader.make())
+)");
+    core.update(builder.tree);
+    const app::LanguageCheck clean = core.check("game.GlobalScriptService.Server.Rules.Cards");
+    CHECK_MESSAGE(clean.diagnostics.empty(), messagesOf(clean));
+
+    // Followed, and so CHECKED: a field the type does not have is an error, where
+    // a module the checker could not find was `any` and everything passed.
+    builder.tree.nodes.back().source = R"(--!strict
+local MatchLoader = require("../../shared/MatchLoader")
+
+local function round(context: MatchLoader.Context): number
+    return context.Rounds
+end
+
+return round(MatchLoader.make())
+)";
+    core.update(builder.tree);
+    const app::LanguageCheck wrong = core.check("game.GlobalScriptService.Server.Rules.Cards");
+    REQUIRE_MESSAGE(wrong.diagnostics.size() == 1, messagesOf(wrong));
+    CHECK(wrong.diagnostics.front().at.line == 4);
+    CHECK(wrong.diagnostics.front().message.find("Rounds") != std::string::npos);
+}
+
+TEST_CASE("a module outside every scene is read from the project, and one that is nowhere is said")
+{
+    // A file no scene mounts -- another scene's, or a tool's -- is the file on
+    // the disk; and a path that names nothing is an error here, as it is when
+    // the host runs the script.
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "engine-language-paths";
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    REQUIRE(platform::createDirectories(root / "src" / "tools"));
+    REQUIRE(platform::writeTextFile(root / "src" / "tools" / "Dice.luau",
+                                    "--!strict\nexport type Roll = { Faces: number }\nlocal Dice = {}\n"
+                                    "function Dice.roll(): Roll\n    return { Faces = 6 }\nend\nreturn Dice\n"));
+
+    LanguageCore core(definitions());
+    TreeBuilder builder;
+    builder.tree.projectRoot = root;
+    const core::u32 global = builder.add(0, "GlobalScriptService", "GlobalScriptService");
+    const core::u32 client = builder.add(global, "Client", "Folder");
+    (void)mount(builder, client, "Main", "Script", "src/client/Main.luau", R"(--!strict
+local Dice = require("../tools/Dice")
+local roll: Dice.Roll = Dice.roll()
+print(roll.Faces)
+)");
+    core.update(builder.tree);
+    const app::LanguageCheck clean = core.check("game.GlobalScriptService.Client.Main");
+    CHECK_MESSAGE(clean.diagnostics.empty(), messagesOf(clean));
+
+    builder.tree.nodes.back().source = "--!strict\nlocal Dice = require(\"../tools/Dise\")\nprint(Dice)\n";
+    core.update(builder.tree);
+    const app::LanguageCheck missing = core.check("game.GlobalScriptService.Client.Main");
+    REQUIRE_MESSAGE(missing.diagnostics.size() == 1, messagesOf(missing));
+    CHECK(missing.diagnostics.front().at.line == 1);
+    CHECK(missing.diagnostics.front().message.find("../tools/Dise") != std::string::npos);
+
+    // A walk through the tree to something not there yet is still not one: the
+    // scene may gain it before the script runs.
+    builder.tree.nodes.back().source = "--!strict\nlocal Later = require(script.Parent.Later)\nprint(Later)\n";
+    core.update(builder.tree);
+    CHECK(core.check("game.GlobalScriptService.Client.Main").diagnostics.empty());
+
+    std::filesystem::remove_all(root, error);
+}
+
+TEST_CASE("the engine's own modules are followed by name, whatever a project's folder holds")
+{
+    // `@engine/settings` and `@std/json` are the engine's, read from beside
+    // the host -- not from a project's `.engine/types/`, where a copy a
+    // version old was an error about a module the engine has.
+    const std::filesystem::path runtime =
+        std::filesystem::path(ENG_TEST_CATALOG).parent_path().parent_path() / "runtime";
+    LanguageCore core(definitions());
+    TreeBuilder builder;
+    builder.tree.projectRoot = std::filesystem::temp_directory_path() / "engine-language-no-such-project";
+    builder.tree.libraryRoot = runtime;
+    // An alias that points nowhere, as a project not set up has.
+    builder.tree.aliases.emplace("std", ".engine/types/std");
+    builder.tree.aliases.emplace("engine", ".engine/types/engine");
+    const core::u32 global = builder.add(0, "GlobalScriptService", "GlobalScriptService");
+    (void)mount(builder, global, "Main", "Script", "src/client/Main.luau", R"(--!strict
+local json = require("@std/json")
+local text: string = json.serialize(json.deserialize("[1, 2, 3]"))
+print(text)
+)");
+    core.update(builder.tree);
+    const app::LanguageCheck clean = core.check("game.GlobalScriptService.Main");
+    CHECK_MESSAGE(clean.diagnostics.empty(), messagesOf(clean));
+
+    builder.tree.nodes.back().source = R"(--!strict
+local json = require("@std/json")
+local text: number = json.serialize(json.deserialize("[1, 2, 3]"))
+print(text)
+)";
+    core.update(builder.tree);
+    const app::LanguageCheck wrong = core.check("game.GlobalScriptService.Main");
+    CHECK_MESSAGE(wrong.diagnostics.size() == 1, messagesOf(wrong));
+
+    // One the engine has none of is unknown, and said.
+    builder.tree.nodes.back().source = "--!strict\nlocal fs = require(\"@std/fs\")\nprint(fs)\n";
+    core.update(builder.tree);
+    CHECK(core.check("game.GlobalScriptService.Main").diagnostics.size() == 1);
+}
+
+TEST_CASE("the checker runs with the fixes Luau's own analyser runs with")
+{
+    // **The second half of the same report**: nine errors were left once the
+    // paths were followed, in lines like this one -- a value typed `any`,
+    // narrowed by an `or`, and its field read. The checker ran the new solver
+    // with every flag off, which is the solver without the fixes made since;
+    // Luau's own tools, and the analyser `ludwerk check` runs, turn the
+    // checker's flags on.
+    LanguageCore core(definitions());
+    TreeBuilder builder;
+    const core::u32 service = builder.add(0, "ServerScriptService", "ServerScriptService");
+    (void)builder.add(service, "Main", "Script", R"(--!strict
+local function offer(hero: any, ended: boolean): boolean
+    if hero.Dead or hero.Body.Parent == nil or ended then
+        return false
+    end
+    return true
+end
+print(offer({}, false))
+)");
+    core.update(builder.tree);
+    const app::LanguageCheck clean = core.check("game.ServerScriptService.Main");
+    CHECK_MESSAGE(clean.diagnostics.empty(), messagesOf(clean));
+}
+
+TEST_CASE("what a string in require names is one rule")
+{
+    // `resolveRequire` is what the world host runs a require by and what the
+    // checker follows one by; these are its answers.
+    const std::vector<std::string> files{"src/shared/Ring.luau", "src/client/Ui.module.luau",
+                                         "src/client/kit/init.luau", "lib/vendor/Signal.luau"};
+    const auto present = [&files](const std::string& path) {
+        return std::find(files.begin(), files.end(), path) != files.end();
+    };
+    const app::RequireAliases aliases{{"vendor", "lib/vendor"}};
+    const auto named = [&](std::string_view from, std::string_view specifier) {
+        std::string out;
+        return app::resolveRequire(from, specifier, aliases, present, out) ? out : std::string("-");
+    };
+    CHECK(named("src/client/Main.luau", "../shared/Ring") == "src/shared/Ring.luau");
+    CHECK(named("src/client/Main.luau", "./Ui") == "src/client/Ui.module.luau");
+    CHECK(named("src/client/Main.luau", "./Ui.module") == "src/client/Ui.module.luau");
+    CHECK(named("src/client/Main.luau", "@self/kit") == "src/client/kit/init.luau");
+    CHECK(named("src/client/Main.luau", "@vendor/Signal") == "lib/vendor/Signal.luau");
+    CHECK(named("src/client/Main.luau", "src/shared/Ring") == "src/shared/Ring.luau");
+    // Nothing there, an alias nobody made, and a path out of the project.
+    CHECK(named("src/client/Main.luau", "./Nothing") == "-");
+    CHECK(named("src/client/Main.luau", "@nobody/Signal") == "-");
+    CHECK(named("src/client/Main.luau", "../../../outside") == "-");
 }

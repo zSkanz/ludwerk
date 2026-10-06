@@ -125,6 +125,61 @@ test.suite("check", function(suite)
         assert.eq(command[#command], ".")
     end)
 
+    suite:case("every scene of a project is a tree to check, in a fixed order", function()
+        -- A script is mounted by the scene it belongs to (ADR 0105), so the
+        -- editor's checker is run over each.
+        local root = scratch("scenes")
+        assert.eq(#check.projectScenes(root), 0)
+        fs.createDirectory(`{root}/content/scenes/levels`, { makeParents = true })
+        fs.writeStringToFile(`{root}/content/scenes/menu.scene.json`, "{}")
+        fs.writeStringToFile(`{root}/content/scenes/levels/one.scene.json`, "{}")
+        fs.writeStringToFile(`{root}/content/scenes/notes.json`, "{}")
+        local scenes = check.projectScenes(root)
+        assert.eq(table.concat(scenes, " "), "scenes/levels/one.scene.json scenes/menu.scene.json")
+        fs.removeDirectory(root, { recursive = true })
+    end)
+
+    suite:case("a project is checked as the editor checks it, where an engine with a checker is", function()
+        -- **The owner's report** (D583): a game `check` called clean, 193
+        -- errors in the editor. The command asks the editor's checker now.
+        local projectlib = require("../project")
+        local engine = projectlib.findEngine()
+        if engine == nil then
+            print("no engine is built here, so the editor's checker was not asked")
+            return
+        end
+        local base = string.match(debug.info(1, "s"), "^(.*)[/\\][^/\\]+$") or "tools/cli/tests"
+        local project = `{base}/../../../tests/scriptcheck/project`
+        local clean = check.editorCheck(engine :: string, project)
+        if not clean.ran then
+            print("the engine found here has no script checker, so it was not asked")
+            return
+        end
+        assert.eq(clean.failure, nil)
+        assert.eq(#clean.problems, 0)
+
+        -- And a mistake is said, once, with its line.
+        local root = scratch("editor")
+        for _, folder in { "src/shared", "src/client" } do
+            fs.createDirectory(`{root}/{folder}`, { makeParents = true })
+        end
+        fs.writeStringToFile(`{root}/project.toml`, '[project]\nname = "Broken"\nid = "dev.ludwerk.broken"\n')
+        fs.writeStringToFile(
+            `{root}/src/shared/Match.luau`,
+            "--!strict\nexport type Context = { Round: number }\nreturn { make = function(): Context\n    return { Round = 1 }\nend }\n"
+        )
+        fs.writeStringToFile(
+            `{root}/src/client/Main.luau`,
+            '--!strict\nlocal Match = require("../shared/Match")\nprint(Match.make().Rounds)\n'
+        )
+        local broken = check.editorCheck(engine :: string, root)
+        assert.eq(broken.errors, 1)
+        assert.eq(#broken.problems, 1)
+        assert.strContains(broken.problems[1].line, "src/client/Main.luau(3,")
+        assert.strContains(broken.problems[1].line, "Rounds")
+        fs.removeDirectory(root, { recursive = true })
+    end)
+
     suite:case("definitions load under the engine's own name", function()
         -- **D212.** Unnamed, the analyser announced them under another
         -- platform's.

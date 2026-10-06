@@ -14,12 +14,14 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "engine/app/language_service.h"
 #include "engine/app/script_complete.h"
 #include "engine/app/script_document.h"
 #include "engine/core/id.h"
@@ -408,6 +410,19 @@ public:
     void setProjectRoot(std::filesystem::path root) { m_projectRoot = std::move(root); }
     [[nodiscard]] const std::filesystem::path& projectRoot() const noexcept { return m_projectRoot; }
 
+    // **What a require by path needs** (see `LanguageTree`): the file each
+    // script of `world` was mounted from, the project's aliases, the engine's
+    // modules. Asked each time a tab is checked rather than kept, because a
+    // reload replaces the world host and every mount with it -- and by world,
+    // because a stamp being edited is a world of its own whose scripts came
+    // from no file.
+    using LanguageFilesOf = std::function<LanguageFiles(const scene::World&)>;
+    void setLanguageFiles(LanguageFilesOf files) { m_languageFiles = std::move(files); }
+    [[nodiscard]] LanguageFiles languageFiles(const scene::World& world) const
+    {
+        return m_languageFiles ? m_languageFiles(world) : LanguageFiles{};
+    }
+
     [[nodiscard]] bool anyDirty() const noexcept;
     [[nodiscard]] std::size_t dirtyCount() const noexcept;
 
@@ -451,6 +466,7 @@ public:
 
 private:
     std::filesystem::path m_projectRoot;
+    LanguageFilesOf m_languageFiles;
     std::vector<OpenScript> m_tabs;
     std::size_t m_active = 0;
     std::optional<std::size_t> m_focusRequest;

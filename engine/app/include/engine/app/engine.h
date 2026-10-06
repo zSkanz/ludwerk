@@ -235,6 +235,12 @@ struct EngineOptions
     // and `ludwerk check` run so a project that never opened the editor is typed.
     bool writeTypesOnly = false;
 
+    // **Check every script of the scene as the editor's script pane would, and
+    // exit** (ADR 0093): `--check-scripts`, which `ludwerk check` runs so that
+    // what the command says is what the editor shows. The scene as the editor
+    // holds it, no script run. Only where the editor is built.
+    bool checkScriptsOnly = false;
+
     // **Lay the scene's terrain from a source, save it and exit** (ADR 0149
     // §2): what `ludwerk terrain import` runs. The scene as the editor holds
     // it -- whole, no script run, nothing partitioned -- its terrain laid a

@@ -4,9 +4,11 @@
 #include <Luau/AstQuery.h>
 #include <Luau/Autocomplete.h>
 #include <Luau/BuiltinDefinitions.h>
+#include <Luau/Common.h>
 #include <Luau/ConfigResolver.h>
 #include <Luau/ConstraintSolver.h>
 #include <Luau/Error.h>
+#include <Luau/ExperimentalFlags.h>
 #include <Luau/FileResolver.h>
 #include <Luau/Frontend.h>
 #include <Luau/LinterConfig.h>
@@ -20,7 +22,9 @@
 #include <unordered_map>
 
 #include "engine/core/i18n.h"
+#include "engine/platform/file.h"
 #include "engine/scene/world.h"
+#include "luau_analysis_flags.gen.h"
 
 namespace engine::app {
 
@@ -56,9 +60,14 @@ namespace {
 
 } // namespace
 
-LanguageTree captureLanguageTree(const scene::World& world, core::InstanceId dataModel)
+LanguageTree captureLanguageTree(const scene::World& world, core::InstanceId dataModel, const LanguageFiles* files)
 {
     LanguageTree tree;
+    if (files != nullptr) {
+        tree.projectRoot = files->projectRoot;
+        tree.aliases = files->aliases;
+        tree.libraryRoot = files->libraryRoot;
+    }
     if (!world.alive(dataModel))
         return tree;
 
@@ -106,6 +115,8 @@ LanguageTree captureLanguageTree(const scene::World& world, core::InstanceId dat
                     node.source = *string;
             }
         }
+        if (node.script && files != nullptr && files->fileOf)
+            node.file = files->fileOf(id);
         const u32 index = static_cast<u32>(tree.nodes.size());
         indexOf[key(id)] = index;
         if (node.parent >= 0)
@@ -213,17 +224,178 @@ namespace {
     return std::nullopt;
 }
 
+// **A module's name says where its text is.** One in the tree is named by its
+// place (`game.GlobalScriptService.Shared.ring`), which is what a tab asks by.
+// A file of the project no scene mounts is `file:` and its path, and one of
+// the engine's own is what a script requires it as (`@engine/settings`,
+// `@std/net`). A place in the tree starts with `game`, so the three never
+// meet.
+constexpr std::string_view FilePrefix = "file:";
+// **A path that names no file is a module with this in front of what was
+// written**, and no text behind it. The new solver says nothing at all about a
+// require it is given no module for -- the call is `any` -- and says "unknown
+// require" of a module it is given that does not exist; a path that names
+// nothing is the second, because the host will refuse it when the script runs.
+constexpr std::string_view MissingPrefix = "missing:";
+
+[[nodiscard]] Luau::ModuleInfo missingModule(std::string_view specifier)
+{
+    return Luau::ModuleInfo{std::string(MissingPrefix) + std::string(specifier)};
+}
+
+[[nodiscard]] bool isFileModule(std::string_view name)
+{
+    return name.starts_with(FilePrefix);
+}
+
+[[nodiscard]] bool isLibraryModule(std::string_view name)
+{
+    return name.starts_with("@");
+}
+
+// `@engine/camera` under `content/runtime`: `engine/camera/init.luau`, or
+// `engine/camera.luau`. Nothing for a name the engine has no module of.
+[[nodiscard]] std::optional<std::filesystem::path> libraryFile(const std::filesystem::path& root, std::string_view name)
+{
+    if (root.empty() || name.size() < 2 || name.find("..") != std::string_view::npos ||
+        name.find('\\') != std::string_view::npos)
+        return std::nullopt;
+    const std::string_view relative = name.substr(1);
+    if (!relative.starts_with("engine/") && !relative.starts_with("std/"))
+        return std::nullopt;
+    std::error_code error;
+    const std::filesystem::path folder = root / std::filesystem::path(relative);
+    if (std::filesystem::path file = folder / "init.luau"; std::filesystem::is_regular_file(file, error))
+        return file;
+    if (std::filesystem::path file = std::filesystem::path(folder.string() + ".luau");
+        std::filesystem::is_regular_file(file, error))
+        return file;
+    return std::nullopt;
+}
+
 struct TreeResolver final : Luau::FileResolver
 {
     const LanguageTree* tree = nullptr;
+    // The files read from the disk, with what each was when it was read, so a
+    // file somebody saved in another editor is checked again (`stale`).
+    struct Read
+    {
+        std::filesystem::path file;
+        std::filesystem::file_time_type written;
+        std::uintmax_t size = 0;
+    };
+    std::unordered_map<std::string, Read> reads;
 
     std::optional<Luau::SourceCode> readSource(const Luau::ModuleName& name) override
     {
-        const std::optional<u32> at = tree != nullptr ? tree->find(name) : std::nullopt;
+        if (tree == nullptr)
+            return std::nullopt;
+        std::optional<std::filesystem::path> file;
+        if (isFileModule(name) && !tree->projectRoot.empty())
+            file = tree->projectRoot / std::filesystem::path(name.substr(FilePrefix.size()));
+        else if (isLibraryModule(name))
+            file = libraryFile(tree->libraryRoot, name);
+        if (file.has_value()) {
+            std::string text;
+            if (!platform::readTextFile(*file, text))
+                return std::nullopt;
+            std::error_code error;
+            Read read{*file, std::filesystem::last_write_time(*file, error), 0};
+            read.size = std::filesystem::file_size(*file, error);
+            reads[name] = std::move(read);
+            return Luau::SourceCode{std::move(text), Luau::SourceCode::Module};
+        }
+        const std::optional<u32> at = tree->find(name);
         if (!at.has_value() || !tree->nodes[*at].script)
             return std::nullopt;
         const LanguageTree::Node& node = tree->nodes[*at];
         return Luau::SourceCode{node.source, node.module ? Luau::SourceCode::Module : Luau::SourceCode::Script};
+    }
+
+    // The modules read from the disk whose file is not what it was.
+    [[nodiscard]] std::vector<std::string> stale() const
+    {
+        std::vector<std::string> out;
+        for (const auto& [name, read] : reads) {
+            std::error_code error;
+            const std::filesystem::file_time_type written = std::filesystem::last_write_time(read.file, error);
+            if (error || written != read.written || std::filesystem::file_size(read.file, error) != read.size)
+                out.push_back(name);
+        }
+        return out;
+    }
+
+    // The project file `name` is: a mounted script's, a `file:` module's, or
+    // none (a script a scene carries, whose requires are from the root).
+    [[nodiscard]] std::string fileOf(const Luau::ModuleName& name) const
+    {
+        if (isFileModule(name))
+            return name.substr(FilePrefix.size());
+        if (const std::optional<u32> at = tree->find(name); at.has_value())
+            return tree->nodes[*at].file;
+        return {};
+    }
+
+    // **A require by path** (api-design.md section 1.3), by the rule the world
+    // host runs one by. The engine's modules first, as there: `@engine/testing`
+    // means one thing whatever an alias says.
+    [[nodiscard]] std::optional<Luau::ModuleInfo> resolvePath(const Luau::ModuleInfo* context,
+                                                              std::string_view specifier) const
+    {
+        if (specifier.empty())
+            return std::nullopt;
+        if (specifier.front() == '@' && libraryFile(tree->libraryRoot, specifier).has_value())
+            return Luau::ModuleInfo{std::string(specifier)};
+        // One of the engine's own modules requiring another beside it.
+        if (context != nullptr && isLibraryModule(context->name)) {
+            if (!specifier.starts_with("./") && !specifier.starts_with("../"))
+                return std::nullopt;
+            const std::optional<std::filesystem::path> from = libraryFile(tree->libraryRoot, context->name);
+            if (!from.has_value())
+                return missingModule(specifier);
+            std::error_code error;
+            const std::string relative =
+                std::filesystem::relative(from->parent_path(), tree->libraryRoot, error).generic_string();
+            std::string found;
+            const auto present = [this](const std::string& candidate) {
+                std::error_code missing;
+                return std::filesystem::is_regular_file(tree->libraryRoot / candidate, missing);
+            };
+            if (error || !resolveRequire(relative + "/init.luau", specifier, {}, present, found))
+                return missingModule(specifier);
+            if (found.ends_with("/init.luau"))
+                found.resize(found.size() - 10);
+            else if (found.ends_with(".luau"))
+                found.resize(found.size() - 5);
+            return Luau::ModuleInfo{"@" + found};
+        }
+        // With no project there are no files to name: a world on its own, as a
+        // stamp being edited is, and a path in it is not this checker's to
+        // judge.
+        if (tree->projectRoot.empty())
+            return std::nullopt;
+
+        const auto mounted = [this](const std::string& file) -> std::optional<u32> {
+            for (u32 index = 0; index < tree->nodes.size(); ++index) {
+                if (tree->nodes[index].script && tree->nodes[index].file == file)
+                    return index;
+            }
+            return std::nullopt;
+        };
+        const auto present = [this, &mounted](const std::string& file) {
+            std::error_code error;
+            return mounted(file).has_value() || std::filesystem::is_regular_file(tree->projectRoot / file, error);
+        };
+        const std::string from = context != nullptr ? fileOf(context->name) : std::string{};
+        std::string found;
+        if (!resolveRequire(from, specifier, tree->aliases, present, found))
+            return missingModule(specifier);
+        // **A file the mount made a `ModuleScript` of is that instance** (ADR
+        // 0105): `require("src/shared/ring")` and `require(Shared.ring)` are one
+        // module, checked once, whichever a script reached for.
+        if (const std::optional<u32> at = mounted(found); at.has_value())
+            return Luau::ModuleInfo{tree->nodes[*at].path};
+        return Luau::ModuleInfo{std::string(FilePrefix) + found};
     }
 
     // One step of a require's walk, from where the step before it arrived
@@ -232,7 +404,11 @@ struct TreeResolver final : Luau::FileResolver
     std::optional<Luau::ModuleInfo> resolveModule(const Luau::ModuleInfo* context, Luau::AstExpr* expr,
                                                   const Luau::TypeCheckLimits&) override
     {
-        if (tree == nullptr || tree->nodes.empty())
+        if (tree == nullptr)
+            return std::nullopt;
+        if (const auto* text = expr->as<Luau::AstExprConstantString>(); text != nullptr)
+            return resolvePath(context, std::string_view(text->value.data, text->value.size));
+        if (tree->nodes.empty())
             return std::nullopt;
         const auto named = [this](u32 index) { return Luau::ModuleInfo{tree->nodes[index].path}; };
         const auto childWhere = [this](u32 parent, const auto& test) -> std::optional<u32> {
@@ -296,7 +472,16 @@ struct TreeResolver final : Luau::FileResolver
         return std::nullopt;
     }
 
-    std::string getHumanReadableModuleName(const Luau::ModuleName& name) const override { return name; }
+    // What a message calls a module: a missing one by what was written, a
+    // file by its path.
+    std::string getHumanReadableModuleName(const Luau::ModuleName& name) const override
+    {
+        if (name.starts_with(MissingPrefix))
+            return name.substr(MissingPrefix.size());
+        if (isFileModule(name))
+            return name.substr(FilePrefix.size());
+        return name;
+    }
 };
 
 [[nodiscard]] CompletionKind kindOf(const Luau::AutocompleteEntry& entry)
@@ -330,13 +515,19 @@ struct TreeResolver final : Luau::FileResolver
 
 // Errors the editor already says better, or that are not errors here: a parse
 // error is the document's own (`ScriptDocument::diagnostics`), and a require
-// the checker cannot follow is a require of something not in the tree yet.
+// the checker cannot follow THROUGH THE TREE is a require of something not in
+// the tree yet -- the resolver gives the solver no module for one, and the
+// solver then says nothing. **A require by path that names no file is said**
+// (`missingModule`): the host will refuse it when the script runs, and
+// `ludwerk check` says it too.
 // A property a class does not declare is how a CHILD is reached -- the tree
 // knows those (ADR 0078), the definitions cannot.
 [[nodiscard]] bool reported(const Luau::TypeError& error)
 {
-    if (Luau::get<Luau::SyntaxError>(error) != nullptr || Luau::get<Luau::UnknownRequire>(error) != nullptr)
+    if (Luau::get<Luau::SyntaxError>(error) != nullptr)
         return false;
+    if (const auto* require = Luau::get<Luau::UnknownRequire>(error); require != nullptr)
+        return !require->modulePath.empty();
     if (const auto* unknown = Luau::get<Luau::UnknownProperty>(error); unknown != nullptr) {
         const Luau::TypeId table = Luau::follow(unknown->table);
         if (Luau::get<Luau::ExternType>(table) != nullptr)
@@ -529,27 +720,44 @@ struct CreatableClasses
 
 [[nodiscard]] CreatableClasses withoutInstanceOverloads(std::string_view definitions)
 {
+    // The generator writes the creatable classes as a table from name to
+    // class and `Instance.new` over it (`gen_dts.luau`), which is what an
+    // analyser with no magic reads. Here the table is read for its rows and
+    // the signature is made the plain one the magic function answers.
     CreatableClasses out;
     out.definitions = std::string(definitions);
+    constexpr std::string_view Table = "type InstanceClasses = {\n";
+    const std::size_t table = out.definitions.find(Table);
+    const std::size_t tableEnd = table == std::string::npos ? table : out.definitions.find("\n}\n", table);
     constexpr std::string_view Head = "declare Instance: {\n    new: ";
     const std::size_t start = out.definitions.find(Head);
-    if (start == std::string::npos)
+    if (table == std::string::npos || tableEnd == std::string::npos || start == std::string::npos)
         return out;
     const std::size_t from = start + Head.size();
     const std::size_t end = out.definitions.find(",\n    ", from);
     if (end == std::string::npos)
         return out;
-    const std::string_view overloads = std::string_view(out.definitions).substr(from, end - from);
-    for (std::size_t at = overloads.find("((\""); at != std::string_view::npos; at = overloads.find("((\"", at + 1)) {
-        const std::size_t nameEnd = overloads.find('"', at + 3);
-        const std::size_t arrow = overloads.find("-> ", nameEnd);
-        const std::size_t close = overloads.find(')', arrow);
-        if (nameEnd == std::string_view::npos || arrow == std::string_view::npos || close == std::string_view::npos)
-            break;
-        out.classes.emplace_back(std::string(overloads.substr(at + 3, nameEnd - at - 3)),
-                                 std::string(overloads.substr(arrow + 3, close - arrow - 3)));
+
+    const std::string_view rows =
+        std::string_view(out.definitions).substr(table + Table.size(), tableEnd - table - Table.size());
+    for (std::size_t at = 0; at < rows.size();) {
+        const std::size_t lineEnd = std::min(rows.find('\n', at), rows.size());
+        std::string_view row = rows.substr(at, lineEnd - at);
+        at = lineEnd + 1;
+        while (!row.empty() && row.front() == ' ')
+            row.remove_prefix(1);
+        const std::size_t colon = row.find(": ");
+        if (colon == std::string_view::npos)
+            continue;
+        std::string_view type = row.substr(colon + 2);
+        while (!type.empty() && (type.back() == ',' || type.back() == '\r'))
+            type.remove_suffix(1);
+        out.classes.emplace_back(std::string(row.substr(0, colon)), std::string(type));
     }
+    // The signature first: it is after the table, and replacing it leaves the
+    // table's offsets as they were.
     out.definitions.replace(from, end - from, "(className: string) -> Instance");
+    out.definitions.erase(table, tableEnd + 3 - table);
     return out;
 }
 
@@ -584,8 +792,32 @@ public:
 
 } // namespace
 
+// **The checker's flags, on** -- the ones Luau's own analyser runs with, and
+// so the ones `ludwerk check` runs with (`cmake/engine_luau_analysis_flags.cmake`
+// says why, and why none of the VM's). Process-wide and done once, before the
+// first frontend is made.
+struct AnalysisFlags
+{
+    AnalysisFlags()
+    {
+        static const bool once = [] {
+            for (Luau::FValue<bool>* flag = Luau::FValue<bool>::list; flag != nullptr; flag = flag->next) {
+                const std::string_view name = flag->name;
+                if (std::find(std::begin(LuauAnalysisFlags), std::end(LuauAnalysisFlags), name) !=
+                        std::end(LuauAnalysisFlags) &&
+                    !Luau::isAnalysisFlagExperimental(flag->name))
+                    flag->value = true;
+            }
+            return true;
+        }();
+        (void)once;
+    }
+};
+
 struct LanguageCore::Impl
 {
+    // First, so the flags are on before the frontend below is made.
+    AnalysisFlags flags;
     TreeResolver resolver;
     Luau::NullConfigResolver config;
     Luau::Frontend frontend;
@@ -963,6 +1195,9 @@ void LanguageCore::update(LanguageTree tree)
     }
     for (const std::string& path : dirty)
         m_impl->frontend.markDirty(path);
+    // And what was read from the disk, when the disk has moved under it.
+    for (const std::string& name : m_impl->resolver.stale())
+        m_impl->frontend.markDirty(name);
 }
 
 LanguageCheck LanguageCore::check(const std::string& module)

@@ -2108,6 +2108,38 @@ TEST_CASE("every global the editor offers and lints against is one the VM really
     }
 }
 
+TEST_CASE("every global the VM really has is one the editor's lint knows")
+{
+    // **The other way round**, which is the way that was missing: the list was
+    // checked against the VM and the VM was never checked against the list, so
+    // `NumberSequence`, `NumberSequenceKeypoint`, `ColorSequence`,
+    // `ColorSequenceKeypoint` and `scene` joined the engine and the editor
+    // called each an unknown global -- seventeen warnings on the owner's game,
+    // in a project `ludwerk check` called clean.
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot({}).has_value());
+    lua_State* L = host.runtime().state();
+    std::vector<std::string> unknown;
+    lua_pushvalue(L, LUA_GLOBALSINDEX);
+    lua_pushnil(L);
+    while (lua_next(L, -2) != 0) {
+        if (lua_type(L, -2) == LUA_TSTRING) {
+            const std::string name = lua_tostring(L, -2);
+            // `_G` and `_VERSION` are Luau's own bookkeeping, which no lint
+            // reads a script for.
+            if (!name.starts_with("_") && !app::knownGlobal(name))
+                unknown.push_back(name);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    std::sort(unknown.begin(), unknown.end());
+    std::string listed;
+    for (const std::string& name : unknown)
+        listed += name + " ";
+    CHECK_MESSAGE(unknown.empty(), "the VM has globals the editor would underline: ", listed);
+}
+
 TEST_CASE("the starter template plays: its scripts run from the scene and turn the spinner")
 {
     // **The template a new project starts from, played** (ADR 0092). Its

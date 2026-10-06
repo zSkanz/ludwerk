@@ -1529,11 +1529,18 @@ the same way — the two shapes are below):
 
 **Built so far:** (1) since M2, freshness-gated, carrying the doc comments since
 M3; (4) since M4, freshness-gated the same way; (5) since M8; (6) since
-2026-08-26. (2) is dropped. **(3) is the one artifact declared here and still not
-generated** — `ludwerk new` copies (1) into a scaffolded project's `.engine/types/`
-and writes no `std/` or `engine/` stubs beside it, so the
-`require.directoryAliases` in the template's `.vscode/settings.json` name
-directories that are not there.
+2026-08-26. (2) is dropped. **(3) is copied rather than generated**: `ludwerk
+setup` (and `ludwerk new` through it) copies the engine's own modules --
+`runtime/engine/` and `runtime/std/` -- into a project's `.engine/types/` beside
+(1), and the project's `.luaurc` aliases `engine` and `std` to them, which is
+what an outside analyser follows a `require("@engine/settings")` by. The
+template's `.vscode/settings.json` names (1) and the scene's tree as definition
+files, the standard platform and the new solver; it needs no
+`require.directoryAliases`, because the aliases are `.luaurc`'s. **(1) is
+written for the new solver** since 2026-10-06 (ADR 0093, amended): one file,
+read as written by `ludwerk check`, by the editor and by an editor extension.
+The editor itself reads none of a project's `.engine/types/`: its checker reads
+(1) and the modules from beside its own binary.
 
 **Two shapes of gate, because the two outputs are read differently.** Both live
 in `scripts/gates/luau-check.sh`. (5) is checked in, so its stage — *generated

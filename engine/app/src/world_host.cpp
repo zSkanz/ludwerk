@@ -14,6 +14,7 @@
 #include <sstream>
 
 #include "class_descriptors.gen.h"
+#include "engine/app/require_paths.h"
 #include "engine/asset/gltf.h"
 #include "engine/asset/mesh_format.h"
 #include "engine/asset/seal.h"
@@ -86,26 +87,6 @@ constexpr std::string_view ConformanceRunnerPath = "runtime/conformance/runner.l
 {
     std::string text = path.generic_string();
     return text;
-}
-
-[[nodiscard]] std::string_view directoryOf(std::string_view path)
-{
-    const std::string::size_type slash = path.rfind('/');
-    return slash == std::string_view::npos ? std::string_view{} : path.substr(0, slash);
-}
-
-// Resolves `.` and `..` without touching the filesystem, so a specifier cannot
-// escape the project root by spelling enough `..`s and so the answer does not
-// depend on what happens to exist -- by the one check every path from outside
-// the engine goes through (audit F5): a backslash, a drive or a share is not a
-// module name.
-[[nodiscard]] bool normalisePath(std::string_view input, std::string& out)
-{
-    std::optional<std::string> safe = core::safeRelativePath(input);
-    if (!safe.has_value())
-        return false;
-    out = std::move(*safe);
-    return true;
 }
 
 // `init.luauc` is `init.luau` compiled (ADR 0112): mounted, named and
@@ -202,83 +183,17 @@ struct WorldHostLoader
         auto& host = *static_cast<WorldHost*>(user);
         if (host.m_root.empty() || specifier.empty())
             return false;
-
-        std::string candidate;
-        if (specifier.front() == '@') {
-            // `@self` is the requiring file's own directory, and an alias is
-            // whatever `.luaurc` said. Resolved here rather than through
-            // `Luau::parseConfig` because that treats an unrecognised key as a
-            // hard error that aborts the require (U-42) -- a `$schema` line
-            // would break `require` at runtime.
-            const std::string::size_type slash = specifier.find('/');
-            const std::string_view head = specifier.substr(1, slash == std::string_view::npos ? slash : slash - 1);
-            const std::string_view tail =
-                slash == std::string_view::npos ? std::string_view{} : specifier.substr(slash + 1);
-
-            if (head == "self") {
-                candidate.assign(directoryOf(fromPath));
-            }
-            else {
-                const auto alias = host.m_aliases.find(std::string(head));
-                if (alias == host.m_aliases.end())
-                    return false;
-                candidate = alias->second;
-            }
-
-            if (!tail.empty()) {
-                if (!candidate.empty())
-                    candidate.push_back('/');
-                candidate.append(tail);
-            }
-        }
-        else if (specifier.starts_with("./") || specifier.starts_with("../")) {
-            candidate.assign(directoryOf(fromPath));
-            if (!candidate.empty())
-                candidate.push_back('/');
-            candidate.append(specifier);
-        }
-        else {
-            // A bare specifier is project-root relative. Deliberately not a
-            // search path: one place to look means one answer, and an ambiguity
-            // a search path would resolve silently is a bug worth an error.
-            candidate.assign(specifier);
-        }
-
-        std::string normalised;
-        if (!normalisePath(candidate, normalised))
-            return false;
-
-        // The extension is added rather than required, and `init.luau` is the
-        // directory form. Both are tried in a fixed order so the answer never
-        // depends on which file was created first -- each as source, then
-        // compiled (ADR 0112), under the source's name either way.
-        const auto present = [&](const std::string& path) {
+        // Each spelling as source, then compiled (ADR 0112), under the
+        // source's name either way.
+        const auto present = [&host](const std::string& path) {
             if (host.m_sealed != nullptr)
                 return host.m_sealed->has(path) || host.m_sealed->has(path + "c");
             return std::filesystem::is_regular_file(host.m_root / path) ||
                    std::filesystem::is_regular_file(host.m_root / (path + "c"));
         };
-        const std::string withExtension = normalised.ends_with(".luau") ? normalised : normalised + ".luau";
-        if (present(withExtension)) {
-            outPath = withExtension;
-            return true;
-        }
-        // A module outside `src/shared` says so in its name (`Tool.module.luau`)
-        // and is required as `Tool` all the same.
-        if (!normalised.ends_with(".luau")) {
-            const std::string asModule = normalised + ".module.luau";
-            if (present(asModule)) {
-                outPath = asModule;
-                return true;
-            }
-        }
-
-        const std::string asDirectory = normalised + "/init.luau";
-        if (present(asDirectory)) {
-            outPath = asDirectory;
-            return true;
-        }
-        return false;
+        // The rule is `resolveRequire`'s, which the script editor's checker
+        // reads too: what a require names is one answer.
+        return resolveRequire(fromPath, specifier, host.m_aliases, present, outPath);
     }
 
     static bool read(void* user, std::string_view path, std::string& outSource)

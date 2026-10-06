@@ -84,6 +84,25 @@ for, so a project made a minute ago passes its first check. The formatter is
 StyLua, which is not carried: if it is not on your `PATH` the check says the
 formatting was not checked and passes on the types.
 
+**A project is checked twice, and must pass both.** First by the analyzer,
+which is what an editor extension shows. Then by the engine's own checker,
+which is what a script's tab in the editor shows: every scene of the project
+is loaded, and every script in it is checked as its tab would check it —
+`engine-host <project> --check-scripts`, which you can run yourself. So a
+project this command calls clean opens clean in the editor. An error from
+either fails the check; the editor's warnings are printed and do not. A
+problem is one line a terminal makes a link:
+
+```
+src/client/Hud.luau(12,5): error: Type 'number' could not be converted into 'string'
+```
+
+A `require` by path — `require("../shared/Match")` — is followed by both, by
+the rule the engine runs one by: beside the requiring file for `./` and `../`,
+from the project's root for anything else, a `.luaurc` alias for `@name/`, and
+`Match.luau`, `Match.module.luau`, `Match/init.luau` in that order. A path
+that names no file is an error.
+
 An empty check — zero files collected — is a **failure**.
 
 ### ludwerk fmt

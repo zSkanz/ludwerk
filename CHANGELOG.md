@@ -1455,6 +1455,30 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A project `ludwerk check` calls clean opens clean in the editor** (D583
+  to D586, ADR 0093 amended). The script pane followed a `require` only
+  through the tree, so a project that requires by path --
+  `require("../shared/Match")` -- had every type of every module unknown; it
+  follows a path now, by the rule the engine runs one by. Its checker ran
+  Luau's new solver with the fixes made since switched off, and runs with
+  them on. Its own lint called a module required for its types "never used",
+  and `NumberSequence`, `NumberSequenceKeypoint`, `ColorSequence`,
+  `ColorSequenceKeypoint` and `scene` unknown globals. On a game of a hundred
+  files: 193 errors and 58 warnings, to none.
+- **`ludwerk check` checks a project as the editor does**, after the
+  analyser: every scene's scripts through the editor's own checker
+  (`engine-host <project> --check-scripts`). Its errors fail the check; its
+  warnings are printed. A require by path that names no file is one of them.
+- **The engine's definitions are one file every analyser reads** (D588).
+  `.engine/types/engine.d.luau` typed `Instance.new` in a way the new solver
+  refuses, so `ludwerk check` analysed a rewritten copy and an editor
+  extension pointed at the file knew no engine class. It is written the way
+  the new solver reads; `.engine/check/` is no longer made and may be
+  deleted. A new project carries a `.vscode/settings.json` that names the
+  file, the standard platform and the new solver.
+- **An installed engine's `ludwerk setup` writes the modules a script requires
+  by name** (D587): `.engine/types/engine/` and `.engine/types/std/`, which
+  the package had left out.
 - **A machine that joined a match pays for what moves, not for what there
   is** (D582). Every snapshot it read every replicated instance it holds to
   find which had changed; it reads the ones that did. Measured with 2,700

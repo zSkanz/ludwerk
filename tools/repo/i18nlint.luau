@@ -668,6 +668,7 @@ local EditorDataLiterals: { [string]: boolean } = {
     ["export type "] = true,
     ["declare function "] = true,
     ["declare Instance: {\\n    new: "] = true,
+    ["type InstanceClasses = {\\n"] = true,
     ["declare workspace: "] = true,
     ["\\ndeclare game: DataModel & {\\n"] = true,
     -- Said before there is a catalog to say it from, and to a developer.

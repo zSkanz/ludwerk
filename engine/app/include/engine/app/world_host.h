@@ -458,6 +458,12 @@ public:
     [[nodiscard]] core::InstanceId mountScriptFile(std::string_view relative);
     // The directory the project was mounted from; empty for a single file.
     [[nodiscard]] const std::filesystem::path& projectRoot() const noexcept { return m_root; }
+    // `.luaurc`'s aliases, as a require is resolved by -- which the script
+    // editor's checker resolves the same require with.
+    [[nodiscard]] const std::unordered_map<std::string, std::string>& requireAliases() const noexcept
+    {
+        return m_aliases;
+    }
     [[nodiscard]] core::u64 scriptLoadFailures() const;
 
     [[nodiscard]] scene::World& world() noexcept { return *m_world; }

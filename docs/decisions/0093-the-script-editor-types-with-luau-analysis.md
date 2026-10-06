@@ -128,4 +128,58 @@ is what reports a field written twice in a table or a table type.
 `luaug check` still runs `luau-lsp` without the new solver's flag, which D192
 records: under that flag the definitions' `Instance.new` is "code too complex"
 there too, and `luau-lsp`'s standard platform has no magic function to put in
-its place.
+its place. *(Superseded: D192 put the flag on with a rewritten copy of the
+file, and the amendment of 2026-10-06 below has the generator write what the
+new solver reads.)*
+
+## Amendment, 2026-10-06: one checker's answer, one configuration
+
+The owner opened a game of a hundred strict files in the editor and it was a
+page of errors: 193, and 58 warnings, on a project `ludwerk check` called
+clean. Four things, none of them in the game (D583 to D586), and under them
+one: **the pane and the command were two checkers that had never been asked
+to agree.** They are now, and a gate test asks.
+
+1. **A require by path is followed.** The checker followed a require through
+   the tree and nothing else. It follows a string by the rule the world host
+   runs one by -- `resolveRequire`, one function, called by both -- to the
+   mounted script, to a file of the project no scene mounts, or to one of the
+   engine's own modules beside the host. A path that names nothing is an
+   error; a walk through the tree to something not there yet is still silent.
+2. **The checker's flags are on.** Luau's own analyser runs with every flag
+   of the checker on, less the few it calls experimental; so does the
+   `luau-lsp` behind `ludwerk check`. The editor's ran with none. It runs
+   with the same set now -- the flags defined under `Analysis/` and `EqSat/`
+   at the pin, listed at configure time -- **and with none of the parser's,
+   the compiler's or the VM's**, which are process-wide too and would make
+   the editor's VM a different one from a shipped game's (R10).
+3. **`engine-host <project> --check-scripts`** is the pane with no pane: the
+   same snapshot, definitions, document parse, tree lints and checker, over
+   every script of the scene instead of the one being typed in. `ludwerk
+   check` runs it over every scene of a project, after the analyser, and
+   fails on its errors -- so what the command says is what a tab shows. Its
+   warnings are printed and do not fail, as the side warnings do not.
+4. **One definitions file, as written.** `gen_dts.luau` writes `Instance.new`
+   over a table of the creatable classes, which the new solver reads, where
+   it wrote an intersection the new solver refused (D588). `ludwerk check`
+   analyses the file as it is, the editor reads the table for its magic
+   function's classes, and an editor extension pointed at the file loads it.
+   This reverses the paragraph above that kept the overloads "because every
+   other reader uses them": the only reader that needed them was the old
+   solver, which R2 does not allow a script to be checked by. What that
+   paragraph says of `index<Map, K>` widening a literal still holds inside
+   the editor, which is why the editor keeps its magic function.
+
+**What stays two programs.** `ludwerk check` still runs `luau-lsp` first: it
+is what an editor extension shows, at whatever version the installation
+carries, and a project should be clean there too. The two are different
+builds of Luau and may one day disagree about a line; when they do, the
+command reports both and the pane shows its own. `script_check_gate` holds
+the direction that was broken -- every example, which the gate's `ludwerk
+check` has already called clean, is clean to `--check-scripts`, and two
+mistakes written into a project are said at their lines.
+
+**What a project already opened must do: nothing.** The editor reads its
+definitions and the engine's modules from beside its own binary, never from
+a project's `.engine/types/`; that folder is for an outside analyser, and
+`ludwerk check` rewrites it when it is another engine's.

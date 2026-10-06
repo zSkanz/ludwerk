@@ -62,6 +62,7 @@
 #include "engine/app/reload.h"
 #include "engine/app/scene_definitions.h"
 #include "engine/app/screenshot.h"
+#include "engine/app/script_check.h"
 #include "engine/app/script_files.h"
 #include "engine/app/skeleton_overlay.h"
 #include "engine/app/soak.h"
@@ -129,6 +130,20 @@ constexpr core::u32 ServerCatchUpTicks = 30;
 constexpr f64 CurtainGroundMetres = 96.0;
 
 namespace {
+
+// What the script editor's checker needs to follow a require by path: the
+// file each script was mounted from, the project's aliases, and the engine's
+// own modules beside the host.
+[[maybe_unused]] [[nodiscard]] LanguageFiles languageFilesOf(WorldHost& host)
+{
+    return LanguageFiles{
+        .projectRoot = host.projectRoot(),
+        .aliases = host.requireAliases(),
+        .libraryRoot = platform::paths().contentDir / "runtime",
+        .fileOf =
+            [&host](core::InstanceId id) { return std::string(script::mountedPathOf(host.runtime().state(), id)); },
+    };
+}
 
 // **A window's sync, applied and said** (D528): which present mode the device
 // granted, on which driver and which adapter, once each time it is set -- a
@@ -2448,7 +2463,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // world it holds, and a world whose ground and parts had gone
                 // to cells wrote a scene without them -- ten megabytes of
                 // terrain saved as seven kilobytes, with nothing said.
-                if (!authoring && !options.writeTypesOnly && options.saveScenePath.empty()) {
+                if (!authoring && !options.writeTypesOnly && !options.checkScriptsOnly &&
+                    options.saveScenePath.empty()) {
                     // Not in the editor, and that is a decision rather than an
                     // omission: the editor holds the whole world because holding it
                     // is what editing it means. Streaming while editing is a scene
@@ -2533,7 +2549,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // of running this binary starts scripts at boot exactly as it always
         // did, and that asymmetry is the whole decision: a tool shows the world
         // it was given, and behaviour begins when somebody presses play.
-        .startScripts = !authoring && !options.writeTypesOnly,
+        .startScripts = !authoring && !options.writeTypesOnly && !options.checkScriptsOnly,
         .networkTopology = static_cast<scene::NetworkTopology>(options.network.topology),
         .maxSubWorlds = options.maxSubWorlds,
         .saveDirectory = options.saveDirectory,
@@ -2571,6 +2587,19 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     worldOptions.locale = hostLocale;
 
     auto host = std::make_unique<WorldHost>();
+    // **The script pane follows a require by path through the host's mounts**
+    // (`LanguageTree`). By reference, because a reload replaces the host; and
+    // only for the host's own world, because a stamp being edited is another
+    // world whose scripts came from no file -- there a path names nothing the
+    // checker can judge, and only the engine's own modules are followed.
+    scripts.setLanguageFiles([&host](const scene::World& world) {
+        if (&world != &host->world()) {
+            LanguageFiles engineOnly;
+            engineOnly.libraryRoot = platform::paths().contentDir / "runtime";
+            return engineOnly;
+        }
+        return languageFilesOf(*host);
+    });
     // **Before `boot`, and that is load-bearing.** `syncSkeletons` runs at the
     // top of the FIRST tick, and a rig that arrived one tick late would be a
     // character that starts a replay in its bind pose -- which a determinism
@@ -2626,6 +2655,38 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         const core::I18nArg args[] = {{"path", (options.scriptPath / ".engine" / "types" / "scene.d.luau").string()}};
         core::log(core::LogLevel::Info, ENG_TR("engine.cli.info.types_written"), args);
         return std::nullopt;
+    }
+
+    // **Every script, as the script pane would check it, and nothing else**
+    // (ADR 0093): what `ludwerk check` runs. A line a problem, on the standard
+    // output where a terminal makes each a link, and the count in the log.
+    if (options.checkScriptsOnly) {
+#if ENG_DEBUG_UI
+        std::string definitions;
+        if (!isProject ||
+            !platform::readTextFile(platform::paths().contentDir / "runtime" / "types" / "engine.d.luau", definitions))
+            return core::makeError(ENG_TR("engine.cli.err.scripts_uncheckable"));
+        const ScriptCheckReport report = checkScripts(host->world(), host->runtime().dataModel(),
+                                                      ScriptCheckOptions{
+                                                          .definitions = definitions,
+                                                          .files = languageFilesOf(*host),
+                                                          .sides = false,
+                                                      });
+        if (!report.loadError.empty())
+            std::fprintf(stdout, "%s\n", report.loadError.c_str());
+        for (const ScriptProblem& problem : report.problems)
+            std::fprintf(stdout, "%s\n", formatProblem(problem).c_str());
+        std::fflush(stdout);
+        const core::I18nArg args[] = {{"scripts", static_cast<core::i64>(report.scripts)},
+                                      {"errors", static_cast<core::i64>(report.errors())},
+                                      {"warnings", static_cast<core::i64>(report.problems.size() - report.errors())}};
+        if (report.errors() > 0 || !report.loadError.empty())
+            return core::makeError(ENG_TR("engine.cli.err.scripts_checked"), args);
+        core::log(core::LogLevel::Info, ENG_TR("engine.cli.info.scripts_checked"), args);
+        return std::nullopt;
+#else
+        return core::makeError(ENG_TR("engine.cli.err.scripts_no_checker"));
+#endif
     }
 
     // **The posture's one door** (ADR 0070, clause 2): argument parsing chose a

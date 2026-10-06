@@ -272,6 +272,10 @@ struct SignatureHelp
 };
 
 [[nodiscard]] std::span<const std::string_view> engineGlobals() noexcept;
+// Whether `name` is a global a script may read: Luau's own, a library, or one
+// of the engine's. What the unknown-global lint asks, and what a test asks of
+// every name a booted VM really has.
+[[nodiscard]] bool knownGlobal(std::string_view name) noexcept;
 
 // **What the type checker found, over what the tree and the file found**
 // (ADR 0093). The checker's rows are the answer wherever it has one; the rows

@@ -82,8 +82,11 @@ local function collectLuau(root: string, ignore: { string }): { string }
     return files
 end
 
---- **The definitions, as the new solver can read them** (R2, D192). The
---- generated file types `Instance.new` as an intersection of one overload per
+--- **The definitions of an engine before 2026-10-06, as the new solver can
+--- read them** (R2, D192). The generator writes them that way itself now, and
+--- this returns such a file as it is; a project whose `.engine/types/` an
+--- older engine wrote, or a file somebody passes by hand, is still rewritten.
+--- That file typed `Instance.new` as an intersection of one overload per
 --- creatable class, which the old solver reads and the new one gives up on as
 --- "code too complex" -- so every `Instance.new("Part")` became an `Instance`.
 --- The new solver has what the intersection spelled out: a table from name to
@@ -289,6 +292,114 @@ local function checkCatalogs(root: string, engineKeys: { [string]: boolean }?): 
     return report
 end
 
+export type EditorProblem = {
+    --- The line as the engine printed it: `src/a.luau(3,7): error: ...`.
+    line: string,
+    error: boolean,
+}
+
+export type EditorReport = {
+    --- False when the engine found here has no checker in it (a player
+    --- build), or is one from before it had this command.
+    ran: boolean,
+    problems: { EditorProblem },
+    errors: number,
+    --- What the engine said when it could not check at all.
+    failure: string?,
+}
+
+--- The scenes of a project, as the engine names them: `scenes/menu.scene.json`.
+--- A script is mounted by the scene it belongs to (ADR 0105), so each scene is
+--- a tree of its own to check.
+local function projectScenes(root: string): { string }
+    local scenes: { string } = {}
+    local function walk(folder: string, relative: string)
+        if not fs.exists(folder) then
+            return
+        end
+        for _, entry in fs.listDirectory(folder) do
+            local child = projectlib.joined(folder, entry.name)
+            local name = if relative == "" then entry.name else `{relative}/{entry.name}`
+            if entry.type == "dir" then
+                walk(child, name)
+            elseif entry.type == "file" and string.sub(entry.name, -11) == ".scene.json" then
+                table.insert(scenes, name)
+            end
+        end
+    end
+    walk(projectlib.joined(root, "content", "scenes"), "scenes")
+    table.sort(scenes)
+    return scenes
+end
+
+--- **The project as the editor's script pane checks it** (ADR 0093): the
+--- engine's own checker over every script of every scene, by `engine-host
+--- --check-scripts`. It is why a project this command calls clean opens clean:
+--- the analyser above and the editor's checker are two programs, and they were
+--- two answers -- a game of a hundred files that passed here was 193 errors in
+--- the editor.
+---
+--- A problem in a script two scenes share is said once.
+local function editorCheck(engine: string, root: string): EditorReport
+    local report: EditorReport = { ran = true, problems = {}, errors = 0, failure = nil }
+    local scenes = projectScenes(root)
+    local runs: { { string } } = {}
+    if #scenes == 0 then
+        table.insert(runs, { engine, root, "--check-scripts" })
+    end
+    for _, scene in scenes do
+        table.insert(runs, { engine, root, "--check-scripts", `--scene={scene}` })
+    end
+    local seen: { [string]: boolean } = {}
+    for _, command in runs do
+        local result = process.run(command)
+        local output = result.stdout .. "\n" .. result.stderr
+        if string.find(output, "engine.cli.err.scripts_no_checker", 1, true) ~= nil then
+            report.ran = false
+            return report
+        end
+        local checked = string.find(output, "engine.cli.err.scripts_checked", 1, true) ~= nil
+            or string.find(output, "engine.cli.info.scripts_checked", 1, true) ~= nil
+            or result.ok
+        local found = 0
+        for line in string.gmatch(output, "[^\r\n]+") do
+            local severity = string.match(line, "^.+%(%d+,%d+%): (%a+): ")
+            if severity == "error" or severity == "warning" then
+                found += 1
+                if not seen[line] then
+                    seen[line] = true
+                    table.insert(report.problems, { line = line, error = severity == "error" })
+                    if severity == "error" then
+                        report.errors += 1
+                    end
+                end
+            end
+        end
+        -- It failed and named no script: the project did not load, or the
+        -- engine is one that does not know the command. Its own last words.
+        if not result.ok and found == 0 then
+            if not checked then
+                local last = ""
+                for line in string.gmatch(output, "[^\r\n]+") do
+                    last = line
+                end
+                if string.find(last, "check-scripts", 1, true) ~= nil then
+                    report.ran = false
+                    return report
+                end
+                report.failure = last
+            else
+                report.failure = string.match(output, "[^\r\n]*scripts_[^\r\n]*") or ""
+            end
+            return report
+        end
+    end
+    table.sort(report.problems, function(a: EditorProblem, b: EditorProblem): boolean
+        return a.line < b.line
+    end)
+    return report
+end
+
 local function run(options: Options): number
     local files = collectLuau(options.path, options.ignore)
     if #files == 0 then
@@ -353,6 +464,33 @@ local function run(options: Options): number
         print(tr("cli.check.sides_skipped"))
     end
 
+    -- And as the editor's script pane checks it, for a project (the engine's
+    -- own repository is checked by its gate, and has no scene to mount).
+    local warnings = 0
+    if fs.exists(projectlib.joined(options.path, "project.toml")) then
+        if engine == nil then
+            print(tr("cli.check.editor_skipped"))
+        else
+            local editor = editorCheck(engine, options.path)
+            if not editor.ran then
+                print(tr("cli.check.editor_no_checker"))
+            else
+                for _, problem in editor.problems do
+                    print(problem.line)
+                end
+                warnings = #editor.problems - editor.errors
+                if editor.failure ~= nil then
+                    print(tr("cli.check.err.editor_failed", { message = editor.failure :: string }))
+                    return 1
+                end
+                if editor.errors > 0 then
+                    print(tr("cli.check.err.editor", { count = editor.errors }))
+                    return 1
+                end
+            end
+        end
+    end
+
     -- The game's catalogs against its default locale's (ADR 0154).
     local catalogs = checkCatalogs(options.path, engineCatalogKeys(engine))
     for _, file in catalogs.unreadable do
@@ -369,7 +507,11 @@ local function run(options: Options): number
         return 1
     end
 
-    print(tr("cli.check.ok", { count = #files }))
+    if warnings > 0 then
+        print(tr("cli.check.ok_warnings", { count = #files, warnings = warnings }))
+    else
+        print(tr("cli.check.ok", { count = #files }))
+    end
     return 0
 end
 
@@ -379,4 +521,6 @@ return {
     styluaCommand = styluaCommand,
     definitionName = definitionName,
     checkCatalogs = checkCatalogs,
+    projectScenes = projectScenes,
+    editorCheck = editorCheck,
 }

@@ -676,6 +676,12 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.headless = true;
             continue;
         }
+        if (arg == "--check-scripts") {
+            // The same shape: the scene as the editor holds it, checked, gone.
+            options.checkScriptsOnly = true;
+            options.headless = true;
+            continue;
+        }
         if (arg.starts_with("--import-terrain=")) {
             // A build step like `--partition`: headless, and gone once the
             // scene is saved (ADR 0149 §2). `hills`, a `.luau` file that
@@ -992,8 +998,8 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
         return kExitUsage;
     }
     if (!options.replayRoot.empty() || !options.benchRoot.empty() || !options.twoWorldsRoot.empty() ||
-        !options.replicaGateProject.empty() || options.partitionOnly || options.writeTypesOnly || options.launcher ||
-        options.terrainImport.has_value())
+        !options.replicaGateProject.empty() || options.partitionOnly || options.writeTypesOnly ||
+        options.checkScriptsOnly || options.launcher || options.terrainImport.has_value())
         return kExitOk;
 
     // A conformance run needs a ceiling for the same reason, and a generous one:
@@ -1302,8 +1308,8 @@ static int hostMain(int argc, char** argv)
         // still wins -- the package is also something a person can `--host` --
         // and a build step (`--partition`, which `ludwerk build` runs on the
         // package itself) is not a session and serves nothing.
-        const bool buildStep = options.partitionOnly || options.writeTypesOnly || !options.saveScenePath.empty() ||
-                               options.terrainImport.has_value();
+        const bool buildStep = options.partitionOnly || options.writeTypesOnly || options.checkScriptsOnly ||
+                               !options.saveScenePath.empty() || options.terrainImport.has_value();
         if (config.serverRole && options.network.topology == engine::replication::Topology::Solo && !options.editor &&
             !buildStep) {
             options.network.topology = engine::replication::Topology::Dedicated;

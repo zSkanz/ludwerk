@@ -1,0 +1,10 @@
+# A project whose scripts name each other by PATH, checked as the editor's
+# script pane checks it (`engine-host --check-scripts`, ADR 0093). Clean here,
+# and clean to `ludwerk check`, which the gate runs over this folder with every
+# other Luau file of the repository: the two were two answers once.
+
+[project]
+name = "Ludwerk Script Check"
+id = "dev.ludwerk.scriptcheck"
+version = "1.0.0"
+engine = "0.1"

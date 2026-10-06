@@ -85,10 +85,42 @@ constexpr std::array<std::string_view, 21> kKeywords{
 // `Material` joined with ADR 0090 and this list did not, so every
 // `Material.load` was underlined as an unknown global -- which is why a test
 // now boots a VM and asks it for each name (`world_host_tests.cpp`).
-constexpr std::array<std::string_view, 24> kEngineGlobals{
-    "game",      "workspace", "script",        "print",  "warn",    "require",  "task",      "Instance",
-    "Enum",      "Vector3",   "CFrame",        "Color3", "Vector2", "UDim",     "UDim2",     "Rect",
-    "TweenInfo", "Signal",    "RaycastParams", "Random", "Content", "Material", "Collector", "Promise",
+//
+// **And asks the VM for every name IT has** (2026-10-06): the test went one
+// way, so a name here that the VM lacked was caught and a name the VM had
+// that was not here was not. The four sequence types and `scene` joined the
+// engine and not the list, and a game that builds a particle's curve was
+// seventeen "unknown global" in the editor and none in `ludwerk check`.
+constexpr std::array<std::string_view, 29> kEngineGlobals{
+    "game",
+    "workspace",
+    "script",
+    "scene",
+    "print",
+    "warn",
+    "require",
+    "task",
+    "Instance",
+    "Enum",
+    "Vector3",
+    "CFrame",
+    "Color3",
+    "Vector2",
+    "UDim",
+    "UDim2",
+    "Rect",
+    "TweenInfo",
+    "Signal",
+    "RaycastParams",
+    "Random",
+    "Content",
+    "Material",
+    "Collector",
+    "Promise",
+    "ColorSequence",
+    "ColorSequenceKeypoint",
+    "NumberSequence",
+    "NumberSequenceKeypoint",
 };
 
 // `task` is the engine's library rather than Luau's, so it is not in
@@ -577,6 +609,21 @@ void mergeCompletions(std::vector<Completion>& shown, const std::vector<Completi
 std::span<const std::string_view> engineGlobals() noexcept
 {
     return kEngineGlobals;
+}
+
+bool knownGlobal(std::string_view name) noexcept
+{
+    for (const script::StdName& global : script::stdGlobals()) {
+        if (global.name == name)
+            return true;
+    }
+    for (const script::StdLibrary& library : script::stdLibraries()) {
+        if (library.name == name)
+            return true;
+    }
+    // The same list the completion offers, so the lint never underlines a
+    // name the editor itself just suggested.
+    return std::find(kEngineGlobals.begin(), kEngineGlobals.end(), name) != kEngineGlobals.end();
 }
 
 CompletionRequest completionAt(const ScriptDocument& document, Position caret)
