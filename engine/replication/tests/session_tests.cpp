@@ -5143,3 +5143,80 @@ TEST_CASE("ADR 0163: a replica expects another player's character ahead of where
     CHECK(static_cast<double>(waiting->collisionLead.y) == doctest::Approx(0.0));
     CHECK(static_cast<double>(waiting->collisionLead.z) == doctest::Approx(0.0));
 }
+
+TEST_CASE("an authority's send costs what changed, not what there is (protocol 42)")
+{
+    // Two thousand four hundred parts in models of eight, as a game's props
+    // are, and one replica. A send read every field of every one into a new
+    // state, copied each again for the peer, compared every field with the
+    // peer's baseline, summed every byte for the checksum, and encoded every
+    // instance's attributes -- 6.4 ms a tick on a desk, where a tick is 16.
+    PlayedMatch match;
+    std::vector<core::InstanceId> bricks;
+    const scene::ClassId model = match.server.classes.findId(match.server.atoms.intern("Model"));
+    for (int group = 0; group < 300; ++group) {
+        const core::InstanceId holder = match.server.world.create(model);
+        REQUIRE_FALSE(match.server.world.setParent(holder, match.server.workspace).has_value());
+        for (int index = 0; index < 8; ++index) {
+            const core::InstanceId id =
+                match.part("Brick", core::DVec3{static_cast<double>(group % 20) * 4.0, 1.0 + index,
+                                                static_cast<double>(group / 20) * 4.0});
+            match.server.world.rigidBodies().find(id)->anchored = true;
+            REQUIRE_FALSE(match.server.world.setParent(id, holder).has_value());
+            bricks.push_back(id);
+        }
+    }
+    // One of them tagged and carrying an attribute, the rest carrying nothing.
+    match.server.world.addTag(bricks[0], match.server.atoms.intern("Marked"));
+    (void)match.server.world.setAttribute(bricks[0], match.server.atoms.intern("Health"), scene::Value{5.0});
+    // Past the history's length, so a capture has states to take its field
+    // sets back from.
+    match.run(static_cast<int>(StateHistory) + 40);
+    REQUIRE(match.copyOf(bricks[2399]).valid());
+
+    const Stats before = match.authority->stats();
+    std::vector<double> took;
+    constexpr int Ticks = 120;
+    constexpr int Moved = 60;
+    for (int tick = 0; tick < Ticks; ++tick) {
+        // Sixty of them move every tick, as a horde's bodies do.
+        for (int index = 0; index < Moved; ++index)
+            match.server.world.parts()
+                .find(bricks[static_cast<std::size_t>((tick * 7 + index * 37) % 2400)])
+                ->cframe.position.x += 0.01;
+        match.tick += 1;
+        match.authority->receive(match.server.world, match.server.workspace);
+        const auto from = std::chrono::steady_clock::now();
+        match.authority->send(match.server.world, match.server.workspace, match.tick);
+        took.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - from).count());
+        match.authority->sendMessages(match.server.world);
+        match.replica->receive(match.client.world, match.client.workspace);
+        match.replica->sendIntent(match.client.world, match.tick);
+        match.replica->sendMessages(match.client.world);
+    }
+    const Stats after = match.authority->stats();
+    std::sort(took.begin(), took.end());
+    MESSAGE("a send, in milliseconds: median " << took[took.size() / 2] << ", p95 " << took[took.size() * 95 / 100]
+                                               << ", worst " << took.back());
+
+    // Field by field, only what moved since the peer's baseline: the baseline
+    // is a tick or two behind, so a few times what moves in one -- and not
+    // the two thousand seven hundred there are.
+    const core::u64 compared = after.entitiesCompared - before.entitiesCompared;
+    CHECK(compared >= static_cast<core::u64>(Ticks) * Moved);
+    CHECK(compared <= static_cast<core::u64>(Ticks) * Moved * 4);
+    // The one instance that carries anything, each tick, and no other.
+    CHECK(after.attributeBodiesEncoded - before.attributeBodiesEncoded == static_cast<core::u64>(Ticks));
+    // Not a field set allocated: each is one a state the history let go held.
+    CHECK(after.fieldSetsAllocated - before.fieldSetsAllocated == 0);
+    // And the replica has what the authority has, proved by every snapshot.
+    CHECK(match.replica->checksumFailures() == 0);
+    const core::InstanceId moved = bricks[static_cast<std::size_t>(((Ticks - 1) * 7) % 2400)];
+    const core::InstanceId copy = match.copyOf(moved);
+    REQUIRE(copy.valid());
+    // Within a step of where the authority has it: a replica draws a moving
+    // part between the last two states it was sent.
+    CHECK(std::abs(match.client.world.parts().find(copy)->cframe.position.x -
+                   match.server.world.parts().find(moved)->cframe.position.x) < 0.02);
+    CHECK(match.client.world.hasTag(match.copyOf(bricks[0]), match.client.atoms.intern("Marked")));
+}

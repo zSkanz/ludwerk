@@ -1018,6 +1018,9 @@ public:
     // documented domain, which the caller reports as `scene.err.attribute_type`.
     bool setAttribute(core::InstanceId id, core::NameAtom attribute, const Value& value);
     void collectAttributes(core::InstanceId id, AttributeMap& out) const;
+    // Whether the instance has an attribute or a tag at all: what something
+    // that reads every instance's, every tick, asks first -- most have none.
+    [[nodiscard]] bool carriesAttributesOrTags(core::InstanceId id) const noexcept;
 
     bool addTag(core::InstanceId id, core::NameAtom tag);
     bool removeTag(core::InstanceId id, core::NameAtom tag);

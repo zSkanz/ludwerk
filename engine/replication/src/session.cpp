@@ -782,23 +782,47 @@ struct UnreliableOnWire
 
 } // namespace
 
+u64 hashOf(const EntityState& entity) noexcept
+{
+    // A word at a time: a field is sixty-four bytes whatever it holds, and a
+    // byte at a time was the whole cost of a checksum.
+    u64 hash = 0x9E3779B97F4A7C15ull ^ (static_cast<u64>(entity.id.value) << 8) ^ entity.schema;
+    for (const FieldValue& field : entity.fields) {
+        for (usize at = 0; at < FieldValue::Bytes; at += sizeof(u64)) {
+            u64 word = 0;
+            std::memcpy(&word, field.raw.data() + at, sizeof(word));
+            hash = (hash ^ word) * 0xFF51AFD7ED558CCDull;
+            hash ^= hash >> 29;
+        }
+    }
+    return hash != 0 ? hash : 1;
+}
+
+namespace {
+
+[[nodiscard]] u64 foldChecksum(u64 folded, const EntityState& entity) noexcept
+{
+    const u64 own = entity.hash != 0 ? entity.hash : hashOf(entity);
+    folded = (folded ^ own) * 0x100000001B3ull;
+    return folded ^ (folded >> 31);
+}
+
+} // namespace
+
 u64 checksumOf(const WorldState& state) noexcept
 {
-    u64 hash = 0xCBF29CE484222325ull;
-    const auto mix = [&hash](const void* data, usize size) {
-        const auto* bytes = static_cast<const u8*>(data);
-        for (usize at = 0; at < size; ++at) {
-            hash ^= bytes[at];
-            hash *= 0x100000001B3ull;
-        }
-    };
-    for (const EntityState& entity : state.entities) {
-        mix(&entity.id.value, sizeof(entity.id.value));
-        mix(&entity.schema, sizeof(entity.schema));
-        for (const FieldValue& field : entity.fields)
-            mix(field.raw.data(), field.raw.size());
-    }
-    return hash;
+    u64 folded = 0xCBF29CE484222325ull;
+    for (const EntityState& entity : state.entities)
+        folded = foldChecksum(folded, entity);
+    return folded;
+}
+
+u64 checksumOf(std::span<const EntityState* const> entities) noexcept
+{
+    u64 folded = 0xCBF29CE484222325ull;
+    for (const EntityState* entity : entities)
+        folded = foldChecksum(folded, *entity);
+    return folded;
 }
 
 // --- Authority ----------------------------------------------------------------
@@ -843,16 +867,21 @@ net::PeerLink AuthoritySession::worstLink() const noexcept
 
 NetId AuthoritySession::netIdOf(InstanceId id) const noexcept
 {
-    const auto found = m_netIds.find(packed(id));
-    return found != m_netIds.end() ? NetId{found->second} : NetId{};
+    const u64 key = packed(id);
+    const auto found =
+        std::lower_bound(m_netIds.begin(), m_netIds.end(), key,
+                         [](const std::pair<u64, u32>& entry, u64 wanted) { return entry.first < wanted; });
+    return found != m_netIds.end() && found->first == key ? NetId{found->second} : NetId{};
 }
 
 InstanceId AuthoritySession::instanceOfNet(const scene::World& world, u32 netId) const noexcept
 {
     // By the index the capture built: a peer names ids by the thousand, and a
     // walk of the world for each was the cost it could make the authority pay.
-    const auto found = m_orderOfNet.find(netId);
-    if (found == m_orderOfNet.end())
+    const auto found =
+        std::lower_bound(m_orderOfNet.begin(), m_orderOfNet.end(), netId,
+                         [](const std::pair<u32, u32>& entry, u32 wanted) { return entry.first < wanted; });
+    if (found == m_orderOfNet.end() || found->first != netId)
         return {};
     const InstanceId id = m_order[found->second].id;
     return world.alive(id) ? id : InstanceId{};
@@ -941,10 +970,34 @@ void AuthoritySession::diffAttributes(const scene::World& world, InstanceId root
     m_attributeEdits.clear();
     const auto netOf = [this](InstanceId id) { return netIdOf(id).value; };
     std::map<AttributeOwner, std::vector<u8>> now;
+    // What `encodeAttributes` makes of an owner with nothing: no attribute,
+    // no tag.
+    static const std::vector<u8> Nothing(4, u8{0});
 
-    // Every captured instance, and the owners nothing spawns.
-    for (const Captured& entry : m_order)
-        now.emplace(AttributeOwner{u8{0}, entry.netId}, encodeAttributes(world, entry.id, netOf));
+    // Every captured instance that carries any, and the owners nothing spawns.
+    //
+    // **Most of a world carries no attribute and no tag**, and each of those
+    // was encoded, put in a tree and compared with its like from the tick
+    // before, every tick. They are passed over: an instance known last send
+    // and not in the shadows carried nothing then.
+    for (const Captured& entry : m_order) {
+        if (!world.carriesAttributesOrTags(entry.id))
+            continue;
+        std::vector<u8> body = encodeAttributes(world, entry.id, netOf);
+        m_stats.attributeBodiesEncoded += 1;
+        if (carriesAny(body))
+            now.emplace(AttributeOwner{u8{0}, entry.netId}, std::move(body));
+    }
+    // And the instances that carried some and now carry none, which is a
+    // change like any other: still captured, they are compared as nothing.
+    const auto byNet = [](const std::pair<u32, u32>& entry, u32 wanted) { return entry.first < wanted; };
+    for (const auto& [owner, body] : m_attributeShadows) {
+        if (owner.first != 0 || now.contains(owner))
+            continue;
+        if (const auto still = std::lower_bound(m_orderOfNet.begin(), m_orderOfNet.end(), owner.second, byNet);
+            still != m_orderOfNet.end() && still->first == owner.second)
+            now.emplace(owner, Nothing);
+    }
     const InstanceId dataModel = world.parentOf(root);
     const InstanceId network = scene::networkServiceOf(world, dataModel);
     for (InstanceId child = network.valid() ? world.firstChild(network) : InstanceId{}; child.valid();
@@ -962,7 +1015,12 @@ void AuthoritySession::diffAttributes(const scene::World& world, InstanceId root
     // its spawn, so only an owner that was already known is an edit.
     for (const auto& [owner, body] : now) {
         const auto found = m_attributeShadows.find(owner);
-        if (found == m_attributeShadows.end()) {
+        const std::vector<u8>* shadow = found != m_attributeShadows.end() ? &found->second : nullptr;
+        // An instance the last send captured, with nothing on it then.
+        if (shadow == nullptr && owner.first == 0 &&
+            std::binary_search(m_attributeKnown.begin(), m_attributeKnown.end(), owner.second))
+            shadow = &Nothing;
+        if (shadow == nullptr) {
             if (owner.first != 0 && carriesAny(body)) {
                 AttributeEdit whole;
                 whole.owner = owner;
@@ -971,7 +1029,7 @@ void AuthoritySession::diffAttributes(const scene::World& world, InstanceId root
             }
             continue;
         }
-        if (found->second == body)
+        if (*shadow == body)
             continue;
         // **What of it changed, and nothing else** (D549). The whole body
         // went again whenever one value did: a hero's eighteen attributes and
@@ -980,7 +1038,7 @@ void AuthoritySession::diffAttributes(const scene::World& world, InstanceId root
         edit.owner = owner;
         OwnedBody is;
         OwnedBody was;
-        if (!splitAttributes(body, is) || !splitAttributes(found->second, was)) {
+        if (!splitAttributes(body, is) || !splitAttributes(*shadow, was)) {
             edit.whole = body;
             m_attributeEdits.push_back(std::move(edit));
             continue;
@@ -1009,6 +1067,13 @@ void AuthoritySession::diffAttributes(const scene::World& world, InstanceId root
         m_attributeEdits.push_back(std::move(edit));
     }
     m_attributeShadows = std::move(now);
+    // Of the instances, only what carries something is kept.
+    std::erase_if(m_attributeShadows,
+                  [](const auto& entry) { return entry.first.first == 0 && !carriesAny(entry.second); });
+    m_attributeKnown.clear();
+    m_attributeKnown.reserve(m_orderOfNet.size());
+    for (const std::pair<u32, u32>& entry : m_orderOfNet)
+        m_attributeKnown.push_back(entry.first);
 }
 
 // --- The ground (ADR 0135) ------------------------------------------------------
@@ -3110,13 +3175,32 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
 {
     auto state = std::make_shared<WorldState>();
     state->tick = tick;
+    state->entities.reserve(m_order.size() + 16);
     const usize parentField = commonIndex("Parent");
 
-    std::map<u64, u32> seen;
+    // **Nothing here allocates an instance** once it has run a few ticks: the
+    // ids are gathered in a list and sorted once, a child carries its parent's
+    // id and place on the stack with it, and a field set is one a state the
+    // history let go was holding. A capture reads every replicated instance
+    // every tick, and four allocations each were more than the reading.
+    std::vector<std::pair<u64, u32>>& seen = m_seenScratch;
+    seen.clear();
     // The walk itself, for interest: which instance each entity is and where
     // its parent is in this list, in pre-order.
     m_order.clear();
-    std::map<u64, i32> orderOf;
+    std::vector<Walked>& stack = m_walkScratch;
+    const auto byKey = [](const std::pair<u64, u32>& entry, u64 wanted) { return entry.first < wanted; };
+    const auto fieldSet = [this] {
+        FieldSet fields;
+        if (!m_fieldPool.empty()) {
+            fields = std::move(m_fieldPool.back());
+            m_fieldPool.pop_back();
+        }
+        else {
+            m_stats.fieldSetsAllocated += 1;
+        }
+        return fields;
+    };
 
     // One container's subtree -- `Workspace`'s, or a service's whose contents
     // travel (ADR 0080) -- with the container itself standing for the parent
@@ -3124,50 +3208,52 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
     // always captured before its children, so a new child's parent already
     // has an id. `pinned` is every replica's, whatever its position.
     const auto walk = [&](InstanceId container, u32 containerNetId, i32 containerOrder, bool pinned) {
-        std::vector<InstanceId> stack;
-        for (InstanceId child = world.firstChild(container); child.valid(); child = world.nextSibling(child))
-            stack.push_back(child);
-        std::reverse(stack.begin(), stack.end());
+        stack.clear();
+        const auto pushChildren = [&](InstanceId parent, u32 parentNet, i32 parentOrder) {
+            const auto from = static_cast<std::ptrdiff_t>(stack.size());
+            for (InstanceId child = world.firstChild(parent); child.valid(); child = world.nextSibling(child))
+                stack.push_back(Walked{child, parentNet, parentOrder});
+            std::reverse(stack.begin() + from, stack.end());
+        };
+        pushChildren(container, containerNetId, containerOrder);
 
         while (!stack.empty()) {
-            const InstanceId id = stack.back();
+            const Walked next = stack.back();
             stack.pop_back();
+            const InstanceId id = next.id;
             // **What a client-side script made is this machine's alone** (ADR
             // 0186), and takes its subtree with it as below.
             if (world.local(id))
                 continue;
             const generated::ClassDesc* desc = schemaFor(world, id);
-            FieldSet fields;
             // **An instance the schema does not describe takes its subtree with
             // it.** A replica could not parent the children to anything.
-            if (desc == nullptr || !extractFields(world, id, *desc, fields))
+            if (desc == nullptr)
                 continue;
+            FieldSet fields = fieldSet();
+            if (!extractFieldsInto(world, id, *desc, fields)) {
+                m_fieldPool.push_back(std::move(fields));
+                continue;
+            }
 
             const u64 key = packed(id);
             u32 netId = 0;
-            if (const auto found = m_netIds.find(key); found != m_netIds.end()) {
+            if (const auto found = std::lower_bound(m_netIds.begin(), m_netIds.end(), key, byKey);
+                found != m_netIds.end() && found->first == key) {
                 netId = found->second;
             }
             else {
                 netId = m_nextNetId++;
                 m_classNames[netId] = world.classes().find(world.classOf(id))->name;
             }
-            seen[key] = netId;
+            seen.emplace_back(key, netId);
 
-            const InstanceId parent = world.parentOf(id);
-            const auto parentId = parent == container ? containerNetId : seen.at(packed(parent));
-            setNetId(fields[parentField], NetId{parentId});
+            setNetId(fields[parentField], NetId{next.parentNet});
 
             state->entities.push_back(EntityState{NetId{netId}, schemaIndexOf(desc), std::move(fields)});
-            const auto parentOrder = orderOf.find(packed(parent));
-            orderOf[key] = static_cast<i32>(m_order.size());
-            m_order.push_back(
-                Captured{netId, id, parentOrder != orderOf.end() ? parentOrder->second : containerOrder, pinned});
-
-            std::vector<InstanceId> children;
-            for (InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child))
-                children.push_back(child);
-            stack.insert(stack.end(), children.rbegin(), children.rend());
+            const auto order = static_cast<i32>(m_order.size());
+            m_order.push_back(Captured{netId, id, next.parentOrder, pinned});
+            pushChildren(id, netId, order);
         }
     };
     walk(root, RootNetId.value, -1, false);
@@ -3183,9 +3269,11 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
         for (InstanceId child = world.firstChild(dataModel); child.valid(); child = world.nextSibling(child)) {
             if (world.atoms().text(world.classes().find(world.classOf(child))->name) != desc.name)
                 continue;
-            FieldSet fields;
-            if (!extractFields(world, child, desc, fields))
+            FieldSet fields = fieldSet();
+            if (!extractFieldsInto(world, child, desc, fields)) {
+                m_fieldPool.push_back(std::move(fields));
                 break;
+            }
             setNetId(fields[parentField], RootNetId);
             const u32 netId = ServiceNetIdBase + static_cast<u32>(index);
             state->entities.push_back(EntityState{NetId{netId}, static_cast<u8>(index), std::move(fields)});
@@ -3196,6 +3284,10 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
         }
     }
 
+    // In id order from here: what a reference is looked up in, and what the
+    // next capture finds its instances' ids in.
+    std::sort(seen.begin(), seen.end());
+
     // **What a joint names, as a network id** (NA34) -- after the walk, since a
     // joint may name what is captured after it. An instance that was not
     // captured -- out of the world, or of a class off the wire -- is none at
@@ -3203,32 +3295,54 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
     for (EntityState& entity : state->entities) {
         for (const usize at : referencesOf(entity.schema)) {
             const InstanceId target = asInstance(entity.fields[at]);
-            const auto found = target.valid() ? seen.find(packed(target)) : seen.end();
-            setNetId(entity.fields[at], NetId{found != seen.end() ? found->second : 0u});
+            u32 named = 0;
+            if (target.valid()) {
+                const u64 key = packed(target);
+                if (const auto found = std::lower_bound(seen.begin(), seen.end(), key, byKey);
+                    found != seen.end() && found->first == key)
+                    named = found->second;
+            }
+            setNetId(entity.fields[at], NetId{named});
         }
+        // What it comes to, once and for every peer: after the references,
+        // which are fields like any other.
+        entity.hash = hashOf(entity);
     }
 
-    // Instances gone since the last capture give their ids up for good.
-    for (auto at = m_netIds.begin(); at != m_netIds.end();) {
-        if (!seen.contains(at->first)) {
-            m_classNames.erase(at->second);
-            at = m_netIds.erase(at);
-        }
-        else {
-            ++at;
+    // Instances gone since the last capture give their ids up for good: both
+    // lists are in id order, so one walk of the two finds them.
+    {
+        auto still = seen.begin();
+        for (const std::pair<u64, u32>& old : m_netIds) {
+            while (still != seen.end() && still->first < old.first)
+                ++still;
+            if (still == seen.end() || still->first != old.first)
+                m_classNames.erase(old.second);
         }
     }
-    m_netIds = std::move(seen);
+    m_netIds.swap(seen);
     m_orderOfNet.clear();
     m_orderOfNet.reserve(m_order.size());
     for (usize at = 0; at < m_order.size(); ++at)
-        m_orderOfNet.emplace(m_order[at].netId, static_cast<u32>(at));
+        m_orderOfNet.emplace_back(m_order[at].netId, static_cast<u32>(at));
+    std::sort(m_orderOfNet.begin(), m_orderOfNet.end());
 
     std::sort(state->entities.begin(), state->entities.end(),
               [](const EntityState& a, const EntityState& b) { return a.id.value < b.id.value; });
     m_history.push_back(std::move(state));
-    while (m_history.size() > StateHistory)
+    while (m_history.size() > StateHistory) {
+        // Its field sets are the next capture's, when nobody else holds the
+        // state -- a peer being sent it in parts does (`pinnedState`).
+        const std::shared_ptr<const WorldState> gone = std::move(m_history.front());
         m_history.pop_front();
+        if (gone.use_count() == 1 && m_fieldPool.size() < 2 * m_order.size() + 64) {
+            // Made here, by `make_shared<WorldState>()`, and held by nobody
+            // else: taking it apart is this function's to do.
+            WorldState& spent = const_cast<WorldState&>(*gone);
+            for (EntityState& entity : spent.entities)
+                m_fieldPool.push_back(std::move(entity.fields));
+        }
+    }
 }
 
 const WorldState* AuthoritySession::historyAt(u64 tick) const noexcept
@@ -3244,10 +3358,16 @@ void AuthoritySession::send(const scene::World& world, InstanceId root, u64 tick
 {
     m_world = &world;
     m_tick = tick;
+    // What a send spends, by what it is doing: reading the world, finding
+    // what changed off the entities, and telling each peer.
+    core::profile::Sections stretch;
+    ENG_PROFILE_NEXT(stretch, "net.capture");
     capture(world, root, tick);
+    ENG_PROFILE_NEXT(stretch, "net.changes");
     diffTilemaps(world);
     diffAttributes(world, root);
     diffGround(world, root);
+    ENG_PROFILE_NEXT(stretch, "net.peers");
     const WorldState& current = *m_history.back();
 
     // Everybody taking part, in join order -- the children of `NetworkService`,
@@ -3389,14 +3509,24 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
     // spawns, despawns, the diff and the checksum -- is over this, so a replica
     // reconstructs and verifies exactly the subset it was sent (ADR 0069
     // decision 8: its hash is a subset by design).
-    WorldState filtered;
-    filtered.tick = everything.tick;
-    filtered.entities.reserve(relevant.size());
-    for (const EntityState& entity : everything.entities) {
-        if (std::binary_search(relevant.begin(), relevant.end(), entity.id.value))
-            filtered.entities.push_back(entity);
+    //
+    // **A view of the whole, never a copy of it**: an entity is a kilobyte and
+    // more, and copying each one a peer is sent, every tick, was megabytes a
+    // peer. Both lists are in id order, so one walk of the two finds them.
+    const u64 currentTick = everything.tick;
+    std::vector<const EntityState*> current;
+    current.reserve(relevant.size());
+    {
+        auto wanted = relevant.begin();
+        for (const EntityState& entity : everything.entities) {
+            while (wanted != relevant.end() && *wanted < entity.id.value)
+                ++wanted;
+            if (wanted == relevant.end())
+                break;
+            if (*wanted == entity.id.value)
+                current.push_back(&entity);
+        }
     }
-    const WorldState& current = filtered;
 
     // --- Who is playing, whole, when it changed for this peer.
     if (!peer.rosterSent || peer.roster != roster) {
@@ -3432,9 +3562,9 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
 
     // --- Spawns and despawns, reliable, before the snapshot that needs them.
     std::vector<u32> now;
-    now.reserve(current.entities.size());
-    for (const EntityState& entity : current.entities)
-        now.push_back(entity.id.value);
+    now.reserve(current.size());
+    for (const EntityState* entity : current)
+        now.push_back(entity->id.value);
 
     std::vector<u32> entering;
     std::set_difference(now.begin(), now.end(), peer.known.begin(), peer.known.end(), std::back_inserter(entering));
@@ -3531,7 +3661,7 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
     }
     // What this peer holds at this tick, for the baseline a later snapshot is
     // diffed against: the global state then, cut to what this peer had then.
-    peer.interest.push_back(PeerInterest{current.tick, peer.known});
+    peer.interest.push_back(PeerInterest{currentTick, peer.known});
     while (peer.interest.size() > StateHistory)
         peer.interest.pop_front();
 
@@ -3568,7 +3698,8 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
     std::vector<Record> records;
     std::set<u32> atoms;
     const usize nameField = commonIndex("Name");
-    for (const EntityState& entity : current.entities) {
+    for (const EntityState* each : current) {
+        const EntityState& entity = *each;
         // Diffed only against what this peer HAD at the baseline -- and whole
         // when it is entering now, whatever the baseline says: the replica
         // scrubbed it from every stored state when it left.
@@ -3576,6 +3707,12 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
             baseline != nullptr && std::binary_search(heldThen->begin(), heldThen->end(), entity.id.value);
         const bool entered = std::binary_search(entering.begin(), entering.end(), entity.id.value);
         const EntityState* before = held && !entered ? findEntity(*baseline, entity.id.value) : nullptr;
+        // **What comes to the same number is the same** -- nearly all of a
+        // world, every tick -- and is left without a field of it compared.
+        if (before != nullptr && before->schema == entity.schema && before->hash != 0 && before->hash == entity.hash)
+            continue;
+        if (before != nullptr)
+            m_stats.entitiesCompared += 1;
         Record record{&entity, before == nullptr || before->schema != entity.schema, {}, before};
         for (usize at = 0; at < entity.fields.size(); ++at) {
             if (record.full || !(before->fields[at] == entity.fields[at]))
@@ -3596,9 +3733,9 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
 
     Writer snapshot;
     snapshot.u8v(static_cast<u8>(MessageType::Snapshot));
-    snapshot.u64v(current.tick);
+    snapshot.u64v(currentTick);
     snapshot.u64v(baseline != nullptr ? baseline->tick : 0);
-    snapshot.u64v(checksumOf(current));
+    snapshot.u64v(checksumOf(std::span<const EntityState* const>(current)));
     // The last of this peer's intents the authority applied, for its
     // prediction to reconcile against (ADR 0076).
     snapshot.u64v(peer.intentTick);
@@ -3668,7 +3805,7 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
             encodeField(snapshot.bytes, encoding, record.entity->fields[at]);
         }
     }
-    peer.sentTicks.push_back(current.tick);
+    peer.sentTicks.push_back(currentTick);
     while (peer.sentTicks.size() > StateHistory)
         peer.sentTicks.pop_front();
     if (snapshot.bytes.size() <= ReliableSnapshotBytes) {
@@ -3687,7 +3824,7 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         const usize size = std::min(SnapshotPartBytes, snapshot.bytes.size() - from);
         Writer part;
         part.u8v(static_cast<u8>(MessageType::SnapshotPart));
-        part.u64v(current.tick);
+        part.u64v(currentTick);
         part.u16v(static_cast<u16>(index));
         part.u16v(static_cast<u16>(parts));
         part.u32v(static_cast<u32>(size));
@@ -3701,7 +3838,7 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
     m_stats.snapshotsInParts += 1;
     peer.pinnedState = m_history.back();
     peer.pinnedHeld = peer.known;
-    peer.pinnedTick = current.tick;
+    peer.pinnedTick = currentTick;
     peer.pinnedPending = true;
 }
 
@@ -5763,6 +5900,8 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
             at = &*held;
             if ((flags & FullRecord) != 0)
                 *at = EntityState{NetId{id}, schema, FieldSet(fieldCount(desc))};
+            // Changed by this record: what it comes to is taken again below.
+            at->hash = 0;
         }
         else {
             if ((flags & FullRecord) == 0 || state->entities.size() + added.size() >= MaxReplicaInstances) {
@@ -5815,6 +5954,12 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     // Departed ids leave the filter once no baseline can still hold them.
     std::erase_if(m_departed, [&](const auto& entry) { return tick > entry.second + DepartedMemoryTicks; });
     std::erase_if(state->entities, [this](const EntityState& entity) { return m_departed.contains(entity.id.value); });
+    // What each entity this snapshot made or changed comes to; the rest keep
+    // the number the state before had for them.
+    for (EntityState& entity : state->entities) {
+        if (entity.hash == 0)
+            entity.hash = hashOf(entity);
+    }
     if (checksumOf(*state) != checksum) {
         m_checksumFailures += 1;
         return;

@@ -1008,6 +1008,14 @@ void World::collectAttributes(core::InstanceId id, AttributeMap& out) const
         out.insert(out.end(), attributes->begin(), attributes->end());
 }
 
+bool World::carriesAttributesOrTags(core::InstanceId id) const noexcept
+{
+    if (const AttributeMap* attributes = m_attributes.find(id); attributes != nullptr && !attributes->empty())
+        return true;
+    const TagSet* tags = m_tags.find(id);
+    return tags != nullptr && !tags->empty();
+}
+
 bool World::addTag(core::InstanceId id, core::NameAtom tag)
 {
     if (m_instances.find(id) == nullptr || !tag.valid())

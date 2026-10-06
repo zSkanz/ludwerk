@@ -30,6 +30,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   client-side visuals no longer need to hide under a `Camera`. The wire is
   unchanged.
 
+- **The wire protocol is 42**: a snapshot's checksum is computed another way
+  (ADR 0069, amended), and nothing else on the wire changed. Every machine in
+  a match must run a build that speaks it. What it bought: a host's send
+  costs what changed and not what there is -- 6.4 ms a tick down to 1.8 for a
+  world of 2,700 replicated instances and one friend, with nothing allocated
+  an instance.
+
 - **The wire protocol is 41** (D570): `Swarm.Enabled` replicates. Every
   machine in a match must run a build that speaks it: one that does not is
   refused at the join, by name. Nothing in the API changed for it.

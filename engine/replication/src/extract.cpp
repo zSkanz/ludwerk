@@ -2198,14 +2198,12 @@ const FieldDesc* fieldAt(const ClassDesc& desc, usize index)
     return nullptr;
 }
 
-bool extractFields(const scene::World& world, InstanceId id, const ClassDesc& desc, FieldSet& out)
+bool extractFieldsInto(const scene::World& world, InstanceId id, const ClassDesc& desc, FieldSet& out)
 {
     const usize count = fieldCount(desc);
-    // **Into a scratch and only then into `out`.** A half-filled set diffed
-    // against a baseline reports its unread half as changed, every tick, for
-    // ever -- so a field that cannot be read is the whole extraction failing
-    // rather than a zero nobody notices.
-    FieldSet scratch(count);
+    // Every field starts as zeros, as a fresh set's do: a reader writes what
+    // its value takes and leaves the rest.
+    out.assign(count, FieldValue{});
 
     for (usize at = 0; at < count; ++at) {
         const FieldDesc* field = fieldAt(desc, at);
@@ -2214,7 +2212,7 @@ bool extractFields(const scene::World& world, InstanceId id, const ClassDesc& de
         }
 
         if (field->source == Source::Component) {
-            if (!readComponent(world, id, *field, scratch[at])) {
+            if (!readComponent(world, id, *field, out[at])) {
                 return false;
             }
             continue;
@@ -2222,7 +2220,7 @@ bool extractFields(const scene::World& world, InstanceId id, const ClassDesc& de
 
         // The common set: what every instance has whatever its class.
         if (field->name == "Name") {
-            setU32(scratch[at], world.name(id).id);
+            setU32(out[at], world.name(id).id);
             continue;
         }
         if (field->name == "Parent") {
@@ -2230,12 +2228,23 @@ bool extractFields(const scene::World& world, InstanceId id, const ClassDesc& de
             // This layer stores the instance id and knows nothing about peers;
             // mapping it is the sender's job, because which network id a peer
             // holds is a fact about that peer.
-            setU32(scratch[at], world.parentOf(id).index);
+            setU32(out[at], world.parentOf(id).index);
             continue;
         }
         return false;
     }
+    return true;
+}
 
+bool extractFields(const scene::World& world, InstanceId id, const ClassDesc& desc, FieldSet& out)
+{
+    // **Into a scratch and only then into `out`.** A half-filled set diffed
+    // against a baseline reports its unread half as changed, every tick, for
+    // ever -- so a field that cannot be read is the whole extraction failing
+    // rather than a zero nobody notices.
+    FieldSet scratch;
+    if (!extractFieldsInto(world, id, desc, scratch))
+        return false;
     out = std::move(scratch);
     return true;
 }

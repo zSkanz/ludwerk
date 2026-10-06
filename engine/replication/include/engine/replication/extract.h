@@ -57,6 +57,13 @@ using FieldSet = std::vector<FieldValue>;
 [[nodiscard]] bool extractFields(const scene::World& world, core::InstanceId id, const generated::ClassDesc& desc,
                                  FieldSet& out);
 
+// The same into a set the caller keeps and gives again -- its storage is used,
+// so a capture of a few thousand instances does not allocate a few thousand
+// times a tick. **On false `out` holds nothing to be read**: this one does
+// fill partially, and the caller that asked for it throws the set back.
+[[nodiscard]] bool extractFieldsInto(const scene::World& world, core::InstanceId id, const generated::ClassDesc& desc,
+                                     FieldSet& out);
+
 // What one instance's diff looks like on the wire.
 struct FieldDelta
 {

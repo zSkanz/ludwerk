@@ -281,6 +281,15 @@ struct Stats
     // An owner's place for its part further than it could have moved, taken
     // only as far as it could (NA24).
     u64 ownedClamped = 0;
+    // **What an authority's sends cost in work** (protocol 42): the entities
+    // whose fields were compared one by one with a peer's baseline, the
+    // attribute bodies encoded, and the field sets a capture had to allocate
+    // rather than take from a state the history let go. In a world where
+    // little changes each should stay near what changed -- what a test holds,
+    // where a time on a busy machine holds nothing.
+    u64 entitiesCompared = 0;
+    u64 attributeBodiesEncoded = 0;
+    u64 fieldSetsAllocated = 0;
 };
 
 // **Where the own character is drawn, against where it is** (the multiplayer

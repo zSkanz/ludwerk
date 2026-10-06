@@ -190,3 +190,46 @@ direction nobody notices.
 - **An exclusion holds below a replicated ancestor.** A `Bone` is an
   `Attachment`; the lookup that walks up a class's ancestors for its schema
   stops at an excluded name, which the generated header now lists.
+
+## Amendment, 2026-10-06 (protocol 42): a send costs what changed
+
+Measured on a listen host with one friend, in a game: `net.send` at a median
+of 0.2 to 2.8 ms and a p95 of 8 to 10, at about two thousand draws. Measured
+here, an authority with 2,700 replicated instances, one replica and sixty
+instances moving a tick: **6.4 ms a send**, of a tick of 16.
+
+A field is sixty-four bytes whatever it holds, so an entity is a kilobyte and
+more and a state four megabytes. Every tick the authority read every field of
+every instance into a new state, allocating four times an instance (2.3 ms);
+copied every entity a peer is sent, compared every field of each with the
+peer's baseline, and summed every byte of the copy for the checksum (3.4 ms a
+peer); and encoded every instance's attributes into a tree and compared each
+with the tick before's (0.8 ms), though one instance in thousands carries any.
+
+- **An entity's bytes are hashed once**, when it is captured
+  (`EntityState::hash`, `hashOf`), and three things read the number instead
+  of the bytes: a peer's diff -- same number as its baseline's, nothing of it
+  changed, no field compared; the checksum, now every entity's hash folded in
+  id order; and the replica, which takes the number again only for the
+  entities a snapshot made or changed. **That is a change to what the
+  checksum is, so the protocol is 42**: both ends compute it, and a build
+  that computes the other would fail every snapshot's.
+- **A peer's world is a view of the whole**, not a copy.
+- **A capture allocates nothing an instance**: ids in a sorted array, a child
+  carrying its parent's id on the walk's stack, and field sets taken back
+  from the state the history lets go each tick.
+- **Attributes are read of the instances that carry any**
+  (`World::carriesAttributesOrTags`): an instance known last send and not in
+  the shadows carried nothing then.
+
+After: **1.8 ms a send** in the same measure -- capture 1.7, the peer 0.2, the
+attributes 0.01. What is left is the reading itself, every field of every
+instance every tick; a world that says what changed would take that too, and
+is not this amendment.
+
+Held by counts, not by a clock (`Stats::entitiesCompared`,
+`attributeBodiesEncoded`, `fieldSetsAllocated`; "an authority's send costs
+what changed, not what there is"): in 120 ticks of that world, only what moved
+is compared field by field, one attribute body is encoded a tick, and no field
+set is allocated. `net.send` has three scopes under it: `net.capture`,
+`net.changes`, `net.peers`.

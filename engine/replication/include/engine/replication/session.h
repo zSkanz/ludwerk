@@ -288,6 +288,12 @@ struct EntityState
     NetId id;
     u8 schema = 0;
     FieldSet fields;
+    // **What its id, schema and field bytes come to** (`hashOf`), kept beside
+    // them by whoever makes or changes the entity; 0 is "not taken yet". A
+    // state's checksum is read from these, and so is a diff's "nothing of it
+    // changed" -- an entity is a kilobyte and more of field bytes, and both
+    // read every byte of every entity for every peer, every tick.
+    u64 hash = 0;
 };
 
 // A world at one tick, entities sorted by network id.
@@ -297,10 +303,20 @@ struct WorldState
     std::vector<EntityState> entities;
 };
 
+// One entity's id, schema and field bytes as a number, never 0. The same on
+// every machine a game runs on: the bytes are read a little-endian word at a
+// time, and every platform the engine builds for is little-endian.
+[[nodiscard]] u64 hashOf(const EntityState& entity) noexcept;
+
 // What a snapshot carries so a replica can prove it reconstructed the state the
-// authority meant. FNV-1a over ids, schema indices and field bytes: a checksum,
-// not a signature -- it is there to catch our own bugs.
+// authority meant: every entity's `hash`, folded in id order (protocol 42 --
+// it was FNV-1a over every field byte, four megabytes a peer a tick in a world
+// of three thousand instances, and as much again on the replica). A checksum,
+// not a signature -- it is there to catch our own bugs. An entity whose hash
+// has not been taken is hashed here, and not kept.
 [[nodiscard]] u64 checksumOf(const WorldState& state) noexcept;
+// The same, of the entities a peer is sent: a view, in id order.
+[[nodiscard]] u64 checksumOf(std::span<const EntityState* const> entities) noexcept;
 
 class AuthoritySession
 {
@@ -626,10 +642,24 @@ private:
 
     net::ITransport& m_transport;
     std::vector<Peer> m_peers;
-    // Keyed by the instance's packed id, ordered so a capture's retirement pass
-    // walks in id order (R10). A network id is never reused: an instance that
-    // leaves and a new one in its slot are two ids.
-    std::map<u64, u32> m_netIds;
+    // By the instance's packed id, in id order -- a capture's retirement pass
+    // walks it so (R10) -- and a sorted array rather than a tree: it is made
+    // again every tick, and a node an instance was most of a capture's cost.
+    // A network id is never reused: an instance that leaves and a new one in
+    // its slot are two ids.
+    std::vector<std::pair<u64, u32>> m_netIds;
+    // What a capture works in, kept between ticks so it allocates nothing an
+    // instance: this capture's ids before they are sorted, the walk's stack,
+    // and the field sets of states the history has let go.
+    struct Walked
+    {
+        core::InstanceId id;
+        u32 parentNet = 0;
+        core::i32 parentOrder = -1;
+    };
+    std::vector<std::pair<u64, u32>> m_seenScratch;
+    std::vector<Walked> m_walkScratch;
+    std::vector<FieldSet> m_fieldPool;
     u32 m_nextNetId = RootNetId.value + 1;
     // Player numbers. 1 is whoever sits at a solo or hosting machine, so peers
     // start at 2 -- on a dedicated server too, so a number means the same kind
@@ -647,7 +677,8 @@ private:
     // The last capture's walk, in pre-order, and each network id's place in
     // it -- a peer names ids, and a lookup must not walk the world.
     std::vector<Captured> m_order;
-    std::unordered_map<u32, u32> m_orderOfNet;
+    // (network id, place in `m_order`), in id order.
+    std::vector<std::pair<u32, u32>> m_orderOfNet;
     std::map<u32, TilemapShadow> m_tilemapShadows;
     // This send's changed blocks, by tilemap network id; an emptied block
     // is all zeros.
@@ -658,6 +689,10 @@ private:
     // `GlobalScriptService` and (3, 0) for its `Shared` folder.
     using AttributeOwner = std::pair<u8, u32>;
     std::map<AttributeOwner, std::vector<u8>> m_attributeShadows;
+    // The instances the last send captured, by network id in order: an
+    // instance in here and not in the shadows was known and carried nothing
+    // (the shadows keep only what carries something, of the instances).
+    std::vector<u32> m_attributeKnown;
     // **One owner's changes in a send** (D549): the attributes whose value is
     // another -- a name and the value's bytes, none for one removed -- and
     // the tags put on and taken off. `whole` instead, for an owner nothing
