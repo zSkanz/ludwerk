@@ -133,7 +133,9 @@ NetworkService:Join(typedText, { Relay = "relay.example.com:7789" })
 - **Hosting does not wait for the relay, and does not need it.** `RelayState`
   goes `Connecting`, then `Ready` when `JoinCode` is there, or `Unreachable`
   while the relay does not answer -- and the match is joined by its address
-  all the while. The relay is asked again by itself.
+  all the while. The relay is asked again by itself, and a relay whose name
+  this machine could not find is looked up again every half minute: a host
+  opened before its network was up gets its code when the network is.
 - **`JoinFailed` says why** in words: the relay did not answer, no match has
   that code, the match is full, its host is keeping this machine away, or no
   path opened in time.

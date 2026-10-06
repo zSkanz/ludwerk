@@ -56,6 +56,7 @@
 #include "engine/core/text_key.h"
 #include "engine/platform/file.h"
 #include "engine/platform/platform.h"
+#include "engine/ui/glyph_outline.h"
 #include "engine/ui/ui.h"
 
 // The one translation unit that defines them. Both are
@@ -534,61 +535,6 @@ constexpr f32 LargestRasterSize = 128.0f;
 // nobody has shown for longest is emptied for the next glyph.
 constexpr u32 AtlasSize = 1024;
 
-// **A glyph's outline, made from its coverage** (ADR 0110): every texel takes
-// the largest coverage within `radius` of it, through a kernel shaped like the
-// join -- a disc rounds the corners, an octagon cuts them, a square keeps them
-// -- and the kernel's own edge is soft over one texel, so a stroke of 2.3
-// pixels is 2.3 and not 2 or 3. `out` is the glyph grown by `pad` on each side.
-void dilateCoverage(const std::vector<core::u8>& coverage, u32 width, u32 height, f32 radius, u32 join, u32 pad,
-                    std::vector<core::u8>& out)
-{
-    const u32 outWidth = width + pad * 2;
-    const u32 outHeight = height + pad * 2;
-    out.assign(static_cast<usize>(outWidth) * outHeight, 0u);
-
-    struct Tap
-    {
-        i32 dx = 0;
-        i32 dy = 0;
-        f32 weight = 0.0f;
-    };
-    std::vector<Tap> taps;
-    const auto reach = static_cast<i32>(std::ceil(radius)) + 1;
-    for (i32 dy = -reach; dy <= reach; ++dy) {
-        for (i32 dx = -reach; dx <= reach; ++dx) {
-            const auto ax = static_cast<f32>(std::abs(dx));
-            const auto ay = static_cast<f32>(std::abs(dy));
-            f32 distance = std::sqrt(ax * ax + ay * ay);
-            if (join == 2)
-                distance = std::fmax(ax, ay);
-            else if (join == 1)
-                distance = std::fmax(std::fmax(ax, ay), (ax + ay) * 0.70710678f);
-            const f32 weight = std::fmin(std::fmax(radius + 0.5f - distance, 0.0f), 1.0f);
-            if (weight > 0.0f)
-                taps.push_back(Tap{dx, dy, weight});
-        }
-    }
-
-    for (u32 y = 0; y < outHeight; ++y) {
-        for (u32 x = 0; x < outWidth; ++x) {
-            const i32 sourceX = static_cast<i32>(x) - static_cast<i32>(pad);
-            const i32 sourceY = static_cast<i32>(y) - static_cast<i32>(pad);
-            f32 best = 0.0f;
-            for (const Tap& tap : taps) {
-                const i32 readX = sourceX + tap.dx;
-                const i32 readY = sourceY + tap.dy;
-                if (readX < 0 || readY < 0 || readX >= static_cast<i32>(width) || readY >= static_cast<i32>(height))
-                    continue;
-                const f32 value =
-                    static_cast<f32>(coverage[static_cast<usize>(readY) * width + static_cast<usize>(readX)]) *
-                    tap.weight;
-                best = std::fmax(best, value);
-            }
-            out[static_cast<usize>(y) * outWidth + x] = static_cast<core::u8>(std::fmin(best + 0.5f, 255.0f));
-        }
-    }
-}
-
 // **The page the next glyph goes on, when the one being filled is full**
 // (ADR 0169): a new one while there may be more; after that, the page nobody
 // has shown for longest, emptied -- its glyphs forgotten, to be rasterised
@@ -654,6 +600,9 @@ void dilateCoverage(const std::vector<core::u8>& coverage, u32 width, u32 height
 [[nodiscard]] bool rasteriseGlyph(Face& face, f32 pixelSize, u32 codepoint, GlyphEntry& entry, GlyphStore& cache,
                                   GlyphStroke stroke = {})
 {
+    // A scope of its own: a glyph is rasterised once, the first time a size
+    // of it is shown, and a report should say how many a slow frame made.
+    ENG_PROFILE_SCOPE("ui.glyphs");
     const f32 scale = stbtt_ScaleForPixelHeight(&face.info, pixelSize);
     const int glyph = stbtt_FindGlyphIndex(&face.info, static_cast<int>(codepoint));
     if (glyph == 0) {

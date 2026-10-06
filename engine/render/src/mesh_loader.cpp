@@ -332,22 +332,32 @@ core::u32 MeshLoader::pumpTextures(rhi::IDevice& device, rhi::ICmdList& cmd, con
         }
 
         if (pending.work == nullptr || !pending.work->ok) {
-            const std::array<core::I18nArg, 1> args{
-                core::I18nArg{"path", std::string(world.atoms().text(pending.urn))}};
-            core::log(core::LogLevel::Warn, ENG_TR("render.err.material_texture_missing"), args);
+            // A compiled map that cannot be read is refused as it was when
+            // the frame transcoded it: once, and without a word of a file.
+            if (pending.work == nullptr || !pending.work->compiled) {
+                const std::array<core::I18nArg, 1> args{
+                    core::I18nArg{"path", std::string(world.atoms().text(pending.urn))}};
+                core::log(core::LogLevel::Warn, ENG_TR("render.err.material_texture_missing"), args);
+            }
             markFailed(pending.urn);
             drop();
             continue;
         }
 
-        const rhi::TextureHandle handle = uploadImage(device, cmd, pending.work->image, "material", pending.srgb);
+        const TextureWork& made = *pending.work;
+        const rhi::TextureHandle handle = made.compiled
+                                              ? uploadTranscoded(device, cmd, made.texture, "material")
+                                              : uploadImage(device, cmd, made.image, "material", pending.srgb);
         if (!handle.valid()) {
             markFailed(pending.urn);
             drop();
             continue;
         }
         textures_.push_back(handle);
-        library.set(pending.urn, handle, pending.work->image.width, pending.work->image.height);
+        if (made.compiled)
+            library.set(pending.urn, handle, made.texture.width, made.texture.height);
+        else
+            library.set(pending.urn, handle, made.image.width, made.image.height);
         ++loaded;
         drop();
     }
@@ -468,6 +478,33 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
         // documented lifetime of a mount -- so there is no read to move off the
         // frame, and a transcode is a fraction of a decode.
         if (resolved.source == asset::ResolvedContent::Source::Pack && resolved.kind == asset::AssetKind::Texture) {
+            // **Off the frame, where a file's decode is** (D564). "A transcode
+            // is a fraction of a decode", the paragraph above says, and it is
+            // -- and it is still ten milliseconds and more of the frame a map
+            // is first drawn in, twenty-five on a phone. The blob is copied
+            // for the job: a mount's bytes are a mount's to take away.
+            if (deferredTextures_) {
+                if (textureInFlight(urn) || pendingTextures_.size() >= MaxTexturesInFlight)
+                    return;
+                PendingTexture pending;
+                pending.urn = urn;
+                pending.srgb = srgb;
+                pending.work = std::make_unique<TextureWork>();
+                TextureWork* work = pending.work.get();
+                work->compiled = true;
+                work->bytes.assign(resolved.bytes.begin(), resolved.bytes.end());
+                pending.decode =
+                    jobs::schedule("texture-transcode", jobs::Domain::AssetIo, [work, options = transcode_]() noexcept {
+                        work->ok = !asset::transcodeTexture(work->bytes, options, work->texture).has_value();
+                        work->bytes.clear();
+                        work->bytes.shrink_to_fit();
+                    });
+                if (pending.decode.valid()) {
+                    pendingTextures_.push_back(std::move(pending));
+                    return;
+                }
+                // No job to be had: transcoded here, as with nothing deferred.
+            }
             asset::TextureAsset texture;
             if (asset::transcodeTexture(resolved.bytes, transcode_, texture).has_value()) {
                 markFailed();

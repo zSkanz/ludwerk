@@ -156,6 +156,12 @@ struct TransportConfig
     // thread a frozen game no longer is to the transport.
     bool serviceThread = true;
 
+    // **How often a relay's name that was not found is looked up again**
+    // (D562), in milliseconds: a record made a minute ago, a network that
+    // came up after the game did. On a thread of its own -- a name server is
+    // not waited for by a frame.
+    u32 relayLookupEveryMs = 30'000;
+
     // **A worse network than the one there is** (netcode ledger A): what a
     // connection this host makes goes through a link conditioner -- a relay
     // in this process, below the transport -- that holds each datagram, each
@@ -237,7 +243,9 @@ public:
     // **A listening host registers with a relay** (`host` or `host:port`), and
     // keeps registered: its `joinCode` is what a joiner anywhere types. The
     // host goes on taking connections by address whether or not the relay
-    // ever answers.
+    // ever answers. A relay whose name is not found is an error said once,
+    // `Unreachable` from then, and looked up again (`relayLookupEveryMs`)
+    // until it is found or the relay is left (D562).
     [[nodiscard]] virtual std::optional<core::EngineError> useRelay(std::string_view relay);
     virtual void leaveRelay() {}
     [[nodiscard]] virtual RelayState relayState() const noexcept { return RelayState::None; }
@@ -282,6 +290,13 @@ public:
 // reliability and sequencing, **no encryption and no authentication**. An ENet
 // channel is a LAN or an otherwise trusted link. Anything else waits for the
 // GameNetworkingSockets row in the manifest to be filled in.
+// **How a name becomes an address**: the system's resolver, unless a test has
+// put its own in the way to say when a name starts to be found (D562). It is
+// handed the name and answers a dotted address, or false for "no such name";
+// null puts the system's back.
+using NameLookup = bool (*)(std::string_view name, std::string& address);
+void setNameLookupForTests(NameLookup lookup) noexcept;
+
 [[nodiscard]] std::unique_ptr<ITransport> createEnetTransport();
 
 // **The most peers `createEnetTransport` can hold**: its protocol addresses a

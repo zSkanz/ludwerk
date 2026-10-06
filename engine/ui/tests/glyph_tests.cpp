@@ -7,6 +7,7 @@
 // key did not have to change.
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <doctest/doctest.h>
 #include <fstream>
@@ -16,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "engine/ui/glyph_outline.h"
 #include "engine/ui/ui.h"
 
 using engine::core::Color3;
@@ -578,4 +580,117 @@ TEST_CASE("the atlas says which rows a glyph was written on, and when it was emp
 
     resetGlyphCache();
     CHECK(glyphAtlas().clearedAt > second.version);
+}
+
+namespace {
+
+// What a stroke's shape IS: every tap of the kernel tried at every texel. The
+// way it was made until D563, and what the way it is made now must equal byte
+// for byte -- an outline that moved by one level would move every golden with
+// stroked text in it.
+std::vector<engine::core::u8> everyTap(const std::vector<engine::core::u8>& coverage, int width, int height,
+                                       float radius, unsigned join, int pad)
+{
+    const int outWidth = width + pad * 2;
+    const int outHeight = height + pad * 2;
+    std::vector<engine::core::u8> out(static_cast<std::size_t>(outWidth) * static_cast<std::size_t>(outHeight), 0u);
+    const int reach = static_cast<int>(std::ceil(radius)) + 1;
+    for (int y = 0; y < outHeight; ++y) {
+        for (int x = 0; x < outWidth; ++x) {
+            float best = 0.0f;
+            for (int dy = -reach; dy <= reach; ++dy) {
+                for (int dx = -reach; dx <= reach; ++dx) {
+                    const auto ax = static_cast<float>(std::abs(dx));
+                    const auto ay = static_cast<float>(std::abs(dy));
+                    float distance = std::sqrt(ax * ax + ay * ay);
+                    if (join == 2)
+                        distance = std::fmax(ax, ay);
+                    else if (join == 1)
+                        distance = std::fmax(std::fmax(ax, ay), (ax + ay) * 0.70710678f);
+                    const float weight = std::fmin(std::fmax(radius + 0.5f - distance, 0.0f), 1.0f);
+                    const int readX = x - pad + dx;
+                    const int readY = y - pad + dy;
+                    if (weight <= 0.0f || readX < 0 || readY < 0 || readX >= width || readY >= height)
+                        continue;
+                    const float value =
+                        static_cast<float>(coverage[static_cast<std::size_t>(readY) * static_cast<std::size_t>(width) +
+                                                    static_cast<std::size_t>(readX)]) *
+                        weight;
+                    best = std::fmax(best, value);
+                }
+            }
+            out[static_cast<std::size_t>(y) * static_cast<std::size_t>(outWidth) + static_cast<std::size_t>(x)] =
+                static_cast<engine::core::u8>(std::fmin(best + 0.5f, 255.0f));
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("D563: a stroke's outline is the bytes that trying every tap at every texel gives")
+{
+    // Coverage of three kinds: a letter's -- solid shapes with soft edges --
+    // noise, where no two neighbours agree, and a single texel. A seeded
+    // generator of its own, so the shapes are the same on every machine.
+    engine::core::u32 state = 0x9E3779B9u;
+    const auto next = [&state] {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        return state;
+    };
+    const float radii[] = {0.25f, 0.5f, 0.75f, 1.0f, 1.5f, 2.3f, 3.0f, 4.25f, 6.5f, 9.75f, 12.0f};
+    int compared = 0;
+    for (const float radius : radii) {
+        for (unsigned join = 0; join < 3; ++join) {
+            for (int kind = 0; kind < 3; ++kind) {
+                const int width = kind == 2 ? 1 : 5 + static_cast<int>(next() % 28);
+                const int height = kind == 2 ? 1 : 4 + static_cast<int>(next() % 30);
+                std::vector<engine::core::u8> coverage(
+                    static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0u);
+                for (int y = 0; y < height; ++y) {
+                    for (int x = 0; x < width; ++x) {
+                        engine::core::u8& texel =
+                            coverage[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                                     static_cast<std::size_t>(x)];
+                        if (kind == 0) {
+                            // Two bars and what is between them, soft at the edges.
+                            const bool bar = (x > width / 5 && x < width / 2) || (y > height / 2 && y < height - 2);
+                            texel = bar ? engine::core::u8{255}
+                                        : static_cast<engine::core::u8>(next() % 4 == 0 ? next() % 256 : 0);
+                        }
+                        else if (kind == 1) {
+                            texel = static_cast<engine::core::u8>(next() % 256);
+                        }
+                        else {
+                            texel = static_cast<engine::core::u8>(1 + next() % 255);
+                        }
+                    }
+                }
+                // The padding a stroke is given, and one short of it and one
+                // over: the outline is cut at the edge and no texel moves.
+                const int reach = static_cast<int>(std::ceil(radius)) + 1;
+                for (const int pad : {reach, reach - 1, reach + 2}) {
+                    std::vector<engine::core::u8> made;
+                    engine::ui::dilateCoverage(coverage, static_cast<engine::core::u32>(width),
+                                               static_cast<engine::core::u32>(height), radius, join,
+                                               static_cast<engine::core::u32>(pad), made);
+                    const std::vector<engine::core::u8> expected = everyTap(coverage, width, height, radius, join, pad);
+                    REQUIRE(made.size() == expected.size());
+                    const bool same = made == expected;
+                    CHECK_MESSAGE(same,
+                                  "radius " << radius << ", join " << join << ", kind " << kind << ", pad " << pad);
+                    ++compared;
+                }
+            }
+        }
+    }
+    CHECK(compared == 11 * 3 * 3 * 3);
+
+    // And nothing to outline is nothing.
+    std::vector<engine::core::u8> none;
+    engine::ui::dilateCoverage({}, 0, 0, 2.0f, 0, 3, none);
+    CHECK(none.size() == 36);
+    CHECK(std::all_of(none.begin(), none.end(), [](engine::core::u8 texel) { return texel == 0; }));
 }

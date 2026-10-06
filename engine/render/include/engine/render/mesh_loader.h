@@ -274,6 +274,10 @@ private:
         // For a texture that is drawn and not read (D544): which one.
         std::string name;
         asset::Image image;
+        // For a compiled map (D564): `bytes` is its blob, and this is what
+        // the job made of it for this device.
+        bool compiled = false;
+        asset::TextureAsset texture;
         bool ok = false;
     };
 

@@ -44,6 +44,15 @@ namespace engine::net {
 
 static_assert(EnetPeerCap == static_cast<usize>(ENET_PROTOCOL_MAXIMUM_PEER_ID), "the published cap is ENet's own");
 
+namespace {
+std::atomic<NameLookup> g_nameLookup{nullptr};
+} // namespace
+
+void setNameLookupForTests(NameLookup lookup) noexcept
+{
+    g_nameLookup.store(lookup);
+}
+
 namespace detail {
 
 // ENet is initialised once per process and deinitialised never.
@@ -83,7 +92,13 @@ bool resolve(std::string_view text, core::u16 defaultPort, ENetAddress& out)
     out = ENetAddress{};
     out.port = port;
     // Read as an address first, and looked up only where it is a name (NA11).
-    return enet_address_set_host_ip(&out, host.c_str()) == 0 || enet_address_set_host(&out, host.c_str()) == 0;
+    if (enet_address_set_host_ip(&out, host.c_str()) == 0)
+        return true;
+    if (const NameLookup lookup = g_nameLookup.load(); lookup != nullptr) {
+        std::string dotted;
+        return lookup(host, dotted) && enet_address_set_host_ip(&out, dotted.c_str()) == 0;
+    }
+    return enet_address_set_host(&out, host.c_str()) == 0;
 }
 
 void ignorePortUnreachable(ENetSocket socket) noexcept
@@ -934,19 +949,26 @@ public:
             return core::makeError(ENG_TR("net.err.relay_needs_port"));
         // Outside the lock: a name server is not waited for with ENet held.
         ENetAddress address{};
-        if (!detail::resolve(relay, DefaultRelayPort, address))
-            return relayUnresolved(relay);
-        // Drawn once a session: its hash is the code, and nobody without it
-        // can register that code.
-        rendezvous::Token token{};
-        core::secureRandom(token);
+        if (!detail::resolve(relay, DefaultRelayPort, address)) {
+            // **Not found now is not "not there"** (D562): a record made a
+            // minute ago, a network that comes up after the game. The name is
+            // kept and looked up again; it was asked once and never again,
+            // and the host had to be hosted anew to be found.
+            std::lock_guard lock(m_mutex);
+            if (m_hosting.active())
+                m_hosting.stop(sender());
+            m_pipes.stop();
+            m_codeKnown = false;
+            m_relayName = std::string(relay);
+            m_relayLookup.reset();
+            m_relayLookupAtMs = detail::steadyMs() + m_config.relayLookupEveryMs;
+            return relayUnresolved(relay, m_config.relayLookupEveryMs);
+        }
         const rendezvous::Locals locals = localsOf(m_config.port);
         std::lock_guard lock(m_mutex);
-        if (m_hosting.active())
-            m_hosting.stop(sender());
-        m_codeKnown = false;
-        m_pipes.start(address, m_config.port, token);
-        m_hosting.start(detail::toEndpoint(address), token, locals, detail::steadyMs());
+        m_relayName.clear();
+        m_relayLookup.reset();
+        registerWith(address, locals);
         return std::nullopt;
     }
 
@@ -957,12 +979,15 @@ public:
             m_hosting.stop(sender());
         m_pipes.stop();
         m_codeKnown = false;
+        m_relayName.clear();
+        m_relayLookup.reset();
     }
 
     [[nodiscard]] RelayState relayState() const noexcept override
     {
         std::lock_guard lock(m_mutex);
-        return m_hosting.state();
+        // A relay still being looked for is one that cannot be reached yet.
+        return m_relayName.empty() ? m_hosting.state() : RelayState::Unreachable;
     }
 
     [[nodiscard]] std::string joinCode() const override
@@ -1048,6 +1073,62 @@ private:
         return core::makeError(ENG_TR("net.err.relay_unresolved"), args);
     }
 
+    // The same, of a host's relay: it goes on being looked for.
+    [[nodiscard]] static std::optional<core::EngineError> relayUnresolved(std::string_view relay, u32 everyMs)
+    {
+        const I18nArg args[] = {{"relay", std::string(relay)},
+                                {"port", static_cast<core::i64>(DefaultRelayPort)},
+                                {"seconds", static_cast<core::i64>((everyMs + 999) / 1000)}};
+        return core::makeError(ENG_TR("net.err.relay_unresolved_host"), args);
+    }
+
+    // A relay found: this host registers with it. Called with the lock held.
+    void registerWith(const ENetAddress& address, const rendezvous::Locals& locals)
+    {
+        // Drawn once a registration: its hash is the code, and nobody without
+        // it can register that code.
+        rendezvous::Token token{};
+        core::secureRandom(token);
+        if (m_hosting.active())
+            m_hosting.stop(sender());
+        m_codeKnown = false;
+        m_pipes.start(address, m_config.port, token);
+        m_hosting.start(detail::toEndpoint(address), token, locals, detail::steadyMs());
+    }
+
+    // **A relay's name that was not found, looked up again** (D562). On a
+    // thread of its own, which is handed what it needs and answers into a
+    // record both hold: a transport closed while a name server is silent does
+    // not wait for it. Called with the lock held, wherever ENet is serviced.
+    void lookRelayUp()
+    {
+        if (m_relayName.empty())
+            return;
+        if (m_relayLookup != nullptr) {
+            const int state = m_relayLookup->state.load();
+            if (state == RelayLookup::Looking)
+                return;
+            if (state == RelayLookup::Found) {
+                registerWith(m_relayLookup->address, m_relayLookup->locals);
+                m_relayName.clear();
+            }
+            else {
+                m_relayLookupAtMs = detail::steadyMs() + m_config.relayLookupEveryMs;
+            }
+            m_relayLookup.reset();
+            return;
+        }
+        if (detail::steadyMs() < m_relayLookupAtMs)
+            return;
+        m_relayLookup = std::make_shared<RelayLookup>();
+        std::thread([lookup = m_relayLookup, name = m_relayName, port = m_config.port] {
+            const bool found = detail::resolve(name, DefaultRelayPort, lookup->address);
+            if (found)
+                lookup->locals = localsOf(port);
+            lookup->state.store(found ? RelayLookup::Found : RelayLookup::NotFound);
+        }).detach();
+    }
+
     // This machine's own addresses, for a peer on the same network to try.
     [[nodiscard]] static rendezvous::Locals localsOf(u16 port)
     {
@@ -1106,6 +1187,7 @@ private:
     // wherever ENet is serviced. True when something was put in the inbox.
     bool attend()
     {
+        lookRelayUp();
         if (!m_hosting.active() && m_joining.empty())
             return false;
         const u64 now = detail::steadyMs();
@@ -1316,6 +1398,23 @@ private:
     // own sockets apart, which have a lock and a thread of their own.
     rendezvous::HostRendezvous m_hosting;
     bool m_codeKnown = false;
+    // The relay's name while it has not been found, when it is next looked
+    // up, and the lookup in flight if there is one (D562).
+    struct RelayLookup
+    {
+        enum : int
+        {
+            Looking,
+            Found,
+            NotFound
+        };
+        std::atomic<int> state{Looking};
+        ENetAddress address{};
+        rendezvous::Locals locals{};
+    };
+    std::string m_relayName;
+    u64 m_relayLookupAtMs = 0;
+    std::shared_ptr<RelayLookup> m_relayLookup;
     std::vector<Joining> m_joining;
     std::unordered_map<u32, PeerPath> m_paths;
     // Joins by code that found a path and are waiting for ENet's handshake

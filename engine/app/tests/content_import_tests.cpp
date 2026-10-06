@@ -38,6 +38,7 @@
 #include <span>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 using namespace engine;
@@ -362,6 +363,68 @@ TEST_CASE("the loader draws a compiled mesh and a compiled map, with no source f
 
     loader.destroy(*device);
     cache.destroy(*device);
+}
+
+TEST_CASE("D564: a compiled map is transcoded off the frame that asks for it")
+{
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+
+    const Project project;
+    asset::ContentMounts mounts;
+    const app::ContentImportReport report = app::openProjectContent(project.root, project.content(), mounts);
+    REQUIRE(report.failed.empty());
+
+    Registries registries;
+    scene::World world(registries.classes, registries.enums, registries.atoms, 1234u);
+    const core::InstanceId workspace = world.create(registries.workspaceClass);
+    const core::InstanceId part = world.create(registries.meshPartClass);
+    world.parts().add(part, scene::PartComponent{});
+    (void)world.setParent(part, workspace);
+
+    asset::MaterialLibrary materials;
+    asset::MaterialAsset base;
+    base.properties.colorMap = "asset://textures/base.png";
+    base.written = asset::AllMaterialFields;
+    materials.put("asset://materials/base.material.json", base);
+    world.setMaterialLibrary(&materials);
+    world.parts().find(part)->material = registries.atoms.intern("asset://materials/base.material.json");
+
+    rhi::DeviceResult device = rhi::createNullDevice({.backend = rhi::BackendId::Null});
+    REQUIRE(device != nullptr);
+    rhi::ICmdList* cmd = device->beginFrame();
+    REQUIRE(cmd != nullptr);
+
+    render::TextureLibrary textures;
+    render::MeshLoader loader;
+    loader.setContentMounts(&mounts);
+    // As a window's loader is: what can wait for a later frame does.
+    loader.setDeferredTextures(true);
+
+    // The frame that first draws with the map pays for none of it -- a
+    // transcode is ten milliseconds and more of a frame, and was done here --
+    // and the map is on its way.
+    const core::NameAtom map = registries.atoms.intern("asset://textures/base.png");
+    CHECK(loader.syncTextures(*device, *cmd, world, textures) == 0u);
+    CHECK_FALSE(textures.find(map).valid());
+    CHECK(loader.texturesInFlight() == 1u);
+
+    // A frame or a few later it is there, once, and nothing is left in flight.
+    core::u32 loaded = 0;
+    for (int frame = 0; frame < 20000 && !textures.find(map).valid(); ++frame) {
+        loaded += loader.syncTextures(*device, *cmd, world, textures);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(textures.find(map).valid());
+    CHECK(loaded == 1u);
+    CHECK(loader.texturesInFlight() == 0u);
+    CHECK(loader.syncTextures(*device, *cmd, world, textures) == 0u);
+
+    loader.destroy(*device);
 }
 
 TEST_CASE("a mesh with no compiled form draws nothing, rather than parsing a source file")

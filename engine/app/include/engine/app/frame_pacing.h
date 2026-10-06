@@ -136,7 +136,8 @@ struct EvenRates
 //     in each of two seconds running. A game that holds fifty-nine with one
 //     frame in twenty doubled is a game at sixty.
 //   - **Up by trying**: after five seconds at a rate, when the frame's own
-//     work on the CPU fits the rate above, it steps up and sees. Whether the
+//     work on the CPU fits the rate above -- its simulation counted as the
+//     fewer ticks a frame runs there (D559) -- it steps up and sees. Whether the
 //     GPU has the room is not something a frame held at a lower rate can say
 //     -- a phone slows its GPU's clock when it idles -- so it is found out by
 //     running at the rate. A step up taken back within ten seconds doubles the
@@ -152,6 +153,10 @@ struct FrameCost
     // The same, less every wait -- the image, the present, the pacing: the
     // CPU's part alone.
     u64 cpuNs = 0;
+    // Of the CPU's part, the simulation's: the ticks the frame ran. That
+    // part belongs to the time that passed and not to the frame -- a frame at
+    // thirty runs two ticks where one at sixty runs one (D559).
+    u64 simNs = 0;
 };
 
 class RateGovernor
@@ -177,6 +182,10 @@ public:
         u32 frames = 0;
         // The CPU's mean time in a frame over that second.
         u64 meanCpuNs = 0;
+        // On a step up, what that time is reckoned to be at the rate stepped
+        // to, where a frame runs fewer of the simulation's ticks: the number
+        // that was found to fit.
+        u64 estimateNs = 0;
     };
     [[nodiscard]] const Step& lastStep() const noexcept { return m_step; }
 
@@ -197,9 +206,10 @@ private:
     u64 m_windowStartNs = 0;
     u32 m_frames = 0;
     // Frames of the window that were late at the rate held, and the CPU's
-    // time over all of them.
+    // time over all of them, with the simulation's part of it.
     u32 m_late = 0;
     u64 m_cpuNs = 0;
+    u64 m_simNs = 0;
     // Seconds in a row that were late.
     u32 m_lateWindows = 0;
     // Since when the rate held has been held, the last step up that has not
@@ -210,6 +220,19 @@ private:
     u64 m_upDelayNs = FirstUpDelayNs;
     Step m_step{};
 };
+
+// **Where a governed frame waits** (ADR 0173, as D560 left it). Under the
+// display's own rate it is held at its present, to its place in the rate's
+// grid (`holdHz`). At the display's own rate it is paced as a frame nobody
+// governs is: by the display, and by the cap `frameCapFor` gave, waited out at
+// the frame's end (`endHz`) -- on the phone the governor was written for, the
+// display alone left three times the frames late that the cap beside it does.
+struct GovernedPace
+{
+    u32 holdHz = 0;
+    u32 endHz = 0;
+};
+[[nodiscard]] GovernedPace governedPaceFor(u32 rateHz, f32 refreshRate, u32 capHz) noexcept;
 
 // **Whether vertical sync is holding** -- told the length of every presented
 // frame, it says no once thirty in a row came in at under two thirds of the

@@ -15,6 +15,7 @@ engine_add_module(ui
     LAYER 5
     SOURCES
         src/layout.cpp
+        src/glyph_outline.cpp
         src/text.cpp
         src/text_edit.cpp
         src/text_field.cpp

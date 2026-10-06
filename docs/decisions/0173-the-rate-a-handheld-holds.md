@@ -70,7 +70,9 @@ All of them: a rate that divides the refresh, held, and the display told.
    - **Up by trying.** After five seconds at a rate that is being held, when
      the CPU's part of a frame -- the frame less every wait: the GPU, the
      display's image, the present, the hold -- fits the rate above with a
-     tenth to spare, it steps up and sees. What the frame took before the
+     tenth to spare, it steps up and sees. The simulation's part of it is
+     counted as the ticks a frame runs at the rate above (D559, below): half
+     as many at sixty as at thirty. What the frame took before the
      hold cannot say whether the rate above would fit: it carries the wait
      for the display, and a phone slows its GPU's clock when the GPU idles,
      so a frame held at thirty takes longer than the same frame at sixty. A
@@ -83,8 +85,11 @@ All of them: a rate that divides the refresh, held, and the display told.
    its work ended. It costs the latency of the hold, which is what a frame
    pacer is.
 
-5. **At the display's own rate the display paces**, and nothing is held: a
-   second pacer beside the display's would beat against it.
+5. **At the display's own rate nothing is held at the present**, and the
+   frame is paced as one nobody governs is (`governedPaceFor`, as D560 left
+   it): by the display, and by the game's cap waited out at the frame's end.
+   The first writing left it to the display alone -- "a second pacer beside
+   the display's would beat against it" -- and the phone said otherwise.
 
 6. **The display is told** (`platform::requestDisplayFrameRate`, through
    `PlayerActivity.requestFrameRate` to `Surface.setFrameRate`, Android 11
@@ -103,6 +108,40 @@ All of them: a rate that divides the refresh, held, and the display told.
 9. The log says the rate each time it changes, and why in the numbers that
    decided it: how many of the second's frames were late, or the CPU's time
    that was found to fit. What a report from a phone is read against.
+
+## Amended 2026-10-05: three things the phone said (D559, D560, D561)
+
+Read from the coordinator's runs on the phone this was written for, with the
+governor on and with it off, in the same two scenes:
+
+- **Stepped down, it stayed down** (D559). Four runs on the lean ground were
+  put at thirty, rightly -- that ground could not be drawn sixty times a
+  second there (ADR 0179) -- and none tried sixty again in the minute and
+  more each went on. The test for trying is that the CPU's part of a frame
+  fits the rate above, and the CPU's part measured at thirty was 14.9 to 17.8
+  ms: over the fifteen that a sixtieth of a second leaves. But a frame at
+  thirty runs two of the simulation's ticks and one at sixty runs one. The
+  simulation's part is now counted at the rate above -- the frame's CPU time
+  less its ticks, plus the ticks scaled by the two rates -- and the log's line
+  for a step up says both numbers. It is a mean: where the rates are not a
+  whole number of ticks apart some frames run a tick more than others, and
+  the try is what finds that out.
+
+- **At sixty on a display at sixty, the display alone paced worse than the
+  cap beside it** (D560). With the fast ground and the governor on, 127
+  frames of 4189 were over 33 ms and a frame waited 5.6 ms on the GPU and the
+  display; with it off, 37 and 0.6. The one difference at that rate: an
+  ungoverned frame waits out the game's cap of sixty at its end, on the
+  host's clock, and the governed one waited for nothing and was stopped by
+  the display's queue when it filled. The reading, not taken further on the
+  device: a frame that arrives at a full queue has no slack for the one that
+  runs long. Decision 5 is amended to do what the ungoverned frame does.
+
+- **The cap's wait was counted as the CPU's drawing** (D561). It slept
+  inside the frame's first stretch with no scope and in none of the frame's
+  waits: a phone's report said 5.2 ms of `frame.begin` and as much "drawing
+  on the CPU" that was sleep. It is the scope `wait.cap` and a wait. The
+  governor was never told it: the interval it is handed begins after it.
 
 ## What it does not do
 
@@ -127,5 +166,6 @@ All of them: a rate that divides the refresh, held, and the display told.
 - A game at the edge of a rate runs at the rate below it, steadily, instead of
   between the two.
 - `--frame-stats` gains a scope, `wait.pace`: the hold. It is counted as a
-  wait, not as the frame's work.
+  wait, not as the frame's work. And, since D561, `wait.cap`: the cap waited
+  out at a frame's end.
 - Protocol unchanged (40).

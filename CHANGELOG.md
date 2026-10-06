@@ -1100,6 +1100,30 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   slowest frames of a phone's run (17 to 27 ms each). The shapes are built on
   the workers too. The simulation is the same: the bodies are made in the
   order they were.
+- **A phone that stepped down to thirty frames a second tries sixty again**
+  (D559). The pacing took the CPU's time of a frame at thirty -- two ticks of
+  the simulation -- as what a frame at sixty would cost, found it did not
+  fit, and never tried. The log's line for a step up says both numbers.
+- **At its display's own rate a phone's frame is paced by the game's cap as
+  well as the display** (D560), as it is with `adaptive_frame_rate` off: on
+  the phone it was measured on, the display alone left three times the frames
+  over 33 ms.
+- **`--frame-stats` counts the frame cap's wait as waiting** (D561), under
+  the scope `wait.cap`. It was reported as drawing on the CPU.
+- **Text with a stroke no longer costs a frame the first time it is shown**
+  (D563). A letter's outline was made by trying every point of the stroke's
+  shape at every texel of the letter -- 16 and 32 ms on a phone in the frames
+  a HUD and a panel first appeared. The same outline, byte for byte, is made
+  about six times faster. `--frame-stats` names the glyphs made in a frame
+  (`ui.glyphs`).
+- **A compiled texture no longer costs the frame it is first drawn in**
+  (D564). An exported game's maps were made ready for the GPU on the frame
+  thread, one at a time: 25 ms each on a phone. They are made ready on the
+  worker threads, several at once, as loose images already were.
+- **A host whose relay could not be found by name finds it later** (D562).
+  `NetworkService.RelayState` was `Unreachable` for the whole session when
+  the name did not resolve as the host opened; it is looked up again every
+  half minute, and `JoinCode` arrives when it answers.
 - **The full ground's shader is compiled only by a game that draws with it.**
   It took 1.3 s to make on a phone, during the first frame after loading,
   whichever ground the game used.

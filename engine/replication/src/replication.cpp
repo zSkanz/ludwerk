@@ -92,7 +92,7 @@ public:
             m_authority->receive(world, root, ticking);
             // What the relay tells a joiner before it tries: a host with no
             // room is not knocked on.
-            if (!m_config.relay.empty() && !m_relayRefused)
+            if (!m_config.relay.empty())
                 m_transport->setOccupancy(m_authority->peerCount(), m_authority->maxPlayers());
         }
         else if (m_replica.has_value()) {
@@ -154,8 +154,13 @@ public:
             status.pingMs = worst.roundTripMs;
             status.jitterMs = worst.jitterMs;
             status.loss = worst.loss;
-            status.relayState = m_relayRefused ? static_cast<u8>(net::RelayState::Unreachable)
-                                               : static_cast<u8>(m_transport->relayState());
+            // Refused at the start is unreachable until the transport says
+            // otherwise: a relay whose name was not found is looked up again
+            // (D562), and found, it is as any other.
+            const net::RelayState relayState = m_transport->relayState();
+            status.relayState = m_relayRefused && relayState == net::RelayState::None
+                                    ? static_cast<u8>(net::RelayState::Unreachable)
+                                    : static_cast<u8>(relayState);
             status.joinCode = m_transport->joinCode();
             status.path = static_cast<u8>(m_authority->worstPath());
         }

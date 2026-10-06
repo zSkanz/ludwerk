@@ -213,7 +213,7 @@ struct Device
     engine::app::RateGovernor governor{};
     core::u64 now = 1'000'000'000ull;
 
-    core::u32 frame(double workMs, double cpuMs = 6.0)
+    core::u32 frame(double workMs, double cpuMs = 6.0, double simMs = 0.0)
     {
         const core::u32 held = governor.rate();
         const double refreshMs = 1000.0 / static_cast<double>(refresh);
@@ -222,17 +222,18 @@ struct Device
         now += static_cast<core::u64>(intervalMs * 1.0e6);
         const engine::app::FrameCost cost{.intervalNs = static_cast<core::u64>(intervalMs * 1.0e6),
                                           .workNs = static_cast<core::u64>(workMs * 1.0e6),
-                                          .cpuNs = static_cast<core::u64>(cpuMs * 1.0e6)};
+                                          .cpuNs = static_cast<core::u64>(cpuMs * 1.0e6),
+                                          .simNs = static_cast<core::u64>(simMs * 1.0e6)};
         return governor.sample(now, cost, refresh, ceiling);
     }
 
     // `seconds` of frames of one cost: the rate held after them.
-    core::u32 run(double seconds, double workMs, double cpuMs = 6.0)
+    core::u32 run(double seconds, double workMs, double cpuMs = 6.0, double simMs = 0.0)
     {
         core::u32 rate = governor.rate();
         const core::u64 end = now + static_cast<core::u64>(seconds * 1.0e9);
         while (now < end)
-            rate = frame(workMs, cpuMs);
+            rate = frame(workMs, cpuMs, simMs);
         return rate;
     }
 
@@ -401,6 +402,56 @@ TEST_CASE("D558: the rate above is tried once the CPU's part fits it, and one ta
     Device bound;
     CHECK(bound.run(7.0, 18.0, 16.0) == 40);
     CHECK(bound.run(60.0, 18.0, 16.0) == 40);
+}
+
+TEST_CASE("D559: a frame's simulation is weighed at the rate above, where the frame runs half the ticks")
+{
+    // A display at sixty: the rates are sixty and thirty. A stretch too heavy
+    // for sixty puts the phone at thirty, where every frame runs two of the
+    // simulation's ticks: sixteen milliseconds on the CPU, ten of them the
+    // ticks'. At sixty a frame runs one -- six and five, eleven -- so sixty
+    // is to be tried. It was not: sixteen does not fit a sixtieth of a second
+    // with a tenth to spare, and the phone drew thirty for the rest of the run.
+    Device device;
+    device.refresh = 60.0f;
+    CHECK(device.run(7.0, 24.0, 16.0, 10.0) == 30);
+    const core::u64 start = device.now;
+    while (device.governor.rate() == 30 && device.now < start + 20'000'000'000ull)
+        (void)device.frame(24.0, 16.0, 10.0);
+    CHECK(device.governor.rate() == 60);
+    CHECK(device.now - start < 6'000'000'000ull);
+    CHECK(device.governor.lastStep().from == 30);
+    CHECK(device.governor.lastStep().meanCpuNs == 16'000'000ull);
+    CHECK(device.governor.lastStep().estimateNs == 11'000'000ull);
+
+    // What is not the simulation's is the frame's at any rate: sixteen
+    // milliseconds of which one is the ticks' is fifteen and a half at sixty.
+    Device bound;
+    bound.refresh = 60.0f;
+    CHECK(bound.run(7.0, 24.0, 16.0, 1.0) == 30);
+    CHECK(bound.run(60.0, 24.0, 16.0, 1.0) == 30);
+}
+
+TEST_CASE("D560: at the display's own rate a governed frame is paced as one nobody governs")
+{
+    using engine::app::governedPaceFor;
+    // A phone's display at sixty and its game capped at sixty: the cap is
+    // waited out at the frame's end, as with the governor off, and nothing
+    // is held at the present.
+    CHECK(governedPaceFor(60, 60.0f, 60).holdHz == 0);
+    CHECK(governedPaceFor(60, 60.0f, 60).endHz == 60);
+    // With no cap there is the display alone.
+    CHECK(governedPaceFor(120, 120.0f, 0).holdHz == 0);
+    CHECK(governedPaceFor(120, 120.0f, 0).endHz == 0);
+    // Under the display's rate the frame is held at its present, and its end
+    // waits for nothing: two waits would be two grids.
+    CHECK(governedPaceFor(30, 60.0f, 60).holdHz == 30);
+    CHECK(governedPaceFor(30, 60.0f, 60).endHz == 0);
+    CHECK(governedPaceFor(60, 120.0f, 60).holdHz == 60);
+    CHECK(governedPaceFor(60, 120.0f, 60).endHz == 0);
+    // A display that does not say its rate is not one to leave the pacing to.
+    CHECK(governedPaceFor(60, 0.0f, 60).holdHz == 60);
+    CHECK(governedPaceFor(60, 0.0f, 60).endHz == 0);
 }
 
 TEST_CASE("another display mode starts the governor over, from the highest rate")

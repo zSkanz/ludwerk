@@ -1030,7 +1030,13 @@ jobs:
     # minute of ctest on a build that already happened -- so call it ~230 s and
     # 20 minutes still leaves 5x headroom. Raising it is a decision about
     # charged minutes, not a formality.
-    timeout-minutes: 20
+    #
+    # **45 again, since 2026-10-05.** The repository is public and the minutes
+    # are not charged; and the build this job does is no longer 168 s. It was
+    # 15.5 minutes on `797806d6` and 18 minutes 47 seconds on `b617eaef`, whose
+    # tests were then cut off 53 seconds in -- a run reported as cancelled for
+    # a commit with nothing wrong in it, and `main` held back for it.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 

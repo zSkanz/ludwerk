@@ -200,6 +200,12 @@ two system calls a datagram.
 Nothing here is on the wire of a match: the protocol's version is unchanged,
 and the rendezvous has a version of its own.
 
+**Amended 2026-10-05 (D562): a relay's name is looked up until it is found.**
+The first relay installed for a game had a name made minutes before, and a
+host whose resolver did not know it yet was `Unreachable` for its whole
+session: the name was asked for once. It is kept and looked up again every
+half minute, on a thread of its own, and the host registers when it answers.
+
 ## What it does not do
 
 - Encryption and identity: ADR 0120 §1 to §3, where they were. A relay sees

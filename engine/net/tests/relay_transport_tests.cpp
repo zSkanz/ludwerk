@@ -6,6 +6,7 @@
 // match both ways, that the script's side will be told the truth about paths
 // and failures. What a ROUTER does to all of it is `rendezvous_tests.cpp`'s,
 // on a network made up for the purpose: the loopback has no router.
+#include <atomic>
 #include <chrono>
 #include <doctest/doctest.h>
 #include <string>
@@ -345,4 +346,87 @@ TEST_CASE("a relay stopped and started again: the code is the same, and a joiner
     std::vector<TransportEvent> friendEvents;
     REQUIRE(pumpUntil(*table.host, *friendOf, table.hostEvents, friendEvents,
                       [&] { return find(friendEvents, TransportEvent::Kind::Connected) != nullptr; }));
+}
+
+namespace {
+
+// A name server for one name, which knows it only once it has been told to.
+std::atomic<bool> g_relayNameKnown{false};
+std::atomic<int> g_relayNameAsked{0};
+
+bool lookUpRelayName(std::string_view name, std::string& address)
+{
+    if (name != "relay.test")
+        return false;
+    ++g_relayNameAsked;
+    if (!g_relayNameKnown.load())
+        return false;
+    address = "127.0.0.1";
+    return true;
+}
+
+} // namespace
+
+TEST_CASE("D562: a relay whose name is not found yet is looked up again, and the host registers when it is")
+{
+    seedCatalog();
+    g_relayNameKnown.store(false);
+    g_relayNameAsked.store(0);
+    setNameLookupForTests(&lookUpRelayName);
+    struct PutBack
+    {
+        ~PutBack() { setNameLookupForTests(nullptr); }
+    } putBack;
+
+    RelayService relay;
+    REQUIRE_FALSE(relay.start(0).has_value());
+    const std::string named = "relay.test:" + std::to_string(relay.port());
+
+    auto host = createEnetTransport();
+    auto joiner = createEnetTransport();
+    REQUIRE_FALSE(host->open({.port = HostPort, .maxPeers = 8, .channels = 2, .relayLookupEveryMs = 150}).has_value());
+    REQUIRE_FALSE(joiner->open({.port = 0, .maxPeers = 4, .channels = 2}).has_value());
+
+    // A record made a minute ago: this machine's resolver does not have it
+    // yet. The host is told once, in words that say it is looked for again,
+    // and is a host all the same.
+    const auto refused = host->useRelay(named);
+    REQUIRE(refused.has_value());
+    CHECK(refused->message.find("relay.test") != std::string::npos);
+    CHECK(refused->message.find("looked up again") != std::string::npos);
+    CHECK(host->relayState() == RelayState::Unreachable);
+    CHECK(host->joinCode().empty());
+
+    std::vector<TransportEvent> hostEvents;
+    std::vector<TransportEvent> joinerEvents;
+    // It goes on being asked for while it is not found...
+    REQUIRE(pumpUntil(*host, *joiner, hostEvents, joinerEvents, [] { return g_relayNameAsked.load() >= 3; }, 2000));
+    CHECK(host->relayState() == RelayState::Unreachable);
+    CHECK(relay.stats().sessions == 0);
+
+    // ...and the lookup after the record arrives registers the host: no
+    // leaving, no hosting again. It was asked once and never again.
+    g_relayNameKnown.store(true);
+    REQUIRE(pumpUntil(
+        *host, *joiner, hostEvents, joinerEvents, [&] { return host->relayState() == RelayState::Ready; }, 2000));
+    CHECK(relay.stats().sessions == 1);
+    CHECK(host->joinCode().size() == 8);
+
+    // And it is joined by its code like any other.
+    PeerId toHost;
+    REQUIRE_FALSE(joiner->connectByCode(named, host->joinCode(), true, toHost).has_value());
+    REQUIRE(pumpUntil(*host, *joiner, hostEvents, joinerEvents,
+                      [&] { return find(joinerEvents, TransportEvent::Kind::Connected) != nullptr; }));
+
+    // A relay left is not looked for any more.
+    const int asked = g_relayNameAsked.load();
+    host->leaveRelay();
+    g_relayNameKnown.store(false);
+    REQUIRE(host->useRelay(named).has_value());
+    host->leaveRelay();
+    const int afterLeaving = g_relayNameAsked.load();
+    CHECK(afterLeaving == asked + 1);
+    (void)pumpUntil(*host, *joiner, hostEvents, joinerEvents, [] { return false; }, 100);
+    CHECK(g_relayNameAsked.load() == afterLeaving);
+    CHECK(host->relayState() == RelayState::None);
 }

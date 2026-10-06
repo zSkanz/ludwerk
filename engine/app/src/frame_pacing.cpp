@@ -105,6 +105,14 @@ EvenRates evenRatesFor(f32 refreshRate, u32 ceilingHz) noexcept
     return rates;
 }
 
+GovernedPace governedPaceFor(u32 rateHz, f32 refreshRate, u32 capHz) noexcept
+{
+    const u32 refresh = refreshRate >= 1.0f ? static_cast<u32>(std::lround(refreshRate)) : 0;
+    if (refresh != 0 && rateHz + 1 >= refresh)
+        return GovernedPace{.holdHz = 0, .endHz = capHz};
+    return GovernedPace{.holdHz = rateHz, .endHz = 0};
+}
+
 void RateGovernor::reset() noexcept
 {
     *this = RateGovernor{};
@@ -116,6 +124,7 @@ void RateGovernor::restartWindow(u64 nowNs) noexcept
     m_frames = 0;
     m_late = 0;
     m_cpuNs = 0;
+    m_simNs = 0;
 }
 
 u32 RateGovernor::sample(u64 nowNs, const FrameCost& frame, f32 refreshRate, u32 ceilingHz) noexcept
@@ -169,6 +178,7 @@ u32 RateGovernor::sample(u64 nowNs, const FrameCost& frame, f32 refreshRate, u32
     ++m_frames;
     m_late += late ? 1u : 0u;
     m_cpuNs += frame.cpuNs;
+    m_simNs += std::min(frame.simNs, frame.cpuNs);
 
     if (nowNs - m_windowStartNs < WindowNs || m_frames < FewestFrames)
         return rate();
@@ -181,7 +191,7 @@ u32 RateGovernor::sample(u64 nowNs, const FrameCost& frame, f32 refreshRate, u32
 
     if (lateWindow) {
         if (++m_lateWindows >= LateWindows && m_rung + 1 < m_ladder.count) {
-            m_step = Step{m_ladder.hz[m_rung], m_ladder.hz[m_rung + 1], m_late, m_frames, meanCpuNs};
+            m_step = Step{m_ladder.hz[m_rung], m_ladder.hz[m_rung + 1], m_late, m_frames, meanCpuNs, 0};
             ++m_rung;
             if (m_lastUpNs != 0 && nowNs - m_lastUpNs < TakenBackNs)
                 m_upDelayNs = std::min(m_upDelayNs * 2, MostUpDelayNs);
@@ -195,9 +205,19 @@ u32 RateGovernor::sample(u64 nowNs, const FrameCost& frame, f32 refreshRate, u32
         // The rate above is tried when this one has been held for the wait,
         // is being held now, and the CPU's own part of a frame fits it with a
         // tenth to spare. The rest is found out by running at it.
+        //
+        // **The simulation's part is weighed at the rate above** (D559). The
+        // ticks a frame runs are the time's, not the frame's: a frame at
+        // thirty runs two of a sixty's and one at sixty runs one. Set whole
+        // against the rate above, a held frame's CPU time said "does not fit"
+        // of a game that fits it with a third to spare, and a phone that had
+        // stepped down once drew thirty for good.
+        const u32 upperHz = m_rung > 0 ? m_ladder.hz[m_rung - 1] : m_ladder.hz[m_rung];
+        const u64 meanSimNs = m_simNs / m_frames;
+        const u64 atUpperNs = (meanCpuNs - meanSimNs) + meanSimNs * m_ladder.hz[m_rung] / upperHz;
         if (m_rung > 0 && heldWindow && nowNs - m_rungSinceNs >= m_upDelayNs &&
-            meanCpuNs * 10 <= periodOf(m_rung - 1) * 9) {
-            m_step = Step{m_ladder.hz[m_rung], m_ladder.hz[m_rung - 1], m_late, m_frames, meanCpuNs};
+            atUpperNs * 10 <= periodOf(m_rung - 1) * 9) {
+            m_step = Step{m_ladder.hz[m_rung], m_ladder.hz[m_rung - 1], m_late, m_frames, meanCpuNs, atUpperNs};
             --m_rung;
             m_lastUpNs = nowNs;
             m_rungSinceNs = nowNs;

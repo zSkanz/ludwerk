@@ -1735,6 +1735,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     std::vector<render::SeenSkin> frameSkins;
     core::u32 heldRate = 0;
     core::u64 heldNs = 0;
+    // What the frame being counted waited for its cap, at its beginning: a
+    // wait like the others, and no part of the interval the governor is told.
+    f64 capWaitMs = 0.0;
     core::u32 saidRate = 0;
     // The cap the display was last asked for; none yet.
     core::u32 saidCeiling = ~0u;
@@ -3066,12 +3069,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         }
         // The frame that ended is accounted for: the warning above and the
         // statistics have both read what it spent.
+        const f64 endedFrameSimMs = phaseSimMs;
         phaseSimMs = 0.0;
         // What the frame that ended spent waiting -- for the GPU, the
         // display's image, the present, its place in the rate: the pacing
-        // below takes it out of the frame to have the CPU's part.
-        const f64 endedFrameWaitMs = phaseWaitMs;
+        // below takes it out of the frame to have the CPU's part. Not the
+        // cap's wait, which the interval it is taken from does not hold.
+        const f64 endedFrameWaitMs = phaseWaitMs - capWaitMs;
         phaseWaitMs = 0.0;
+        capWaitMs = 0.0;
         phaseRenderScriptsMs = 0.0;
         // **`--pace`**: the rest of the frame's share of a second, waited out
         // and left out of what the frame is measured to have cost.
@@ -3102,6 +3108,19 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 syncWatch.sample(now - pacedFrameNs, state.refreshRate);
             state.syncHeld = syncWatch.held();
             core::u32 cap = frameCapFor(livePacing, state);
+            // **The cap's wait is a wait** (D561): counted with the frame's
+            // others and under a scope of its own. It was neither, and a
+            // phone's report said five milliseconds of sleeping were "drawing
+            // on the CPU".
+            const auto waitOutCap = [&](core::u64 fromNs, core::u32 hz) {
+                const core::u64 wait = frameLimiter.waitNs(fromNs, hz);
+                if (wait == 0)
+                    return;
+                ENG_PROFILE_SCOPE("wait.cap");
+                platform::sleepNs(wait);
+                capWaitMs = msSince(fromNs);
+                phaseWaitMs += capWaitMs;
+            };
             // **A handheld in front is paced at a rate it holds** (ADR 0173),
             // and the wait is at the frame's PRESENT, not here: frames shown a
             // steady time apart, where a wait after the present leaves each
@@ -3113,14 +3132,19 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 const auto waited = static_cast<core::u64>(std::max(0.0, endedFrameWaitMs) * 1.0e6);
                 const FrameCost cost{.intervalNs = interval,
                                      .workNs = interval > heldNs ? interval - heldNs : 0,
-                                     .cpuNs = interval > waited ? interval - waited : 0};
+                                     .cpuNs = interval > waited ? interval - waited : 0,
+                                     .simNs = static_cast<core::u64>(std::max(0.0, endedFrameSimMs) * 1.0e6)};
                 const core::u32 ceiling = lowerRate(livePacing.maxFrameRate, cap);
                 const core::u32 rate = rateGovernor.sample(now, cost, state.refreshRate, ceiling);
                 const core::u32 refresh =
                     state.refreshRate >= 1.0f ? static_cast<core::u32>(std::lround(state.refreshRate)) : 0;
-                // At the display's own rate the display is the pacer, and a
-                // second one beside it would only beat against it.
-                heldRate = refresh != 0 && rate + 1 >= refresh && state.syncHeld ? 0 : rate;
+                // **At the display's own rate the frame is paced as one
+                // nobody governs** (D560): by the display, and by the cap
+                // waited out here. Under it, held at its present.
+                const GovernedPace pace = governedPaceFor(rate, state.refreshRate, cap);
+                heldRate = pace.holdHz;
+                if (pace.endHz != 0)
+                    waitOutCap(now, pace.endHz);
                 cap = rate;
                 // **The display is asked for the game's cap, once** (D558),
                 // and not for each rate held: a display told thirty may go to
@@ -3149,10 +3173,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         core::log(LogLevel::Info, ENG_TR("engine.frame.info.paced_down"), downArgs);
                     }
                     else {
-                        const std::array<I18nArg, 4> upArgs{I18nArg{"rate", static_cast<core::i64>(step.to)},
-                                                            I18nArg{"from", static_cast<core::i64>(step.from)},
-                                                            I18nArg{"cpu", static_cast<f64>(step.meanCpuNs) / 1.0e6},
-                                                            I18nArg{"period", 1000.0 / static_cast<f64>(step.to)}};
+                        const std::array<I18nArg, 5> upArgs{
+                            I18nArg{"rate", static_cast<core::i64>(step.to)},
+                            I18nArg{"from", static_cast<core::i64>(step.from)},
+                            I18nArg{"cpu", static_cast<f64>(step.meanCpuNs) / 1.0e6},
+                            I18nArg{"estimate", static_cast<f64>(step.estimateNs) / 1.0e6},
+                            I18nArg{"period", 1000.0 / static_cast<f64>(step.to)}};
                         core::log(LogLevel::Info, ENG_TR("engine.frame.info.paced_up"), upArgs);
                     }
                 }
@@ -3165,8 +3191,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     saidRate = 0;
                 }
                 heldRate = 0;
-                if (const core::u64 wait = frameLimiter.waitNs(now, cap); wait > 0)
-                    platform::sleepNs(wait);
+                waitOutCap(now, cap);
             }
             heldNs = 0;
             pacedFrameNs = platform::nowNs();
@@ -6644,15 +6669,22 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 uiGradients.clear();
                 // A picture for each `CanvasGroup`, before the geometry that is
                 // drawn into them (ADR 0128).
-                uiGroupPictures.prepare(uiRenderer.valid() ? device.get() : nullptr, uiDrawList, uiColorFormat,
-                                        ++uiFrame);
-                buildUiGeometry(uiDrawList, uiViewport, uiVertices, uiRuns, uiTextures, uiGradients,
-                                uiGroupPictures.textures());
+                {
+                    ENG_PROFILE_SCOPE("ui.groups");
+                    uiGroupPictures.prepare(uiRenderer.valid() ? device.get() : nullptr, uiDrawList, uiColorFormat,
+                                            ++uiFrame);
+                }
+                {
+                    ENG_PROFILE_SCOPE("ui.geometry");
+                    buildUiGeometry(uiDrawList, uiViewport, uiVertices, uiRuns, uiTextures, uiGradients,
+                                    uiGroupPictures.textures());
+                }
 
                 // **The world's UI, into the picture the renderer is about to
                 // draw** (F3): laid out and drawn by the same code as the screen's,
                 // placed on its parts and billboards, and sharing the screen's
                 // glyph atlas and images.
+                ENG_PROFILE_SCOPE("ui.world");
                 buildWorldUi(host->world(), host->workspace(), host->uiService(), uiViewport, uiTextures,
                              worldUiDrawList, snapshot, &uiGradients, &framePoses);
             });
