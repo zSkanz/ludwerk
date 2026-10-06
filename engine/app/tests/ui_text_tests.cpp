@@ -126,6 +126,28 @@ TEST_CASE("a deferred picture costs the frame that asked for it nothing")
     text.destroy(*fixture.device);
 }
 
+TEST_CASE("D578: a picture goes up with every level under it, in either mode")
+{
+    // An icon of 256 texels drawn seventeen pixels tall is fifteen texels a
+    // pixel, and a sampler reads four: with the top level alone on the GPU the
+    // picture was whichever four the pixel's centre fell among -- ragged where
+    // it should be small. `checker.png` is two texels square: two levels.
+    for (const bool deferred : {false, true}) {
+        CAPTURE(deferred);
+        Fixture fixture;
+        UiText text;
+        text.setMounts(&fixture.mounts);
+        text.setDeferredImages(deferred);
+        CHECK_FALSE(resolves(text, "asset://checker.png"));
+        // The pass that reads it, or that queues it; then until it is in.
+        text.sync(*fixture.device, *fixture.cmd);
+        settle(text, *fixture.device, *fixture.cmd);
+        REQUIRE(resolves(text, "asset://checker.png"));
+        CHECK(text.imageLevelsUploaded() == 2);
+        text.destroy(*fixture.device);
+    }
+}
+
 TEST_CASE("a picture that is not there is refused once, in either mode")
 {
     Fixture fixture;

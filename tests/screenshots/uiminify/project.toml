@@ -1,0 +1,13 @@
+# A picture drawn small in the interface is drawn from its smaller levels
+# (D578). A project rather than a bare script, because the picture is a file.
+
+[project]
+name = "Ludwerk UI Minify"
+id = "dev.ludwerk.uiminify"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — UI Minify"
+width = 640
+height = 360

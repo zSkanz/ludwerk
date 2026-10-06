@@ -1438,6 +1438,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A picture drawn small in the interface is no longer ragged** (D578). An
+  `ImageLabel` or `ImageButton` showing a picture well under its own size --
+  a 256-pixel icon in a 17-pixel slot -- sampled four texels of the hundreds
+  each pixel covers, which broke outlines into steps and turned fine detail
+  to noise. A picture now goes to the GPU with its smaller levels and is
+  drawn from the ones nearest the size on screen. Nothing to change in a
+  game; a picture costs a third more memory. An icon drawn at its own size
+  looks as it did.
 - **A turned part in a run of identical parts is lit from the right side**
   (D577). Parts the engine draws together as one instanced run -- the same
   mesh and material many times, and every enemy of an animated horde -- had

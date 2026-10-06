@@ -112,6 +112,9 @@ public:
     }
     // How many bytes of the atlas have gone up, in all: what a new glyph costs.
     [[nodiscard]] core::u64 atlasBytesUploaded() const noexcept { return atlasBytes_; }
+    // How many levels of pictures have gone up, in all: a picture is sent
+    // with every level under it (D578).
+    [[nodiscard]] core::u64 imageLevelsUploaded() const noexcept { return imageLevels_; }
 
     // Every image the UI has asked for, in the order it asked. The frame loop
     // appends these after the atlas's pages, so `ui::kFirstImageTexture` is
@@ -130,6 +133,7 @@ private:
     };
     std::array<AtlasPage, ui::kGlyphPages> pages_{};
     core::u64 atlasBytes_ = 0;
+    core::u64 imageLevels_ = 0;
     // The atlas expanded from coverage to RGBA. Kept between frames so a
     // re-upload does not allocate four megabytes every time a new glyph appears.
     std::vector<std::byte> staging_;
@@ -169,10 +173,10 @@ private:
     struct ImageWork
     {
         std::vector<std::byte> bytes;
-        asset::Image decoded;
+        // The picture with every level under it: as the compiler made it, or
+        // as the job made it from a file the compiler has not seen (D578).
         asset::TextureAsset compiled;
         bool ok = false;
-        bool isCompiled = false;
     };
 
     struct Image

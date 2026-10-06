@@ -151,8 +151,21 @@ std::optional<core::EngineError> UiRenderer::create(rhi::IDevice& device, const 
     // CLAMPED, not repeated. A glyph sampled past its cell would fetch its
     // neighbour in the atlas, which is how text acquires faint marks nobody can
     // explain; tiling is a quad-level decision (`ScaleType`), not a sampler one.
-    sampler_ = device.createSampler(
-        {.addressU = rhi::AddressMode::ClampToEdge, .addressV = rhi::AddressMode::ClampToEdge, .debugName = "ui2d"});
+    //
+    // **Half a level sharper than the size on screen asks for** (D578). A
+    // picture drawn small is sampled from its smaller levels, and between two
+    // of them a sampler blends: an icon of 256 texels at seventeen pixels came
+    // out of the 16-texel level almost alone, which is soft. Half a level up
+    // is the two levels round it in near equal parts. Measured on six of a
+    // game's icons at 17, 22, 28 and 44 pixels, as error against a Lanczos
+    // reduction (0 to 255): the top level alone, as it was, 19.7, 16.1, 13.7,
+    // 9.3; the levels unbiased 12.7, 11.4, 10.1, 7.8; at minus a half 7.6,
+    // 6.2, 6.1, 4.4; at minus one it is worse again. A glyph page and a
+    // view's picture have one level, and no bias reaches below it.
+    sampler_ = device.createSampler({.addressU = rhi::AddressMode::ClampToEdge,
+                                     .addressV = rhi::AddressMode::ClampToEdge,
+                                     .mipLodBias = -0.5f,
+                                     .debugName = "ui2d"});
     if (!whitePixel_.valid() || !sampler_.valid())
         return core::makeError(ENG_TR("render.err.ui_pipeline_failed"));
 

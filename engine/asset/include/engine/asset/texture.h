@@ -106,8 +106,10 @@ struct TranscodeOptions
     // Ignores every block format and produces `Rgba8`. What a headless run and
     // the capture backend want, and what makes a golden comparable.
     bool forceUncompressed = false;
-    // Transcode only the largest level. The UI wants this: a `ScreenGui` image
-    // is drawn at one size and mips would be memory nobody samples.
+    // Transcode only the largest level: for what is sampled at its own size
+    // and no other -- a sky's faces, read by the CPU. Not the interface's
+    // pictures, which it was written for: an icon is drawn at a fifteenth of
+    // its size as often as at its own (D578).
     bool baseLevelOnly = false;
     // ASTC, taken where BC7 is not allowed: a phone (ADR 0180). The device's
     // word unless the caller says. Last, so the options written by position
@@ -119,5 +121,24 @@ struct TranscodeOptions
 // crash: this reads bytes that came out of a pack a person may have truncated.
 [[nodiscard]] std::optional<core::EngineError> transcodeTexture(std::span<const std::byte> ktx2,
                                                                 const TranscodeOptions& options, TextureAsset& out);
+
+struct Image;
+
+// **A decoded picture with its smaller levels**, as `Rgba8`: the picture
+// itself, then each level half the one above down to one texel. What a
+// picture the compiler has not seen -- a project run out of its source tree --
+// is uploaded as wherever it may be drawn smaller than it is (D578); a
+// compiled one carries its chain already.
+//
+// Each level is the mean of the four texels above it, **weighted by their
+// alpha**: the colour under a transparent texel is whatever a paint program
+// left there, and averaged in plainly it is a dark fringe round everything
+// drawn small. **And of their light, for a colour** (`srgb`): the mean of a
+// black texel and a white one is the grey that is half as bright, 188 and not
+// 128 -- which is also what the compiler's chain holds, so a picture looks
+// the same small whether the compiler has seen it or not. Data -- `srgb`
+// false -- is averaged as the numbers it is. An invalid image gives an
+// invalid texture.
+[[nodiscard]] TextureAsset mipChainOf(const Image& image, bool srgb);
 
 } // namespace engine::asset

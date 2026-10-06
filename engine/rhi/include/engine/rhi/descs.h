@@ -42,6 +42,10 @@ struct SamplerDesc
     AddressMode addressU = AddressMode::Repeat;
     AddressMode addressV = AddressMode::Repeat;
     AddressMode addressW = AddressMode::Repeat;
+    // Added to the level a sample would be taken from: below zero, a larger
+    // (sharper) level than the size on screen asks for. Zero everywhere but
+    // the interface's pictures (D578).
+    f32 mipLodBias = 0.0f;
     std::string_view debugName{};
 };
 

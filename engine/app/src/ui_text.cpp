@@ -74,28 +74,15 @@ bool resolveFace(void* user, std::string_view name, std::vector<core::u8>& out)
     return rhi::TextureFormat::Rgba8Unorm;
 }
 
-// A decoded RGBA picture, uploaded. Mip zero only: a UI picture is drawn at or
-// near its own size, and a mip chain for a HUD icon is memory spent on a level
-// nothing samples.
-[[nodiscard]] rhi::TextureHandle uploadImage(rhi::IDevice& device, rhi::ICmdList& cmd, const asset::Image& image)
-{
-    const rhi::TextureHandle handle = device.createTexture({
-        .format = rhi::TextureFormat::Rgba8Unorm,
-        .usage = rhi::TextureUsage::Sampled,
-        .width = image.width,
-        .height = image.height,
-        .debugName = "ui-image",
-    });
-    if (!handle.valid()) {
-        return {};
-    }
-    cmd.uploadTexture(handle, image.pixels, 0);
-    return handle;
-}
-
-// A compiled texture, uploaded at its top level only, for the same reason.
+// **A picture, uploaded with every level it has** (D578). It went up at its
+// top level alone, "drawn at or near its own size" -- and a game's icons are
+// 256 texels drawn seventeen to forty-four pixels tall: up to fifteen texels
+// a pixel, of which a sampler reads four. Measured against a proper
+// reduction, the top level alone is three times further from it than the
+// levels are (`ui_renderer.cpp`, the sampler). A third more memory a picture.
+// Returns the handle and adds the levels sent to `levels`.
 [[nodiscard]] rhi::TextureHandle uploadTexture(rhi::IDevice& device, rhi::ICmdList& cmd,
-                                               const asset::TextureAsset& texture)
+                                               const asset::TextureAsset& texture, core::u64& levels)
 {
     if (texture.mips.empty()) {
         return {};
@@ -105,13 +92,17 @@ bool resolveFace(void* user, std::string_view name, std::vector<core::u8>& out)
         .usage = rhi::TextureUsage::Sampled,
         .width = texture.width,
         .height = texture.height,
+        .mipLevels = static_cast<core::u32>(texture.mips.size()),
         .debugName = "ui-image",
     });
     if (!handle.valid()) {
         return {};
     }
-    const asset::TextureMip& top = texture.mips.front();
-    cmd.uploadTexture(handle, std::span<const std::byte>(texture.pixels).subspan(top.offset, top.size), 0);
+    for (core::u32 level = 0; level < static_cast<core::u32>(texture.mips.size()); ++level) {
+        const asset::TextureMip& mip = texture.mips[level];
+        cmd.uploadTexture(handle, std::span<const std::byte>(texture.pixels).subspan(mip.offset, mip.size), level);
+    }
+    levels += texture.mips.size();
     return handle;
 }
 
@@ -295,7 +286,7 @@ void UiText::loadPendingImages(rhi::IDevice& device, rhi::ICmdList& cmd)
         // is the mode people spend their time in.
         asset::TextureAsset compiled;
         if (!asset::transcodeTexture(bytes, asset::TranscodeOptions{}, compiled).has_value() && compiled.valid()) {
-            image.texture = uploadTexture(device, cmd, compiled);
+            image.texture = uploadTexture(device, cmd, compiled, imageLevels_);
             image.width = compiled.width;
             image.height = compiled.height;
         }
@@ -306,7 +297,9 @@ void UiText::loadPendingImages(rhi::IDevice& device, rhi::ICmdList& cmd)
                 core::log(core::LogLevel::Warn, ENG_TR("app.warn.image_undecodable"), args);
                 continue;
             }
-            image.texture = uploadImage(device, cmd, decoded);
+            // A picture the compiler has not seen has no levels of its own:
+            // made here, as the compiler would have.
+            image.texture = uploadTexture(device, cmd, asset::mipChainOf(decoded, true), imageLevels_);
             image.width = decoded.width;
             image.height = decoded.height;
         }
@@ -413,11 +406,12 @@ void UiText::pumpImages(rhi::IDevice& device, rhi::ICmdList& cmd)
                 // tree carries the PNG the artist saved.
                 if (!asset::transcodeTexture(work->bytes, asset::TranscodeOptions{}, work->compiled).has_value() &&
                     work->compiled.valid()) {
-                    work->isCompiled = true;
                     work->ok = true;
                 }
-                else if (!asset::decodeImage(work->bytes, work->decoded).has_value()) {
-                    work->ok = true;
+                else if (asset::Image decoded; !asset::decodeImage(work->bytes, decoded).has_value()) {
+                    // With its smaller levels, made here and not on the frame.
+                    work->compiled = asset::mipChainOf(decoded, true);
+                    work->ok = work->compiled.valid();
                 }
                 work->bytes.clear();
                 work->bytes.shrink_to_fit();
@@ -442,16 +436,9 @@ void UiText::pumpImages(rhi::IDevice& device, rhi::ICmdList& cmd)
         // **No logging from inside the job.** The flag comes back and the
         // sentence is said here, on the frame thread.
         if (image.work != nullptr && image.work->ok) {
-            if (image.work->isCompiled) {
-                image.texture = uploadTexture(device, cmd, image.work->compiled);
-                image.width = image.work->compiled.width;
-                image.height = image.work->compiled.height;
-            }
-            else {
-                image.texture = uploadImage(device, cmd, image.work->decoded);
-                image.width = image.work->decoded.width;
-                image.height = image.work->decoded.height;
-            }
+            image.texture = uploadTexture(device, cmd, image.work->compiled, imageLevels_);
+            image.width = image.work->compiled.width;
+            image.height = image.work->compiled.height;
         }
         else {
             const core::I18nArg args[] = {{"content", image.urn}};

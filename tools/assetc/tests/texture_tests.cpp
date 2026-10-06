@@ -174,7 +174,7 @@ TEST_CASE("one asset transcodes to whatever the device can sample")
     }
 }
 
-TEST_CASE("baseLevelOnly stops at the level the UI draws")
+TEST_CASE("baseLevelOnly stops at the top level")
 {
     seedRealCatalog();
 

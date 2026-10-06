@@ -1052,6 +1052,20 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # **A picture drawn small in the interface is drawn from its smaller
+    # levels** (D578): a checkerboard of single texels at an icon's sizes is
+    # an even grey, where it was a pattern of its own. See the driver.
+    add_test(NAME ui_minify_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/uiminify
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/ui-minify.png
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_ui_minify_gate.cmake)
+    set_tests_properties(ui_minify_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # ADR 0107: a mirror shows what a mirror would, and a portal what is
     # beyond it (`@engine/views`, `Camera.ClipPlane`).
     add_test(NAME mirrors_gate
@@ -1949,7 +1963,7 @@ if(ENG_BUILD_TESTS)
     # no group is asked for.
     set(drawn_tests
         screenshot_gate screenshot_gate_contact screenshot_gate_ui screenshot_gate_instanced
-        screenshot_gate_sprites ui_appearance_gate ui_layouts_gate sprite_color_gate views_gate mirrors_gate ortho_gate
+        screenshot_gate_sprites ui_appearance_gate ui_layouts_gate sprite_color_gate views_gate ui_minify_gate mirrors_gate ortho_gate
         subworld_gate
         surface_contract_proof_meshes surface_contract_proof_specular user_surface_proof
         graphics_settings_differential graphics_runtime_differential options_screen_gate local_shadow_differential

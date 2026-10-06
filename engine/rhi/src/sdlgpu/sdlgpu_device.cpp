@@ -542,7 +542,7 @@ public:
             .address_mode_u = toSdl(desc.addressU),
             .address_mode_v = toSdl(desc.addressV),
             .address_mode_w = toSdl(desc.addressW),
-            .mip_lod_bias = 0.0f,
+            .mip_lod_bias = desc.mipLodBias,
             .max_anisotropy = 0.0f,
             .compare_op = SDL_GPU_COMPAREOP_NEVER,
             .min_lod = 0.0f,

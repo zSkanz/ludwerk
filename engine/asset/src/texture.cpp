@@ -1,9 +1,14 @@
 #include "engine/asset/texture.h"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <basisu_transcoder.h>
+#include <cmath>
+#include <cstring>
 #include <mutex>
 
+#include "engine/asset/image.h"
 #include "engine/core/i18n.h"
 #include "engine/core/text_key.h"
 
@@ -196,6 +201,86 @@ std::optional<core::EngineError> transcodeTexture(std::span<const std::byte> ktx
     }
 
     return std::nullopt;
+}
+
+TextureAsset mipChainOf(const Image& image, bool srgb)
+{
+    TextureAsset out;
+    if (!image.valid())
+        return out;
+    out.width = image.width;
+    out.height = image.height;
+    out.format = TextureFormat::Rgba8;
+    out.srgb = srgb;
+    out.hasAlpha = image.sourceChannels == 2 || image.sourceChannels == 4;
+
+    usize total = 0;
+    for (u32 width = image.width, height = image.height;;) {
+        const usize size = static_cast<usize>(width) * height * 4u;
+        out.mips.push_back(TextureMip{width, height, total, size});
+        total += size;
+        if (width == 1 && height == 1)
+            break;
+        width = std::max(1u, width / 2u);
+        height = std::max(1u, height / 2u);
+    }
+    out.pixels.resize(total);
+    std::memcpy(out.pixels.data(), image.pixels.data(), image.pixels.size());
+
+    // A stored value as the light it stands for, and back.
+    std::array<float, 256> light{};
+    for (usize value = 0; value < light.size(); ++value) {
+        const float kept = static_cast<float>(value) / 255.0f;
+        if (!srgb)
+            light[value] = kept;
+        else if (kept <= 0.04045f)
+            light[value] = kept / 12.92f;
+        else
+            light[value] = std::pow((kept + 0.055f) / 1.055f, 2.4f);
+    }
+    const auto stored = [srgb](float value) {
+        float encoded = value;
+        if (srgb)
+            encoded = value <= 0.0031308f ? value * 12.92f : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+        return static_cast<unsigned char>(std::clamp(encoded * 255.0f + 0.5f, 0.0f, 255.0f));
+    };
+
+    for (usize level = 1; level < out.mips.size(); ++level) {
+        const TextureMip& above = out.mips[level - 1];
+        const TextureMip& here = out.mips[level];
+        const auto* from = reinterpret_cast<const unsigned char*>(out.pixels.data() + above.offset);
+        auto* to = reinterpret_cast<unsigned char*>(out.pixels.data() + here.offset);
+        for (u32 y = 0; y < here.height; ++y) {
+            // The two rows and two columns above; the same one twice where the
+            // level above is a single texel across.
+            const u32 rows[2]{std::min(y * 2u, above.height - 1u), std::min(y * 2u + 1u, above.height - 1u)};
+            for (u32 x = 0; x < here.width; ++x) {
+                const u32 columns[2]{std::min(x * 2u, above.width - 1u), std::min(x * 2u + 1u, above.width - 1u)};
+                float weighted[3]{};
+                float plain[3]{};
+                u32 alpha = 0;
+                for (const u32 row : rows) {
+                    for (const u32 column : columns) {
+                        const unsigned char* texel = from + (static_cast<usize>(row) * above.width + column) * 4u;
+                        for (usize channel = 0; channel < 3; ++channel) {
+                            weighted[channel] += light[texel[channel]] * static_cast<float>(texel[3]);
+                            plain[channel] += light[texel[channel]];
+                        }
+                        alpha += texel[3];
+                    }
+                }
+                unsigned char* made = to + (static_cast<usize>(y) * here.width + x) * 4u;
+                for (usize channel = 0; channel < 3; ++channel) {
+                    // Four texels of nothing keep their plain mean: a colour
+                    // to blend towards, where there is none to weigh.
+                    made[channel] =
+                        stored(alpha > 0 ? weighted[channel] / static_cast<float>(alpha) : plain[channel] * 0.25f);
+                }
+                made[3] = static_cast<unsigned char>((alpha + 2u) / 4u);
+            }
+        }
+    }
+    return out;
 }
 
 } // namespace engine::asset
