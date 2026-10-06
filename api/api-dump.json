@@ -3999,6 +3999,24 @@
           ],
           "Returns": [],
           "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "PingRelayAsync",
+          "Parameters": [
+            {
+              "Name": "relay",
+              "Type": "string?",
+              "Default": "nil"
+            },
+            {
+              "Name": "timeout",
+              "Type": "number?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["{ Ping: number, Matches: number, Relayed: number, BytesPerSecond: number, Uptime: number }?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
         }
       ],
       "Events": [

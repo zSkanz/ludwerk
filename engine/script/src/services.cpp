@@ -1718,6 +1718,46 @@ int networkServiceJoin(lua_State* L)
     return 0;
 }
 
+// `NetworkService:PingRelayAsync(relay?, timeout?)` (ADR 0178, amended): what
+// a game with relays in several regions asks of each before it hosts or
+// joins. Yields; the answer is a table, or nil where the relay did not answer
+// in the time allowed.
+int networkServicePingRelay(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    scene::EngineState& state = world(L).engineState();
+    std::string relay = state.defaultRelay;
+    if (lua_gettop(L) >= 2 && !lua_isnil(L, 2)) {
+        size_t length = 0;
+        const char* text = luaL_checklstring(L, 2, &length);
+        relay.assign(text, length);
+    }
+    if (relay.empty())
+        raise(L, ENG_TR("scene.err.network_no_relay"));
+    // Seconds at the boundary, as every duration a script writes is.
+    f64 timeout = 1.5;
+    if (lua_gettop(L) >= 3 && !lua_isnil(L, 3)) {
+        timeout = luaL_checknumber(L, 3);
+        if (!(timeout > 0.0))
+            raise(L, ENG_TR("scene.err.number_positive"));
+    }
+    requireYieldable(L, "PingRelayAsync");
+    ServiceState& services = *context(L).services;
+    if (services.relayPinger == nullptr)
+        services.relayPinger = std::make_unique<net::RelayPinger>();
+    const net::RelayPingTicket ticket =
+        services.relayPinger->submit(relay, static_cast<u32>(std::min(timeout, 60.0) * 1000.0));
+    // No socket to be had: no answer, said the way a silent relay is -- and
+    // still by yielding, so the call is one thing to its caller.
+    ServiceState::RelayPingWaiter waiter;
+    waiter.ticket = ticket;
+    lua_pushthread(L);
+    waiter.threadRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+    services.relayPingWaiters.push_back(waiter);
+    return lua_yield(L, 0);
+}
+
 int networkServiceHost(lua_State* L)
 {
     (void)checkInstance(L, 1);
@@ -2721,6 +2761,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"SceneService", "ReleaseLoading", sceneServiceReleaseLoading},
 
     {"NetworkService", "Join", networkServiceJoin},
+    {"NetworkService", "PingRelayAsync", networkServicePingRelay},
     {"NetworkService", "Host", networkServiceHost},
     {"NetworkService", "Disconnect", networkServiceDisconnect},
 
@@ -3283,6 +3324,60 @@ void fireDataModelLoaded(lua_State* L)
     if (descriptor == nullptr)
         return;
     fireInstanceEvent(L, state.dataModel, descriptor->slot, 0, 0);
+}
+
+void resumeRelayPings(lua_State* L)
+{
+    ServiceState& state = *context(L).services;
+    if (state.relayPingWaiters.empty())
+        return;
+    // Collected first: a resumed thread may ask again, and the list it would
+    // add to is the one being walked.
+    struct Ready
+    {
+        int threadRef = -1;
+        net::RelayPingResult result;
+    };
+    std::vector<Ready> ready;
+    for (usize index = 0; index < state.relayPingWaiters.size();) {
+        net::RelayPingResult result;
+        const net::RelayPingTicket ticket = state.relayPingWaiters[index].ticket;
+        // A ticket that is none is an ask no socket could be made for.
+        if (ticket.valid() && (state.relayPinger == nullptr || !state.relayPinger->take(ticket, result))) {
+            ++index;
+            continue;
+        }
+        ready.push_back({state.relayPingWaiters[index].threadRef, result});
+        state.relayPingWaiters.erase(state.relayPingWaiters.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+    for (const Ready& entry : ready) {
+        lua_getref(L, entry.threadRef);
+        lua_State* co = lua_tothread(L, -1);
+        if (co == nullptr) {
+            lua_pop(L, 1);
+            (void)lua_unref(L, entry.threadRef);
+            continue;
+        }
+        if (!entry.result.answered) {
+            lua_pushnil(co);
+        }
+        else {
+            lua_createtable(co, 0, 5);
+            lua_pushnumber(co, entry.result.pingMs);
+            lua_setfield(co, -2, "Ping");
+            lua_pushnumber(co, static_cast<double>(entry.result.matches));
+            lua_setfield(co, -2, "Matches");
+            lua_pushnumber(co, static_cast<double>(entry.result.relayed));
+            lua_setfield(co, -2, "Relayed");
+            lua_pushnumber(co, static_cast<double>(entry.result.bytesPerSecond));
+            lua_setfield(co, -2, "BytesPerSecond");
+            lua_pushnumber(co, static_cast<double>(entry.result.uptimeSeconds));
+            lua_setfield(co, -2, "Uptime");
+        }
+        (void)resumeScheduled(L, co, 1);
+        lua_pop(L, 1);
+        (void)lua_unref(L, entry.threadRef);
+    }
 }
 
 void resumeChildWaiters(lua_State* L)

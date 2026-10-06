@@ -58,6 +58,7 @@ This is short, and it is the whole list:
 | Module | What it gives you |
 |---|---|
 | `@std/net` | `net.request` — an HTTP client that yields. |
+| `@std/json` | `json.serialize` and `json.deserialize`, with `json.null`, `json.object`, `json.asObject` and `json.asArray`. |
 | `@engine/camera` | Third-person and orbit camera rigs. |
 | `@engine/testing` | The test runner the conformance suite is written against. |
 
@@ -65,11 +66,38 @@ Plus the `task` global, which is a global and **not** a module —
 `require("@std/task")` does not resolve.
 
 **That is the current surface, and the rest of the standard library is not in
-the game VM yet.** `@std/json`, `@std/fs`, `@std/path`, `@std/stringext`,
-`@std/tableext`, `@std/test` and `@std/io` are all part of the intended
-cross-runtime surface and none of them is reachable from a script today. A
-project that needs JSON carries its own encoder in a module; a project that
-needs a filesystem does not have one.
+the game VM yet.** `@std/fs`, `@std/path`, `@std/stringext`, `@std/tableext`,
+`@std/test` and `@std/io` are all part of the intended cross-runtime surface
+and none of them is reachable from a script today. A project that needs a
+filesystem does not have one.
+
+**`@std/json` is Lute's, name for name**, so a module shared with a backend
+encodes with one `require` on both sides:
+
+```luau
+--!strict
+local json = require("@std/json")
+local net = require("@std/net")
+
+local response = net.request({
+    url = "https://rooms.example.com/rooms",
+    method = "POST",
+    headers = { ["Content-Type"] = "application/json" },
+    body = json.serialize({ name = "Friday night", players = 3 }),
+})
+if response.ok and response.statusCode == 200 then
+    local room: any = json.deserialize(response.body)
+    print(room.code)
+end
+```
+
+An object's members are written in the order of their names, so the same
+table is always the same text; `json.null` stands for JSON's `null`, which is
+not `nil`; an empty table is written `[]`, and `json.object({})` is how to say
+`{}`. `deserialize` raises where the text is not JSON -- wrap what came from
+a network in `pcall`. A number that is not finite, a key that is not a
+string, a function, an instance and a table that holds itself raise in
+`serialize`.
 
 `@std/process` and `@std/luau` are **never** going into the game VM: the first is
 process control and the second is a `loadstring` equivalent. Both are tooling

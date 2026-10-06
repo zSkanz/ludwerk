@@ -168,3 +168,53 @@ TEST_CASE("a script hosts through a relay, reads its join code, and another join
     REQUIRE(runUntil(server, client, [&] { return log.contains("relay:None code-length:0"); }));
     REQUIRE(runUntil(server, client, [&] { return relay.stats().sessions == 0; }));
 }
+
+TEST_CASE("a script asks a relay how far it is before it has a match, and is told nothing by one that is not there")
+{
+    // What a game with relays in several regions does on its first screen: no
+    // match yet, each relay asked, the nearest chosen (ADR 0178, amended).
+    Captured log;
+    net::RelayService relay;
+    REQUIRE_FALSE(relay.start(0).has_value());
+    const std::string relayAt = "127.0.0.1:" + std::to_string(relay.port());
+    // A relay that was there and is not: its port is nobody's now.
+    net::RelayService gone;
+    REQUIRE_FALSE(gone.start(0).has_value());
+    const std::string goneAt = "127.0.0.1:" + std::to_string(gone.port());
+    gone.stop();
+
+    Machine machine;
+    machine.project.write("src/client/regions.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        task.spawn(function()
+            -- The project's own relay, named by no argument.
+            local near = NetworkService:PingRelayAsync()
+            print(`near answered:{near ~= nil}`)
+            if near then
+                print(`near ping-sane:{near.Ping >= 0 and near.Ping < 500} matches:{near.Matches} relayed:{near.Relayed}`)
+            end
+        end)
+        task.spawn(function()
+            -- Asked at the same time, of nobody: nil, after its own wait.
+            local far = NetworkService:PingRelayAsync(")" +
+                                                         goneAt + R"(", 0.4)
+            print(`far answered:{far ~= nil}`)
+        end)
+        print(`state:{NetworkService.State.Name}`)
+    )");
+    machine.boot(relayAt);
+    for (int frame = 0; frame < 4000 && !(log.contains("near answered:") && log.contains("far answered:")); ++frame) {
+        // Where the engine's frame hands a thread what a socket brought it.
+        machine.host->publishNetworkResults();
+        machine.frame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("near answered:true"));
+    CHECK(log.contains("near ping-sane:true matches:0 relayed:0"));
+    CHECK(log.contains("far answered:false"));
+    // And it took no match to ask.
+    CHECK(log.contains("state:Offline"));
+    CHECK(machine.state().networkState == Offline);
+    relay.stop();
+}

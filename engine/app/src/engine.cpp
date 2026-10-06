@@ -2893,6 +2893,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     bool quit = false;
     TextInputFocus textInputFocus;
     FrameClock frameClock;
+    // When the loop began, for the conformance run's ceiling below.
+    const u64 loopBeganNs = platform::nowNs();
 
     while (!quit) {
         // A damaged game is not played on (ADR 0183).
@@ -2908,7 +2910,17 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // tree accounted 3.5 ms of said nothing about the other 41.
         core::profile::Sections stretch;
         ENG_PROFILE_NEXT(stretch, "frame.begin");
-        if (options.frames != 0 && scheduler.totalFrames() >= options.frames)
+        // **A conformance run's ceiling is in frames AND in time.** The suite
+        // ends by calling `Shutdown`, and the budget is there for one that
+        // hangs -- but a headless frame on the null device is microseconds,
+        // a hundred thousand of them a few seconds, and some cases wait on
+        // the wall clock for a thread: a request's worker, a relay's answer.
+        // On a hosted runner doing four tests on four cores that thread was
+        // not given its turn before the frames ran out, once, and the suite
+        // "never reported" (12 s into a run that takes 2). A minute as well.
+        const bool conformanceWaits =
+            !options.conformanceRoot.empty() && platform::nowNs() - loopBeganNs < 60'000'000'000ull;
+        if (options.frames != 0 && scheduler.totalFrames() >= options.frames && !conformanceWaits)
             break;
 
         // The FrameStart safe point for `PhysicsService.FixedTimestep`

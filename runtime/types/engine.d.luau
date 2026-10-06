@@ -4495,6 +4495,16 @@ declare extern type NetworkService extends Instance with
     --- ranges first, the interface the default route leaves by first among them. A fact about this
     --- machine: it needs no match, is never replicated, and is empty offline.
     function GetLocalAddresses(self): {string}
+    --- **Asks a relay how far it is and what it carries** (ADR 0178), before hosting or joining through
+    --- it: what a game with relays in several regions calls on each to choose one. `relay` is
+    --- `host:port`, or the project's `[network] relay` when it is left out. Yields until the relay has
+    --- answered -- it is asked three times, a tenth of a second apart -- or for `timeout` seconds, one
+    --- and a half by default. The answer: the round trip in milliseconds, the least of the three
+    --- (`Ping`); the matches registered with it (`Matches`), the players it is carrying (`Relayed`),
+    --- the bytes a second through it (`BytesPerSecond`) and the seconds it has been up (`Uptime`).
+    --- **`nil` when it did not answer**: nothing listens there, the name is nobody's, or the way to it
+    --- is shut. It needs no match and does not disturb one; ask several at once from several tasks.
+    function PingRelayAsync(self, relay: string?, timeout: number?): { Ping: number, Matches: number, Relayed: number, BytesPerSecond: number, Uptime: number }?
     --- **How the connection is doing**, for a game that shows a connection-quality mark: the round trip
     --- in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets lost in percent
     --- (`Loss`), snapshots a second, corrections of this machine's own character a second, and in all

@@ -219,9 +219,6 @@ half minute, on a thread of its own, and the host registers when it answers.
 - IPv6. ENet's addresses are IPv4 and so are these.
 - A room list, names, passwords: a directory's, which is a game's service.
 - UPnP or NAT-PMP port mapping.
-- A call for a script to ping a relay before it joins: the relay answers a
-  ping and says what it carries, and nothing in the script API asks yet. A
-  game with relays in several regions needs it to choose one.
 - The link conditioner (`--net-delay`) on a join by code.
 
 ## Consequences
@@ -236,3 +233,27 @@ half minute, on a thread of its own, and the host registers when it answers.
   loopback address -- so a host's own limit of connections an address counts
   every carried player as one address there; the relay's limit of carried
   players an address is what holds.
+
+## Amendment, 2026-10-06: a script asks a relay how far it is
+
+What "it does not do" listed as wanted: a game with relays in several
+regions has to choose one before it has a match.
+
+- **`NetworkService:PingRelayAsync(relay?, timeout?)`** yields and returns
+  `{ Ping, Matches, Relayed, BytesPerSecond, Uptime }`, or `nil` where the
+  relay did not answer. `relay` is `host:port`, the project's `[network]
+  relay` when left out; `timeout` is seconds, one and a half by default.
+- **A socket and a thread of its own** (`net::RelayPinger`), made at the
+  first ask: before a match there is no transport to borrow a socket from,
+  and looking a name up blocks. Every ask in flight shares them, so three
+  regions asked from three tasks cost the slowest of the three.
+- **Three asks a tenth of a second apart, the least kept.** One datagram is
+  one sample of a link that jitters; the least of three is the link. It
+  answers as soon as all three are back, or a quarter of a second after the
+  last left once one is.
+- **No answer is `nil`, not an error**: nothing listening, a name that is
+  nobody's and a shut firewall are facts about the world, as a refused HTTP
+  request is.
+
+The relay's side is unchanged: it answered `Ping` from the start, padded so
+that it never sends more than it was sent.

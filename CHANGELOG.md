@@ -247,6 +247,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`NetworkService:PingRelayAsync(relay?, timeout?)`** (ADR 0178, amended):
+  asks a relay how far it is and what it carries, before hosting or joining
+  through it -- what a game with relays in several regions calls on each to
+  choose one. Yields; returns `{ Ping, Matches, Relayed, BytesPerSecond,
+  Uptime }`, or `nil` where the relay did not answer.
+- **`@std/json` in the game VM**: `json.serialize`, `json.deserialize`,
+  `json.null`, `json.object`, `json.asObject` and `json.asArray`, Lute's
+  names. A project no longer carries its own encoder to talk to a service.
 - **A terrain layer glows** (ADR 0113, amended): a layer whose material has
   an `Emissive` colour gives that light off -- lava, a rune ring -- on every
   quality level and on a phone. Not `EmissiveMap`.

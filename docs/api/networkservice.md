@@ -63,6 +63,12 @@ Connects to a server at `address` (`host` or `host:port`), or to `[network] serv
 
 **Or to the match a join code names** (ADR 0178): where a relay is known -- `options.Relay`, or `[network] relay` -- and `address` is a code, as a player types one (either case, spaces or a dash between), the relay is asked for its host and the best path there is taken without the game's help: the same network, across the internet each to the other, or through the relay. `GetStats().Path` says which. `options.Direct = false` goes straight through the relay. `relay://host:port/CODE` says both in one string. A host whose name could be read as a code is written with its port.
 
+### `PingRelayAsync(relay: string? = nil, timeout: number? = nil): { Ping: number, Matches: number, Relayed: number, BytesPerSecond: number, Uptime: number }?`
+
+**Yields.** The calling thread parks until it completes.
+
+**Asks a relay how far it is and what it carries** (ADR 0178), before hosting or joining through it: what a game with relays in several regions calls on each to choose one. `relay` is `host:port`, or the project's `[network] relay` when it is left out. Yields until the relay has answered -- it is asked three times, a tenth of a second apart -- or for `timeout` seconds, one and a half by default. The answer: the round trip in milliseconds, the least of the three (`Ping`); the matches registered with it (`Matches`), the players it is carrying (`Relayed`), the bytes a second through it (`BytesPerSecond`) and the seconds it has been up (`Uptime`). **`nil` when it did not answer**: nothing listens there, the name is nobody's, or the way to it is shut. It needs no match and does not disturb one; ask several at once from several tasks.
+
 ## Events
 
 Every signal here is **deferred** (ADR 0015): a handler runs at the next

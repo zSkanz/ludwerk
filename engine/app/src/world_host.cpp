@@ -1946,6 +1946,7 @@ void WorldHost::publishNetworkResults()
     // there would put game code into the frame wherever the socket happened to
     // land it. Same rule and same reason as `resumeAreaWaiters` below (R10).
     script::resumeNetWaiters(m_runtime->state());
+    script::resumeRelayPings(m_runtime->state());
 }
 
 void WorldHost::publishStats(const script::FrameStats& stats)

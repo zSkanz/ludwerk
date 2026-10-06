@@ -41,6 +41,7 @@
 #include "engine/core/i18n.h"
 #include "engine/net/async_client.h"
 #include "engine/script/binding.h"
+#include "engine/script/json_module.h"
 #include "engine/script/modules.h"
 #include "engine/script/services.h"
 #include "engine/script/signals.h"
@@ -245,6 +246,7 @@ int openStdNet(lua_State* L)
 void registerStdModules(lua_State* L)
 {
     registerNativeModule(L, "@std/net", openStdNet);
+    registerNativeModule(L, "@std/json", openStdJson);
 }
 
 void resumeNetWaiters(lua_State* L)

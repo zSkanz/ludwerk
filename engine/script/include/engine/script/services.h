@@ -30,6 +30,7 @@
 #include "engine/input/input.h"
 #include "engine/nav/nav.h"
 #include "engine/net/async_client.h"
+#include "engine/net/relay_ping.h"
 #include "engine/platform/event.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/physics_sync.h"
@@ -299,6 +300,18 @@ public:
     // waiting on its tickets die with the VM too.
     std::unique_ptr<net::AsyncClient> netClient;
 
+    // `NetworkService:PingRelayAsync` (ADR 0178, amended): the same parking
+    // shape -- a ticket and the thread that waits on it -- and a pinger made
+    // on the first ask and never before, for the reason the client above is:
+    // it owns a socket and a thread.
+    struct RelayPingWaiter
+    {
+        net::RelayPingTicket ticket;
+        int threadRef = -1;
+    };
+    std::vector<RelayPingWaiter> relayPingWaiters;
+    std::unique_ptr<net::RelayPinger> relayPinger;
+
     // Resolved once at boot. `fireRunServiceEvent` runs four times a tick and
     // `publishMessage` runs per `print`; hashing a string literal on either path
     // is a cost with no reason to exist.
@@ -490,6 +503,10 @@ void setReloadState(lua_State* L, ReloadState* state);
 // waiter is a pending resumption like any other -- but keyed on a tree state
 // rather than on a deadline, so it cannot live in the timer list.
 void resumeChildWaiters(lua_State* L);
+
+// Resumes every thread whose `PingRelayAsync` has its answer, or has waited
+// its time out -- at the frame's safe point, as `resumeNetWaiters` is.
+void resumeRelayPings(lua_State* L);
 
 // Whether a `BindToClose` callback asked the run to end, or a script called
 // `Shutdown`. The host polls it; nothing here can end a process.

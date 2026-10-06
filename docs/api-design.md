@@ -1602,8 +1602,9 @@ Naming-rule lints run inside the generator (§9) as a CI gate.
 
 ## 7. @std implementation scope for v1 (ADR 0030)
 
-**Registered in the game VM, today: one module and one function.**
-`require("@std/net")` resolves and exports `request`, the HTTP client; nothing
+**Registered in the game VM, today: two modules.**
+`require("@std/net")` resolves and exports `request`, the HTTP client, and
+`require("@std/json")` the six names Lute's has; nothing
 else on this table is reachable from a script. The table is therefore the *scope*
 this section committed to and not a report of what a game can call, and the third
 column says which is which. `@engine/testing` and `@engine/camera` do ship, as
@@ -1612,7 +1613,7 @@ Luau content the engine mounts.
 | Module | Game runtime? | v1 notes / sandbox |
 |---|---|---|
 | `@std/task` | **Not registered.** `task` is a global and the module name does not resolve | The design was table identity, not merely the same surface: `require("@std/task") == task`, because two tables would be two schedulers and only one of them owns the queue in §3.1. spawn/defer/delay/wait/cancel; synchronize/desynchronize are reserved names, meaning absent — not present-and-erroring |
-| `@std/json` | **Not registered** | encode/decode |
+| `@std/json` | **Yes** | `serialize`, `deserialize`, `null`, `object`, `asObject`, `asArray`: Lute's names, written natively (`json_module.cpp`). Members are written in the order of their names, and what JSON cannot say raises |
 | `@std/path` | **Not registered** | pure |
 | `@std/stringext`, `@std/tableext` | **Not registered** | pure |
 | `@std/net` | **Yes — `request` only** | `request` (HTTP client) is built and parks the calling coroutine on a worker, resuming at a frame safe point. The WS client, `serve` (HTTP+WS server) and raw sockets are design: shipped builds were to require `[permissions] net_serve = true` in project.toml, and nothing reads that key yet |
@@ -1627,7 +1628,8 @@ CI, and there is no second run of those files under `lute` — the insurance pol
 on the convergence bet is written down here and has never been collected. It is
 also what would have caught this table going stale: a spec that required
 `@std/json` would have failed the first time the suite ran without it, and no
-spec ever required one.
+spec required one until `tests/conformance/std/json.spec.luau`, which came
+with the module.
 
 ---
 

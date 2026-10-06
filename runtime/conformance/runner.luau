@@ -13,9 +13,9 @@
 
 local testing = require("@engine/testing")
 
---- A JSON encoder rather than `@std/json`, which the game VM does not carry yet
---- (api-design.md §7 schedules it; nothing before now has needed it). It only
---- ever sees the two shapes below.
+--- A JSON encoder of its own, written before the game VM carried `@std/json`,
+--- and kept: the runner must be able to report a VM whose `@std/json` is the
+--- thing that broke. It only ever sees the two shapes below.
 local function quote(text: string): string
     local escaped = string.gsub(text, '[%c"\\]', function(c: string): string
         if c == '"' then

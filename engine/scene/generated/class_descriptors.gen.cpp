@@ -5823,7 +5823,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setNetworkServiceMaxPlayers,
         },
     }};
-    static std::array<MethodDesc, 6> networkServiceMethods;
+    static std::array<MethodDesc, 7> networkServiceMethods;
     networkServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetPlayers"),
@@ -5836,6 +5836,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "**This machine's addresses on its networks**, best first: what a host shows the friends on its Wi-Fi to type. IPv4, from interfaces that are up -- never loopback, never link-local (169.254), never a virtual adapter that can be told apart (a hypervisor's or a container's) -- the private ranges first, the interface the default route leaves by first among them. A fact about this machine: it needs no match, is never replicated, and is empty offline.",
+        },
+        MethodDesc{
+            .name = atoms.intern("PingRelayAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "**Asks a relay how far it is and what it carries** (ADR 0178), before hosting or joining through it: what a game with relays in several regions calls on each to choose one. `relay` is `host:port`, or the project's `[network] relay` when it is left out. Yields until the relay has answered -- it is asked three times, a tenth of a second apart -- or for `timeout` seconds, one and a half by default. The answer: the round trip in milliseconds, the least of the three (`Ping`); the matches registered with it (`Matches`), the players it is carrying (`Relayed`), the bytes a second through it (`BytesPerSecond`) and the seconds it has been up (`Uptime`). **`nil` when it did not answer**: nothing listens there, the name is nobody's, or the way to it is shut. It needs no match and does not disturb one; ask several at once from several tasks.",
         },
         MethodDesc{
             .name = atoms.intern("GetStats"),

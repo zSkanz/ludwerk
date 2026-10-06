@@ -26,6 +26,7 @@ engine_add_module(script
         src/materials.cpp
         src/modules.cpp
         src/debugger.cpp
+        src/json_module.cpp
         src/net_module.cpp
         src/print_tree.cpp
         src/save_store.cpp

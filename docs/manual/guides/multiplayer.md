@@ -165,6 +165,51 @@ connected `direct` costs it a few small packets when joining and none after.
 A relay that is restarted loses nothing a host cannot say again: codes resolve
 again within ten seconds, and a carried player is carried again within four.
 
+**Several relays, and choosing one.** A game played on more than one continent
+runs a relay near each and lets each player use the nearest. A relay answers a
+ping from anybody, with no match and no registration, and
+`NetworkService:PingRelayAsync(relay)` asks it: it yields until the relay has
+answered -- three asks a tenth of a second apart, the least of them kept -- or
+for a second and a half, and returns the round trip in milliseconds with what
+the relay is carrying, or `nil` where nothing answered.
+
+```luau
+--!strict
+local NetworkService = game:GetService("NetworkService")
+
+local Regions = {
+    { Name = "South America", Relay = "relay-sa.example.com" },
+    { Name = "North America", Relay = "relay-na.example.com" },
+    { Name = "Europe", Relay = "relay-eu.example.com" },
+}
+
+-- Every region asked at once: the slowest answer is all it costs.
+local best: { Name: string, Relay: string }? = nil
+local bestPing = math.huge
+local waiting = #Regions
+for _, region in Regions do
+    task.spawn(function()
+        local answer = NetworkService:PingRelayAsync(region.Relay)
+        if answer and answer.Ping < bestPing then
+            best, bestPing = region, answer.Ping
+        end
+        waiting -= 1
+    end)
+end
+while waiting > 0 do
+    task.wait()
+end
+if best then
+    NetworkService:Host(7777, { Relay = best.Relay })
+end
+```
+
+The answer also says `Matches`, `Relayed` (players it is carrying),
+`BytesPerSecond` and `Uptime`, for a status page or to pass over a relay that
+is full. The host and everybody who joins it use the same relay: a code is
+one relay's, so an invitation says which (`relay://host:port/CODE`). Asking
+needs no match and does not disturb one.
+
 **What a relay sees.** What the match sends, as every router between two
 players does: a match is not encrypted yet (see [Accounts, tokens and
 passwords](#accounts-tokens-and-passwords)).
