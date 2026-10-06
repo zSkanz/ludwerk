@@ -4827,6 +4827,74 @@ TEST_CASE("D579: the ground a joining peer is sent is not encoded on the host's 
         jobs::shutdown();
 }
 
+TEST_CASE("D580: a host with nobody holding its ground encodes none of its changes")
+{
+    // A land made by a script in a match's first second -- heights, layers,
+    // every site levelled -- was compressed chunk by chunk as it was edited,
+    // into messages for the peers that hold the ground: twelve milliseconds
+    // of a host's frame, with no peer connected. Whoever joins is sent the
+    // ground whole.
+    seedCatalog();
+    const std::shared_ptr<net::MemoryNetwork> network = net::createMemoryNetwork();
+    const std::unique_ptr<net::ITransport> serverTransport = net::createMemoryTransport(network);
+    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 6}).has_value());
+    RealSide server;
+    (void)scene::createPlayer(server.world, server.network, 1, true);
+    AuthoritySession authority(*serverTransport);
+    core::u64 tick = 0;
+    const auto host = [&] {
+        tick += 1;
+        authority.receive(server.world, server.workspace);
+        authority.send(server.world, server.workspace, tick);
+        authority.sendMessages(server.world);
+    };
+    host();
+
+    const core::InstanceId ground = makeTerrain(server);
+    scene::TerrainComponent* terrain = server.world.terrains().find(ground);
+    terrain->field.setHeightRange(-32.0f, 32.0f);
+    (void)asset::fillFlat(terrain->field, core::DVec3{0.0, 0.0, 0.0}, 64.0f, 2.0f, 1);
+    terrain->fieldRevision += 1;
+    host();
+    terrain = server.world.terrains().find(ground);
+    (void)asset::fillBall(terrain->field, core::DVec3{3.0, 2.0, 3.0}, 5.0, 0);
+    terrain->fieldRevision += 1;
+    host();
+    CHECK(authority.stats().groundEditMessages == 0);
+
+    // Somebody joins: the ground whole, as it is now.
+    const std::unique_ptr<net::ITransport> clientTransport = net::createMemoryTransport(network);
+    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
+    net::PeerId toServer;
+    REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
+    RealSide client;
+    (void)scene::createPlayer(client.world, client.network, 0, true);
+    ReplicaSession replica(*clientTransport, toServer);
+    const auto both = [&] {
+        host();
+        replica.receive(client.world, client.workspace);
+        replica.sendIntent(client.world, tick);
+        replica.sendMessages(client.world);
+    };
+    for (int at = 0; at < 8; ++at)
+        both();
+    const core::InstanceId copy = terrainIn(client.world, client.workspace);
+    REQUIRE(copy.valid());
+    terrain = server.world.terrains().find(ground);
+    CHECK(client.world.terrains().find(copy)->field.digest() == terrain->field.digest());
+    CHECK(authority.stats().groundEditMessages == 0);
+
+    // And from here a change is somebody's to be told: encoded, and there.
+    (void)asset::fillBall(terrain->field, core::DVec3{-6.0, 2.0, -6.0}, 4.0, 0);
+    terrain->fieldRevision += 1;
+    for (int at = 0; at < 3; ++at)
+        both();
+    CHECK(authority.stats().groundEditMessages > 0);
+    terrain = server.world.terrains().find(ground);
+    CHECK(client.world.terrains().find(copy)->field.digest() == terrain->field.digest());
+    CHECK(replica.checksumFailures() == 0);
+}
+
 TEST_CASE("ground a server makes in a script reaches a replica whole, and each edit after it by chunks (ADR 0135)")
 {
     // **The owner, 2026-09-29**: a digging game, and a world generated while

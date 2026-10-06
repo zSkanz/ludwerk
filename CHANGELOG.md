@@ -1447,6 +1447,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A crowd of animated bodies costs a third of what it did** (D581). Bodies
+  of a horde on the same rig and clip share the poses the others built, as
+  they were meant to: two in three were being worked out again from the
+  clip's keys every tick. Measured on 550 bodies: 0.63 ms a tick of posing
+  down to 0.19. Nothing to change in a game, and every pose is what it was.
+- **A host laying ground with nobody in the match no longer pays to tell
+  nobody** (D580): a land made by a script at a match's start cost the host
+  a frame of twelve milliseconds compressing changes no peer was there for.
 - **A host no longer drops frames when somebody joins** (D579). On a match
   whose ground was made or changed by a script, the frame a friend joined in
   cost the host twenty milliseconds and more -- the whole ground compressed

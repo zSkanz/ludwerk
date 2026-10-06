@@ -17,6 +17,7 @@
 // idle/walk/jump".
 #pragma once
 
+#include <memory>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -350,7 +351,19 @@ private:
     // One pose per skinned mesh that has tracks. Keyed rather than pooled because
     // a `MeshPart` is an Instance and this is not scene's storage -- and because
     // the count is a handful even in a crowd.
-    std::unordered_map<core::u64, Pose> poses_;
+    //
+    // **Held, not owned**: the meshes of a crowd on one rig, one clip and one
+    // moment hold the one pose that was built (H10). Each had a copy of it --
+    // three arrays of matrices a body a tick, which was most of what a pose
+    // cost a crowd. Nothing writes to a pose another may hold: what builds or
+    // overrides one takes it alone first (`ownPose`).
+    std::unordered_map<core::u64, std::shared_ptr<const Pose>> poses_;
+    // This mesh's pose to write to: the one it holds, when nothing else does;
+    // a copy of it otherwise, or a new one.
+    [[nodiscard]] Pose& ownPose(core::InstanceId meshPart, bool keep);
+    // The rigs a `Bone` that names a joint hangs from, this tick, in id order:
+    // the only ones whose children are searched for bones to turn a pose by.
+    std::vector<core::InstanceId> boned_;
 
     // Scratch, reused so a steady-state tick allocates nothing.
     //
@@ -378,18 +391,40 @@ private:
     {
         [[nodiscard]] core::usize operator()(const std::vector<core::u64>& signature) const noexcept
         {
-            core::u64 hash = 1469598103934665603ull;
-            for (const core::u64 word : signature)
-                hash = (hash ^ word) * 1099511628211ull;
+            // **Every bit of a word reaches every bit of the hash.** It was
+            // FNV's step taken a 64-bit word at a time, and a multiplication
+            // carries upwards only: the clip's time is the HIGH half of its
+            // word, so every moment of one clip had the same low bits -- the
+            // bits a table takes its bucket from -- and the index was one
+            // chain a clip, walked end to end for every body of a crowd.
+            core::u64 hash = 0x9E3779B97F4A7C15ull;
+            for (const core::u64 word : signature) {
+                hash = (hash ^ word) * 0xFF51AFD7ED558CCDull;
+                hash ^= hash >> 33;
+            }
+            hash *= 0xC4CEB9FE1A85EC53ull;
+            hash ^= hash >> 33;
             return static_cast<core::usize>(hash);
         }
     };
     struct SharedPose
     {
-        Pose pose;
+        std::shared_ptr<const Pose> pose;
         core::u64 used = 0;
     };
     std::unordered_map<std::vector<core::u64>, SharedPose, SignatureHash> shared_;
+    // **How long a pose nobody took is kept, and how many are.** A body comes
+    // back to a moment of its clip once a loop, and a crowd on one clip is
+    // spread over every moment of it -- so a pose is worth keeping for a
+    // loop and more, not the half second it was: at thirty-two ticks and a
+    // thousand entries a horde of five hundred built two poses in three, and
+    // at these builds one in thirty. Four seconds of ticks; and eight
+    // thousand poses of eight joints are twelve megabytes.
+    static constexpr core::u64 SharedPoseTicks = 256;
+    static constexpr core::usize MostSharedPoses = 8192;
+    // Where the tick's sweep of the index is, and what it found to let go.
+    core::usize sharedSweep_ = 0;
+    std::vector<const std::vector<core::u64>*> expired_;
     core::u64 sharedRevision_ = 0;
     std::vector<core::u64> signature_;
     // A clip's key period, by (content, clip): what a quantised time rounds to.

@@ -284,6 +284,9 @@ struct Stats
     // the peer told nothing until it is done.
     u64 groundsEncodedOnFrame = 0;
     u64 groundsEncodedInJobs = 0;
+    // The messages a send made of the ground's changes, for the peers that
+    // hold the ground -- none, where no peer does (D580).
+    u64 groundEditMessages = 0;
     // An owner's place for its part further than it could have moved, taken
     // only as far as it could (NA24).
     u64 ownedClamped = 0;

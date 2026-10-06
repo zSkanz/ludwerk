@@ -499,6 +499,7 @@ void AnimationSystem::sample(f64 fixedDt)
             note(mesh);
     }
     turned_.clear();
+    boned_.clear();
     world_->attachments().forEach([&](core::InstanceId id, const scene::AttachmentComponent& bone) {
         if (bone.jointIndex < 0)
             return;
@@ -506,8 +507,10 @@ void AnimationSystem::sample(f64 fixedDt)
         // **A rig a `Bone` hangs from is posed every tick** (H3): what hangs
         // there -- a sword, a hitbox, a camera -- follows the joint, and is
         // gameplay as much as it is a picture.
-        if (rig.valid())
+        if (rig.valid()) {
             always_.push_back(rig);
+            boned_.push_back(rig);
+        }
         if (!(bone.transform == core::CFrameD{})) {
             note(rig);
             if (rig.valid() && std::find(turned_.begin(), turned_.end(), rig) == turned_.end())
@@ -531,6 +534,8 @@ void AnimationSystem::sample(f64 fixedDt)
         return a.index != b.index ? a.index < b.index : a.generation < b.generation;
     };
     std::sort(always_.begin(), always_.end(), byId);
+    std::sort(boned_.begin(), boned_.end(), byId);
+    boned_.erase(std::unique(boned_.begin(), boned_.end()), boned_.end());
     ++sampled_;
     // The shared poses: all of them when a rig or a clip changed, and every
     // so often the ones nothing has copied for half a second.
@@ -538,8 +543,27 @@ void AnimationSystem::sample(f64 fixedDt)
         shared_.clear();
         sharedRevision_ = skeletons_->revision();
     }
-    if (sampled_ % 64 == 0)
-        std::erase_if(shared_, [this](const auto& entry) { return sampled_ - entry.second.used > 32; });
+    // **Let go a little a tick, never all at once.** The index was swept
+    // whole every sixty-fourth tick and emptied whole when it was full: with
+    // thousands of poses in it, each some arrays to free, that was a tick of
+    // five milliseconds every so often. A sixty-fourth of its buckets a tick
+    // instead, so every entry is still looked at once in sixty-four.
+    if (const usize buckets = shared_.bucket_count(); buckets > 0 && !shared_.empty()) {
+        const usize span = buckets / 64 + 1;
+        expired_.clear();
+        for (usize step = 0; step < span; ++step) {
+            const usize bucket = (sharedSweep_ + step) % buckets;
+            for (auto entry = shared_.begin(bucket); entry != shared_.end(bucket); ++entry) {
+                if (sampled_ - entry->second.used > SharedPoseTicks)
+                    expired_.push_back(&entry->first);
+            }
+        }
+        sharedSweep_ = (sharedSweep_ + span) % buckets;
+        for (const std::vector<core::u64>* signature : expired_) {
+            if (const auto gone = shared_.find(*signature); gone != shared_.end())
+                shared_.erase(gone);
+        }
+    }
     for (const core::InstanceId meshPart : meshes_) {
         const scene::MeshPartComponent* mesh = world_->meshParts().find(meshPart);
         if (mesh == nullptr)
@@ -628,8 +652,16 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
     const core::NameAtom content = meshComponent != nullptr ? meshComponent->meshContent : core::NameAtom{};
 
     // What the mesh's bones turn (G9), by joint: `Bone.Transform` in the
-    // joint's own space, after whatever the clips did.
-    const std::vector<std::pair<u32, Mat4>> offsets = boneOffsets(meshPart, jointCount);
+    // joint's own space, after whatever the clips did. **Asked only of a rig
+    // that has a bone** (`boned_`, this tick's): every body of a crowd had its
+    // children walked for bones it does not have, and two lists made to say
+    // so. Outside a tick the list is the last tick's, and the walk is made.
+    std::vector<std::pair<u32, Mat4>> offsets;
+    if (!indexed ||
+        std::binary_search(boned_.begin(), boned_.end(), meshPart, [](core::InstanceId a, core::InstanceId b) {
+            return a.index != b.index ? a.index < b.index : a.generation < b.generation;
+        }))
+        offsets = boneOffsets(meshPart, jointCount);
 
     // **The same inputs, the same pose** (H10): the rig, and each driving
     // track's clip, time and weight. A crowd of one rig walking one clip from
@@ -651,6 +683,7 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
         if (signature_.size() > 1) {
             if (const auto same = shared_.find(signature_); same != shared_.end()) {
                 same->second.used = sampled_;
+                // The pose itself, held by one more: not a copy of it.
                 poses_[keyOf(meshPart)] = same->second.pose;
                 ++posesShared_;
                 return;
@@ -779,7 +812,7 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
         return;
     }
 
-    Pose& pose = poses_[keyOf(meshPart)];
+    Pose& pose = ownPose(meshPart, false);
     pose.palette.assign(jointCount, Mat4{});
     // Kept rather than thrown away. `model` is what a socket asks for and
     // `local` is what an override needs to re-run the forward pass -- both were
@@ -838,12 +871,32 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
         pose.palette[joint] = pose.model[joint] * bone.inverseBind;
     }
     if (shareable && signature_.size() > 1) {
-        // Bounded: a crowd at a thousand moments of its clips starts again.
-        constexpr usize MostShared = 1024;
-        if (shared_.size() >= MostShared)
-            shared_.clear();
-        shared_.insert_or_assign(signature_, SharedPose{pose, sampled_});
+        // Bounded, and full is full: a pose there is no room for is this
+        // mesh's alone, and built again by whoever comes to its moment. It
+        // was emptied instead -- every pose of a crowd built again at once,
+        // and thousands of them freed in the same tick.
+        // Held by the crowd's index too from here: whoever writes to this
+        // mesh's pose next takes one of its own.
+        if (shared_.size() < MostSharedPoses) {
+            // Its buckets made once, for all it may hold: grown as it filled,
+            // every doubling was every entry filed again inside one tick.
+            if (shared_.empty())
+                shared_.reserve(MostSharedPoses);
+            shared_.insert_or_assign(signature_, SharedPose{poses_[keyOf(meshPart)], sampled_});
+        }
     }
+}
+
+Pose& AnimationSystem::ownPose(core::InstanceId meshPart, bool keep)
+{
+    std::shared_ptr<const Pose>& held = poses_[keyOf(meshPart)];
+    // Nobody else holds it: written where it is, its arrays kept.
+    if (held != nullptr && held.use_count() == 1)
+        return const_cast<Pose&>(*held);
+    std::shared_ptr<Pose> own = keep && held != nullptr ? std::make_shared<Pose>(*held) : std::make_shared<Pose>();
+    Pose& pose = *own;
+    held = std::move(own);
+    return pose;
 }
 
 // The rig a bone is on: the nearest `MeshPart` above it, through the bones it
@@ -1043,8 +1096,8 @@ bool AnimationSystem::jointModel(core::InstanceId meshPart, core::u32 joint, cor
     // not -- a character standing still has no pose at all, and a socket on its
     // hand still has to be somewhere.
     const auto found = poses_.find(keyOf(meshPart));
-    const Mat4 model = found != poses_.end() && joint < found->second.model.size() ? found->second.model[joint]
-                                                                                   : restModelOf(*entry, joint);
+    const Mat4 model = found != poses_.end() && joint < found->second->model.size() ? found->second->model[joint]
+                                                                                    : restModelOf(*entry, joint);
     // Orthonormalised on the way out: an exporter is free to bake scale into a
     // bind pose and often does, and a socket welded to a joint has to be rigid
     // or every part hanging off it inherits that scale (`core::cframeFromMatrix`).
@@ -1141,7 +1194,9 @@ void AnimationSystem::commitOverrides()
             continue;
 
         const usize jointCount = entry->joints.size();
-        Pose& pose = poses_[keyOf(set.meshPart)];
+        // Its own, with what it held: the joints the override does not name
+        // keep their locals, and a pose a crowd shares is not written to.
+        Pose& pose = ownPose(set.meshPart, true);
         if (pose.model.size() != jointCount) {
             // No pose this tick: the mesh has a rig and nothing playing, which
             // is exactly a limp ragdoll. Built from rest so the joints the
@@ -1206,7 +1261,7 @@ void AnimationSystem::retire(const scene::World& world)
 const Pose* AnimationSystem::pose(core::InstanceId meshPart) const noexcept
 {
     const auto found = poses_.find(keyOf(meshPart));
-    return found == poses_.end() ? nullptr : &found->second;
+    return found == poses_.end() ? nullptr : found->second.get();
 }
 
 } // namespace engine::render

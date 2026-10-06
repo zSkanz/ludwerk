@@ -1368,6 +1368,13 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
     };
     const bool restored = m_ground.restores != world.restores();
     m_ground.restores = world.restores();
+    // **Whether anybody holds the ground to be told what changed** (D580).
+    // The changes are compressed chunk by chunk into messages for the peers
+    // that have been sent the ground -- and were, with no such peer: a land a
+    // script lays in a match's first second cost its host twelve milliseconds
+    // of a frame, for nobody. With none, what changed is only noted: whoever
+    // joins is sent the ground whole, as it then is.
+    const bool listened = std::any_of(m_peers.begin(), m_peers.end(), [](const Peer& peer) { return peer.groundSent; });
 
     // **The collision groups** (D545), with the ground because they are sent
     // as it is: whole to a peer that joins, and to every peer when they
@@ -1443,8 +1450,14 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
         if (restored || terrain->fieldRevision != m_ground.terrainRevision) {
             const std::vector<asset::TerrainField::Entry> changed = changedChunks<asset::TerrainField::Entry>(
                 terrain->field.chunks(), m_ground.terrainChunks, package, m_ground.terrainShipped);
-            for (std::vector<u8>& message : terrainChunkMessages(terrain->field.settings(), changed))
-                m_groundEdits.push_back(std::move(message));
+            if (!listened) {
+                if (!changed.empty())
+                    invalidate();
+            }
+            else {
+                for (std::vector<u8>& message : terrainChunkMessages(terrain->field.settings(), changed))
+                    m_groundEdits.push_back(std::move(message));
+            }
             m_ground.terrainChunks.assign(terrain->field.chunks().begin(), terrain->field.chunks().end());
             m_ground.terrainShipped.assign(package.begin(), package.end());
             m_ground.terrainRevision = terrain->fieldRevision;
@@ -1459,8 +1472,14 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
     else if (m_ground.baseSet && !m_ground.terrainChunks.empty()) {
         const std::vector<asset::TerrainField::Entry> gone = changedChunks<asset::TerrainField::Entry>(
             std::span<const asset::TerrainField::Entry>{}, m_ground.terrainChunks, package, m_ground.terrainShipped);
-        for (std::vector<u8>& message : terrainChunkMessages(m_ground.settings, gone))
-            m_groundEdits.push_back(std::move(message));
+        if (!listened) {
+            if (!gone.empty())
+                invalidate();
+        }
+        else {
+            for (std::vector<u8>& message : terrainChunkMessages(m_ground.settings, gone))
+                m_groundEdits.push_back(std::move(message));
+        }
         m_ground.terrainChunks.clear();
         m_ground.terrainShipped.assign(package.begin(), package.end());
     }
@@ -1478,6 +1497,9 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
         m_ground.voxelTypes.clear();
         m_ground.voxelRevision = ~u64{0};
         withGroups();
+        // Noted above, and nobody's to be sent.
+        if (!listened)
+            m_groundEdits.clear();
         return;
     }
     // A block world new here, on the terrain's terms.
@@ -1488,8 +1510,14 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
     if (restored || voxels->revision != m_ground.voxelRevision) {
         const std::vector<asset::VoxelGrid::Entry> changed = changedChunks<asset::VoxelGrid::Entry>(
             voxels->grid.chunks(), m_ground.voxelChunks, voxels->shipped.chunks(), m_ground.voxelShipped);
-        for (std::vector<u8>& message : voxelChunkMessages(voxels->blockSize, changed))
-            m_groundEdits.push_back(std::move(message));
+        if (!listened) {
+            if (!changed.empty())
+                invalidate();
+        }
+        else {
+            for (std::vector<u8>& message : voxelChunkMessages(voxels->blockSize, changed))
+                m_groundEdits.push_back(std::move(message));
+        }
         m_ground.voxelChunks.assign(voxels->grid.chunks().begin(), voxels->grid.chunks().end());
         m_ground.voxelShipped.assign(voxels->shipped.chunks().begin(), voxels->shipped.chunks().end());
         m_ground.voxelRevision = voxels->revision;
@@ -1504,6 +1532,8 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
     withGroups();
     if (!m_groundEdits.empty())
         invalidate();
+    if (!listened)
+        m_groundEdits.clear();
 }
 
 // **A whole ground, from what it is made of to the messages a peer is sent**
@@ -3528,6 +3558,7 @@ void AuthoritySession::send(const scene::World& world, InstanceId root, u64 tick
     diffTilemaps(world);
     diffAttributes(world, root);
     diffGround(world, root);
+    m_stats.groundEditMessages += m_groundEdits.size();
     ENG_PROFILE_NEXT(stretch, "net.peers");
     const WorldState& current = *m_history.back();
 

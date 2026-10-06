@@ -438,6 +438,11 @@ TEST_CASE("H10: two meshes of one rig at one moment of one clip share a pose, bi
     REQUIRE(three != nullptr);
     CHECK(std::memcmp(one->palette.data(), two->palette.data(), one->palette.size() * sizeof(core::Mat4)) == 0);
     CHECK_FALSE(close(one->palette[1].m[3][1], three->palette[1].m[3][1]));
+    // **And it is the one pose, held by both**: each had a copy of it, three
+    // arrays of matrices a body a tick, which was most of what a pose cost a
+    // crowd.
+    CHECK(one == two);
+    CHECK(one != three);
 
     SUBCASE("posed at a reduced rate, the third samples its clip's keys and shares with whoever is at the same key")
     {
@@ -452,6 +457,99 @@ TEST_CASE("H10: two meshes of one rig at one moment of one clip share a pose, bi
             animation.sample(1.0 / 60.0);
         CHECK(animation.posesShared() > shared);
     }
+}
+
+TEST_CASE("a body that comes to a moment of a clip another was at seconds ago takes the pose that one built")
+{
+    // A horde is not in step: its bodies began their clips at different
+    // ticks, and each is where another was a while ago. A pose was kept for
+    // thirty-two ticks -- so of five hundred bodies on a handful of clips,
+    // two in three were built from their keys every tick, each a pose some
+    // other body had built within the last two seconds.
+    Fixture fixture;
+    render::SkeletonLibrary::Entry entry = twoJointSkeleton();
+    entry.clips.push_back(slideClip("Slide"));
+    const core::InstanceId first = fixture.rig(entry);
+    const core::InstanceId second = fixture.rig(std::move(entry));
+    const core::InstanceId secondMesh = fixture.mesh;
+
+    render::AnimationSystem animation{fixture.world, fixture.skeletons};
+    const scene::TrackId a = animation.createTrack(first, {}, "Slide");
+    const scene::TrackId b = animation.createTrack(second, {}, "Slide");
+    animation.setLooped(a, true);
+    animation.setLooped(b, true);
+    animation.play(a, 0.0f, 1.0f, 1.0f);
+    // A hundred ticks on its own, through a loop and most of another.
+    for (int tick = 0; tick < 100; ++tick)
+        animation.sample(1.0 / 60.0);
+    animation.play(b, 0.0f, 1.0f, 1.0f);
+    const core::u64 built = animation.posesBuilt();
+    const core::u64 shared = animation.posesShared();
+    for (int tick = 0; tick < 50; ++tick)
+        animation.sample(1.0 / 60.0);
+    // The second is fifty ticks into its clip, where the first was a hundred
+    // ticks ago: every one of its poses was the first's, kept. What was built
+    // in those fifty ticks is the first's own at most.
+    CHECK(animation.posesBuilt() - built <= 50);
+    CHECK(animation.posesShared() - shared >= 50);
+    REQUIRE(animation.pose(secondMesh) != nullptr);
+}
+
+TEST_CASE("a pose a crowd shares is written to by none of them: a ragdoll and a bone are one body's own")
+{
+    Fixture fixture;
+    render::SkeletonLibrary::Entry entry = twoJointSkeleton();
+    entry.clips.push_back(slideClip("Slide"));
+    const core::InstanceId first = fixture.rig(entry);
+    const core::InstanceId firstMesh = fixture.mesh;
+    const core::InstanceId second = fixture.rig(entry);
+    const core::InstanceId secondMesh = fixture.mesh;
+    const core::InstanceId third = fixture.rig(std::move(entry));
+    const core::InstanceId thirdMesh = fixture.mesh;
+
+    render::AnimationSystem animation{fixture.world, fixture.skeletons};
+    for (const core::InstanceId player : {first, second, third})
+        animation.play(animation.createTrack(player, {}, "Slide"), 0.0f, 1.0f, 1.0f);
+    for (int tick = 0; tick < 6; ++tick)
+        animation.sample(1.0 / 60.0);
+    REQUIRE(animation.pose(firstMesh) != nullptr);
+    REQUIRE(animation.pose(firstMesh) == animation.pose(secondMesh));
+    REQUIRE(animation.pose(firstMesh) == animation.pose(thirdMesh));
+    const std::vector<core::Mat4> shared = animation.pose(secondMesh)->palette;
+
+    // The first goes limp at a joint: its pose is its own from here, and the
+    // other two hold what they held, to the bit.
+    scene::SkeletonHost& host = animation;
+    core::CFrameD moved;
+    moved.position = core::DVec3{5.0, 1.0, 0.0};
+    host.setJointOverride(firstMesh, 1, moved);
+    host.commitOverrides();
+    CHECK(animation.pose(firstMesh) != animation.pose(secondMesh));
+    CHECK(animation.pose(secondMesh) == animation.pose(thirdMesh));
+    CHECK(std::memcmp(animation.pose(secondMesh)->palette.data(), shared.data(), shared.size() * sizeof(core::Mat4)) ==
+          0);
+    core::CFrameD at;
+    REQUIRE(host.jointModel(firstMesh, 1, at));
+    CHECK(at.position.x == doctest::Approx(5.0));
+    REQUIRE(host.jointModel(secondMesh, 1, at));
+    CHECK_FALSE(at.position.x == doctest::Approx(5.0));
+
+    // And a `Bone` on the third turns the third alone: a rig with a bone is
+    // posed for itself, and one without is not asked whether it has any.
+    const core::InstanceId bone = fixture.world.create(fixture.instanceClass);
+    scene::AttachmentComponent attachment;
+    attachment.jointIndex = 1;
+    attachment.transform.position = core::DVec3{0.0, 3.0, 0.0};
+    fixture.world.attachments().add(bone, attachment);
+    (void)fixture.world.setParent(bone, thirdMesh);
+    animation.sample(1.0 / 60.0);
+    animation.sample(1.0 / 60.0);
+    CHECK(animation.pose(thirdMesh) != animation.pose(secondMesh));
+    core::CFrameD turned;
+    core::CFrameD plain;
+    REQUIRE(host.jointModel(thirdMesh, 1, turned));
+    REQUIRE(host.jointModel(secondMesh, 1, plain));
+    CHECK(turned.position.y == doctest::Approx(plain.position.y + 3.0).epsilon(0.01));
 }
 
 TEST_CASE("H3: the intervals shrink with the rig on the picture")
