@@ -107,6 +107,8 @@ TEST_CASE("skip reads a list of lighting terms as the bits the shaders read")
     CHECK(app::debugSkipText(skip) == "shadow,environment,unlit");
     CHECK(app::parseDebugSkip("") == 0);
     CHECK(app::debugSkipText(0).empty());
+    // A pass of the frame is a name of the same list.
+    CHECK(app::parseDebugSkip("depth_prepass") == Skip::DepthPrepass);
 
     // Every name is one bit, and no two names share one.
     engine::core::u32 all = 0;

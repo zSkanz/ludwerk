@@ -39,6 +39,10 @@ enum class TextureFormat : core::u8
     Bc3Rgba,
     Bc5Rg,
     Bc7Rgba,
+    // ASTC in blocks of four by four, eight bits a pixel: what a phone's GPU
+    // samples where a desktop's samples BC7 (ADR 0180). Colour or data, with
+    // or without alpha, as BC7 is.
+    Astc4x4Rgba,
 };
 
 [[nodiscard]] const char* textureFormatName(TextureFormat format) noexcept;
@@ -77,13 +81,22 @@ struct TextureAsset
 // after a platform, because that is what `rhi::Capabilities` answers.
 // **Whether this platform's GPUs sample the BC formats.** Desktop GPUs do;
 // a phone's (Adreno, Mali) do not, and a BC texture there is a texture that
-// fails to create. Until the transcoder targets ASTC or ETC2 as well, a phone
-// takes uncompressed RGBA: four times the memory, and every texture drawn.
+// fails to create. A phone takes ASTC instead (ADR 0180, `allowAstc`), and
+// uncompressed RGBA only where its GPU says it samples neither.
 #if defined(__ANDROID__)
 inline constexpr bool BlockCompressedByDefault = false;
 #else
 inline constexpr bool BlockCompressedByDefault = true;
 #endif
+
+// **Whether the device this process draws on samples ASTC** (ADR 0180): said
+// once, when the device is made, by whoever made it; false until then and on
+// every machine whose GPU samples the BC formats, which come first. A fact
+// about the process rather than a thing each caller passes down, because
+// every texture of every kind -- a mesh's, the interface's, the sky's -- goes
+// to the one device.
+void setDeviceSamplesAstc(bool samples) noexcept;
+[[nodiscard]] bool deviceSamplesAstc() noexcept;
 
 struct TranscodeOptions
 {
@@ -96,6 +109,10 @@ struct TranscodeOptions
     // Transcode only the largest level. The UI wants this: a `ScreenGui` image
     // is drawn at one size and mips would be memory nobody samples.
     bool baseLevelOnly = false;
+    // ASTC, taken where BC7 is not allowed: a phone (ADR 0180). The device's
+    // word unless the caller says. Last, so the options written by position
+    // before it existed mean what they meant.
+    bool allowAstc = deviceSamplesAstc();
 };
 
 // Reads a KTX2 blob and transcodes it. Bad input is an error rather than a

@@ -550,6 +550,10 @@ struct ViewState
     // Set while that mask is being drawn: `drawGeometry` takes only the parts
     // that receive none.
     bool decalMaskPass_ = false;
+    // Whether this frame drew the depth prepass: what an opaque draw's
+    // pipeline assumes (ADR 0174), and whether the forward pass loads the
+    // depth or clears it.
+    bool prepassDrawn_ = true;
     // **What is cleared and has not been drawn to since** (ADR 0172): the
     // occlusion, the contact shadows and the bloom of a view whose settings
     // have them off are a white, a white and a black picture, cleared the
@@ -3531,7 +3535,7 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // **What the prepass drew is tested against its depth and writes none**
         // (ADR 0174): every opaque draw but a cutout and a masked surface,
         // which the prepass leaves out above and which write their own.
-        const bool prepassed = selection == Selection::Opaque && !draw.cutout &&
+        const bool prepassed = prepassDrawn_ && selection == Selection::Opaque && !draw.cutout &&
                                !(surface != nullptr && world.materials[draw.material].masked);
         const auto unlessPrepassed = [prepassed](rhi::PipelineHandle writing, rhi::PipelineHandle testing) {
             return prepassed && testing.valid() ? testing : writing;
@@ -8030,21 +8034,36 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // What it costs is a second geometry submission, which is CPU work in the
     // exact place the instanced path exists to reduce. What it buys, besides the
     // constraint, is early-Z rejection for the forward pass.
-    cmd.pushDebugGroup("depth-prepass");
-    cmd.beginRenderPass({
-        .colorAttachments = {},
-        .depthStencil = {.texture = depth_, .loadOp = rhi::LoadOp::Clear, .storeOp = rhi::StoreOp::Store},
-        .debugName = "depth-prepass",
-    });
-    cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
-    cmd.setScissor({.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
-    if (world.camera.valid) {
-        cmd.setPipeline(depthPrepassPipeline_);
-        drawGeometry(cmd, world, meshes, world.camera.viewProjection, depthPrepassPipeline_,
-                     depthPrepassSkinnedPipeline_, Selection::Prepass);
+    //
+    // **`[debug] skip = "depth_prepass"`** (ADR 0171) leaves it out on a frame
+    // where nothing reads the depth before the forward pass -- no ambient
+    // occlusion, no contact shadow, no motion written: the forward pass then
+    // clears the depth and writes its own. On a tile-based GPU a pass is a
+    // load and a store and the scene's triangles binned once more, and
+    // whether early rejection pays that back is a phone's to say.
+    const bool orthographicView = core::isOrthographic(world.camera.projection);
+    const bool depthRead = (settings_.ambientOcclusion && !orthographicView) || motionNow ||
+                           (settings_.contactShadows && world.camera.valid && settings_.shadowCascades != 0 &&
+                            !orthographicView && world.environment.globalShadows);
+    prepassDrawn_ = depthRead || (settings_.measuredSkip & MeasureSkip::DepthPrepass) == 0u;
+    if (prepassDrawn_) {
+        cmd.pushDebugGroup("depth-prepass");
+        cmd.beginRenderPass({
+            .colorAttachments = {},
+            .depthStencil = {.texture = depth_, .loadOp = rhi::LoadOp::Clear, .storeOp = rhi::StoreOp::Store},
+            .debugName = "depth-prepass",
+        });
+        cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
+        cmd.setScissor(
+            {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
+        if (world.camera.valid) {
+            cmd.setPipeline(depthPrepassPipeline_);
+            drawGeometry(cmd, world, meshes, world.camera.viewProjection, depthPrepassPipeline_,
+                         depthPrepassSkinnedPipeline_, Selection::Prepass);
+        }
+        cmd.endRenderPass();
+        cmd.popDebugGroup();
     }
-    cmd.endRenderPass();
-    cmd.popDebugGroup();
 
     // **How far each pixel moved**, for the temporal pass (ADR 0158): from the
     // depth just drawn, and what moved by itself over it.
@@ -8186,9 +8205,12 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.beginRenderPass({
         .colorAttachments = hdrAttachment,
         // LOADED, not cleared: the prepass wrote this depth and the occlusion
-        // pass has already read it. Stored, because the blended pass tests
-        // against it.
-        .depthStencil = {.texture = depth_, .loadOp = rhi::LoadOp::Load, .storeOp = rhi::StoreOp::Store},
+        // pass has already read it -- unless a measurement left the prepass
+        // out, and this pass is the first to draw depth. Stored, because the
+        // blended pass tests against it.
+        .depthStencil = {.texture = depth_,
+                         .loadOp = prepassDrawn_ ? rhi::LoadOp::Load : rhi::LoadOp::Clear,
+                         .storeOp = rhi::StoreOp::Store},
         .debugName = "forward",
     });
     cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});

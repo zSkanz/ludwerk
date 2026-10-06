@@ -84,6 +84,7 @@ TEST_CASE("format names and block sizes agree with each other")
 {
     CHECK(std::string(textureFormatName(TextureFormat::Rgba8)) == "rgba8");
     CHECK(std::string(textureFormatName(TextureFormat::Bc7Rgba)) == "bc7");
+    CHECK(std::string(textureFormatName(TextureFormat::Astc4x4Rgba)) == "astc4x4");
 
     CHECK_FALSE(isBlockCompressed(TextureFormat::Rgba8));
     CHECK_FALSE(isBlockCompressed(TextureFormat::Unknown));
@@ -91,4 +92,13 @@ TEST_CASE("format names and block sizes agree with each other")
     CHECK(isBlockCompressed(TextureFormat::Bc3Rgba));
     CHECK(isBlockCompressed(TextureFormat::Bc5Rg));
     CHECK(isBlockCompressed(TextureFormat::Bc7Rgba));
+    CHECK(isBlockCompressed(TextureFormat::Astc4x4Rgba));
+
+    // What the device samples is said once and is every caller's default
+    // (ADR 0180); nothing has said it here.
+    CHECK_FALSE(TranscodeOptions{}.allowAstc);
+    setDeviceSamplesAstc(true);
+    CHECK(TranscodeOptions{}.allowAstc);
+    setDeviceSamplesAstc(false);
+    CHECK_FALSE(deviceSamplesAstc());
 }

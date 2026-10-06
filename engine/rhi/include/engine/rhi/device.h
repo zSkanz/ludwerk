@@ -47,6 +47,9 @@ struct Capabilities
     bool rendersPixels = false;
     // Compute passes, storage buffers and indirect draws (ADR 0116).
     bool compute = false;
+    // Whether the GPU samples ASTC's four-by-four blocks (ADR 0180): a
+    // phone's does, a desktop's mostly does not.
+    bool astcTextures = false;
 };
 
 struct Swapchain

@@ -151,6 +151,10 @@ where the GPU is, and removing what it draws says why.
     takes the ground apart now is what replaced it: shaders compiled apart,
     `terrain_fast.hlsl` and `terrain_flat.hlsl`.
 
+    And one name that is a pass: `depth_prepass` (2026-10-05) leaves out
+    the depth drawn before the forward pass where nothing reads it before
+    then, so a tile-based GPU can say whether the pass pays for itself.
+
 ## What it does not do
 
 - No depth prepass switch: the opaque pass draws at the prepass's depth and

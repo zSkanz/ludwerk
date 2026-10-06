@@ -342,6 +342,10 @@ public:
         caps.maxTextureSize = 16384;
         caps.rendersPixels = true;
         caps.compute = true;
+        caps.astcTextures = SDL_GPUTextureSupportsFormat(device_, SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM,
+                                                         SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER) &&
+                            SDL_GPUTextureSupportsFormat(device_, SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM_SRGB,
+                                                         SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
         return caps;
     }
 

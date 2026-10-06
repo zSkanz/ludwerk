@@ -52,7 +52,7 @@ struct SkipName
     u32 bit;
 };
 
-constexpr std::array<SkipName, 11> kSkipNames{{
+constexpr std::array<SkipName, 12> kSkipNames{{
     {"sun", render::MeasureSkip::Sun},
     {"shadow", render::MeasureSkip::Shadow},
     {"contact", render::MeasureSkip::Contact},
@@ -64,10 +64,11 @@ constexpr std::array<SkipName, 11> kSkipNames{{
     {"normal_map", render::MeasureSkip::NormalMap},
     {"material_maps", render::MeasureSkip::MaterialMaps},
     {"unlit", render::MeasureSkip::Unlit},
+    {"depth_prepass", render::MeasureSkip::DepthPrepass},
 }};
 
-constexpr std::array<std::string_view, 11> kSkips = [] {
-    std::array<std::string_view, 11> names{};
+constexpr std::array<std::string_view, 12> kSkips = [] {
+    std::array<std::string_view, 12> names{};
     for (std::size_t index = 0; index < names.size(); ++index)
         names[index] = kSkipNames[index].name;
     return names;

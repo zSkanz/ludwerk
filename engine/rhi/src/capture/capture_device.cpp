@@ -322,6 +322,10 @@ std::string_view name(TextureFormat value)
         return "Bc3RgbaUnormSrgb";
     case TextureFormat::Bc7RgbaUnormSrgb:
         return "Bc7RgbaUnormSrgb";
+    case TextureFormat::Astc4x4RgbaUnorm:
+        return "Astc4x4RgbaUnorm";
+    case TextureFormat::Astc4x4RgbaUnormSrgb:
+        return "Astc4x4RgbaUnormSrgb";
     }
     return "?";
 }

@@ -277,6 +277,11 @@ inline constexpr u32 Fog = 128u;
 inline constexpr u32 NormalMap = 256u;
 inline constexpr u32 MaterialMaps = 512u; // metallic-roughness and emissive
 inline constexpr u32 Unlit = 1024u;       // base colour alone
+// Not a term of a surface but a pass of the frame: the depth drawn before the
+// forward pass, on a frame where nothing reads it before then -- no ambient
+// occlusion, no contact shadow, no motion. The forward pass then clears and
+// writes its own depth, and what it shades twice is what the prepass saved.
+inline constexpr u32 DepthPrepass = 2048u;
 } // namespace MeasureSkip
 
 // The taps a shadow quality filters with: `shadowTaps` for the level's place

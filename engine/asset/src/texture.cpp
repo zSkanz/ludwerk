@@ -1,5 +1,6 @@
 #include "engine/asset/texture.h"
 
+#include <atomic>
 #include <basisu_transcoder.h>
 #include <mutex>
 
@@ -34,7 +35,8 @@ void ensureTranscoderReady()
         return static_cast<usize>(width) * height * 4u;
     }
     const usize blocks = static_cast<usize>(blocksAcross(width)) * blocksAcross(height);
-    // BC1 is eight bytes a block; BC3, BC5 and BC7 are sixteen.
+    // BC1 is eight bytes a block; BC3, BC5, BC7 and ASTC's four by four are
+    // sixteen.
     return format == TextureFormat::Bc1Rgb ? blocks * 8u : blocks * 16u;
 }
 
@@ -49,6 +51,8 @@ void ensureTranscoderReady()
         return basist::transcoder_texture_format::cTFBC5_RG;
     case TextureFormat::Bc7Rgba:
         return basist::transcoder_texture_format::cTFBC7_RGBA;
+    case TextureFormat::Astc4x4Rgba:
+        return basist::transcoder_texture_format::cTFASTC_4x4_RGBA;
     case TextureFormat::Rgba8:
     case TextureFormat::Unknown:
         break;
@@ -69,6 +73,11 @@ void ensureTranscoderReady()
     }
     if (options.allowBc7) {
         return TextureFormat::Bc7Rgba;
+    }
+    // A phone's BC7: one format for colour and alpha both, at the same eight
+    // bits a pixel.
+    if (options.allowAstc) {
+        return TextureFormat::Astc4x4Rgba;
     }
     if (hasAlpha) {
         return options.allowBc3 ? TextureFormat::Bc3Rgba : TextureFormat::Rgba8;
@@ -91,6 +100,8 @@ const char* textureFormatName(TextureFormat format) noexcept
         return "bc5";
     case TextureFormat::Bc7Rgba:
         return "bc7";
+    case TextureFormat::Astc4x4Rgba:
+        return "astc4x4";
     case TextureFormat::Unknown:
         break;
     }
@@ -100,7 +111,21 @@ const char* textureFormatName(TextureFormat format) noexcept
 bool isBlockCompressed(TextureFormat format) noexcept
 {
     return format == TextureFormat::Bc1Rgb || format == TextureFormat::Bc3Rgba || format == TextureFormat::Bc5Rg ||
-           format == TextureFormat::Bc7Rgba;
+           format == TextureFormat::Bc7Rgba || format == TextureFormat::Astc4x4Rgba;
+}
+
+namespace {
+std::atomic<bool> g_deviceSamplesAstc{false};
+} // namespace
+
+void setDeviceSamplesAstc(bool samples) noexcept
+{
+    g_deviceSamplesAstc.store(samples, std::memory_order_relaxed);
+}
+
+bool deviceSamplesAstc() noexcept
+{
+    return g_deviceSamplesAstc.load(std::memory_order_relaxed);
 }
 
 std::optional<core::EngineError> transcodeTexture(std::span<const std::byte> ktx2, const TranscodeOptions& options,

@@ -65,6 +65,8 @@ bool resolveFace(void* user, std::string_view name, std::vector<core::u8>& out)
         return rhi::TextureFormat::Bc5RgUnorm;
     case asset::TextureFormat::Bc7Rgba:
         return rhi::TextureFormat::Bc7RgbaUnorm;
+    case asset::TextureFormat::Astc4x4Rgba:
+        return rhi::TextureFormat::Astc4x4RgbaUnorm;
     case asset::TextureFormat::Rgba8:
     case asset::TextureFormat::Unknown:
         break;

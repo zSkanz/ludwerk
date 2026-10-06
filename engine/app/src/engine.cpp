@@ -78,6 +78,7 @@
 #include "engine/app/world_ui.h"
 #include "engine/asset/content.h"
 #include "engine/asset/image.h"
+#include "engine/asset/texture.h"
 #include "engine/core/build_info.h"
 #include "engine/core/json_writer.h"
 #include "engine/core/log.h"
@@ -1350,6 +1351,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     const rhi::DeviceResult device = createDevice({.backend = options.backend, .debug = gpuDebug}, &error);
     if (device == nullptr)
         return error;
+    // **What the GPU samples, said before the first texture is read** (ADR
+    // 0180): a phone's takes ASTC where a desktop's takes BC7, and a texture
+    // sent to one as neither is four times the memory.
+    asset::setDeviceSamplesAstc(device->caps().astcTextures);
     // **What draws, said once** -- a card, or a software rasteriser standing in
     // for one: what tells a slow frame from a frame the CPU drew, in a report
     // and in a test that holds a time. A device with no name says nothing.

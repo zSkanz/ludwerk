@@ -87,6 +87,8 @@ constexpr std::string_view kAssetScheme = "asset://";
         return rhi::TextureFormat::Bc5RgUnorm;
     case asset::TextureFormat::Bc7Rgba:
         return srgb ? rhi::TextureFormat::Bc7RgbaUnormSrgb : rhi::TextureFormat::Bc7RgbaUnorm;
+    case asset::TextureFormat::Astc4x4Rgba:
+        return srgb ? rhi::TextureFormat::Astc4x4RgbaUnormSrgb : rhi::TextureFormat::Astc4x4RgbaUnorm;
     case asset::TextureFormat::Rgba8:
     case asset::TextureFormat::Unknown:
         break;

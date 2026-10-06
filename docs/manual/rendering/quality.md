@@ -436,6 +436,12 @@ emissive), and `unlit` -- the base colour alone, which is what drawing the
 triangles and reading one texture costs. Where `hide` says which objects cost
 a frame its time, `skip` says which part of lighting them.
 
+One name is a pass and not a term: `depth_prepass` leaves out the depth drawn
+before the forward pass, on a frame where nothing reads it before then (no
+ambient occlusion, no contact shadows, no temporal pass). The forward pass
+then writes its own depth, and the two frames' times say whether drawing the
+scene's depth first pays for itself on that GPU.
+
 **`log_ui_touches`** (`--log-ui-touches`) writes a line for each finger that
 comes down: the whole name and rectangle of the element of the interface that
 took it, or that none did and the finger is the game's.

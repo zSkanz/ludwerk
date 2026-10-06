@@ -107,6 +107,10 @@ enum class TextureFormat : u8
     Bc1RgbaUnormSrgb,
     Bc3RgbaUnormSrgb,
     Bc7RgbaUnormSrgb,
+    // ASTC in blocks of four by four, linear and sRGB: a phone's block format
+    // (ADR 0180), sampled only where `Capabilities::astcTextures` says.
+    Astc4x4RgbaUnorm,
+    Astc4x4RgbaUnormSrgb,
     // Two half floats: a screen-space motion vector (ADR 0158), which is
     // what every temporal pass reads. Added when the first one arrived.
     Rg16Float,

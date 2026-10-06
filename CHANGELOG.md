@@ -1081,6 +1081,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   it lifts, and the pipelines of particles, decals, name tags and their kin
   are made there: on a phone the frame after the loading screen took over a
   second, and a first spark or a first name tag another hitch.
+- **A phone's textures are compressed** (ADR 0180). A compiled texture was
+  sent to an Android GPU uncompressed -- four bytes a pixel -- because the
+  only block formats the engine knew were a desktop's. It is ASTC there now:
+  a quarter of the memory. Nothing changes on a desktop.
 - **A ground for a phone, compiled apart** (ADR 0179).
   `[graphics] terrain_surface = "fast"` draws the terrain with a shader that
   holds nothing but what it does: at most four layers a pixel by their colour

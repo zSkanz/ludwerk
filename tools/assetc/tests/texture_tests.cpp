@@ -143,6 +143,11 @@ TEST_CASE("one asset transcodes to whatever the device can sample")
         {{false, true, true, false, false}, engine::asset::TextureFormat::Bc3Rgba},
         {{false, false, false, false, false}, engine::asset::TextureFormat::Rgba8},
         {{true, true, true, true, false}, engine::asset::TextureFormat::Rgba8},
+        // A phone: no BC format, and ASTC (ADR 0180) -- the same sixteen
+        // bytes a block BC7 is.
+        {{false, false, false, false, false, true}, engine::asset::TextureFormat::Astc4x4Rgba},
+        // And BC7 first where a device has both.
+        {{true, true, true, false, false, true}, engine::asset::TextureFormat::Bc7Rgba},
     };
 
     for (const Case& entry : cases) {
@@ -155,6 +160,16 @@ TEST_CASE("one asset transcodes to whatever the device can sample")
         // whole reason to want one.
         if (engine::asset::isBlockCompressed(decoded.format)) {
             CHECK(decoded.mips[0].size < static_cast<usize>(32) * 32 * 4);
+        }
+        if (decoded.format == engine::asset::TextureFormat::Astc4x4Rgba) {
+            // Eight blocks by eight of sixteen bytes, and every level there.
+            CHECK(decoded.mips[0].size == static_cast<usize>(8) * 8 * 16);
+            CHECK(decoded.mips.size() > 1);
+            // Not sixteen bytes of nothing a block: the transcoder wrote them.
+            bool written = false;
+            for (usize at = 0; at < decoded.mips[0].size; ++at)
+                written = written || decoded.pixels[decoded.mips[0].offset + at] != std::byte{0};
+            CHECK(written);
         }
     }
 }
