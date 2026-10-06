@@ -5865,6 +5865,9 @@ void ReplicaSession::onSpawn(scene::World& world, std::span<const u8> bytes)
         if (!local.valid())
             continue;
         m_locals[id] = local;
+        // Made here now: whatever the last state said of this id, this one
+        // has been written nothing.
+        m_unsettled.insert(id);
         // **This machine's own scripts for where it was authored** (ADR 0138
         // §6). Looked up, never interned, for the reason the class is: an
         // origin this replica never read is not one it holds scripts for --
@@ -5958,6 +5961,8 @@ void ReplicaSession::resetForRejoin(scene::World& world)
     }
     m_locals.clear();
     m_written.clear();
+    m_appliedState.reset();
+    m_unsettled.clear();
     m_departed.clear();
     m_names.clear();
     m_states.clear();
@@ -5992,6 +5997,7 @@ void ReplicaSession::forget(std::span<const u32> ids)
         m_ownedParts.erase(id);
         m_locals.erase(id);
         m_written.erase(id);
+        m_unsettled.erase(id);
     }
     // Out of every remembered state too, so a diff against one of them
     // reconstructs what the authority has -- which no longer includes them.
@@ -6157,7 +6163,11 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
 
     // Departed ids leave the filter once no baseline can still hold them.
     std::erase_if(m_departed, [&](const auto& entry) { return tick > entry.second + DepartedMemoryTicks; });
-    std::erase_if(state->entities, [this](const EntityState& entity) { return m_departed.contains(entity.id.value); });
+    // Asked of every instance only when something has departed: with nothing
+    // in the filter it was a lookup an instance a snapshot, for nothing.
+    if (!m_departed.empty())
+        std::erase_if(state->entities,
+                      [this](const EntityState& entity) { return m_departed.contains(entity.id.value); });
     // What each entity this snapshot made or changed comes to; the rest keep
     // the number the state before had for them.
     for (EntityState& entity : state->entities) {
@@ -6199,7 +6209,7 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
         m_serverClock -= 1;
     m_ackedIntent = intentTick;
     m_snapshotAttributes = std::move(predicted);
-    applyToWorld(world, root, *state);
+    applyToWorld(world, root, state);
     m_snapshotAttributes.reset();
 
     // **Said without a guarantee, and not on the control channel** (D576,
@@ -6566,8 +6576,17 @@ void ReplicaSession::reconcile2d(scene::World& world, InstanceId character, core
     }
 }
 
-void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const WorldState& state)
+void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
+                                  const std::shared_ptr<const WorldState>& applied)
 {
+    const WorldState& state = *applied;
+    // Whichever way this returns, the world is as this state says from here.
+    struct Settle
+    {
+        std::shared_ptr<const WorldState>& held;
+        const std::shared_ptr<const WorldState>& now;
+        ~Settle() { held = now; }
+    };
     // The own character's answer, kept until every entity is read (ADR 0133).
     std::optional<scene::CharacterReplayStart> answer;
     InstanceId answeredCharacter;
@@ -6591,14 +6610,38 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
             }
         }
     }
+    // The state last written from, walked beside this one: both in id order.
+    const std::shared_ptr<const WorldState> last = m_appliedState;
+    const Settle settle{m_appliedState, applied};
+    auto lastAt = last != nullptr ? last->entities.begin() : state.entities.end();
+    const auto lastEnd = last != nullptr ? last->entities.end() : state.entities.end();
     for (const EntityState& entity : state.entities) {
         const bool service = entity.id.value >= ServiceNetIdBase;
+        // **The very set it was last written from: nothing to write** (D582).
+        // Not the own character, which is an answer to compare whether or
+        // not it moved; and not what is unsettled.
+        const bool own = entity.id.value == m_owned && m_owned != 0;
+        bool asWritten = false;
+        if (last != nullptr) {
+            while (lastAt != lastEnd && lastAt->id.value < entity.id.value)
+                ++lastAt;
+            asWritten =
+                lastAt != lastEnd && lastAt->id.value == entity.id.value && lastAt->fields.sameSetAs(entity.fields);
+        }
+        if (asWritten && !own && (m_unsettled.empty() || !m_unsettled.contains(entity.id.value)))
+            continue;
         const auto local = m_locals.find(entity.id.value);
-        if (local == m_locals.end() || !world.alive(local->second))
-            continue; // its spawn has not arrived yet; the next apply writes it whole
+        if (local == m_locals.end() || !world.alive(local->second)) {
+            // Its spawn has not arrived yet; the next apply writes it whole.
+            m_unsettled.insert(entity.id.value);
+            continue;
+        }
         const generated::ClassDesc& desc = generated::Classes[entity.schema];
         const auto written = m_written.find(entity.id.value);
+        m_stats.entitiesApplied += 1;
         FieldSet next = entity.fields.copy();
+        // A field left waiting for the instance it names: read again next time.
+        bool waiting = false;
         // **The own character is checked against every answer, moved or not.**
         // Only what changed is written, and an authority that stopped the
         // character -- against a wall the prediction walked through -- sends
@@ -6628,6 +6671,7 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
                 const InstanceId parent = parentId == RootNetId.value ? root : localOf(NetId{parentId});
                 if (!parent.valid()) {
                     next[at] = pendingValue();
+                    waiting = true;
                     continue;
                 }
                 if (!(world.parentOf(local->second) == parent))
@@ -6648,6 +6692,7 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
                 const InstanceId target = named == 0 ? InstanceId{} : localOf(NetId{named});
                 if (named != 0 && !target.valid()) {
                     next[at] = pendingValue();
+                    waiting = true;
                     continue;
                 }
                 FieldValue translated;
@@ -6772,6 +6817,10 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
             (void)applyField(world, local->second, desc, FieldDelta{wireIdAt(desc, at), value});
         }
         m_written[entity.id.value] = std::move(next);
+        if (waiting)
+            m_unsettled.insert(entity.id.value);
+        else if (!m_unsettled.empty())
+            m_unsettled.erase(entity.id.value);
 
         // The own sprite's place in this state, changed or not: an authority
         // that stopped it sends the same place tick after tick, and that is

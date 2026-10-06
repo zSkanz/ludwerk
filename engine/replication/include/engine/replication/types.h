@@ -304,6 +304,10 @@ struct Stats
     // same bytes.
     u64 entitiesRead = 0;
     u64 entitiesKept = 0;
+    // **The instances a replica's apply read field by field** (D582): the
+    // ones a snapshot changed, and its own character -- not every instance
+    // it holds, every snapshot.
+    u64 entitiesApplied = 0;
 };
 
 // **Where the own character is drawn, against where it is** (the multiplayer

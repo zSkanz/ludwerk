@@ -36,6 +36,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "engine/core/id.h"
@@ -301,6 +302,10 @@ public:
     [[nodiscard]] usize size() const noexcept { return m_set != nullptr ? m_set->size() : 0; }
     // The whole set, to copy: what a caller that changes a copy starts from.
     [[nodiscard]] FieldSet copy() const { return m_set != nullptr ? *m_set : FieldSet{}; }
+    // Whether the two hold the very same set -- not sets that are equal: one a
+    // state kept from the state before it, which is how an instance nothing
+    // changed is told without reading a field of it.
+    [[nodiscard]] bool sameSetAs(const SharedFields& other) const noexcept { return m_set == other.m_set; }
     [[nodiscard]] FieldSet::const_iterator begin() const noexcept
     {
         return m_set != nullptr ? m_set->cbegin() : FieldSet::const_iterator{};
@@ -963,7 +968,7 @@ private:
     // stale survives to be updated by nobody.
     void resetForRejoin(scene::World& world);
     void onPlayers(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
-    void applyToWorld(scene::World& world, core::InstanceId root, const WorldState& state);
+    void applyToWorld(scene::World& world, core::InstanceId root, const std::shared_ptr<const WorldState>& applied);
     void resolveCharacters(scene::World& world, core::InstanceId root);
     void onOwnership(scene::World& world, std::span<const u8> bytes);
     void onTilemapBlocks(scene::World& world, std::span<const u8> bytes);
@@ -1041,6 +1046,18 @@ private:
     // What the world was last given, per id, in the authority's terms -- so an
     // apply writes only what changed.
     std::map<u32, FieldSet> m_written;
+    // **The state the world was last written from** (D582). A state keeps the
+    // field set of an instance a snapshot did not change, so an instance that
+    // has in the new state the very set it had in this one has nothing to
+    // write -- told by walking the two side by side, both in id order, where
+    // every field of every instance was copied and compared every snapshot.
+    // Held, so no set of it can be let go and another made in its place.
+    //
+    // And the instances that are NOT as this state says, whatever their sets:
+    // one whose spawn had not arrived, one made again, one with a field still
+    // waiting for the instance it names. Each is read until it is settled.
+    std::shared_ptr<const WorldState> m_appliedState;
+    std::unordered_set<u32> m_unsettled;
     // Ids that have left, and the applied tick they left at: a filter a
     // reconstructed state must pass, for as long as a baseline could still
     // hold them (`DepartedMemoryTicks`), and then forgotten.

@@ -1447,6 +1447,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A machine that joined a match pays for what moves, not for what there
+  is** (D582). Every snapshot it read every replicated instance it holds to
+  find which had changed; it reads the ones that did. Measured with 2,700
+  instances and sixty moving: 1.42 ms a frame of receiving down to 0.48.
 - **A crowd of animated bodies costs a third of what it did** (D581). Bodies
   of a horde on the same rig and clip share the poses the others built, as
   they were meant to: two in three were being worked out again from the

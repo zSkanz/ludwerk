@@ -5422,6 +5422,91 @@ TEST_CASE("an authority's send costs what changed, not what there is (protocol 4
     CHECK(match.client.world.hasTag(match.copyOf(bricks[0]), match.client.atoms.intern("Marked")));
 }
 
+// --- What a replica's apply costs (D582) ----------------------------------------
+
+TEST_CASE("D582: a replica's apply reads what a snapshot changed, not every instance it holds")
+{
+    // Every snapshot, every instance the replica holds had its fields copied
+    // and each compared with what was last written -- to find, for all but
+    // the few that moved, that nothing had changed: a millisecond and a half
+    // a frame on a joined machine for a world of 2,700 instances with sixty
+    // moving, and five times that on a phone.
+    PlayedMatch match;
+    std::vector<core::InstanceId> bricks;
+    for (int index = 0; index < 300; ++index) {
+        const core::InstanceId id = match.part(
+            "Brick", core::DVec3{static_cast<double>(index % 20) * 3.0, 1.0, static_cast<double>(index / 20) * 3.0});
+        match.server.world.rigidBodies().find(id)->anchored = true;
+        bricks.push_back(id);
+    }
+    match.run(10);
+    REQUIRE(match.copyOf(bricks[299]).valid());
+
+    const core::u64 before = match.replica->stats().entitiesApplied;
+    constexpr int Ticks = 40;
+    for (int tick = 0; tick < Ticks; ++tick) {
+        // Three of the three hundred move a tick.
+        for (int index = 0; index < 3; ++index)
+            match.server.world.parts()
+                .find(bricks[static_cast<std::size_t>((tick * 7 + index * 31) % 300)])
+                ->cframe.position.y += 0.01;
+        match.step();
+    }
+    const double applied = static_cast<double>(match.replica->stats().entitiesApplied - before) / Ticks;
+    CAPTURE(applied);
+    // The three, and a handful beside them that are this machine's own or
+    // were still arriving: not three hundred.
+    CHECK(applied < 12.0);
+    CHECK(match.replica->checksumFailures() == 0);
+    // And what moved is where the authority has it, once it has stopped.
+    match.run(6);
+    for (const int index : {0, 7, 31, 62, 150, 299}) {
+        const core::InstanceId copy = match.copyOf(bricks[static_cast<std::size_t>(index)]);
+        REQUIRE(copy.valid());
+        CHECK(match.client.world.parts().find(copy)->cframe.position.y ==
+              doctest::Approx(
+                  match.server.world.parts().find(bricks[static_cast<std::size_t>(index)])->cframe.position.y));
+    }
+
+    // A rename, a new parent and a part destroyed still arrive: each is a
+    // change, and read.
+    match.server.world.setName(bricks[5], match.server.atoms.intern("Renamed"));
+    REQUIRE_FALSE(match.server.world.setParent(bricks[6], bricks[5]).has_value());
+    (void)match.server.world.destroy(bricks[8]);
+    match.run(4);
+    CHECK(match.client.atoms.text(match.client.world.name(match.copyOf(bricks[5]))) == "Renamed");
+    CHECK(match.client.world.parentOf(match.copyOf(bricks[6])) == match.copyOf(bricks[5]));
+    CHECK_FALSE(match.copyOf(bricks[8]).valid());
+}
+
+TEST_CASE("D582: a value that goes back to what an older baseline held is written back")
+{
+    // The trap in reading only what a snapshot's records name: a snapshot is
+    // a diff against the state the authority last heard acknowledged, which
+    // may be older than the one the replica last applied. A part that moved
+    // and then moved BACK is, against that older state, unchanged -- it has
+    // no record -- and yet the world shows where it went. What tells it is
+    // that its set of fields is not the one the world was last written from.
+    PlayedMatch match(nullptr, nullptr, true);
+    const core::InstanceId stone = match.part("Stone", core::DVec3{0.0, 1.0, 0.0});
+    match.server.world.rigidBodies().find(stone)->anchored = true;
+    match.run(8);
+    const core::InstanceId copy = match.copyOf(stone);
+    REQUIRE(copy.valid());
+    REQUIRE(match.client.world.parts().find(copy)->cframe.position.x == doctest::Approx(0.0));
+
+    // From here the authority hears no acknowledgement: every snapshot is
+    // against the state it holds now.
+    match.held->losingAcks = true;
+    match.server.world.parts().find(stone)->cframe.position.x = 5.0;
+    match.run(10);
+    CHECK(match.client.world.parts().find(copy)->cframe.position.x == doctest::Approx(5.0));
+    match.server.world.parts().find(stone)->cframe.position.x = 0.0;
+    match.run(10);
+    CHECK(match.client.world.parts().find(copy)->cframe.position.x == doctest::Approx(0.0));
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
 // --- A replica's word that it holds a snapshot (D576) --------------------------
 
 TEST_CASE("D576: a replica's acknowledgement of a snapshot stands in front of no message of the game's")
