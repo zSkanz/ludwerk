@@ -1,5 +1,6 @@
 #include <cmath>
 #include <doctest/doctest.h>
+#include <vector>
 
 #include "engine/render/shadow.h"
 #include "engine_test_nearly.h"
@@ -512,4 +513,76 @@ TEST_CASE("D537: a caster between a cascade's sphere and the sun reaches it, and
     // A lamp's cull has no sweep: a sphere, as before.
     CHECK(engine::render::casterReaches(centre, radius, Vec3{}, Vec3{0.0f, 10.5f, 0.0f}, 1.0f));
     CHECK_FALSE(engine::render::casterReaches(centre, radius, Vec3{}, Vec3{0.0f, 11.5f, 0.0f}, 1.0f));
+}
+
+TEST_CASE(
+    "a run's members are staged with those the camera sees first, as they were, then the rest by distance (ADR 0182)")
+{
+    using engine::core::Vec3;
+    using engine::render::ShadowCasterBounds;
+    // Six of a run, as the frame ordered them; the second, the fourth and the
+    // fifth are outside the camera's frustum.
+    const std::vector<ShadowCasterBounds> bounds{
+        {Vec3{0.0f, 0.0f, 30.0f}, 1.0f}, {Vec3{0.0f, 0.0f, -40.0f}, 1.0f}, {Vec3{0.0f, 0.0f, 5.0f}, 1.0f},
+        {Vec3{-9.0f, 0.0f, 0.0f}, 1.0f}, {Vec3{0.0f, 0.0f, -40.0f}, 1.0f}, {Vec3{0.0f, 0.0f, 12.0f}, 1.0f},
+    };
+    const std::vector<engine::core::u8> inFrustum{1, 0, 1, 0, 0, 1};
+    std::vector<engine::core::u32> order;
+    CHECK(engine::render::orderInstanceRun(bounds, inFrustum, order) == 3);
+    // Those it sees keep their order -- what the camera's passes draw is drawn
+    // in the order it always was; the rest nearest first, and two as far as
+    // each other in the order they came.
+    CHECK(order == std::vector<engine::core::u32>{0, 2, 5, 3, 1, 4});
+
+    // All of them seen, and none of them.
+    const std::vector<engine::core::u8> all(bounds.size(), 1);
+    CHECK(engine::render::orderInstanceRun(bounds, all, order) == 6);
+    CHECK(order == std::vector<engine::core::u32>{0, 1, 2, 3, 4, 5});
+    const std::vector<engine::core::u8> none(bounds.size(), 0);
+    CHECK(engine::render::orderInstanceRun(bounds, none, order) == 0);
+    CHECK(order == std::vector<engine::core::u32>{2, 3, 5, 0, 1, 4});
+}
+
+TEST_CASE("a shadow map draws the piece of a run that reaches it, and no run it is not reached by (ADR 0182)")
+{
+    using engine::core::Vec3;
+    using engine::render::castersReaching;
+    using engine::render::InstancePiece;
+    using engine::render::ShadowCasterBounds;
+    // A column of a horde marching away from the camera, a metre across each,
+    // five metres apart: at 5, 10, ... 60 metres.
+    std::vector<ShadowCasterBounds> column;
+    for (int place = 1; place <= 12; ++place)
+        column.push_back({Vec3{0.0f, 0.0f, static_cast<float>(place) * 5.0f}, 0.5f});
+    const auto count = static_cast<engine::core::u32>(column.size());
+    const Vec3 noSweep{};
+
+    // The near cascade, eight metres round a point ten metres off: the first
+    // three and none of the nine behind them, which were drawn into it too.
+    const InstancePiece nearPiece = castersReaching(Vec3{0.0f, 0.0f, 10.0f}, 8.0f, noSweep, column, 0, count);
+    CHECK(nearPiece.first == 0);
+    CHECK(nearPiece.count == 3);
+    // The far one, twenty round forty-five: from the fifth to the last.
+    const InstancePiece farPiece = castersReaching(Vec3{0.0f, 0.0f, 45.0f}, 20.0f, noSweep, column, 0, count);
+    CHECK(farPiece.first == 4);
+    CHECK(farPiece.count == 8);
+    // One that covers none of them draws none.
+    CHECK(castersReaching(Vec3{0.0f, 0.0f, 200.0f}, 20.0f, noSweep, column, 0, count).count == 0);
+    // Every member that reaches is in the piece, whatever lies between: with
+    // one far to the side in the middle of the range, it is drawn with them.
+    std::vector<ShadowCasterBounds> gapped = column;
+    gapped[1].centre = Vec3{500.0f, 0.0f, 10.0f};
+    const InstancePiece gappedPiece = castersReaching(Vec3{0.0f, 0.0f, 10.0f}, 8.0f, noSweep, gapped, 0, count);
+    CHECK(gappedPiece.first == 0);
+    CHECK(gappedPiece.count == 3);
+    // A part of the run alone: the piece is inside it.
+    const InstancePiece later = castersReaching(Vec3{0.0f, 0.0f, 10.0f}, 8.0f, noSweep, column, 2, count);
+    CHECK(later.first == 2);
+    CHECK(later.count == 1);
+    CHECK(castersReaching(Vec3{0.0f, 0.0f, 10.0f}, 8.0f, noSweep, column, 5, count).count == 0);
+    // And what stands between the sphere and the sun reaches it (D537): the
+    // sweep is the caster test's own.
+    std::vector<ShadowCasterBounds> above{{Vec3{0.0f, 30.0f, 10.0f}, 0.5f}};
+    CHECK(castersReaching(Vec3{0.0f, 0.0f, 10.0f}, 8.0f, Vec3{0.0f, 40.0f, 0.0f}, above, 0, 1).count == 1);
+    CHECK(castersReaching(Vec3{0.0f, 0.0f, 10.0f}, 8.0f, noSweep, above, 0, 1).count == 0);
 }

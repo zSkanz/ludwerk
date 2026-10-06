@@ -1,5 +1,6 @@
 #include "engine/app/frame_scheduler.h"
 
+#include <algorithm>
 #include <array>
 
 #include "engine/core/log.h"
@@ -48,8 +49,30 @@ Frame FrameScheduler::beginFrame(u64 nowNs) noexcept
         ++frame.simTicks;
     }
 
+    // **The count a run of frames has kept is kept across a tick's edge**
+    // (D565, `TickSlack`): one fewer than the frames before with nearly a
+    // tick owed is lent the rest of it; one more with hardly anything over
+    // holds it back. Not a frame that was clamped, and not where the frames
+    // have no count of their own.
+    const f64 slack = timing_.fixedDt * TickSlack;
+    if (!frame.clamped && steadyTicks_ > 0) {
+        if (frame.simTicks + 1 == steadyTicks_ && accumulator_ >= timing_.fixedDt - slack) {
+            accumulator_ -= timing_.fixedDt;
+            ++frame.simTicks;
+        }
+        else if (frame.simTicks == steadyTicks_ + 1 && accumulator_ < slack) {
+            accumulator_ += timing_.fixedDt;
+            --frame.simTicks;
+        }
+    }
+    steadyTicks_ = frame.simTicks == lastTicks_ ? frame.simTicks : 0;
+    lastTicks_ = frame.simTicks;
+
     totalTicks_ += frame.simTicks;
-    frame.alpha = static_cast<f32>(accumulator_ / timing_.fixedDt);
+    // Between the two ticks it is drawn between, and at an end of them while
+    // a tick is lent or held back.
+    constexpr f64 JustUnderOne = 0.99999;
+    frame.alpha = static_cast<f32>(std::clamp(accumulator_ / timing_.fixedDt, 0.0, JustUnderOne));
 
     constexpr u64 WarnEveryNs = 5'000'000'000ull;
     if (frame.clamped && !quiet_ && (!warned_ || nowNs - lastWarnNs_ >= WarnEveryNs)) {

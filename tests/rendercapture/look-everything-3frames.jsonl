@@ -163,7 +163,7 @@
 {"op":"vertexBuffer","buffer":4}
 {"op":"vertexBuffer","buffer":3}
 {"op":"bindIndexBuffer","buffer":5,"type":"U32"}
-{"op":"drawIndexed","indices":36,"instances":45,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
+{"op":"drawIndexed","indices":36,"instances":39,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":3}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"5a03f5dbb8a1ca0c"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":1}
@@ -179,7 +179,7 @@
 {"op":"vertexBuffer","buffer":4}
 {"op":"vertexBuffer","buffer":3}
 {"op":"bindIndexBuffer","buffer":5,"type":"U32"}
-{"op":"drawIndexed","indices":36,"instances":45,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
+{"op":"drawIndexed","indices":36,"instances":39,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":3}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"326ea67d1e8e9e1d"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":1}
@@ -195,7 +195,7 @@
 {"op":"vertexBuffer","buffer":4}
 {"op":"vertexBuffer","buffer":3}
 {"op":"bindIndexBuffer","buffer":5,"type":"U32"}
-{"op":"drawIndexed","indices":36,"instances":45,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
+{"op":"drawIndexed","indices":36,"instances":39,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":3}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"0e564162b085de2a"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":1}
@@ -211,7 +211,7 @@
 {"op":"vertexBuffer","buffer":4}
 {"op":"vertexBuffer","buffer":3}
 {"op":"bindIndexBuffer","buffer":5,"type":"U32"}
-{"op":"drawIndexed","indices":36,"instances":45,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
+{"op":"drawIndexed","indices":36,"instances":39,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":3}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"6ea811732a7e6586"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":1}
@@ -707,7 +707,7 @@
 {"op":"vertexBuffer","buffer":4}
 {"op":"vertexBuffer","buffer":3}
 {"op":"bindIndexBuffer","buffer":5,"type":"U32"}
-{"op":"drawIndexed","indices":36,"instances":45,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
+{"op":"drawIndexed","indices":36,"instances":39,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":3}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"5a03f5dbb8a1ca0c"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":1}
@@ -723,7 +723,7 @@
 {"op":"vertexBuffer","buffer":4}
 {"op":"vertexBuffer","buffer":3}
 {"op":"bindIndexBuffer","buffer":5,"type":"U32"}
-{"op":"drawIndexed","indices":36,"instances":45,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
+{"op":"drawIndexed","indices":36,"instances":39,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":3}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"326ea67d1e8e9e1d"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":1}
@@ -739,7 +739,7 @@
 {"op":"vertexBuffer","buffer":4}
 {"op":"vertexBuffer","buffer":3}
 {"op":"bindIndexBuffer","buffer":5,"type":"U32"}
-{"op":"drawIndexed","indices":36,"instances":45,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
+{"op":"drawIndexed","indices":36,"instances":39,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":3}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"0e564162b085de2a"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":1}
@@ -755,7 +755,7 @@
 {"op":"vertexBuffer","buffer":4}
 {"op":"vertexBuffer","buffer":3}
 {"op":"bindIndexBuffer","buffer":5,"type":"U32"}
-{"op":"drawIndexed","indices":36,"instances":45,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
+{"op":"drawIndexed","indices":36,"instances":39,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":3}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"6ea811732a7e6586"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":1}
@@ -1204,7 +1204,7 @@
 {"op":"vertexBuffer","buffer":4}
 {"op":"vertexBuffer","buffer":3}
 {"op":"bindIndexBuffer","buffer":5,"type":"U32"}
-{"op":"drawIndexed","indices":36,"instances":45,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
+{"op":"drawIndexed","indices":36,"instances":39,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":3}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"5a03f5dbb8a1ca0c"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":1}
@@ -1220,7 +1220,7 @@
 {"op":"vertexBuffer","buffer":4}
 {"op":"vertexBuffer","buffer":3}
 {"op":"bindIndexBuffer","buffer":5,"type":"U32"}
-{"op":"drawIndexed","indices":36,"instances":45,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
+{"op":"drawIndexed","indices":36,"instances":39,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":3}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"326ea67d1e8e9e1d"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":1}
@@ -1236,7 +1236,7 @@
 {"op":"vertexBuffer","buffer":4}
 {"op":"vertexBuffer","buffer":3}
 {"op":"bindIndexBuffer","buffer":5,"type":"U32"}
-{"op":"drawIndexed","indices":36,"instances":45,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
+{"op":"drawIndexed","indices":36,"instances":39,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":3}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"0e564162b085de2a"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":1}
@@ -1252,7 +1252,7 @@
 {"op":"vertexBuffer","buffer":4}
 {"op":"vertexBuffer","buffer":3}
 {"op":"bindIndexBuffer","buffer":5,"type":"U32"}
-{"op":"drawIndexed","indices":36,"instances":45,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
+{"op":"drawIndexed","indices":36,"instances":39,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":3}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"6ea811732a7e6586"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":1}

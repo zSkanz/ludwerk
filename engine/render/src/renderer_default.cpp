@@ -426,10 +426,15 @@ struct InstanceBatch
     // The union of the run's bounds, for the per-pass tests.
     Vec3 boundsCenter;
     f32 boundsRadius = 0.0f;
-    // Whether ANY of the run is in the camera's frustum. The forward passes draw
-    // the batch if this holds, because a batch is one call and cannot be drawn
-    // in pieces.
+    // Whether ANY of the run is in the camera's frustum: the camera's passes
+    // draw none of it otherwise.
     bool anyVisible = false;
+    // **How many of it are** (ADR 0182), staged first: the camera's passes
+    // draw these and not the rest. And where its members' bounds begin in
+    // `batchBounds_`, in the order staged: what a shadow map's piece of the run
+    // is chosen from.
+    u32 visibleCount = 0;
+    u32 firstBounds = 0;
     // A run of skinned draws (H2): its instances are `GpuSkinnedInstance`s,
     // each posed by its own palette.
     bool skinned = false;
@@ -1029,6 +1034,12 @@ private:
 
     rhi::BufferHandle instanceBuffer_{};
     std::vector<GpuInstance> instanceStaging_;
+    // Every run's members' bounds, in the order staged (ADR 0182), and the
+    // scratch a run is put in order with.
+    std::vector<ShadowCasterBounds> batchBounds_;
+    std::vector<ShadowCasterBounds> runBounds_;
+    std::vector<core::u8> runInFrustum_;
+    std::vector<u32> runOrder_;
     // Skinned runs (H2): their instance stream, the frame's palettes, and the
     // three pipelines that read them.
     bool skinnedInstancingTried_ = false;
@@ -3147,6 +3158,7 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
     batches_.clear();
     instanceStaging_.clear();
     skinnedInstanceStaging_.clear();
+    batchBounds_.clear();
     batchOf_.assign(world.draws.size(), kNoBatch);
     if (!settings_.instancing)
         return;
@@ -3255,6 +3267,32 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             batchOf_[member] = static_cast<u32>(batches_.size());
             batch.anyVisible = batch.anyVisible || draw.inCameraFrustum;
 
+            const Vec3 offset = draw.boundsCenter - batch.boundsCenter;
+            const f32 distance = core::length(offset);
+            if (distance + draw.boundsRadius > batch.boundsRadius) {
+                const f32 grown = 0.5f * (batch.boundsRadius + distance + draw.boundsRadius);
+                if (distance > 1e-6f)
+                    batch.boundsCenter = batch.boundsCenter + offset * ((grown - batch.boundsRadius) / distance);
+                batch.boundsRadius = grown;
+            }
+        }
+
+        // **Staged in the order a pass can take a piece of** (ADR 0182): the
+        // members the camera sees first, as they were ordered, then the rest
+        // by distance. The union above is grown in the order it always was --
+        // a sphere grown in another order is another sphere.
+        runBounds_.clear();
+        runInFrustum_.clear();
+        for (core::usize member = index; member < last; ++member) {
+            runBounds_.push_back({world.draws[member].boundsCenter, world.draws[member].boundsRadius});
+            runInFrustum_.push_back(world.draws[member].inCameraFrustum ? core::u8{1} : core::u8{0});
+        }
+        batch.visibleCount = orderInstanceRun(runBounds_, runInFrustum_, runOrder_);
+        batch.firstBounds = static_cast<u32>(batchBounds_.size());
+        for (const u32 place : runOrder_) {
+            const DrawItem& draw = world.draws[index + place];
+            batchBounds_.push_back(runBounds_[place]);
+
             GpuInstance instance;
             instance.model = draw.transform;
             instance.alphaTint[0] = draw.alpha;
@@ -3271,15 +3309,6 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             }
             else {
                 instanceStaging_.push_back(instance);
-            }
-
-            const Vec3 offset = draw.boundsCenter - batch.boundsCenter;
-            const f32 distance = core::length(offset);
-            if (distance + draw.boundsRadius > batch.boundsRadius) {
-                const f32 grown = 0.5f * (batch.boundsRadius + distance + draw.boundsRadius);
-                if (distance > 1e-6f)
-                    batch.boundsCenter = batch.boundsCenter + offset * ((grown - batch.boundsRadius) / distance);
-                batch.boundsRadius = grown;
             }
         }
 
@@ -3478,6 +3507,38 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             const Vec3 centre = batch != nullptr ? batch->boundsCenter : draw.boundsCenter;
             const f32 radius = batch != nullptr ? batch->boundsRadius : draw.boundsRadius;
             if (!casterReaches(cull->centre, cull->radius, cull->sweep, centre, radius))
+                continue;
+        }
+
+        // **The pieces of a run this pass draws** (ADR 0182): what the camera
+        // sees of it, for the camera's passes; for a shadow map, the members
+        // that reach what the map covers -- a piece of those the camera sees
+        // and a piece of those it does not, each a range of the order staged.
+        std::array<InstancePiece, 2> pieces{};
+        u32 pieceCount = 0;
+        if (batch != nullptr) {
+            if (selection != Selection::Shadow) {
+                pieces[pieceCount++] = InstancePiece{0, batch->visibleCount};
+            }
+            else if (cull == nullptr) {
+                pieces[pieceCount++] = InstancePiece{0, batch->count};
+            }
+            else {
+                const std::span<const ShadowCasterBounds> members{batchBounds_.data() + batch->firstBounds,
+                                                                  batch->count};
+                for (const auto& [from, to] : {std::pair<u32, u32>{0u, batch->visibleCount},
+                                               std::pair<u32, u32>{batch->visibleCount, batch->count}}) {
+                    const InstancePiece piece =
+                        castersReaching(cull->centre, cull->radius, cull->sweep, members, from, to);
+                    if (piece.count == 0)
+                        continue;
+                    if (pieceCount > 0 && pieces[pieceCount - 1].first + pieces[pieceCount - 1].count == piece.first)
+                        pieces[pieceCount - 1].count += piece.count;
+                    else
+                        pieces[pieceCount++] = piece;
+                }
+            }
+            if (pieceCount == 0 || pieces[0].count == 0)
                 continue;
         }
 
@@ -3816,14 +3877,19 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             cmd.bindVertexBuffers(0, vertexBuffers);
         }
         cmd.bindIndexBuffer(resolved->indices, rhi::IndexType::U32);
-        cmd.drawIndexed(section.indexCount, batch != nullptr ? batch->count : 1,
-                        resolved->firstIndex + section.firstIndex, resolved->vertexOffset,
-                        batch != nullptr ? batch->firstInstance : 0);
-
-        ++stats_.drawCalls;
-        if (batch != nullptr) {
-            ++stats_.instancedDraws;
-            stats_.instances += batch->count;
+        if (batch == nullptr) {
+            cmd.drawIndexed(section.indexCount, 1, resolved->firstIndex + section.firstIndex, resolved->vertexOffset,
+                            0);
+            ++stats_.drawCalls;
+        }
+        else {
+            for (u32 piece = 0; piece < pieceCount; ++piece) {
+                cmd.drawIndexed(section.indexCount, pieces[piece].count, resolved->firstIndex + section.firstIndex,
+                                resolved->vertexOffset, batch->firstInstance + pieces[piece].first);
+                ++stats_.drawCalls;
+                ++stats_.instancedDraws;
+                stats_.instances += pieces[piece].count;
+            }
         }
     }
 }

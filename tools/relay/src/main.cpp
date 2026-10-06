@@ -87,6 +87,9 @@ int main(int argc, char** argv)
         else if (arg.starts_with("--rate=") && numberOf(value("--rate="), 1024, 1'000'000'000, number)) {
             limits.slotBytesPerSecond = static_cast<u32>(number);
         }
+        else if (arg.starts_with("--burst=") && numberOf(value("--burst="), 1, 600, number)) {
+            limits.slotBurstSeconds = static_cast<u32>(number);
+        }
         else if (arg.starts_with("--report=") && numberOf(value("--report="), 0, 86'400, number)) {
             reportSeconds = number;
         }
@@ -106,10 +109,11 @@ int main(int argc, char** argv)
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);
     {
-        const std::array<I18nArg, 4> args{I18nArg{"port", static_cast<engine::core::i64>(relay.port())},
+        const std::array<I18nArg, 5> args{I18nArg{"port", static_cast<engine::core::i64>(relay.port())},
                                           I18nArg{"matches", static_cast<engine::core::i64>(limits.maxSessions)},
                                           I18nArg{"relayed", static_cast<engine::core::i64>(limits.maxSlotsPerSession)},
-                                          I18nArg{"rate", static_cast<engine::core::i64>(limits.slotBytesPerSecond)}};
+                                          I18nArg{"rate", static_cast<engine::core::i64>(limits.slotBytesPerSecond)},
+                                          I18nArg{"burst", static_cast<engine::core::i64>(limits.slotBurstSeconds)}};
         engine::core::log(LogLevel::Info, ENG_TR("relay.info.listening"), args);
     }
 

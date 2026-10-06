@@ -17,6 +17,7 @@
 #pragma once
 
 #include <span>
+#include <vector>
 
 #include "engine/core/math.h"
 #include "engine/core/types.h"
@@ -269,6 +270,39 @@ struct ShadowCasterBounds
     core::Vec3 centre;
     f32 radius = 0.0f;
 };
+
+// **A run of instances, drawn in the pieces a pass needs** (ADR 0182).
+//
+// An instanced run is one mesh many times over, and was one call: all of it
+// in every pass that wanted any of it. A horde round the player was drawn
+// whole into each shadow cascade, and a forest whole into the camera's passes
+// while one tree of it was on the screen. The members are put in an order
+// that makes what a pass needs a piece or two of the run, and a pass draws
+// the pieces.
+
+// Some of a run: `count` members from `first`, in the order they were staged.
+struct InstancePiece
+{
+    u32 first = 0;
+    u32 count = 0;
+};
+
+// **The order a run's members are staged in**: those in the camera's frustum
+// first, in the order they were given -- the order they were always drawn in,
+// so the camera's passes are the pixels they were -- then those outside it,
+// nearest the camera first. `bounds` is camera-relative; `inFrustum` is one
+// flag a member. Returns how many are in the frustum: the camera's passes
+// draw that many from the first.
+u32 orderInstanceRun(std::span<const ShadowCasterBounds> bounds, std::span<const core::u8> inFrustum,
+                     std::vector<u32>& order);
+
+// **The members a shadow map needs**, of `bounds[first, end)`: one piece from
+// the first that reaches the cull's sphere to the last that does
+// (`casterReaches`), empty when none does. What lies between them and does
+// not reach is drawn with them -- a piece is a range -- which is why the order
+// above keeps members that are near each other in depth near each other.
+[[nodiscard]] InstancePiece castersReaching(const core::Vec3& cullCentre, f32 cullRadius, const core::Vec3& sweep,
+                                            std::span<const ShadowCasterBounds> bounds, u32 first, u32 end) noexcept;
 
 // What the fit produces, and what the frame uniforms carry.
 struct ShadowCascades

@@ -952,10 +952,56 @@ TEST_CASE("a host that vanishes: its code stops resolving, and what its joiners 
     CHECK(late.rendezvous.failure() == JoinFailure::NoSession);
 }
 
+TEST_CASE("D566: a join's first second crosses a relay whole, and the rate after it is still the rate")
+{
+    // The relay as it is started with no option: 512 KB a second for a
+    // carried player.
+    World world;
+    const int hostRouter = world.net.addRouter(address(198, 51, 100, 10), Nat::Symmetric);
+    const int joinRouter = world.net.addRouter(address(198, 51, 100, 20), Nat::Symmetric);
+    HostSide& host = world.host({address(192, 168, 0, 5), 7777}, hostRouter);
+    host.start();
+    world.run(200);
+    JoinSide& joiner = world.joiner({address(192, 168, 0, 9), 6000}, joinRouter);
+    joiner.start(host.rendezvous.code(), 111, false);
+    world.run(600);
+    REQUIRE(joiner.rendezvous.found());
+    const usize before = joiner.match.size();
+
+    // A world sent at a join: a megabyte and a half in one second, fifteen
+    // datagrams of a thousand bytes every ten milliseconds. A third of it was
+    // dropped -- one second's allowance held and one second's earned.
+    for (int tick = 0; tick < 100; ++tick) {
+        for (u8 index = 0; index < 15; ++index)
+            world.net.send(host.pipes[0].machine, world.relayAt, matchBytes(index, 1000), world.now);
+        world.run(10);
+    }
+    world.run(100);
+    CHECK(joiner.match.size() - before == 1500);
+
+    // And a match that goes on sending twice the rate is held to the rate:
+    // ten seconds of a megabyte a second, of which what the allowance still
+    // held and ten seconds' earnings cross, and no more.
+    const usize settled = joiner.match.size();
+    for (int tick = 0; tick < 1000; ++tick) {
+        for (u8 index = 0; index < 10; ++index)
+            world.net.send(host.pipes[0].machine, world.relayAt, matchBytes(index, 1000), world.now);
+        world.run(10);
+    }
+    world.run(100);
+    const usize crossed = joiner.match.size() - settled;
+    CHECK(crossed < 10000);
+    // Eight seconds' allowance less what the join took, and what eleven
+    // seconds earn: under nine megabytes of the ten.
+    CHECK(crossed <= 9000);
+    CHECK(crossed >= 5000);
+}
+
 TEST_CASE("a relay is bounded: bytes a second for a joiner, lookups from an address, sessions in all")
 {
     RelayLimits limits;
     limits.slotBytesPerSecond = 1'000;
+    limits.slotBurstSeconds = 1;
     limits.lookupsPerSecond = 2;
     limits.maxSessions = 2;
     World world(limits);

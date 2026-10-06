@@ -200,6 +200,12 @@ two system calls a datagram.
 Nothing here is on the wire of a match: the protocol's version is unchanged,
 and the rendezvous has a version of its own.
 
+**Amended 2026-10-05 (D566): a carried player's allowance holds eight seconds
+of its rate.** It held one, and the first relay in service dropped a third of
+every join: a small scene's world is a megabyte and a half sent in a second,
+against 512 KB held and 512 KB earned. The rate over any long stretch is the
+rate it was; `--burst` says another number of seconds.
+
 **Amended 2026-10-05 (D562): a relay's name is looked up until it is found.**
 The first relay installed for a game had a name made minutes before, and a
 host whose resolver did not know it yet was `Unreachable` for its whole

@@ -915,7 +915,10 @@ void RelayServer::forward(Endpoint from, std::span<const u8> datagram, u64 nowMs
     }
     const bool fromHost = route->second.fromHost;
     const double rate = static_cast<double>(m_limits.slotBytesPerSecond);
-    if (!spend(fromHost ? slot->down : slot->up, static_cast<double>(datagram.size()), rate, rate, nowMs)) {
+    // What it may carry at once is several seconds of the rate (D566): a
+    // join's first second is not a match's every second.
+    const double most = rate * static_cast<double>(std::max<u32>(m_limits.slotBurstSeconds, 1));
+    if (!spend(fromHost ? slot->down : slot->up, static_cast<double>(datagram.size()), rate, most, nowMs)) {
         ++m_dropped;
         return;
     }

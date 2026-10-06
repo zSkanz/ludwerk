@@ -288,6 +288,13 @@ struct RelayLimits
     // What one relayed joiner may carry each way, in bytes a second; what is
     // over it is dropped, as a full link drops it.
     u32 slotBytesPerSecond = 512u * 1024u;
+    // **And how many seconds of that it may carry at once** (D566): a join
+    // begins with the whole world sent at a stroke -- a megabyte and a half in
+    // a second, of a small scene -- and then settles to a few kilobytes. An
+    // allowance of one second of the rate dropped a third of it, and what a
+    // reliable channel loses it sends again into the same full allowance. The
+    // rate over any long stretch is the rate; this is what it may borrow.
+    u32 slotBurstSeconds = 8;
     // A host not heard from for this long is gone, and its code with it.
     u32 sessionTimeoutMs = 30'000;
     // A relayed joiner nothing has crossed for this long is let go.

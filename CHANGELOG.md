@@ -1110,6 +1110,21 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   over 33 ms.
 - **`--frame-stats` counts the frame cap's wait as waiting** (D561), under
   the scope `wait.cap`. It was reported as drawing on the CPU.
+- **Many of one mesh are drawn only where each is needed** (ADR 0182). A
+  forest, a horde -- anything the renderer draws as one instanced run -- was
+  drawn whole into every pass that wanted any of it: into each shadow cascade,
+  and into the camera's passes for one member on the screen. Each pass draws
+  the members it needs. In a horde game's scene that is three fifths fewer of
+  those triangles for the camera and from a third to four fifths fewer for
+  the shadow maps, and no picture changes.
+- **A join through a relay is carried whole** (D566). The relay's allowance
+  for a carried player held one second of its rate, and a join's first second
+  is several: a third of it was dropped and sent again. It holds eight;
+  `engine-relay --burst=SECONDS` says another.
+- **Frames at the simulation's own rate run one tick each** (D565). A display
+  at sixty and a simulation at sixty could fall into running no tick in one
+  frame and two in the next, for as long as the two clocks stood a certain
+  way: twice the simulation's cost in half the frames.
 - **Text with a stroke no longer costs a frame the first time it is shown**
   (D563). A letter's outline was made by trying every point of the stroke's
   shape at every texel of the letter -- 16 and 32 ms on a phone in the frames

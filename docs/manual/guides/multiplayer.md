@@ -154,8 +154,11 @@ account:
 engine-relay --port=7789
 ```
 
-`--max-matches`, `--max-relayed` (carried players a match) and `--rate` (bytes
-a second each way for one carried player) bound what it will do, and
+`--max-matches`, `--max-relayed` (carried players a match), `--rate` (bytes
+a second each way for one carried player) and `--burst` (how many seconds of
+that rate a player may be carried at once: a join begins with the whole world
+sent at a stroke, and eight seconds of the rate is what lets it through)
+bound what it will do, and
 `--report=60` says every minute what it carries. A carried player costs the
 relay what the match sends that player and nothing more; a player who
 connected `direct` costs it a few small packets when joining and none after.

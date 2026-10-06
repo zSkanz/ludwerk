@@ -7,6 +7,45 @@
 
 namespace engine::render {
 
+u32 orderInstanceRun(std::span<const ShadowCasterBounds> bounds, std::span<const core::u8> inFrustum,
+                     std::vector<u32>& order)
+{
+    order.clear();
+    const auto count = static_cast<u32>(bounds.size());
+    for (u32 member = 0; member < count; ++member) {
+        if (member < inFrustum.size() && inFrustum[member] != 0)
+            order.push_back(member);
+    }
+    const auto visible = static_cast<u32>(order.size());
+    for (u32 member = 0; member < count; ++member) {
+        if (!(member < inFrustum.size() && inFrustum[member] != 0))
+            order.push_back(member);
+    }
+    // By distance, and by place in the run where two are as far: the order is
+    // the same wherever it is worked out.
+    std::sort(order.begin() + visible, order.end(), [&](u32 a, u32 b) {
+        const f32 da = core::dot(bounds[a].centre, bounds[a].centre);
+        const f32 db = core::dot(bounds[b].centre, bounds[b].centre);
+        return da != db ? da < db : a < b;
+    });
+    return visible;
+}
+
+InstancePiece castersReaching(const core::Vec3& cullCentre, f32 cullRadius, const core::Vec3& sweep,
+                              std::span<const ShadowCasterBounds> bounds, u32 first, u32 end) noexcept
+{
+    end = std::min<u32>(end, static_cast<u32>(bounds.size()));
+    u32 from = end;
+    u32 past = first;
+    for (u32 member = first; member < end; ++member) {
+        if (!casterReaches(cullCentre, cullRadius, sweep, bounds[member].centre, bounds[member].radius))
+            continue;
+        from = std::min(from, member);
+        past = member + 1;
+    }
+    return from < past ? InstancePiece{from, past - from} : InstancePiece{};
+}
+
 // How many candidates the ranking will look at in one frame. Past this a light
 // is refused without being weighed, which is reported rather than silent -- and
 // the number is far above the tile budget on purpose, so the ORDER is decided
