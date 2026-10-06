@@ -12,6 +12,7 @@
 // rather than two things this module would have to name.
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <span>
 
@@ -518,9 +519,25 @@ struct SurfaceMaterial
     f32 restitution = 0.0f;
 };
 
+// **A collision shape built ahead of the body that takes it** (ADR 0181):
+// what `IPhysics::prepareShape` hands back, and `BodyDesc::prepared` hands in.
+// Opaque -- the backend's own shape behind a pointer nothing above can read
+// (R17) -- and shared, so it lives until the body that took it has it. Empty
+// from a backend that prepares nothing, and a body made with an empty one is
+// made as it always was, from its description.
+struct PreparedShape
+{
+    std::shared_ptr<const void> shape;
+
+    [[nodiscard]] bool valid() const noexcept { return shape != nullptr; }
+};
+
 struct BodyDesc
 {
     ShapeDesc shape;
+    // The shape already built from `shape`, by `prepareShape`: taken as it is
+    // rather than built again. The description still says what it is.
+    PreparedShape prepared;
     core::CFrameD transform;
     MotionType motion = MotionType::Dynamic;
 

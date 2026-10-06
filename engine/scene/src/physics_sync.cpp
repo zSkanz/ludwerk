@@ -1809,66 +1809,95 @@ void PhysicsSync::applyTerrain()
             std::min<usize>(pending.size(), std::max<usize>(inTheWay, TerrainRebuildsPerTick -
                                                                           std::min(rebuilt, TerrainRebuildsPerTick)));
         want->settled = chosen == pending.size();
+        // **And each one's collision shape with it** (ADR 0181). The mesh was
+        // made on the pool and its shape -- the tree Jolt builds over the
+        // triangles, which is most of what a collider costs -- on this thread,
+        // one after another: four chunks a tick was twenty-five milliseconds
+        // of a phone's frame whenever a player walked onto new ground. A shape
+        // is a function of its mesh alone, as the mesh is of the field, so it
+        // is built there too; the bodies are still made here, in the order
+        // they always were.
         std::vector<asset::TerrainCollider> meshes(chosen);
+        std::vector<std::vector<u8>> drawnOf(chosen);
+        std::vector<physics::PreparedShape> shapes(chosen);
+        core::profile::Sections steps;
+        if (chosen > 0)
+            ENG_PROFILE_NEXT(steps, "physics.terrain.shapes");
+        const auto shapeOf = [](const asset::TerrainCollider& meshed, const std::vector<u8>& drawn, u64 content) {
+            physics::ShapeDesc shape;
+            shape.type = physics::ShapeType::TriangleMesh;
+            shape.points = meshed.points;
+            shape.indices = meshed.indices;
+            shape.triangleSurfaces = drawn;
+            // The band of its neighbours' triangles, which only lends its
+            // edges: the seam is inside the mesh (ADR 0143).
+            shape.bandFirst = meshed.bandFirst;
+            shape.pointsRevision = content;
+            shape.geometryRevision = content;
+            return shape;
+        };
         jobs::parallelFor("terrain.collider.meshes", jobs::Domain::SimVisible, 0, chosen, 1,
                           [&](usize begin, usize end, u32) noexcept {
-                              for (usize at = begin; at < end; ++at)
+                              for (usize at = begin; at < end; ++at) {
                                   meshes[at] = asset::meshCollider(field, pending[at].key);
+                                  const asset::TerrainCollider& meshed = meshes[at];
+                                  // **What the ground is, triangle by triangle**
+                                  // (ADR 0117): the layer each is DRAWN as --
+                                  // its paint and the rules included, as a
+                                  // raycast reports it -- so ice painted over
+                                  // rock is ice to stand on. Only for a chunk
+                                  // that has a triangle of a surface that is
+                                  // not the default: the rest are handed
+                                  // nothing, and collide exactly as they did.
+                                  std::vector<u8>& drawn = drawnOf[at];
+                                  if (surfaces.key != 0 && meshed.surfaces.size() == meshed.indices.size()) {
+                                      const usize triangles = meshed.indices.size() / 3;
+                                      drawn.resize(triangles, 0);
+                                      bool any = false;
+                                      const physics::SurfaceMaterial standard;
+                                      for (usize triangle = 0; triangle < triangles; ++triangle) {
+                                          const core::Vec3& a = meshed.points[meshed.indices[triangle * 3]];
+                                          const core::Vec3& b = meshed.points[meshed.indices[triangle * 3 + 1]];
+                                          const core::Vec3& c = meshed.points[meshed.indices[triangle * 3 + 2]];
+                                          const core::Vec3 face = core::cross(b - a, c - a);
+                                          const f32 area = std::sqrt(core::dot(face, face));
+                                          const core::Vec3 normal =
+                                              area > 1.0e-12f ? face * (1.0f / area) : core::Vec3{0.0f, 1.0f, 0.0f};
+                                          const core::Vec3 middle = (a + b + c) * (1.0f / 3.0f);
+                                          const u8 layer = asset::drawnMaterial(
+                                              terrain.rules,
+                                              asset::Voxel{255, meshed.surfaces[triangle * 3],
+                                                           meshed.surfaces[triangle * 3 + 1],
+                                                           meshed.surfaces[triangle * 3 + 2]},
+                                              normal, middle, middle.y + static_cast<f32>(terrain.origin.y));
+                                          if (layer >= surfaces.table.size())
+                                              continue;
+                                          drawn[triangle] = layer;
+                                          any = any || surfaces.table[layer].friction != standard.friction ||
+                                                surfaces.table[layer].restitution != standard.restitution;
+                                      }
+                                      if (!any)
+                                          drawn.clear();
+                                  }
+                                  if (meshed.indices.size() >= 3)
+                                      shapes[at] = m_backend.prepareShape(shapeOf(meshed, drawn, pending[at].content));
+                              }
                           });
 
+        if (chosen > 0)
+            ENG_PROFILE_NEXT(steps, "physics.terrain.bodies");
         for (usize index = 0; index < chosen; ++index) {
             const Pending& next = pending[index];
             const asset::TerrainCollider& meshed = meshes[index];
-
-            // **What the ground is, triangle by triangle** (ADR 0117): the
-            // layer each is DRAWN as -- its paint and the rules included, as
-            // a raycast reports it -- so ice painted over rock is ice to
-            // stand on. Only for a chunk that has a triangle of a surface
-            // that is not the default: the rest are handed nothing, and
-            // collide exactly as they did.
-            std::vector<u8> drawn;
-            if (surfaces.key != 0 && meshed.surfaces.size() == meshed.indices.size()) {
-                const usize triangles = meshed.indices.size() / 3;
-                drawn.resize(triangles, 0);
-                bool any = false;
-                const physics::SurfaceMaterial standard;
-                for (usize triangle = 0; triangle < triangles; ++triangle) {
-                    const core::Vec3& a = meshed.points[meshed.indices[triangle * 3]];
-                    const core::Vec3& b = meshed.points[meshed.indices[triangle * 3 + 1]];
-                    const core::Vec3& c = meshed.points[meshed.indices[triangle * 3 + 2]];
-                    const core::Vec3 face = core::cross(b - a, c - a);
-                    const f32 area = std::sqrt(core::dot(face, face));
-                    const core::Vec3 normal = area > 1.0e-12f ? face * (1.0f / area) : core::Vec3{0.0f, 1.0f, 0.0f};
-                    const core::Vec3 middle = (a + b + c) * (1.0f / 3.0f);
-                    const u8 layer = asset::drawnMaterial(
-                        terrain.rules,
-                        asset::Voxel{255, meshed.surfaces[triangle * 3], meshed.surfaces[triangle * 3 + 1],
-                                     meshed.surfaces[triangle * 3 + 2]},
-                        normal, middle, middle.y + static_cast<f32>(terrain.origin.y));
-                    if (layer >= surfaces.table.size())
-                        continue;
-                    drawn[triangle] = layer;
-                    any = any || surfaces.table[layer].friction != standard.friction ||
-                          surfaces.table[layer].restitution != standard.restitution;
-                }
-                if (!any)
-                    drawn.clear();
-            }
+            const std::vector<u8>& drawn = drawnOf[index];
 
             physics::BodyHandle handle{};
             if (meshed.indices.size() >= 3) {
                 physics::BodyDesc desc;
-                desc.shape.type = physics::ShapeType::TriangleMesh;
-                desc.shape.points = meshed.points;
-                desc.shape.indices = meshed.indices;
-                desc.shape.triangleSurfaces = drawn;
+                desc.shape = shapeOf(meshed, drawn, next.content);
+                desc.prepared = shapes[index];
                 if (!drawn.empty())
                     desc.surfaces = surfaces.table;
-                // The band of its neighbours' triangles, which only lends its
-                // edges: the seam is inside the mesh (ADR 0143).
-                desc.shape.bandFirst = meshed.bandFirst;
-                desc.shape.pointsRevision = next.content;
-                desc.shape.geometryRevision = next.content;
                 desc.motion = physics::MotionType::Static;
                 // **Offset by the terrain's own origin**, which is what makes a
                 // terrain a thing you can move: the field is untouched.

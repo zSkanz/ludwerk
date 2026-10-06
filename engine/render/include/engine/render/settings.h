@@ -246,13 +246,23 @@ struct GraphicsSettings
         Flat,
     };
     TerrainSurface terrainSurface = TerrainSurface::Level;
-    [[nodiscard]] bool leanTerrain() const noexcept
+    // **The fast ground is a handheld's, at Low and at Medium** (ADR 0179, on
+    // the phone's numbers): there the lean ground was twenty milliseconds of
+    // a frame and this one a little over one. The level's, as `terrainLean`
+    // is, and over it.
+    bool terrainFast = false;
+    // The ground a frame is drawn with: what the project said, or the level's.
+    [[nodiscard]] TerrainSurface terrainSurfaceNow() const noexcept
     {
-        return terrainSurface == TerrainSurface::Level ? terrainLean : terrainSurface == TerrainSurface::Lean;
+        if (terrainSurface != TerrainSurface::Level)
+            return terrainSurface;
+        return terrainFast ? TerrainSurface::Fast : terrainLean ? TerrainSurface::Lean : TerrainSurface::Full;
     }
+    [[nodiscard]] bool leanTerrain() const noexcept { return terrainSurfaceNow() == TerrainSurface::Lean; }
     [[nodiscard]] bool compiledTerrain() const noexcept
     {
-        return terrainSurface == TerrainSurface::Fast || terrainSurface == TerrainSurface::Flat;
+        const TerrainSurface now = terrainSurfaceNow();
+        return now == TerrainSurface::Fast || now == TerrainSurface::Flat;
     }
 
     // **How many levels the bloom's chain has** (ADR 0172), 2 through 5: each

@@ -145,6 +145,13 @@ GraphicsSettings handheldSettings(GraphicsSettings settings) noexcept
     // fragment was two thirds of a phone's frame.
     if (settings.quality == QualityLevel::Medium)
         settings.terrainLean = true;
+    // **And at both, the fast ground over it** (ADR 0179). Measured on the
+    // phone this was written for: the lean ground held fifty-six frames a
+    // second at Low and forty-one at Medium, the fast one sixty at both and
+    // at Medium drawn at the display's own size. A project that wants the
+    // other says so (`[graphics.android] terrain_surface`).
+    if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium)
+        settings.terrainFast = true;
     if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium)
         settings.antiAliasing = AntiAliasingMode::Fxaa;
     else if (settings.antiAliasing == AntiAliasingMode::Taa)

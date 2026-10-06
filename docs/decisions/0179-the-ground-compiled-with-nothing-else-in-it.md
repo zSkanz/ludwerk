@@ -69,21 +69,51 @@ tile-based GPU.
    whether a driver takes a branch is the thing being asked.
 
 3. **`[graphics] terrain_surface = "fast"`** (and `"flat"`), and
-   `--terrain-surface=`, beside `"full"` and `"lean"`. No level chooses it yet:
-   it is chosen on the phone's numbers, and what they say goes here.
+   `--terrain-surface=`, beside `"full"` and `"lean"`. No level chose it when
+   this was written: see the amendment below.
 
 4. A debug view (`DebugView`) is the full ground's to draw whatever the
    surface: the variants have none.
 
+## Amended 2026-10-05: the phone's numbers, and the default
+
+Measured the same day on the phone this was written for (Adreno 830, the
+display at sixty, two scenes of a horde game; the tables are the
+coordinator's):
+
+| | lean | fast |
+|---|---|---|
+| Low, 720 lines | 55 to 57 (50 to 54 warm) | 59.6 to 59.9 |
+| Medium, 900 lines | 35 to 41 | 59.4 to 59.7 |
+| Medium, 1080 lines | -- | 58.5 to 60.0 |
+| High, 900 lines | 21 | 49 to 58 |
+| the heavy scene, Low | 47 to 57 | 59.4 to 60.0 |
+| the heavy scene, Medium, 900 | 32 to 37 | 59.2 to 59.7 |
+
+Sixty is the display's ceiling. Timed by pass and brought to one clock (the
+GPU runs slower under a light frame, by the same factor for every pass): the
+forward pass is about 3.1 ms with no ground, 3.4 with the flat one, 4.4 with
+the fast one and 23.5 with the lean one. No single piece of the lean ground
+taken out behind a branch was the cost; only a shader without the rest in it
+was. With the fast ground a frame waits 0.6 ms on the GPU where it waited
+5.5, and frames over 33 ms fell from 245 in 4189 to 37.
+
+So:
+
+5. **A handheld's Low and Medium draw the fast ground**
+   (`GraphicsSettings::terrainFast`, `handheldSettings`), where they drew the
+   lean one. A desk's levels are what they were, and a project's word
+   (`terrain_surface`) is over either.
+
+6. **Each forward pipeline of the ground is made when a frame first draws with
+   it.** The full ground's took 1.3 s to make on that phone, in every run,
+   whichever ground the game drew.
+
 ## What it does not do
 
-- It does not make the fast ground a level's default. That is decided by the
-  phone, with this and the lean ground on one install.
 - It does not give the same treatment to the lit fragment every mesh shares,
   which has the same branches. If the ground's numbers bear the reading out,
   that is next, and is the larger change.
-- The full ground's pipeline is still made, fast ground or not: a second of a
-  phone's loading that the fast ground does not need.
 - `terrain.hlsl` and the variants hold the terrain's vertex stage twice, line
   for line (`engine_terrain_vertex.hlsli`).
 

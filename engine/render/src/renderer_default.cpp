@@ -7278,9 +7278,10 @@ GraphicsSettings::TerrainSurface DefaultRenderer::terrainForwardWanted() const n
     // a variant that could not be made is drawn as the full ground.
     if (settings_.debugView != DebugView::None)
         return Surface::Full;
-    if (settings_.terrainSurface == Surface::Fast && !(terrainFastTried_ && !terrainFastPipeline_.valid()))
+    const Surface asked = settings_.terrainSurfaceNow();
+    if (asked == Surface::Fast && !(terrainFastTried_ && !terrainFastPipeline_.valid()))
         return Surface::Fast;
-    if (settings_.terrainSurface == Surface::Flat && !(terrainFlatTried_ && !terrainFlatPipeline_.valid()))
+    if (asked == Surface::Flat && !(terrainFlatTried_ && !terrainFlatPipeline_.valid()))
         return Surface::Flat;
     return Surface::Full;
 }

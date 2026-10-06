@@ -589,9 +589,20 @@ TEST_CASE("the lean ground is Low's, and a handheld's Medium's, unless the proje
     const auto hand = [](QualityLevel level) {
         return engine::render::handheldSettings(engine::render::settingsFor(level));
     };
-    CHECK(hand(QualityLevel::Low).leanTerrain());
-    CHECK(hand(QualityLevel::Medium).leanTerrain());
-    CHECK_FALSE(hand(QualityLevel::High).leanTerrain());
+    // A handheld's Low and Medium are the fast ground (ADR 0179), which is
+    // not the lean one; from High up it is the full ground, as on a desk.
+    using Surface = GraphicsSettings::TerrainSurface;
+    CHECK(hand(QualityLevel::Low).terrainSurfaceNow() == Surface::Fast);
+    CHECK(hand(QualityLevel::Medium).terrainSurfaceNow() == Surface::Fast);
+    CHECK(hand(QualityLevel::Low).compiledTerrain());
+    CHECK_FALSE(hand(QualityLevel::Low).leanTerrain());
+    CHECK(hand(QualityLevel::High).terrainSurfaceNow() == Surface::Full);
+    CHECK(engine::render::settingsFor(QualityLevel::Low).terrainSurfaceNow() == Surface::Lean);
+    // And the project's word is over the handheld's level too.
+    GraphicsSettings handLean = hand(QualityLevel::Low);
+    handLean.terrainSurface = Surface::Lean;
+    CHECK(handLean.leanTerrain());
+    CHECK_FALSE(handLean.compiledTerrain());
 
     // The project's word, over the level's.
     const ProjectDir full("[graphics]\nquality = \"low\"\nterrain_surface = \"full\"\n");

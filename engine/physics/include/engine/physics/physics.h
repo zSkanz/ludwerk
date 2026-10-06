@@ -62,6 +62,18 @@ public:
     // An invalid handle when the world is full or the shape is degenerate. The
     // caller raises the key; this module has no catalog.
     [[nodiscard]] virtual BodyHandle createBody(WorldHandle world, const BodyDesc& desc) = 0;
+    // **A shape, built apart from any body** (ADR 0181): the costly half of
+    // making a body of a triangle mesh -- its tree -- as a thing that can be
+    // done on any thread, several at once, while the world it is for is doing
+    // nothing with it. A function of the description and nothing else, so who
+    // built it and when is not observable (R10); `BodyDesc::prepared` then
+    // makes the body from it. Empty where the description is one the backend
+    // refuses, and from a backend that has no such step.
+    [[nodiscard]] virtual PreparedShape prepareShape(const ShapeDesc& desc) const
+    {
+        (void)desc;
+        return {};
+    }
     virtual void destroyBody(WorldHandle world, BodyHandle body) = 0;
     // How many collision shapes a world has built: what a test counts to know
     // that a hundred bodies of one mesh built its hull once (H8).

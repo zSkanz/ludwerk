@@ -1448,7 +1448,16 @@ public:
 
     [[nodiscard]] BodyHandle createBody(const BodyDesc& desc)
     {
-        const JPH::ShapeRefC shape = shapeFor(desc.shape);
+        // A shape built ahead (ADR 0181) is taken as it is, and counted as
+        // one built: it was, for this world.
+        JPH::ShapeRefC shape;
+        if (desc.prepared.valid()) {
+            shape = *static_cast<const JPH::ShapeRefC*>(desc.prepared.shape.get());
+            ++m_shapesBuilt;
+        }
+        else {
+            shape = shapeFor(desc.shape);
+        }
         if (shape == nullptr) {
             return {};
         }
@@ -4131,6 +4140,17 @@ public:
     {
         JoltWorld* world = resolve(handle);
         return world != nullptr ? world->createBody(desc) : BodyHandle{};
+    }
+
+    // No world in it: a shape is a function of its description, and Jolt
+    // builds one without touching any world's state -- which is what lets
+    // several be built at once on the pool.
+    [[nodiscard]] PreparedShape prepareShape(const ShapeDesc& desc) const override
+    {
+        JPH::ShapeRefC shape = buildShape(desc);
+        if (shape == nullptr)
+            return {};
+        return PreparedShape{std::make_shared<const JPH::ShapeRefC>(std::move(shape))};
     }
 
     void destroyBody(WorldHandle handle, BodyHandle body) override

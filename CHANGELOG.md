@@ -1090,8 +1090,19 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   holds nothing but what it does: at most four layers a pixel by their colour
   alone, the mesh's own normal, diffuse light through four shadow taps. The
   one shader for every ground keeps each kind behind a switch, and a phone's
-  driver can charge for all of them. No level chooses it yet. `"flat"` is one
-  colour, for measuring.
+  driver can charge for all of them. A phone's Low and Medium draw it: on the
+  phone it was measured on, sixty frames a second where the lean ground held
+  fifty-six and forty-one. `[graphics.android] terrain_surface` says
+  otherwise. `"flat"` is one colour, for measuring.
+- **Walking onto new ground no longer costs a frame** (ADR 0181). A terrain's
+  colliders were meshed on the worker threads and then had their collision
+  shapes built one after another on the main one: up to four a tick, and the
+  slowest frames of a phone's run (17 to 27 ms each). The shapes are built on
+  the workers too. The simulation is the same: the bodies are made in the
+  order they were.
+- **The full ground's shader is compiled only by a game that draws with it.**
+  It took 1.3 s to make on a phone, during the first frame after loading,
+  whichever ground the game used.
 - **A match is joined over the internet by a code, with no port opened and no
   VPN** (ADR 0178). `NetworkService:Host(port, { Relay = "host:port" })`
   registers the match with a relay -- `engine-relay`, a small program on one

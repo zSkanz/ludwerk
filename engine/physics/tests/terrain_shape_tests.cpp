@@ -7,10 +7,12 @@
 // triangles it was given, that both are forced static however they were asked
 // for, and that every description the backend cannot honour is refused rather
 // than approximated.
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <doctest/doctest.h>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "engine/core/i18n.h"
@@ -204,6 +206,68 @@ TEST_CASE("a triangle mesh collides as its triangles, and a hole in it is a hole
 
     CHECK(fixture.physics->bodyState(fixture.world, onSlab).transform.position.y == doctest::Approx(0.5).epsilon(0.1));
     CHECK(fixture.physics->bodyState(fixture.world, throughGap).transform.position.y < -5.0);
+}
+
+TEST_CASE("a shape built ahead, on other threads, is the body's shape: the same ground to land on (ADR 0181)")
+{
+    Fixture fixture;
+
+    // Two slabs with a gap, as above: what is landed on and what is fallen
+    // through says whether the shape that was prepared is the one described.
+    const std::vector<core::Vec3> points{
+        {-12.0f, 0.0f, -6.0f}, {-4.0f, 0.0f, -6.0f}, {-4.0f, 0.0f, 6.0f}, {-12.0f, 0.0f, 6.0f},
+        {4.0f, 0.0f, -6.0f},   {12.0f, 0.0f, -6.0f}, {12.0f, 0.0f, 6.0f}, {4.0f, 0.0f, 6.0f},
+    };
+    const std::vector<u32> indices{0, 2, 1, 0, 3, 2, 4, 6, 5, 4, 7, 6};
+    ShapeDesc shape;
+    shape.type = ShapeType::TriangleMesh;
+    shape.points = points;
+    shape.indices = indices;
+
+    // Four at once, off this thread: what a tick's colliders are.
+    std::array<PreparedShape, 4> prepared;
+    {
+        std::array<std::thread, 4> builders;
+        for (std::size_t at = 0; at < builders.size(); ++at)
+            builders[at] = std::thread([&, at] { prepared[at] = fixture.physics->prepareShape(shape); });
+        for (std::thread& builder : builders)
+            builder.join();
+    }
+    for (const PreparedShape& each : prepared)
+        REQUIRE(each.valid());
+
+    const core::u64 builtBefore = fixture.physics->shapesBuilt(fixture.world);
+    BodyDesc mesh;
+    mesh.shape = shape;
+    mesh.prepared = prepared[2];
+    mesh.motion = MotionType::Static;
+    mesh.userData = 1;
+    REQUIRE(fixture.physics->createBody(fixture.world, mesh).valid());
+    // Counted as a shape this world was given, once.
+    CHECK(fixture.physics->shapesBuilt(fixture.world) == builtBefore + 1);
+
+    const BodyHandle onSlab = fixture.physics->createBody(fixture.world, cubeAbove({-8.0, 6.0, 0.0}));
+    const BodyHandle throughGap = fixture.physics->createBody(fixture.world, cubeAbove({0.0, 6.0, 0.0}));
+    fixture.run(180);
+    CHECK(fixture.physics->bodyState(fixture.world, onSlab).transform.position.y == doctest::Approx(0.5).epsilon(0.1));
+    CHECK(fixture.physics->bodyState(fixture.world, throughGap).transform.position.y < -5.0);
+
+    // The one prepared shape under a second body, somewhere else: shared, as
+    // a shape is.
+    BodyDesc again = mesh;
+    again.transform.position = core::DVec3{100.0, 0.0, 0.0};
+    REQUIRE(fixture.physics->createBody(fixture.world, again).valid());
+    const BodyHandle onSecond = fixture.physics->createBody(fixture.world, cubeAbove({92.0, 6.0, 0.0}));
+    fixture.run(180);
+    CHECK(fixture.physics->bodyState(fixture.world, onSecond).transform.position.y ==
+          doctest::Approx(0.5).epsilon(0.1));
+
+    // A description the backend refuses prepares nothing, and a body handed
+    // nothing prepared is made from its description as it always was.
+    ShapeDesc broken = shape;
+    const std::vector<u32> partial{0, 2};
+    broken.indices = partial;
+    CHECK_FALSE(fixture.physics->prepareShape(broken).valid());
 }
 
 TEST_CASE("an in-place height edit moves the ground without rebuilding the body")

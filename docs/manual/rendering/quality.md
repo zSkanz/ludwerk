@@ -140,8 +140,8 @@ of a triangle's corners, the heaviest painted over them, the rule that covers
 most -- by their colour alone, on the mesh's own normal, lit by the sun
 through four shadow taps, the sky and the lights near it with no gloss. It is
 for a phone, where a shader that holds every kind of ground behind switches
-can cost as if it drew them all. No level chooses it yet: name it under
-`[graphics.android]` and measure. `"flat"` is one colour with no light at
+can cost as if it drew them all. A phone's Low and Medium choose it; a project
+that wants another says so under `[graphics.android]`. `"flat"` is one colour with no light at
 all, and is not a look: with it the forward pass's time is what drawing the
 ground costs whatever is on it.
 
@@ -150,8 +150,10 @@ resolution the world is drawn at, and uses FXAA below High and never TAA.
 Bloom reaches less far there -- three levels of it where a desktop has five,
 five passes where there were nine -- and contact shadows start at High
 (ADR 0172); `contact_shadows = true` under `[graphics.android]` says
-otherwise. The ground is lean at Medium as well as at Low (ADR 0175);
-`terrain_surface = "full"` under `[graphics.android]` says otherwise.
+otherwise. The ground is the fast one at Low and at Medium (ADR 0179: on the
+phone it was measured on, sixty frames a second where the lean ground held
+fifty-six and forty-one); `terrain_surface = "lean"` or `"full"` under
+`[graphics.android]` says otherwise.
 
 ## Anti-aliasing and upscaling
 
