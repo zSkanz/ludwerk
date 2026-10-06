@@ -34,6 +34,10 @@ struct DeviceDesc
     // The blob format the shader pack will supply. A backend that cannot
     // consume it fails to create rather than failing at the first draw.
     ShaderFormat shaderFormat = ShaderFormat::Unknown;
+    // **Ask the GPU for nothing it may lack** (D567): the device a phone
+    // without depth clamping is given, asked for outright -- what a test and
+    // `--gpu-least` use to draw as such a phone does.
+    bool leastFeatures = false;
 };
 
 // Queried, never assumed. Interfaces here are coarse by design (architecture.md
@@ -50,6 +54,10 @@ struct Capabilities
     // Whether the GPU samples ASTC's four-by-four blocks (ADR 0180): a
     // phone's does, a desktop's mostly does not.
     bool astcTextures = false;
+    // Whether depth can be clamped where a pipeline does not clip it. A GPU
+    // without it clips: what stands nearer a light than its map begins is
+    // cut, where it was flattened onto the map's near plane (D567).
+    bool depthClamp = true;
 };
 
 struct Swapchain

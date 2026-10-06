@@ -1110,6 +1110,19 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   over 33 ms.
 - **`--frame-stats` counts the frame cap's wait as waiting** (D561), under
   the scope `wait.cap`. It was reported as drawing on the CPU.
+- **A phone whose GPU lacks a feature the engine never used is no longer
+  refused** (D567). The graphics device was asked for clip distances,
+  anisotropic filtering and a first instance in indirect draws, none of which
+  anything here uses, and a GPU without one -- a large family of phones' --
+  closed the game as it opened. They are not asked for; depth clamping is done
+  without where a GPU has none.
+- **A game that cannot start says why** (D568): a dialog with the error and
+  where the log is, on a phone and for a game opened by a double click. And on
+  Android the log is where a tester can reach it (D569):
+  `Android/data/<id>/files/engine.log`, with the run before's beside it.
+- `--gpu-least` draws on a desk as a GPU with no depth clamping does;
+  `[debug] astc = false` (or `--no-astc`) sends textures as RGBA to a GPU that
+  samples ASTC, to tell a fault of that path from another.
 - **Many of one mesh are drawn only where each is needed** (ADR 0182). A
   forest, a horde -- anything the renderer draws as one instanced run -- was
   drawn whole into every pass that wanted any of it: into each shadow cascade,

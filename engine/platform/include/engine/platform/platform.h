@@ -168,6 +168,12 @@ struct Paths
     // memory for one session, and every one of them is a convenience. Nothing
     // the engine needs to RUN lives here.
     std::filesystem::path userDir;
+    // **Where a person can reach what a run leaves behind** (D569): on a
+    // phone, the app's own external files folder -- `Android/data/<id>/files`
+    // -- which a file manager and a cable both open and no permission is
+    // asked for; the log and a crash report go there. Empty everywhere else,
+    // where the folder a game runs from is already a person's.
+    std::filesystem::path reportDir;
     // Where this user keeps documents, which is where the launcher offers to
     // put a new project. Distinct from `userDir` and not derivable from it: one
     // is where an application hides its own state and the other is where a

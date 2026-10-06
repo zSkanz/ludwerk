@@ -1348,13 +1348,14 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     const bool gpuDebug = gpuValidationWanted(ENG_PROFILE_NAME, options.gpuDebug);
     if (gpuDebug)
         core::log(LogLevel::Info, ENG_TR("engine.info.gpu_debug"));
-    const rhi::DeviceResult device = createDevice({.backend = options.backend, .debug = gpuDebug}, &error);
+    const rhi::DeviceResult device =
+        createDevice({.backend = options.backend, .debug = gpuDebug, .leastFeatures = options.gpuLeast}, &error);
     if (device == nullptr)
         return error;
     // **What the GPU samples, said before the first texture is read** (ADR
     // 0180): a phone's takes ASTC where a desktop's takes BC7, and a texture
     // sent to one as neither is four times the memory.
-    asset::setDeviceSamplesAstc(device->caps().astcTextures);
+    asset::setDeviceSamplesAstc(options.astcTextures && device->caps().astcTextures);
     // **What draws, said once** -- a card, or a software rasteriser standing in
     // for one: what tells a slow frame from a frame the CPU drew, in a report
     // and in a test that holds a time. A device with no name says nothing.

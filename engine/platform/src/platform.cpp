@@ -153,6 +153,11 @@ void resolvePaths()
     // A player APK's content, extracted to the app's own storage: from there on
     // everything is an ordinary file, and the host runs as it does on a desktop
     // -- `executableDir/game` is the packaged game.
+    if (const char* external = SDL_GetAndroidExternalStoragePath(); external != nullptr && external[0] != 0) {
+        paths.reportDir = std::filesystem::path(external);
+        std::error_code error;
+        std::filesystem::create_directories(paths.reportDir, error);
+    }
     if (const char* internal = SDL_GetAndroidInternalStoragePath(); internal != nullptr) {
         const std::filesystem::path home = std::filesystem::path(internal) / "payload";
         if (extractAndroidPayload(home)) {

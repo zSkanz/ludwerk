@@ -312,6 +312,13 @@ struct EngineOptions
     // **`--gpu-debug`: the GPU debug layer, asked for by name** (D183). Off
     // means whatever the profile decides -- see `gpuValidationWanted`.
     bool gpuDebug = false;
+    // **`--gpu-least`: the device a GPU with the fewest features is given**
+    // (D567) -- no depth clamping -- on a GPU that has more: how a desk draws
+    // as such a phone does.
+    bool gpuLeast = false;
+    // **`[debug] astc = false`, `--no-astc`**: textures as RGBA on a GPU that
+    // samples ASTC (ADR 0180) -- to tell a fault of that path from another.
+    bool astcTextures = true;
 
     // **The posture, from the command line and from nowhere else** (ADR 0070):
     // `--host`, `--serve` or `--join`. Solo when none was given, which builds no

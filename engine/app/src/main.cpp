@@ -9,6 +9,7 @@
 #include <charconv>
 #include <cstdio>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -77,9 +78,43 @@ constexpr int kExitDeviceLost = 5;
 // "adding a locale is adding a file" to "adding a locale nobody on Windows can
 // read". `platform::writeConsole` is the fix, and routing the log through it is
 // how every engine message gets it.
+// **What a start that failed says to somebody with no console** (D568): the
+// last errors the log was given, where the log is, and whether a window was
+// meant. Kept by the sink below, which is given every line.
+struct StartReport
+{
+    std::mutex guard;
+    std::vector<std::string> errors;
+    std::string logPath;
+    // A phone's app is a window from its first instruction; a desk's is one
+    // once its options say it is not headless.
+#if defined(__ANDROID__)
+    bool windowed = true;
+#else
+    bool windowed = false;
+#endif
+    // A dialog of its own was shown already.
+    bool told = false;
+};
+
+StartReport& startReport()
+{
+    static StartReport report;
+    return report;
+}
+
 void installConsoleLogSink()
 {
     engine::core::setLogSink([](LogLevel level, std::string_view text) {
+        if (level == LogLevel::Error) {
+            StartReport& report = startReport();
+            const std::lock_guard lock(report.guard);
+            // The last few: a failure's own line and the ones that led to it.
+            constexpr std::size_t Kept = 6;
+            if (report.errors.size() == Kept)
+                report.errors.erase(report.errors.begin());
+            report.errors.emplace_back(text);
+        }
         // Warnings and errors go to stderr so a headless CI run can
         // separate them from ordinary output without parsing.
         const auto stream = (level == LogLevel::Warn || level == LogLevel::Error)
@@ -94,8 +129,46 @@ void installConsoleLogSink()
 // deliberately to stderr and to this single call site (ADR 0019).
 void reportCatalogFailure(const std::string& diagnostic)
 {
-    engine::platform::writeConsole(engine::platform::ConsoleStream::Err,
-                                   "engine-host: cannot load the message catalog: " + diagnostic + "\n");
+    const std::string line = "engine-host: cannot load the message catalog: " + diagnostic;
+    engine::platform::writeConsole(engine::platform::ConsoleStream::Err, line + "\n");
+    StartReport& report = startReport();
+    const std::lock_guard lock(report.guard);
+    report.errors.push_back(line);
+}
+
+// **A start that failed says so** (D568). A game that could not make its
+// graphics device, read its project, find its content, closed -- and on a
+// phone, or opened by a double click, closed with nothing on the screen: the
+// reason was in a log nobody had. A system dialog then, with the errors and
+// where the log is. Not where somebody is reading the output, not for a run
+// with no window, and not for a lost device, which has a dialog of its own.
+void sayStartFailure(int code)
+{
+    StartReport& report = startReport();
+    std::string body;
+    {
+        const std::lock_guard lock(report.guard);
+        if (code == kExitOk || code == kExitDeviceLost || report.told || !report.windowed || report.errors.empty())
+            return;
+        for (const std::string& line : report.errors) {
+            if (!body.empty())
+                body += "\n\n";
+            body += line;
+        }
+        if (!report.logPath.empty() && code != kExitNoCatalog) {
+            const std::array<I18nArg, 1> args{I18nArg{"path", report.logPath}};
+            body += "\n\n" + engine::core::engineCatalog().format(ENG_TR("engine.start.err.log"), args);
+        }
+    }
+    if (!engine::platform::outputGoesUnread())
+        return;
+    const engine::core::Catalog& text = engine::core::engineCatalog();
+    // With no catalogue there are no words for a title or a button: the
+    // message is the one sentence this file may write by itself.
+    const bool worded = code != kExitNoCatalog;
+    (void)engine::platform::askChoice(nullptr, worded ? text.format(ENG_TR("engine.start.err.title")) : std::string(),
+                                      body,
+                                      {worded ? text.format(ENG_TR("engine.start.err.close")) : std::string("OK")});
 }
 
 void printVersion()
@@ -359,6 +432,14 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
         }
         if (arg == "--gpu-debug") {
             options.gpuDebug = true;
+            continue;
+        }
+        if (arg == "--gpu-least") {
+            options.gpuLeast = true;
+            continue;
+        }
+        if (arg == "--no-astc") {
+            options.astcTextures = false;
             continue;
         }
 
@@ -958,7 +1039,7 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
 
 } // namespace
 
-int main(int argc, char** argv)
+static int hostMain(int argc, char** argv)
 {
 #if defined(_WIN32) && defined(ENG_GUI_SUBSYSTEM)
     // A Windows-subsystem program has no console of its own. Started from a
@@ -1090,7 +1171,14 @@ int main(int argc, char** argv)
         options.scriptPath = packagedProject;
     engine::app::GraphicsOverrides graphicsOverrides;
     bool sizeFromFlags = false;
-    if (const int usageExit = parseOptions(args, options, graphicsOverrides, sizeFromFlags); usageExit != kExitOk)
+    const int usageExit = parseOptions(args, options, graphicsOverrides, sizeFromFlags);
+    {
+        // From here a failure is a window's or it is not (D568).
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        report.windowed = !options.headless;
+    }
+    if (usageExit != kExitOk)
         return usageExit;
     if (noProjectGiven)
         options.launcher = true;
@@ -1122,6 +1210,7 @@ int main(int argc, char** argv)
         options.graphics = engine::render::clampSettings(options.graphics);
         options.gpuPassTimes = options.gpuPassTimes || config.gpuPassTimes;
         options.logUiTouches = options.logUiTouches || config.logUiTouches;
+        options.astcTextures = options.astcTextures && config.astcTextures;
         if (!config.debugHide.empty())
             options.debugHide += (options.debugHide.empty() ? "" : ",") + config.debugHide;
         if (!config.debugSkip.empty())
@@ -1243,11 +1332,14 @@ int main(int argc, char** argv)
     // not open a log is an engine that a read-only directory takes away
     // entirely, which is a worse trade than losing the log.
 #if defined(__ANDROID__)
-    // An app's working directory is `/`, which it may not write; its own
-    // storage is where the log and a crash report can go (and `adb pull` finds
-    // them).
-    std::filesystem::path artifactDir =
-        engine::platform::paths().userDir.empty() ? std::filesystem::current_path() : engine::platform::paths().userDir;
+    // An app's working directory is `/`, which it may not write. **Its
+    // external files folder first** (D569) -- `Android/data/<id>/files`,
+    // which a tester opens with a file manager or a cable and sends from --
+    // and its internal storage, which only `adb` reads, where there is none.
+    const engine::platform::Paths& places = engine::platform::paths();
+    std::filesystem::path artifactDir = !places.reportDir.empty() ? places.reportDir
+                                        : !places.userDir.empty() ? places.userDir
+                                                                  : std::filesystem::current_path();
 #else
     std::filesystem::path artifactDir = std::filesystem::current_path();
 #endif
@@ -1297,6 +1389,9 @@ int main(int argc, char** argv)
     if (logOpened) {
         const std::array<I18nArg, 1> logArgs{I18nArg{"path", logPath.string()}};
         engine::core::log(LogLevel::Info, ENG_TR("engine.boot.info.log_file"), logArgs);
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        report.logPath = logPath.string();
     }
     else {
         const std::array<I18nArg, 1> logArgs{I18nArg{"path", logPath.string()}};
@@ -1412,6 +1507,9 @@ int main(int argc, char** argv)
             const engine::core::Catalog& text = engine::core::engineCatalog();
             (void)engine::platform::askChoice(nullptr, text.format(ENG_TR("engine.server.err.title")), error->message,
                                               {text.format(ENG_TR("engine.server.ok"))});
+            StartReport& report = startReport();
+            const std::lock_guard lock(report.guard);
+            report.told = true;
         }
         if (error->key.hash == ENG_TR("engine.err.device_lost").hash)
             return kExitDeviceLost;
@@ -1426,4 +1524,11 @@ int main(int argc, char** argv)
     }
 
     return kExitOk;
+}
+
+int main(int argc, char** argv)
+{
+    const int code = hostMain(argc, argv);
+    sayStartFailure(code);
+    return code;
 }

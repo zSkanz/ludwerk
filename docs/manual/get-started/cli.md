@@ -286,6 +286,11 @@ Five refusals worth knowing, all of them exit 2:
 - `--capture-out` needs the capture backend.
 - The editor needs a window.
 
+`--gpu-least` makes the graphics device a GPU with the fewest features is
+given -- no depth clamping -- on whatever GPU the machine has: how a desk
+draws as such a phone does. `--no-astc` sends textures as RGBA to a GPU that
+samples ASTC.
+
 `--window=x,y,w,h` places the window, `--label=Name` adds a name to its title,
 and `--log-file=path` writes the log somewhere other than `engine.log`. The
 editor's Play with players uses all three for each window of a match.

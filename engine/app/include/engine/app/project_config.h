@@ -185,6 +185,8 @@ struct ProjectConfig
     // by anything on the phone, and a game that ships is not one a stranger's
     // intent may hand `--hide=` to.
     bool launchArguments = false;
+    // `[debug] astc = false`: see `EngineOptions::astcTextures`.
+    bool astcTextures = true;
     // `[debug] overlay_key`: the key that opens the host's overlay in a run of
     // the project being made, by `Enum.KeyCode`'s name for it -- "F3" unless
     // the project says, "None" for no key at all. The host takes that key: the

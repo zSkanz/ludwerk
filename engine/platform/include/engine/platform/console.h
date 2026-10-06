@@ -32,4 +32,12 @@ void writeConsole(ConsoleStream stream, std::string_view utf8);
 // nobody reads. False from a terminal, and everywhere else.
 [[nodiscard]] bool consoleClosesWithProcess() noexcept;
 
+// **Whether what this process prints is read by nobody** (D568): a phone's
+// app, which has no console; a game started by a double click, with no
+// console or one that closes with it; a desktop entry, whose output goes to
+// nowhere. False from a terminal and wherever the output is a pipe or a file
+// -- a test, a script, CI -- where somebody is reading and a dialog would
+// only be in the way.
+[[nodiscard]] bool outputGoesUnread() noexcept;
+
 } // namespace engine::platform

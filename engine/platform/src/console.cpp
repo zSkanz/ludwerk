@@ -6,6 +6,11 @@
 #include <android/log.h>
 #endif
 
+#if !defined(_WIN32) && !defined(__ANDROID__)
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -53,6 +58,35 @@ bool consoleClosesWithProcess() noexcept
     return GetConsoleProcessList(processes, 2) == 1;
 #else
     return false;
+#endif
+}
+
+bool outputGoesUnread() noexcept
+{
+#if defined(__ANDROID__)
+    return true;
+#elif defined(_WIN32)
+    DWORD processes[2] = {};
+    const DWORD attached = GetConsoleProcessList(processes, 2);
+    if (attached >= 2)
+        return false;
+    if (attached == 1)
+        return true;
+    // No console at all: read by somebody only where it was sent somewhere.
+    const HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (out == nullptr || out == INVALID_HANDLE_VALUE)
+        return true;
+    const DWORD kind = GetFileType(out);
+    return kind != FILE_TYPE_PIPE && kind != FILE_TYPE_DISK;
+#else
+    if (isatty(STDOUT_FILENO) != 0 || isatty(STDERR_FILENO) != 0)
+        return false;
+    struct stat info
+    {
+    };
+    if (fstat(STDOUT_FILENO, &info) != 0)
+        return true;
+    return !S_ISFIFO(info.st_mode) && !S_ISREG(info.st_mode);
 #endif
 }
 

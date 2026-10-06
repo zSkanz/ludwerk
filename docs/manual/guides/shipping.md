@@ -156,6 +156,13 @@ turn the moment the game starts.
 `version_code` by one in `project.toml` before it exports, leaving the rest of
 the file as it was.
 
+**When a phone will not open the game**, it says why: a dialog with the error
+and where the log is. The log of a run, and of the run before it, is in the
+game's own folder on the phone -- `Android/data/<package>/files/engine.log`
+and `engine.previous.log` -- which a file manager or a cable opens with no
+permission asked; a crash report lands beside them. Ask a tester for those
+files whether the game opened or not.
+
 ## Signing an Android game
 
 **Debug**, the default, needs no setup: the first export makes a key for this

@@ -649,6 +649,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.logUiTouches = *value;
     if (const std::optional<bool> value = document.boolean("debug.launch_arguments"))
         config.launchArguments = *value;
+    if (const std::optional<bool> value = document.boolean("debug.astc"))
+        config.astcTextures = *value;
     if (const std::optional<std::string_view> value = document.string("debug.overlay_key"))
         config.overlayKey = std::string(*value);
     if (const std::optional<f64> value = document.number("scene.close_grace_seconds");

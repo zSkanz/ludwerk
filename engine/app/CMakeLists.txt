@@ -551,6 +551,19 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "Could not create a graphics device"
         TIMEOUT 120)
 
+    # **D567: a GPU with no depth clamping is still a GPU.** The device such a
+    # phone is given, asked for by name on whatever this machine has
+    # (`--gpu-least`): every pipeline clips where it clamped, and with the
+    # debug layer on a pipeline that asked for a feature the device was made
+    # without is a failure rather than a driver's guess.
+    add_test(NAME host_least_gpu_features
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/descriptorheap/transparent_crowd.luau"
+                --headless --frames=8 --exit --rhi=sdlgpu --gpu-debug --gpu-least)
+    set_tests_properties(host_least_gpu_features PROPERTIES
+        PASS_REGULAR_EXPRESSION "does not clamp depth.*Ran 8 frames"
+        SKIP_REGULAR_EXPRESSION "Could not create a graphics device"
+        TIMEOUT 120)
+
     # **The render half of the frame runs headless** (G11, K3): a Render-rate
     # context reads an injected stick and a bound render step runs.
     add_test(NAME host_headless_render_rate

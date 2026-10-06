@@ -286,8 +286,8 @@ private:
 class SdlGpuDevice final : public IDevice
 {
 public:
-    SdlGpuDevice(SDL_GPUDevice* device, ShaderFormat shaderFormat) noexcept
-        : device_(device), shaderFormat_(shaderFormat), cmdList_(*this)
+    SdlGpuDevice(SDL_GPUDevice* device, ShaderFormat shaderFormat, bool depthClamp) noexcept
+        : device_(device), shaderFormat_(shaderFormat), depthClamp_(depthClamp), cmdList_(*this)
     {}
 
     ~SdlGpuDevice() override
@@ -346,6 +346,7 @@ public:
                                                          SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER) &&
                             SDL_GPUTextureSupportsFormat(device_, SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM_SRGB,
                                                          SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
+        caps.depthClamp = depthClamp_;
         return caps;
     }
 
@@ -866,6 +867,8 @@ private:
 
     SDL_GPUDevice* device_ = nullptr;
     ShaderFormat shaderFormat_ = ShaderFormat::Unknown;
+    // Whether the device was created with depth clamping (D567).
+    bool depthClamp_ = true;
     SdlGpuCmdList cmdList_;
     bool lost_ = false;
     // ADR 0171: asked for, and the last timed frame's answer. The names are
@@ -968,7 +971,9 @@ PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& 
     info.rasterizer_state.fill_mode = toSdl(desc.rasterizer.fillMode);
     info.rasterizer_state.cull_mode = toSdl(desc.rasterizer.cullMode);
     info.rasterizer_state.front_face = toSdl(desc.rasterizer.frontFace);
-    info.rasterizer_state.enable_depth_clip = desc.rasterizer.depthClip;
+    // A device created without depth clamping clips: asking it to clamp is
+    // asking for a feature that was never turned on (D567).
+    info.rasterizer_state.enable_depth_clip = desc.rasterizer.depthClip || !depthClamp_;
     info.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
     info.depth_stencil_state.compare_op = toSdl(desc.depthStencil.depthCompare);
     info.depth_stencil_state.enable_depth_test = desc.depthStencil.depthTest;
@@ -2100,14 +2105,57 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
             ? (SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL)
             : toSdl(desc.shaderFormat);
 
-    SDL_GPUDevice* device = SDL_CreateGPUDevice(requested, desc.debug, nullptr);
+    // **Asked for what the engine uses, and no more** (D567). SDL's Vulkan
+    // backend, told nothing, wants four features of a GPU and takes none that
+    // lacks one: clip distances, which no shader here writes; anisotropic
+    // filtering, which no sampler here asks for; a first instance in an
+    // indirect draw, which is always nought here; and depth clamping, which
+    // the pipelines do use. A phone whose GPU has no clip distances -- most of
+    // one maker's -- was refused for a feature nothing in the engine touches,
+    // and the game closed as it opened. So the three are never asked for, and
+    // depth clamping is asked for first and done without where no device has
+    // it. A backend that is not Vulkan reads none of these.
+    const auto create = [&](bool depthClamp) {
+        const SDL_PropertiesID props = SDL_CreateProperties();
+        if ((requested & SDL_GPU_SHADERFORMAT_SPIRV) != 0)
+            SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
+        if ((requested & SDL_GPU_SHADERFORMAT_DXIL) != 0)
+            SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXIL_BOOLEAN, true);
+        if ((requested & SDL_GPU_SHADERFORMAT_MSL) != 0)
+            SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN, true);
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, desc.debug);
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_CLIP_DISTANCE_BOOLEAN, false);
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_ANISOTROPY_BOOLEAN, false);
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_INDIRECT_DRAW_FIRST_INSTANCE_BOOLEAN, false);
+        SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_DEPTH_CLAMPING_BOOLEAN, depthClamp);
+        SDL_GPUDevice* made = SDL_CreateGPUDeviceWithProperties(props);
+        SDL_DestroyProperties(props);
+        return made;
+    };
+
+    bool depthClamp = !desc.leastFeatures;
+    SDL_GPUDevice* device = create(depthClamp);
+    std::string first;
+    if (device == nullptr && depthClamp) {
+        // What the first try said is kept: if the second fails too, both are
+        // what a report needs.
+        first = SDL_GetError();
+        depthClamp = false;
+        device = create(false);
+    }
     if (device == nullptr) {
-        if (outError != nullptr)
-            *outError = core::makeError(ENG_TR("rhi.err.device_create_failed"), {}, SDL_GetError());
+        if (outError != nullptr) {
+            std::string detail = SDL_GetError();
+            if (!first.empty() && first != detail)
+                detail = first + " / " + detail;
+            *outError = core::makeError(ENG_TR("rhi.err.device_create_failed"), {}, detail);
+        }
         return nullptr;
     }
+    if (!depthClamp)
+        core::log(core::LogLevel::Info, ENG_TR("rhi.info.no_depth_clamp"));
 
-    return std::make_unique<SdlGpuDevice>(device, fromSdlShaderFormats(SDL_GetGPUShaderFormats(device)));
+    return std::make_unique<SdlGpuDevice>(device, fromSdlShaderFormats(SDL_GetGPUShaderFormats(device)), depthClamp);
 }
 
 } // namespace engine::rhi
