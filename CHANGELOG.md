@@ -1447,6 +1447,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A host no longer drops frames when somebody joins** (D579). On a match
+  whose ground was made or changed by a script, the frame a friend joined in
+  cost the host twenty milliseconds and more -- the whole ground compressed
+  for the newcomer inside one frame. It is compressed off the frame now, and
+  the newcomer begins a tick or two later.
 - **A picture drawn small in the interface is no longer ragged** (D578). An
   `ImageLabel` or `ImageButton` showing a picture well under its own size --
   a 256-pixel icon in a 17-pixel slot -- sampled four texels of the hundreds

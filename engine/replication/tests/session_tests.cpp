@@ -23,6 +23,7 @@
 #include "engine/asset/terrain_rules.h"
 #include "engine/asset/voxel.h"
 #include "engine/core/i18n.h"
+#include "engine/jobs/jobs.h"
 #include "engine/net/memory_transport.h"
 #include "engine/replication/extract.h"
 #include "engine/replication/field.h"
@@ -4725,6 +4726,106 @@ namespace {
 }
 
 } // namespace
+
+namespace {
+
+// A second machine that joins a match already running.
+struct LateJoiner
+{
+    std::unique_ptr<net::ITransport> transport;
+    RealSide side;
+    net::PeerId toServer;
+    std::optional<ReplicaSession> replica;
+
+    explicit LateJoiner(PlayedMatch& match) : transport(net::createMemoryTransport(match.network))
+    {
+        REQUIRE_FALSE(transport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
+        REQUIRE_FALSE(transport->connect("memory", Port, toServer).has_value());
+        (void)scene::createPlayer(side.world, side.network, 0, true);
+        replica.emplace(*transport, toServer);
+    }
+
+    // One tick of the match, this machine's with it.
+    void step(PlayedMatch& match)
+    {
+        match.step();
+        replica->receive(side.world, side.workspace);
+        replica->sendIntent(side.world, match.tick);
+        replica->sendMessages(side.world);
+    }
+};
+
+} // namespace
+
+TEST_CASE("D579: the ground a joining peer is sent is not encoded on the host's frame")
+{
+    // Every chunk of the ground compressed inside the one send that told the
+    // peer of it: twenty-two milliseconds of a host's frame for a land four
+    // hundred metres square, each time somebody joined -- two frames dropped
+    // for everybody already playing.
+    const bool ownPool = !jobs::initialized();
+    if (ownPool)
+        jobs::init(2);
+    {
+        PlayedMatch match;
+        const core::InstanceId ground = makeTerrain(match.server);
+        scene::TerrainComponent* terrain = match.server.world.terrains().find(ground);
+        terrain->field.setHeightRange(-32.0f, 32.0f);
+        (void)asset::fillFlat(terrain->field, core::DVec3{0.0, 0.0, 0.0}, 96.0f, 2.0f, 1);
+        (void)asset::fillBall(terrain->field, core::DVec3{10.0, 2.0, -6.0}, 7.0, 1);
+        terrain->fieldRevision += 1;
+        const core::InstanceId part = match.part("Stone", core::DVec3{4.0, 3.0, 0.0});
+        match.run(6);
+        const core::u64 onFrameBefore = match.authority->stats().groundsEncodedOnFrame;
+
+        LateJoiner late(match);
+        for (int tick = 0; tick < 400 && !late.replica->localOf(match.authority->netIdOf(part)).valid(); ++tick) {
+            late.step(match);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        for (int tick = 0; tick < 4; ++tick)
+            late.step(match);
+
+        // It has the world, and the ground to the voxel.
+        REQUIRE(late.replica->localOf(match.authority->netIdOf(part)).valid());
+        const core::InstanceId copy = terrainIn(late.side.world, late.side.workspace);
+        REQUIRE(copy.valid());
+        terrain = match.server.world.terrains().find(ground);
+        CHECK(late.side.world.terrains().find(copy)->field.digest() == terrain->field.digest());
+        CHECK(late.replica->checksumFailures() == 0);
+        // And no send of the host's encoded it.
+        CHECK(match.authority->stats().groundsEncodedOnFrame == onFrameBefore);
+        CHECK(match.authority->stats().groundsEncodedInJobs >= 1);
+
+        // **A ground edited while it is being encoded is sent as it is**: the
+        // one being made is of a ground that is gone, and the peer is given
+        // the present one -- on the frame, once, as before.
+        terrain = match.server.world.terrains().find(ground);
+        (void)asset::fillBall(terrain->field, core::DVec3{-20.0, 2.0, 20.0}, 6.0, 0);
+        terrain->fieldRevision += 1;
+        match.step();
+        LateJoiner third(match);
+        // The tick that starts its ground's encoding, then an edit before the
+        // next: what was being encoded is of a ground that is gone.
+        third.step(match);
+        terrain = match.server.world.terrains().find(ground);
+        (void)asset::fillBall(terrain->field, core::DVec3{24.0, 2.0, 24.0}, 5.0, 0);
+        terrain->fieldRevision += 1;
+        for (int tick = 0; tick < 400 && !third.replica->localOf(match.authority->netIdOf(part)).valid(); ++tick) {
+            third.step(match);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        for (int tick = 0; tick < 4; ++tick)
+            third.step(match);
+        const core::InstanceId thirdCopy = terrainIn(third.side.world, third.side.workspace);
+        REQUIRE(thirdCopy.valid());
+        terrain = match.server.world.terrains().find(ground);
+        CHECK(third.side.world.terrains().find(thirdCopy)->field.digest() == terrain->field.digest());
+        CHECK(third.replica->checksumFailures() == 0);
+    }
+    if (ownPool)
+        jobs::shutdown();
+}
 
 TEST_CASE("ground a server makes in a script reaches a replica whole, and each edit after it by chunks (ADR 0135)")
 {

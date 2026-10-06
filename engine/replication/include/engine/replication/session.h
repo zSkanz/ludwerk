@@ -541,6 +541,10 @@ private:
         // again, since the peer then loads that scene's ground.
         bool groundSent = false;
         std::string groundScene;
+        // Whether it has been sent anything yet. Until it has, it can be made
+        // to wait a tick or two with nothing lost -- which is what lets the
+        // ground it is first sent be encoded off the frame (D579).
+        bool begun = false;
         // The parts it owns as it was last told (ADR 0099), and the newest
         // tick of theirs it has taken a state from.
         std::vector<u32> owned;
@@ -673,8 +677,15 @@ private:
     // Everything of the ground that differs from the scene, to a peer that
     // has not been sent it.
     void sendGroundWhole(Peer& peer, const scene::World& world);
-    template <typename Send>
-    void encodeGroundWhole(const scene::World& world, Send send);
+    // What a whole ground is made from, read off the world -- cheap -- and
+    // what it is made into, which is the cost: every chunk compressed.
+    struct GroundWork;
+    [[nodiscard]] GroundWork groundWorkOf(const scene::World& world);
+    // **Whether the whole ground is ready to be sent** (D579): at once where
+    // it is already encoded, or there is nothing of it to compress, or there
+    // are no jobs to compress it in. Otherwise it is being encoded in a job
+    // and the answer is no until that has finished.
+    [[nodiscard]] bool groundWholeReady(const scene::World& world);
     // One intent a peer, the next in tick order, as this tick's.
     void applyIntents(scene::World& world);
     // The atom a peer's intent number stands for here, or none: a number it
@@ -810,6 +821,11 @@ private:
     // tick. Made again when the ground changes (`diffGround` clears it).
     std::vector<std::vector<u8>> m_groundWhole;
     bool m_groundWholeValid = false;
+    // The one being encoded in a job, and which ground it is of: the count
+    // moves each time the ground changes, and one made of a ground that has
+    // changed since is thrown away.
+    std::shared_ptr<GroundWork> m_groundWork;
+    u64 m_groundGeneration = 0;
     const scene::World* m_world = nullptr;
     u64 m_tick = 0;
     Stats m_stats;

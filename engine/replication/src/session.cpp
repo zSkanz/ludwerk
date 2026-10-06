@@ -17,6 +17,7 @@
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/profile.h"
+#include "engine/jobs/jobs.h"
 #include "engine/replication/script_templates.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/components.h"
@@ -1360,7 +1361,11 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
 {
     m_groundEdits.clear();
     // Whatever changes below makes the whole ground a peer is sent another.
-    const auto invalidate = [this]() { m_groundWholeValid = false; };
+    const auto invalidate = [this]() {
+        m_groundWholeValid = false;
+        // And whatever is being encoded in a job is of a ground that is gone.
+        m_groundGeneration += 1;
+    };
     const bool restored = m_ground.restores != world.restores();
     m_ground.restores = world.restores();
 
@@ -1501,53 +1506,142 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
         invalidate();
 }
 
-void AuthoritySession::sendGroundWhole(Peer& peer, const scene::World& world)
+// **A whole ground, from what it is made of to the messages a peer is sent**
+// (D579). Reading it off the world is cheap and is done on the frame: the
+// groups, the look, the block types, and WHICH chunks differ from what the
+// peer loaded -- a chunk is shared and never written to (`terrain.h`), so the
+// list is pointers. Compressing every one of them is the cost, and `encode`
+// touches nothing but this.
+struct AuthoritySession::GroundWork
 {
-    if (!m_groundWholeValid) {
-        m_groundWhole.clear();
-        // Made with the messages each peer is sent, in the order it is sent them.
-        const auto send = [&](std::vector<u8> bytes) { m_groundWhole.push_back(std::move(bytes)); };
-        encodeGroundWhole(world, send);
-        m_groundWholeValid = true;
-    }
-    for (const std::vector<u8>& bytes : m_groundWhole)
-        sendBytes(m_transport, peer.id, bytes, net::Delivery::Reliable, ControlChannel, m_stats);
-}
+    // Which ground it is of (`m_groundGeneration`), and the job making it.
+    u64 generation = 0;
+    jobs::JobHandle job;
 
-template <typename Send>
-void AuthoritySession::encodeGroundWhole(const scene::World& world, Send send)
+    // In the order a peer is sent them. The collision groups first (D545),
+    // when a game has any.
+    std::vector<u8> groups;
+    // The terrain's chunks -- against the package the peer loaded: a terrain
+    // that replaced the scene's is measured from the scene's (terrain audit
+    // R4); or, the scene's terrain destroyed and none since, its ground going.
+    bool terrain = false;
+    asset::FieldSettings settings;
+    std::vector<asset::TerrainField::Entry> terrainChunks;
+    // Its look; empty where there is no terrain to have one.
+    std::vector<u8> look;
+    bool voxels = false;
+    std::vector<u8> voxelTypes;
+    f32 blockSize = 0.0f;
+    std::vector<asset::VoxelGrid::Entry> voxelChunks;
+
+    std::vector<std::vector<u8>> messages;
+
+    [[nodiscard]] bool compresses() const noexcept { return !terrainChunks.empty() || !voxelChunks.empty(); }
+
+    void encode()
+    {
+        messages.clear();
+        if (!groups.empty())
+            messages.push_back(groups);
+        if (terrain) {
+            for (std::vector<u8>& message : terrainChunkMessages(settings, terrainChunks))
+                messages.push_back(std::move(message));
+            if (!look.empty())
+                messages.push_back(look);
+        }
+        if (voxels) {
+            messages.push_back(voxelTypes);
+            for (std::vector<u8>& message : voxelChunkMessages(blockSize, voxelChunks))
+                messages.push_back(std::move(message));
+        }
+    }
+};
+
+AuthoritySession::GroundWork AuthoritySession::groundWorkOf(const scene::World& world)
 {
-    // The collision groups first (D545), when a game has any.
-    if (std::vector<u8> groups = collisionGroupsMessage(world); !groups.empty())
-        send(std::move(groups));
+    GroundWork work;
+    work.generation = m_groundGeneration;
+    work.groups = collisionGroupsMessage(world);
     if (const scene::TerrainComponent* terrain =
             m_ground.terrain.valid() ? world.terrains().find(m_ground.terrain) : nullptr;
         terrain != nullptr) {
-        // Against the package the peer loaded: a terrain that replaced the
-        // scene's is measured from the scene's (terrain audit R4).
-        const std::vector<asset::TerrainField::Entry> differing = unshippedChunks<asset::TerrainField::Entry>(
+        work.terrain = true;
+        work.settings = terrain->field.settings();
+        work.terrainChunks = unshippedChunks<asset::TerrainField::Entry>(
             terrain->field.chunks(),
             m_ground.baseSet ? std::span<const asset::TerrainField::Entry>(m_ground.base) : terrain->shipped.chunks());
-        for (const std::vector<u8>& message : terrainChunkMessages(terrain->field.settings(), differing))
-            send(message);
-        send(terrainLookMessage(*terrain));
+        work.look = terrainLookMessage(*terrain);
     }
     else if (m_ground.baseSet) {
-        // The scene's terrain destroyed and none since: its ground goes.
-        const std::vector<asset::TerrainField::Entry> gone =
+        work.terrain = true;
+        work.settings = m_ground.settings;
+        work.terrainChunks =
             unshippedChunks<asset::TerrainField::Entry>(std::span<const asset::TerrainField::Entry>{}, m_ground.base);
-        for (const std::vector<u8>& message : terrainChunkMessages(m_ground.settings, gone))
-            send(message);
     }
     const InstanceId voxelsId = groundVoxelsOf(world);
     if (const scene::VoxelComponent* voxels = voxelsId.valid() ? world.voxels().find(voxelsId) : nullptr;
         voxels != nullptr) {
-        send(voxelTypesMessage(world, *voxels));
-        const std::vector<asset::VoxelGrid::Entry> differing =
-            unshippedChunks<asset::VoxelGrid::Entry>(voxels->grid.chunks(), voxels->shipped.chunks());
-        for (const std::vector<u8>& message : voxelChunkMessages(voxels->blockSize, differing))
-            send(message);
+        work.voxels = true;
+        work.voxelTypes = voxelTypesMessage(world, *voxels);
+        work.blockSize = voxels->blockSize;
+        work.voxelChunks = unshippedChunks<asset::VoxelGrid::Entry>(voxels->grid.chunks(), voxels->shipped.chunks());
     }
+    return work;
+}
+
+bool AuthoritySession::groundWholeReady(const scene::World& world)
+{
+    if (m_groundWholeValid || !jobs::initialized())
+        return true;
+    if (m_groundWork != nullptr) {
+        if (!jobs::finished(m_groundWork->job))
+            return false;
+        const std::shared_ptr<GroundWork> done = std::move(m_groundWork);
+        m_groundWork.reset();
+        if (done->generation == m_groundGeneration) {
+            m_groundWhole = std::move(done->messages);
+            m_groundWholeValid = true;
+            m_stats.groundsEncodedInJobs += 1;
+        }
+        // Of a ground that has changed since, and thrown away: the peer is
+        // given the present one, encoded where it is sent, once -- a ground
+        // dug at every tick would otherwise keep a peer out for good.
+        return true;
+    }
+    // **The job is told nothing it could outlive**: the work is kept until
+    // the job has run, and whoever lets go of it waits for that first.
+    std::shared_ptr<GroundWork> work(new GroundWork(groundWorkOf(world)), [](GroundWork* made) {
+        if (made->job.valid() && jobs::initialized())
+            jobs::wait(made->job);
+        delete made;
+    });
+    // Nothing to compress: made here, which is nothing.
+    if (!work->compresses())
+        return true;
+    GroundWork* raw = work.get();
+    work->job = jobs::schedule("ground-encode", jobs::Domain::AssetIo, [raw]() noexcept { raw->encode(); });
+    if (!work->job.valid())
+        return true;
+    m_groundWork = std::move(work);
+    return false;
+}
+
+void AuthoritySession::sendGroundWhole(Peer& peer, const scene::World& world)
+{
+    if (!m_groundWholeValid) {
+        // Made with the messages each peer is sent, in the order it is sent
+        // them. Here, on the frame, for a peer already in the match whose
+        // scene changed, for a ground that changed while a job encoded it,
+        // and where there are no jobs.
+        GroundWork work = groundWorkOf(world);
+        work.encode();
+        m_groundWhole = std::move(work.messages);
+        m_groundWholeValid = true;
+        if (work.compresses())
+            m_stats.groundsEncodedOnFrame += 1;
+    }
+    for (const std::vector<u8>& bytes : m_groundWhole)
+        sendBytes(m_transport, peer.id, bytes, net::Delivery::Reliable, ControlChannel, m_stats);
 }
 
 void AuthoritySession::sendAttributes(Peer& peer, const std::vector<u32>& entering)
@@ -3455,6 +3549,18 @@ void AuthoritySession::send(const scene::World& world, InstanceId root, u64 tick
     for (Peer& peer : m_peers) {
         if (!peer.welcomed)
             continue;
+        // **A peer that has been sent nothing yet waits for the ground**
+        // (D579). The first thing it is sent includes the whole ground, every
+        // chunk of it compressed -- twenty-two milliseconds of this frame for
+        // a land four hundred metres square, each time somebody joined. It is
+        // compressed in a job instead, and the peer begins on the tick that
+        // is done: a tick or two later than it would have, with nothing sent
+        // in between for it to have missed.
+        if (!peer.begun) {
+            if (!groundWholeReady(world))
+                continue;
+            peer.begun = true;
+        }
         // What this peer owns (ADR 0099), in network-id order.
         std::vector<u32> owned;
         for (const Captured& entry : m_order) {

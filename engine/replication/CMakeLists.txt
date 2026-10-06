@@ -46,6 +46,9 @@ if(ENG_ENABLE_REPLICATION)
             src/session.cpp
         DEPS
             core
+            # The whole ground a joining peer is sent is encoded in a job
+            # (D579): L1, an ordinary downward edge.
+            jobs
             scene
             # The transport seam (L2), an ordinary downward edge: the sessions
             # speak `ITransport`, and `createReplication` is the one place an

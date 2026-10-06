@@ -278,6 +278,12 @@ struct Stats
     // tick this peer was never sent.
     u64 snapshotsInParts = 0;
     u64 acksRefused = 0;
+    // **Whole grounds encoded for a peer that joined** (D579): on the frame
+    // that sent it -- every chunk of the ground compressed inside one send,
+    // a hitch the host feels each time somebody joins -- and in a job, with
+    // the peer told nothing until it is done.
+    u64 groundsEncodedOnFrame = 0;
+    u64 groundsEncodedInJobs = 0;
     // An owner's place for its part further than it could have moved, taken
     // only as far as it could (NA24).
     u64 ownedClamped = 0;
