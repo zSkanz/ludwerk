@@ -541,6 +541,7 @@ void AnimationSystem::sample(f64 fixedDt)
     // so often the ones nothing has copied for half a second.
     if (skeletons_->revision() != sharedRevision_) {
         shared_.clear();
+        sharedJoints_ = 0;
         sharedRevision_ = skeletons_->revision();
     }
     // **Let go a little a tick, never all at once.** The index was swept
@@ -560,8 +561,10 @@ void AnimationSystem::sample(f64 fixedDt)
         }
         sharedSweep_ = (sharedSweep_ + span) % buckets;
         for (const std::vector<core::u64>* signature : expired_) {
-            if (const auto gone = shared_.find(*signature); gone != shared_.end())
+            if (const auto gone = shared_.find(*signature); gone != shared_.end()) {
+                sharedJoints_ -= std::min(sharedJoints_, gone->second.pose->palette.size());
                 shared_.erase(gone);
+            }
         }
     }
     for (const core::InstanceId meshPart : meshes_) {
@@ -877,12 +880,13 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
         // and thousands of them freed in the same tick.
         // Held by the crowd's index too from here: whoever writes to this
         // mesh's pose next takes one of its own.
-        if (shared_.size() < MostSharedPoses) {
+        if (shared_.size() < MostSharedPoses && sharedJoints_ + jointCount <= MostSharedJoints) {
             // Its buckets made once, for all it may hold: grown as it filled,
             // every doubling was every entry filed again inside one tick.
             if (shared_.empty())
                 shared_.reserve(MostSharedPoses);
-            shared_.insert_or_assign(signature_, SharedPose{poses_[keyOf(meshPart)], sampled_});
+            if (shared_.insert_or_assign(signature_, SharedPose{poses_[keyOf(meshPart)], sampled_}).second)
+                sharedJoints_ += jointCount;
         }
     }
 }

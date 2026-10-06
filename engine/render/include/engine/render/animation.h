@@ -420,8 +420,16 @@ private:
     // thousand entries a horde of five hundred built two poses in three, and
     // at these builds one in thirty. Four seconds of ticks; and eight
     // thousand poses of eight joints are twelve megabytes.
+    //
+    // **And by what they hold, not only by how many** (`MostSharedJoints`): a
+    // pose is three matrices a joint, and eight thousand poses of a rig of
+    // sixty joints would be ninety megabytes. Sixteen megabytes of joints at
+    // the most, whatever the rigs are.
     static constexpr core::u64 SharedPoseTicks = 256;
     static constexpr core::usize MostSharedPoses = 8192;
+    static constexpr core::usize MostSharedJoints = (16u << 20) / (3u * sizeof(core::Mat4));
+    // The joints of every pose the index holds.
+    core::usize sharedJoints_ = 0;
     // Where the tick's sweep of the index is, and what it found to let go.
     core::usize sharedSweep_ = 0;
     std::vector<const std::vector<core::u64>*> expired_;

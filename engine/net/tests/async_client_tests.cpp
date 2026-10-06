@@ -3,6 +3,7 @@
 // Both were found by `@std/net`'s first request never coming back to Luau, and
 // both are the kind that a smaller test would never produce: one needs a caller
 // polling in a tight loop, the other needs a port with nothing behind it.
+#include <atomic>
 #include <chrono>
 #include <doctest/doctest.h>
 #include <string>
@@ -136,19 +137,36 @@ TEST_CASE("two requests are in flight at once rather than one after the other")
 
     // Two workers is the default, and this is why it is not one: a script that
     // fires two requests at a page load should not have the second wait for the
-    // first. Both go to a server that answers slowly, so serial execution would
-    // take twice as long as parallel -- measured as a ratio rather than against
-    // a wall-clock budget, because only the ratio is a property of the client.
+    // first. Both go to a server that answers slowly.
+    //
+    // **Asked as what it means, not as a time**: each server had its request in
+    // hand before the other had answered. It was "both back in under 1.8
+    // delays", 720 ms -- and a hosted runner doing four tests on three cores
+    // took 752 to give two threads their turn, once. A client that sent one
+    // after the other fails this whatever the machine is doing: the second
+    // server hears nothing until the first has answered.
     testing::LoopbackServer first;
     testing::LoopbackServer second;
-    const auto slowHandler = [](testing::Connection& connection) {
-        (void)connection.readUntil("\r\n\r\n");
-        std::this_thread::sleep_for(std::chrono::milliseconds(SlowReplyMs));
-        connection.write("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nslow");
-        connection.close();
+    using Moment = std::chrono::steady_clock::time_point;
+    struct Heard
+    {
+        std::atomic<std::chrono::steady_clock::rep> asked{0};
+        std::atomic<std::chrono::steady_clock::rep> answered{0};
     };
-    first.serve(slowHandler);
-    second.serve(slowHandler);
+    Heard heardFirst;
+    Heard heardSecond;
+    const auto slowHandler = [](Heard& heard) {
+        return [&heard](testing::Connection& connection) {
+            (void)connection.readUntil("\r\n\r\n");
+            heard.asked.store(std::chrono::steady_clock::now().time_since_epoch().count());
+            std::this_thread::sleep_for(std::chrono::milliseconds(SlowReplyMs));
+            heard.answered.store(std::chrono::steady_clock::now().time_since_epoch().count());
+            connection.write("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nslow");
+            connection.close();
+        };
+    };
+    first.serve(slowHandler(heardFirst));
+    second.serve(slowHandler(heardSecond));
 
     AsyncClient client;
     HttpRequest a;
@@ -156,7 +174,7 @@ TEST_CASE("two requests are in flight at once rather than one after the other")
     HttpRequest b;
     b.url = "http://127.0.0.1:" + std::to_string(second.port()) + "/";
 
-    const auto started = std::chrono::steady_clock::now();
+    const Moment started = std::chrono::steady_clock::now();
     const NetTicket ticketA = client.submit(a);
     const NetTicket ticketB = client.submit(b);
 
@@ -169,7 +187,6 @@ TEST_CASE("two requests are in flight at once rather than one after the other")
         haveB = haveB || client.take(ticketB, resultB);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    const f64 elapsed = millisecondsSince(started);
 
     first.join();
     second.join();
@@ -178,8 +195,11 @@ TEST_CASE("two requests are in flight at once rather than one after the other")
     REQUIRE(haveB);
     CHECK(resultA.response.body == "slow");
     CHECK(resultB.response.body == "slow");
-    // Well under two delays. Serial would be at least that.
-    CHECK(elapsed < static_cast<f64>(SlowReplyMs) * 1.8);
+    // Both were asked, and each before the other had answered.
+    REQUIRE(heardFirst.asked.load() != 0);
+    REQUIRE(heardSecond.asked.load() != 0);
+    CHECK(heardFirst.asked.load() < heardSecond.answered.load());
+    CHECK(heardSecond.asked.load() < heardFirst.answered.load());
 }
 
 TEST_CASE("shutdown drops results nobody will ever take")
