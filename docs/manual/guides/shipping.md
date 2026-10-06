@@ -264,6 +264,8 @@ the pack with its manifest, as every build before this made:
 packed = false
 ```
 
+The Export window's **One sealed pack** is the same key.
+
 If no content pack was built, the loose `content/` and `assets/` trees are
 copied instead -- shipping both would double the size of every game, and
 shipping neither would be a game with no art.

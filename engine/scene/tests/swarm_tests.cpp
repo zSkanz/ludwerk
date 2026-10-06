@@ -3,6 +3,7 @@
 // an obstacle, thinking less often far away -- and placing its bodies.
 #include <cmath>
 #include <doctest/doctest.h>
+#include <utility>
 #include <vector>
 
 #include "engine/scene/swarm.h"
@@ -216,6 +217,68 @@ TEST_CASE("H10: a radius query through the grid finds what a walk of every agent
     std::vector<u32> there;
     querySwarmRadius(rig.swarm(), core::DVec3{50.0, 0.0, 50.0}, 0.5, false, there);
     CHECK(there == std::vector<u32>{moved});
+}
+
+TEST_CASE("Swarm.PileHeight: a crowd round what stands still piles as high as it is let, and no higher")
+{
+    // A hundred and fifty agents closing on one point from all round it: what
+    // a horde does to a hero who stands still. With no limit they climb each
+    // other for as long as there is one in the way -- a tower over the point.
+    const auto pile = [](f32 pileHeight) {
+        Rig rig;
+        rig.swarm().target = core::DVec3{0.0, 0.0, 0.0};
+        rig.swarm().stopDistance = 0.0f;
+        rig.swarm().pileHeight = pileHeight;
+        SwarmAgentSettings held;
+        held.speed = 0.0f;
+        (void)rig.agent(core::DVec3{0.0, 0.0, 0.0}, held);
+        for (int index = 0; index < 150; ++index) {
+            const f64 turn = static_cast<f64>(index) * 2.399963;
+            const f64 far = 3.0 + static_cast<f64>(index) * 0.06;
+            (void)rig.agent(core::DVec3{std::cos(turn) * far, 0.0, std::sin(turn) * far});
+        }
+        rig.ticks(900);
+        // Over the fifteen seconds' last second -- a limit that is held, not
+        // passed through: the highest any of them STANDS (at rest on the
+        // ground or on another), and the highest any is at all, which is
+        // more by the hop an agent makes as it crests the one it climbed.
+        std::pair<f64, f64> highest{0.0, 0.0};
+        std::vector<f64> before;
+        for (const SwarmAgent& agent : rig.swarm().agents)
+            before.push_back(agent.position.y);
+        std::vector<int> still(before.size(), 0);
+        for (int tick = 0; tick < 60; ++tick) {
+            rig.ticks(1);
+            for (usize slot = 0; slot < rig.swarm().agents.size(); ++slot) {
+                const SwarmAgent& agent = rig.swarm().agents[slot];
+                if (!agent.alive)
+                    continue;
+                // At rest: where it was for three ticks running. One tick is
+                // also the top of a hop, where it hangs for an instant.
+                still[slot] = std::fabs(agent.position.y - before[slot]) < 1.0e-3 ? still[slot] + 1 : 0;
+                if (still[slot] >= 3)
+                    highest.first = std::max(highest.first, agent.position.y);
+                highest.second = std::max(highest.second, agent.position.y);
+                before[slot] = agent.position.y;
+            }
+        }
+        return highest;
+    };
+
+    const std::pair<f64, f64> unlimited = pile(0.0f);
+    const std::pair<f64, f64> limited = pile(2.0f);
+    CAPTURE(unlimited.first);
+    CAPTURE(limited.first);
+    CAPTURE(limited.second);
+    // No limit: a tower -- agents a metre tall, standing five and more deep.
+    CHECK(unlimited.first > 5.0);
+    // Two metres: nobody stands on a top past two metres over the ground,
+    // so the highest feet at rest are at two, on the second one up.
+    CHECK(limited.first <= 2.0 + 1.0e-3);
+    // Cresting, an agent hops as it always did: a little over half a metre.
+    CHECK(limited.second <= 2.0 + 0.7);
+    // And it is still a pile: they do climb what is under the limit.
+    CHECK(limited.first > 0.9);
 }
 
 TEST_CASE("ADR 0156: two runs of one crowd end in the same place")

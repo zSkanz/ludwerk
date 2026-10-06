@@ -4353,6 +4353,42 @@ TEST_CASE("ADR 0162: an agent walking a straight line is carried forward, not co
     CHECK(worst < 0.8);
 }
 
+TEST_CASE("BasePart.Fade is each machine's own: the authority's is not sent, and a replica's is not taken away")
+{
+    // A listen host thins the trees between its own camera and its own hero.
+    // Written as `Transparency`, a friend's trees went thin with the host's.
+    PlayedMatch match;
+    const core::InstanceId tree = match.part("Tree", core::DVec3{4.0, 1.0, 0.0});
+    const core::InstanceId rock = match.part("Rock", core::DVec3{8.0, 1.0, 0.0});
+    match.run(20);
+    const core::InstanceId treeCopy = match.copyOf(tree);
+    const core::InstanceId rockCopy = match.copyOf(rock);
+    REQUIRE(treeCopy.valid());
+    REQUIRE(rockCopy.valid());
+
+    // The host's own picture of the tree -- and the same world as before it:
+    // two machines in one match hash alike whatever each leaves out.
+    const core::u64 hashed = match.server.world.worldHash();
+    match.server.world.parts().find(tree)->fade = 0.8f;
+    CHECK(match.server.world.worldHash() == hashed);
+    // And the friend's own picture of the rock, on its own machine.
+    match.client.world.parts().find(rockCopy)->fade = 0.6f;
+    // Something the wire does carry, so there is a message about each part
+    // for the fade to have ridden on or been wiped by.
+    match.server.world.parts().find(tree)->castShadow = false;
+    match.server.world.parts().find(rock)->castShadow = false;
+    match.run(60);
+
+    CHECK_FALSE(match.client.world.parts().find(treeCopy)->castShadow);
+    CHECK_FALSE(match.client.world.parts().find(rockCopy)->castShadow);
+    // The friend's tree is solid, the friend's rock is as the friend left it,
+    // and the host's rock is solid.
+    CHECK(match.client.world.parts().find(treeCopy)->fade == 0.0f);
+    CHECK(match.client.world.parts().find(rockCopy)->fade == 0.6f);
+    CHECK(match.server.world.parts().find(rock)->fade == 0.0f);
+    CHECK(match.server.world.parts().find(tree)->fade == 0.8f);
+}
+
 TEST_CASE("D570: a swarm disabled on the authority stands still on a replica, where the authority's stands")
 {
     // A game holds its horde while a player chooses: `Swarm.Enabled = false`

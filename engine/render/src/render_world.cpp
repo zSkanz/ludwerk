@@ -1181,15 +1181,21 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             // `Transparency` and whatever alpha the material arrived with.
             // The shader computes the same product, and it has to -- this is
             // what the draw was sorted by.
-            const f32 opacity = (1.0f - look.transparency) * out.materials[materialSlot].uniforms.baseColor[3];
+            const f32 own = (1.0f - look.transparency) * out.materials[materialSlot].uniforms.baseColor[3];
             // Fully invisible draws nothing at all, in either pass. That is
             // the debug path's existing rule (`submitWorld` skips a part at
             // `transparency >= 1`), and consistency with it matters more
             // here than the shadow question the roadmap left closed: a
             // shadow cast by something nobody can see is a defect whoever
             // sees it will report.
-            if (opacity <= 0.0f)
+            if (own <= 0.0f)
                 continue;
+            // **And what this machine leaves out of its own picture**
+            // (`BasePart.Fade`): the part's opacity less that much. It is
+            // drawn blended then, as anything see-through is, and it is still
+            // in the world -- thinned to nothing, it is a draw the camera's
+            // passes skip and the shadow maps do not.
+            const f32 opacity = own * (1.0f - std::clamp(part->fade, 0.0f, 1.0f));
 
             const bool transparent = opacity < 1.0f;
             const Vec3 centre = core::center(worldBounds);
@@ -1226,6 +1232,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             out.draws.back().motionKey = motionKeyOf(id);
             out.draws.back().castShadow = part->castShadow;
             out.draws.back().receivesDecals = part->receivesDecals;
+            out.draws.back().fadedOnly = own >= 1.0f && transparent;
         }
     });
 
@@ -1728,9 +1735,11 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             return;
 
         const PartLook look = lookOf(world, id, part, materials, frameMaterials, lastFrameMaterial);
-        const f32 opacity = 1.0f - look.transparency;
-        if (opacity <= 0.0f)
+        const f32 own = 1.0f - look.transparency;
+        if (own <= 0.0f)
             return;
+        // Less what this machine leaves out of its own picture (`BasePart.Fade`).
+        const f32 opacity = own * (1.0f - std::clamp(part.fade, 0.0f, 1.0f));
 
         const Mat4 transform = core::toRenderMatrixScaled(posed.part(id), origin, primitiveScale(shape, part.size));
         const AABB worldBounds = core::transformed(transform, entry->bounds);
@@ -1824,6 +1833,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         out.draws.back().motionKey = motionKeyOf(id);
         out.draws.back().castShadow = part.castShadow;
         out.draws.back().receivesDecals = part.receivesDecals;
+        out.draws.back().fadedOnly = own >= 1.0f && transparent;
     });
 
     // --- Ropes, rods and springs (ADR 0127) -----------------------------------

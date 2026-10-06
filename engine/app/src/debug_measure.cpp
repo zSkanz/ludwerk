@@ -305,6 +305,11 @@ PassTimeLedger::Line PassTimeLedger::line() const
             out.floor = total.submits != 0 ? total.milliseconds / static_cast<f64>(total.submits) : 0.0;
             continue;
         }
+        // And the fixed work is the GPU's clock, not a pass of the game's.
+        if (total.name == "clock") {
+            out.clock = total.milliseconds / frames;
+            continue;
+        }
         order.push_back(&total);
     }
     std::stable_sort(order.begin(), order.end(),

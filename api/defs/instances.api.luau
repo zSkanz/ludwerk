@@ -532,6 +532,25 @@ local Classes: { Schema.Class } = {
                     .. "draws nothing at all.",
             },
             {
+                Name = "Fade",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Transient = true,
+                -- One screen's choice, not the world's: two machines in one
+                -- match hold different values of it and the same world, so it
+                -- is in no hash (ADR 0184 §2).
+                Presentation = true,
+                Doc = "How much of the part THIS machine leaves out of its own picture: 0 draws it as "
+                    .. "`Transparency` says, 1 not at all, and between them its opacity is multiplied by "
+                    .. "one less this. It is this machine's alone -- never sent to another, never saved -- "
+                    .. "so it is what a game reaches for to change what one player sees of a part every "
+                    .. "player has: the tree between a camera and its hero thinned on that screen and on no "
+                    .. "other, where writing `Transparency` on a host thinned it for everybody.\n\n"
+                    .. "A part thinned this way goes on casting the shadow its `Transparency` gives it: "
+                    .. "what is hidden from a camera has not left the world.",
+            },
+            {
                 Name = "ReceivesDecals",
                 Type = "boolean",
                 Default = "true",
@@ -7355,6 +7374,17 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "6",
                 Doc = "How fast an agent climbs the one in its way, in metres per second.",
+            },
+            {
+                Name = "PileHeight",
+                Type = "number",
+                Default = "0",
+                Doc = "How high the crowd may pile on itself, in metres above the ground under an agent; 0 "
+                    .. "for no limit. Past it an agent does not climb the one in its way, and one standing "
+                    .. "on another whose top is past it is not held up: it is pushed aside like any "
+                    .. "neighbour and comes down. Two or three agents deep reads as a wave breaking over "
+                    .. "what it reached; with no limit, a crowd round something that stands still becomes "
+                    .. "a tower over it.",
             },
             {
                 Name = "StopDistance",

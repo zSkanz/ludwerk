@@ -112,6 +112,9 @@ public:
         core::f64 submits = 0.0;
         // What one of those stops costs when its pass clears one pixel.
         core::f64 floor = 0.0;
+        // What the same fixed work took, a frame's mean: how fast the GPU
+        // was running. Nought where the device times none.
+        core::f64 clock = 0.0;
     };
     [[nodiscard]] Line line() const;
 

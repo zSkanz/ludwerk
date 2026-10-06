@@ -412,9 +412,13 @@ every pass and the wait is the measure. Three things follow:
   from a run without the key.
 - Every pass carries what a stop costs, which the line says: a pass that
   reads near that floor cost nearly nothing.
-- On a phone the GPU may slow its clock while it waits. Compare the passes
-  with each other, and their sum with the median of an untimed run, rather
-  than reading them as absolutes.
+- On a phone the GPU may slow its clock while it waits -- by nearly four
+  times, measured, when the frame is light. **The line's `clock` says at what
+  speed a run was timed**: the same fixed work, sixteen megapixels moved
+  between two textures, timed with every frame. Two runs with the same clock
+  compare pass for pass; where it differs, divide each run's passes by its
+  own clock first. Their sum is still compared with the median of an untimed
+  run, not read as an absolute.
 
 The picture is the one an untimed frame draws.
 

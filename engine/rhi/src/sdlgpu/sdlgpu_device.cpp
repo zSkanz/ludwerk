@@ -324,6 +324,10 @@ public:
             SDL_ReleaseGPUTexture(device_, fallbackTexture_);
         if (timingProbe_ != nullptr)
             SDL_ReleaseGPUTexture(device_, timingProbe_);
+        for (SDL_GPUTexture* work : timingWork_) {
+            if (work != nullptr)
+                SDL_ReleaseGPUTexture(device_, work);
+        }
         if (fallbackSampler_ != nullptr)
             SDL_ReleaseGPUSampler(device_, fallbackSampler_);
 
@@ -823,6 +827,30 @@ public:
         }
         return timingProbe_;
     }
+    // **The same work every time** (ADR 0171, amended): two textures a
+    // megapixel each, which a timed frame moves between a fixed number of
+    // times -- `clock`. A phone runs its GPU slower under a light frame, by
+    // the same factor for every pass, and this is what says by how much:
+    // two runs whose `clock` differ were not timed at one speed.
+    static constexpr Uint32 TimingWorkSide = 1024;
+    static constexpr int TimingWorkTurns = 16;
+    [[nodiscard]] std::array<SDL_GPUTexture*, 2> timingWork() noexcept
+    {
+        for (SDL_GPUTexture*& work : timingWork_) {
+            if (work != nullptr || device_ == nullptr)
+                continue;
+            SDL_GPUTextureCreateInfo info{};
+            info.type = SDL_GPU_TEXTURETYPE_2D;
+            info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+            info.width = TimingWorkSide;
+            info.height = TimingWorkSide;
+            info.layer_count_or_depth = 1;
+            info.num_levels = 1;
+            work = SDL_CreateGPUTexture(device_, &info);
+        }
+        return timingWork_;
+    }
     [[nodiscard]] SDL_GPUSampler* fallbackSampler() noexcept
     {
         if (fallbackSampler_ == nullptr && device_ != nullptr) {
@@ -895,6 +923,7 @@ private:
     std::vector<SDL_GPUSampler*> samplers_;
     SDL_GPUTexture* fallbackTexture_ = nullptr;
     SDL_GPUTexture* timingProbe_ = nullptr;
+    std::array<SDL_GPUTexture*, 2> timingWork_{};
     SDL_GPUSampler* fallbackSampler_ = nullptr;
     bool staleBindingSaid_ = false;
     std::vector<SDL_GPUShader*> shaders_;
@@ -1512,6 +1541,32 @@ void SdlGpuCmdList::finishTimedPasses() noexcept
             (void)SDL_WaitForGPUFences(device, true, &fence, 1);
             SDL_ReleaseGPUFence(device, fence);
             addTime("floor", static_cast<f64>(SDL_GetTicksNS() - start) / 1'000'000.0);
+        }
+    }
+    // **The clock**: the same sixteen megapixels moved every timed frame,
+    // whatever the game draws. Its time is not the game's; it is how fast
+    // the GPU was running when the passes above were timed.
+    const std::array<SDL_GPUTexture*, 2> work = device_.timingWork();
+    if (work[0] == nullptr || work[1] == nullptr)
+        return;
+    if (SDL_GPUCommandBuffer* fixed = SDL_AcquireGPUCommandBuffer(device); fixed != nullptr) {
+        for (int turn = 0; turn < SdlGpuDevice::TimingWorkTurns; ++turn) {
+            SDL_GPUBlitInfo move{};
+            move.source.texture = work[static_cast<usize>(turn % 2)];
+            move.source.w = SdlGpuDevice::TimingWorkSide;
+            move.source.h = SdlGpuDevice::TimingWorkSide;
+            move.destination.texture = work[static_cast<usize>((turn + 1) % 2)];
+            move.destination.w = SdlGpuDevice::TimingWorkSide;
+            move.destination.h = SdlGpuDevice::TimingWorkSide;
+            move.load_op = SDL_GPU_LOADOP_DONT_CARE;
+            move.filter = SDL_GPU_FILTER_LINEAR;
+            SDL_BlitGPUTexture(fixed, &move);
+        }
+        const Uint64 start = SDL_GetTicksNS();
+        if (SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(fixed); fence != nullptr) {
+            (void)SDL_WaitForGPUFences(device, true, &fence, 1);
+            SDL_ReleaseGPUFence(device, fence);
+            addTime("clock", static_cast<f64>(SDL_GetTicksNS() - start) / 1'000'000.0);
         }
     }
 }

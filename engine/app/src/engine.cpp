@@ -1435,12 +1435,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     };
     const auto sayPassTimes = [](const PassTimeLedger& ledger) {
         const PassTimeLedger::Line line = ledger.line();
-        const std::array<I18nArg, 5> passArgs{
+        const std::array<I18nArg, 6> passArgs{
             I18nArg{"frames", static_cast<core::i64>(ledger.frames())},
             I18nArg{"passes", line.passes},
             I18nArg{"total", std::round(line.total * 100.0) / 100.0},
             I18nArg{"submits", std::round(line.submits * 10.0) / 10.0},
             I18nArg{"floor", std::round(line.floor * 1000.0) / 1000.0},
+            I18nArg{"clock", std::round(line.clock * 1000.0) / 1000.0},
         };
         core::log(LogLevel::Info, ENG_TR("engine.frame.info.gpu_passes"), passArgs);
     };

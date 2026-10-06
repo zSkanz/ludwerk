@@ -1124,6 +1124,72 @@ TEST_CASE("BasePart.ReceivesDecals: a part asked to take none is drawn as it was
     CHECK(render::DrawItem{}.receivesDecals);
 }
 
+TEST_CASE("BasePart.Fade: what one machine leaves out of its own picture is blended there, and still casts")
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const core::InstanceId workspace = fixture.world.create(fixture.workspaceClass);
+    (void)fixture.cameraLookingDownNegativeZ(workspace);
+    render::MeshLibrary meshes;
+    registerBlock(fixture, meshes);
+
+    const core::InstanceId solid = blockAt(fixture, workspace);
+    const core::InstanceId thinned = blockAt(fixture, workspace);
+    const core::InstanceId gone = blockAt(fixture, workspace);
+    // Nothing until a game says otherwise.
+    CHECK(fixture.world.parts().find(solid)->fade == 0.0f);
+    fixture.world.parts().find(thinned)->fade = 0.75f;
+    fixture.world.parts().find(gone)->fade = 1.0f;
+
+    render::RenderWorld snapshot;
+    render::extract(fixture.world, workspace, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+    // All three are in the list: a tree hidden from a camera has not left the
+    // world, and the one thinned to nothing is there for its shadow.
+    REQUIRE(snapshot.draws.size() == 3);
+    int opaque = 0;
+    int blended = 0;
+    int unseen = 0;
+    for (const render::DrawItem& draw : snapshot.draws) {
+        // Every one of them casts the shadow it cast before it was thinned.
+        CHECK(render::castsShadow(draw));
+        if (!draw.transparent) {
+            ++opaque;
+            CHECK(nearF(draw.alpha, 1.0f));
+            CHECK_FALSE(draw.fadedOnly);
+        }
+        else if (draw.alpha > 0.0f) {
+            ++blended;
+            // A quarter of it is left, drawn in the blended pass.
+            CHECK(nearF(draw.alpha, 0.25f));
+            CHECK(draw.fadedOnly);
+        }
+        else {
+            ++unseen;
+            CHECK(draw.fadedOnly);
+        }
+    }
+    CHECK(opaque == 1);
+    CHECK(blended == 1);
+    CHECK(unseen == 1);
+
+    // A part that is see-through of its own is see-through, and casts none:
+    // thinning it further does not give it a shadow back.
+    const core::InstanceId glass = blockAt(fixture, workspace);
+    setTransparencyOverride(fixture.world, glass, 0.5f);
+    fixture.world.parts().find(glass)->fade = 0.5f;
+    render::extract(fixture.world, workspace, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+    REQUIRE(snapshot.draws.size() == 4);
+    int glassy = 0;
+    for (const render::DrawItem& draw : snapshot.draws) {
+        if (draw.transparent && !draw.fadedOnly) {
+            ++glassy;
+            CHECK(nearF(draw.alpha, 0.25f));
+            CHECK_FALSE(render::castsShadow(draw));
+        }
+    }
+    CHECK(glassy == 1);
+}
+
 TEST_CASE("BasePart.CastShadow: a part asked to cast none is drawn as it was, and casts none")
 {
     Fixture fixture;

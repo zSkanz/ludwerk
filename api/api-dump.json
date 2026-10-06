@@ -396,6 +396,12 @@
           "Default": "1"
         },
         {
+          "Name": "Fade",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
           "Name": "Friction",
           "Type": "number",
           "Default": "0.3"
@@ -6113,6 +6119,11 @@
           "Name": "NearDistance",
           "Type": "number",
           "Default": "24"
+        },
+        {
+          "Name": "PileHeight",
+          "Type": "number",
+          "Default": "0"
         },
         {
           "Name": "Replicates",

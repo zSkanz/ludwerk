@@ -3485,6 +3485,10 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // And what is see-through casts none (`castsShadow`).
         if (selection == Selection::Shadow && !castsShadow(draw))
             continue;
+        // A part this machine thinned to nothing (`BasePart.Fade`) is in the
+        // list for its shadow alone: the camera's blended pass has none of it.
+        if (selection == Selection::Transparent && draw.alpha <= 0.0f)
+            continue;
         // **The decals' mask is the parts that receive none, and all of each**
         // (`BasePart.ReceivesDecals`): a cutout's holes are in its depth here
         // and not in the scene's, so a decal still lands on what shows through

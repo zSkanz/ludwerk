@@ -176,22 +176,24 @@ TEST_CASE("a finger that comes down is said with the element that took it, or as
     CHECK(said[1].find("the game's") != std::string::npos);
 }
 
-TEST_CASE("the GPU's time by pass is a frame's mean, the costliest first, the floor apart")
+TEST_CASE("the GPU's time by pass is a frame's mean, the costliest first, the floor and the clock apart")
 {
     app::PassTimeLedger ledger;
     CHECK(ledger.frames() == 0);
     CHECK(ledger.line().passes.empty());
 
-    const std::array<rhi::PassTime, 4> first{
+    const std::array<rhi::PassTime, 5> first{
         rhi::PassTime{.name = "shadow", .milliseconds = 2.0, .submits = 1},
         rhi::PassTime{.name = "forward", .milliseconds = 6.0, .submits = 1},
         rhi::PassTime{.name = "floor", .milliseconds = 0.2, .submits = 1},
+        rhi::PassTime{.name = "clock", .milliseconds = 1.5, .submits = 1},
         rhi::PassTime{.name = "tonemap+ui", .milliseconds = 1.0, .submits = 1},
     };
-    const std::array<rhi::PassTime, 4> second{
+    const std::array<rhi::PassTime, 5> second{
         rhi::PassTime{.name = "shadow", .milliseconds = 4.0, .submits = 1},
         rhi::PassTime{.name = "forward", .milliseconds = 8.0, .submits = 2},
         rhi::PassTime{.name = "floor", .milliseconds = 0.4, .submits = 1},
+        rhi::PassTime{.name = "clock", .milliseconds = 2.5, .submits = 1},
         rhi::PassTime{.name = "tonemap+ui", .milliseconds = 2.0, .submits = 1},
     };
     ledger.add(first);
@@ -205,6 +207,8 @@ TEST_CASE("the GPU's time by pass is a frame's mean, the costliest first, the fl
     CHECK(line.total == doctest::Approx(11.5));
     CHECK(line.submits == doctest::Approx(3.5));
     CHECK(line.floor == doctest::Approx(0.3));
+    // The fixed work is in neither the list nor the sum: it is not the game's.
+    CHECK(line.clock == doctest::Approx(2.0));
 
     ledger.clear();
     CHECK(ledger.frames() == 0);

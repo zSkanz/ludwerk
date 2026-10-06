@@ -120,3 +120,22 @@ metres from one target and two hundred from the other thinks every tick; an
 agent with no body walks as one with a body does. From a script, one swarm
 chases two targets with body-less agents.
 
+## Amendment, 2026-10-06: how high the crowd piles
+
+A crowd round something that stands still climbs itself for as long as there
+is one in the way: measured in the test this amendment adds, a hundred and
+fifty agents round one point stand fourteen metres deep, and in the game it
+was asked for a hero who stood still was under a tower that hid the fight.
+A game could say whether an agent climbs (`Climbs`), not how high the pile
+goes.
+
+**`Swarm.PileHeight`**, in metres over the ground under an agent, 0 for no
+limit (the default, and what a swarm did). Past it a top is nothing to climb
+and nothing to stand on: an agent blocked by one whose top is past it is
+pushed aside as by any neighbour, and one found standing on such a top is not
+held up by it and comes down. An agent still hops as it crests the one it
+climbed, as it always did -- four tenths of a metre over where it then
+stands. The authority's step alone: a replica is told where agents are.
+
+Test: the same crowd with no limit and with two metres -- at rest, the highest
+feet are at fourteen metres and at two.

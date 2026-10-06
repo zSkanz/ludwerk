@@ -192,6 +192,10 @@ end)
 - **Settings**: `Radius` (0.5), `Height` (1), `Speed` (4 metres a second),
   `Climbs` (true), and `Floats` with `FloatHeight` (1) for a flier that keeps
   over the ground and out of the pushing.
+- **How high it piles**: `Swarm.PileHeight`, in metres over the ground, 0 for
+  no limit. A crowd round something that stands still climbs itself into a
+  tower over it; two or three agents' height reads as a wave breaking over
+  what it reached, and leaves the fight in view.
 - **Asked in bulk**: `GetAgents()` and `GetPositions()` in one call each,
   `GetAgentPosition(agent)`, and `QueryRadius(centre, radius, into, flat)` for
   what a weapon aims at -- answered from the swarm's grid, so its cost is the

@@ -97,6 +97,10 @@ struct PartComponent
     // `BasePart.ReceivesDecals`: whether a decal paints it. On until a game
     // says otherwise.
     bool receivesDecals = true;
+    // `BasePart.Fade`: how much of the part this machine leaves out of its
+    // own picture, 0 to 1. This machine's alone: never on the wire, never in
+    // a file, never in the world's hash.
+    f32 fade = 0.0f;
 };
 
 // `MeshPart`'s geometry. The renderer resolves the URN to a loaded mesh and
@@ -1507,6 +1511,9 @@ struct SwarmComponent
     u32 maxNeighbours = 14;
     f32 gravity = 30.0f;
     f32 climbSpeed = 6.0f;
+    // `Swarm.PileHeight`: how high over the ground the crowd may pile on
+    // itself, in metres; 0 for no limit.
+    f32 pileHeight = 0.0f;
     f32 stopDistance = 0.55f;
     f32 nearDistance = 24.0f;
     f32 farDistance = 48.0f;

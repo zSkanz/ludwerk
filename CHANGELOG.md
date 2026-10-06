@@ -219,6 +219,16 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`BasePart.Fade`** (ADR 0184): how much of a part THIS machine leaves out
+  of its own picture, 0 to 1. Never sent to another machine and never saved,
+  so it is what changes one player's view of a part every player has -- the
+  tree between a camera and its hero thinned on that screen alone, where
+  writing `Transparency` on a host thinned it for everybody. A part thinned
+  this way keeps the shadow its `Transparency` gives it.
+- **`Swarm.PileHeight`** (ADR 0156, amended): how high over the ground a crowd
+  may pile on itself, in metres; 0, the default, is no limit. A crowd round
+  something that stood still became a tower over it.
+
 - **The GPU's time, pass by pass** (ADR 0171). `[debug] gpu_pass_times = true`
   in `project.toml`, or `--gpu-pass-times`, adds a line under the frame
   report: what each pass of the renderer took of the GPU, a frame's mean, the
@@ -1120,6 +1130,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   over 33 ms.
 - **`--frame-stats` counts the frame cap's wait as waiting** (D561), under
   the scope `wait.cap`. It was reported as drawing on the CPU.
+- **A timed run says how fast the GPU was running** (ADR 0171, amended):
+  `--gpu-pass-times` times the same fixed work with every frame and reports
+  it as `clock`. A phone slows its GPU under a light frame, by the same
+  factor for every pass, and two runs could not be compared without knowing
+  it.
 - **A build does not ship a surface shader it could not compile** (D572).
   `ludwerk build` stops, naming the shader and the compiler it looked for,
   where it packed the source and said nothing -- and every copy of the game

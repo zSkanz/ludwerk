@@ -1283,6 +1283,22 @@ bool setBasePartCastShadow(World& world, core::InstanceId id, const Value& value
     return true;
 }
 
+Value getBasePartFade(const World& world, core::InstanceId id)
+{
+    const PartComponent* part = readPart(world, id);
+    return part == nullptr ? Value{} : Value{static_cast<f64>(part->fade)};
+}
+
+bool setBasePartFade(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* number = std::get_if<f64>(&value);
+    PartComponent* part = writePart(world, id);
+    if (number == nullptr || part == nullptr || !(*number >= 0.0 && *number <= 1.0))
+        return false;
+    part->fade = static_cast<f32>(*number);
+    return true;
+}
+
 Value getBasePartReceivesDecals(const World& world, core::InstanceId id)
 {
     const PartComponent* part = readPart(world, id);

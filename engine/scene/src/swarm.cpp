@@ -179,6 +179,11 @@ void stepSwarm(World& world, const PhysicsSync* physics, SwarmComponent& swarm, 
         f64 support = -1.0e30;
         bool blocked = false;
         f64 climbTo = -1.0e30;
+        // **As high as the crowd may pile, and no higher** (`PileHeight`): a
+        // top past this is nothing to stand on and nothing to climb. Over the
+        // ground this agent last found under itself; no limit where none is
+        // set.
+        const f64 pileTop = swarm.pileHeight > 0.0f ? agent.ground + static_cast<f64>(swarm.pileHeight) : 1.0e30;
 
         if (!agent.floats) {
             const i64 cx = cellOf(x, cell);
@@ -202,19 +207,23 @@ void stepSwarm(World& world, const PhysicsSync* physics, SwarmComponent& swarm, 
                         const f64 d2 = ax * ax + az * az;
                         if (d2 < reach * reach) {
                             const f64 top = them.position.y + static_cast<f64>(them.height);
-                            if (y >= top - StandSlack) {
+                            const bool tooHigh = top > pileTop;
+                            if (y >= top - StandSlack && !tooHigh) {
                                 // Standing on it.
                                 if (d2 < (reach * OnTopReach) * (reach * OnTopReach) && top > support)
                                     support = top;
                             }
-                            else if (them.position.y < y + h && y < top) {
-                                // Side by side: apart.
+                            else if ((them.position.y < y + h && y < top) || (tooHigh && y >= top - StandSlack)) {
+                                // Side by side: apart. And one found standing
+                                // on a top past the pile's height is beside it
+                                // too: pushed off, and not held up.
                                 const f64 d = std::sqrt(d2) + 0.0001;
                                 const f64 push = (reach - d) / d;
                                 pushX += ax * push;
                                 pushZ += az * push;
-                                // In the way, between it and the target: climb.
-                                if (dirX * -ax + dirZ * -az > InTheWay * d) {
+                                // In the way, between it and the target: climb
+                                // -- where its top is one the pile may reach.
+                                if (!tooHigh && dirX * -ax + dirZ * -az > InTheWay * d) {
                                     blocked = true;
                                     climbTo = std::max(climbTo, top);
                                 }

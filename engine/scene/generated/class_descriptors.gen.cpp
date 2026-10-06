@@ -467,7 +467,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(moduleScriptDesc);
 
     // --- BasePart ---
-    static std::array<PropertyDesc, 24> basePartProperties;
+    static std::array<PropertyDesc, 25> basePartProperties;
     basePartProperties = {{
         PropertyDesc{
             .name = atoms.intern("CFrame"),
@@ -545,6 +545,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getBasePartCastShadow,
             .set = native::setBasePartCastShadow,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Fade"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How much of the part THIS machine leaves out of its own picture: 0 draws it as `Transparency` says, 1 not at all, and between them its opacity is multiplied by one less this. It is this machine's alone -- never sent to another, never saved -- so it is what a game reaches for to change what one player sees of a part every player has: the tree between a camera and its hero thinned on that screen and on no other, where writing `Transparency` on a host thinned it for everybody.\012\012A part thinned this way goes on casting the shadow its `Transparency` gives it: what is hidden from a camera has not left the world.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getBasePartFade,
+            .set = native::setBasePartFade,
         },
         PropertyDesc{
             .name = atoms.intern("ReceivesDecals"),
@@ -3802,7 +3815,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(navigationLinkDesc);
 
     // --- Swarm ---
-    static std::array<PropertyDesc, 11> swarmProperties;
+    static std::array<PropertyDesc, 12> swarmProperties;
     swarmProperties = {{
         PropertyDesc{
             .name = atoms.intern("Target"),
@@ -3869,6 +3882,17 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
             .get = native::getSwarmClimbSpeed,
             .set = native::setSwarmClimbSpeed,
+        },
+        PropertyDesc{
+            .name = atoms.intern("PileHeight"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How high the crowd may pile on itself, in metres above the ground under an agent; 0 for no limit. Past it an agent does not climb the one in its way, and one standing on another whose top is past it is not held up: it is pushed aside like any neighbour and comes down. Two or three agents deep reads as a wave breaking over what it reached; with no limit, a crowd round something that stands still becomes a tower over it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getSwarmPileHeight,
+            .set = native::setSwarmPileHeight,
         },
         PropertyDesc{
             .name = atoms.intern("StopDistance"),

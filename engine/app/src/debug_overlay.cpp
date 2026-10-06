@@ -10094,6 +10094,9 @@ struct ExportUi
     int multiplayer = 0; // none, host, dedicated
     // `[export] ship_source` (ADR 0112): scripts as source rather than bytecode.
     bool shipSource = false;
+    // `[export] packed` (ADR 0183), where the project says: unsaid, a game is
+    // sealed unless it ships its source.
+    std::optional<bool> packed;
     std::array<char, 128> server{};
     std::array<char, 96> windowsExecutable{};
     std::array<char, 96> linuxExecutable{};
@@ -10228,6 +10231,7 @@ void readExportSettings(ExportUi& ui)
     const std::string mode = stringOf("export.multiplayer", "none");
     ui.multiplayer = mode == "dedicated" ? 2 : mode == "host" ? 1 : 0;
     ui.shipSource = document.boolean("export.ship_source").value_or(false);
+    ui.packed = document.boolean("export.packed");
     copyInto(ui.server, stringOf("network.server"));
     copyInto(ui.windowsExecutable, stringOf("export.windows.executable"));
     copyInto(ui.linuxExecutable, stringOf("export.linux.executable"));
@@ -10909,6 +10913,15 @@ void drawExportWindow(Editor& editor, EditorDialogs& dialogs, const IconAtlas* i
     if (ImGui::Checkbox(core::tr(ENG_TR("engine.editor.export_window.ship_source")), &ui.shipSource))
         writeExportSetting(ui, "export.ship_source", core::tomlBoolean(ui.shipSource));
     ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.export_window.off_the_game_s_scripts_tip")));
+    // And whether the game is one sealed pack or a folder of files (ADR 0183):
+    // what the project says, or what a build does where it says nothing.
+    ImGui::SameLine(0.0f, ImGui::GetFontSize() * 1.5f);
+    bool sealed = ui.packed.value_or(!ui.shipSource);
+    if (ImGui::Checkbox(core::tr(ENG_TR("engine.editor.export_window.packed")), &sealed)) {
+        ui.packed = sealed;
+        writeExportSetting(ui, "export.packed", core::tomlBoolean(sealed));
+    }
+    ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.export_window.packed_tip")));
     if (!ui.problem.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, themeColor(palette().danger));
         ImGui::TextWrapped("%s", ui.problem.c_str());

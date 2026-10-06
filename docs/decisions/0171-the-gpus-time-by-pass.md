@@ -77,6 +77,15 @@ where the GPU is, and removing what it draws says why.
    fall while it waits and stretch every number: the passes are compared with
    each other and their sum with an untimed frame, not read as absolutes.
 
+   **Amended 2026-10-06: the clock is measured too.** That stretch was
+   found to be by 3.8 on the phone this was written for, and the same for
+   every pass -- so a run that drew less was timed slower, and two runs could
+   be compared only by a pass both were known to share (the upscaler's). Each
+   timed frame now also times the same fixed work, sixteen megapixels moved
+   between two textures of the device's own: `clock`, said in the line apart
+   from the passes and out of their sum, as the floor is. Two runs with one
+   clock compare as they stand; otherwise each is divided by its own.
+
 7. **The times are said under the frame report**, every
    `frame_report_seconds`, as a frame's mean over the frames since the last
    line, the costliest first; and once more at the end of the run.

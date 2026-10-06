@@ -193,13 +193,17 @@ TEST_CASE("a timed frame draws what an untimed one does, and says what each pass
     device.setPassTiming(true);
     frame();
     const std::span<const PassTime> times = device.passTimes();
-    REQUIRE(times.size() == 4);
+    REQUIRE(times.size() == 5);
     CHECK(times[0].name == "first");
     CHECK(times[0].submits == 1);
     CHECK(times[1].name == "second");
     CHECK(times[1].submits == 1);
     CHECK(times[2].name == "second/again");
     CHECK(times[3].name == "floor");
+    // And the same fixed work, timed with every timed frame: how fast the GPU
+    // was running while the passes above were timed.
+    CHECK(times[4].name == "clock");
+    CHECK(times[4].submits == 1);
     for (const PassTime& time : times) {
         CHECK(time.milliseconds >= 0.0);
         // A clear of sixty-four pixels: a second would be a wait that hung.
@@ -290,11 +294,12 @@ TEST_CASE("a timed frame's passes to a window are one entry, after every pass be
 
     if (screen.texture.valid()) {
         const std::span<const PassTime> times = device.passTimes();
-        REQUIRE(times.size() == 3);
+        REQUIRE(times.size() == 4);
         CHECK(times[0].name == "world");
         CHECK(times[1].name == "floor");
-        CHECK(times[2].name == "resolve+late+ui");
-        CHECK(times[2].submits == 1);
+        CHECK(times[2].name == "clock");
+        CHECK(times[3].name == "resolve+late+ui");
+        CHECK(times[3].submits == 1);
 
         std::vector<std::byte> pixels(8 * 8 * 4);
         REQUIRE(device.readTexture(world, pixels));

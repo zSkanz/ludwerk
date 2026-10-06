@@ -306,6 +306,10 @@ struct DrawItem
     // `BasePart.ReceivesDecals`: false for a part no decal paints. True for
     // everything that is not a part: the ground always receives.
     bool receivesDecals = true;
+    // **See-through on this machine alone** (`BasePart.Fade`): the draw is
+    // blended because this machine thinned it, not because the part is
+    // see-through -- so it casts the shadow it would have cast.
+    bool fadedOnly = false;
     // The draw's world bounds as a sphere, in the snapshot's camera-relative
     // space. A sphere rather than the box it came from, because every consumer
     // is a distance test: the shadow pass rejects a caster against a cascade's
@@ -377,9 +381,12 @@ struct DrawItem
 // **And what its game switched off** (`BasePart.CastShadow`): a muzzle flash,
 // a blade's trail, a ring on the ground -- solid, lit, and not a thing that
 // has a shadow.
+//
+// **And not what one machine thinned for itself** (`BasePart.Fade`): a tree
+// hidden from a camera has not left the world, and its shadow stays.
 [[nodiscard]] constexpr bool castsShadow(const DrawItem& draw) noexcept
 {
-    return !draw.transparent && draw.castShadow;
+    return (!draw.transparent || draw.fadedOnly) && draw.castShadow;
 }
 
 // One terrain, as the renderer needs it beyond its meshes: the palette its

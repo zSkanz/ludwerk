@@ -429,6 +429,16 @@ bool setSwarmClimbSpeed(World& world, core::InstanceId id, const Value& value)
     return setSwarmNumber<&SwarmComponent::climbSpeed>(world, id, value, false);
 }
 
+Value getSwarmPileHeight(const World& world, core::InstanceId id)
+{
+    return getSwarmNumber<&SwarmComponent::pileHeight>(world, id);
+}
+
+bool setSwarmPileHeight(World& world, core::InstanceId id, const Value& value)
+{
+    return setSwarmNumber<&SwarmComponent::pileHeight>(world, id, value, false);
+}
+
 Value getSwarmStopDistance(const World& world, core::InstanceId id)
 {
     return getSwarmNumber<&SwarmComponent::stopDistance>(world, id);

@@ -1136,6 +1136,14 @@ declare extern type BasePart extends PVInstance with
     --- still lit, and still receives the shadows of others. A part that is see-through casts none
     --- whatever this says, and a hidden one draws nothing at all.
     CastShadow: boolean
+    --- How much of the part THIS machine leaves out of its own picture: 0 draws it as `Transparency`
+    --- says, 1 not at all, and between them its opacity is multiplied by one less this. It is this
+    --- machine's alone -- never sent to another, never saved -- so it is what a game reaches for to
+    --- change what one player sees of a part every player has: the tree between a camera and its hero
+    --- thinned on that screen and on no other, where writing `Transparency` on a host thinned it for
+    --- everybody. A part thinned this way goes on casting the shadow its `Transparency` gives it: what
+    --- is hidden from a camera has not left the world.
+    Fade: number
     --- Whether a `Decal` paints this part. A decal projects onto everything inside its box; off, the
     --- part is left as it is by every one of them -- a character standing on a scorch mark, an enemy
     --- inside a warning ring on the ground, a door a puddle would otherwise climb. It changes only what
@@ -3619,6 +3627,12 @@ declare extern type Swarm extends Instance with
     Gravity: number
     --- How fast an agent climbs the one in its way, in metres per second.
     ClimbSpeed: number
+    --- How high the crowd may pile on itself, in metres above the ground under an agent; 0 for no
+    --- limit. Past it an agent does not climb the one in its way, and one standing on another whose top
+    --- is past it is not held up: it is pushed aside like any neighbour and comes down. Two or three
+    --- agents deep reads as a wave breaking over what it reached; with no limit, a crowd round
+    --- something that stands still becomes a tower over it.
+    PileHeight: number
     --- How far past its own radius from `Target` an agent stops walking at it.
     StopDistance: number
     --- Past this far from `Target`, in metres, an agent thinks every second tick.

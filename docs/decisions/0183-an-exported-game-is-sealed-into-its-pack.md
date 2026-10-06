@@ -102,7 +102,6 @@ away.
 - No layout that keeps a patch small: entries are in the order of their
   hashes, and a changed asset moves what follows it. A store's delta of the
   whole file is what there is.
-- The Export window has no switch for it yet: the key is in `project.toml`.
 - The engine's own content beside a game -- shaders, fonts, its catalogue,
   its Luau modules -- is as it was. It is the engine's, and public.
 
