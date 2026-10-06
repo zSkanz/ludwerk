@@ -82,7 +82,14 @@ Interpolants VertexMain(VertexInput input)
     const float3 a = input.ModelColumn0.xyz;
     const float3 b = input.ModelColumn1.xyz;
     const float3 c = input.ModelColumn2.xyz;
-    const float3x3 normalMatrix = float3x3(cross(b, c), cross(c, a), cross(a, b));
+    //
+    // **The three cross products are the cofactor matrix's COLUMNS**, as
+    // `normalMatrixOf` stores them -- and `float3x3(a, b, c)` fills ROWS, the
+    // same trap `instanceModel` above names (D043). Built without the
+    // transpose it was the cofactor's transpose, which for a rotation is its
+    // inverse: every instanced part was lit as if turned the other way, a
+    // quarter-turned crate bright on its shaded side (D577).
+    const float3x3 normalMatrix = transpose(float3x3(cross(b, c), cross(c, a), cross(a, b)));
 
     output.Normal = mul(normalMatrix, input.Normal);
     // A tangent is a direction along the surface, not a covector, so it rides on

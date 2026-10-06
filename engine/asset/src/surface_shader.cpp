@@ -507,7 +507,10 @@ constexpr std::string_view ForwardVertex = R"(Interpolants VertexMain(VertexInpu
     const float3 a = input.ModelColumn0.xyz;
     const float3 b = input.ModelColumn1.xyz;
     const float3 c = input.ModelColumn2.xyz;
-    output.Normal = mul(float3x3(cross(b, c), cross(c, a), cross(a, b)), vertex.Normal);
+    // Transposed: the cross products are the cofactor's columns and the
+    // constructor fills rows (D577). Without it an instanced part's normal
+    // was turned by the inverse of the part's rotation.
+    output.Normal = mul(transpose(float3x3(cross(b, c), cross(c, a), cross(a, b))), vertex.Normal);
     output.InstanceAlpha = input.InstanceAlphaTint.x;
 #else
     output.Normal = mul((float3x3)NormalMatrix, vertex.Normal);

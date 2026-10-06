@@ -1,0 +1,14 @@
+# A part drawn in an instanced run is lit as the same part drawn alone (D577).
+# A project rather than a bare script, because the two materials that make one
+# cube a draw of its own and five a run are files.
+
+[project]
+name = "Ludwerk Instanced Normals"
+id = "dev.ludwerk.instancednormals"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Instanced Normals"
+width = 960
+height = 540

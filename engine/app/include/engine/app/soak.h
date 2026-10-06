@@ -206,6 +206,13 @@ struct SoakVerdict
     f64 p99Ms = 0.0;
     f64 worstMs = 0.0;
     usize hitches = 0;
+    // **Which frames they were**, counted from the first one recorded, and the
+    // first `MostHitchFrames` of them. A flight is the same path every time,
+    // so a frame's number is a place on it: a hitch a change made comes back
+    // at the same place in the next flight, and one the machine made does not
+    // (`run_far_flight_gate.cmake` asks exactly that of two flights).
+    static constexpr usize MostHitchFrames = 64;
+    std::vector<usize> hitchFrames;
     f64 worstStreamingMs = 0.0;
     // The worst in CPU time, or negative when no frame could say.
     f64 worstStreamingCpuMs = -1.0;

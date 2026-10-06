@@ -1272,8 +1272,12 @@ TEST_CASE("D535: a window the system holds still hands the engine its frames")
         MESSAGE("held for a second: ", held, " frames lent, the longest wait for the pump ", longestMs, " ms");
         // It was one wait of the whole second, and no frame.
         CHECK(longestMs < 250.0);
-        // Half the simulation's sixty a second at the least, on a loaded machine.
-        CHECK(held >= 30);
+        // And frames were lent through it. The defect is none at all; how many
+        // is the system's timer's to say, which a machine doing three builds
+        // and a game answers late -- seventeen in the second, once, where an
+        // idle one gives sixty. A handful is the claim, and the wait above is
+        // the bound.
+        CHECK(held >= 8);
         // And it is over: the pump is the system's queue again.
         static_cast<void>(engine::platform::pumpEvents());
         CHECK_FALSE(engine::platform::pumpHeld());

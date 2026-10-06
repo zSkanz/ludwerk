@@ -473,3 +473,63 @@ TEST_CASE("ADR 0162: a replica stands an agent on the floor it was told, a lift 
     rig.ticks(60);
     CHECK(rig.at(1).position.y == doctest::Approx(20.0).epsilon(0.001));
 }
+
+TEST_CASE("a swarm's ground is the terrain's own height to the bit, and follows an edit under its feet")
+{
+    // A step asks the ground's height for every agent that has moved, and a
+    // height is the tops of five columns of voxels: the swarm keeps the tops
+    // it has asked for. What it answers by them is what the terrain answers,
+    // exactly -- and other ground is other tops.
+    Rig rig;
+    scene::World& world = rig.fixture.world;
+    const core::InstanceId ground = rig.fixture.folder("Ground");
+    {
+        TerrainComponent terrain;
+        terrain.field =
+            asset::TerrainField(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 64.0f});
+        (void)asset::fillFlat(terrain.field, core::DVec3{0.0, 0.0, 0.0}, 128.0f, 2.0f, 1);
+        // A mound in the way, so the height differs from one column to the next.
+        (void)asset::fillBall(terrain.field, core::DVec3{6.0, 2.0, 0.0}, 4.0, 1);
+        world.terrains().add(ground, std::move(terrain));
+    }
+    rig.swarm().target = core::DVec3{40.0, 0.0, 0.0};
+    std::vector<u32> agents;
+    for (int row = 0; row < 12; ++row)
+        agents.push_back(rig.agent(core::DVec3{-6.0, 10.0, -3.3 + 0.6 * row}));
+
+    f64 lowest = 1.0e9;
+    f64 highest = -1.0e9;
+    const auto agrees = [&] {
+        for (const u32 agent : agents) {
+            const SwarmAgent& row = rig.at(agent);
+            const std::optional<f64> terrain = swarmTerrainAt(std::as_const(world), row.groundX, row.groundZ);
+            REQUIRE(terrain.has_value());
+            CHECK(row.ground == *terrain);
+            lowest = std::min(lowest, row.ground);
+            highest = std::max(highest, row.ground);
+        }
+    };
+    for (int tick = 0; tick < 240; ++tick) {
+        rig.ticks(1);
+        if (tick % 10 == 9)
+            agrees();
+    }
+    // Over the mound, not round a flat field.
+    CHECK(highest - lowest > 1.0);
+
+    // The ground ahead of them dug away: what they find there is the hole.
+    const core::DVec3 ahead{rig.at(agents[6]).position.x + 3.0, 2.0, 0.0};
+    TerrainComponent* live = world.terrains().find(ground);
+    REQUIRE(live != nullptr);
+    (void)asset::fillBall(live->field, ahead, 3.0, 0);
+    live->fieldRevision += 1;
+    const f64 before = *swarmTerrainAt(std::as_const(world), ahead.x, ahead.z);
+    CHECK(before < 2.0);
+    lowest = 1.0e9;
+    for (int tick = 0; tick < 90; ++tick) {
+        rig.ticks(1);
+        if (tick > 10)
+            agrees();
+    }
+    CHECK(lowest < 2.0);
+}

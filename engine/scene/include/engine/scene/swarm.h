@@ -51,6 +51,9 @@ struct SwarmTold
 // The terrain's top at (x, z), or nothing where no terrain covers it: the
 // ground an authority and its replicas agree on without a ray.
 [[nodiscard]] std::optional<f64> swarmTerrainAt(const World& world, f64 x, f64 z);
+// The same answer, from the column tops `swarm` has kept and the ones it
+// asks for now: what a step asks, hundreds of times a tick.
+[[nodiscard]] std::optional<f64> swarmTerrainAt(const World& world, SwarmComponent& swarm, f64 x, f64 z);
 // An agent this replica now has. A row that held another is that one removed
 // first.
 void mirrorSwarmAgentAdded(SwarmComponent& swarm, u32 slot, u16 tag, f32 radius, f32 height, const SwarmTold& told,

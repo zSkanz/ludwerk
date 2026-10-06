@@ -928,7 +928,9 @@ private:
     // Which loose parts are predicted this tick: in, out, and what each
     // starts from.
     void updatePredicted(scene::World& world);
-    void onSnapshot(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
+    // `inParts`: it came as `SnapshotPart`s, and is acknowledged reliably --
+    // the authority sends nothing after such a one until it hears (D576).
+    void onSnapshot(scene::World& world, core::InstanceId root, std::span<const u8> bytes, bool inParts);
     // A part of a snapshot sent reliably (NA1): joined, and applied whole
     // when the last part is in.
     void onSnapshotPart(scene::World& world, core::InstanceId root, std::span<const u8> bytes);

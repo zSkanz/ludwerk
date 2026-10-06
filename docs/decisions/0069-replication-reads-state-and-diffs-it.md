@@ -275,3 +275,31 @@ tick, the sixty that moved and an eighth of the rest are read, the others
 kept, and no more than a field set a tick is allocated. And "every pool the
 wire reads is one a capture can tell has not changed" fails when a pool is
 added to the wire and not to the digest's list.
+
+## Amendment, 2026-10-06, the third (protocol 43): an acknowledgement is not reliable
+
+D576. A replica said it held a snapshot with a reliable message on the control
+channel, one a snapshot. A reliable channel delivers in order, and the game's
+own reliable messages -- every `RemoteEvent` and `RemoteFunction` a client
+sends -- are on that channel: each acknowledgement a link lost held all of
+them until it was sent again. Measured at 150 ms each way and 2% loss, 19 of
+88 remote calls took a tenth to a third of a second longer than the link.
+
+- **An `Ack` goes without a guarantee, on the state channel**, which carries
+  nothing reliable from a replica and so is never held. The authority keeps
+  the newest tick it heard. A lost one costs one diff against the state
+  before, which the replica holds -- both ends keep sixty-four -- and once
+  the authority has no state the replica proved it holds, it sends whole
+  ones until it hears again. The guarantee had been for a replica that kept
+  one state.
+- **The acknowledgement of a snapshot sent in parts stays reliable**, on the
+  control channel: nothing goes to that peer until it is heard, so nothing
+  later could say it instead. An authority takes an `Ack` on either channel.
+
+After: 5 of 88 late, each by one resend of the call itself -- the link's own
+loss, and all of it.
+
+**What is still in front of a client's remote calls** is the client's other
+remote calls, in order, which is the guarantee a `RemoteEvent` gives; and
+from the authority, spawns and attribute changes, which a message that names
+an instance must not arrive before.

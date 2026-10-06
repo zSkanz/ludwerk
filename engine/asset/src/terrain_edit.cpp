@@ -1663,29 +1663,7 @@ EditReport replaceMaterial(TerrainField& field, DVec3 minCorner, DVec3 maxCorner
 
 std::optional<float> heightAt(const TerrainField& field, double x, double z)
 {
-    const double voxel = static_cast<double>(field.settings().voxelSize);
-    if (!(voxel > 0.0))
-        return std::nullopt;
-    // Bilinear between the four column centres around the point. The column the
-    // point is IN decides whether there is ground here at all; a neighbour with
-    // none stands in with its value, so the edge of a plateau does not sag.
-    const std::optional<float> own = field.columnTop(field.voxelIndex(x), field.voxelIndex(z));
-    if (!own.has_value())
-        return std::nullopt;
-    const double gridX = x / voxel - 0.5;
-    const double gridZ = z / voxel - 0.5;
-    const auto lowX = static_cast<i32>(std::floor(gridX));
-    const auto lowZ = static_cast<i32>(std::floor(gridZ));
-    const auto tx = static_cast<float>(gridX - std::floor(gridX));
-    const auto tz = static_cast<float>(gridZ - std::floor(gridZ));
-    const auto top = [&](i32 cx, i32 cz) { return field.columnTop(cx, cz).value_or(*own); };
-    const float a = top(lowX, lowZ);
-    const float b = top(lowX + 1, lowZ);
-    const float c = top(lowX, lowZ + 1);
-    const float d = top(lowX + 1, lowZ + 1);
-    const float near = a + (b - a) * tx;
-    const float far = c + (d - c) * tx;
-    return near + (far - near) * tz;
+    return heightAtWith(field, x, z, [&field](i32 cx, i32 cz) { return field.columnTop(cx, cz); });
 }
 
 } // namespace engine::asset

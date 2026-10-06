@@ -109,6 +109,9 @@ TEST_CASE("one frame that spent too long INSIDE STREAMING fails the gate")
     const SoakVerdict verdict = recorder.evaluate({});
     CHECK_FALSE(verdict.ok);
     CHECK(verdict.hitches == 1);
+    // And which frame it was: what two flights are compared by.
+    REQUIRE(verdict.hitchFrames.size() == 1);
+    CHECK(verdict.hitchFrames[0] == 500);
     CHECK(verdict.worstStreamingMs == doctest::Approx(38.0));
     CHECK(mentions(verdict, "engine.soak.err.hitches"));
 }

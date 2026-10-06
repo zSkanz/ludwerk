@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <unordered_map>
 
 #include "engine/asset/terrain.h"
@@ -62,10 +63,10 @@ constexpr f64 GroundReach = 64.0;
 
 // The ground's height under (x, z): the highest terrain over it, or what a
 // ray down finds, or zero.
-[[nodiscard]] f64 groundAt(const World& world, const PhysicsSync* physics, core::InstanceId body, f64 x, f64 z,
-                           f64 from)
+[[nodiscard]] f64 groundAt(const World& world, SwarmComponent& swarm, const PhysicsSync* physics, core::InstanceId body,
+                           f64 x, f64 z, f64 from)
 {
-    if (const std::optional<f64> terrain = swarmTerrainAt(world, x, z); terrain.has_value())
+    if (const std::optional<f64> terrain = swarmTerrainAt(world, swarm, x, z); terrain.has_value())
         return *terrain;
     if (physics == nullptr)
         return 0.0;
@@ -89,20 +90,74 @@ void buildGrid(SwarmComponent& swarm)
 {
     const f64 cell = std::max(static_cast<f64>(swarm.cellSize), 0.01);
     const usize count = swarm.agents.size();
-    swarm.grid.clear();
-    swarm.grid.reserve(count);
+    swarm.grid.reset(count);
     swarm.gridNext.assign(count, 0);
     for (usize slot = 0; slot < count; ++slot) {
         const SwarmAgent& agent = swarm.agents[slot];
         if (!agent.alive)
             continue;
         const i64 key = cellKey(cellOf(agent.position.x, cell), cellOf(agent.position.z, cell));
-        auto [at, inserted] = swarm.grid.try_emplace(key, 0u);
-        swarm.gridNext[slot] = at->second;
-        at->second = static_cast<u32>(slot) + 1;
+        u32& first = swarm.grid.at(key);
+        swarm.gridNext[slot] = first;
+        first = static_cast<u32>(slot) + 1;
     }
     swarm.gridCell = swarm.cellSize;
     swarm.gridValid = true;
+}
+
+// **The obstacles, by cell** -- each in every cell its circle touches, with a
+// metre to spare for the widest agent -- made again only when the obstacles
+// are other than the ones it was made from.
+void fileObstacles(SwarmComponent& swarm)
+{
+    u64 digest = 0x9E3779B97F4A7C15ull ^ swarm.obstacles.size();
+    for (const SwarmObstacle& obstacle : swarm.obstacles) {
+        u64 words[3]{};
+        std::memcpy(&words[0], &obstacle.x, sizeof(f64));
+        std::memcpy(&words[1], &obstacle.z, sizeof(f64));
+        std::memcpy(&words[2], &obstacle.radius, sizeof(f32));
+        for (const u64 word : words) {
+            digest = (digest ^ word) * 0xFF51AFD7ED558CCDull;
+            digest ^= digest >> 29;
+        }
+    }
+    if (digest == 0)
+        digest = 1;
+    if (digest == swarm.obstacleDigest)
+        return;
+    swarm.obstacleDigest = digest;
+
+    // Each cell's obstacles in the order the obstacles are: counted, given a
+    // run of the rows, then filled.
+    struct Filed
+    {
+        i64 key = 0;
+        u32 obstacle = 0;
+    };
+    std::vector<Filed> filed;
+    for (usize index = 0; index < swarm.obstacles.size(); ++index) {
+        const SwarmObstacle& obstacle = swarm.obstacles[index];
+        const f64 reach = static_cast<f64>(obstacle.radius) + 1.0;
+        for (i64 x = cellOf(obstacle.x - reach, ObstacleCell); x <= cellOf(obstacle.x + reach, ObstacleCell); ++x) {
+            for (i64 z = cellOf(obstacle.z - reach, ObstacleCell); z <= cellOf(obstacle.z + reach, ObstacleCell); ++z)
+                filed.push_back(Filed{cellKey(x, z), static_cast<u32>(index)});
+        }
+    }
+    std::stable_sort(filed.begin(), filed.end(), [](const Filed& a, const Filed& b) { return a.key < b.key; });
+    swarm.obstacleCells.reset(filed.size());
+    // A cell's value: where its run starts in the rows, plus one. The run is
+    // its count, then that many obstacles.
+    swarm.obstacleRows.clear();
+    for (usize from = 0; from < filed.size();) {
+        usize to = from;
+        while (to < filed.size() && filed[to].key == filed[from].key)
+            ++to;
+        swarm.obstacleCells.at(filed[from].key) = static_cast<u32>(swarm.obstacleRows.size()) + 1;
+        swarm.obstacleRows.push_back(static_cast<u32>(to - from));
+        for (usize at = from; at < to; ++at)
+            swarm.obstacleRows.push_back(filed[at].obstacle);
+        from = to;
+    }
 }
 
 void stepSwarm(World& world, const PhysicsSync* physics, SwarmComponent& swarm, f64 dt, u64 tick,
@@ -114,20 +169,10 @@ void stepSwarm(World& world, const PhysicsSync* physics, SwarmComponent& swarm, 
     // Where the last step left everyone, unless something moved an agent since.
     if (!swarm.gridValid || swarm.gridCell != swarm.cellSize)
         buildGrid(swarm);
-    const std::unordered_map<i64, u32>& head = swarm.grid;
+    const SwarmCells& head = swarm.grid;
     const std::vector<u32>& next = swarm.gridNext;
 
-    // The obstacles, by cell -- each in every cell its circle touches, with a
-    // metre to spare for the widest agent.
-    std::unordered_map<i64, std::vector<u32>> obstacleCells;
-    for (usize index = 0; index < swarm.obstacles.size(); ++index) {
-        const SwarmObstacle& obstacle = swarm.obstacles[index];
-        const f64 reach = static_cast<f64>(obstacle.radius) + 1.0;
-        for (i64 x = cellOf(obstacle.x - reach, ObstacleCell); x <= cellOf(obstacle.x + reach, ObstacleCell); ++x) {
-            for (i64 z = cellOf(obstacle.z - reach, ObstacleCell); z <= cellOf(obstacle.z + reach, ObstacleCell); ++z)
-                obstacleCells[cellKey(x, z)].push_back(static_cast<u32>(index));
-        }
-    }
+    fileObstacles(swarm);
 
     for (usize slot = 0; slot < count; ++slot) {
         SwarmAgent& agent = swarm.agents[slot];
@@ -192,8 +237,7 @@ void stepSwarm(World& world, const PhysicsSync* physics, SwarmComponent& swarm, 
             for (const auto& offset : Around) {
                 if (seen >= swarm.maxNeighbours)
                     break;
-                const auto found = head.find(cellKey(cx + offset[0], cz + offset[1]));
-                u32 other = found == head.end() ? 0u : found->second;
+                u32 other = head.find(cellKey(cx + offset[0], cz + offset[1]));
                 while (other != 0) {
                     ++seen;
                     if (seen > swarm.maxNeighbours)
@@ -235,10 +279,11 @@ void stepSwarm(World& world, const PhysicsSync* physics, SwarmComponent& swarm, 
             }
 
             // Round the obstacles.
-            if (const auto stones = obstacleCells.find(cellKey(cellOf(x, ObstacleCell), cellOf(z, ObstacleCell)));
-                stones != obstacleCells.end()) {
-                for (const u32 index : stones->second) {
-                    const SwarmObstacle& stone = swarm.obstacles[index];
+            if (const u32 run = swarm.obstacleCells.find(cellKey(cellOf(x, ObstacleCell), cellOf(z, ObstacleCell)));
+                run != 0) {
+                const u32 stones = swarm.obstacleRows[run - 1];
+                for (u32 at = 0; at < stones; ++at) {
+                    const SwarmObstacle& stone = swarm.obstacles[swarm.obstacleRows[run + at]];
                     const f64 ax = x - stone.x;
                     const f64 az = z - stone.z;
                     const f64 reach = r + static_cast<f64>(stone.radius);
@@ -263,7 +308,7 @@ void stepSwarm(World& world, const PhysicsSync* physics, SwarmComponent& swarm, 
 
         // The ground, found again only when it has moved.
         if (std::fabs(nx - agent.groundX) + std::fabs(nz - agent.groundZ) > 0.1) {
-            agent.ground = groundAt(world, physics, agent.body, nx, nz, y);
+            agent.ground = groundAt(world, swarm, physics, agent.body, nx, nz, y);
             agent.groundX = nx;
             agent.groundZ = nz;
         }
@@ -600,6 +645,70 @@ bool mirrorSwarmAgentTold(SwarmComponent& swarm, u32 slot, const SwarmTold& told
     return true;
 }
 
+std::optional<f64> swarmTerrainAt(const World& world, SwarmComponent& swarm, f64 x, f64 z)
+{
+    // What the kept tops are of: every terrain's place and revision, in the
+    // pool's order. Other ground, and they are let go.
+    constexpr usize MostTerrains = 8;
+    constexpr usize MostTops = 16384;
+    u64 digest = 0x9E3779B97F4A7C15ull;
+    usize terrains = 0;
+    const auto mix = [&digest](u64 word) {
+        digest = (digest ^ word) * 0xFF51AFD7ED558CCDull;
+        digest ^= digest >> 29;
+    };
+    world.terrains().forEach([&](core::InstanceId id, const TerrainComponent& terrain) {
+        ++terrains;
+        u64 words[3]{};
+        std::memcpy(&words[0], &terrain.origin.x, sizeof(f64));
+        std::memcpy(&words[1], &terrain.origin.y, sizeof(f64));
+        std::memcpy(&words[2], &terrain.origin.z, sizeof(f64));
+        mix((static_cast<u64>(id.index) << 32) | id.generation);
+        mix(terrain.fieldRevision);
+        for (const u64 word : words)
+            mix(word);
+    });
+    if (terrains == 0)
+        return std::nullopt;
+    // More terrains than a key has room to tell apart: asked afresh, as before.
+    if (terrains > MostTerrains)
+        return swarmTerrainAt(world, x, z);
+    if (digest == 0)
+        digest = 1;
+    if (digest != swarm.groundDigest || swarm.groundTops.size() >= MostTops || swarm.groundCells.keys.empty()) {
+        swarm.groundDigest = digest;
+        swarm.groundCells.reset(MostTops);
+        swarm.groundTops.clear();
+    }
+
+    std::optional<f64> best;
+    u64 ordinal = 0;
+    world.terrains().forEach([&](core::InstanceId, const TerrainComponent& terrain) {
+        const u64 which = ordinal++;
+        const std::optional<float> height = asset::heightAtWith(
+            terrain.field, x - terrain.origin.x, z - terrain.origin.z, [&](i32 cx, i32 cz) -> std::optional<float> {
+                // The column's own key: its cell's, and which terrain it is.
+                constexpr i64 Half = i64{1} << 27;
+                const i64 key = ((((static_cast<i64>(cx) + Half) << 28) | (static_cast<i64>(cz) + Half)) << 3) |
+                                static_cast<i64>(which);
+                u32& kept = swarm.groundCells.at(key);
+                if (kept == 0) {
+                    const std::optional<float> top = terrain.field.columnTop(cx, cz);
+                    swarm.groundTops.push_back(top.has_value() ? *top : std::numeric_limits<f32>::quiet_NaN());
+                    kept = static_cast<u32>(swarm.groundTops.size());
+                }
+                const f32 top = swarm.groundTops[kept - 1];
+                return std::isnan(top) ? std::optional<float>{} : std::optional<float>{top};
+            });
+        if (!height.has_value())
+            return;
+        const f64 top = static_cast<f64>(*height) + terrain.origin.y;
+        if (!best.has_value() || top > *best)
+            best = top;
+    });
+    return best;
+}
+
 std::optional<f64> swarmTerrainAt(const World& world, f64 x, f64 z)
 {
     std::optional<f64> best;
@@ -656,8 +765,7 @@ void querySwarmRadius(SwarmComponent& swarm, core::DVec3 centre, f64 radius, boo
     }
     for (i64 x = low[0]; x <= high[0]; ++x) {
         for (i64 z = low[1]; z <= high[1]; ++z) {
-            const auto found = swarm.grid.find(cellKey(x, z));
-            for (u32 at = found == swarm.grid.end() ? 0u : found->second; at != 0; at = swarm.gridNext[at - 1]) {
+            for (u32 at = swarm.grid.find(cellKey(x, z)); at != 0; at = swarm.gridNext[at - 1]) {
                 const SwarmAgent& agent = swarm.agents[at - 1];
                 if (agent.alive && within(agent))
                     out.push_back(at);

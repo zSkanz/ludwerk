@@ -91,6 +91,8 @@ SoakVerdict SoakRecorder::evaluate(const SoakThresholds& thresholds) const
         const f64 attributed = sample.streamingCpuMs >= 0.0 ? sample.streamingCpuMs : sample.streamingMs;
         if (attributed > thresholds.hitchMs) {
             verdict.hitches += 1;
+            if (verdict.hitchFrames.size() < SoakVerdict::MostHitchFrames)
+                verdict.hitchFrames.push_back(static_cast<usize>(&sample - m_samples.data()));
         }
     }
     verdict.finalResidentBytes = m_samples.back().residentBytes;
@@ -371,6 +373,10 @@ std::string SoakRecorder::report(const SoakThresholds& thresholds) const
     out << "  \"worstMs\": " << fixed(verdict.worstMs, 3) << ",\n";
     out << "  \"hitchMs\": " << fixed(thresholds.hitchMs, 3) << ",\n";
     out << "  \"hitches\": " << verdict.hitches << ",\n";
+    out << "  \"hitchFrames\": [";
+    for (usize i = 0; i < verdict.hitchFrames.size(); ++i)
+        out << (i == 0 ? "" : ", ") << verdict.hitchFrames[i];
+    out << "],\n";
     out << "  \"worstStreamingMs\": " << fixed(verdict.worstStreamingMs, 3) << ",\n";
     out << "  \"worstStreamingCpuMs\": " << fixed(verdict.worstStreamingCpuMs, 3) << ",\n";
     out << "  \"wholeFrameP99Ms\": " << fixed(thresholds.wholeFrameP99Ms, 3) << ",\n";

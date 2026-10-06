@@ -3311,7 +3311,7 @@ local Messages: { Schema.Message } = {
     {
         Name = "Ack",
         Id = 6,
-        Channel = "Control",
+        Channel = "State",
         Direction = "ToAuthority",
         Layout = {
             {
@@ -3320,8 +3320,15 @@ local Messages: { Schema.Message } = {
                 Doc = "The snapshot tick the replica now holds, and may be diffed against.",
             },
         },
-        Doc = "Which baseline the replica now holds. Reliable, because a lost acknowledgement makes "
-            .. "the authority diff against a baseline the replica has moved past.",
+        Doc = "Which baseline the replica now holds. **Not reliable, since protocol 43** (D576): it was, "
+            .. "on `Control`, one a snapshot in front of every `RemoteToAuthority` -- and on a link that "
+            .. "loses packets each one lost held those behind it until it was sent again. A lost one "
+            .. "costs nothing a later one does not mend: the authority keeps the newest tick it heard, "
+            .. "and both ends keep the same sixty-four states, so the next snapshot is a diff against "
+            .. "one the replica still holds (or a whole one, once the authority has none the replica "
+            .. "proved). **The exception goes on `Control`, reliably**: the acknowledgement of a "
+            .. "snapshot that came as `SnapshotPart`s, after which the authority sends no snapshot "
+            .. "until it hears. An authority takes an `Ack` on either channel.",
     },
     {
         Name = "Intent",

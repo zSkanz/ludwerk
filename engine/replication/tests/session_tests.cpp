@@ -573,8 +573,14 @@ public:
     explicit HeldTransport(std::unique_ptr<net::ITransport> inner) : m_inner(std::move(inner)) {}
 
     bool holding = false;
-    // The type of every message sent through it, held or not.
+    // The type of every message sent through it, held or not -- and how each
+    // went: its delivery and its channel.
     std::vector<core::u8> sentTypes;
+    std::vector<net::Delivery> sentDeliveries;
+    std::vector<core::u8> sentChannels;
+    // **Every acknowledgement of a snapshot lost on the way** (D576), where a
+    // link can lose one: a reliable message is not a link's to lose.
+    bool losingAcks = false;
 
     void release()
     {
@@ -602,8 +608,14 @@ public:
             m_held.push_back(Held{peer, std::vector<core::u8>(payload.begin(), payload.end()), delivery, channel});
             return std::nullopt;
         }
-        if (!payload.empty())
+        if (!payload.empty()) {
             sentTypes.push_back(payload[0]);
+            sentDeliveries.push_back(delivery);
+            sentChannels.push_back(channel);
+        }
+        // 6 is `Ack` (`api/wire/state.wire.luau`).
+        if (losingAcks && !payload.empty() && payload[0] == 6 && delivery != net::Delivery::Reliable)
+            return std::nullopt;
         return m_inner->send(peer, payload, delivery, channel);
     }
     void flush() override { m_inner->flush(); }
@@ -5239,4 +5251,90 @@ TEST_CASE("an authority's send costs what changed, not what there is (protocol 4
     CHECK(std::abs(match.client.world.parts().find(copy)->cframe.position.x -
                    match.server.world.parts().find(moved)->cframe.position.x) < 0.02);
     CHECK(match.client.world.hasTag(match.copyOf(bricks[0]), match.client.atoms.intern("Marked")));
+}
+
+// --- A replica's word that it holds a snapshot (D576) --------------------------
+
+TEST_CASE("D576: a replica's acknowledgement of a snapshot stands in front of no message of the game's")
+{
+    // The acknowledgement went reliably on the control channel, one a
+    // snapshot: thirty to sixty a second, in order, in front of every
+    // `RemoteEvent` the client fired. On a link that loses two packets in a
+    // hundred, one of them was lost every second or so, and what it held up
+    // until it was sent again -- a third of a second at 300 ms -- was the
+    // game's own messages: one remote call in five arrived a tenth to a third
+    // of a second late, measured.
+    PlayedMatch match(nullptr, nullptr, true);
+    const core::InstanceId moved = match.part("Moved", core::DVec3{0.0, 1.0, 0.0});
+    match.run(4);
+    match.held->sentTypes.clear();
+    match.held->sentDeliveries.clear();
+    match.held->sentChannels.clear();
+    for (int tick = 0; tick < 30; ++tick) {
+        match.server.world.parts().find(moved)->cframe.position.x += 0.25;
+        match.step();
+    }
+    int acknowledgements = 0;
+    for (std::size_t at = 0; at < match.held->sentTypes.size(); ++at) {
+        if (match.held->sentTypes[at] != 6)
+            continue;
+        ++acknowledgements;
+        CHECK(match.held->sentDeliveries[at] != net::Delivery::Reliable);
+        // 0 is the control channel, which the game's reliable messages are on.
+        CHECK(match.held->sentChannels[at] != 0);
+    }
+    // And they were sent, and heard: the authority diffs against a state the
+    // replica holds, so a tick's snapshot is the one part that moved.
+    CHECK(acknowledgements >= 25);
+    CHECK(match.replica->checksumFailures() == 0);
+    const core::InstanceId copy = match.copyOf(moved);
+    REQUIRE(copy.valid());
+    match.run(4);
+    CHECK(match.client.world.parts().find(copy)->cframe.position.x ==
+          doctest::Approx(match.server.world.parts().find(moved)->cframe.position.x));
+}
+
+TEST_CASE("D576: a match whose acknowledgements are lost goes on, and costs what it did when they are heard again")
+{
+    // What reliability bought the acknowledgement was nothing a later one does
+    // not say: the authority keeps the newest it heard, and both ends keep
+    // the same sixty-four states to diff against. With every one lost for
+    // longer than that, the authority has no state the replica proved it
+    // holds and sends whole ones -- more bytes, the same world -- and the
+    // first one heard puts it back on diffs.
+    PlayedMatch match(nullptr, nullptr, true);
+    std::vector<core::InstanceId> parts;
+    for (int index = 0; index < 40; ++index)
+        parts.push_back(match.part("Brick", core::DVec3{static_cast<double>(index) * 3.0, 1.0, 0.0}));
+    match.run(6);
+    const auto bytesOver = [&](int ticks) {
+        const core::u64 before = match.authority->stats().snapshotBytes;
+        for (int tick = 0; tick < ticks; ++tick) {
+            match.server.world.parts().find(parts[0])->cframe.position.x += 0.25;
+            match.step();
+        }
+        return static_cast<double>(match.authority->stats().snapshotBytes - before) / ticks;
+    };
+    const double heard = bytesOver(20);
+
+    match.held->losingAcks = true;
+    (void)bytesOver(100);
+    const double unheard = bytesOver(20);
+    // Whole states: every part, not the one that moved.
+    CHECK(unheard > 4.0 * heard);
+    CHECK(match.replica->checksumFailures() == 0);
+    const core::InstanceId copy = match.copyOf(parts[0]);
+    REQUIRE(copy.valid());
+    match.run(4);
+    CHECK(match.client.world.parts().find(copy)->cframe.position.x ==
+          doctest::Approx(match.server.world.parts().find(parts[0])->cframe.position.x));
+
+    match.held->losingAcks = false;
+    (void)bytesOver(10);
+    const double heardAgain = bytesOver(20);
+    CHECK(heardAgain < 1.5 * heard);
+    CHECK(match.replica->checksumFailures() == 0);
+    match.run(4);
+    CHECK(match.client.world.parts().find(copy)->cframe.position.x ==
+          doctest::Approx(match.server.world.parts().find(parts[0])->cframe.position.x));
 }

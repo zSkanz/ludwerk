@@ -33,6 +33,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <map>
 #include <memory>
 #include <set>
@@ -1500,6 +1501,59 @@ struct SwarmObstacle
     f32 radius = 0.0f;
 };
 
+// **A swarm's cells, by key**: one number a cell that holds something. A table
+// of its own and not a map from the library -- a step asks it nine times an
+// agent, and builds it again once a step, and a node a cell was most of what
+// that cost. Open addressing over a power of two: a key's place is its hash,
+// or the next free one after it.
+struct SwarmCells
+{
+    static constexpr i64 Free = std::numeric_limits<i64>::min();
+
+    std::vector<i64> keys;
+    std::vector<u32> values;
+    u32 mask = 0;
+
+    // Emptied and sized for `count` keys, at half full or less.
+    void reset(usize count)
+    {
+        usize size = 16;
+        while (size < count * 2)
+            size *= 2;
+        keys.assign(size, Free);
+        values.assign(size, 0u);
+        mask = static_cast<u32>(size - 1);
+    }
+    [[nodiscard]] u32 slotOf(i64 key) const noexcept
+    {
+        return static_cast<u32>((static_cast<u64>(key) * 0x9E3779B97F4A7C15ull) >> 32) & mask;
+    }
+    // The value under `key`, or 0: no cell holds a zero.
+    [[nodiscard]] u32 find(i64 key) const noexcept
+    {
+        if (keys.empty())
+            return 0;
+        for (u32 at = slotOf(key);; at = (at + 1) & mask) {
+            if (keys[at] == key)
+                return values[at];
+            if (keys[at] == Free)
+                return 0;
+        }
+    }
+    // The value under `key` to write, made 0 when the key is new.
+    [[nodiscard]] u32& at(i64 key) noexcept
+    {
+        for (u32 place = slotOf(key);; place = (place + 1) & mask) {
+            if (keys[place] == key)
+                return values[place];
+            if (keys[place] == Free) {
+                keys[place] = key;
+                return values[place];
+            }
+        }
+    }
+};
+
 // `Swarm` (ADR 0156): its settings, its agents as rows, and its obstacles.
 struct SwarmComponent
 {
@@ -1555,10 +1609,31 @@ struct SwarmComponent
     // cell and the next in the same one. What the step's neighbours and a
     // script's `QueryRadius` both read; built again when an agent was added,
     // removed or placed since.
-    std::unordered_map<i64, u32> grid;
+    SwarmCells grid;
     std::vector<u32> gridNext;
     f32 gridCell = 0.0f;
     bool gridValid = false;
+
+    // **The obstacles by cell**, kept from one step to the next: each in every
+    // cell its circle touches, as (first, count) into `obstacleRows`, in the
+    // order the obstacles are. Made again when the obstacles are other than
+    // the ones it was made from (`obstacleDigest`) -- a map's trees and rocks
+    // are the same from one tick to the next, and filing four hundred of them
+    // again every tick was a quarter of a step.
+    SwarmCells obstacleCells;
+    std::vector<u32> obstacleRows;
+    u64 obstacleDigest = 0;
+
+    // **The terrain's column tops this swarm has asked for**, kept until the
+    // ground changes (`groundDigest`: each terrain's place and revision). An
+    // agent asks the ground's height every other tick, a height is the tops
+    // of five columns, and each top is a walk down a column of voxels -- a
+    // third of a step, for answers that were the same a tick ago. A cell's
+    // value is one more than its place in `groundTops`; a top of NaN is "no
+    // ground in this column".
+    SwarmCells groundCells;
+    std::vector<f32> groundTops;
+    u64 groundDigest = 0;
 };
 
 struct NavigationAgentComponent

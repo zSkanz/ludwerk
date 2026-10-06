@@ -2723,6 +2723,28 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 m_stats.unreliableReceived += 1;
                 break;
             }
+            // **A replica's word that it holds a snapshot**: on the state
+            // channel, where one lost holds nothing up (D576, protocol 43) --
+            // and on the control channel, reliably, for the one snapshot
+            // nothing is sent after until it is heard: the one sent in parts.
+            // The newest heard is kept, so the order they come in is nothing.
+            if (type == MessageType::Ack && (event.channel == StateChannel || event.channel == ControlChannel)) {
+                const u64 tick = reader.u64v();
+                // **Only a tick this peer was sent** (NA1): acknowledging one
+                // it never was -- the largest number there is, say -- pinned
+                // the authority to diffing against nothing.
+                const bool sent = tick == peer->pinnedTick || std::find(peer->sentTicks.begin(), peer->sentTicks.end(),
+                                                                        tick) != peer->sentTicks.end();
+                if (!reader.ok() || !sent) {
+                    m_stats.acksRefused += 1;
+                }
+                else {
+                    peer->acked = std::max(peer->acked, tick);
+                    if (peer->pinnedPending && peer->acked >= peer->pinnedTick)
+                        peer->pinnedPending = false;
+                }
+                break;
+            }
             if (event.channel != ControlChannel)
                 break;
             if (type == MessageType::Hello) {
@@ -2823,22 +2845,6 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 welcome.u64v(token.high);
                 welcome.u64v(token.low);
                 sendBytes(m_transport, peer->id, welcome.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
-            }
-            else if (type == MessageType::Ack) {
-                const u64 tick = reader.u64v();
-                // **Only a tick this peer was sent** (NA1): acknowledging one
-                // it never was -- the largest number there is, say -- pinned
-                // the authority to diffing against nothing.
-                const bool sent = tick == peer->pinnedTick || std::find(peer->sentTicks.begin(), peer->sentTicks.end(),
-                                                                        tick) != peer->sentTicks.end();
-                if (!reader.ok() || !sent) {
-                    m_stats.acksRefused += 1;
-                }
-                else {
-                    peer->acked = std::max(peer->acked, tick);
-                    if (peer->pinnedPending && peer->acked >= peer->pinnedTick)
-                        peer->pinnedPending = false;
-                }
             }
             else if (type == MessageType::RemoteToAuthority && peer->welcomed && peer->player.valid()) {
                 // **The sender is the connection's player**, never anything
@@ -4010,7 +4016,7 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             onDespawn(world, event.payload);
             break;
         case MessageType::Snapshot:
-            onSnapshot(world, root, event.payload);
+            onSnapshot(world, root, event.payload, false);
             break;
         case MessageType::SnapshotPart:
             onSnapshotPart(world, root, event.payload);
@@ -5868,7 +5874,7 @@ void ReplicaSession::forget(std::span<const u32> ids)
     }
 }
 
-void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<const u8> bytes)
+void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<const u8> bytes, bool inParts)
 {
     Reader reader(bytes);
     (void)reader.u8v();
@@ -6059,10 +6065,26 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     applyToWorld(world, root, *state);
     m_snapshotAttributes.reset();
 
+    // **Said without a guarantee, and not on the control channel** (D576,
+    // protocol 43). It went reliably there, one a snapshot, in front of every
+    // message of the game's: on a link losing two packets in a hundred one was
+    // lost every second or so, and until it was sent again -- a third of a
+    // second at 300 ms -- every `RemoteEvent` behind it waited. One call in
+    // five was late by a tenth to a third of a second. And a guarantee bought
+    // nothing: the next says more, the authority keeps the newest it heard,
+    // and both ends keep the same sixty-four states, so the snapshot after a
+    // lost one is diffed against a state this replica still holds.
+    //
+    // **But the one that came in parts is said reliably**: the authority sends
+    // nothing more until it hears of that one (`pinnedPending`), so nothing
+    // later could say it instead.
     Writer ack;
     ack.u8v(static_cast<u8>(MessageType::Ack));
     ack.u64v(tick);
-    sendBytes(m_transport, m_authority, ack.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+    if (inParts)
+        sendBytes(m_transport, m_authority, ack.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+    else
+        sendBytes(m_transport, m_authority, ack.bytes, net::Delivery::UnreliableSequenced, StateChannel, m_stats);
 }
 
 void ReplicaSession::onSnapshotPart(scene::World& world, InstanceId root, std::span<const u8> bytes)
@@ -6096,7 +6118,7 @@ void ReplicaSession::onSnapshotPart(scene::World& world, InstanceId root, std::s
     std::vector<u8> joined = std::move(m_partBytes);
     m_partBytes.clear();
     m_partNext = 0;
-    onSnapshot(world, root, joined);
+    onSnapshot(world, root, joined, true);
 }
 
 void ReplicaSession::reconcile(scene::World& world, InstanceId character,

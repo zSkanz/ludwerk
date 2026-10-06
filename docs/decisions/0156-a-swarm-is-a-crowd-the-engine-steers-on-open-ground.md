@@ -139,3 +139,32 @@ stands. The authority's step alone: a replica is told where agents are.
 
 Test: the same crowd with no limit and with two metres -- at rest, the highest
 feet are at fourteen metres and at two.
+
+## Amendment, 2026-10-06, the second: what a step no longer does every tick
+
+Measured on a horde of 525 agents stepping among a map's 376 obstacles
+(player build, a desktop): 0.44 ms a step, and by part --
+
+- a quarter of it **filing the obstacles into cells**, all of them, every
+  tick, into a map made and thrown away;
+- a quarter **finding neighbours**, nine cells an agent, each a lookup in a
+  map with a node a cell, which the step also built again when it was done;
+- a third **the ground's height**: an agent that has moved asks, a height is
+  the tops of five columns of the terrain, and a top is a walk down a column
+  of voxels -- for answers that were the same a tick ago.
+
+1. **The obstacles' cells are kept** (`SwarmComponent::obstacleCells`) and
+   made again only when the obstacles are other than the ones they were made
+   from, in the order they were.
+2. **The cells are a table of the swarm's own** (`SwarmCells`): open
+   addressing over a power of two, emptied and filled each step with no
+   allocation.
+3. **The swarm keeps the column tops it has asked for** until a terrain's
+   revision or place changes (`groundCells`, `asset::heightAtWith`). The
+   height is the same arithmetic over the same tops.
+
+**Nothing an agent does changes by a bit**: neighbours and obstacles are met
+in the order they were, the ground is the number the terrain gives -- the
+determinism replays do not move, and a test holds an agent's ground equal to
+the terrain's own answer, over a mound and after a hole is dug ahead of it.
+After: 0.16 ms a step.

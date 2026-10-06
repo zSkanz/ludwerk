@@ -62,7 +62,10 @@ Interpolants VertexMain(VertexInput input)
     const float3 a = input.ModelColumn0.xyz;
     const float3 b = input.ModelColumn1.xyz;
     const float3 c = input.ModelColumn2.xyz;
-    const float3x3 normalMatrix = float3x3(cross(b, c), cross(c, a), cross(a, b));
+    // Transposed: the cross products are its columns and the constructor fills
+    // rows (D577, and `pbr_instanced.hlsl`) -- an enemy in a horde was lit as
+    // if it faced the other way round its own turn.
+    const float3x3 normalMatrix = transpose(float3x3(cross(b, c), cross(c, a), cross(a, b)));
     output.Normal = mul(normalMatrix, mul((float3x3)skin, input.Normal));
     output.Tangent = float4(mul((float3x3)model, mul((float3x3)skin, input.Tangent.xyz)), input.Tangent.w);
     output.Uv = input.Uv;

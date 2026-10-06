@@ -26,6 +26,7 @@
 
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <compare>
 #include <map>
 #include <memory>
@@ -953,6 +954,38 @@ EditReport replaceMaterial(TerrainField& field, core::DVec3 minCorner, core::DVe
 // The height of the top of the ground at this point, in metres, interpolated
 // between the four columns around it -- or nothing where there is no ground.
 [[nodiscard]] std::optional<float> heightAt(const TerrainField& field, double x, double z);
+
+// The same height by the same arithmetic, with each column's top asked of
+// `top(cx, cz)` instead of the field: for a caller that asks about the same
+// columns again and again and keeps what it was told. `top` answers as
+// `TerrainField::columnTop` does.
+template <class Top>
+[[nodiscard]] std::optional<float> heightAtWith(const TerrainField& field, double x, double z, Top&& top)
+{
+    const double voxel = static_cast<double>(field.settings().voxelSize);
+    if (!(voxel > 0.0))
+        return std::nullopt;
+    // Bilinear between the four column centres around the point. The column the
+    // point is IN decides whether there is ground here at all; a neighbour with
+    // none stands in with its value, so the edge of a plateau does not sag.
+    const std::optional<float> own = top(field.voxelIndex(x), field.voxelIndex(z));
+    if (!own.has_value())
+        return std::nullopt;
+    const double gridX = x / voxel - 0.5;
+    const double gridZ = z / voxel - 0.5;
+    const auto lowX = static_cast<core::i32>(std::floor(gridX));
+    const auto lowZ = static_cast<core::i32>(std::floor(gridZ));
+    const auto tx = static_cast<float>(gridX - std::floor(gridX));
+    const auto tz = static_cast<float>(gridZ - std::floor(gridZ));
+    const auto at = [&](core::i32 cx, core::i32 cz) { return top(cx, cz).value_or(*own); };
+    const float a = at(lowX, lowZ);
+    const float b = at(lowX + 1, lowZ);
+    const float c = at(lowX, lowZ + 1);
+    const float d = at(lowX + 1, lowZ + 1);
+    const float near = a + (b - a) * tx;
+    const float far = c + (d - c) * tx;
+    return near + (far - near) * tz;
+}
 
 // --- Sampling and raycasting -------------------------------------------------
 

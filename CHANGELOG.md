@@ -30,6 +30,16 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   client-side visuals no longer need to hide under a `Camera`. The wire is
   unchanged.
 
+- **The wire protocol is 43** (D576): a replica's acknowledgement of a
+  snapshot is sent without a guarantee, on the state channel, where it was
+  reliable and on the control channel in front of every `RemoteEvent` a
+  client fires. Every machine in a match must run a build that speaks it.
+  What it bought: on a link that loses packets, a client's remote calls are
+  no longer held behind a lost acknowledgement until it is sent again -- at
+  300 ms and 2% loss, one call in five arrived a tenth to a third of a
+  second late, and now the ones that are late are the ones the link lost.
+  Nothing in the API changed for it.
+
 - **The wire protocol is 42**: a snapshot's checksum is computed another way
   (ADR 0069, amended), and nothing else on the wire changed. Every machine in
   a match must run a build that speaks it. What it bought: a host's send
@@ -1428,6 +1438,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A turned part in a run of identical parts is lit from the right side**
+  (D577). Parts the engine draws together as one instanced run -- the same
+  mesh and material many times, and every enemy of an animated horde -- had
+  their normals turned by the inverse of their rotation: a crate turned a
+  quarter turn was bright on its shaded side. A part not turned showed
+  nothing. **If a surface shader of yours turns its normal back to work
+  round this, take that out**: it now turns a right normal wrong.
 - **A `ViewportFrame` is no longer a white square the frame it is first
   shown** (D575). Each time one became visible it drew solid white for a frame
   before its instances -- every preview in a menu, each time the menu opened.
