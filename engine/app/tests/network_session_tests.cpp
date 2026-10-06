@@ -101,6 +101,8 @@ struct Machine
     Project project;
     std::unique_ptr<app::WorldHost> host = std::make_unique<app::WorldHost>();
     std::unique_ptr<app::NetworkSession> network;
+    // `--net-log-client-writes`, for the machine booted after it is set.
+    bool logClientWrites = false;
 
     void boot(const std::shared_ptr<net::MemoryNetwork>& wire,
               scene::NetworkTopology topology = scene::NetworkTopology::Solo, std::string_view scene = {},
@@ -108,6 +110,7 @@ struct Machine
     {
         app::WorldHostOptions options = bootOptions(project.root);
         options.networkTopology = topology;
+        options.logClientWrites = logClientWrites;
         if (!scene.empty()) {
             options.bootScene = project.root / "content" / std::filesystem::path(scene);
             options.bootScenePath = std::string(scene);
@@ -324,7 +327,7 @@ TEST_CASE("a joined client runs its own copy of a door's client and shared scrip
     server.project.write("content/scenes/main.scene.json", scene);
     server.project.write("content/stamps/lamp.stamp.json", lamp);
     // A stamp placed at run time, and a clone of it: each is the stamp again.
-    server.project.write("src/client/host.luau", R"(
+    server.project.write("src/server/host.luau", R"(
         game:GetService("NetworkService"):Host(47103)
         local placed = Instance.stamp("lamp")
         placed.Parent = workspace
@@ -1992,7 +1995,7 @@ TEST_CASE("NA34: a jointed assembly handed to a replica holds together there, an
     Captured log;
     auto wire = net::createMemoryNetwork();
     Machine server;
-    server.project.write("src/client/host.luau", R"(
+    server.project.write("src/server/host.luau", R"(
         local NetworkService = game:GetService("NetworkService")
         NetworkService:Host(47134)
         workspace.Gravity = vector.zero
@@ -2099,7 +2102,7 @@ TEST_CASE("D482: an assembly handed over the moment it is made is where the auth
     Captured log;
     auto wire = net::createMemoryNetwork();
     Machine server;
-    server.project.write("src/client/host.luau", R"(
+    server.project.write("src/server/host.luau", R"(
         local NetworkService = game:GetService("NetworkService")
         NetworkService:Host(47135)
         workspace.Gravity = vector.zero
@@ -2249,4 +2252,219 @@ TEST_CASE("G18: a server that loads its own scene again restarts a replica's sce
     CHECK(occurrences(log, "loaded:scenes/b.scene.json:false") == 1);
     CHECK(occurrences(log, "dead-character") == 0);
     CHECK(client.topology() == scene::NetworkTopology::Replica);
+}
+
+namespace {
+
+// How many of `parent`'s children are called `name`.
+[[nodiscard]] int childrenNamed(const scene::World& world, core::InstanceId parent, std::string_view name)
+{
+    int count = 0;
+    for (core::InstanceId child = world.firstChild(parent); child.valid(); child = world.nextSibling(child))
+        count += world.atoms().text(world.name(child)) == name ? 1 : 0;
+    return count;
+}
+
+} // namespace
+
+TEST_CASE("ADR 0186: what a host's client-side script makes is the host's alone, and what its server side makes "
+          "travels")
+{
+    // A listen host is a server and a client in one world. Its client scripts
+    // made their visuals under Workspace -- a ring under a hero, a number over
+    // an enemy -- and every friend was sent them, and drew them over its own.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    // One module for both sides, as a game has: what it makes is the side's
+    // that called it, and its handler the side's that connected it.
+    server.project.write("src/shared/maker.luau", R"(
+        local RunService = game:GetService("RunService")
+        local Maker = {}
+        function Maker.make(name: string)
+            local part = Instance.new("Part")
+            part.Name = name
+            part.Anchored = true
+            part.Parent = workspace
+            return part
+        end
+        function Maker.onBeat(name: string)
+            local made = false
+            RunService.Heartbeat:Connect(function()
+                if not made then
+                    made = true
+                    Maker.make(name)
+                end
+            end)
+        end
+        return Maker
+    )");
+    server.project.write("src/server/host.luau", R"(
+        local Maker = require("@shared/maker")
+        game:GetService("NetworkService"):Host(47140)
+        local made = Maker.make("ServerMade")
+        Maker.onBeat("ServerHandler")
+        task.spawn(function()
+            Maker.make("ServerSpawned")
+        end)
+        print(`server-local:{made.Local}`)
+    )");
+    server.project.write("src/client/visuals.luau", R"(
+        local Maker = require("@shared/maker")
+        local own = Maker.make("ClientMade")
+        Maker.onBeat("ClientHandler")
+        task.spawn(function()
+            Maker.make("ClientSpawned")
+        end)
+        task.defer(function()
+            Maker.make("ClientDeferred")
+        end)
+        task.delay(0.1, function()
+            Maker.make("ClientDelayed")
+        end)
+        coroutine.wrap(function()
+            Maker.make("ClientCoroutine")
+        end)()
+        local served = workspace:WaitForChild("ServerMade")
+        -- Under something that travels, and a copy of it: still its own.
+        local under = Instance.new("Part")
+        under.Name = "ClientUnderServer"
+        under.Anchored = true
+        under.Parent = served
+        local copy = served:Clone()
+        copy.Name = "ClientClone"
+        copy.Parent = workspace
+        print(`client-local:{own.Local}:{under.Local}:{copy.Local}:{served.Local}`)
+    )");
+    server.boot(wire);
+    Machine client;
+    client.project.write("src/client/join.luau", R"(game:GetService("NetworkService"):Join("memory:47140"))");
+    client.boot(wire);
+    run(server, client, 120);
+    REQUIRE(client.topology() == scene::NetworkTopology::Replica);
+
+    CHECK(log.contains("server-local:false"));
+    CHECK(log.contains("client-local:true:true:true:false"));
+
+    // The host has all of it: one world.
+    const scene::World& hosted = server.host->world();
+    const core::InstanceId hostedSpace = server.host->workspace();
+    for (const std::string_view name :
+         {"ServerMade", "ServerHandler", "ServerSpawned", "ClientMade", "ClientHandler", "ClientSpawned",
+          "ClientDeferred", "ClientDelayed", "ClientCoroutine", "ClientClone"}) {
+        CAPTURE(name);
+        CHECK(childrenNamed(hosted, hostedSpace, name) == 1);
+    }
+    const core::InstanceId hostedMade = hosted.findFirstChild(hostedSpace, hosted.atoms().lookup("ServerMade"));
+    REQUIRE(hostedMade.valid());
+    CHECK(childrenNamed(hosted, hostedMade, "ClientUnderServer") == 1);
+
+    // The friend has what the server side made, and nothing the client side
+    // did -- called straight, spawned, deferred, delayed, in a coroutine, from
+    // a signal, copied, or put under what travels.
+    const scene::World& joined = client.host->world();
+    const core::InstanceId joinedSpace = client.host->workspace();
+    for (const std::string_view name : {"ServerMade", "ServerHandler", "ServerSpawned"}) {
+        CAPTURE(name);
+        CHECK(childrenNamed(joined, joinedSpace, name) == 1);
+    }
+    for (const std::string_view name : {"ClientMade", "ClientHandler", "ClientSpawned", "ClientDeferred",
+                                        "ClientDelayed", "ClientCoroutine", "ClientClone"}) {
+        CAPTURE(name);
+        CHECK(childrenNamed(joined, joinedSpace, name) == 0);
+    }
+    const core::InstanceId joinedMade = joined.findFirstChild(joinedSpace, joined.atoms().lookup("ServerMade"));
+    REQUIRE(joinedMade.valid());
+    CHECK(childrenNamed(joined, joinedMade, "ClientUnderServer") == 0);
+}
+
+TEST_CASE("ADR 0186: what a script every machine runs makes is each machine's own, once")
+{
+    // A script with no side runs on the host and on the friend. The host's
+    // copy of what it made was sent to the friend, who had made its own: two.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    const std::string scene =
+        R"json({"format":"scene","version":2,"root":{"children":[)json"
+        R"json({"class":"Part","name":"Door","properties":{"Anchored":true},"children":[)json"
+        R"json({"class":"Script","name":"Both","properties":{"Source":")json"
+        R"json(local p = Instance.new('Part') p.Name = 'Knocker' p.Anchored = true p.Parent = workspace)json"
+        R"json("}}]}]}})json";
+    Machine server;
+    server.project.write("content/scenes/main.scene.json", scene);
+    server.project.write("src/server/host.luau", R"(game:GetService("NetworkService"):Host(47141))");
+    server.boot(wire, scene::NetworkTopology::Solo, "scenes/main.scene.json");
+    Machine client;
+    client.project.write("content/scenes/main.scene.json", scene);
+    client.project.write("src/client/join.luau", R"(game:GetService("NetworkService"):Join("memory:47141"))");
+    client.boot(wire, scene::NetworkTopology::Solo, "scenes/main.scene.json");
+    run(server, client, 90);
+    REQUIRE(client.topology() == scene::NetworkTopology::Replica);
+
+    CHECK(childrenNamed(server.host->world(), server.host->workspace(), "Knocker") == 1);
+    CHECK(childrenNamed(client.host->world(), client.host->workspace(), "Knocker") == 1);
+    // And the friend's is its own, not the host's sent over.
+    const scene::World& joined = client.host->world();
+    const core::InstanceId knocker = joined.findFirstChild(client.host->workspace(), joined.atoms().lookup("Knocker"));
+    REQUIRE(knocker.valid());
+    CHECK(joined.local(knocker));
+}
+
+TEST_CASE("ADR 0186: a host's client script that writes what travels is told so once, when asked to be")
+{
+    // What a client-side script makes is its own. What it WRITES to an
+    // instance every machine has is everybody's on a host -- one world, one
+    // value -- which is how a host's faded trees reached its friends.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.logClientWrites = true;
+    server.project.write("src/server/host.luau", R"(
+        game:GetService("NetworkService"):Host(47142)
+        local tree = Instance.new("Part")
+        tree.Name = "Tree"
+        tree.Anchored = true
+        tree.Parent = workspace
+        -- The server side's own writes are what a server is for.
+        tree.CastShadow = false
+        tree:SetMaterialParameter("Transparency", 0.1)
+    )");
+    server.project.write("src/client/thin.luau", R"(
+        local tree = workspace:WaitForChild("Tree")
+        -- Hosting by now: a host is asked for at boot and is one a frame on.
+        task.wait(0.25)
+        for step = 2, 4 do
+            tree.CastShadow = step % 2 == 0
+            -- How a host's thinned trees reached its friends.
+            tree:SetMaterialParameter("Transparency", step / 10)
+        end
+        -- Not sent: this machine's own picture of the tree.
+        tree.Fade = 0.5
+        -- And its own part is nobody else's, whatever is written to it.
+        local own = Instance.new("Part")
+        own.Anchored = true
+        own.CastShadow = false
+        own:SetMaterialParameter("Transparency", 0.5)
+        own.Parent = workspace
+        print("thinned")
+    )");
+    server.boot(wire);
+    Machine client;
+    client.project.write("src/client/join.luau", R"(game:GetService("NetworkService"):Join("memory:47142"))");
+    client.boot(wire);
+    run(server, client, 60);
+    REQUIRE(log.contains("thinned"));
+
+    // Once for the property and once for the method, however often each was
+    // written, and each names who wrote what.
+    CHECK(occurrences(log, "net.warn.client_write") == 2);
+    int named = 0;
+    for (const std::string& line : log.lines) {
+        if (line.find("net.warn.client_write") == std::string::npos || line.find("thin") == std::string::npos)
+            continue;
+        named += line.find("Part.CastShadow") != std::string::npos ? 1 : 0;
+        named += line.find("Part.SetMaterialParameter") != std::string::npos ? 1 : 0;
+    }
+    CHECK(named == 2);
 }

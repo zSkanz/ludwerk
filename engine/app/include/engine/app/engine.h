@@ -71,6 +71,8 @@ struct EngineOptions
 
     // Exit when the frame budget is spent instead of continuing to run.
     bool exitAfterFrames = false;
+    // `--net-log-client-writes` (ADR 0186 section 5): see `WorldHostOptions`.
+    bool logClientWrites = false;
 
     // Empty means take no screenshot. Requires `headless`: a windowed frame
     // renders into the swapchain, which has been presented and is gone by the

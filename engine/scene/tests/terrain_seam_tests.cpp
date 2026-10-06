@@ -760,7 +760,10 @@ Watch walk(World& world, const asset::TerrainField& field, double target, double
     JPH::CharacterVirtualSettings settings;
     settings.mShape = new JPH::CapsuleShape(1.5f, 0.5f);
     settings.mMaxSlopeAngle = JPH::DegreesToRadians(46.0f);
-    settings.mEnhancedInternalEdgeRemoval = removesEdges(world.join);
+    // Under the engine's own join a character is as the engine makes one:
+    // without the flag, which stood it still on open ground (D574) and which
+    // the band and its filter do not need.
+    settings.mEnhancedInternalEdgeRemoval = removesEdges(world.join) && world.join != Join::RingFilteredEdges;
     JPH::Ref<JPH::CharacterVirtual> character = new JPH::CharacterVirtual(
         &settings, rvec(startX, ground->position.y + 2.0, startZ), JPH::Quat::sIdentity(), &world.system);
     if (world.join == Join::Listener || banded(world.join))

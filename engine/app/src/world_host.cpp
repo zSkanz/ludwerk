@@ -663,6 +663,15 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // rather than handing back an empty prefab.
     m_stampSource = options.bootStamps;
     m_runtime->setStampSource(options.bootStamps);
+    m_logClientWrites = options.logClientWrites;
+#if ENG_ENABLE_REPLICATION
+    // A build with no replication hosts nothing, and has nothing to say here.
+    if (m_logClientWrites) {
+        m_runtime->setClientWriteLog([](const scene::World& world, core::InstanceId id, std::string_view property) {
+            return replication::carriesField(world, id, property);
+        });
+    }
+#endif
 
     // **Mounted above; started here, and only if this run is one that starts
     // them** (ADR 0058). The editor is the one caller that says no: a project
@@ -791,6 +800,14 @@ std::optional<core::EngineError> WorldHost::restartRuntime()
         return error;
 
     m_runtime->setStampSource(m_stampSource);
+#if ENG_ENABLE_REPLICATION
+    // A build with no replication hosts nothing, and has nothing to say here.
+    if (m_logClientWrites) {
+        m_runtime->setClientWriteLog([](const scene::World& world, core::InstanceId id, std::string_view property) {
+            return replication::carriesField(world, id, property);
+        });
+    }
+#endif
     script::adoptMountedEntries(m_runtime->state(), std::move(mounted));
 
     if (m_animation.has_value())

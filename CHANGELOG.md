@@ -19,6 +19,17 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **What a client-side script makes is its machine's alone, on a host too**
+  (ADR 0186). An instance made with `Instance.new`, `Instance.stamp` or
+  `Clone` by a script that does not run on the server side -- the client
+  script services, `RunContext = Client`, and a script every machine runs --
+  is never sent to another machine, with everything under it. A machine that
+  joined always worked this way; a machine hosting a match sent its friends
+  everything its own client code made. **If a host's client code made
+  something a friend is meant to see, move that to `src/server/`.** A game's
+  client-side visuals no longer need to hide under a `Camera`. The wire is
+  unchanged.
+
 - **The wire protocol is 41** (D570): `Swarm.Enabled` replicates. Every
   machine in a match must run a build that speaks it: one that does not is
   refused at the join, by name. Nothing in the API changed for it.
@@ -219,6 +230,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`Instance.Local`** (ADR 0186), read-only: whether the instance was made by
+  a script that does not run on the server side, and so is never sent.
+- **`--net-log-client-writes`**: on a machine that is hosting, a client-side
+  script's write to something every machine has is everybody's. This logs each
+  such write once a script and property -- properties, `SetMaterialParameter`,
+  `SetAttribute`, `AddTag` -- with the script's name.
 - **A decal paints foliage, and `FoliageLayer.ReceivesDecals`** (ADR 0185). A
   mark laid on a meadow was drawn on the dirt and left every blade of grass in
   it clean; it is on the grass now, in all three blend modes, with nothing to
@@ -1404,6 +1421,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A character moving fast over terrain no longer stands still** (D574). A
+  `CharacterBody` whose step in a tick was long enough to reach from one facet
+  of the ground on to the next -- a dash, a mount, a knock-back -- could stop
+  dead on open, walkable ground and stay stopped for as long as it was asked
+  to move. A walk did not show it.
 - **The sun's shadows under an orthographic camera** (D536). A camera looking
   down from more than about fifteen metres -- a strategy game's, a map's -- drew
   no shadow of the sun at all, and chose every lamp from the nearest slice of

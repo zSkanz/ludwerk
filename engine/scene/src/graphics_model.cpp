@@ -35,7 +35,7 @@ constexpr std::array ReflectionsGroup{S::Reflections};
 constexpr std::array TexturesGroup{S::TextureQuality, S::AnisotropicFiltering, S::TextureStreamingBudget};
 constexpr std::array EffectsGroup{S::ParticleBudget, S::SoftParticles};
 constexpr std::array FoliageGroup{S::FoliageDensity};
-constexpr std::array ShadingGroup{S::LightBudget, S::SkinWeights, S::FogQuality};
+constexpr std::array ShadingGroup{S::LightBudget, S::SkinWeights, S::AnimationDetail, S::FogQuality};
 
 [[nodiscard]] bool same(f64 a, f64 b) noexcept
 {

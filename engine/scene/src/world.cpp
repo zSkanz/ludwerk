@@ -240,6 +240,28 @@ bool World::generated(core::InstanceId id) const noexcept
     return record != nullptr && record->generated;
 }
 
+void World::setLocal(core::InstanceId id, bool subtree)
+{
+    InstanceRecord* record = m_instances.find(id);
+    if (record == nullptr)
+        return;
+    record->local = true;
+    if (!subtree)
+        return;
+    std::vector<core::InstanceId> below;
+    collectDescendants(id, below);
+    for (const core::InstanceId child : below) {
+        if (InstanceRecord* under = m_instances.find(child); under != nullptr)
+            under->local = true;
+    }
+}
+
+bool World::local(core::InstanceId id) const noexcept
+{
+    const InstanceRecord* record = m_instances.find(id);
+    return record != nullptr && record->local;
+}
+
 void World::setStreamAnchor(core::u32 anchor, core::InstanceId id)
 {
     // A scene names at most as many anchors as it has instances; a number

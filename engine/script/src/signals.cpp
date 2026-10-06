@@ -325,6 +325,16 @@ void enqueueFire(lua_State* L, SignalId id, int first, int count)
     if (const void* caller = runEnvOfThread(L); caller != nullptr && caller != connection.run)
         connection.madeBy = caller;
 
+    // Whose its handler's threads are (ADR 0186): the connecting thread's
+    // side, or -- connected by nobody's thread -- the function's own.
+    ThreadSide side = threadSide(L);
+    if (side == ThreadSide::Unknown && !waiter) {
+        lua_getref(L, ref);
+        side = sideOfFunction(L, -1);
+        lua_pop(L, 1);
+    }
+    connection.side = static_cast<core::u8>(side);
+
     const ConnectionId handle = sys.connections.insert(connection);
     record.connections.push_back(handle);
     if (connection.run != nullptr)
@@ -560,6 +570,7 @@ void reportHandlerError(lua_State* L, lua_State* co, int status)
         reportHandlerError(L, co, LUA_ERRRUN);
         return true;
     }
+    adoptFunctionSide(co, argCount);
     // `from = nullptr` resets the coroutine's C-call accounting to zero, which
     // is both the cheapest option and the one that keeps a drain from inheriting
     // a deep resume chain's budget (research §2.3) -- which is why the nesting
@@ -609,6 +620,7 @@ void invokeFire(lua_State* L, const DeferredEntry& entry)
         const int ref = connection->ref;
         const bool waiter = connection->waiter;
         const bool once = connection->once;
+        const ThreadSide side = static_cast<ThreadSide>(connection->side);
 
         // The referenced value is fetched onto the stack BEFORE the connection
         // is disconnected, and this ordering is load-bearing rather than tidy.
@@ -655,6 +667,8 @@ void invokeFire(lua_State* L, const DeferredEntry& entry)
             // an error in one must not touch the others. `lua_pcall` cannot do
             // either: everything under it is non-yieldable (U-34).
             co = lua_newthread(L);
+            // The side that connected it, whatever fired it (ADR 0186).
+            setThreadSide(co, side);
             rooted = lua_gettop(L);
             lua_insert(L, rooted - 1);
             lua_xmove(L, co, 1);
@@ -803,6 +817,7 @@ int startScheduled(lua_State* L, lua_State* co, int argCount)
         reportHandlerError(L, co, LUA_ERRRUN);
         return LUA_ERRRUN;
     }
+    adoptFunctionSide(co, argCount);
     const int status = lua_resume(co, nullptr, argCount);
     leaveResume(L, co);
     if (status != LUA_OK && status != LUA_YIELD && status != LUA_BREAK)
@@ -817,6 +832,7 @@ int callUnyielding(lua_State* L, lua_State* co, int argCount)
         reportHandlerError(L, co, LUA_ERRRUN);
         return LUA_ERRRUN;
     }
+    adoptFunctionSide(co, argCount);
     // Called, not resumed: a C boundary under it is what makes every wait
     // in it raise rather than leave the rest of the function for later.
     const int status = lua_pcall(co, argCount, 0, 0);

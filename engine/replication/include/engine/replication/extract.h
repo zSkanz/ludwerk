@@ -78,6 +78,11 @@ void diffFields(const generated::ClassDesc& desc, std::span<const FieldValue> ba
 // The field descriptor at a flat index, common set first. Null past the end.
 [[nodiscard]] const generated::FieldDesc* fieldAt(const generated::ClassDesc& desc, core::usize index);
 
+// Whether the property `name` of `id` is one the wire carries: what a write
+// to it on the authority sends to every machine. False for an instance with
+// no schema. What `--net-log-client-writes` asks (ADR 0186 section 5).
+[[nodiscard]] bool carriesField(const scene::World& world, core::InstanceId id, std::string_view name);
+
 // The id a field travels under, which is NOT `FieldDesc::id`.
 //
 // **The schema numbers the common fields from 1 and each class's fields from 1

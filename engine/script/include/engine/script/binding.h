@@ -37,6 +37,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "engine/core/error.h"
@@ -274,6 +275,13 @@ struct VmContext
     // `Instance.stamp` raises there rather than pretending: a prefab that
     // silently arrived empty would be a bug shaped like content.
     std::function<std::optional<std::string>(std::string_view)> stamps;
+    // **Whether a property of an instance is sent to other machines**, asked
+    // of the host for `--net-log-client-writes` (ADR 0186 §5) -- `script` does
+    // not know the wire. Empty unless the key is in force, and then a
+    // client-side script's write to what travels, on a machine that is
+    // hosting, is said once a script and property (`toldClientWrites`).
+    std::function<bool(const scene::World&, core::InstanceId, std::string_view)> travels;
+    std::unordered_set<core::u64> toldClientWrites;
     // **Stamps `ContentProvider:PreloadAsync` was asked for** (ADR 0155 §10),
     // by content path: their text, read once, so `Instance.stamp` of one does
     // not go to the disk at the moment a game spawns it.

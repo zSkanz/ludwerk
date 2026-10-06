@@ -47,7 +47,7 @@ namespace engine::scene::generated
 void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
 {
     // --- Instance ---
-    static std::array<PropertyDesc, 3> instanceProperties;
+    static std::array<PropertyDesc, 4> instanceProperties;
     instanceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Name"),
@@ -80,6 +80,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "The name of this instance's class; typeof answers Instance whatever the class, so this is what tells two classes apart.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
             .get = native::getInstanceClassName,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Local"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether this instance is this machine's alone (ADR 0186): made by a script that does not run on the server side -- under `ClientScriptService`, the client half of `GlobalScriptService`, or anywhere with a `RunContext` other than `Server` -- with `Instance.new` or `Clone`. It is never sent to another machine, with everything under it, wherever it is parented, and that holds on a machine that is hosting a match as it does on one that joined. What a server-side script makes, and what a scene holds, answers false and travels.\012\012It says who made the instance, not what is written to it afterwards: a client-side script on a host that writes a property of an instance that travels has written it for everybody.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getInstanceLocal,
             .set = nullptr,
         },
     }};
@@ -4809,7 +4822,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(localizationServiceDesc);
 
     // --- GraphicsService ---
-    static std::array<PropertyDesc, 41> graphicsServiceProperties;
+    static std::array<PropertyDesc, 42> graphicsServiceProperties;
     graphicsServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("QualityLevel"),
@@ -5048,6 +5061,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
             .get = native::getGraphicsServiceFoliageDensity,
             .set = native::setGraphicsServiceFoliageDensity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AnimationDetail"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How small on the screen a skinned mesh may be and still be posed every tick, as a scale on the size it is taken to be: at 1 a rig is posed every tick while it is 12% of the picture's height or more, every second tick down to 6%, every fourth down to 3% and every eighth below; at 2 those are 6%, 3% and 1.5%, and at 4 half that again. A game whose camera stands far from a crowd raises it, and pays for the poses: a crowd posed at a quarter of the ticks moves in steps. 0.25 to 8.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceAnimationDetail,
+            .set = native::setGraphicsServiceAnimationDetail,
         },
         PropertyDesc{
             .name = atoms.intern("ViewDistance"),

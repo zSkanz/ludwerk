@@ -892,6 +892,9 @@ bool startScript(lua_State* L, core::InstanceId instance)
     lua_State* co = lua_newthread(L);
     const int rooted = lua_gettop(L);
     luaL_sandboxthread(co);
+    // Whose everything this run makes is (ADR 0186): its script's side, which
+    // every thread made from this one starts with.
+    setThreadSide(co, scriptSideOf(w, instance) == ScriptSide::Server ? ThreadSide::Server : ThreadSide::Local);
 
     // BEFORE the load. `luaL_sandboxthread` marks the new globals table
     // safeenv, which makes the compiler's import fast path resolve globals
@@ -1040,6 +1043,87 @@ core::InstanceId scriptOfThread(lua_State* thread)
     const core::InstanceId out = id != nullptr ? *id : core::InstanceId{};
     lua_pop(thread, 1);
     return out;
+}
+
+namespace {
+
+// A script's side as a thread carries it: only the server's travels.
+[[nodiscard]] ThreadSide sideForScript(lua_State* L, core::InstanceId script)
+{
+    const scene::World& w = world(L);
+    if (!script.valid() || !w.alive(script))
+        return ThreadSide::Unknown;
+    return scriptSideOf(w, script) == ScriptSide::Server ? ThreadSide::Server : ThreadSide::Local;
+}
+
+// Luau's hook: `parent` made `thread`, or -- null -- `thread` is going.
+void threadMade(lua_State* parent, lua_State* thread)
+{
+    if (parent != nullptr)
+        lua_setthreaddata(thread, lua_getthreaddata(parent));
+}
+
+} // namespace
+
+ThreadSide threadSide(lua_State* thread) noexcept
+{
+    return static_cast<ThreadSide>(reinterpret_cast<std::uintptr_t>(lua_getthreaddata(thread)) & 3u);
+}
+
+void setThreadSide(lua_State* thread, ThreadSide side) noexcept
+{
+    lua_setthreaddata(thread, reinterpret_cast<void*>(static_cast<std::uintptr_t>(side)));
+}
+
+void installThreadSides(lua_State* L)
+{
+    lua_callbacks(L)->userthread = threadMade;
+}
+
+ThreadSide sideOfFunction(lua_State* L, int index)
+{
+    if (!lua_isfunction(L, index) || lua_iscfunction(L, index))
+        return ThreadSide::Unknown;
+    lua_getfenv(L, index);
+    // A script's function has its run's globals. A module's has the module's
+    // own, behind which are the globals of the thread that required it -- a
+    // script's run, or another module's and so on back to one.
+    for (int depth = 0; depth < 16 && lua_istable(L, -1); ++depth) {
+        if (const core::InstanceId owner = runOwnerOf(L, -1); owner.valid()) {
+            lua_pop(L, 1);
+            return sideForScript(L, owner);
+        }
+        if (lua_getmetatable(L, -1) == 0)
+            break;
+        lua_rawgetfield(L, -1, "__index");
+        lua_remove(L, -2);
+        lua_remove(L, -2);
+    }
+    lua_pop(L, 1);
+    return ThreadSide::Unknown;
+}
+
+void adoptFunctionSide(lua_State* thread, int argCount)
+{
+    if (threadSide(thread) != ThreadSide::Unknown || lua_status(thread) != LUA_OK)
+        return;
+    const int function = lua_gettop(thread) - argCount;
+    if (function >= 1 && lua_isfunction(thread, function))
+        setThreadSide(thread, sideOfFunction(thread, function));
+}
+
+bool threadMakesLocal(lua_State* L)
+{
+    ThreadSide side = threadSide(L);
+    if (side == ThreadSide::Unknown) {
+        // A thread nobody gave a side: the function that called says whose.
+        lua_Debug caller;
+        if (lua_getinfo(L, 1, "f", &caller) != 0) {
+            side = sideOfFunction(L, -1);
+            lua_pop(L, 1);
+        }
+    }
+    return side == ThreadSide::Local;
 }
 
 core::InstanceId scriptOfFunction(lua_State* L, int index)

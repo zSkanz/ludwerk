@@ -190,6 +190,11 @@ Value getInstanceClassName(const World& world, core::InstanceId id)
     return descriptor == nullptr ? std::string{} : std::string(world.atoms().text(descriptor->name));
 }
 
+Value getInstanceLocal(const World& world, core::InstanceId id)
+{
+    return world.local(id);
+}
+
 // --- Workspace --------------------------------------------------------------
 
 Value getWorkspaceCurrentCamera(const World& world, core::InstanceId id)
@@ -2397,6 +2402,16 @@ Value getGraphicsServiceFoliageDensity(const World& world, core::InstanceId)
 bool setGraphicsServiceFoliageDensity(World& world, core::InstanceId, const Value& value)
 {
     return writeGraphicsNumber(world, GraphicsSetting::FoliageDensity, value);
+}
+
+Value getGraphicsServiceAnimationDetail(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::AnimationDetail)};
+}
+
+bool setGraphicsServiceAnimationDetail(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::AnimationDetail, value);
 }
 
 Value getGraphicsServiceViewDistance(const World& world, core::InstanceId)

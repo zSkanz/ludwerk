@@ -169,6 +169,13 @@ public:
     // reports on.
     [[nodiscard]] bool animates(core::InstanceId meshPart) const;
 
+    // **`GraphicsService.AnimationDetail`**: a scale on the size a mesh is
+    // taken to be when its update interval is chosen, 1 by default. A camera
+    // that stands far from a crowd sees every rig small, and at 1 poses nearly
+    // all of them at a half or a quarter of the ticks.
+    void setDetail(f32 detail) noexcept { detail_ = detail > 0.0f ? detail : 1.0f; }
+    [[nodiscard]] f32 detail() const noexcept { return detail_; }
+
     // How often a mesh seen this big is posed: every tick, or every second,
     // fourth or eighth. Public so the thresholds are a thing a test holds.
     [[nodiscard]] static core::u32 updateInterval(f32 screenHeight) noexcept
@@ -398,6 +405,7 @@ private:
     // much of the picture's height it covered. Looked up, never iterated (R10).
     std::unordered_map<core::u64, f32> seen_;
     bool seeing_ = false;
+    f32 detail_ = 1.0f;
     // Ticks sampled, which staggers the meshes that skip: a crowd's posing is
     // spread across the ticks rather than all on one of every eight.
     core::u64 sampled_ = 0;

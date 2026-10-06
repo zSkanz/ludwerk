@@ -342,6 +342,13 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.network.logCorrections = true;
             continue;
         }
+        // **A host's client script writing what its friends are sent** (ADR
+        // 0186 §5): said once a script and property. In any build, for the
+        // reason above.
+        if (arg == "--net-log-client-writes") {
+            options.logClientWrites = true;
+            continue;
+        }
         if (arg == "--exit") {
             options.exitAfterFrames = true;
             continue;

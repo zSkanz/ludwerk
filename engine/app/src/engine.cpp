@@ -2580,6 +2580,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     editor.setMaterialLibrary(&materialLibrary);
     // What the first frame will be drawn into, for a script's first line.
     worldOptions.viewportSize = core::Vec2{static_cast<f32>(options.width), static_cast<f32>(options.height)};
+    worldOptions.logClientWrites = options.logClientWrites;
     // **What the machine has, before the first script asks** (D456). A run
     // with a window asks the system; one without says what the platform is --
     // a keyboard on a desktop, a touchscreen on a phone -- so a headless test
@@ -6489,6 +6490,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                 shadowRadius, host->animation(), framePoses, snapshot,
                                 useEditorView ? &editorView : nullptr, outlined, &textureLibrary, terrainNodes);
                 // The rigs this frame reached, for how often each is posed (H3).
+                // By the settings as they are this frame: a level, a
+                // project's own value or a player's menu.
+                host->setAnimationDetail(static_cast<f32>(
+                    host->world().engineState().graphics.effective(scene::GraphicsSetting::AnimationDetail)));
                 host->reportSeenSkins(snapshot.seenSkins, true);
                 // And the rigs inside the frames a player can see (ADR 0107,
                 // amended): looked at whether or not their frame was redrawn.

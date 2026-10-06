@@ -353,6 +353,48 @@ to a player who joins, every chunk that differs from the scene, and after that
 each chunk as it changes ([Terrain in a match](manual:world/terrain)). A
 digging game digs on the server, and every player sees the hole.
 
+### Whose what a script makes is
+
+**What a server-side script makes is everyone's; what any other script makes
+is that machine's alone** (ADR 0186). A part, a model, a stamp or a clone made
+by a script under `ClientScriptService` or `GlobalScriptService.Client` -- or
+by one every machine runs -- is never sent to another machine, with everything
+under it, wherever it is parented: under `Workspace`, or under a part that
+does travel. That holds on a machine that is **hosting** exactly as on one
+that joined, so a ring under the hero or a number over an enemy made by
+client code is on that screen and no other.
+
+```luau
+-- src/client/: this machine's own. A friend never sees it.
+local ring = Instance.new("Part")
+ring.Parent = workspace
+print(ring.Local) --> true
+
+-- src/server/: everyone's.
+local crate = Instance.new("Part")
+crate.Parent = workspace
+print(crate.Local) --> false
+```
+
+- It follows **who is running**, not where the code is written: a function in
+  a `src/shared/` module makes a local part when client code calls it and a
+  travelling one when server code does. A task it spawns, and a handler it
+  connects, are the caller's too.
+- `Clone` follows who calls it: a client-side copy of something everyone has
+  is that machine's own.
+- For a friend to see something, the server side makes it. A client asks with
+  a `RemoteEvent`, below.
+- `Instance.Local` reads it.
+
+**Writing is not making.** A host is one world: a client-side script on a host
+that writes a property of something everyone has -- its colour, its material,
+an attribute -- has written it for everybody, where the same write on a
+machine that joined stays there. What one machine alone should see is made by
+the client side, or said with a property that is never sent, like
+[`BasePart.Fade`](manual:rendering/quality). Start the game with
+`--net-log-client-writes` to be told, once a script and property, each such
+write on a machine that is hosting.
+
 ## Players
 
 `NetworkService:GetPlayers()` lists everyone taking part, and `PlayerAdded` and

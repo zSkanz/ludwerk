@@ -107,6 +107,41 @@ inline constexpr core::i32 RunContextShared = 2;
 // topology says now: solo and a host run both sides.
 [[nodiscard]] bool scriptSideRunsHere(const scene::World& world, ScriptSide side);
 
+// **Whose a thread is, for what it makes** (ADR 0186): the side of the run
+// that started it. A script's own thread is given its script's side; a thread
+// made from another -- a spawned task, a coroutine, a module's body being
+// required -- starts as the one that made it; a signal's handler is given
+// the side of the thread that connected it; and any other callback takes the
+// side of the run its function was written in, when nobody gave it one.
+enum class ThreadSide : core::u8
+{
+    // Nobody's: the engine's own, a test's, the editor's command line. What it
+    // makes travels, as what the engine makes does.
+    Unknown = 0,
+    // A server-side script's: what it makes travels.
+    Server = 1,
+    // A client-side script's, or one every machine runs: what it makes is this
+    // machine's alone.
+    Local = 2,
+};
+
+[[nodiscard]] ThreadSide threadSide(lua_State* thread) noexcept;
+void setThreadSide(lua_State* thread, ThreadSide side) noexcept;
+// Once a VM: a thread made from another starts as its side.
+void installThreadSides(lua_State* L);
+// The side of the run the function at `index` was written in: its own
+// script's, or -- a module's function -- the script's that first required the
+// module. Unknown for a function of the engine's.
+[[nodiscard]] ThreadSide sideOfFunction(lua_State* L, int index);
+// A thread about to be started on the function under its `argCount`
+// arguments, and given no side, takes that function's.
+void adoptFunctionSide(lua_State* thread, int argCount);
+
+// **Whether what the running thread makes is this machine's alone** (ADR
+// 0186): its side is `Local`. A thread with none is asked by the function
+// that called -- and what no script's run made travels.
+[[nodiscard]] bool threadMakesLocal(lua_State* L);
+
 // Per-VM. Held by `VmContext` as a pointer and owned by `ScriptRuntime`.
 class ModuleRegistry
 {

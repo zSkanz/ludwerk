@@ -83,6 +83,17 @@ struct InstanceRecord
     // with a different answer.
     bool generated = false;
 
+    // **Made by a script that does not run on the server side** (ADR 0186),
+    // and so this machine's alone: never sent to another, with everything
+    // under it, wherever it is parented -- a listen host included, whose
+    // client scripts share one world with its server's.
+    //
+    // A fact about who made it, set when it is made and never after. Not in
+    // the world hash, for the reason `generated` is not: a part a client
+    // script made ticks like any other, and what is asked here is who else
+    // is told about it.
+    bool local = false;
+
     // **The STAMP this instance was made from**, or an empty atom (ADR 0049).
     //
     // The same kind of fact as `generated` above and stored beside it for the
@@ -776,6 +787,13 @@ public:
     // same statement a thousand times.
     void setGenerated(core::InstanceId id, bool generated) noexcept;
     [[nodiscard]] bool generated(core::InstanceId id) const noexcept;
+
+    // Marks an instance, and with `subtree` everything under it now, as this
+    // machine's alone (ADR 0186): what `Instance.new` and `Clone` say of what
+    // a client-side script makes. The whole of a clone is marked, so a piece
+    // of it moved out from under its root is still nobody else's.
+    void setLocal(core::InstanceId id, bool subtree = false);
+    [[nodiscard]] bool local(core::InstanceId id) const noexcept;
 
     // **Where streamed content is born** (D422). A partitioned scene marks
     // each instance whose children left for a cell with a number, and reading

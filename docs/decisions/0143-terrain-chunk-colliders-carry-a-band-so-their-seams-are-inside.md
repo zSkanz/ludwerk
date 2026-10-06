@@ -151,3 +151,26 @@ and the band never collides; moving bodies remove internal edges.**
   either alone does not fix wheels.
 - A raycast may hit a band triangle; it lies in the neighbour's own surface,
   so the point and normal are the surface's, and the body is the same terrain.
+
+## Amendment, 2026-10-06 (D574): a character does not remove internal edges
+
+Decision 3 set `mEnhancedInternalEdgeRemoval` on every dynamic body **and
+every character**. A character no longer sets it.
+
+With the flag, a character standing by the edge two facets of the ground
+share keeps one contact for the two and solves its step along that one plane.
+The sweep that checks the step then meets the other facet -- a degree or two
+off the first, on any rolling ground -- and the controller's correction for
+its padding takes the hit back to where the character stands: the whole step
+is thrown away, every tick, for as long as it is asked to move. A step has to
+be long enough to reach the next facet, so a walk did not show it and a dash
+at forty metres a second stood still in 52 of 296.
+
+The flag bought a character nothing at a seam: in the table above the
+character rows read 0.000 under `ring+f`, the band and its filter with no
+flag, as under `ring+f+e`. What it is for is the body that ROLLS, which hops
+on the edges inside one mesh without it; dynamic bodies keep it.
+
+The harness's character runs without the flag under the engine's join, so
+"every kind of body crosses a seam between chunks' colliders as it crosses one
+surface" holds a character as the engine now makes one.

@@ -278,6 +278,9 @@ void seedPresets(scene::GraphicsModel& model, bool handheld)
         say(layer, GraphicsSetting::ParticleBudget, extras.particleBudget);
         say(layer, GraphicsSetting::SoftParticles, extras.softParticles);
         say(layer, GraphicsSetting::SkinWeights, extras.skinWeights);
+        // Every level poses by the same sizes: how far a game's camera stands
+        // from its crowd is the game's to say, not a level's.
+        say(layer, GraphicsSetting::AnimationDetail, 1.0);
         say(layer, GraphicsSetting::FogQuality, extras.level);
         say(layer, GraphicsSetting::GlobalIllumination, extras.level);
         say(layer, GraphicsSetting::Reflections, extras.level);

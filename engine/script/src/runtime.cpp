@@ -313,6 +313,13 @@ void ScriptRuntime::setStampSource(std::function<std::optional<std::string>(std:
     m_impl->context.stamps = std::move(source);
 }
 
+void ScriptRuntime::setClientWriteLog(
+    std::function<bool(const scene::World&, core::InstanceId, std::string_view)> travels)
+{
+    m_impl->context.travels = std::move(travels);
+    m_impl->context.toldClientWrites.clear();
+}
+
 void ScriptRuntime::setSaveStore(SaveStore* store) noexcept
 {
     m_impl->services.saves = store;
@@ -343,6 +350,7 @@ std::optional<core::EngineError> ScriptRuntime::boot(core::InstanceId adoptDataM
     // silently stops using its atom -- slower, still correct, and invisible.
     lua_callbacks(L)->userdata = &m_impl->context;
     lua_callbacks(L)->useratom = internAtom;
+    installThreadSides(L);
     lua_callbacks(L)->interrupt = watchdogInterrupt;
 
     // Beside the other two, and before anything loads: the hooks are read by

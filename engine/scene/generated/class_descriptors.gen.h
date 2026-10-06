@@ -143,6 +143,7 @@ bool setInstanceName(World& world, core::InstanceId id, const Value& value);
 Value getInstanceParent(const World& world, core::InstanceId id);
 bool setInstanceParent(World& world, core::InstanceId id, const Value& value);
 Value getInstanceClassName(const World& world, core::InstanceId id);
+Value getInstanceLocal(const World& world, core::InstanceId id);
 
 // PVInstance
 Value getPVInstancePivotOffset(const World& world, core::InstanceId id);
@@ -894,6 +895,8 @@ Value getGraphicsServiceTerrainDetail(const World& world, core::InstanceId id);
 bool setGraphicsServiceTerrainDetail(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceFoliageDensity(const World& world, core::InstanceId id);
 bool setGraphicsServiceFoliageDensity(World& world, core::InstanceId id, const Value& value);
+Value getGraphicsServiceAnimationDetail(const World& world, core::InstanceId id);
+bool setGraphicsServiceAnimationDetail(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceViewDistance(const World& world, core::InstanceId id);
 bool setGraphicsServiceViewDistance(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceTextureQuality(const World& world, core::InstanceId id);

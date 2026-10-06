@@ -21,6 +21,7 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `AmbientOcclusion` | `boolean` | `true` | read/write | Whether creases and corners are darkened. |
+| `AnimationDetail` | `number` | `1` | read/write | How small on the screen a skinned mesh may be and still be posed every tick, as a scale on the size it is taken to be: at 1 a rig is posed every tick while it is 12% of the picture's height or more, every second tick down to 6%, every fourth down to 3% and every eighth below; at 2 those are 6%, 3% and 1.5%, and at 4 half that again. A game whose camera stands far from a crowd raises it, and pays for the poses: a crowd posed at a quarter of the ticks moves in steps. 0.25 to 8. |
 | `AnisotropicFiltering` | `number` | `8` | read/write | How sharp a texture stays at a grazing angle, 1 to 16. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands. |
 | `AntiAliasing` | `Enum.AntiAliasingMode` | `Enum.AntiAliasingMode.SMAA` | read/write | How edges are smoothed (ADR 0158). |
 | `AsyncUploadBudget` | `number` | `2` | read/write | The milliseconds a frame may spend sending data to the GPU. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands. |

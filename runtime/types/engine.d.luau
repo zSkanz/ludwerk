@@ -925,6 +925,15 @@ declare extern type Instance with
     --- The name of this instance's class; typeof answers Instance whatever the class, so this is what
     --- tells two classes apart.
     read ClassName: string
+    --- Whether this instance is this machine's alone (ADR 0186): made by a script that does not run on
+    --- the server side -- under `ClientScriptService`, the client half of `GlobalScriptService`, or
+    --- anywhere with a `RunContext` other than `Server` -- with `Instance.new` or `Clone`. It is never
+    --- sent to another machine, with everything under it, wherever it is parented, and that holds on a
+    --- machine that is hosting a match as it does on one that joined. What a server-side script makes,
+    --- and what a scene holds, answers false and travels. It says who made the instance, not what is
+    --- written to it afterwards: a client-side script on a host that writes a property of an instance
+    --- that travels has written it for everybody.
+    read Local: boolean
     --- Fired after an instance is parented to this one, carrying that child.
     read ChildAdded: Signal<Instance>
     --- Fired after an instance stops being parented to this one, carrying that child.
@@ -4166,6 +4175,13 @@ declare extern type GraphicsService extends Instance with
     TerrainDetail: number
     --- How much of the foliage a `FoliageLayer` grows is drawn, 0 to 1, over the project's own density.
     FoliageDensity: number
+    --- How small on the screen a skinned mesh may be and still be posed every tick, as a scale on the
+    --- size it is taken to be: at 1 a rig is posed every tick while it is 12% of the picture's height
+    --- or more, every second tick down to 6%, every fourth down to 3% and every eighth below; at 2
+    --- those are 6%, 3% and 1.5%, and at 4 half that again. A game whose camera stands far from a crowd
+    --- raises it, and pays for the poses: a crowd posed at a quarter of the ticks moves in steps. 0.25
+    --- to 8.
+    AnimationDetail: number
     --- A scale on how far things are drawn, 0.25 to 4. **Kept, saved and reported, and not drawn by
     --- yet**: it applies when that part of the renderer lands.
     ViewDistance: number

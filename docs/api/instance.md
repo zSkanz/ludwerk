@@ -16,6 +16,7 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `ClassName` | `string` | — | read-only | The name of this instance's class; typeof answers Instance whatever the class, so this is what tells two classes apart. |
+| `Local` | `boolean` | — | read-only | Whether this instance is this machine's alone (ADR 0186): made by a script that does not run on the server side -- under `ClientScriptService`, the client half of `GlobalScriptService`, or anywhere with a `RunContext` other than `Server` -- with `Instance.new` or `Clone`. It is never sent to another machine, with everything under it, wherever it is parented, and that holds on a machine that is hosting a match as it does on one that joined. What a server-side script makes, and what a scene holds, answers false and travels.<br><br>It says who made the instance, not what is written to it afterwards: a client-side script on a host that writes a property of an instance that travels has written it for everybody. |
 | `Name` | `string` | — | read/write | This instance's name; siblings may share one, and renaming into an awaited name satisfies a WaitForChild waiter exactly as parenting a new child does. |
 | `Parent` | `Instance?` | — | read/write | The instance this one hangs under, nil when unparented; assigning it appends this instance last among its new siblings, assigning the current parent again changes nothing, and assigning after Destroy raises. |
 

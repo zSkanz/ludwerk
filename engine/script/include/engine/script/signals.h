@@ -110,6 +110,11 @@ struct ConnectionRecord
     // owns the connection as it owns the threads the call spawns, so it ends
     // with the scene. Null when it is `run`.
     const void* madeBy = nullptr;
+    // **The side of the thread that connected it** (ADR 0186), as a
+    // `ThreadSide`: whose the handler's thread is each time it runs, and so
+    // whether what it makes travels. A handler written in a module both sides
+    // use is the side's that connected it.
+    core::u8 side = 0;
 };
 
 struct SignalRecord

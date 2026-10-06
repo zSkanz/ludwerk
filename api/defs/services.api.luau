@@ -776,6 +776,20 @@ local Classes: { Schema.Class } = {
                     .. "density.",
             },
             {
+                Name = "AnimationDetail",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How small on the screen a skinned mesh may be and still be posed every tick, as a "
+                    .. "scale on the size it is taken to be: at 1 a rig is posed every tick while it is "
+                    .. "12% of the picture's height or more, every second tick down to 6%, every fourth "
+                    .. "down to 3% and every eighth below; at 2 those are 6%, 3% and 1.5%, and at 4 "
+                    .. "half that again. A game whose camera stands far from a crowd raises it, and pays "
+                    .. "for the poses: a crowd posed at a quarter of the ticks moves in steps. 0.25 to 8.",
+            },
+            {
                 Name = "ViewDistance",
                 Type = "number",
                 Default = "1",

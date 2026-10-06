@@ -158,6 +158,9 @@ struct WorldHostOptions
     std::function<void()> resetStreaming = nullptr;
 
     scene::StampSource bootStamps;
+    // `--net-log-client-writes` (ADR 0186 §5): a client-side script's write
+    // to a property that travels, on a machine that is hosting, is logged.
+    bool logClientWrites = false;
     std::filesystem::path bootScene;
     // **The scene's text, when it came from a content pack** rather than a
     // file: a built game ships `content/` as a pack, and the scene -- which now
@@ -582,6 +585,12 @@ public:
         if (m_animation)
             m_animation->reportSeen(seen, fresh);
     }
+    // `GraphicsService.AnimationDetail`, as the settings have it now.
+    void setAnimationDetail(core::f32 detail)
+    {
+        if (m_animation)
+            m_animation->setDetail(detail);
+    }
 
     // **The rigs every `MeshPart` names, loaded now** rather than at the top of
     // the next tick -- which, while the editor is editing, never comes. The
@@ -793,6 +802,7 @@ private:
     // caller chose, and neither is recoverable from the world.
     script::ReloadState* m_reloadState = nullptr;
     scene::StampSource m_stampSource;
+    bool m_logClientWrites = false;
 
     std::filesystem::path m_root;
     // **A sealed game's own files** (ADR 0183): set where the project folder

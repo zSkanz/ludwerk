@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "engine/core/profile.h"
 #include "engine/render/lighting.h"
 #include "engine/render/shader_types.h"
 #include "engine/render/terrain_loader.h"
@@ -645,6 +646,11 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     out.clear();
     if (!root.valid())
         return;
+    // What an extract spends, by what it is walking: the camera and what is
+    // highlighted, the lights, the meshes, the ground and what lies on it, the
+    // parts, and the order they are drawn in.
+    core::profile::Sections stretch;
+    ENG_PROFILE_NEXT(stretch, "extract.camera");
 
     // Linear for a handful, which is the common case and the cheap answer: a
     // search structure per frame would cost more on a list of four than the
@@ -889,6 +895,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         return shape >= 0 && shape < kPrimitiveShapes ? primitives[static_cast<usize>(shape)] : nullptr;
     };
 
+    ENG_PROFILE_NEXT(stretch, "extract.lights");
     world.parts().forEach([&](core::InstanceId id, const scene::PartComponent& part) {
         // **The common case leaves before any other lookup.** A plain part, with
         // a camera to draw it through and every primitive uploaded, is drawn by
@@ -1043,6 +1050,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         return slot;
     };
 
+    ENG_PROFILE_NEXT(stretch, "extract.meshes");
     world.meshParts().forEach([&](core::InstanceId id, const scene::MeshPartComponent& meshPart) {
         if (!inWorld(world, id, root))
             return;
@@ -1070,24 +1078,45 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         // cast-in test both describe what is actually drawn.
         const AABB worldBounds = core::transformed(transform, entry->bounds);
 
+        // Culled against the whole mesh's bounds rather than a section's: the
+        // section bounds are in the library and this is the loop that would
+        // have to fetch them per section. Whole-mesh is conservative in the
+        // direction that never drops geometry, and a per-section test is the
+        // optimization to make when a profile says the draws it saves are
+        // worth the fetch.
+        const bool visible = core::intersects(out.camera.frustum, worldBounds);
+        const Vec3 centre = core::center(worldBounds);
+        const f32 distance = core::length(centre);
+        const f32 radius = 0.5f * core::length(core::size(worldBounds));
+        // Out of the picture, it is kept when it is close enough to cast into
+        // view. The first version dropped it, which deleted the shadow of
+        // everything behind the camera -- an image that looks right until you
+        // notice what is missing from it.
+        //
+        // **And left here when it is neither**, before its pose is copied and
+        // its look resolved: no section of it is drawn, in any pass. A horde
+        // is mostly this -- every body round a hero has a palette of some
+        // kilobytes, and the camera sees a slice of them.
+        if (!visible && distance > shadowRadius + radius) {
+            out.candidateDraws += entry->sectionCount;
+            out.culledDraws += entry->sectionCount;
+            return;
+        }
+
+        // **What the animation's update rate is decided from** (H3): a rig
+        // the camera sees, or close enough to cast into the view, and how
+        // much of the picture's height its bounds cover.
+        if (animation != nullptr && animation->animates(id)) {
+            const f32 covered = distance > 1.0e-3f ? radius * out.camera.projection.m[1][1] / distance : 1.0f;
+            out.seenSkins.push_back(SeenSkin{id, covered});
+        }
+
         // The palette, appended once per MESH rather than once per section: a
         // character with four submeshes is one skeleton, and uploading its pose
         // four times would be four times the bytes for one answer. Truncated at
         // `kMaxSkinJoints` rather than refused -- a rig past the budget draws
         // its first sixty-four joints posed and the rest in bind, which is
         // visibly wrong in a way that says what happened.
-        // **What the animation's update rate is decided from** (H3): a rig
-        // the camera sees, or close enough to cast into the view, and how
-        // much of the picture's height its bounds cover.
-        if (animation != nullptr && animation->animates(id)) {
-            const f32 distance = core::length(core::center(worldBounds));
-            const f32 radius = 0.5f * core::length(core::size(worldBounds));
-            if (core::intersects(out.camera.frustum, worldBounds) || distance <= shadowRadius + radius) {
-                const f32 covered = distance > 1.0e-3f ? radius * out.camera.projection.m[1][1] / distance : 1.0f;
-                out.seenSkins.push_back(SeenSkin{id, covered});
-            }
-        }
-
         u32 firstBone = 0;
         u32 boneCount = 0;
         if (animation != nullptr) {
@@ -1103,38 +1132,24 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         // whole mesh rather than once per section: `Material` is a property of
         // the PART, and every section of it gets the same answer.
         const PartLook look = lookOf(world, id, *part, materials, frameMaterials, lastFrameMaterial);
+        // The same for every section of it, and asked once.
+        const bool outlinedHere = isOutlined(id);
+        const core::u8 highlightHere = highlightOf(id);
+        const u64 motionKey = motionKeyOf(id);
 
         for (u32 section = 0; section < entry->sectionCount; ++section) {
-            // Resolved before the cull test so that `material` is meaningful
-            // on every candidate, and deduplicated across the frame by
-            // (content, local index, the part's material and its tint) so the
-            // sort key can group draws that share a bind set. A linear scan,
-            // because a scene has a handful of materials and an unordered
-            // container's iteration order must not reach observable output
-            // (R10).
+            // Deduplicated across the frame by (content, local index, the
+            // part's material and its tint) so the sort key can group draws
+            // that share a bind set. A linear scan, because a scene has a
+            // handful of materials and an unordered container's iteration
+            // order must not reach observable output (R10).
             u32 localMaterial = 0;
             if (section < entry->sectionMaterial.size())
                 localMaterial = entry->sectionMaterial[section];
 
             ++out.candidateDraws;
-            // Culled against the whole mesh's bounds rather than the
-            // section's: the section bounds are in the library and this is
-            // the loop that would have to fetch them per section. Whole-mesh
-            // is conservative in the direction that never drops geometry,
-            // and a per-section test is the optimization to make when a
-            // profile says the draws it saves are worth the fetch.
-            const bool visible = core::intersects(out.camera.frustum, worldBounds);
-            if (!visible) {
+            if (!visible)
                 ++out.culledDraws;
-                // Kept anyway when it is close enough to cast into view. The
-                // first version dropped it, which deleted the shadow of
-                // everything behind the camera -- an image that looks right
-                // until you notice what is missing from it.
-                const Vec3 toCentre = core::center(worldBounds);
-                const f32 reach = shadowRadius + 0.5f * core::length(core::size(worldBounds));
-                if (core::length(toCentre) > reach)
-                    continue;
-            }
 
             u32 materialSlot = 0;
             bool found = false;
@@ -1198,13 +1213,11 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             const f32 opacity = own * (1.0f - std::clamp(part->fade, 0.0f, 1.0f));
 
             const bool transparent = opacity < 1.0f;
-            const Vec3 centre = core::center(worldBounds);
-            const f32 depth = core::length(centre);
             // Back-to-front for the blended pass, and the inversion happens
             // HERE rather than as a reversed walk in a backend -- that is
             // M4's third design constraint, and a reversed walk is work
             // every future backend would repeat.
-            const f32 sortDepth = transparent ? kMaxSortDepth - depth : depth;
+            const f32 sortDepth = transparent ? kMaxSortDepth - distance : distance;
             out.draws.push_back(DrawItem{
                 // Zero for a transparent draw: see `drawSortKey`.
                 // The opaque pass sorts by the material's FAMILY, so parts
@@ -1219,17 +1232,17 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 .material = materialSlot,
                 .alpha = opacity,
                 .transparent = transparent,
-                .boundsCenter = core::center(worldBounds),
-                .boundsRadius = 0.5f * core::length(core::size(worldBounds)),
+                .boundsCenter = centre,
+                .boundsRadius = radius,
                 .inCameraFrustum = visible,
                 .firstBone = firstBone,
                 .boneCount = boneCount,
-                .outlined = isOutlined(id),
-                .highlight = highlightOf(id),
+                .outlined = outlinedHere,
+                .highlight = highlightHere,
                 .terrain = false,
                 .voxelBlock = false,
             });
-            out.draws.back().motionKey = motionKeyOf(id);
+            out.draws.back().motionKey = motionKey;
             out.draws.back().castShadow = part->castShadow;
             out.draws.back().receivesDecals = part->receivesDecals;
             out.draws.back().fadedOnly = own >= 1.0f && transparent;
@@ -1238,6 +1251,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
 
     // --- Terrain (ADR 0082) ---------------------------------------------------
     //
+    ENG_PROFILE_NEXT(stretch, "extract.ground");
     // **The ground is meshes**, one per node of each terrain's level-of-detail
     // quadtree, which `TerrainLoader` built and chose for this camera and hands
     // in as `terrainNodes`. This turns each into draws.
@@ -1720,6 +1734,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     std::unordered_map<u64, std::vector<usize>> partMaterialsByKey;
     usize lastPartMaterial = std::numeric_limits<usize>::max();
 
+    ENG_PROFILE_NEXT(stretch, "extract.parts");
     world.parts().forEach([&](core::InstanceId id, const scene::PartComponent& part) {
         if (!inWorld(world, id, root))
             return;
@@ -1948,6 +1963,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     // quicksort and would order them by whatever the partition happened to do
     // (R10) -- the same trap the api-dump generator hit on the same day.
     //
+    ENG_PROFILE_NEXT(stretch, "extract.sort");
     // **Sorted as (key, index) pairs and permuted once**, which is the same
     // order: the index breaks every tie exactly the way stability does. What
     // changed is what moves. A `DrawItem` is over a hundred bytes and a merge

@@ -364,6 +364,33 @@ TEST_CASE("H3: a rig nobody sees is not posed, a small one is posed every few ti
             animation.sample(1.0 / 60.0);
         CHECK(animation.posesBuilt() == after + 8);
     }
+    SUBCASE("AnimationDetail scales the size a rig is taken to be: a far camera's crowd, posed every tick")
+    {
+        // Four per cent of the picture's height: every fourth tick.
+        const std::array<render::SeenSkin, 1> far{render::SeenSkin{fixture.mesh, 0.04f}};
+        animation.reportSeen(far, true);
+        const auto posed = [&animation] { return animation.posesBuilt() + animation.posesShared(); };
+        core::u64 before = posed();
+        for (int tick = 0; tick < 32; ++tick)
+            animation.sample(1.0 / 60.0);
+        CHECK(posed() == before + 8);
+
+        // Taken for four times that, sixteen per cent: every tick.
+        animation.setDetail(4.0f);
+        before = posed();
+        for (int tick = 0; tick < 8; ++tick)
+            animation.sample(1.0 / 60.0);
+        CHECK(posed() == before + 8);
+
+        // And for half of it, two per cent: every eighth at most -- a pose at
+        // a moment of the clip it already has is not made again.
+        animation.setDetail(0.5f);
+        before = posed();
+        for (int tick = 0; tick < 32; ++tick)
+            animation.sample(1.0 / 60.0);
+        CHECK(posed() > before);
+        CHECK(posed() <= before + 4);
+    }
     SUBCASE("AlwaysAnimate: every tick, seen or not")
     {
         fixture.world.animationPlayers().add(player, scene::AnimationPlayerComponent{.cullingMode = 1});

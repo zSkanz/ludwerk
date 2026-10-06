@@ -148,6 +148,23 @@ every tick.
 its meshes every tick, seen or not: the hero, or a character whose pose a
 script reads from a distance.
 
+**How small is small is a setting**, `GraphicsService.AnimationDetail`
+(`[graphics] animation_detail` in `project.toml`), a scale on the size a rig is
+taken to be. At 1 a rig is posed every tick while it covers 12% of the
+picture's height or more, every second tick down to 6%, every fourth down to
+3%, and every eighth below that. A camera that stands well back from a crowd
+sees every rig small -- from 8.5 metres behind a hero at a field of view of
+70, a character 1.5 metres tall is posed every tick only within about ten
+metres of the camera -- and the crowd moves in steps. Such a game raises it:
+
+```toml
+[graphics]
+animation_detail = 4   # every tick down to 3%, every second down to 1.5%
+```
+
+It costs the poses it asks for, so it is a setting a player's menu may lower
+on a slow machine as it lowers shadows.
+
 A crowd of one skinned mesh is also drawn in one call a pass, each copy posed
 by its own palette, and a skinned mesh has levels of detail as a static one
 does.

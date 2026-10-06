@@ -220,6 +220,51 @@ int instanceIndex(lua_State* L)
     raiseUnknownInstanceMember(L, id, key);
 }
 
+// **A client-side script on a host writing what travels** (ADR 0186 §5,
+// `--net-log-client-writes`). What it makes is its own; what it WRITES, to an
+// instance every machine has, is everybody's -- one world, one value -- and
+// that is how a host's own view of a thing reaches its friends unasked. Said
+// once a script and property, and only while the key is in force.
+//
+// `what` is the property or the method as a script wrote it, `mark` what
+// tells one from another for the once, and `field` the wire's name for what
+// it changes -- a method's is not its own.
+void noteClientWrite(lua_State* L, core::InstanceId id, core::u32 mark, std::string_view what, std::string_view field)
+{
+    VmContext& ctx = context(L);
+    if (!ctx.travels)
+        return;
+    const World& w = world(L);
+    if (w.engineState().networkTopology != scene::NetworkTopology::Host || !threadMakesLocal(L))
+        return;
+    // Its own, or under something that is: sent to nobody.
+    for (core::InstanceId walk = id; walk.valid(); walk = w.parentOf(walk)) {
+        if (w.local(walk))
+            return;
+    }
+    if (!ctx.travels(w, id, field))
+        return;
+    const core::InstanceId writer = scriptOfThread(L);
+    const core::u64 key = (static_cast<core::u64>(writer.index) << 32) | mark;
+    if (!ctx.toldClientWrites.insert(key).second)
+        return;
+    const std::string script = writer.valid() ? std::string(w.atoms().text(w.name(writer))) : std::string{};
+    const scene::ClassDescriptor* descriptor = w.classes().find(w.classOf(id));
+    const core::I18nArg args[] = {
+        {"script", std::string_view{script}},
+        {"class", descriptor != nullptr ? w.atoms().text(descriptor->name) : std::string_view{}},
+        {"property", what},
+        {"instance", w.atoms().text(w.name(id))},
+    };
+    core::logText(core::LogLevel::Warn, core::formatKeyPrefixed(ENG_TR("net.warn.client_write"), args));
+}
+
+// The methods that write what travels, for the same log: no property's atom
+// is this large.
+constexpr core::u32 WroteMaterialParameter = 0xFFFF0001u;
+constexpr core::u32 WroteAttribute = 0xFFFF0002u;
+constexpr core::u32 WroteTag = 0xFFFF0003u;
+
 int instanceNewIndex(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
@@ -267,6 +312,8 @@ int instanceNewIndex(lua_State* L)
     // generic setter, because a cycle and a destroyed instance are two different
     // refusals with two different keys and the accessor collapses both to
     // `false` (native_accessors.cpp says so at the collapse).
+    noteClientWrite(L, id, name.id, key, key);
+
     if (name == context(L).wellKnown.parent && property->type == scene::ValueType::Instance) {
         core::InstanceId target;
         if (const auto* reference = std::get_if<core::InstanceId>(&value.value()))
@@ -565,7 +612,13 @@ int methodIsDescendantOf(lua_State* L)
 
 int methodClone(lua_State* L)
 {
-    pushInstance(L, world(L).clone(liveInstance(L, 1)));
+    World& w = world(L);
+    const core::InstanceId copy = w.clone(liveInstance(L, 1));
+    // Whose it is follows who made it, not what it was made from (ADR 0186):
+    // a client-side script's copy of something that travels is its own.
+    if (copy.valid() && threadMakesLocal(L))
+        w.setLocal(copy, true);
+    pushInstance(L, copy);
     flushSceneChanges(L);
     return 1;
 }
@@ -668,6 +721,8 @@ int methodSetAttribute(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
     const core::NameAtom name = checkAttributeName(L, 2);
+    // An attribute travels with whatever instance does: asked by its name.
+    noteClientWrite(L, id, WroteAttribute, "SetAttribute", "Name");
 
     const std::optional<scene::Value> value = toAttributeValue(L, 3);
     if (!value.has_value() || !world(L).setAttribute(id, name, *value)) {
@@ -748,6 +803,7 @@ int methodGetAttributes(lua_State* L)
 int methodAddTag(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
+    noteClientWrite(L, id, WroteTag, "AddTag", "Name");
     world(L).addTag(id, checkTagName(L, 2));
     flushSceneChanges(L);
     return 0;
@@ -1010,6 +1066,11 @@ int instanceStamp(lua_State* L)
     // by, since the authority never sends a script.
     (void)w.numberOrigins(placed, w.atoms().intern("stamp:" + name), 0);
 
+    // The whole of it this machine's alone, placed by a client-side script
+    // (ADR 0186).
+    if (threadMakesLocal(L))
+        w.setLocal(placed, true);
+
     pushInstance(L, placed);
     return 1;
 }
@@ -1044,7 +1105,13 @@ int instanceNew(lua_State* L)
         raise(L, ENG_TR("scene.err.not_creatable"), args);
     }
 
-    pushInstance(L, w.create(classId));
+    const core::InstanceId made = w.create(classId);
+    // **What a client-side script makes is this machine's alone** (ADR 0186),
+    // a listen host's included: it shares one world with its server side, and
+    // sent a friend every visual its own client scripts made.
+    if (made.valid() && threadMakesLocal(L))
+        w.setLocal(made);
+    pushInstance(L, made);
     return 1;
 }
 
@@ -1741,6 +1808,7 @@ int methodSetMaterialParameter(lua_State* L)
     const core::InstanceId id = liveInstance(L, 1);
     const NamedParameter parameter = checkParameter(L, 2);
     World& w = world(L);
+    noteClientWrite(L, id, WroteMaterialParameter, "SetMaterialParameter", "MaterialParameters");
     const scene::PartComponent* part = w.parts().find(id);
     if (part == nullptr)
         return 0;

@@ -2130,6 +2130,18 @@ namespace {
 
 } // namespace
 
+bool carriesField(const scene::World& world, InstanceId id, std::string_view name)
+{
+    const ClassDesc* desc = schemaFor(world, id);
+    if (desc == nullptr)
+        return false;
+    for (usize index = 0, count = fieldCount(*desc); index < count; ++index) {
+        if (const FieldDesc* field = fieldAt(*desc, index); field != nullptr && field->name == name)
+            return true;
+    }
+    return false;
+}
+
 usize fieldCount(const ClassDesc& desc)
 {
     const ClassDesc* base = baseOf(desc);

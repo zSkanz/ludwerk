@@ -2037,6 +2037,12 @@
           "Transient": true
         },
         {
+          "Name": "AnimationDetail",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        },
+        {
           "Name": "AnisotropicFiltering",
           "Type": "number",
           "Default": "8",
@@ -3069,6 +3075,12 @@
           "Name": "ClassName",
           "Type": "string",
           "ReadOnly": true
+        },
+        {
+          "Name": "Local",
+          "Type": "boolean",
+          "ReadOnly": true,
+          "Transient": true
         },
         {
           "Name": "Name",

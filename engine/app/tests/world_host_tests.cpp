@@ -4607,6 +4607,101 @@ TEST_CASE("D532: a character walking a terrain slope it can walk stays Grounded,
     CHECK_MESSAGE(log.firstError().empty(), log.firstError());
 }
 
+TEST_CASE("D574: a character at a dash's speed crosses open terrain without once standing still")
+{
+    // A hero dashing over rolling ground stopped dead in the middle of the
+    // dash and stood there until it ended: on the ground, asked to move, and
+    // not moving, tick after tick -- with nothing in its way. At forty metres
+    // a second a step is two thirds of a metre, long enough to reach from one
+    // facet of the ground on to the next, and a step that met the next facet
+    // was thrown away whole.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        local ground = Instance.new("Terrain")
+        ground.Parent = workspace
+        -- Rolling hills with a ripple on them: every facet a little off its
+        -- neighbour, nowhere near too steep to walk.
+        local columns = 96
+        local heights = {}
+        for z = 0, columns - 1 do
+            for x = 0, columns - 1 do
+                local wx, wz = x - 48, z - 48
+                table.insert(heights, 4 + 1.6 * math.sin(wx / 6) + 1.2 * math.cos(wz / 7)
+                    + 0.25 * math.sin(wx * 0.9 + wz * 0.4) * math.cos(wz * 0.7))
+            end
+        end
+        ground:WriteHeights(vector.create(-48, 0, -48), columns, heights)
+        local walker = Instance.new("CharacterBody")
+        walker.Size = vector.create(0.9, 2, 0.9)
+        walker.Position = vector.create(0, 12, 0)
+        walker.WalkSpeed = 40
+        walker.Parent = workspace
+        local ticks, slides, stalled, short, metres = 0, 0, 0, 0, 0
+        local dir = vector.create(1, 0, 0)
+        local last = walker.Position
+        local sliding = false
+        RunService.Heartbeat:Connect(function()
+            ticks += 1
+            local phase = ticks % 30
+            local here = walker.Position
+            if ticks > 120 then
+                if phase == 0 then
+                    -- A dash of a quarter of a second, each a different way:
+                    -- back toward the middle from far out, else by the golden
+                    -- angle.
+                    slides += 1
+                    if vector.magnitude(vector.create(here.x, 0, here.z)) > 30 then
+                        dir = vector.normalize(vector.create(-here.x, 0, -here.z))
+                    else
+                        local turn = slides * 2.399963
+                        dir = vector.create(math.cos(turn), 0, math.sin(turn))
+                    end
+                    sliding = true
+                elseif phase == 15 then
+                    sliding = false
+                end
+                if sliding and phase > 1 and walker.Grounded then
+                    local flat = vector.magnitude(vector.create(here.x - last.x, 0, here.z - last.z))
+                    metres += flat
+                    if flat < 1e-4 then
+                        stalled += 1
+                    elseif flat < 0.5 * 40 / 60 then
+                        short += 1
+                    end
+                end
+                walker:Move(if sliding then dir else vector.zero)
+            end
+            last = here
+            workspace:SetAttribute("Slides", slides)
+            workspace:SetAttribute("Stalled", stalled)
+            workspace:SetAttribute("Short", short)
+            workspace:SetAttribute("Metres", metres)
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    scene::World& world = host.world();
+    for (int tick = 0; tick < 3000; ++tick)
+        host.tick();
+    const auto count = [&](std::string_view name) {
+        const scene::Value value = world.getAttribute(host.workspace(), world.atoms().intern(name));
+        const double* number = std::get_if<double>(&value);
+        return number != nullptr ? *number : -1.0;
+    };
+    REQUIRE(count("Slides") >= 90.0);
+    // Not one tick of a dash spent standing still, nor one cut short: fifteen
+    // of these ninety-six dashes stalled, for ninety-two ticks in all.
+    CHECK(count("Stalled") == 0.0);
+    CHECK(count("Short") == 0.0);
+    // And the ground it was asked to cover, covered: thirteen counted ticks
+    // of two thirds of a metre a dash, less the few it spent in the air.
+    CHECK(count("Metres") > 0.95 * count("Slides") * 13.0 * (40.0 / 60.0));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
 TEST_CASE("ADR 0162: a swarm's agents are heard, tagged and given bodies by a script -- and a replica's copy is read")
 {
     Captured log;

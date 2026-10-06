@@ -556,7 +556,7 @@ void AnimationSystem::sample(f64 fixedDt)
         bool reduced = false;
         if (seeing_ && !std::binary_search(always_.begin(), always_.end(), meshPart, byId)) {
             const auto seen = seen_.find(keyOf(meshPart));
-            const core::u32 interval = seen == seen_.end() ? 0u : updateInterval(seen->second);
+            const core::u32 interval = seen == seen_.end() ? 0u : updateInterval(seen->second * detail_);
             if (interval == 0 || (sampled_ + meshPart.index) % interval != 0) {
                 skipped_.push_back(meshPart);
                 stale_[keyOf(meshPart)] = true;

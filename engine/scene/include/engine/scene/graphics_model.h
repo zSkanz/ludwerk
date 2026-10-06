@@ -63,6 +63,7 @@ namespace engine::scene {
     X(ParticleBudget, Whole, 0.0, 1048576.0, 65536.0, true, false)                                                     \
     X(SoftParticles, Flag, 0.0, 1.0, 1.0, true, false)                                                                 \
     X(SkinWeights, Whole, 1.0, 4.0, 4.0, true, false)                                                                  \
+    X(AnimationDetail, Number, 0.25, 8.0, 1.0, true, true)                                                             \
     X(TextureStreamingBudget, Whole, 0.0, 65536.0, 0.0, true, false)                                                   \
     X(AsyncUploadBudget, Number, 0.0, 33.0, 2.0, true, false)                                                          \
     X(MotionBlur, Flag, 0.0, 1.0, 0.0, true, false)                                                                    \

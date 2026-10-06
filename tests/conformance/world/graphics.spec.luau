@@ -54,6 +54,14 @@ describe("GraphicsService", function()
         expect(Graphics.MaxFrameRate):ToBe(144)
         Graphics.FoliageDensity = 2
         expect(Graphics.FoliageDensity):ToBe(1)
+        -- How small a rig may be and still be posed every tick: 1 until a
+        -- game says otherwise, and held to 0.25 to 8.
+        expect(Graphics.AnimationDetail):ToBe(1)
+        Graphics.AnimationDetail = 4
+        expect(Graphics.AnimationDetail):ToBe(4)
+        Graphics.AnimationDetail = 100
+        expect(Graphics.AnimationDetail):ToBe(8)
+        Graphics.AnimationDetail = 1
 
         expect(function()
             Graphics.MaxFrameRate = 59.5

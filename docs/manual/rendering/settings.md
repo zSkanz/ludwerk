@@ -60,7 +60,7 @@ settings are no one level's:
 | `Textures` | `TextureQuality`, `AnisotropicFiltering`, `TextureStreamingBudget` |
 | `Effects` | `ParticleBudget`, `SoftParticles` |
 | `Foliage` | `FoliageDensity` |
-| `Shading` | `LightBudget`, `SkinWeights`, `FogQuality` |
+| `Shading` | `LightBudget`, `SkinWeights`, `AnimationDetail`, `FogQuality` |
 
 `Enum.GraphicsLevel` is `Low`, `Medium`, `High`, `Ultra` and `Cinematic`, which
 is `Ultra` until something is finer.

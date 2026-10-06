@@ -2286,8 +2286,19 @@ public:
         settings.mShape = JPH::ShapeRefC(new JPH::CapsuleShape(halfCylinder, radius));
         settings.mMaxSlopeAngle = JPH::DegreesToRadians(desc.maxSlopeAngle);
         settings.mMass = desc.mass;
-        // As a moving body does (ADR 0143).
-        settings.mEnhancedInternalEdgeRemoval = true;
+        // **Not `mEnhancedInternalEdgeRemoval`, which a moving body sets** (ADR
+        // 0143, amended by D574). With it a character standing by the edge two
+        // facets of the ground share keeps one contact for the two, and its
+        // step is solved along the one plane; the sweep that checks the step
+        // then meets the other facet a little way on, is taken back by the
+        // controller's padding to where the character already stands, and
+        // the whole step is thrown away -- on the ground, asked to move, not
+        // moving, every tick, wherever a step is long enough to reach the
+        // next facet. Without it the solver has both planes and slides over
+        // the crease. At a seam between chunks it bought a character nothing:
+        // the band and its filter measure the same with and without (ADR
+        // 0143's table, `ring+f` against `ring+f+e`).
+        settings.mEnhancedInternalEdgeRemoval = false;
         // A character with no inner body is invisible to the simulation: other
         // bodies pass through it, which is not what "a capsule standing on a
         // seesaw" means. The inner body is what makes the character push and be

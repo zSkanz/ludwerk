@@ -796,7 +796,7 @@ TEST_CASE("a project file names any setting by its name in snake case")
 {
     const ProjectDir project("[graphics]\nshadow_quality = \"low\"\nterrain_detail = 2.0\nfoliage_density = 0.25\n"
                              "texture_quality = \"medium\"\nmaximum_lod_level = 2\nanisotropic_filtering = 4\n"
-                             "anti_aliasing = \"off\"\n\n"
+                             "animation_detail = 4\nanti_aliasing = \"off\"\n\n"
                              "[display]\nwindow_mode = \"fullscreen\"\nmonitor = 1\nresolution = [1920, 1080]\n"
                              "brightness = 0.25\nbackground_frame_rate = 0\nremember_player_settings = false\n");
     const app::ProjectConfig config = app::loadProjectConfig(project.path, {});
@@ -806,6 +806,7 @@ TEST_CASE("a project file names any setting by its name in snake case")
     CHECK(value(scene::GraphicsSetting::ShadowQuality) == doctest::Approx(1.0));
     CHECK(value(scene::GraphicsSetting::TerrainDetail) == doctest::Approx(2.0));
     CHECK(value(scene::GraphicsSetting::FoliageDensity) == doctest::Approx(0.25));
+    CHECK(value(scene::GraphicsSetting::AnimationDetail) == doctest::Approx(4.0));
     CHECK(value(scene::GraphicsSetting::TextureQuality) == doctest::Approx(1.0));
     CHECK(value(scene::GraphicsSetting::MaximumLODLevel) == doctest::Approx(2.0));
     CHECK(value(scene::GraphicsSetting::AnisotropicFiltering) == doctest::Approx(4.0));

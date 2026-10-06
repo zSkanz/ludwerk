@@ -3132,6 +3132,10 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
         while (!stack.empty()) {
             const InstanceId id = stack.back();
             stack.pop_back();
+            // **What a client-side script made is this machine's alone** (ADR
+            // 0186), and takes its subtree with it as below.
+            if (world.local(id))
+                continue;
             const generated::ClassDesc* desc = schemaFor(world, id);
             FieldSet fields;
             // **An instance the schema does not describe takes its subtree with

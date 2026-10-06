@@ -69,6 +69,25 @@ local Classes: { Schema.Class } = {
                 ReadOnly = true,
                 Doc = "The name of this instance's class; typeof answers Instance whatever the class, so this is what tells two classes apart.",
             },
+            {
+                Name = "Local",
+                Type = "boolean",
+                ReadOnly = true,
+                Transient = true,
+                -- Who made it, which no operation of the world's produced: two
+                -- machines in one match answer differently for their own.
+                HostFact = true,
+                Doc = "Whether this instance is this machine's alone (ADR 0186): made by a script that does "
+                    .. "not run on the server side -- under `ClientScriptService`, the client half of "
+                    .. "`GlobalScriptService`, or anywhere with a `RunContext` other than `Server` -- with "
+                    .. "`Instance.new` or `Clone`. It is never sent to another machine, with everything under "
+                    .. "it, wherever it is parented, and that holds on a machine that is hosting a match as "
+                    .. "it does on one that joined. What a server-side script makes, and what a scene holds, "
+                    .. "answers false and travels.\n\n"
+                    .. "It says who made the instance, not what is written to it afterwards: a client-side "
+                    .. "script on a host that writes a property of an instance that travels has written it "
+                    .. "for everybody.",
+            },
         },
         Methods = {
             {

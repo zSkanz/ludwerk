@@ -68,6 +68,10 @@ public:
     // the binding asks upward, and a VM nobody gave one raises rather than
     // handing back an empty prefab.
     void setStampSource(std::function<std::optional<std::string>(std::string_view)> source);
+    // `--net-log-client-writes` (ADR 0186 §5): given what says whether a
+    // property travels, a client-side script's write to one on a host is
+    // logged, once a script and property. Empty turns it off.
+    void setClientWriteLog(std::function<bool(const scene::World&, core::InstanceId, std::string_view)> travels);
     // Runs every queued stamp copy's `Construct` (ADR 0155 §8): after a scene
     // is read, at a tick's start, and -- with `editing` -- in the editor's
     // frame, where a parameter written builds its copy again.
