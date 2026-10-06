@@ -26,6 +26,18 @@ describe("FoliageLayer", function()
         layer:Destroy()
     end)
 
+    it("takes a decal unless it says otherwise (ADR 0185)", function()
+        -- A mark on a meadow is on the grass that stands in it.
+        local layer = Instance.new("FoliageLayer")
+        expect(layer.ReceivesDecals):ToBe(true)
+        layer.ReceivesDecals = false
+        expect(layer.ReceivesDecals):ToBe(false)
+        local copy = layer:Clone() :: FoliageLayer
+        expect(copy.ReceivesDecals):ToBe(false)
+        copy:Destroy()
+        layer:Destroy()
+    end)
+
     it("refuses a negative density, a slope past vertical and clumping past one", function()
         local layer = Instance.new("FoliageLayer") :: any
         expect(function()

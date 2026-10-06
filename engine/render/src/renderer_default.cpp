@@ -552,6 +552,12 @@ struct ViewState
     // of them in view. A decal's pixel is left alone where this and the
     // scene's depth are the same surface. Made the first frame it is needed.
     rhi::TextureHandle decalMask_{};
+    // **The depth of the foliage a decal paints** (ADR 0185), drawn alone on a
+    // frame that has a decal and any of it. A decal fades where a surface
+    // turns away from it, and a blade of grass is edge-on to every mark laid
+    // on the ground under it: where this and the scene's depth are the same
+    // surface, the decal lands whole.
+    rhi::TextureHandle decalFoliage_{};
     // Set while that mask is being drawn: `drawGeometry` takes only the parts
     // that receive none.
     bool decalMaskPass_ = false;
@@ -876,10 +882,19 @@ private:
     // The cull, outside any pass: counters cleared, every run culled into its
     // mesh's list, and the indirect draws' instance counts written.
     void cullFoliage(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world, const MeshCache& meshes);
-    // Every bucket's indirect draws, into the open pass: the forward pass or,
-    // with `shadow`, a cascade.
+    // Which of a frame's foliage draws this is: the picture, a cascade, or one
+    // of the decal pass's two masks (ADR 0185) -- the depth of the layers a
+    // decal paints, and of the ones it does not.
+    enum class FoliagePass : core::u8
+    {
+        Forward,
+        Shadow,
+        DecalReceiving,
+        DecalRefusing,
+    };
+    // Every bucket's indirect draws, into the open pass.
     void drawFoliage(rhi::ICmdList& cmd, const RenderWorld& world, const MeshCache& meshes, const Mat4& viewProjection,
-                     bool shadow);
+                     FoliagePass pass);
 
     // **A pipeline the look needs (ADR 0096), made the first frame it is
     // used** -- as the decals' and the particles' are, and for their reason: a
@@ -1164,6 +1179,8 @@ private:
     rhi::ComputePipelineHandle foliageFinalizePipeline_{};
     rhi::PipelineHandle foliagePipeline_{};
     rhi::PipelineHandle foliageShadowPipeline_{};
+    // The shadow's shader into the camera's depth: a decal mask (ADR 0185).
+    rhi::PipelineHandle foliageDecalPipeline_{};
     bool foliageTried_ = false;
     rhi::BufferHandle foliageVisible_{};
     u32 foliageVisibleCapacity_ = 0;
@@ -2285,8 +2302,8 @@ void DefaultRenderer::releaseActiveView(rhi::IDevice& device)
         texture = {};
     };
     for (rhi::TextureHandle* texture :
-         {&hdr_, &depth_, &decalMask_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_, &spriteMask_,
-          &luminance64_, &luminance8_, &exposure_[0], &exposure_[1], &environmentMap_})
+         {&hdr_, &depth_, &decalMask_, &decalFoliage_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_,
+          &spriteMask_, &luminance64_, &luminance8_, &exposure_[0], &exposure_[1], &environmentMap_})
         release(*texture);
     for (rhi::TextureHandle& level : bloom_)
         release(level);
@@ -2328,8 +2345,8 @@ std::optional<core::EngineError> DefaultRenderer::ensureTargets(rhi::IDevice& de
     // has to remember to.
 
     for (rhi::TextureHandle* texture :
-         {&hdr_, &depth_, &decalMask_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_, &spriteMask_,
-          &luminance64_, &luminance8_, &exposure_[0], &exposure_[1]}) {
+         {&hdr_, &depth_, &decalMask_, &decalFoliage_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_,
+          &spriteMask_, &luminance64_, &luminance8_, &exposure_[0], &exposure_[1]}) {
         if (texture->valid())
             device.destroy(*texture);
         *texture = {};
@@ -2518,11 +2535,11 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
         *pipeline = {};
     }
     for (rhi::TextureHandle* texture :
-         {&hdr_,         &depth_,           &decalMask_,      &ldr_,         &occlusion_,       &occlusionBlur_,
-          &contact_,     &outlineMask_,     &spriteMask_,     &luminance64_, &luminance8_,      &exposure_[0],
-          &exposure_[1], &shadowMap_,       &localShadowMap_, &whitePixel_,  &flatNormalPixel_, &blackPixel_,
-          &whiteArray_,  &flatNormalArray_, &environmentMap_, &brdfLut_,     &clusterGrid_,     &lightIndices_,
-          &lightData_}) {
+         {&decalFoliage_,  &hdr_,         &depth_,           &decalMask_,      &ldr_,         &occlusion_,
+          &occlusionBlur_, &contact_,     &outlineMask_,     &spriteMask_,     &luminance64_, &luminance8_,
+          &exposure_[0],   &exposure_[1], &shadowMap_,       &localShadowMap_, &whitePixel_,  &flatNormalPixel_,
+          &blackPixel_,    &whiteArray_,  &flatNormalArray_, &environmentMap_, &brdfLut_,     &clusterGrid_,
+          &lightIndices_,  &lightData_}) {
         if (texture->valid())
             device.destroy(*texture);
         *texture = {};
@@ -2620,7 +2637,7 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     particleTried_ = false;
     decalTried_ = false;
     worldUiTried_ = false;
-    for (rhi::PipelineHandle* pipeline : {&foliagePipeline_, &foliageShadowPipeline_}) {
+    for (rhi::PipelineHandle* pipeline : {&foliagePipeline_, &foliageShadowPipeline_, &foliageDecalPipeline_}) {
         if (pipeline->valid())
             device.destroy(*pipeline);
         *pipeline = {};
@@ -6549,6 +6566,22 @@ bool DefaultRenderer::ensureFoliage(rhi::IDevice& device)
         .depthStencilFormat = kShadowFormat,
         .debugName = "foliage_shadow",
     });
+    // **The shadow's shader through the camera** (ADR 0185): the depth the
+    // forward pass wrote for the same instances, with the same holes -- the
+    // card's image and the fade's dither -- so a decal can tell foliage from
+    // what it stands on. Clipped as the forward pass clips, or the two depths
+    // differ at the near plane. A frame with no decal never binds it.
+    foliageDecalPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = shadowVertex,
+        .fragmentShader = shadowFragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = shadowAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::None, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = {},
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "foliage_decal",
+    });
     return foliagePipeline_.valid() && foliageShadowPipeline_.valid();
 }
 
@@ -6696,17 +6729,25 @@ void DefaultRenderer::cullFoliage(rhi::IDevice& device, rhi::ICmdList& cmd, cons
 }
 
 void DefaultRenderer::drawFoliage(rhi::ICmdList& cmd, const RenderWorld& world, const MeshCache& meshes,
-                                  const Mat4& viewProjection, bool shadow)
+                                  const Mat4& viewProjection, FoliagePass pass)
 {
     if (!foliageCulled_)
         return;
-    cmd.setPipeline(shadow ? foliageShadowPipeline_ : foliagePipeline_);
+    // A decal's mask is drawn as a shadow is -- depth alone, with the card's
+    // holes -- and differs in which buckets it takes and how far it reaches.
+    const bool decal = pass == FoliagePass::DecalReceiving || pass == FoliagePass::DecalRefusing;
+    const bool shadow = pass != FoliagePass::Forward;
+    if (decal && !foliageDecalPipeline_.valid())
+        return;
+    cmd.setPipeline(decal ? foliageDecalPipeline_ : (shadow ? foliageShadowPipeline_ : foliagePipeline_));
     const std::array<rhi::BufferHandle, 1> list{foliageVisible_};
     cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0, list);
 
     for (u32 index = 0; index < world.foliageBuckets.size(); ++index) {
         const RenderFoliageBucket& bucket = world.foliageBuckets[index];
-        if (shadow && !bucket.castShadow)
+        if (pass == FoliagePass::Shadow && !bucket.castShadow)
+            continue;
+        if (decal && bucket.receivesDecals != (pass == FoliagePass::DecalReceiving))
             continue;
         const MeshCache::Resolved* resolved = meshes.resolve(bucket.mesh);
         if (resolved == nullptr || resolved->lods.empty())
@@ -6731,7 +6772,19 @@ void DefaultRenderer::drawFoliage(rhi::ICmdList& cmd, const RenderWorld& world, 
         foliage.windParams[2] = bucket.windResponse / std::max(bucket.stiffness, 1e-3f);
         foliage.mesh[0] = bucket.meshMinY;
         foliage.mesh[1] = bucket.meshHeight;
-        foliage.mesh[2] = world.foliageShadowDistance;
+        // The shadow's shader draws nothing past this. A decal's mask ends
+        // where the decals do, and an instance's root is no further from any
+        // of it than the mesh reaches at its largest.
+        f32 reach = world.foliageShadowDistance;
+        if (decal) {
+            f32 largest = 1.0f;
+            for (const RenderFoliageRun& run : world.foliageRuns) {
+                if (run.bucket == index)
+                    largest = std::max(largest, run.scaleMax);
+            }
+            reach = decalReach(world.decals) + bucket.radius * largest;
+        }
+        foliage.mesh[2] = reach;
         foliage.cameraOrigin[0] = static_cast<f32>(world.camera.origin.x);
         foliage.cameraOrigin[1] = static_cast<f32>(world.camera.origin.y);
         foliage.cameraOrigin[2] = static_cast<f32>(world.camera.origin.z);
@@ -8036,7 +8089,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             // Foliage casts only near the camera: the shader drops what lies
             // past `foliage_shadow_distance`, so the far cascades get none.
             if (splits[index] < world.foliageShadowDistance)
-                drawFoliage(cmd, world, meshes, cascades.viewProjection[index], true);
+                drawFoliage(cmd, world, meshes, cascades.viewProjection[index], FoliagePass::Shadow);
         }
     }
     if (cascadesDrawn != 0)
@@ -8496,7 +8549,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         drawGeometry(cmd, world, meshes, world.camera.viewProjection, pbrPipeline_, pbrSkinnedPipeline_,
                      Selection::Opaque);
         // The foliage the cull kept (ADR 0116), with the opaque surfaces.
-        drawFoliage(cmd, world, meshes, world.camera.viewProjection, false);
+        drawFoliage(cmd, world, meshes, world.camera.viewProjection, FoliagePass::Forward);
 
         // **Decals, between the opaque surfaces and the transparent ones**
         // (F2). They read the depth the opaque surfaces wrote, which a pass
@@ -8519,6 +8572,24 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                     break;
                 }
             }
+            // And the foliage: the layers a decal does not paint go into the
+            // same mask as those parts, and the ones it does into a depth of
+            // their own, where the decal lands whichever way a blade faces
+            // (ADR 0185). Each only on a frame that has a decal in the picture
+            // and such a layer drawn, and only under the decals: a mask is
+            // read nowhere else.
+            const rhi::Rect decalsCover =
+                decalCoverage(world.decals, world.camera.viewProjection, renderWidth_, renderHeight_);
+            bool foliageRefuses = false;
+            bool foliageReceives = false;
+            if (foliageCulled_ && foliageDecalPipeline_.valid() && decalsCover.width > 0 && decalsCover.height > 0) {
+                for (const RenderFoliageBucket& bucket : world.foliageBuckets) {
+                    if (bucket.capacity == 0)
+                        continue;
+                    (bucket.receivesDecals ? foliageReceives : foliageRefuses) = true;
+                }
+            }
+            masked = masked || foliageRefuses;
             if (masked && !decalMask_.valid()) {
                 decalMask_ = device.createTexture({
                     .format = kDepthFormat,
@@ -8528,7 +8599,30 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                     .debugName = "decal-mask",
                 });
             }
+            if (foliageReceives && !decalFoliage_.valid()) {
+                decalFoliage_ = device.createTexture({
+                    .format = kDepthFormat,
+                    .usage = rhi::TextureUsage::DepthStencilTarget | rhi::TextureUsage::Sampled,
+                    .width = renderWidth_,
+                    .height = renderHeight_,
+                    .debugName = "decal-foliage",
+                });
+            }
             masked = masked && decalMask_.valid();
+            foliageReceives = foliageReceives && decalFoliage_.valid();
+            if (foliageReceives) {
+                cmd.beginRenderPass({
+                    .colorAttachments = {},
+                    .depthStencil = {.texture = decalFoliage_,
+                                     .loadOp = rhi::LoadOp::Clear,
+                                     .storeOp = rhi::StoreOp::Store},
+                    .debugName = "decal-foliage",
+                });
+                cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
+                cmd.setScissor(decalsCover);
+                drawFoliage(cmd, world, meshes, world.camera.viewProjection, FoliagePass::DecalReceiving);
+                cmd.endRenderPass();
+            }
             if (masked) {
                 cmd.beginRenderPass({
                     .colorAttachments = {},
@@ -8545,6 +8639,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 drawGeometry(cmd, world, meshes, world.camera.viewProjection, depthPrepassPipeline_,
                              depthPrepassSkinnedPipeline_, Selection::Prepass);
                 decalMaskPass_ = false;
+                if (foliageRefuses) {
+                    cmd.setScissor(decalsCover);
+                    drawFoliage(cmd, world, meshes, world.camera.viewProjection, FoliagePass::DecalRefusing);
+                }
                 cmd.endRenderPass();
             }
             const std::array<rhi::ColorAttachment, 1> decalTarget{rhi::ColorAttachment{
@@ -8594,15 +8692,18 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 fragment.axis[0] = decal.axis.x;
                 fragment.axis[1] = decal.axis.y;
                 fragment.axis[2] = decal.axis.z;
-                fragment.axis[3] = masked ? 1.0f : 0.0f;
+                // Which of the two masks there is to read: 1 for the parts
+                // and layers no decal paints, 2 for the foliage one does.
+                fragment.axis[3] = (masked ? 1.0f : 0.0f) + (foliageReceives ? 2.0f : 0.0f);
                 cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&vertex, sizeof(vertex)));
                 cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&fragment, sizeof(fragment)));
-                // The mask where there is one; the depth again where there is
+                // A mask where there is one; the depth again where there is
                 // none, bound and not read.
-                const std::array<rhi::TextureBinding, 3> textures{
+                const std::array<rhi::TextureBinding, 4> textures{
                     rhi::TextureBinding{decal.texture.valid() ? decal.texture : whitePixel_, linearSampler_},
                     rhi::TextureBinding{depth_, pointSampler_},
                     rhi::TextureBinding{masked ? decalMask_ : depth_, pointSampler_},
+                    rhi::TextureBinding{foliageReceives ? decalFoliage_ : depth_, pointSampler_},
                 };
                 cmd.bindTextures(rhi::ShaderStage::Fragment, 0, textures);
                 cmd.draw(36, 1, 0, 0);

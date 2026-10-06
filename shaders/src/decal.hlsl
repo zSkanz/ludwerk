@@ -29,7 +29,8 @@ cbuffer GpuDecalFragment : register(b0, space3)
     // xy: 1 / render size; z: 1 when there is an image.
     float4 DecalParams;
     // The box's projection axis in world space, for the grazing-angle fade.
-    // w: 1 when `MaskTexture` holds the depth of the parts no decal paints.
+    // w: 1 when `MaskTexture` holds the depth of what no decal paints, 2 when
+    // `FoliageTexture` holds the depth of the foliage one does, 3 for both.
     float4 DecalAxis;
     // rgb: the light an Alpha decal is lit by; a: its glow (ADR 0160).
     float4 DecalLight;
@@ -45,6 +46,11 @@ SamplerState DepthSampler : register(s1, space2);
 // further, something else is seen and is painted.
 Texture2D<float> MaskTexture : register(t2, space2);
 SamplerState MaskSampler : register(s2, space2);
+// **The depth of the foliage a decal paints** (`FoliageLayer.ReceivesDecals`,
+// ADR 0185), drawn alone. Where it is the depth of the picture, what is seen
+// there is a blade of it, and the decal lands whichever way the blade faces.
+Texture2D<float> FoliageTexture : register(t3, space2);
+SamplerState FoliageSampler : register(s3, space2);
 
 struct Interpolants
 {
@@ -81,7 +87,8 @@ float4 FragmentMain(Interpolants input, bool isFront : SV_IsFrontFace) : SV_Targ
     // A part that receives none. The two depths are of one surface drawn
     // twice with the same vertices, so they agree to the last bits; the slack
     // is for a cutout, whose depth the picture took from another shader.
-    if (DecalAxis.w > 0.5f && abs(MaskTexture.SampleLevel(MaskSampler, uv, 0.0f) - depth) <= 2.0e-6f)
+    const bool masked = fmod(DecalAxis.w, 2.0f) > 0.5f;
+    if (masked && abs(MaskTexture.SampleLevel(MaskSampler, uv, 0.0f) - depth) <= 2.0e-6f)
         discard;
 
     // Back to a position, and into the box.
@@ -96,7 +103,14 @@ float4 FragmentMain(Interpolants input, bool isFront : SV_IsFrontFace) : SV_Targ
     // projected onto a floor smears down the side of every step it crosses.
     const float3 normal = normalize(cross(ddy(world), ddx(world)));
     const float facing = abs(dot(normal, normalize(DecalAxis.xyz)));
-    const float fade = saturate((facing - 0.15f) / 0.35f);
+    float fade = saturate((facing - 0.15f) / 0.35f);
+    // **Foliage takes a decal as the ground under it does** (ADR 0185). A
+    // blade of grass is a card standing on end: edge-on to every mark laid on
+    // the ground, and by the fade above the one thing in a painted field left
+    // clean. Its facing says nothing about whether the mark is on it -- it is
+    // in the box, and it is not the side of a step.
+    if (DecalAxis.w > 1.5f && abs(FoliageTexture.SampleLevel(FoliageSampler, uv, 0.0f) - depth) <= 2.0e-6f)
+        fade = 1.0f;
 
     float4 image = float4(1.0f, 1.0f, 1.0f, 1.0f);
     if (DecalParams.z > 0.5f)

@@ -571,6 +571,9 @@ void FoliageSystem::append(const scene::World& world, const MeshLibrary& meshes,
         bucket.windResponse = mesh->windResponse;
         bucket.stiffness = mesh->stiffness;
         bucket.castShadow = mesh->castShadow;
+        if (const scene::FoliageLayerComponent* layer = world.foliageLayers().find(world.parentOf(meshId));
+            layer != nullptr)
+            bucket.receivesDecals = layer->receivesDecals;
         // Its own material, once for every section, when it names one.
         std::optional<u32> worn;
         if (mesh->material.valid()) {

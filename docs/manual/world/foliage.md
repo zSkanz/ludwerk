@@ -71,6 +71,24 @@ a stiff bush has a `Stiffness` above 1 and a reed below. **Not yet**: a
 material's surface shader running its own `surfaceVertex` on foliage — the
 built-in sway is what moves it today.
 
+## Decals
+
+A [decal](manual:rendering/particles-and-decals) paints the foliage that stands
+in its box, blade and ground alike: a warning ring on a meadow is a ring on
+the grass. A layer that should stand clear of every mark says so:
+
+```luau
+reeds.ReceivesDecals = false   -- on the FoliageLayer; true by default
+```
+
+The decal then paints round the layer's instances and under them. A blade is
+painted where it is inside the box, so a box as deep as the grass is tall
+paints the whole blade, and a shallow one only its foot.
+
+On a frame with a decal in view, the foliage near it is drawn once more, depth
+only: about half of what the foliage costs to draw, and nothing on a frame
+with no decal.
+
 ## Visual only
 
 Foliage has no body: nothing collides with it, a raycast passes through it and

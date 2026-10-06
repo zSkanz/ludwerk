@@ -2600,6 +2600,16 @@ bool setFoliageLayerSeed(scene::World& world, core::InstanceId id, const Value& 
     return writeNumber(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::seed, -kUnbounded, kUnbounded);
 }
 
+Value getFoliageLayerReceivesDecals(const scene::World& world, core::InstanceId id)
+{
+    return readValue(world.foliageLayers(), id, &scene::FoliageLayerComponent::receivesDecals);
+}
+
+bool setFoliageLayerReceivesDecals(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeValue(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::receivesDecals);
+}
+
 Value getFoliageMeshMesh(const scene::World& world, core::InstanceId id)
 {
     return readContent(world, world.foliageMeshes(), id, &scene::FoliageMeshComponent::mesh);

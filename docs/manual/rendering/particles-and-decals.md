@@ -291,12 +291,17 @@ character.ReceivesDecals = false   -- on the character's parts, or its mesh
 The decal still paints the ground round the part and under it; only the part
 itself is left as it is. It is a property of every kind of part -- `Part`,
 `MeshPart`, `CharacterBody` -- on by default, and terrain always receives.
+
+**Foliage receives too**, whichever way a blade faces: a mark on a meadow is on
+the grass standing in it, not on the dirt between the blades. A
+`FoliageLayer` has the same switch, `ReceivesDecals`, for a layer that should
+stand clear ([Foliage](manual:world/foliage)).
 Turn it off for what moves over marks rather than for the marks: characters,
 enemies, pickups, doors.
 
 It costs something only where it is used: on a frame that has both a decal
 and a part that receives none in view, those parts are drawn once more, depth
-only.
+only -- and so is the foliage near a decal, receiving or not.
 
 Both decals and particle emitters replicate: on every machine of a match, the
 same emitters run and the same marks are painted -- and `ReceivesDecals` with

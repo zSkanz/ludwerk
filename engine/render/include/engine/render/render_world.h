@@ -436,6 +436,8 @@ struct RenderFoliageBucket
     f32 windResponse = 1.0f;
     f32 stiffness = 1.0f;
     bool castShadow = true;
+    // Its layer's `ReceivesDecals` (ADR 0185): whether a decal paints it.
+    bool receivesDecals = true;
 };
 
 // One run of instances the cull reads: a tile's instances of one mesh.
@@ -510,6 +512,21 @@ struct RenderDecal
     core::i32 blendMode = 0;
     f32 emissive = 0.0f;
 };
+
+// **The rectangle of the picture a frame's decals can reach** (ADR 0185), in
+// the pixels of a `width` by `height` target: every pixel any of their boxes
+// covers is inside it, so a mask that is read only under a decal is drawn only
+// there. The whole target when a box crosses the camera's own plane -- a
+// corner behind the camera projects to nowhere -- and empty when no box is in
+// the picture at all.
+[[nodiscard]] rhi::Rect decalCoverage(std::span<const RenderDecal> decals, const Mat4& viewProjection, u32 width,
+                                      u32 height);
+
+// **How far from the camera the frame's decals reach**: the farthest corner of
+// any of their boxes, in metres. Nothing further than this is under a decal,
+// so a mask leaves it out -- and a mark is usually at a hero's feet, with a
+// field of grass behind it to the horizon. 0 when there is no decal.
+[[nodiscard]] f32 decalReach(std::span<const RenderDecal> decals);
 
 // One `Highlight` as drawn (ADR 0129): the colours over the shape and round
 // it, premultiplied by nothing -- the alpha is how much of each shows.

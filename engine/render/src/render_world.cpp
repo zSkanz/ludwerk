@@ -2003,4 +2003,64 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     out.draws.swap(out.drawScratch);
 }
 
+rhi::Rect decalCoverage(std::span<const RenderDecal> decals, const Mat4& viewProjection, u32 width, u32 height)
+{
+    const rhi::Rect whole{0, 0, static_cast<core::i32>(width), static_cast<core::i32>(height)};
+    if (decals.empty() || width == 0 || height == 0)
+        return {};
+    f32 low[2]{std::numeric_limits<f32>::max(), std::numeric_limits<f32>::max()};
+    f32 high[2]{std::numeric_limits<f32>::lowest(), std::numeric_limits<f32>::lowest()};
+    for (const RenderDecal& decal : decals) {
+        const Mat4 toClip = viewProjection * decal.boxToWorld;
+        for (u32 corner = 0; corner < 8; ++corner) {
+            const f32 x = (corner & 1u) != 0 ? 0.5f : -0.5f;
+            const f32 y = (corner & 2u) != 0 ? 0.5f : -0.5f;
+            const f32 z = (corner & 4u) != 0 ? 0.5f : -0.5f;
+            const auto row = [&](int at) {
+                return toClip.m[0][at] * x + toClip.m[1][at] * y + toClip.m[2][at] * z + toClip.m[3][at];
+            };
+            const f32 w = row(3);
+            // At the camera's plane or behind it: the box's outline on the
+            // screen is not the hull of its corners any more.
+            if (!(w > 1.0e-4f))
+                return whole;
+            const f32 screen[2]{(row(0) / w * 0.5f + 0.5f) * static_cast<f32>(width),
+                                (0.5f - row(1) / w * 0.5f) * static_cast<f32>(height)};
+            for (int axis = 0; axis < 2; ++axis) {
+                if (!std::isfinite(screen[axis]))
+                    return whole;
+                low[axis] = std::min(low[axis], screen[axis]);
+                high[axis] = std::max(high[axis], screen[axis]);
+            }
+        }
+    }
+    // A pixel of slack each way: a box's edge is rasterised by the GPU's
+    // rules, and this is arithmetic beside them.
+    const f32 limit[2]{static_cast<f32>(width), static_cast<f32>(height)};
+    core::i32 from[2];
+    core::i32 to[2];
+    for (int axis = 0; axis < 2; ++axis) {
+        from[axis] = static_cast<core::i32>(std::clamp(std::floor(low[axis]) - 1.0f, 0.0f, limit[axis]));
+        to[axis] = static_cast<core::i32>(std::clamp(std::ceil(high[axis]) + 1.0f, 0.0f, limit[axis]));
+    }
+    if (to[0] <= from[0] || to[1] <= from[1])
+        return {};
+    return {from[0], from[1], to[0] - from[0], to[1] - from[1]};
+}
+
+f32 decalReach(std::span<const RenderDecal> decals)
+{
+    f32 furthest = 0.0f;
+    for (const RenderDecal& decal : decals) {
+        for (u32 corner = 0; corner < 8; ++corner) {
+            // The box is camera-relative: a corner's length is its distance.
+            const Vec3 at = core::transformPoint(decal.boxToWorld, Vec3{(corner & 1u) != 0 ? 0.5f : -0.5f,
+                                                                        (corner & 2u) != 0 ? 0.5f : -0.5f,
+                                                                        (corner & 4u) != 0 ? 0.5f : -0.5f});
+            furthest = std::max(furthest, std::sqrt(at.x * at.x + at.y * at.y + at.z * at.z));
+        }
+    }
+    return furthest;
+}
+
 } // namespace engine::render

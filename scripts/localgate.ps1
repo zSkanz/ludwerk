@@ -98,6 +98,10 @@ if ($Stages) { $Stages = @($Stages | ForEach-Object { $_ -split ',' } | Where-Ob
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path -Parent $PSScriptRoot
 Push-Location $repo
+. "$PSScriptRoot/tier2volume.ps1"
+# One build volume a checkout: see `tier2volume.ps1` for what sharing one cost.
+$buildVolume = Get-Tier2Volume -Base 'engine-tier2-build' -Repo $repo
+$asanVolume = Get-Tier2Volume -Base 'engine-tier2-asan' -Repo $repo
 
 $script:failures = @()
 $script:results = @()
@@ -451,7 +455,7 @@ Invoke-Stage 'linux' {
 
     # A named volume, so the second run is incremental. This is the local
     # equivalent of CI's build cache, and it costs nothing.
-    docker volume create engine-tier2-build | Out-Null
+    docker volume create $buildVolume | Out-Null
 
     # Asked for by id first: removing a container that is not there is an error
     # on stderr, and see above for why that matters here.
@@ -463,7 +467,7 @@ Invoke-Stage 'linux' {
     # evidence with it.
     docker run --name engine-tier2-gate `
         -v "${repo}:/repo" `
-        -v "engine-tier2-build:/build" `
+        -v "${buildVolume}:/build" `
         engine-tier2:latest bash scripts/gates/linux-build.sh
     if ($LASTEXITCODE -ne 0) { throw "the Tier-2 build or tests failed" }
 }
@@ -498,7 +502,7 @@ Invoke-Stage 'asan' {
         return
     }
     Initialize-Tier2Image
-    docker volume create engine-tier2-asan | Out-Null
+    docker volume create $asanVolume | Out-Null
 
     $existing = docker ps -aq --filter 'name=^engine-tier2-asan$'
     if ($existing) { docker rm -f engine-tier2-asan | Out-Null }
@@ -518,7 +522,7 @@ Invoke-Stage 'asan' {
         -e UBSAN_SYMBOLIZER_PATH=/usr/lib/llvm-18/bin/llvm-symbolizer `
         -e UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 `
         -v "${repo}:/repo" `
-        -v "engine-tier2-asan:/build" `
+        -v "${asanVolume}:/build" `
         engine-tier2:latest bash scripts/gates/linux-build.sh
     if ($LASTEXITCODE -ne 0) { throw "the sanitizer build or tests failed" }
 }
@@ -552,7 +556,7 @@ Invoke-Stage 'asan' {
 # should say so before spending that.
 Invoke-Stage 'shipping' {
     Initialize-Tier2Image
-    docker volume create engine-tier2-build | Out-Null
+    docker volume create $buildVolume | Out-Null
 
     $existing = docker ps -aq --filter 'name=^engine-shipping-gate$'
     if ($existing) { docker rm -f engine-shipping-gate | Out-Null }
@@ -562,7 +566,7 @@ Invoke-Stage 'shipping' {
     # trees all survive between runs and no stage disturbs another.
     docker run --name engine-shipping-gate `
         -v "${repo}:/repo" `
-        -v "engine-tier2-build:/build" `
+        -v "${buildVolume}:/build" `
         engine-tier2:latest bash scripts/gates/shipping-build.sh
     if ($LASTEXITCODE -ne 0) { throw "the shipping, player or editor profile failed to build" }
 }
@@ -647,7 +651,7 @@ Invoke-Stage 'lavapipe' {
         return
     }
     Initialize-Tier2Image
-    docker volume create engine-tier2-build | Out-Null
+    docker volume create $buildVolume | Out-Null
 
     $existing = docker ps -aq --filter 'name=^engine-lavapipe-gate$'
     if ($existing) { docker rm -f engine-lavapipe-gate | Out-Null }
@@ -657,7 +661,7 @@ Invoke-Stage 'lavapipe' {
 
     docker run --name engine-lavapipe-gate `
         -v "${repo}:/repo" `
-        -v "engine-tier2-build:/build" `
+        -v "${buildVolume}:/build" `
         engine-tier2:latest @arguments
     if ($LASTEXITCODE -ne 0) { throw "the lavapipe goldens did not match" }
 }

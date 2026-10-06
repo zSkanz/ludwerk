@@ -7754,6 +7754,17 @@ local Classes: { Schema.Class } = {
                 Doc = "Which of the endless arrangements the same rules give. The same seed grows the same "
                     .. "field on every machine.",
             },
+            {
+                Name = "ReceivesDecals",
+                Type = "boolean",
+                Default = "true",
+                Presentation = true,
+                Doc = "Whether a `Decal` paints what it grows. On, a mark laid on the ground is on the grass "
+                    .. "that stands in it too, whichever way a blade faces -- a blade takes the picture as "
+                    .. "the ground under it does, where a part's own side is left clean. Off for what should "
+                    .. "stand clear of every mark: a decal paints round it and under it, as it does a part "
+                    .. "with `BasePart.ReceivesDecals` off.",
+            },
         } :: { Schema.Property },
         Methods = {
             {

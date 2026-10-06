@@ -1905,6 +1905,11 @@
           "Default": "0.25"
         },
         {
+          "Name": "ReceivesDecals",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
           "Name": "Seed",
           "Type": "number",
           "Default": "0"

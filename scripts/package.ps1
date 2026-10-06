@@ -42,6 +42,7 @@ $ErrorActionPreference = 'Continue'
 $repo = Split-Path -Parent $PSScriptRoot
 Push-Location $repo
 . "$PSScriptRoot/devshell.ps1"
+. "$PSScriptRoot/tier2volume.ps1"
 
 try {
     if (-not $env:ENG_BUILD_ROOT) {
@@ -88,12 +89,14 @@ cmake --build --preset win-msvc-player --target engine_host || exit /b 1
         if ($LASTEXITCODE -ne 0) {
             throw "no engine-tier2 image; run scripts/localgate.ps1 -Only linux once, or pass -SkipLinuxPlayer"
         }
-        docker volume create engine-tier2-build | Out-Null
+        $buildVolume = Get-Tier2Volume -Base 'engine-tier2-build' -Repo $repo
+        docker volume create $buildVolume | Out-Null
         if (Test-Path $linuxPlayer) { Remove-Item -Recurse -Force $linuxPlayer }
         New-Item -ItemType Directory -Force $players | Out-Null
-        # Built into the gate's own volume, then copied out through a bind
+        # Built into this checkout's own volume -- the gate's, when this is
+        # the checkout the gate runs in -- then copied out through a bind
         # mount: the volume is not a directory this machine can read.
-        docker run --rm -v "${repo}:/repo" -v "engine-tier2-build:/build" -v "${players}:/out" engine-tier2:latest `
+        docker run --rm -v "${repo}:/repo" -v "${buildVolume}:/build" -v "${players}:/out" engine-tier2:latest `
             bash -c "cmake --preset linux-clang-player >/dev/null && cmake --build --preset linux-clang-player --target engine_host engine_relay && mkdir -p /out/linux-x64 && cp /build/linux-clang-player/engine/app/engine-host /build/linux-clang-player/tools/relay/engine-relay /out/linux-x64/ && strip --strip-unneeded /out/linux-x64/engine-host /out/linux-x64/engine-relay && cp -r /build/linux-clang-player/engine/app/content /out/linux-x64/"
         if ($LASTEXITCODE -ne 0) { throw "the Linux player failed to build in the container" }
     }

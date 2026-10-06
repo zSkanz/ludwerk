@@ -3761,6 +3761,11 @@ declare extern type FoliageLayer extends Instance with
     --- Which of the endless arrangements the same rules give. The same seed grows the same field on
     --- every machine.
     Seed: number
+    --- Whether a `Decal` paints what it grows. On, a mark laid on the ground is on the grass that
+    --- stands in it too, whichever way a blade faces -- a blade takes the picture as the ground under
+    --- it does, where a part's own side is left clean. Off for what should stand clear of every mark: a
+    --- decal paints round it and under it, as it does a part with `BasePart.ReceivesDecals` off.
+    ReceivesDecals: boolean
     --- The terrain materials it grows on, each with a multiplier of `Density`: material `n` is the
     --- terrain's layer `n` (`Terrain:GetLayers`). Empty is every material at 1.
     function GetMaterials(self): { { Material: number, Density: number } }

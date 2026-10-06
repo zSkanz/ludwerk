@@ -562,6 +562,8 @@ scene::Value getFoliageLayerFadeDistance(const scene::World& world, core::Instan
 bool setFoliageLayerFadeDistance(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getFoliageLayerSeed(const scene::World& world, core::InstanceId id);
 bool setFoliageLayerSeed(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageLayerReceivesDecals(const scene::World& world, core::InstanceId id);
+bool setFoliageLayerReceivesDecals(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachFoliageLayerComponents(scene::World& world, core::InstanceId id);
 void detachFoliageLayerComponents(scene::World& world, core::InstanceId id);
 

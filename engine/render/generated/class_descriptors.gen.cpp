@@ -2341,7 +2341,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(animationPlayerDesc);
 
     // --- FoliageLayer ---
-    static std::array<scene::PropertyDesc, 11> foliageLayerProperties;
+    static std::array<scene::PropertyDesc, 12> foliageLayerProperties;
     foliageLayerProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -2474,6 +2474,18 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
             .get = native::getFoliageLayerSeed,
             .set = native::setFoliageLayerSeed,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ReceivesDecals"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether a `Decal` paints what it grows. On, a mark laid on the ground is on the grass that stands in it too, whichever way a blade faces -- a blade takes the picture as the ground under it does, where a part's own side is left clean. Off for what should stand clear of every mark: a decal paints round it and under it, as it does a part with `BasePart.ReceivesDecals` off.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getFoliageLayerReceivesDecals,
+            .set = native::setFoliageLayerReceivesDecals,
         },
     }};
     static std::array<scene::MethodDesc, 2> foliageLayerMethods;

@@ -219,6 +219,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A decal paints foliage, and `FoliageLayer.ReceivesDecals`** (ADR 0185). A
+  mark laid on a meadow was drawn on the dirt and left every blade of grass in
+  it clean; it is on the grass now, in all three blend modes, with nothing to
+  change in a game. `ReceivesDecals = false` on a layer keeps what it grows
+  clear of every mark, as the property of the same name does for a part.
 - **`BasePart.Fade`** (ADR 0184): how much of a part THIS machine leaves out
   of its own picture, 0 to 1. Never sent to another machine and never saved,
   so it is what changes one player's view of a part every player has -- the

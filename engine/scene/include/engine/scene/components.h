@@ -958,6 +958,8 @@ struct FoliageLayerComponent
     f32 drawDistance = 120.0f;
     f32 fadeDistance = 20.0f;
     f32 seed = 0.0f;
+    // Whether a decal paints what it grows (ADR 0185).
+    bool receivesDecals = true;
     // The materials it grows on, each with a multiplier; empty is every
     // material at 1 (`FoliageLayer:SetMaterials`).
     std::vector<FoliageMaterial> materials;

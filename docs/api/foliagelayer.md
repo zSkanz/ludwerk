@@ -23,6 +23,7 @@ offers is on the base's page, which is what keeps one added member on
 | `HeightMax` | `number` | `10000` | read/write | The highest ground it grows on, in metres: a tree line. |
 | `HeightMin` | `number` | `-10000` | read/write | The lowest ground it grows on, in metres of world height. |
 | `MinSpacing` | `number` | `0.25` | read/write | The least distance between two instances, in metres. |
+| `ReceivesDecals` | `boolean` | `true` | read/write | Whether a `Decal` paints what it grows. On, a mark laid on the ground is on the grass that stands in it too, whichever way a blade faces -- a blade takes the picture as the ground under it does, where a part's own side is left clean. Off for what should stand clear of every mark: a decal paints round it and under it, as it does a part with `BasePart.ReceivesDecals` off. |
 | `Seed` | `number` | `0` | read/write | Which of the endless arrangements the same rules give. The same seed grows the same field on every machine. |
 | `SlopeMax` | `number` | `35` | read/write | The steepest ground it grows on, in degrees: grass thins out before a cliff does. |
 | `SlopeMin` | `number` | `0` | read/write | The flattest ground it grows on, in degrees from level. |

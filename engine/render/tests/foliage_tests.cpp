@@ -229,3 +229,33 @@ TEST_CASE("a tile let go while it grows is not put up, and a system destroyed wh
     fixture.sync();
     CHECK(fixture.foliage.pending());
 }
+
+TEST_CASE("ADR 0185: a bucket takes decals as its layer says, and saying so regrows nothing")
+{
+    FoliageFixture fixture;
+    fixture.sync();
+    MeshLibrary meshes;
+    MeshLibrary::Entry grass;
+    grass.mesh = MeshHandle{0, 1};
+    grass.bounds = core::AABB::fromCenterSize(core::Vec3{}, core::Vec3{1.0f, 1.0f, 1.0f});
+    grass.sectionCount = 1;
+    meshes.set(fixture.atoms.intern("asset://models/grass.gltf"), grass);
+
+    // A layer receives unless it says otherwise: a mark on the ground is on
+    // the grass that stands in it.
+    {
+        RenderWorld frame;
+        fixture.foliage.append(fixture.world, meshes, frame);
+        REQUIRE(frame.foliageBuckets.size() == 1);
+        CHECK(frame.foliageBuckets[0].receivesDecals);
+    }
+
+    fixture.world.foliageLayers().find(fixture.layer)->receivesDecals = false;
+    fixture.sync();
+    // How it is drawn, not where it grows: no tile is grown again for it.
+    CHECK(fixture.foliage.stats().tilesGrownLastSync == 0);
+    RenderWorld frame;
+    fixture.foliage.append(fixture.world, meshes, frame);
+    REQUIRE(frame.foliageBuckets.size() == 1);
+    CHECK_FALSE(frame.foliageBuckets[0].receivesDecals);
+}

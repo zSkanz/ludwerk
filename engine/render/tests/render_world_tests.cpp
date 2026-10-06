@@ -2085,3 +2085,64 @@ TEST_CASE("spritesOnly: sprites and not one 3D surface, which is drawn at the wi
     withMesh.sprites.clear();
     CHECK_FALSE(spritesOnly(withMesh));
 }
+
+TEST_CASE("ADR 0185: the rectangle a frame's decals can reach, which is where their masks are drawn")
+{
+    using namespace render;
+    // No decal: nowhere.
+    CHECK(decalCoverage({}, core::Mat4{}, 100, 200).width == 0);
+
+    // The unit box through a camera that changes nothing: the middle half of
+    // the picture each way, and a pixel of slack round it.
+    std::vector<RenderDecal> decals(1);
+    const rhi::Rect middle = decalCoverage(decals, core::Mat4{}, 100, 200);
+    CHECK(middle.x == 24);
+    CHECK(middle.y == 49);
+    CHECK(middle.width == 52);
+    CHECK(middle.height == 102);
+
+    // A second one, up and to the right: the rectangle is of both, and stops
+    // at the picture's edge. Up is the top of the picture, where y is 0.
+    RenderDecal corner;
+    corner.boxToWorld.m[3][0] = 0.75f;
+    corner.boxToWorld.m[3][1] = 0.75f;
+    decals.push_back(corner);
+    const rhi::Rect both = decalCoverage(decals, core::Mat4{}, 100, 200);
+    CHECK(both.x == 24);
+    CHECK(both.y == 0);
+    CHECK(both.x + both.width == 100);
+    CHECK(both.y + both.height == 151);
+
+    // One wholly off the picture: nowhere, and nothing is drawn for it.
+    std::vector<RenderDecal> aside(1);
+    aside[0].boxToWorld.m[3][0] = 5.0f;
+    const rhi::Rect none = decalCoverage(aside, core::Mat4{}, 100, 200);
+    CHECK(none.width == 0);
+    CHECK(none.height == 0);
+
+    // A box the camera stands in, through a perspective: a corner behind the
+    // camera projects to nowhere, so the answer is the whole picture.
+    core::Mat4 perspective;
+    perspective.m[2][3] = -1.0f;
+    perspective.m[3][3] = 0.0f;
+    const std::vector<RenderDecal> around(1);
+    const rhi::Rect whole = decalCoverage(around, perspective, 100, 200);
+    CHECK(whole.x == 0);
+    CHECK(whole.y == 0);
+    CHECK(whole.width == 100);
+    CHECK(whole.height == 200);
+    // And one in front of it is a rectangle again.
+    std::vector<RenderDecal> ahead(1);
+    ahead[0].boxToWorld.m[3][2] = -4.0f;
+    const rhi::Rect small = decalCoverage(ahead, perspective, 100, 200);
+    CHECK(small.width > 0);
+    CHECK(small.width < 100);
+    CHECK(small.height < 200);
+
+    // How far the decals reach from the camera, which is how far a mask is
+    // drawn: the unit box round it reaches to its corner, and one four metres
+    // off to its far corner.
+    CHECK(decalReach({}) == 0.0f);
+    CHECK(nearF(decalReach(around), std::sqrt(0.75f)));
+    CHECK(nearF(decalReach(ahead), std::sqrt(0.5f + 4.5f * 4.5f)));
+}
