@@ -307,3 +307,32 @@ the start scene's `UIService.ScreenOrientation`, read at export: the manifest
 holds the phone before any scene has loaded, the scene once one has, and two
 settings for one question turned the screen at launch whenever they differed.
 The export window shows the value and does not set it.
+
+## Amended 2026-10-06: what a store asks of the package
+
+Two things a store's review checks of the file itself, and the export now
+checks them of the file itself.
+
+**Permissions are the game's, not the engine's.** The template declared
+`INTERNET`, `ACCESS_NETWORK_STATE` and `VIBRATE` for every game (D431: with
+none, no game could open a socket). A review asks about each permission and a
+player reads the list, so a game that plays alone should declare none. The
+export reads the project -- a script that names `NetworkService` or requires
+`@std/net`, a `[network]` section, `[export] multiplayer`; a script that
+names `HapticService` -- and writes the game's own manifest with what it
+uses. `[export.android] internet` and `vibrate` say it outright, for a name
+built at run time; turning one off that the scripts use is allowed and said
+at export. All three are normal permissions: nobody is ever asked anything.
+A socket a phone refuses still says so by name
+(`net.err.transport_socket_failed`).
+
+**Every native library loads where a page is 16 KB**, which a store requires
+of an app that targets Android 15 -- this one targets 35. The engine's own is
+linked for it; the export's last step opens the package and reads each
+library's program headers, and refuses one whose loadable segments are
+aligned to less. Asked of the file a store will receive rather than of the
+build that made it, so it holds for a library a later engine or a project
+adds.
+
+Still to come under this decision: an Android App Bundle beside the APK,
+which a store requires of a new app.

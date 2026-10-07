@@ -1096,6 +1096,17 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 300)
 
+    # **A game learns how its last run ended, and where its report is** (ADR
+    # 0187): six runs in a row against one log -- none, a script error, a real
+    # fault, clean again. See the driver. Nothing is drawn: no device.
+    add_test(NAME last_run_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROJECTS=${CMAKE_SOURCE_DIR}/tests/lastrun
+            -DSCRATCH=${CMAKE_CURRENT_BINARY_DIR}/last-run-gate
+            -P ${CMAKE_SOURCE_DIR}/tests/lastrun/run_last_run_gate.cmake)
+    set_tests_properties(last_run_gate PROPERTIES TIMEOUT 300)
+
     # ADR 0107: a mirror shows what a mirror would, and a portal what is
     # beyond it (`@engine/views`, `Camera.ClipPlane`).
     add_test(NAME mirrors_gate

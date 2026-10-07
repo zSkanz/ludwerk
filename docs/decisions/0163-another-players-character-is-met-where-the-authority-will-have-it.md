@@ -128,3 +128,66 @@ ahead turns.
   (the smoothness brief); the island it pushes is predicted (ADR 0133).
 - **Soft collision**, where players push each other apart gently instead of
   blocking: a game's rule, written in its predicted step.
+
+## Amendment, 2026-10-06: the own character is kept out of everywhere the other may be (D590)
+
+The owner, in play, hosting: "my friend can walk INTO my character and then
+he gets a rollback." Two processes, a friend's hero and the host's in one
+group that collides with itself, at 0 and at 80 ms each way, showed three
+cases -- all from where this decision put the stand-in, which was one place:
+the newest snapshot's, carried on by the way it was going.
+
+- **Coming at a standing player**, the guess runs on THROUGH the player, and
+  the stand-in was put inside him. A body inside a character pushes it out:
+  the friend's own hero was pushed 8 to 56 cm from where the host had it
+  standing still, corrected, and pushed again -- 210 corrections in twelve
+  seconds.
+- **Head-on**, the same from both sides: 340 corrections and as many 12 cm
+  snaps back.
+- **Following a friend who stops or turns**, the guess had already carried
+  the stand-in out of the way, and the follower walked through him: 250
+  frames on the far side of him, snaps back of 0.8 m, steps forward of 1.7 m.
+  This is the trade-off stated above ("a guess can be wrong") from the side
+  that costs: stopped a step early is nothing, walked through a friend and
+  pulled back out is the report.
+
+**The rule now.** The other character is somewhere between where its newest
+snapshot put it (`CharacterBodyComponent::collisionKnown`, which the session
+now says beside the lead) and where it is expected: it kept going, or it
+stopped. This machine's own character is kept out of ALL of it
+(`PhysicsSync::standInPlace`):
+
+1. the stand-in is put at the place between the two NEAREST the own
+   character;
+2. where the way from the known place to the expected one runs into the own
+   character, it stops touching him, on the side it came from -- as the
+   character it stands for does on the authority, where the own character is
+   a body in its way;
+3. touching already at its known place, it stays there: it is not moved
+   further in, and it is not moved back -- a stand-in that gives way lets a
+   player creep through a friend who is standing still.
+
+So one coming at the player is met as far forward as it may be; one going
+away is met where it was last known to be; one standing is where it is.
+
+**Measured**, the same seven cases at 0 and 80 ms, the friend's screen:
+
+| case | before | after |
+|---|---|---|
+| host walks into a standing friend | 210 corrections, 8--56 cm off | 0, where the host has it |
+| head-on | 340 corrections, 344 snaps back | 1, 1 of 5 cm |
+| friend follows a host who stops and goes | 133 snaps back (0.82 m), 259 frames through, 6 jumps (1.7 m) | none of any |
+| friend pushes on a host who jabs at him | 129 snaps back, 157 frames through, 12 jumps | none of any |
+| friend walks into a standing host | 0 | 0 |
+
+**What it costs, which is the cheap kind of wrong.** A player close behind a
+running friend is stopped a step short of where the host lets him go --
+short by how far the friend ran in the time the news takes -- and carried
+forward to it, the way he was already going: the count of corrections while
+following is as it was (about 150 in twelve seconds), and none of them is a
+step back or a step of more than two ticks' walking. The trade-off above
+that read "a character walking into that stand-in is stopped a step early"
+is now the only way the guess is wrong.
+
+No property, no call, and nothing for a game to set, as before. `NA18` of
+the netcode acceptance is this.

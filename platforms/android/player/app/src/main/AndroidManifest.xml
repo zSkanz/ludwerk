@@ -13,18 +13,24 @@
     android:installLocation="auto">
 
     <!--
-        Always, and not a project's switch (D431): Android refuses every socket
-        to an app without INTERNET, so a game with none could neither join nor
-        host, nor make one HTTPS request, and the engine ships all three as
-        core services. Both are normal permissions: nobody is asked anything.
+        **What an export declares is what its game uses.** `ludwerk build`
+        writes its own copy of this file with the lines between the two marks
+        replaced: INTERNET and ACCESS_NETWORK_STATE when the game's scripts
+        use the network, VIBRATE when they use HapticService, each also a
+        switch in `[export.android]`. A store's review asks about every
+        permission and a player reads the list, so a game that plays alone
+        declares none.
+
+        Here, with no export in front of it, all three: Android refuses every
+        socket to an app without INTERNET (D431), so no join, no host and not
+        one HTTPS request; and the vibrator is `HapticService:Vibrate` (ADR
+        0131). All normal permissions: nobody is ever asked anything.
     -->
+    <!-- engine:permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!--
-        `HapticService:Vibrate` (ADR 0131): the device's own vibrator, and a
-        connected controller's motors. A normal permission, like the two above.
-    -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- /engine:permissions -->
 
     <uses-feature
         android:name="android.hardware.vulkan.version"

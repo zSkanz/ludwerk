@@ -1,0 +1,9 @@
+# Says what the run before it left, and ends (ADR 0187). One of two projects
+# `run_last_run_gate.cmake` runs in turn against one log, so that each run is
+# the "run before" of the next.
+
+[project]
+name = "Ludwerk Last Run"
+id = "dev.ludwerk.lastrun"
+version = "1.2.0"
+engine = "0.1"

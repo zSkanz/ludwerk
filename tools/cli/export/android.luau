@@ -320,6 +320,10 @@ export type Settings = {
     -- A debug key a team shares, in place of this machine's.
     debugKeystore: string?,
     debugKeyAlias: string?,
+    -- `internet` and `vibrate`, when the project says: otherwise each is
+    -- declared when the project's code uses what needs it (`projectUses`).
+    internet: boolean?,
+    vibrate: boolean?,
 }
 
 --- `Enum.ScreenOrientation`, by name and by number, as the manifest spells it.
@@ -409,6 +413,11 @@ local function settings(project: projectlib.Project): (Settings?, string?)
         then path.format(path.resolve(projectlib.joined(project.root, section.debug_keystore)))
         else nil
     local debugKeyAlias: string? = if typeof(section.debug_key_alias) == "string" then section.debug_key_alias else nil
+    for _, name in { "internet", "vibrate" } do
+        if section[name] ~= nil and typeof(section[name]) ~= "boolean" then
+            return nil, tr("cli.build.err.android_permission_value", { name = name })
+        end
+    end
     return {
         package = package,
         versionCode = versionCode,
@@ -420,8 +429,121 @@ local function settings(project: projectlib.Project): (Settings?, string?)
         keyAlias = keyAlias,
         debugKeystore = debugKeystore,
         debugKeyAlias = debugKeyAlias,
+        internet = section.internet,
+        vibrate = section.vibrate,
     },
         nil
+end
+
+export type Uses = {
+    -- A script names `NetworkService` or requires `@std/net`, or the project
+    -- configures a network.
+    network: boolean,
+    -- A script names `HapticService`.
+    haptics: boolean,
+}
+
+--- **What the project's own code reaches for that a phone gates behind a
+--- permission.** Read from its words, as other engines read theirs: every
+--- script under `src/`, and every scene, stamp and `global.json` that carries
+--- one. A name built at run time is not seen -- which `[export.android]
+--- internet = true` is for -- and a name in a comment is, which costs a
+--- permission nobody is asked for.
+local function projectUses(project: projectlib.Project): Uses
+    local uses: Uses = { network = false, haptics = false }
+    local config = project.config
+    if typeof(config.network) == "table" or typeof(config.net) == "table" then
+        uses.network = true
+    end
+    local export = config.export
+    if typeof(export) == "table" and export.multiplayer == true then
+        uses.network = true
+    end
+    local function read(file: string)
+        local text = fs.readFileToString(file)
+        if string.find(text, "NetworkService", 1, true) ~= nil or string.find(text, "@std/net", 1, true) ~= nil then
+            uses.network = true
+        end
+        if string.find(text, "HapticService", 1, true) ~= nil then
+            uses.haptics = true
+        end
+    end
+    local function walk(folder: string, wanted: (string) -> boolean)
+        if not fs.exists(folder) then
+            return
+        end
+        for _, entry in fs.listDirectory(folder) do
+            local child = projectlib.joined(folder, entry.name)
+            if entry.type == "dir" then
+                walk(child, wanted)
+            elseif entry.type == "file" and wanted(entry.name) and not (uses.network and uses.haptics) then
+                read(child)
+            end
+        end
+    end
+    walk(projectlib.joined(project.root, "src"), function(name: string): boolean
+        return string.sub(name, -5) == ".luau"
+    end)
+    walk(projectlib.joined(project.root, "content"), function(name: string): boolean
+        return string.sub(name, -11) == ".scene.json" or string.sub(name, -11) == ".stamp.json" or name == "global.json"
+    end)
+    return uses
+end
+
+--- **The permissions the package declares**, in the manifest's order: only
+--- what the game uses, because a store's review asks about each one and a
+--- player reads the list. All three are normal permissions -- nobody is ever
+--- asked anything -- so declaring one costs a line on a store page and not a
+--- prompt.
+---
+--- `INTERNET` is what Android gates every socket behind (D431), and
+--- `ACCESS_NETWORK_STATE` goes with it: joining, hosting and HTTPS.
+--- `VIBRATE` is `HapticService` on the phone itself.
+local function permissions(configured: Settings, uses: Uses): { string }
+    local out: { string } = {}
+    local internet = if configured.internet ~= nil then configured.internet :: boolean else uses.network
+    local vibrate = if configured.vibrate ~= nil then configured.vibrate :: boolean else uses.haptics
+    if internet then
+        table.insert(out, "android.permission.INTERNET")
+        table.insert(out, "android.permission.ACCESS_NETWORK_STATE")
+    end
+    if vibrate then
+        table.insert(out, "android.permission.VIBRATE")
+    end
+    return out
+end
+
+local PermissionsBegin = "<!-- engine:permissions -->"
+local PermissionsEnd = "<!-- /engine:permissions -->"
+
+--- The template's manifest with its permissions replaced by `declared`. The
+--- template itself declares all of them between two marks, so a package made
+--- with no export in front of it can do everything; an export writes its own
+--- copy with what its game uses. Nothing when the marks are not there.
+local function manifestWith(template: string, declared: { string }): string?
+    local from = string.find(template, PermissionsBegin, 1, true)
+    local to = string.find(template, PermissionsEnd, 1, true)
+    if from == nil or to == nil or to < from then
+        return nil
+    end
+    local lines: { string } = { PermissionsBegin }
+    for _, name in declared do
+        table.insert(lines, `    <uses-permission android:name="{name}" />`)
+    end
+    table.insert(lines, "    " .. PermissionsEnd)
+    return string.sub(template, 1, from - 1) .. table.concat(lines, "\n") .. string.sub(template, to + #PermissionsEnd)
+end
+
+--- Writes the game's manifest into the stage, where the template's build
+--- takes it from in place of its own.
+local function writeManifest(tools: Tools, stageDir: string, declared: { string }): string?
+    local source = projectlib.joined(tools.template, "app", "src", "main", "AndroidManifest.xml")
+    local written = if fs.exists(source) then manifestWith(fs.readFileToString(source), declared) else nil
+    if written == nil then
+        return tr("cli.build.err.android_manifest", { path = source })
+    end
+    fs.writeStringToFile(projectlib.joined(stageDir, "AndroidManifest.xml"), written :: string)
+    return nil
 end
 
 --- Every file under `root`, relative to it, sorted: the payload list.
@@ -692,7 +814,111 @@ local function verify(tools: Tools, apk: string): string?
     return nil
 end
 
+--- What a page is on the largest-paged phones a store requires an app to
+--- run on: 16 KB, since Android 15.
+local PageBytes = 16384
+
+--- **The smallest alignment of a library's loadable segments**, read from its
+--- ELF program headers, or nothing and why for bytes that are not a library.
+---
+--- It is the number that decides whether a phone with 16 KB pages can load
+--- the library at all: a segment aligned to 4 KB cannot be mapped there, and
+--- the app dies in `dlopen` before a line of it runs. Read here rather than
+--- by a tool because an export has no NDK -- the player is prebuilt -- and
+--- the header is thirty lines.
+local function loadAlignment(bytes: string): (number?, string?)
+    if #bytes < 64 or string.sub(bytes, 1, 4) ~= "\127ELF" then
+        return nil, tr("cli.build.elf.not_elf")
+    end
+    local data = buffer.fromstring(bytes)
+    local wide = buffer.readu8(data, 4) == 2
+    if buffer.readu8(data, 5) ~= 1 then
+        return nil, tr("cli.build.elf.not_little_endian")
+    end
+    local function word(offset: number): number
+        -- A 64-bit field, as a number: no library's offsets or alignments
+        -- reach the 2^53 where a double stops being exact.
+        return buffer.readu32(data, offset) + buffer.readu32(data, offset + 4) * 4294967296
+    end
+    local headers = if wide then word(0x20) else buffer.readu32(data, 0x1C)
+    local size = buffer.readu16(data, if wide then 0x36 else 0x2A)
+    local count = buffer.readu16(data, if wide then 0x38 else 0x2C)
+    if count == 0 or size < (if wide then 56 else 32) or headers + count * size > #bytes then
+        return nil, tr("cli.build.elf.no_headers")
+    end
+    local smallest: number? = nil
+    for index = 0, count - 1 do
+        local at = headers + index * size
+        -- PT_LOAD: a segment the loader maps.
+        if buffer.readu32(data, at) == 1 then
+            local alignment = if wide then word(at + 0x30) else buffer.readu32(data, at + 0x1C)
+            smallest = if smallest == nil then alignment else math.min(smallest :: number, alignment)
+        end
+    end
+    if smallest == nil then
+        return nil, tr("cli.build.elf.no_segment")
+    end
+    return smallest, nil
+end
+
+--- **Every native library in the package loads on a phone with 16 KB pages**
+--- (a store's requirement for an app that targets Android 15 or later, which
+--- this one does). The package is opened and each `lib/<abi>/*.so` read: the
+--- engine's own is built for it (`cmake/toolchains/android.cmake`), and this
+--- is what says so of the file a store will actually receive -- and of any
+--- library a later engine, or a project, adds beside it.
+local function checkPages(tools: Tools, package: string): string?
+    local scratch = `{package}.pages`
+    game.removeTree(scratch)
+    fs.createDirectory(scratch, { makeParents = true })
+    local listed = process.run({ projectlib.joined(tools.jdk, "bin", exe("jar")), "tf", package })
+    if not listed.ok then
+        game.removeTree(scratch)
+        return listed.stdout .. listed.stderr
+    end
+    local libraries: { string } = {}
+    for line in string.gmatch(listed.stdout, "[^\r\n]+") do
+        -- An APK keeps them under `lib/`; a bundle under `<module>/lib/`.
+        if string.match(line, "^lib/[^/]+/[^/]+%.so$") or string.match(line, "^[^/]+/lib/[^/]+/[^/]+%.so$") then
+            table.insert(libraries, line)
+        end
+    end
+    local problem: string? = nil
+    if #libraries == 0 then
+        problem = tr("cli.build.err.android_no_library", { path = package })
+    else
+        local command = { projectlib.joined(tools.jdk, "bin", exe("jar")), "xf", path.format(path.resolve(package)) }
+        for _, library in libraries do
+            table.insert(command, library)
+        end
+        local extracted = process.run(command, { cwd = scratch })
+        if not extracted.ok then
+            problem = extracted.stdout .. extracted.stderr
+        end
+        for _, library in libraries do
+            if problem ~= nil then
+                break
+            end
+            local alignment, why = loadAlignment(fs.readFileToString(projectlib.joined(scratch, library)))
+            if alignment == nil then
+                problem = tr("cli.build.err.android_library_unread", { library = library, why = why :: string })
+            elseif alignment < PageBytes then
+                problem = tr("cli.build.err.android_pages", { library = library, found = tostring(alignment) })
+            end
+        end
+    end
+    game.removeTree(scratch)
+    return problem
+end
+
 return {
+    PageBytes = PageBytes,
+    projectUses = projectUses,
+    permissions = permissions,
+    manifestWith = manifestWith,
+    writeManifest = writeManifest,
+    loadAlignment = loadAlignment,
+    checkPages = checkPages,
     userFolder = userFolder,
     toolsFolder = toolsFolder,
     installFolder = installFolder,

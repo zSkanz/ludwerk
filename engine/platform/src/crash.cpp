@@ -435,4 +435,20 @@ std::filesystem::path crashNotePath()
     return std::filesystem::path(notePath());
 }
 
+std::filesystem::path crashNotePathOf(const std::filesystem::path& directory, unsigned long process)
+{
+    return directory / ("engine-crash-" + std::to_string(process) + ".txt");
+}
+
+std::filesystem::path crashDumpPathOf(const std::filesystem::path& directory, unsigned long process)
+{
+#ifdef _WIN32
+    return directory / ("engine-crash-" + std::to_string(process) + ".dmp");
+#else
+    (void)directory;
+    (void)process;
+    return {};
+#endif
+}
+
 } // namespace engine::platform

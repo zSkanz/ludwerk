@@ -26,16 +26,19 @@
 #include "engine/app/script_sides.h"
 #include "engine/app/two_worlds.h"
 #include "engine/asset/mesh_format.h"
+#include "engine/core/brand.h"
 #include "engine/core/build_info.h"
 #include "engine/core/content_path.h"
 #include "engine/core/error.h"
 #include "engine/core/i18n.h"
 #include "engine/core/json.h"
 #include "engine/core/log.h"
+#include "engine/core/run_record.h"
 #include "engine/platform/console.h"
 #include "engine/platform/crash.h"
 #include "engine/platform/file.h"
 #include "engine/platform/platform.h"
+#include "engine/platform/process.h"
 #include "engine/platform/stop_signal.h"
 
 #if defined(_WIN32) && defined(ENG_GUI_SUBSYSTEM)
@@ -676,6 +679,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.headless = true;
             continue;
         }
+        if (arg == "--fault-on-purpose") {
+            options.faultOnPurpose = true;
+            continue;
+        }
         if (arg == "--check-scripts") {
             // The same shape: the scene as the editor holds it, checked, gone.
             options.checkScriptsOnly = true;
@@ -1203,6 +1210,7 @@ static int hostMain(int argc, char** argv)
     // The project file, and the three-layer resolution it completes. A bare
     // script has no project and gets the preset plus the flags, which is the
     // same code path with an empty root.
+    std::string playing;
     {
         std::error_code projectError;
         const bool isProject =
@@ -1210,6 +1218,12 @@ static int hostMain(int argc, char** argv)
         std::string configDiagnostic;
         const engine::app::ProjectConfig config = engine::app::loadProjectConfig(
             isProject ? options.scriptPath : std::filesystem::path{}, graphicsOverrides, &configDiagnostic);
+        // What is running, for the record of this run (ADR 0187).
+        if (isProject) {
+            playing = config.name.empty() ? config.id : config.name;
+            if (!config.version.empty())
+                playing += " " + config.version;
+        }
 
         if (!configDiagnostic.empty()) {
             // Named and survivable, like a content pack that will not open: a
@@ -1395,6 +1409,42 @@ static int hostMain(int argc, char** argv)
     }
     const bool handlerInstalled = engine::platform::installCrashHandler(artifactDir);
 
+    // **What the run before this one left** (ADR 0187), read before this run
+    // writes anything of its own beside it: how it ended, and its report --
+    // which `RunService:GetLastRun` hands a game. And this run's own record
+    // begins, saying it is running until `main` says it ended.
+    if (logOpened) {
+        // Where the crash handler writes, which is not always where the log
+        // is: `--log-file` names the log alone.
+        const std::filesystem::path besideLog = artifactDir;
+        (void)engine::core::beginRun(engine::core::RunFiles{
+                                         .log = logPath,
+                                         .crashNoteOf =
+                                             [besideLog](engine::core::u32 process) {
+                                                 return engine::platform::crashNotePathOf(besideLog, process);
+                                             },
+                                         .crashDumpOf =
+                                             [besideLog](engine::core::u32 process) {
+                                                 return engine::platform::crashDumpPathOf(besideLog, process);
+                                             },
+                                     },
+                                     engine::core::RunIdentity{
+                                         .process = static_cast<engine::core::u32>(engine::platform::processId()),
+                                         .game = playing.empty() ? options.scriptPath.filename().string() : playing,
+                                         .engine = std::string(ENG_BRAND_SHORT) + " " + ENG_VERSION_STRING,
+                                         .platform =
+#if defined(__ANDROID__)
+                                             "Android",
+#elif defined(_WIN32)
+                                             "Windows",
+#elif defined(__APPLE__)
+                                             "macOS",
+#else
+                                             "Linux",
+#endif
+                                     });
+    }
+
     const std::array<I18nArg, 1> bootArgs{I18nArg{"version", ENG_VERSION_STRING}};
     engine::core::log(LogLevel::Info, ENG_TR("engine.boot.hello"), bootArgs);
 
@@ -1417,6 +1467,13 @@ static int hostMain(int argc, char** argv)
     if (handlerInstalled) {
         const std::array<I18nArg, 1> crashArgs{I18nArg{"path", engine::platform::crashArtifactPath().string()}};
         engine::core::log(LogLevel::Info, ENG_TR("engine.boot.info.crash_artifact"), crashArgs);
+    }
+
+    if (options.faultOnPurpose) {
+        // Through a pointer the compiler cannot see through, so the write is
+        // made and the fault is the system's: what a real one is.
+        static volatile int* const nowhere = nullptr;
+        *nowhere = 1;
     }
 
     if (!options.benchRoot.empty()) {
@@ -1512,6 +1569,17 @@ static int hostMain(int argc, char** argv)
             options.backend = *none;
     }
 
+    // **Nor checking a project's scripts, nor writing its tree as types**
+    // (D591): both read a scene and draw none of it. `ludwerk check` runs
+    // them, and a project's own CI is a machine with no GPU -- where
+    // `--check-scripts` ended with "no graphics device" and this
+    // repository's CI went red on the gate test of it, and `--write-types`
+    // had failed there without a word since it was written.
+    if ((options.checkScriptsOnly || options.writeTypesOnly) && !options.backendChosen) {
+        if (const std::optional<engine::rhi::BackendId> none = engine::app::parseBackendId("null"); none.has_value())
+            options.backend = *none;
+    }
+
     if (const std::optional<engine::core::EngineError> error = engine::app::run(options)) {
         engine::core::logText(LogLevel::Error, error->message);
         if (!error->detail.empty())
@@ -1546,6 +1614,10 @@ static int hostMain(int argc, char** argv)
 int main(int argc, char** argv)
 {
     const int code = hostMain(argc, argv);
+    // It ended because it was asked to, whatever it has to say about how: the
+    // record that the next run reads says so (ADR 0187). A run that never gets
+    // here is one that did not end well.
+    engine::core::endRun();
     sayStartFailure(code);
     return code;
 }

@@ -2286,6 +2286,8 @@ public:
         settings.mShape = JPH::ShapeRefC(new JPH::CapsuleShape(halfCylinder, radius));
         settings.mMaxSlopeAngle = JPH::DegreesToRadians(desc.maxSlopeAngle);
         settings.mMass = desc.mass;
+        // Jolt's own default, said: the scene reads the same number.
+        settings.mCharacterPadding = CharacterSkin;
         // **Not `mEnhancedInternalEdgeRemoval`, which a moving body sets** (ADR
         // 0143, amended by D574). With it a character standing by the edge two
         // facets of the ground share keeps one contact for the two, and its

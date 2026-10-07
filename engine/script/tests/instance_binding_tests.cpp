@@ -585,6 +585,7 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // `FireServer`, `FireClient` and `FireAllClients` (ADR 0161). 243:
     // `Swarm`'s `SetAgentTag`, `GetAgentTag` and `SetAgentBody` (ADR 0162).
     // 246: `NetworkService`'s `PingRelayAsync` (ADR 0178, amended).
+    // 247: `RunService`'s `GetLastRun` (ADR 0187).
     // This number is what makes a
     // DECLARED-but-unbound method impossible to ship: the IDL would count it and the binding table would not, which is
     // `Inert` for a method.
@@ -592,8 +593,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // **It earned its keep at F1.** Five methods were declared in the IDL in one
     // commit and this failed on the next build, before anything could reach a
     // script and find a name that answered nothing.
-    CHECK(coverage.declared == 246);
-    CHECK(coverage.bound == 246);
+    CHECK(coverage.declared == 247);
+    CHECK(coverage.bound == 247);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

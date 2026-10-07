@@ -36,6 +36,114 @@ test.suite("export", function(suite)
         assert.eq(android.debugKeystorePath("keys/team.keystore"), "keys/team.keystore")
     end)
 
+    -- A store requires an app that targets Android 15 to load where a page is
+    -- 16 KB, and what decides it is one number in each library's header. The
+    -- reader is held still on headers written here: a library that says 16 KB
+    -- for two segments and 4 KB for a third is a 4 KB library.
+    suite:case("a library's page alignment is the smallest of its loadable segments", function()
+        local function library(alignments: { number }, wide: boolean): string
+            local headerSize = if wide then 64 else 52
+            local entry = if wide then 56 else 32
+            -- One segment that is not loadable first (PT_DYNAMIC), aligned to 8:
+            -- it must not count.
+            local count = #alignments + 1
+            local data = buffer.create(headerSize + count * entry)
+            buffer.writestring(data, 0, "\127ELF")
+            buffer.writeu8(data, 4, if wide then 2 else 1)
+            buffer.writeu8(data, 5, 1)
+            if wide then
+                buffer.writeu32(data, 0x20, headerSize)
+                buffer.writeu16(data, 0x36, entry)
+                buffer.writeu16(data, 0x38, count)
+            else
+                buffer.writeu32(data, 0x1C, headerSize)
+                buffer.writeu16(data, 0x2A, entry)
+                buffer.writeu16(data, 0x2C, count)
+            end
+            buffer.writeu32(data, headerSize, 2)
+            buffer.writeu32(data, headerSize + (if wide then 0x30 else 0x1C), 8)
+            for index, alignment in alignments do
+                local at = headerSize + index * entry
+                buffer.writeu32(data, at, 1)
+                buffer.writeu32(data, at + (if wide then 0x30 else 0x1C), alignment)
+            end
+            return buffer.tostring(data)
+        end
+
+        assert.eq(android.PageBytes, 16384)
+        assert.eq(android.loadAlignment(library({ 16384, 16384, 16384 }, true)), 16384)
+        assert.eq(android.loadAlignment(library({ 16384, 4096, 16384 }, true)), 4096)
+        assert.eq(android.loadAlignment(library({ 65536, 16384 }, true)), 16384)
+        assert.eq(android.loadAlignment(library({ 4096 }, false)), 4096)
+        -- What is not a library is said to be none, not taken for a good one.
+        local nothing, why =
+            android.loadAlignment("PK\3\4 this is a zip, not a library, and long enough to have a header in")
+        assert.eq(nothing, nil)
+        assert.that(why ~= nil, "no reason given")
+        local none = android.loadAlignment(library({}, true))
+        assert.eq(none, nil)
+    end)
+
+    -- A store's review asks about every permission a package declares, and a
+    -- player reads the list: a game that plays alone declares none.
+    suite:case(
+        "an Android package declares the permissions its game uses, and the project has the last word",
+        function()
+            local function configured(internet: boolean?, vibrate: boolean?): android.Settings
+                return {
+                    package = "dev.ludwerk.test",
+                    versionCode = 1,
+                    orientation = "sensorLandscape",
+                    release = false,
+                    internet = internet,
+                    vibrate = vibrate,
+                }
+            end
+            local alone = { network = false, haptics = false }
+            local online = { network = true, haptics = true }
+            assert.eq(#android.permissions(configured(nil, nil), alone), 0)
+            assert.eq(
+                table.concat(android.permissions(configured(nil, nil), online), " "),
+                "android.permission.INTERNET android.permission.ACCESS_NETWORK_STATE android.permission.VIBRATE"
+            )
+            -- A name built at run time is not seen, which is what the switch is for.
+            assert.eq(
+                table.concat(android.permissions(configured(true, nil), alone), " "),
+                "android.permission.INTERNET android.permission.ACCESS_NETWORK_STATE"
+            )
+            assert.eq(
+                table.concat(android.permissions(configured(false, nil), online), " "),
+                "android.permission.VIBRATE"
+            )
+            assert.eq(#android.permissions(configured(false, false), online), 0)
+        end
+    )
+
+    suite:case("the manifest's permissions are written between its two marks, and nowhere else", function()
+        local template = table.concat({
+            "<manifest>",
+            "    <!-- engine:permissions -->",
+            '    <uses-permission android:name="android.permission.INTERNET" />',
+            '    <uses-permission android:name="android.permission.VIBRATE" />',
+            "    <!-- /engine:permissions -->",
+            '    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />',
+            "</manifest>",
+        }, "\n")
+        local none = android.manifestWith(template, {}) :: string
+        assert.that(string.find(none, "uses-permission", 1, true) == nil, none)
+        assert.that(string.find(none, "android.hardware.touchscreen", 1, true) ~= nil, "lost what follows the marks")
+        assert.that(string.find(none, "<manifest>", 1, true) == 1, "lost what precedes the marks")
+
+        local one = android.manifestWith(template, { "android.permission.VIBRATE" }) :: string
+        assert.that(string.find(one, 'android:name="android.permission.VIBRATE"', 1, true) ~= nil, one)
+        assert.that(string.find(one, "INTERNET", 1, true) == nil, one)
+        -- Written again from its own output: an export of an export's manifest.
+        assert.eq(android.manifestWith(one, { "android.permission.VIBRATE" }), one)
+
+        -- A template that lost its marks is refused, not shipped as it is.
+        assert.eq(android.manifestWith("<manifest></manifest>", {}), nil)
+    end)
+
     suite:case("the targets, and v1's name for the first", function()
         local names: { string } = {}
         for _, target in targets.All do

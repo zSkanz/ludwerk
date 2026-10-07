@@ -513,6 +513,20 @@ local function run(options: Options): number
         local apk = ""
         local assembled = progress.step(reporter, "assemble", function(): string?
             android.writePayload(stage)
+            -- Only the permissions the game uses (see `android.permissions`),
+            -- and a word when the project turned one off that its code needs:
+            -- a socket a phone refuses is a match nobody can join.
+            local uses = android.projectUses(project)
+            if settings.internet == false and uses.network then
+                progress.note(reporter, tr("cli.build.warn.android_no_internet"))
+            end
+            if settings.vibrate == false and uses.haptics then
+                progress.note(reporter, tr("cli.build.warn.android_no_vibrate"))
+            end
+            local manifestError = android.writeManifest(tools, stage, android.permissions(settings, uses))
+            if manifestError ~= nil then
+                return manifestError
+            end
             -- A release is signed with the project's key and its passwords from
             -- the environment or the per-user store, never from `project.toml`
             -- (ADR 0104 §3); anything else with the debug key -- Android's
@@ -562,7 +576,9 @@ local function run(options: Options): number
         end
         if
             not progress.step(reporter, "sign", function(): string?
-                return android.verify(tools, apk)
+                -- Signed, and loadable where a store requires it to be: both
+                -- are asked of the file itself, not of what built it.
+                return android.verify(tools, apk) or android.checkPages(tools, apk)
             end)
         then
             -- **Not left beside the good ones** (audit T10): an APK whose

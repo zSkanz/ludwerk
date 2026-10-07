@@ -108,6 +108,8 @@ icon_foreground = "branding/foreground.png"  # optional: a foreground drawn for 
 release = false                   # false: the debug key; true: the keystore below
 keystore = "keys/release.keystore"
 key_alias = "skyhopper"
+internet = true                   # optional: see "What a store asks of an Android package"
+vibrate = false                   # optional, the same
 ```
 
 **The debug key is Android's own**: `~/.android/debug.keystore`, the one the
@@ -188,6 +190,73 @@ the name on the certificate, a validity, and a password.
 
 It reaches `keytool` and Gradle through their environment, never their command
 line, where other programs on the machine could read it.
+
+## What a store asks of an Android package
+
+A store's review reads the package, not your project. These are the things it
+checks, and what the export does about each.
+
+| It asks | The package |
+|---|---|
+| Which Android it targets | API 35 (Android 15), and it runs from API 21 up. |
+| Which processors | `arm64-v8a` only: 64-bit, which a store requires. |
+| That it loads where a page is 16 KB | Every native library in it is laid out for 16 KB pages. The export's last step reads each one and refuses a package with one that is not. |
+| What it may do: its permissions | Only what the game uses -- see below. None is one a player is ever asked about. |
+| Who signed it | Your release key (the section above). A debug-signed package is refused. |
+| A version code higher than the last | `version_code`; `--bump-version-code` raises it for you. |
+
+**Permissions.** The export reads your project and declares:
+
+- `INTERNET` and `ACCESS_NETWORK_STATE` when a script names `NetworkService`
+  or requires `@std/net`, or the project has a `[network]` section or
+  `[export] multiplayer = true`. Without `INTERNET` a phone refuses every
+  socket: nothing joins, hosts or fetches.
+- `VIBRATE` when a script names `HapticService`.
+
+A game that plays alone declares none. The export cannot see a service whose
+name is built at run time; if yours is, say so: `internet = true` or `vibrate
+= true` under `[export.android]`. Either may be set `false` to leave a
+permission out whatever the scripts say, and the export tells you when the
+scripts use what you turned off.
+
+**On the screen.** A game fills the display: it is immersive, the system's
+bars hidden until swiped for, and it draws under the camera cutout.
+`UIService.SafeAreaInsets` says where an interface may go; a store's
+reviewer on a phone with a cutout will look. The system's back button reaches
+your game as the `Back` key and does not leave it unless you say so.
+
+**Not yet:** a store requires a new app as an App Bundle (`.aab`), and the
+export makes an APK. A bundle is the next thing this page will gain.
+
+## When a player's game did not end well
+
+A shipped game is run by people you will never meet, on machines you will
+never see. When it dies on one of them, the next run can know:
+
+```luau
+local RunService = game:GetService("RunService")
+
+local last = RunService:GetLastRun()
+if last.Outcome == Enum.RunOutcome.Crashed or last.ScriptErrors > 0 then
+    -- Yours to decide: a line in the menu, a button that shows the path.
+    showReportOffer(last.Report)
+end
+```
+
+`Outcome` is `Clean` when the last run was asked to end and did, `Crashed`
+when it died of a fault, and `Unfinished` when it ended without saying so and
+without a fault of its own -- ended by the system, the player or the power.
+**Do not treat `Unfinished` as a crash**: a phone ends a game in the
+background whenever it wants the memory. `ScriptErrors` counts errors a
+script raised that nothing caught, in a run that may have gone on running
+with half of itself not working.
+
+`Report` is one text file, written when there is something to report: what
+the game and the engine were, the crash note, and the end of that run's log.
+It is beside the log -- the game's own folder, and on a phone
+`Android/data/<package>/files`, which a cable or the system's file browser
+opens with no permission asked. The engine uploads nothing and shows
+nothing: what you do with the path is yours, and so is whether to ask.
 
 ## Multiplayer: what each package leaves out
 

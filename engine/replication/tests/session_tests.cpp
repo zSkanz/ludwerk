@@ -5323,6 +5323,20 @@ TEST_CASE("ADR 0163: a replica expects another player's character ahead of where
     CHECK(static_cast<double>(waiting->collisionLead.x) == doctest::Approx(0.0));
     CHECK(static_cast<double>(waiting->collisionLead.y) == doctest::Approx(0.0));
     CHECK(static_cast<double>(waiting->collisionLead.z) == doctest::Approx(0.0));
+
+    // **And where each was last KNOWN to be is said too** (D590): its newest
+    // snapshot's place, which is what the guess starts from and what a
+    // character behind it is kept out of. Between where it is drawn and
+    // where it is expected for one that runs; where it is drawn for one that
+    // stands.
+    const double known = drawn + static_cast<double>(moving->collisionKnown.x);
+    MESSAGE("last known at ", known);
+    CHECK(known > drawn);
+    CHECK(known <= expected + 0.001);
+    CHECK(known <= newest + 0.001);
+    CHECK(known >= newest - 3.0 * pace);
+    CHECK(static_cast<double>(waiting->collisionKnown.x) == doctest::Approx(0.0));
+    CHECK(static_cast<double>(waiting->collisionKnown.z) == doctest::Approx(0.0));
 }
 
 TEST_CASE("an authority's send costs what changed, not what there is (protocol 42)")

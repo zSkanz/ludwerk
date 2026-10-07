@@ -60,4 +60,11 @@ namespace engine::platform {
 // whole of what a fault leaves behind.
 [[nodiscard]] std::filesystem::path crashNotePath();
 
+// **The same two names for ANOTHER process**, in `directory`: what the run
+// before this one would have written had it crashed, which is how the next run
+// tells a crash from a run that was ended from outside (`core::beginRun`). The
+// dump is empty where the platform writes none.
+[[nodiscard]] std::filesystem::path crashNotePathOf(const std::filesystem::path& directory, unsigned long process);
+[[nodiscard]] std::filesystem::path crashDumpPathOf(const std::filesystem::path& directory, unsigned long process);
+
 } // namespace engine::platform

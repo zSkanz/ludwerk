@@ -675,6 +675,13 @@ struct QueryFilter
     CollisionGroup group = kDefaultCollisionGroup;
 };
 
+// **How far from what it touches a character is held**, in metres: two
+// characters of ninety centimetres stand ninety-two apart. A backend keeps
+// this much, and what must say where a character will be stopped without
+// asking the backend -- a replica placing another player's stand-in (ADR
+// 0163) -- reads the same number.
+inline constexpr f32 CharacterSkin = 0.02f;
+
 // A capsule that walks. Not a rigid body: Jolt's character sweeps its own shape
 // and resolves its own contacts, which is what lets it climb a step without the
 // solver deciding the capsule should tip over instead.

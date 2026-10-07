@@ -4746,6 +4746,10 @@ void ReplicaSession::interpolate(scene::World& world)
             const core::DVec3 apart = expected - part->cframe.position;
             remote->collisionLead =
                 core::Vec3{static_cast<f32>(apart.x), static_cast<f32>(apart.y), static_cast<f32>(apart.z)};
+            // And where it was last told to be, which the guess starts from.
+            const core::DVec3 known = newest.cframe.position - part->cframe.position;
+            remote->collisionKnown =
+                core::Vec3{static_cast<f32>(known.x), static_cast<f32>(known.y), static_cast<f32>(known.z)};
             remote->collisionLeadSet = true;
         };
         // Past the newest sample, the newest: extrapolating a part the authority

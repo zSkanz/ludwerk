@@ -143,6 +143,14 @@ bool PhysicsSync::inWorld(core::InstanceId id) const
 // the machine was running (R10).
 constexpr u64 kAnchoredMovingTicks = 12;
 
+// A stand-in stopped at this machine's own character is put this much short
+// of touching it, in metres: at the touch itself a rounding the wrong way is
+// a body a hair inside a character, which is pushed. And two that are within
+// `StandInTouch` of touching are touching: a character stopped by another
+// stands at the touch give or take what its sweep leaves.
+constexpr f64 StandInClearance = 0.002;
+constexpr f64 StandInTouch = 0.01;
+
 // `Enum.CollisionFidelity`'s items, by name rather than by the numbers they
 // happen to have. The component stores the raw value -- for the reason every
 // enum-valued component does, that a generated accessor needs no per-enum C++
@@ -624,6 +632,53 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
     }
 }
 
+core::DVec3 PhysicsSync::standInPlace(const core::DVec3& known, const core::DVec3& expected, const core::DVec3& own,
+                                      f64 reach, bool overlapping) noexcept
+{
+    if (!overlapping || reach <= 0.0)
+        return expected;
+    const f64 startX = known.x - own.x;
+    const f64 startZ = known.z - own.z;
+    const f64 goX = expected.x - known.x;
+    const f64 goZ = expected.z - known.z;
+    const f64 startSquared = startX * startX + startZ * startZ;
+    const f64 length = goX * goX + goZ * goZ;
+
+    core::DVec3 place = expected;
+    const auto along = [&](f64 share) {
+        place.x = known.x + goX * share;
+        place.z = known.z + goZ * share;
+        return place;
+    };
+
+    // The place between the two that is nearest the own character.
+    f64 nearest = 0.0;
+    if (length > 1e-12)
+        nearest = std::clamp(-(goX * startX + goZ * startZ) / length, 0.0, 1.0);
+    const f64 nearX = startX + goX * nearest;
+    const f64 nearZ = startZ + goZ * nearest;
+    const f64 clear = reach + StandInClearance;
+    if (nearX * nearX + nearZ * nearZ >= clear * clear)
+        return along(nearest);
+
+    // The way runs into the own character. **Touching already, where it was
+    // last known to be**: it goes no nearer, and no further off either -- a
+    // stand-in moved back from where the character is would give way to a
+    // player walking into a friend who is standing still.
+    const f64 touching = reach + StandInTouch;
+    if (startSquared <= touching * touching)
+        return along(0.0);
+    // Otherwise it stops where its capsule first touches the own character's:
+    // a circle round the own character, a line through it, and the first of
+    // the two places they meet.
+    const f64 b = 2.0 * (goX * startX + goZ * startZ);
+    const f64 c = startSquared - clear * clear;
+    const f64 discriminant = b * b - 4.0 * length * c;
+    if (length < 1e-12 || discriminant < 0.0)
+        return along(nearest);
+    return along(std::clamp((-b - std::sqrt(discriminant)) / (2.0 * length), 0.0, 1.0));
+}
+
 void PhysicsSync::applyCharacter(core::InstanceId id, PartComponent& part, RigidBodyComponent& body,
                                  CharacterBodyComponent& character, f32 fixedDt)
 {
@@ -718,6 +773,27 @@ void PhysicsSync::applyCharacter(core::InstanceId id, PartComponent& part, Rigid
                 expected.position.x += static_cast<f64>(character.collisionLead.x);
                 expected.position.y += static_cast<f64>(character.collisionLead.y);
                 expected.position.z += static_cast<f64>(character.collisionLead.z);
+                // **Anywhere it may be, this machine's own character is kept
+                // out of** (D590, see `standInPlace`): an obstacle to walk
+                // into, never a body put inside the player's own, and never
+                // one guessed out of the player's way.
+                if (player != nullptr) {
+                    const auto own = m_characters.find(packInstance(player->character));
+                    if (own != m_characters.end() && own->second.handle.valid() && !own->second.follower) {
+                        const core::DVec3& mine = own->second.written.position;
+                        const f64 reach =
+                            (static_cast<f64>(record.diameter) + static_cast<f64>(own->second.diameter)) * 0.5 +
+                            static_cast<f64>(physics::CharacterSkin);
+                        const f64 between =
+                            (static_cast<f64>(record.height) + static_cast<f64>(own->second.height)) * 0.5;
+                        const bool overlapping = std::abs(expected.position.y - mine.y) < between;
+                        core::DVec3 known = part.cframe.position;
+                        known.x += static_cast<f64>(character.collisionKnown.x);
+                        known.y += static_cast<f64>(character.collisionKnown.y);
+                        known.z += static_cast<f64>(character.collisionKnown.z);
+                        expected.position = standInPlace(known, expected.position, mine, reach, overlapping);
+                    }
+                }
                 m_backend.setCharacterStandIn(m_world, record.handle, &expected);
                 record.standIn = true;
             }

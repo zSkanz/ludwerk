@@ -750,6 +750,9 @@ local CliDataLiterals: { [string]: boolean } = {
     ["@echo off\\r\\n"] = true,
     ["Written by `ludwerk build`. This directory is cleared on every rebuild.\\n"] = true,
     ["[Desktop Entry]"] = true,
+    -- A line of the Android manifest an export writes, its permission's name
+    -- taken out as this lint reads an interpolation.
+    ['    <uses-permission android:name="" />'] = true,
     -- Luau it writes for the analysis: type definitions.
     ["declare Instance: {"] = true,
     ["type InstanceClasses = {"] = true,

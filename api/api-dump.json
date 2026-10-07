@@ -5036,6 +5036,12 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "GetLastRun",
+          "Parameters": [],
+          "Returns": ["{ Outcome: Enum.RunOutcome, ScriptErrors: number, FirstScriptError: string?, Report: string?, Dump: string? }"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
           "Name": "IsPaused",
           "Parameters": [],
           "Returns": ["boolean"],
@@ -13567,6 +13573,27 @@
         {
           "Name": "Shared",
           "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "RunOutcome",
+      "Items": [
+        {
+          "Name": "Clean",
+          "Value": 1
+        },
+        {
+          "Name": "Crashed",
+          "Value": 2
+        },
+        {
+          "Name": "None",
+          "Value": 0
+        },
+        {
+          "Name": "Unfinished",
+          "Value": 3
         }
       ]
     },

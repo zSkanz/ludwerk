@@ -183,14 +183,22 @@ test.suite("android export", function(suite)
         assert.that(fs.exists(apk), `no APK at {apk}`)
         local badge = badging(tools :: android.Tools, apk)
         assert.that(string.find(badge, "versionCode='1'", 1, true) ~= nil, "not code 1")
-        -- **A game on a phone can open a socket** (D431): without INTERNET
-        -- Android refuses every one, and no game could join, host or fetch.
-        for _, permission in { "android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE" } do
-            assert.that(
-                string.find(badge, `uses-permission: name='{permission}'`, 1, true) ~= nil,
-                `the APK does not declare {permission}`
-            )
-        end
+        -- **A game that plays alone declares no permission**: a store's
+        -- review asks about each one, and the starter opens no socket and
+        -- shakes no phone.
+        assert.that(string.find(badge, "uses-permission", 1, true) == nil, `the starter's APK declares:\n{badge}`)
+        -- **Its library loads where a page is 16 KB**, which a store requires
+        -- of an app that targets Android 15: asked of the APK itself.
+        assert.eq(android.checkPages(tools :: android.Tools, apk), nil)
+
+        -- A script that joins a match and shakes the phone, for the release.
+        fs.writeStringToFile(
+            projectlib.joined(project, "src", "client", "Online.luau"),
+            "--!strict\n"
+                .. 'local NetworkService = game:GetService("NetworkService")\n'
+                .. 'local HapticService = game:GetService("HapticService")\n'
+                .. "print(NetworkService, HapticService)\n"
+        )
 
         -- A release key, made the way the editor's button makes one.
         local key = projectlib.joined(parent, "keys", "release.keystore")
@@ -227,7 +235,24 @@ test.suite("android export", function(suite)
         local text = fs.readFileToString(config)
         assert.that(string.find(text, "version_code = 2", 1, true) ~= nil, text)
         assert.that(string.find(text, "# kept", 1, true) ~= nil, "the bump lost a comment")
-        assert.that(string.find(badging(tools :: android.Tools, apk), "versionCode='2'", 1, true) ~= nil, "not code 2")
+        local released = badging(tools :: android.Tools, apk)
+        assert.that(string.find(released, "versionCode='2'", 1, true) ~= nil, "not code 2")
+        -- **A game on a phone can open a socket** (D431): without INTERNET
+        -- Android refuses every one, and no game could join, host or fetch.
+        -- Declared because the game's script names the service.
+        for _, permission in
+            {
+                "android.permission.INTERNET",
+                "android.permission.ACCESS_NETWORK_STATE",
+                "android.permission.VIBRATE",
+            }
+        do
+            assert.that(
+                string.find(released, `uses-permission: name='{permission}'`, 1, true) ~= nil,
+                `the APK of a game that uses it does not declare {permission}`
+            )
+        end
+        assert.eq(android.checkPages(tools :: android.Tools, apk), nil)
 
         -- The certificate is the project's: its common name, not the debug key's.
         local jar = projectlib.joined(tools.sdk, "build-tools", "35.0.0", "lib", "apksigner.jar")

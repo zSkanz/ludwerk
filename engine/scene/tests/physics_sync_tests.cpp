@@ -2534,6 +2534,75 @@ TEST_CASE("ADR 0163: on a replica, another player's character is met where its s
     CHECK(mirror.backend.standIns.size() == calls);
 }
 
+TEST_CASE("D590: another player's stand-in is kept where this machine's own character cannot be inside it")
+{
+    // **The owner's report, in play**: "my friend can walk INTO my character
+    // and then he gets a rollback." Two processes showed three cases, all
+    // from where the other player's stand-in was put: inside the player's own
+    // character (pushed out of it, half a metre off, corrected every other
+    // frame), and guessed out of the way of a player following close (who
+    // then walked through a friend who had stopped, and was pulled back out).
+    // Two capsules of 0.9 touch at 0.92; the own character is at the origin.
+    const core::DVec3 own{0.0, 1.0, 0.0};
+    const f64 reach = 0.92;
+    const auto place = [&](core::DVec3 known, core::DVec3 expected) {
+        return PhysicsSync::standInPlace(known, expected, own, reach, true);
+    };
+    const auto gap = [&](const core::DVec3& at) { return std::sqrt(at.x * at.x + at.z * at.z); };
+
+    // **Coming at the player, and guessed on through him**: it stops touching
+    // him, on the side it came from -- as it does on the authority.
+    {
+        const core::DVec3 at = place({-3.0, 1.0, 0.0}, {0.4, 1.0, 0.0});
+        CHECK(at.x < 0.0);
+        CHECK(gap(at) == doctest::Approx(0.922).epsilon(0.001));
+        CHECK(at.y == doctest::Approx(1.0));
+    }
+    // Guessed to just short of him: where it is guessed.
+    {
+        const core::DVec3 at = place({-3.0, 1.0, 0.0}, {-1.5, 1.0, 0.0});
+        CHECK(at.x == doctest::Approx(-1.5));
+    }
+    // **Going away from the player**: where it was last known to be, not
+    // where it is guessed to have got to. A player behind it walks into that.
+    {
+        const core::DVec3 at = place({1.2, 1.0, 0.0}, {2.9, 1.0, 0.0});
+        CHECK(at.x == doctest::Approx(1.2));
+        CHECK(at.z == doctest::Approx(0.0));
+    }
+    // **Standing still, the player pressed against it**: it is where it is.
+    // It does not give way (a stand-in moved back from a player walking into
+    // it lets him creep through), and it is not moved further in.
+    {
+        const core::DVec3 at = place({0.92, 1.0, 0.0}, {0.92, 1.0, 0.0});
+        CHECK(at.x == doctest::Approx(0.92));
+        const core::DVec3 pressed = place({0.915, 1.0, 0.0}, {0.915, 1.0, 0.0});
+        CHECK(pressed.x == doctest::Approx(0.915));
+    }
+    // Stopped against the player and guessed further into him: where it was
+    // last known to be, touching.
+    {
+        const core::DVec3 at = place({-0.92, 1.0, 0.0}, {-0.3, 1.0, 0.0});
+        CHECK(at.x == doctest::Approx(-0.92));
+    }
+    // **Crossing in front of the player**: the nearest it may be.
+    {
+        const core::DVec3 at = place({-2.0, 1.0, 3.0}, {2.0, 1.0, 3.0});
+        CHECK(at.x == doctest::Approx(0.0));
+        CHECK(at.z == doctest::Approx(3.0));
+    }
+    // Across the ground only: its height is the guess's.
+    {
+        const core::DVec3 at = place({-3.0, 1.0, 0.0}, {0.4, 1.4, 0.0});
+        CHECK(at.y == doctest::Approx(1.4));
+    }
+    // One above the other shares no height with him: nothing is in the way.
+    {
+        const core::DVec3 at = PhysicsSync::standInPlace({-3.0, 6.0, 0.0}, {0.4, 6.0, 0.0}, own, reach, false);
+        CHECK(at.x == doctest::Approx(0.4));
+    }
+}
+
 TEST_CASE("ADR 0163: an authority's characters are met where they are")
 {
     Mirror mirror;

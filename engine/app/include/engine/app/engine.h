@@ -241,6 +241,12 @@ struct EngineOptions
     // holds it, no script run. Only where the editor is built.
     bool checkScriptsOnly = false;
 
+    // **Die of a fault once the crash handler is in, on purpose**
+    // (`--fault-on-purpose`): the instrument of the gate that checks what a
+    // crash leaves for the next run to find (ADR 0187). A crash cannot be
+    // checked from inside the process that has it.
+    bool faultOnPurpose = false;
+
     // **Lay the scene's terrain from a source, save it and exit** (ADR 0149
     // §2): what `ludwerk terrain import` runs. The scene as the editor holds
     // it -- whole, no script run, nothing partitioned -- its terrain laid a

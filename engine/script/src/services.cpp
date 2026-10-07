@@ -18,6 +18,7 @@
 #include "engine/asset/terrain.h"
 #include "engine/asset/voxel_mesher.h"
 #include "engine/core/content_path.h"
+#include "engine/core/run_record.h"
 #include "engine/input/input.h"
 #include "engine/net/local_address.h"
 #include "engine/platform/event.h"
@@ -174,6 +175,37 @@ int runServiceIsPaused(lua_State* L)
     // Since `Pause` and `Resume` are both idempotent, this is how code tells the
     // two states apart rather than by watching a call fail.
     lua_pushboolean(L, world(L).engineState().paused);
+    return 1;
+}
+
+// **How the run before this one ended, and where its report is** (ADR 0187):
+// what a shipped game asks at its start, to tell its player that the last
+// session did not end well and which file to send. A fact about this machine,
+// never about the world -- nothing of it is replicated or hashed -- and
+// nothing is uploaded or shown by the engine.
+int runServiceGetLastRun(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::LastRun& last = core::lastRun();
+    lua_createtable(L, 0, 5);
+    pushEnumItem(L, scene::EnumValue{scene::generated::RunOutcomeEnumId, static_cast<core::i32>(last.outcome)});
+    lua_setfield(L, -2, "Outcome");
+    lua_pushinteger(L, static_cast<int>(last.scriptErrors));
+    lua_setfield(L, -2, "ScriptErrors");
+    if (!last.firstScriptError.empty()) {
+        lua_pushlstring(L, last.firstScriptError.data(), last.firstScriptError.size());
+        lua_setfield(L, -2, "FirstScriptError");
+    }
+    if (!last.report.empty()) {
+        const std::string report = last.report.generic_string();
+        lua_pushlstring(L, report.data(), report.size());
+        lua_setfield(L, -2, "Report");
+    }
+    if (!last.dump.empty()) {
+        const std::string dump = last.dump.generic_string();
+        lua_pushlstring(L, dump.data(), dump.size());
+        lua_setfield(L, -2, "Dump");
+    }
     return 1;
 }
 
@@ -2748,6 +2780,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"RunService", "UnbindFromRenderStep", runServiceUnbindFromRenderStep},
     {"RunService", "Resume", runServiceResume},
     {"RunService", "IsPaused", runServiceIsPaused},
+    {"RunService", "GetLastRun", runServiceGetLastRun},
     {"RunService", "SaveSimulation", runServiceSaveSimulation},
     {"RunService", "RestoreSimulation", runServiceRestoreSimulation},
     {"RunService", "StepSimulation", runServiceStepSimulation},

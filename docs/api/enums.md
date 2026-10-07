@@ -737,6 +737,17 @@ The order `CFrame.fromEuler` applies its three angles, and `CFrame:ToEuler` reco
 | `Server` | 1 | The authority: a dedicated server, solo and a host -- never a joined client. A client's package carries no `Server` script's code. |
 | `Shared` | 2 | Every machine, once each: the server and every client. The default outside the script services. |
 
+## Enum.RunOutcome
+
+How a run of the game ended on this machine: `RunService:GetLastRun().Outcome`.
+
+| Item | Value | Description |
+|---|---|---|
+| `None` | 0 | No run came before this one, or what it left was cleared. |
+| `Clean` | 1 | It was asked to end, and did. |
+| `Crashed` | 2 | It died of a fault, or of an exception nothing caught. Its report holds the crash note. |
+| `Unfinished` | 3 | It ended without saying so and without a fault of its own: ended by the system, by its player or by the power. On a phone this is what a game left in the background usually is. |
+
 ## Enum.ScaleType
 
 How an `ImageLabel` fits its image into its box (§2.2).

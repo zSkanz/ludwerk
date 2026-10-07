@@ -172,7 +172,7 @@ reproduced with real processes.
 - [~] **NA16** A correction is drawn whole on its first frame, then slides.
   [ ] Rotation smoothing; 2D smoothing and replay.
 - [x] **NA17** A part a client's own scripts made is simulated by that client.
-- [ ] **NA18** The own character collides with others where they were drawn.
+- [x] **NA18** The own character collides with others where they were drawn. Not where they are DRAWN: anywhere between where each was last known to be and where it is expected, and never inside it (ADR 0163 and its amendment of 2026-10-06, D590).
 - [x] **NA25** -- see D.
 - [ ] **NA19** Send cost grows as players times instances; [ ] **NA20** no
   bandwidth budget, priority or quantisation -- both change what the snapshot

@@ -1313,6 +1313,30 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         {
+            Name = "RunOutcome",
+            Doc = "How a run of the game ended on this machine: `RunService:GetLastRun().Outcome`.",
+            Items = {
+                {
+                    Name = "None",
+                    Value = 0,
+                    Doc = "No run came before this one, or what it left was cleared.",
+                },
+                { Name = "Clean", Value = 1, Doc = "It was asked to end, and did." },
+                {
+                    Name = "Crashed",
+                    Value = 2,
+                    Doc = "It died of a fault, or of an exception nothing caught. Its report holds the crash note.",
+                },
+                {
+                    Name = "Unfinished",
+                    Value = 3,
+                    Doc = "It ended without saying so and without a fault of its own: ended by the system, by "
+                        .. "its player or by the power. On a phone this is what a game left in the background "
+                        .. "usually is.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
             Name = "Platform",
             Doc = "The operating system a game is running on: `RunService.Platform`. For the few things "
                 .. "that differ by system -- a store's rules, a path a player is told about. What a game "

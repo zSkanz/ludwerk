@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "engine/core/log.h"
+#include "engine/core/run_record.h"
 #include "engine/scene/world.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
@@ -238,6 +239,11 @@ void dropArgumentsImpl(lua_State* L, u32 base, u32 count)
 void report(lua_State* L, core::LogLevel level, const std::string& message)
 {
     core::logText(level, message);
+    // **An error nothing caught, in this run's record** (`core::beginRun`): the
+    // next run can say the last one had them, and a game can ask its player
+    // for the report.
+    if (level == core::LogLevel::Error)
+        core::noteScriptError(message);
 
     SignalSystem& sys = system(L);
     if (sys.reporting)

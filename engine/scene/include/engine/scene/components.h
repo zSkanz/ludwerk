@@ -288,6 +288,12 @@ struct CharacterBodyComponent
     // guess, and the authority has none.
     core::Vec3 collisionLead{0.0f, 0.0f, 0.0f};
     bool collisionLeadSet = false;
+    // **And where it was last KNOWN to be**, the same way: the place its
+    // newest snapshot put it, less the drawn one (ADR 0163, amended). Between
+    // this and the expected place is everywhere it may be now -- it kept
+    // going, or it stopped -- and this machine's own character is kept out of
+    // all of it (`PhysicsSync::standInPlace`).
+    core::Vec3 collisionKnown{0.0f, 0.0f, 0.0f};
 };
 
 // `Weld` and `WeldConstraint` (M5, added to the milestone by human decision).

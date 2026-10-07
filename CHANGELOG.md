@@ -247,6 +247,17 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`RunService:GetLastRun()`** and `Enum.RunOutcome` (ADR 0187): how the run
+  before this one ended on this machine -- `Clean`, `Crashed`, `Unfinished`
+  (ended from outside, which a phone does to a game in the background) or
+  `None` -- the count of script errors nothing caught and the first of them,
+  and the path of a one-file report written for a run that left something to
+  report: what the game and the engine were, the crash note, the end of that
+  run's log. For a shipped game to tell its player the last session did not
+  end well and which file to send. Nothing is uploaded and nothing is shown.
+- **`[export.android] internet` and `vibrate`**: whether the package declares
+  the network permissions and the vibrator's. Left out, each is declared when
+  the project's scripts use what needs it.
 - **`NetworkService:PingRelayAsync(relay?, timeout?)`** (ADR 0178, amended):
   asks a relay how far it is and what it carries, before hosting or joining
   through it -- what a game with relays in several regions calls on each to
@@ -1140,6 +1151,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **An Android package declares the permissions its game uses, not all of
+  them** (ADR 0104, amended). `INTERNET` and `ACCESS_NETWORK_STATE` when a
+  script names `NetworkService` or requires `@std/net`, or the project
+  configures a network; `VIBRATE` when one names `HapticService`. A game that
+  plays alone declares none. **If your game reaches the network through a
+  name built at run time, set `[export.android] internet = true`.**
+- **An Android export refuses a native library not laid out for 16 KB
+  pages**, which a store requires of an app that targets Android 15: the last
+  step reads every library in the package. The engine's own passes.
 - **The lean ground** (ADR 0175). At `Low`, and at `Medium` on a phone, a
   terrain's material is drawn from one read of each layer's maps and one more
   of its colour at the far scale, with one noise a pixel where there were
@@ -1455,6 +1475,21 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **Two players' characters that block each other no longer rubber-band on a
+  machine that joined** (D590, ADR 0163 amended). A friend walking into a
+  standing player pushed that player's own character away on his screen and
+  was corrected every other frame; a player following a friend who stopped
+  walked through him and was pulled back out. Another player is now met
+  anywhere he may be -- where he was last known to be when going away, as far
+  forward as he may have got when coming, never inside the player's own
+  character. Measured in two processes at 0 and 80 ms each way: no step back,
+  no frame walked through. Nothing for a game to set.
+- **`ludwerk check` and `ludwerk setup` need no GPU** (D591): checking a
+  project's scripts as the editor does, and writing its scene's tree as
+  types, open no graphics device. On a build machine the second had failed
+  without a word.
+- **An installed `ludwerk` runs its own engine** (D589), not the one in a
+  build tree `ENG_BUILD_ROOT` names.
 - **A project `ludwerk check` calls clean opens clean in the editor** (D583
   to D586, ADR 0093 amended). The script pane followed a `require` only
   through the tree, so a project that requires by path --

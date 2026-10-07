@@ -41,6 +41,14 @@ Runs `fn(dt)` **every drawn frame**, in `priority` order -- lowest first, and in
 
 Binding a name already bound replaces it. Nothing runs without a window. A binding belongs to the script that made it and goes with its scene (ADR 0124).
 
+### `GetLastRun(): { Outcome: Enum.RunOutcome, ScriptErrors: number, FirstScriptError: string?, Report: string?, Dump: string? }`
+
+**How the run before this one ended on this machine, and where its report is** (ADR 0187). `Outcome` is `Clean` when it was asked to end and did, `Crashed` when it died of a fault, `Unfinished` when it ended without saying so and without a fault -- ended from outside, which on a phone is ordinary: the system ends a game in the background -- and `None` when no run came before. `ScriptErrors` counts the errors a script raised that nothing caught, and `FirstScriptError` is the first of them.
+
+`Report` is the path of one text file written for a run that crashed, was left unfinished or had script errors: what the game and the engine were, the crash note, and the end of that run's log. It is `nil` for a run that left nothing to report. `Dump` is the crash dump beside it, on a system that writes one.
+
+Ask at the start: `if last.Outcome == Enum.RunOutcome.Crashed or last.ScriptErrors > 0 then` show the player the path and ask for the file. The engine uploads nothing and shows nothing itself. On a phone the file is in the game's own folder, `Android/data/<package>/files`, which a cable or the system's file browser opens with no permission asked. It is this machine's fact, and the same on a host and on a machine that joined.
+
 ### `IsPaused(): boolean`
 
 Whether the world is currently paused. Since `Pause` and `Resume` are both idempotent, this is how code tells the two states apart rather than by watching a call fail.

@@ -24,6 +24,7 @@ engine_add_module(core
         src/json.cpp
         src/json_writer.cpp
         src/log.cpp
+        src/run_record.cpp
         src/error.cpp
         src/easing.cpp
         src/math.cpp
@@ -55,6 +56,7 @@ engine_add_module_tests(core
         tests/json_tests.cpp
         tests/json_writer_tests.cpp
         tests/log_tests.cpp
+        tests/run_record_tests.cpp
         tests/error_tests.cpp
         tests/math_tests.cpp
         tests/phase_tests.cpp

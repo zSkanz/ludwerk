@@ -51,7 +51,11 @@ local function indexOf(haystack: { string }, needle: string): number
 end
 
 test.suite("install", function(suite)
-    suite:case("the engine search is explicit, then the build tree, then the installation", function()
+    suite:case("the engine search is explicit, then the installation's own, then the build tree", function()
+        -- **D589.** An installed CLI on a machine that also builds the engine
+        -- ran the build tree's host: another version's, and one a build was
+        -- writing. An installation runs its own; this repository has no
+        -- binary at its root, so here the build tree is what is found.
         local candidates = projectlib.engineCandidates(Roots)
 
         assert.eq(candidates[1], "/somewhere/engine-host", "an explicit ENG_HOST is not first")
@@ -59,9 +63,8 @@ test.suite("install", function(suite)
         local build =
             indexOf(candidates, "/build/win-msvc-player/engine/app/" .. projectlib.executableName("engine-host"))
         local install = indexOf(candidates, "/install/" .. projectlib.executableName("engine-host"))
-        assert.that(build > 1, "the build tree is not searched")
-        assert.that(install > build, "the installation is searched before the build tree")
-        assert.eq(install, #candidates, "the installation is not the last resort")
+        assert.eq(install, 2, "the installation's own host is not right after an explicit one")
+        assert.that(build > install, "the build tree is searched before the installation's own host")
     end)
 
     suite:case("with no environment at all, the installation is the only answer", function()
@@ -119,7 +122,8 @@ test.suite("install", function(suite)
             contains(candidates, "/build/win-msvc-editor/tools/assetc/" .. projectlib.executableName("assetc")),
             "the build tree layout for a tool is wrong"
         )
-        assert.eq(candidates[#candidates], projectlib.joined("/install/" .. projectlib.executableName("assetc")))
+        -- The installation's own first, as its host is (D589).
+        assert.eq(candidates[2], projectlib.joined("/install/" .. projectlib.executableName("assetc")))
     end)
 
     suite:case("D517: an export's asset compiler is the one in the player's own build or installation", function()

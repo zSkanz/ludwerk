@@ -325,6 +325,43 @@ private:
         bool seen = false;
     };
 
+public:
+    // **Where another player's stand-in is put, given this machine's own
+    // character** (ADR 0163, amended; D590). `known` is where its newest
+    // snapshot put that character and `expected` where the session expects
+    // it by the tick being predicted -- `known` carried on by the way it was
+    // going. It is somewhere between the two: it kept going, or it stopped.
+    //
+    // **This machine's own character is kept out of all of it.** The stand-in
+    // is put at the place between the two that is NEAREST the own character,
+    // and where the way from `known` to `expected` runs into the own
+    // character, it stops there, touching -- as that character does on the
+    // authority, where a character walks until it meets a body and the own
+    // character is one. So:
+    //
+    // - one coming at the player is met as far forward as it may be, and never
+    //   inside the player (it was put there, a body inside a character pushes
+    //   it out, and a friend walking into a standing player pushed that
+    //   player's own hero away on that player's screen -- half a metre from
+    //   where the host had it, corrected and pushed again every other frame);
+    // - one going away is met where it was last known to be, not where it is
+    //   guessed to have got to (a player following a friend who stopped walked
+    //   on through him, as far as the guess had run, and was pulled back out);
+    // - one standing still is where it is, and does not give way.
+    //
+    // The price is the cheap kind of wrong: a player close behind a running
+    // friend is stopped a step short of where the host lets him go, and
+    // carried forward to it -- the way he was going -- and never taken back
+    // out of somebody.
+    //
+    // Across the ground only, as the carrying is. `overlapping` says whether
+    // the two capsules share any height; when they do not -- one is above the
+    // other -- nothing is in the way, and it is where it is expected.
+    // `reach` is the distance between two axes that touch.
+    [[nodiscard]] static core::DVec3 standInPlace(const core::DVec3& known, const core::DVec3& expected,
+                                                  const core::DVec3& own, f64 reach, bool overlapping) noexcept;
+
+private:
     struct CharacterRecord
     {
         physics::CharacterHandle handle;

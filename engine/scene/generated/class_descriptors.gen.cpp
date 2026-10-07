@@ -6133,7 +6133,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 12> runServiceMethods;
+    static std::array<MethodDesc, 13> runServiceMethods;
     runServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("Pause"),
@@ -6188,6 +6188,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::ReadParallel,
             .doc = "Whether the world is currently paused. Since `Pause` and `Resume` are both idempotent, this is how code tells the two states apart rather than by watching a call fail.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetLastRun"),
+            .yields = false,
+            .threadSafety = ThreadSafety::ReadParallel,
+            .doc = "**How the run before this one ended on this machine, and where its report is** (ADR 0187). `Outcome` is `Clean` when it was asked to end and did, `Crashed` when it died of a fault, `Unfinished` when it ended without saying so and without a fault -- ended from outside, which on a phone is ordinary: the system ends a game in the background -- and `None` when no run came before. `ScriptErrors` counts the errors a script raised that nothing caught, and `FirstScriptError` is the first of them.\012\012`Report` is the path of one text file written for a run that crashed, was left unfinished or had script errors: what the game and the engine were, the crash note, and the end of that run's log. It is `nil` for a run that left nothing to report. `Dump` is the crash dump beside it, on a system that writes one.\012\012Ask at the start: `if last.Outcome == Enum.RunOutcome.Crashed or last.ScriptErrors > 0 then` show the player the path and ask for the file. The engine uploads nothing and shows nothing itself. On a phone the file is in the game's own folder, `Android/data/<package>/files`, which a cable or the system's file browser opens with no permission asked. It is this machine's fact, and the same on a host and on a machine that joined.",
         },
         MethodDesc{
             .name = atoms.intern("SaveSimulation"),
@@ -9086,6 +9092,36 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     swipeDirectionDesc.docKey = {};
     swipeDirectionDesc.items = swipeDirectionItems;
     enums.registerEnum(swipeDirectionDesc);
+
+    // --- RunOutcome ---
+    static std::array<EnumItemDesc, 4> runOutcomeItems;
+    runOutcomeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("None"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Clean"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Crashed"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Unfinished"),
+            .value = 3,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor runOutcomeDesc;
+    runOutcomeDesc.name = atoms.intern("RunOutcome");
+    runOutcomeDesc.docKey = {};
+    runOutcomeDesc.items = runOutcomeItems;
+    enums.registerEnum(runOutcomeDesc);
 
     // --- Platform ---
     static std::array<EnumItemDesc, 5> platformItems;

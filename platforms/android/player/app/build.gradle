@@ -115,6 +115,10 @@ android {
     }
 
     sourceSets.main {
+        // The game's own manifest, when the export staged one: this
+        // template's with only the permissions the game uses.
+        if (new File("${stageDir}/AndroidManifest.xml").exists())
+            manifest.srcFile "${stageDir}/AndroidManifest.xml"
         java.srcDirs = ['src/main/java', sdlJavaDir]
         jniLibs.srcDirs = ["${stageDir}/jniLibs"]
         assets.srcDirs = ["${stageDir}/assets"]

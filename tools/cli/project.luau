@@ -201,14 +201,21 @@ local function hostCandidates(buildPath: string, installPath: string, presets: {
         table.insert(candidates, roots.explicit)
     end
 
+    -- **An installation's own binary before a build tree's** (D589). It was
+    -- the other way round, and on a machine that also builds the engine
+    -- (`ENG_BUILD_ROOT` set) an installed `ludwerk` ran whatever that tree
+    -- held -- another version's host, checking a project with the wrong
+    -- engine, and one a build was in the middle of writing ("resource busy
+    -- or locked"). In this repository there is no binary at the root, so the
+    -- build tree is still what is found here.
+    if roots.install ~= nil and roots.install ~= "" then
+        table.insert(candidates, joined(roots.install, installPath))
+    end
+
     if roots.buildRoot ~= nil and roots.buildRoot ~= "" then
         for _, preset in presets do
             table.insert(candidates, joined(roots.buildRoot, preset, buildPath))
         end
-    end
-
-    if roots.install ~= nil and roots.install ~= "" then
-        table.insert(candidates, joined(roots.install, installPath))
     end
 
     return candidates
