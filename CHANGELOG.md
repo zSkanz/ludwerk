@@ -1475,6 +1475,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **The engine's mud, grass and rock no longer show their repeat as a grid**
+  (D592). Each carried a feature a quarter of its tile across -- mud's were
+  puddles, nearly mirrors -- which a field of it showed once a tile, most of
+  all on a phone, where a layer is read once and nothing hides a repeat. All
+  three are finer now, and a puddle is wet rather than a mirror. **A terrain
+  that uses them looks a little different**: the same colours, smaller
+  features.
 - **Two players' characters that block each other no longer rubber-band on a
   machine that joined** (D590, ADR 0163 amended). A friend walking into a
   standing player pushed that player's own character away on his screen and

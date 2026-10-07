@@ -1,8 +1,12 @@
 // A terrain's layers are materials (ADR 0113): the engine's eight, built in,
 // and the mesher handing the shader each triangle's layers.
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <doctest/doctest.h>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "engine/asset/material.h"
@@ -11,6 +15,8 @@
 
 using namespace engine;
 using namespace engine::asset;
+using core::f64;
+using core::u32;
 
 TEST_CASE("a new terrain's layers are the engine's eight, in the old palette's order")
 {
@@ -108,4 +114,78 @@ TEST_CASE("every vertex carries its triangle's three layers and its corner")
     }
     CHECK(sawPlain);
     CHECK(sawSeam);
+}
+
+TEST_CASE("D592: no built-in ground carries a feature a field of it would show as a grid")
+{
+    // **The owner, of a swamp**: "a square inside it that keeps reflecting, and
+    // it follows a grid." A tile is repeated across a field, and whatever is
+    // large in it is seen once a tile. Mud's body was noise four cells across
+    // and its puddles the two or three lowest of them, each nearly a mirror;
+    // grass's dry patches and rock's body were the same four cells.
+    //
+    // Asked of the maps themselves: cut a tile into eight by eight blocks, and
+    // of all the variation in it, how much is BETWEEN the blocks -- what is
+    // left when everything finer than an eighth of the tile is averaged away.
+    // That is what a field shows from above. Mud was 0.67 in colour and 0.54
+    // in roughness, grass 0.55, rock 0.67; a ground with no such feature is
+    // under 0.2. A map that barely varies at all (snow's colour) shows nothing
+    // either way and is not asked.
+    constexpr u32 Blocks = 8;
+    const auto between = [](const Image& image, int channels, int first, f64& contrast) {
+        const u32 size = image.width;
+        const u32 block = size / Blocks;
+        std::vector<f64> means(static_cast<std::size_t>(Blocks) * Blocks, 0.0);
+        f64 sum = 0.0;
+        f64 squares = 0.0;
+        for (u32 y = 0; y < size; ++y) {
+            for (u32 x = 0; x < size; ++x) {
+                f64 value = 0.0;
+                for (int channel = 0; channel < channels; ++channel) {
+                    const std::size_t at =
+                        (static_cast<std::size_t>(y) * size + x) * 4u + static_cast<std::size_t>(first + channel);
+                    value += static_cast<f64>(std::to_integer<u32>(image.pixels[at])) / 255.0;
+                }
+                value /= static_cast<f64>(channels);
+                sum += value;
+                squares += value * value;
+                means[static_cast<std::size_t>(y / block) * Blocks + x / block] += value;
+            }
+        }
+        const f64 count = static_cast<f64>(size) * static_cast<f64>(size);
+        const f64 mean = sum / count;
+        const f64 variance = squares / count - mean * mean;
+        contrast = std::sqrt(std::max(variance, 0.0));
+        f64 across = 0.0;
+        for (f64& each : means) {
+            each /= static_cast<f64>(block) * static_cast<f64>(block);
+            across += (each - mean) * (each - mean);
+        }
+        across /= static_cast<f64>(means.size());
+        return variance > 0.0 ? across / variance : 0.0;
+    };
+
+    for (const char* name : {"grass", "sand", "rock", "snow", "mud", "sandstone", "basalt", "ice"}) {
+        CAPTURE(name);
+        const std::optional<Image> color = engineTexture(std::string("engine://terrain/") + name + "/color");
+        const std::optional<Image> surface = engineTexture(std::string("engine://terrain/") + name + "/surface");
+        REQUIRE(color.has_value());
+        REQUIRE(surface.has_value());
+        f64 contrast = 0.0;
+        const f64 colour = between(*color, 3, 0, contrast);
+        if (contrast >= 0.01)
+            CHECK(colour < 0.25);
+        // Roughness is the surface map's green.
+        const f64 roughness = between(*surface, 1, 1, contrast);
+        if (contrast >= 0.01)
+            CHECK(roughness < 0.25);
+    }
+
+    // And a puddle is wet, not a mirror: the least roughness mud has.
+    const std::optional<Image> mud = engineTexture("engine://terrain/mud/surface");
+    REQUIRE(mud.has_value());
+    u32 least = 255;
+    for (std::size_t at = 1; at < mud->pixels.size(); at += 4)
+        least = std::min(least, std::to_integer<u32>(mud->pixels[at]));
+    CHECK(least >= 80);
 }

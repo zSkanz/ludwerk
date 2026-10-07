@@ -164,19 +164,32 @@ struct Sample
     f32 accent = 0.0f;
 };
 
+// **Nothing in a tile is wider than a sixteenth of it** (2026-10-06). A tile
+// is repeated across a field, and whatever is large in it is seen once a tile,
+// in a grid: the owner, of a swamp, "a square inside it that keeps reflecting,
+// and it follows a grid" -- mud's body was noise four cells across, its puddles
+// were the two or three lowest of those cells, and each was a mirror. Grass's
+// dry patches and rock's body were the same four cells. The full ground can
+// hide a repeat (hexagonal tiling, a second read at another scale); the lean
+// and the fast ground -- a phone's -- read a layer once, and there the tile is
+// what the field looks like. So the tile carries no feature a field would
+// show: the coarsest lattice is `Coarsest` cells across, and what was large
+// is many and small.
+constexpr u32 Coarsest = 16;
+
 [[nodiscard]] Sample sampleLayer(const Layer& layer, f32 u, f32 v) noexcept
 {
     Sample out;
     out.roughness = layer.roughness;
     switch (layer.pattern) {
     case Pattern::Grass: {
-        const f32 clumps = fbm(u, v, 8, 4, 11u);
+        const f32 clumps = fbm(u, v, Coarsest, 4, 11u);
         // Blades: fine noise stretched along one axis, so the surface reads as
         // grain rather than as mottle.
         const f32 blades = valueNoise(u * 4.0f, v, 128, 12u) * 0.5f + valueNoise(u, v * 4.0f, 128, 13u) * 0.5f;
         out.height = saturate(clumps * 0.55f + blades * 0.45f);
         out.tone = saturate(0.2f + clumps * 0.5f + blades * 0.4f);
-        out.accent = saturate((fbm(u, v, 4, 3, 14u) - 0.58f) * 3.0f);
+        out.accent = saturate((fbm(u, v, Coarsest, 3, 14u) - 0.58f) * 3.0f);
         break;
     }
     case Pattern::Sand: {
@@ -188,8 +201,8 @@ struct Sample
         break;
     }
     case Pattern::Rock: {
-        const f32 body = fbm(u, v, 4, 6, 31u);
-        const f32 ridged = 1.0f - std::abs(fbm(u, v, 8, 4, 32u) * 2.0f - 1.0f);
+        const f32 body = fbm(u, v, Coarsest, 5, 31u);
+        const f32 ridged = 1.0f - std::abs(fbm(u, v, Coarsest, 4, 32u) * 2.0f - 1.0f);
         const f32 cracks = saturate((ridged - 0.88f) * 5.0f);
         out.height = saturate(body * 0.8f + 0.2f - cracks * 0.3f);
         out.tone = saturate(body * 0.9f + 0.05f - cracks * 0.3f);
@@ -205,12 +218,16 @@ struct Sample
         break;
     }
     case Pattern::Mud: {
-        const f32 body = fbm(u, v, 4, 5, 51u);
-        const f32 puddle = saturate((0.38f - body) * 8.0f);
+        const f32 body = fbm(u, v, Coarsest, 4, 51u);
+        // Where it pools: a lattice of its own, twice as fine, so the wet is
+        // a scatter of hand-sized hollows and not the tile's two lowest places.
+        const f32 hollows = fbm(u, v, Coarsest * 2u, 3, 52u);
+        const f32 puddle = saturate((0.36f - hollows) * 9.0f);
         out.height = saturate(body * (1.0f - puddle) + 0.3f * puddle);
-        out.tone = saturate(body * 0.9f + 0.1f - puddle * 0.35f);
-        // Wet where it pools, and a puddle is nearly a mirror.
-        out.roughness = layer.roughness * (1.0f - puddle) + 0.18f * puddle;
+        out.tone = saturate(body * 0.9f + 0.1f - puddle * 0.22f);
+        // Wet where it pools: shining, and no longer a mirror -- a mirror a
+        // tile across the ground is what was seen as a grid.
+        out.roughness = layer.roughness * (1.0f - puddle) + 0.34f * puddle;
         break;
     }
     case Pattern::Sandstone: {
