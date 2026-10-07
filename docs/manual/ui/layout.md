@@ -89,6 +89,13 @@ holding: on the way **down** it is subtracted, shrinking the rectangle offered
 to children; on the way **up**, when `AutomaticSize` is measuring, it is added,
 because padding is around the content.
 
+**An element's own text is content too.** A `UIPadding` in a `TextButton`
+insets what the button says, as it insets what the button holds: the words are
+aligned, wrapped, cut (`TextOverflow`) and scaled (`TextScaled`) inside the
+padding, and a `TextInput`'s caret, selection and placeholder with them. So a
+button with its label on the left is one `UIPadding` away from a margin, with
+no frame put in between for it.
+
 ## UIListLayout
 
 A modifier that stacks its parent's `UIObject` children in a line.

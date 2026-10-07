@@ -478,6 +478,16 @@ struct LayoutStats
 // `windowSize` is the drawable size in pixels. A change to it dirties every
 // tree, because a scale is a fraction of something that just changed.
 void layout(scene::World& world, core::InstanceId uiService, core::Vec2 windowSize);
+
+// **Where an element's own text goes**: `box`, its rectangle, less its
+// `UIPadding` -- the first among its children, the one its children are laid
+// out by (G21). A `UIPadding` in a button moved what the button holds and not
+// what the button says: a label aligned to the left sat against the edge the
+// padding was there to keep it from, and a field's caret and placeholder with
+// it. One rectangle, asked by what draws the text and by what puts a caret in
+// it, so the two cannot part. Never inside out: padding wider than the box
+// leaves a box of no width where the padding meets.
+[[nodiscard]] core::Rect textRectOf(const scene::World& world, core::InstanceId element, core::Rect box) noexcept;
 // How many pixels one unit of a `ScreenGui` is in a window this size: the
 // window's height over its `ReferenceHeight`, or one where it has none.
 [[nodiscard]] f32 screenScale(const scene::ScreenGuiComponent& screen, core::Vec2 windowSize) noexcept;

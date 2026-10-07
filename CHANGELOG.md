@@ -1481,6 +1481,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **`UIPadding` insets an element's own text** (D594). The words of a
+  `TextLabel` or `TextButton`, and a `TextInput`'s text, caret and
+  placeholder, are placed, wrapped, cut and scaled inside the element's
+  padding, as its children are. They were drawn in the whole rectangle, so a
+  label aligned to the left sat against the edge. **If you padded a text
+  element and worked round this with a frame inside it, the frame is no
+  longer needed; if you relied on the words reaching the edge, they move in.**
 - **A game on a phone whose shared storage has no file locks writes its log**
   (D593). On such a phone the log was nine empty files: the lock that tells a
   second run from the first could not be taken, and that was read as "another

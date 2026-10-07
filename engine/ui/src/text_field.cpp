@@ -21,7 +21,9 @@ FieldView fieldView(const scene::World& world, core::InstanceId id)
     if (self == nullptr || label == nullptr || field == nullptr)
         return view;
 
-    view.box = core::Rect{self->absolutePosition, self->absolutePosition + self->absoluteSize};
+    // Less the field's own padding (G21): where its text, its caret and its
+    // placeholder are, and where a press is turned into a place in the text.
+    view.box = textRectOf(world, id, core::Rect{self->absolutePosition, self->absolutePosition + self->absoluteSize});
     view.font = label->font;
     view.size = label->textSize * self->unitScale;
     view.lineHeight = textLineHeight(view.font, view.size);

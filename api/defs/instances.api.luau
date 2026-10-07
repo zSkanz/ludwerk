@@ -5954,7 +5954,9 @@ local Classes: { Schema.Class } = {
         Parents = InAUi,
         Storage = "UIPadding",
         Doc = "Insets its parent's content on each side (§2.2). Like `UIListLayout`, a modifier parented "
-            .. "beside what it affects.",
+            .. "beside what it affects. The parent's content is its children **and its own text**: the words "
+            .. "of a `TextLabel` or a `TextButton`, and a `TextInput`'s text, caret and placeholder, are "
+            .. "placed, wrapped, cut and scaled inside the padding.",
         Properties = {
             {
                 Name = "PaddingTop",

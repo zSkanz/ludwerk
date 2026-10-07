@@ -2224,7 +2224,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     uIPaddingDesc.super = instanceClass;
     uIPaddingDesc.flags = scene::ClassFlags::None;
     uIPaddingDesc.defaultName = atoms.intern("UIPadding");
-    uIPaddingDesc.doc = "Insets its parent's content on each side (\302\247" "2.2). Like `UIListLayout`, a modifier parented beside what it affects.";
+    uIPaddingDesc.doc = "Insets its parent's content on each side (\302\247" "2.2). Like `UIListLayout`, a modifier parented beside what it affects. The parent's content is its children **and its own text**: the words of a `TextLabel` or a `TextButton`, and a `TextInput`'s text, caret and placeholder, are placed, wrapped, cut and scaled inside the padding.";
     static constexpr std::array<std::string_view, 6> uIPaddingParents{{"ScreenGui", "BillboardGui", "SurfaceGui", "UIObject", "ReplicatedStorage", "ServerStorage"}};
     uIPaddingDesc.parents = uIPaddingParents;
     uIPaddingDesc.properties = uIPaddingProperties;

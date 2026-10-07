@@ -5,7 +5,7 @@
 - Inherits [`Instance`](instance.md)
 - Created with `Instance.new("UIPadding")`
 
-Insets its parent's content on each side (§2.2). Like `UIListLayout`, a modifier parented beside what it affects.
+Insets its parent's content on each side (§2.2). Like `UIListLayout`, a modifier parented beside what it affects. The parent's content is its children **and its own text**: the words of a `TextLabel` or a `TextButton`, and a `TextInput`'s text, caret and placeholder, are placed, wrapped, cut and scaled inside the padding.
 
 **Members below are the ones this class DECLARES.** Everything its base
 offers is on the base's page, which is what keeps one added member on

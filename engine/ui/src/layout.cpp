@@ -315,7 +315,13 @@ struct Pass
     // automatic size is, and what a `ScrollFrame`'s automatic canvas is.
     [[nodiscard]] Vec2 contentExtent(core::InstanceId id, const Modifiers& mods, Vec2 fixed, bool autoX, bool autoY)
     {
-        Vec2 content = textExtent(world, id, fixed.x);
+        // Its words wrap in the room its own padding leaves (G21): where they
+        // are drawn, so what is measured is what is drawn.
+        f32 wrapRoom = fixed.x;
+        if (mods.padding != nullptr)
+            wrapRoom = std::fmax(0.0f, fixed.x - resolve(mods.padding->paddingLeft, fixed.x) -
+                                           resolve(mods.padding->paddingRight, fixed.x));
+        Vec2 content = textExtent(world, id, wrapRoom);
 
         std::vector<core::InstanceId> children;
         collectChildren(world, id, mods.sortOrder(), children);
@@ -898,6 +904,22 @@ void place(scene::World& world, Pass& pass, core::InstanceId id, Vec2 parentOrig
 f32 screenScale(const scene::ScreenGuiComponent& screen, core::Vec2 windowSize) noexcept
 {
     return screen.referenceHeight > 0.0f && windowSize.y > 0.0f ? windowSize.y / screen.referenceHeight : 1.0f;
+}
+
+core::Rect textRectOf(const scene::World& world, core::InstanceId element, core::Rect box) noexcept
+{
+    const scene::UIPaddingComponent* padding = nullptr;
+    for (core::InstanceId child = world.firstChild(element); child.valid() && padding == nullptr;
+         child = world.nextSibling(child))
+        padding = world.uiPaddings().find(child);
+    if (padding == nullptr)
+        return box;
+    Rect inner = contentRect(box.min, Vec2{box.max.x - box.min.x, box.max.y - box.min.y}, padding);
+    if (inner.max.x < inner.min.x)
+        inner.min.x = inner.max.x = (inner.min.x + inner.max.x) * 0.5f;
+    if (inner.max.y < inner.min.y)
+        inner.min.y = inner.max.y = (inner.min.y + inner.max.y) * 0.5f;
+    return inner;
 }
 
 void layout(scene::World& world, core::InstanceId uiService, core::Vec2 windowSize)

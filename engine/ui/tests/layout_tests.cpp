@@ -1400,3 +1400,71 @@ TEST_CASE("D547: a list that scrolls down has no bar across its bottom, at any w
     ui::buildDrawList(*fixture.world, fixture.service, wide);
     CHECK(wide.quads.size() == 2);
 }
+
+TEST_CASE("G21: an element's own text is inside its own UIPadding")
+{
+    // **Found making a game's menus**: a `UIPadding` in a button moved what the
+    // button held and not what the button said -- a label aligned to the left
+    // sat against the edge the padding was there to keep it from.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId button = fixture.child("TextButton", screen);
+    fixture.object(button).size = core::UDim2{core::UDim{0.0f, 300.0f}, core::UDim{0.0f, 60.0f}};
+    scene::TextLabelComponent* label = fixture.world->textLabels().find(button);
+    REQUIRE(label != nullptr);
+    label->text = "Play";
+    label->horizontalAlignment = 0; // Left
+    label->verticalAlignment = 0;   // Top
+
+    // The leftmost and topmost edge of the words: every quad after the box.
+    const auto wordsAt = [&]() {
+        ui::DrawList list;
+        ui::buildDrawList(*fixture.world, fixture.service, list);
+        REQUIRE(list.quads.size() > 1);
+        core::Vec2 least{1.0e9f, 1.0e9f};
+        for (std::size_t index = 1; index < list.quads.size(); ++index) {
+            least.x = std::fmin(least.x, list.quads[index].min.x);
+            least.y = std::fmin(least.y, list.quads[index].min.y);
+        }
+        return least;
+    };
+    fixture.run();
+    const core::Vec2 bare = wordsAt();
+
+    const InstanceId padding = fixture.child("UIPadding", button);
+    scene::UIPaddingComponent* pad = fixture.world->uiPaddings().find(padding);
+    pad->paddingLeft = core::UDim{0.0f, 24.0f};
+    pad->paddingTop = core::UDim{0.0f, 9.0f};
+    fixture.run();
+    const core::Vec2 padded = wordsAt();
+    CHECK(static_cast<double>(padded.x - bare.x) == doctest::Approx(24.0));
+    CHECK(static_cast<double>(padded.y - bare.y) == doctest::Approx(9.0));
+
+    // Aligned to the right, it is the right padding that holds them off.
+    label->horizontalAlignment = 2; // Right
+    pad->paddingRight = core::UDim{0.0f, 30.0f};
+    const auto wordsEnd = [&]() {
+        ui::DrawList list;
+        ui::buildDrawList(*fixture.world, fixture.service, list);
+        core::f32 most = -1.0e9f;
+        for (std::size_t index = 1; index < list.quads.size(); ++index)
+            most = std::fmax(most, list.quads[index].max.x);
+        return most;
+    };
+    fixture.run();
+    CHECK(static_cast<double>(wordsEnd()) <= 270.0 + 0.01);
+    CHECK(static_cast<double>(wordsEnd()) > 250.0);
+
+    // And the rectangle itself, which a field's caret is placed by.
+    const core::Rect inner =
+        ui::textRectOf(*fixture.world, button, core::Rect{core::Vec2{0.0f, 0.0f}, core::Vec2{300.0f, 60.0f}});
+    CHECK(static_cast<double>(inner.min.x) == doctest::Approx(24.0));
+    CHECK(static_cast<double>(inner.min.y) == doctest::Approx(9.0));
+    CHECK(static_cast<double>(inner.max.x) == doctest::Approx(270.0));
+    CHECK(static_cast<double>(inner.max.y) == doctest::Approx(60.0));
+    // Padding wider than the box leaves no room, not a box inside out.
+    pad->paddingLeft = core::UDim{0.0f, 400.0f};
+    const core::Rect none =
+        ui::textRectOf(*fixture.world, button, core::Rect{core::Vec2{0.0f, 0.0f}, core::Vec2{300.0f, 60.0f}});
+    CHECK(none.min.x <= none.max.x);
+}
