@@ -108,6 +108,7 @@ icon_foreground = "branding/foreground.png"  # optional: a foreground drawn for 
 release = false                   # false: the debug key; true: the keystore below
 keystore = "keys/release.keystore"
 key_alias = "skyhopper"
+bundle = true                     # an App Bundle beside the APK; default: when release is true
 internet = true                   # optional: see "What a store asks of an Android package"
 vibrate = false                   # optional, the same
 ```
@@ -225,8 +226,29 @@ bars hidden until swiped for, and it draws under the camera cutout.
 reviewer on a phone with a cutout will look. The system's back button reaches
 your game as the `Back` key and does not leave it unless you say so.
 
-**Not yet:** a store requires a new app as an App Bundle (`.aab`), and the
-export makes an APK. A bundle is the next thing this page will gain.
+**The file a store takes is the bundle.** A store requires a new app as an
+App Bundle, and a release export makes one beside the APK:
+
+```
+dist/android/
+    SkyHopper-1.2.0.apk    what you hand a tester, or install with a cable
+    SkyHopper-1.2.0.aab    what you upload
+```
+
+Both hold the same engine and the same game, signed with the same key. In the
+bundle the engine is the base and **the game is an install-time asset pack**:
+a store delivers it with the app, at install, and the game reads it as its own
+files -- nothing in your game changes. It is a pack always, small game or
+large, because a store limits how large a bundle's base may be and the game
+is nearly all of an app's bytes. `bundle = true` makes one for a debug export
+too; `bundle = false` leaves it out of a release.
+
+What the export checks of the bundle is what it checks of the APK: that it is
+signed and that every library in it loads where a page is 16 KB. **What it
+cannot check is the installing**: a phone does not install a bundle, a store
+turns it into the APKs it serves. Upload it to your store's internal testing
+track and install from there before you publish -- that is the first time the
+bundle itself runs on a phone.
 
 ## When a player's game did not end well
 

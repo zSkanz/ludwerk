@@ -24,3 +24,14 @@ dependencyResolutionManagement {
 
 rootProject.name = 'engine-player'
 include ':app'
+
+// **A bundle carries the game in a pack of its own** (ADR 0104, amended): an
+// install-time asset pack, which a store delivers with the app and which the
+// app reads as its own assets. `ludwerk build` stages the pack's module --
+// its two-line build file and the game under `src/main/assets/` -- and names
+// the folder here; an APK has none, and the game is in the app itself.
+def packDir = startParameter.projectProperties.get('engine.packDir')
+if (packDir != null) {
+    include ':game'
+    project(':game').projectDir = new File(packDir)
+}

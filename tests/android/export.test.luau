@@ -254,6 +254,59 @@ test.suite("android export", function(suite)
         end
         assert.eq(android.checkPages(tools :: android.Tools, apk), nil)
 
+        -- **And the bundle a store takes, beside it** (ADR 0104, amended): a
+        -- release makes one. The engine and its content in the base, the
+        -- game in an install-time pack of its own, the list the host reads
+        -- in the base and naming the game where the pack puts it.
+        local bundle = projectlib.joined(project, "dist", "android", "androidtest-0.1.0.aab")
+        assert.that(fs.exists(bundle), `no bundle at {bundle}`)
+        local jarTool = projectlib.joined(
+            tools.jdk,
+            "bin",
+            if fs.exists(projectlib.joined(tools.jdk, "bin", "jar.exe")) then "jar.exe" else "jar"
+        )
+        local inside = process.run({ jarTool, "tf", bundle })
+        assert.that(inside.ok, `the bundle could not be listed:\n{inside.stdout}{inside.stderr}`)
+        for _, entry in
+            {
+                "base/lib/arm64-v8a/libmain.so",
+                "base/assets/payload.txt",
+                "base/manifest/AndroidManifest.xml",
+                "game/assets/game/.engine/content.lpack",
+                "game/manifest/AndroidManifest.xml",
+            }
+        do
+            assert.that(string.find(inside.stdout, entry, 1, true) ~= nil, `the bundle has no {entry}`)
+        end
+        assert.that(string.find(inside.stdout, "base/assets/content/", 1, true) ~= nil, "no engine content in the base")
+        assert.that(
+            string.find(inside.stdout, "base/assets/game/", 1, true) == nil,
+            "the game is in the base as well as in its pack"
+        )
+        assert.eq(android.verifyBundle(tools :: android.Tools, bundle), nil)
+        assert.eq(android.checkPages(tools :: android.Tools, bundle), nil)
+        -- And the stage is as it was: the game back in the app's assets.
+        assert.that(
+            fs.exists(
+                projectlib.joined(
+                    project,
+                    ".engine",
+                    "export",
+                    "android",
+                    "stage",
+                    "assets",
+                    "game",
+                    ".engine",
+                    "content.lpack"
+                )
+            ),
+            "the game was not put back in the stage"
+        )
+        assert.that(
+            not fs.exists(projectlib.joined(project, ".engine", "export", "android", "stage", "pack")),
+            "the pack's folder was left in the stage"
+        )
+
         -- The certificate is the project's: its common name, not the debug key's.
         local jar = projectlib.joined(tools.sdk, "build-tools", "35.0.0", "lib", "apksigner.jar")
         local checked = process.run({

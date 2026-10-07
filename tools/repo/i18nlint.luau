@@ -753,6 +753,8 @@ local CliDataLiterals: { [string]: boolean } = {
     -- A line of the Android manifest an export writes, its permission's name
     -- taken out as this lint reads an interpolation.
     ['    <uses-permission android:name="" />'] = true,
+    -- What the JDK's `jarsigner` prints of a signed jar, which is read.
+    ["jar verified"] = true,
     -- Luau it writes for the analysis: type definitions.
     ["declare Instance: {"] = true,
     ["type InstanceClasses = {"] = true,

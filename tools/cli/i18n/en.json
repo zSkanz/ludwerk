@@ -109,6 +109,8 @@
   "cli.build.err.android_gradle": "Gradle could not assemble the APK. Its output is above.",
   "cli.build.err.android_no_apksigner": "The SDK's apksigner is not at {path}. Install build-tools 35.0.0.",
   "cli.build.err.android_unsigned": "{path} did not verify as signed.",
+  "cli.build.done_android_bundle": "Built {path}: the App Bundle a store takes. The game is in an install-time asset pack in it.",
+  "cli.build.err.android_bundle_value": "[export.android] bundle must be true or false. Leave it out and a release makes a bundle and a debug build does not.",
   "cli.build.err.android_permission_value": "[export.android] {name} must be true or false. Leave it out and it is declared when the project's scripts use what needs it.",
   "cli.build.err.android_manifest": "The Android template's manifest at {path} is missing, or has lost the marks its permissions are written between.",
   "cli.build.warn.android_no_internet": "[export.android] internet = false, and the project's scripts use the network: on a phone every socket will be refused, so nothing will join, host or fetch.",

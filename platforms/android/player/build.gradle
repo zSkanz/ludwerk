@@ -3,6 +3,8 @@
 
 plugins {
     id 'com.android.application' version '8.7.3' apply false
+    // The same plugin's other half, at the same pin: a bundle's asset pack.
+    id 'com.android.asset-pack' version '8.7.3' apply false
 }
 
 def buildRoot = project.findProperty('engine.buildRoot') ?: System.getenv('ENG_BUILD_ROOT')

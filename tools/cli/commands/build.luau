@@ -511,6 +511,7 @@ local function run(options: Options): number
         end
 
         local apk = ""
+        local bundle = ""
         local assembled = progress.step(reporter, "assemble", function(): string?
             android.writePayload(stage)
             -- Only the permissions the game uses (see `android.permissions`),
@@ -569,6 +570,33 @@ local function run(options: Options): number
             local version = if identity.version ~= nil then `-{identity.version}` else ""
             apk = projectlib.joined(output, `{identity.fileName}{version}.apk`)
             fs.copy(built :: string, apk)
+
+            -- **And the bundle a store takes** (ADR 0104, amended): the same
+            -- library, content and game, the game in an install-time pack.
+            -- A second run of the same build, with the game moved to the
+            -- pack's module for it and moved back after.
+            if settings.bundle then
+                local pack = android.stagePack(stage)
+                local bundled, bundleError = android.assemble({
+                    tools = tools,
+                    stage = stage,
+                    settings = settings,
+                    appName = identity.displayName,
+                    versionName = identity.version or "1.0.0",
+                    resources = resources,
+                    keystore = keystore,
+                    keyAlias = keyAlias,
+                    passwords = passwords :: any,
+                    release = settings.release,
+                    packDir = pack,
+                })
+                android.unstagePack(stage)
+                if bundled == nil then
+                    return bundleError
+                end
+                bundle = projectlib.joined(output, `{identity.fileName}{version}.aab`)
+                fs.copy(bundled :: string, bundle)
+            end
             return nil
         end)
         if not assembled then
@@ -578,19 +606,31 @@ local function run(options: Options): number
             not progress.step(reporter, "sign", function(): string?
                 -- Signed, and loadable where a store requires it to be: both
                 -- are asked of the file itself, not of what built it.
-                return android.verify(tools, apk) or android.checkPages(tools, apk)
+                local wrong = android.verify(tools, apk) or android.checkPages(tools, apk)
+                if wrong == nil and bundle ~= "" then
+                    wrong = android.verifyBundle(tools, bundle) or android.checkPages(tools, bundle)
+                end
+                return wrong
             end)
         then
             -- **Not left beside the good ones** (audit T10): an APK whose
             -- signature did not verify sat in `dist/` under the game's name,
             -- the file a person picks up and installs.
-            if apk ~= "" and fs.exists(apk) then
-                fs.remove(apk)
+            for _, made in { apk, bundle } do
+                if made ~= "" and fs.exists(made) then
+                    fs.remove(made)
+                end
             end
             return 1
         end
         progress.note(reporter, tr("cli.build.done_android", { path = apk }))
-        progress.result(reporter, { target = chosen.name, folder = output, apk = apk, package = settings.package })
+        if bundle ~= "" then
+            progress.note(reporter, tr("cli.build.done_android_bundle", { path = bundle }))
+        end
+        progress.result(
+            reporter,
+            { target = chosen.name, folder = output, apk = apk, bundle = bundle, package = settings.package }
+        )
         return 0
     end
 

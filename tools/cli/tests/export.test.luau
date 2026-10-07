@@ -95,6 +95,7 @@ test.suite("export", function(suite)
                     versionCode = 1,
                     orientation = "sensorLandscape",
                     release = false,
+                    bundle = false,
                     internet = internet,
                     vibrate = vibrate,
                 }

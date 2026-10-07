@@ -320,6 +320,10 @@ export type Settings = {
     -- A debug key a team shares, in place of this machine's.
     debugKeystore: string?,
     debugKeyAlias: string?,
+    -- An App Bundle beside the APK, which a store requires of a new app:
+    -- a release makes one unless the project says not, a debug build when it
+    -- says so.
+    bundle: boolean,
     -- `internet` and `vibrate`, when the project says: otherwise each is
     -- declared when the project's code uses what needs it (`projectUses`).
     internet: boolean?,
@@ -418,6 +422,10 @@ local function settings(project: projectlib.Project): (Settings?, string?)
             return nil, tr("cli.build.err.android_permission_value", { name = name })
         end
     end
+    if section.bundle ~= nil and typeof(section.bundle) ~= "boolean" then
+        return nil, tr("cli.build.err.android_bundle_value")
+    end
+    local bundle = if typeof(section.bundle) == "boolean" then section.bundle else release
     return {
         package = package,
         versionCode = versionCode,
@@ -429,6 +437,7 @@ local function settings(project: projectlib.Project): (Settings?, string?)
         keyAlias = keyAlias,
         debugKeystore = debugKeystore,
         debugKeyAlias = debugKeyAlias,
+        bundle = bundle,
         internet = section.internet,
         vibrate = section.vibrate,
     },
@@ -708,9 +717,68 @@ export type AssembleOptions = {
     keyAlias: string,
     passwords: Passwords,
     release: boolean,
+    -- Makes the App Bundle instead of the APK: the pack's module folder, as
+    -- `stagePack` laid it.
+    packDir: string?,
 }
 
---- Gradle on the shipped template. Returns the APK it wrote.
+--- The name of the pack a bundle carries the game in, which is also its
+--- module's and its folder's in the bundle.
+local PackName = "game"
+
+--- A folder under another name, by the system's own rename -- at once, on one
+--- volume, however large the game -- or copied and removed where that is
+--- refused.
+local function moveTree(from: string, to: string)
+    local native = path.format(path.resolve(from))
+    local target = path.format(path.resolve(to))
+    local moved = if platform.win32
+        then process.run({ "cmd", "/c", "move", "/Y", native, target })
+        else process.run({ "mv", native, target })
+    if moved.ok and fs.exists(to) and not fs.exists(from) then
+        return
+    end
+    game.copyTree(from, to)
+    game.removeTree(from)
+end
+
+--- **Lays the game out as a bundle's asset pack**: the module's build file,
+--- and the game MOVED from the app's assets to the pack's. An install-time
+--- pack is delivered with the app and read as the app's own assets, so the
+--- host finds the game where `payload.txt` says it is, bundle or APK.
+---
+--- Always, and not past some size: a store limits how large the base of a
+--- bundle may be, the game is nearly all of an app's bytes, and one way of
+--- making a bundle is one way that is tested. `unstagePack` puts it back.
+local function stagePack(stageDir: string): string
+    -- **The module's folder is named as the pack**: the build finds a pack's
+    -- assets by its name, and a module in a folder of another name is packed
+    -- with its manifest and nothing else -- silently.
+    local pack = projectlib.joined(stageDir, "pack", PackName)
+    game.removeTree(projectlib.joined(stageDir, "pack"))
+    local assets = projectlib.joined(pack, "src", "main", "assets")
+    fs.createDirectory(assets, { makeParents = true })
+    fs.writeStringToFile(
+        projectlib.joined(pack, "build.gradle"),
+        "plugins {\n    id 'com.android.asset-pack'\n}\n\nassetPack {\n"
+            .. `    packName = "{PackName}"\n`
+            .. '    dynamicDelivery {\n        deliveryType = "install-time"\n    }\n}\n'
+    )
+    moveTree(projectlib.joined(stageDir, "assets", "game"), projectlib.joined(assets, "game"))
+    return pack
+end
+
+--- Puts the game back in the app's assets, where an APK takes it from and
+--- where the stage is looked at.
+local function unstagePack(stageDir: string)
+    local held = projectlib.joined(stageDir, "pack", PackName, "src", "main", "assets", "game")
+    if fs.exists(held) then
+        moveTree(held, projectlib.joined(stageDir, "assets", "game"))
+    end
+    game.removeTree(projectlib.joined(stageDir, "pack"))
+end
+
+--- Gradle on the shipped template. Returns the APK it wrote, or the bundle.
 local function assemble(options: AssembleOptions): (string?, string?)
     local tools = options.tools
     local lib = projectlib.joined(tools.gradle, "lib")
@@ -750,7 +818,9 @@ local function assemble(options: AssembleOptions): (string?, string?)
             projectlib.joined(buildRoot, "android-player-gradle", "cache"),
             "--no-daemon",
             "-q",
-            if options.release then "assembleRelease" else "assembleDebug",
+            if options.packDir ~= nil
+                then (if options.release then "bundleRelease" else "bundleDebug")
+                else (if options.release then "assembleRelease" else "assembleDebug"),
             `-Pengine.stageDir={options.stage}`,
             `-Pengine.applicationId={options.settings.package}`,
             `-Pengine.appName={options.appName}`,
@@ -766,6 +836,9 @@ local function assemble(options: AssembleOptions): (string?, string?)
     end
     if options.resources ~= nil then
         table.insert(command, `-Pengine.resDir={options.resources}`)
+    end
+    if options.packDir ~= nil then
+        table.insert(command, `-Pengine.packDir={options.packDir}`)
     end
 
     local env = table.clone(process.env)
@@ -794,11 +867,31 @@ local function assemble(options: AssembleOptions): (string?, string?)
         return nil, built.stdout .. built.stderr .. "\n" .. tr("cli.build.err.android_gradle")
     end
     local kind = if options.release then "release" else "debug"
-    local apk = projectlib.joined(buildRoot, "android-player-gradle", "app", "outputs", "apk", kind, `app-{kind}.apk`)
-    if not fs.exists(apk) then
+    local made = if options.packDir ~= nil
+        then projectlib.joined(buildRoot, "android-player-gradle", "app", "outputs", "bundle", kind, `app-{kind}.aab`)
+        else projectlib.joined(buildRoot, "android-player-gradle", "app", "outputs", "apk", kind, `app-{kind}.apk`)
+    if not fs.exists(made) then
         return nil, tr("cli.build.err.android_gradle")
     end
-    return apk, nil
+    return made, nil
+end
+
+--- A bundle's signature, by the JDK's own verifier: a bundle is a signed
+--- jar, which `apksigner` does not read.
+local function verifyBundle(tools: Tools, bundle: string): string?
+    -- In English whatever the machine speaks: an unsigned jar "verifies"
+    -- with a zero exit and a sentence, so the sentence is what is read.
+    local checked = process.run({
+        projectlib.joined(tools.jdk, "bin", exe("jarsigner")),
+        "-J-Duser.language=en",
+        "-J-Duser.country=US",
+        "-verify",
+        bundle,
+    })
+    if not checked.ok or string.find(checked.stdout, "jar verified", 1, true) == nil then
+        return checked.stdout .. checked.stderr .. "\n" .. tr("cli.build.err.android_unsigned", { path = bundle })
+    end
+    return nil
 end
 
 --- The signature, checked by the SDK's own verifier rather than trusted.
@@ -936,4 +1029,8 @@ return {
     DebugPassword = DebugPassword,
     assemble = assemble,
     verify = verify,
+    PackName = PackName,
+    stagePack = stagePack,
+    unstagePack = unstagePack,
+    verifyBundle = verifyBundle,
 }

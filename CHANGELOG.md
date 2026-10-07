@@ -255,6 +255,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   report: what the game and the engine were, the crash note, the end of that
   run's log. For a shipped game to tell its player the last session did not
   end well and which file to send. Nothing is uploaded and nothing is shown.
+- **An Android release export makes an App Bundle beside the APK** (ADR 0104,
+  amended): `dist/android/<name>-<version>.aab`, the file a store takes. The
+  engine is the bundle's base and the game an install-time asset pack in it,
+  delivered with the app. `[export.android] bundle` turns it on for a debug
+  export or off for a release. Signed with the same key and checked the same
+  way; install it from your store's testing track before you publish.
 - **`[export.android] internet` and `vibrate`**: whether the package declares
   the network permissions and the vibrator's. Left out, each is declared when
   the project's scripts use what needs it.

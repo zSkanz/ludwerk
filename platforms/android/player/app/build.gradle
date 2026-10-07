@@ -126,6 +126,10 @@ android {
             res.srcDirs += [resDir]
     }
 
+    // The game's pack, when this is a bundle (see settings.gradle).
+    if (project.findProperty('engine.packDir') != null)
+        assetPacks = [':game']
+
     androidResources {
         // AAPT drops assets whose names start with a dot, and a game's pack
         // lives in `.engine/` and its Luau configuration is `.luaurc`. This is

@@ -334,5 +334,30 @@ aligned to less. Asked of the file a store will receive rather than of the
 build that made it, so it holds for a library a later engine or a project
 adds.
 
-Still to come under this decision: an Android App Bundle beside the APK,
-which a store requires of a new app.
+**And the file a store takes is a bundle.** A release export makes an App
+Bundle beside the APK (`[export.android] bundle`, by default what `release`
+is): the same Gradle build run a second time for `bundleRelease`, with the
+game moved for it from the app's assets into a module of its own -- an
+install-time asset pack named `game` -- and moved back after. The engine's
+library, its content and the payload list are the base.
+
+- **A pack always, whatever the size.** A store limits how large a bundle's
+  base may be, the game is nearly all of an app's bytes, and one way of making
+  a bundle is one way that is tested. An install-time pack is delivered with
+  the app and read through the same asset manager, so the host extracts the
+  game by the same list from the same names: nothing in the engine knows it
+  came from a pack.
+- **The module's folder is named as the pack.** The build finds a pack's
+  assets by its name; a module in a folder of another name is packed with its
+  manifest and no assets, and says nothing. Found by listing the bundle, which
+  the gate test now does.
+- **Checked:** the bundle's entries (the library, the list and the engine's
+  content in `base/`, the game in `game/assets/game/`, none of the game in the
+  base), its signature by the JDK's `jarsigner`, and every library in it for
+  16 KB pages.
+- **Not checked, and said in the manual:** that a phone installs it. A phone
+  installs the APKs a store makes of a bundle; making them here needs the
+  store's own tool, which the engine does not carry. The first run of a
+  bundle on a phone is an upload to a store's testing track.
+- A game over what a store allows in ONE pack is not split into several;
+  that is the next step when a game is that large.
