@@ -40,7 +40,11 @@ local tr = catalog.tr
 -- would fail for something that is not ours to fix.
 -- Folder NAMES, matched whole: `dist` is what `ludwerk build` writes, and a
 -- check that walked into it analysed every exported copy of the game (D211).
-local DefaultIgnore = { "third_party", ".lute", "luau_packages", ".engine", "dist" }
+-- `.local` is a machine's own folder beside a project -- captures, copies of
+-- another project, whatever somebody keeps there -- and never the project's:
+-- one appeared at this repository's root holding another game's sources, and
+-- the check walked into all of it.
+local DefaultIgnore = { "third_party", ".lute", "luau_packages", ".engine", "dist", ".local" }
 
 --- `process.args` is not what its name suggests: it carries the script path as
 --- its first entry and keeps the `--` separator that was meant to end Lute's

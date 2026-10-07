@@ -77,6 +77,7 @@ test-report.json
 # and, on a fault, a minidump. They are evidence a person sends, never something
 # a repository keeps.
 engine.log
+/.local/
 engine*.run
 engine*.last-run.txt
 engine-crash-*.dmp

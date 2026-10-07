@@ -4,6 +4,7 @@
 #ifdef _WIN32
 #include <share.h>
 #else
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
@@ -95,6 +96,26 @@ void resetLogSink()
     sinkSlot() = nullptr;
 }
 
+#ifndef _WIN32
+namespace {
+// Whether another writer HOLDS the file -- as opposed to there being no lock
+// to take. **A file system without advisory locks answers every `flock` with
+// an error, and it is not "would block"** (D593): a phone's shared storage,
+// where a game's log has been since D569, is one on the phones that serve it
+// through FUSE. Taken for "held", every one of the nine names a log may have
+// was somebody else's, and the game ran with no log at all -- nine empty
+// files in its folder, and nothing for a tester to send. Where there are no
+// locks there is no second writer to tell from the first, and the log is
+// written.
+[[nodiscard]] bool lockedByAnother(int descriptor) noexcept
+{
+    if (::flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+        return false;
+    return errno == EWOULDBLOCK || errno == EAGAIN;
+}
+} // namespace
+#endif
+
 bool openLogFile(const std::filesystem::path& path)
 {
     closeLogFile();
@@ -109,7 +130,7 @@ bool openLogFile(const std::filesystem::path& path)
 #else
     std::FILE* file = std::fopen(path.c_str(), "wb");
     // The same rule as Windows' share mode, by an advisory lock: one writer.
-    if (file != nullptr && ::flock(::fileno(file), LOCK_EX | LOCK_NB) != 0) {
+    if (file != nullptr && lockedByAnother(::fileno(file))) {
         std::fclose(file);
         file = nullptr;
     }
@@ -138,7 +159,7 @@ namespace {
     const int fd = ::open(path.c_str(), O_WRONLY | O_APPEND);
     if (fd < 0)
         return true;
-    const bool held = ::flock(fd, LOCK_EX | LOCK_NB) != 0;
+    const bool held = lockedByAnother(fd);
     ::close(fd);
     return held;
 #endif

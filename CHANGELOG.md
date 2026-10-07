@@ -1481,6 +1481,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A game on a phone whose shared storage has no file locks writes its log**
+  (D593). On such a phone the log was nine empty files: the lock that tells a
+  second run from the first could not be taken, and that was read as "another
+  run has it". With no log there was nothing for a tester to send and no
+  record for `RunService:GetLastRun` to read.
 - **The engine's mud, grass and rock no longer show their repeat as a grid**
   (D592). Each carried a feature a quarter of its tile across -- mud's were
   puddles, nearly mirrors -- which a field of it showed once a tile, most of
