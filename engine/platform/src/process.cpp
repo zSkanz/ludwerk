@@ -4,6 +4,7 @@
 #include <SDL3/SDL_process.h>
 #include <SDL3/SDL_properties.h>
 #include <SDL3/SDL_stdinc.h>
+#include <cstdlib>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -56,6 +57,47 @@ unsigned long processId() noexcept
     return static_cast<unsigned long>(GetCurrentProcessId());
 #else
     return static_cast<unsigned long>(getpid());
+#endif
+}
+
+unsigned long windowsBuild() noexcept
+{
+#if defined(_WIN32)
+    // `RtlGetVersion`, from the system's own library: `GetVersionEx` answers
+    // "Windows 8" to any program whose manifest does not name a later one.
+    struct Version
+    {
+        unsigned long size;
+        unsigned long major;
+        unsigned long minor;
+        unsigned long build;
+        unsigned long platform;
+        wchar_t servicePack[128];
+    };
+    using Ask = long(__stdcall*)(Version*);
+    const HMODULE system = GetModuleHandleW(L"ntdll.dll");
+    if (system == nullptr)
+        return 0;
+    const auto ask = reinterpret_cast<Ask>(reinterpret_cast<void*>(GetProcAddress(system, "RtlGetVersion")));
+    if (ask == nullptr)
+        return 0;
+    Version version{};
+    version.size = sizeof(Version);
+    return ask(&version) == 0 ? version.build : 0;
+#else
+    return 0;
+#endif
+}
+
+bool graphicsDriverNamed() noexcept
+{
+#if defined(_WIN32)
+    char named[64];
+    const DWORD length = GetEnvironmentVariableA("SDL_GPU_DRIVER", named, sizeof(named));
+    return length != 0;
+#else
+    const char* named = std::getenv("SDL_GPU_DRIVER");
+    return named != nullptr && named[0] != 0;
 #endif
 }
 

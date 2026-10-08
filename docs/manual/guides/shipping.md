@@ -283,6 +283,27 @@ game's own folder under the user's application data
 opens with no permission asked. The engine uploads nothing and shows
 nothing: what you do with the path is yours, and so is whether to ask.
 
+## When a player's picture is wrong
+
+A game draws through the graphics API its system does best: Direct3D 12 on
+Windows 11, Metal on a Mac, Vulkan on Linux, on Android -- and on a Windows
+older than 11, where Vulkan is taken when the machine can make a device
+through it. The first lines of the log say which, and on what card.
+
+A player whose picture is wrong -- a pass missing, the interface gone -- can
+be asked to start the game on the other one:
+
+```text
+MyGame.exe --gpu=vulkan
+MyGame.exe --gpu=direct3d12
+```
+
+A name the machine cannot make a device through is not an error: the log
+says so and the game starts on the system's own choice. When a driver refuses
+one of the game's pipelines, the log names it and gives the driver's reason
+-- that line, with the card and the API from the top of the log, is what to
+send with a report.
+
 ## Multiplayer: what each package leaves out
 
 The **Multiplayer** selector above the cards is `[export] multiplayer`:

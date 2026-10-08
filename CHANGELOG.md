@@ -247,6 +247,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`--gpu=NAME` chooses the graphics API a run draws through** (D596):
+  `vulkan`, `direct3d12` or `metal`, on the engine's host and on an exported
+  game alike. A name no device can be made through warns and takes the
+  system's choice, so a shortcut carrying it cannot leave a game unable to
+  start.
 - **`RunService:GetLastRun()`** and `Enum.RunOutcome` (ADR 0187): how the run
   before this one ended on this machine -- `Clean`, `Crashed`, `Unfinished`
   (ended from outside, which a phone does to a game in the background) or
@@ -1481,6 +1486,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A game on Windows 10 starts on Vulkan** when the machine can (D596). One
+  player's Windows 10 machine drew a game's scene dark and with no interface
+  through Direct3D 12, and right through Vulkan; the Direct3D cause is still
+  open. `--gpu=direct3d12` asks for the old behaviour, and Windows 11 is
+  unchanged.
+- **A pipeline or shader the graphics driver refuses is an error in the
+  log**, with its name and the driver's reason (D596). It was counted and
+  not said, so a picture with a pass missing left a log that read as a
+  healthy run.
 - **A game no longer sets off Windows' Controlled Folder Access at its
   start** (D595). The engine asked the system where Documents is on every
   start -- for the editor's launcher, which a game has none of -- and that

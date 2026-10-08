@@ -330,6 +330,9 @@ struct EngineOptions
     // (D567) -- no depth clamping -- on a GPU that has more: how a desk draws
     // as such a phone does.
     bool gpuLeast = false;
+    // `--gpu=<name>`: which graphics API to draw through (`vulkan`,
+    // `direct3d12`, `metal`). Empty takes `rhi::defaultDriver()`.
+    std::string gpuDriver;
     // **`[debug] astc = false`, `--no-astc`**: textures as RGBA on a GPU that
     // samples ASTC (ADR 0180) -- to tell a fault of that path from another.
     bool astcTextures = true;

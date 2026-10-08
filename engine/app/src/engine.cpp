@@ -131,6 +131,32 @@ constexpr f64 CurtainGroundMetres = 96.0;
 
 namespace {
 
+// **Which graphics API a run draws through** (D596): what `--gpu=` named;
+// otherwise the platform library's own choice -- except on a Windows older
+// than 11, where it is Vulkan when a device can be made through it.
+//
+// A player on Windows 10 with a new card got the game's scene with no final
+// colour pass and no interface, on Direct3D 12, with nothing in his log; the
+// same folder through Vulkan drew right. Windows 10 is the one system the
+// Direct3D path had never been seen on, its Direct3D is the one that stopped
+// being updated, and the Vulkan path is the one every phone and every Linux
+// machine has run. Until the Direct3D cause is found on such a machine, the
+// path that is known to draw is the one taken there. An environment that
+// already names a driver is left alone.
+[[maybe_unused]] [[nodiscard]] std::string gpuDriverFor(const EngineOptions& options)
+{
+    if (!options.gpuDriver.empty())
+        return options.gpuDriver;
+    if (platform::graphicsDriverNamed())
+        return {};
+    const unsigned long build = platform::windowsBuild();
+    if (build != 0 && build < 22000 && options.backend == rhi::BackendId::SdlGpu) {
+        core::log(core::LogLevel::Info, ENG_TR("rhi.info.driver_for_old_windows"));
+        return "vulkan";
+    }
+    return {};
+}
+
 // What the script editor's checker needs to follow a require by path: the
 // file each script was mounted from, the project's aliases, and the engine's
 // own modules beside the host.
@@ -1397,8 +1423,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     const bool gpuDebug = gpuValidationWanted(ENG_PROFILE_NAME, options.gpuDebug);
     if (gpuDebug)
         core::log(LogLevel::Info, ENG_TR("engine.info.gpu_debug"));
-    const rhi::DeviceResult device =
-        createDevice({.backend = options.backend, .debug = gpuDebug, .leastFeatures = options.gpuLeast}, &error);
+    const rhi::DeviceResult device = createDevice({.backend = options.backend,
+                                                   .debug = gpuDebug,
+                                                   .shaderFormat = rhi::ShaderFormat::Unknown,
+                                                   .leastFeatures = options.gpuLeast,
+                                                   .driver = gpuDriverFor(options)},
+                                                  &error);
     if (device == nullptr)
         return error;
     // **What the GPU samples, said before the first texture is read** (ADR

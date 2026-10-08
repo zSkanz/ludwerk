@@ -14,6 +14,7 @@
 #pragma once
 
 #include <span>
+#include <string>
 
 #include "engine/core/error.h"
 #include "engine/rhi/descs.h"
@@ -38,6 +39,11 @@ struct DeviceDesc
     // without depth clamping is given, asked for outright -- what a test and
     // `--gpu-least` use to draw as such a phone does.
     bool leastFeatures = false;
+    // **Which of the system's graphics APIs to draw through**, by the name the
+    // platform library knows it by (`vulkan`, `direct3d12`, `metal`), or empty
+    // for the library's own choice. Where the named one cannot be made the
+    // library's choice is taken, and the log says which was (D596).
+    std::string driver = {};
 };
 
 // Queried, never assumed. Interfaces here are coarse by design (architecture.md

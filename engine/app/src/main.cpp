@@ -444,6 +444,12 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.gpuDebug = true;
             continue;
         }
+        if (arg.starts_with("--gpu=")) {
+            // Which graphics API: a player's way round a driver that draws
+            // wrong through one of them (D596).
+            options.gpuDriver = std::string(arg.substr(6));
+            continue;
+        }
         if (arg == "--gpu-least") {
             options.gpuLeast = true;
             continue;

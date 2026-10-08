@@ -44,6 +44,17 @@ struct ProcessOptions
 // This process's number, as the system counts them: what makes a file's name
 // one no other process running now would choose.
 [[nodiscard]] unsigned long processId() noexcept;
+
+// The build number of the Windows this runs on -- 19045 is the last Windows
+// 10, 22000 the first 11 -- or 0 where it is not Windows or will not say.
+// Asked of the system itself, not of the compatibility layer a program
+// without a manifest is told a lie by.
+[[nodiscard]] unsigned long windowsBuild() noexcept;
+
+// Whether the environment already names a graphics driver for the platform
+// library (`SDL_GPU_DRIVER`): somebody's choice, which the engine's own
+// default does not override.
+[[nodiscard]] bool graphicsDriverNamed() noexcept;
 [[nodiscard]] ProcessResult runProcess(const std::vector<std::string>& arguments, const ProcessOptions& options);
 
 // **A program that runs beside this one, and whose output is read while it

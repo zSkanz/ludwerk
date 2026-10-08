@@ -1020,8 +1020,16 @@ PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& 
     const Uint64 startedNs = SDL_GetTicksNS();
     SDL_GPUGraphicsPipeline* pipeline = SDL_CreateGPUGraphicsPipeline(device_, &info);
     sayIfSlow(desc.debugName, startedNs);
-    if (pipeline == nullptr)
+    if (pipeline == nullptr) {
+        // **Said** (D596). A pipeline the driver refuses was noted and nothing
+        // else, and every pass drawn with it then drew nothing: a player's
+        // game came up as its scene with no interface, and his log held not
+        // one line about it.
+        const core::I18nArg args[] = {{"name", std::string_view{desc.debugName}},
+                                      {"detail", std::string_view{SDL_GetError()}}};
+        core::log(core::LogLevel::Error, ENG_TR("rhi.err.pipeline_refused"), args);
         noteFailure();
+    }
     return pipeline != nullptr ? PipelineHandle{addSlot(pipelines_, pipeline)} : PipelineHandle{};
 }
 
@@ -2170,8 +2178,10 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
     // and the game closed as it opened. So the three are never asked for, and
     // depth clamping is asked for first and done without where no device has
     // it. A backend that is not Vulkan reads none of these.
-    const auto create = [&](bool depthClamp) {
+    const auto create = [&](bool depthClamp, const std::string& driver) {
         const SDL_PropertiesID props = SDL_CreateProperties();
+        if (!driver.empty())
+            SDL_SetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING, driver.c_str());
         if ((requested & SDL_GPU_SHADERFORMAT_SPIRV) != 0)
             SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
         if ((requested & SDL_GPU_SHADERFORMAT_DXIL) != 0)
@@ -2189,14 +2199,29 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
     };
 
     bool depthClamp = !desc.leastFeatures;
-    SDL_GPUDevice* device = create(depthClamp);
+    std::string driver = desc.driver;
+    SDL_GPUDevice* device = create(depthClamp, driver);
     std::string first;
     if (device == nullptr && depthClamp) {
         // What the first try said is kept: if the second fails too, both are
         // what a report needs.
         first = SDL_GetError();
         depthClamp = false;
-        device = create(false);
+        device = create(false, driver);
+    }
+    if (device == nullptr && !driver.empty()) {
+        // The one asked for is not to be had here: the library's own choice,
+        // from the top, and a word about it.
+        const core::I18nArg args[] = {{"driver", std::string_view{driver}},
+                                      {"detail", std::string_view{SDL_GetError()}}};
+        core::log(core::LogLevel::Warn, ENG_TR("rhi.warn.driver_unavailable"), args);
+        driver.clear();
+        depthClamp = !desc.leastFeatures;
+        device = create(depthClamp, driver);
+        if (device == nullptr && depthClamp) {
+            depthClamp = false;
+            device = create(false, driver);
+        }
     }
     if (device == nullptr) {
         if (outError != nullptr) {

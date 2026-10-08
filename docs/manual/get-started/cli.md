@@ -217,7 +217,7 @@ a benchmark or a capture does:
 engine-host [script.luau | project-dir]
   [--headless --frames=N --exit] [--width=N --height=N]
   [--scene=PATH [--scene-data=JSON]]
-  [--screenshot=FILE] [--frame-stats] [--rhi=NAME]
+  [--screenshot=FILE] [--frame-stats] [--rhi=NAME] [--gpu=NAME]
   [--quality=low|medium|high|ultra --render-scale=F
    --shadow-resolution=N --shadow-cascades=N --shadow-distance=F
    --light-budget=N --[no-]bloom --[no-]ambient-occlusion
@@ -230,6 +230,12 @@ engine-host [script.luau | project-dir]
   [--[no-]vsync --max-frame-rate=N --background-frame-rate=N]
   | --run-tests=DIR | --replay=DIR [--record-replay] | --version | --help
 ```
+
+`--gpu=NAME` names the graphics API the run draws through -- `vulkan`,
+`direct3d12`, `metal` -- in place of the system's own choice. A name no
+device can be made through warns and falls back. It is what
+[a player with a wrong picture](manual:guides/shipping)
+is asked to try.
 
 **Four test instruments**, for a picture that proves something:
 
