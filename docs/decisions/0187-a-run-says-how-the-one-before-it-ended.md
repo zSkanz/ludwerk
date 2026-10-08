@@ -91,8 +91,10 @@ run. All of them separate **learning that it happened** (the engine's) from
    through `@std/net` -- is the game's, and a privacy decision the engine has
    no standing to make for it.
 
-7. **Where the file is.** Beside the log: the folder the game runs from, its
-   user folder when that cannot be written, and on a phone the game's own
+7. **Where the file is.** Beside the log: the folder the game runs from;
+   the game's own folder under the user's application data
+   (`<company>/<game>/logs`, beside its saves) when that cannot be written --
+   a protected Desktop, Program Files (D595); and on a phone the game's own
    external folder (`Android/data/<package>/files`, D569), which a cable or
    the system's file browser opens with no permission asked.
 

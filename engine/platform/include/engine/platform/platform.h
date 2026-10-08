@@ -182,8 +182,18 @@ struct Paths
     //
     // Empty where the platform has no such notion, and the launcher then leaves
     // its location field blank rather than seeding it with somewhere wrong.
-    std::filesystem::path documentsDir;
+    //
+    // **Not kept here: asked for, by `documentsFolder()`, by the one thing that
+    // wants it** (D595). It was read at every start of every game, and the
+    // system's answer comes with "and make it if it is missing" -- which
+    // Windows' Controlled Folder Access reports as the game trying to change
+    // the player's Documents. A player unpacked a game, ran it, and was told
+    // by his antivirus that it had been blocked.
 };
+
+// Where a person keeps their work: see `Paths`. Asks the system each time,
+// which is once, when the launcher opens.
+[[nodiscard]] std::filesystem::path documentsFolder();
 
 // Both members are ABSOLUTE on every desktop tier. On Android they are
 // deliberately RELATIVE -- `.` and `content` -- because an APK's content is a

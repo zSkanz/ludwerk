@@ -205,17 +205,26 @@ void resolvePaths()
         SDL_free(pref);
     }
 
-    // **Not derived from the one above, because they are different questions.**
-    // `userDir` is where an application hides its own state; this is where a
-    // person keeps their work, and offering to create somebody's game inside
-    // `AppData` is offering to put it where they will never find it. SDL owns
-    // this string and it is not freed.
-    if (const char* documents = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS); documents != nullptr)
-        paths.documentsDir = std::filesystem::path(documents);
 #endif
 }
 
 } // namespace
+
+std::filesystem::path documentsFolder()
+{
+#ifdef SDL_PLATFORM_ANDROID
+    return {};
+#else
+    // **Not derived from `userDir`, because they are different questions.**
+    // That is where an application hides its own state; this is where a
+    // person keeps their work, and offering to create somebody's game inside
+    // `AppData` is offering to put it where they will never find it. SDL owns
+    // this string and it is not freed.
+    if (const char* documents = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS); documents != nullptr)
+        return std::filesystem::path(documents);
+    return {};
+#endif
+}
 
 std::optional<core::EngineError> init(const InitOptions& options)
 {

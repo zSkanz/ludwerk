@@ -1481,6 +1481,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A game no longer sets off Windows' Controlled Folder Access at its
+  start** (D595). The engine asked the system where Documents is on every
+  start -- for the editor's launcher, which a game has none of -- and that
+  question is reported as the game trying to change the folder. A game asks
+  nothing of Documents now.
+- **A game that cannot write beside its executable keeps its log in its own
+  folder** (D595): `%APPDATA%/<company>/<game>/logs`, beside its saves, with
+  its crash files and the record `RunService:GetLastRun` reads. It was the
+  engine's folder.
 - **`UIPadding` insets an element's own text** (D594). The words of a
   `TextLabel` or `TextButton`, and a `TextInput`'s text, caret and
   placeholder, are placed, wrapped, cut and scaled inside the element's

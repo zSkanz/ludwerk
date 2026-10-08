@@ -1211,6 +1211,7 @@ static int hostMain(int argc, char** argv)
     // script has no project and gets the preset plus the flags, which is the
     // same code path with an empty root.
     std::string playing;
+    std::filesystem::path gameHome;
     {
         std::error_code projectError;
         const bool isProject =
@@ -1314,8 +1315,12 @@ static int hostMain(int argc, char** argv)
             const std::string game = config.name.empty() ? config.id : config.name;
             if (const std::filesystem::path home =
                     engine::platform::preferencePath(config.company.empty() ? game : config.company, game);
-                !home.empty())
+                !home.empty()) {
                 options.saveDirectory = home / "saves";
+                // The game's own folder, for what else of it has to be
+                // written somewhere a player may write (its log, below).
+                gameHome = home;
+            }
         }
         // A server package, run with no posture of its own: what `--serve`
         // would have been, on the default port. A posture on the command line
@@ -1399,9 +1404,13 @@ static int hostMain(int argc, char** argv)
     // **Where it can write, when it cannot write here** (audit A15): a game
     // installed where a player may not write -- Program Files -- had no log
     // and no crash report at all. Its own folder then, as a phone's already is.
-    if (!logOpened && options.logFile.empty() && !engine::platform::paths().userDir.empty()) {
+    // **And a game's is the game's own folder** (D595): it was the engine's
+    // -- a shipped game's log under a name its player has never heard, in a
+    // folder every other game made with the engine wrote to as well.
+    if (!logOpened && options.logFile.empty() && (!gameHome.empty() || !engine::platform::paths().userDir.empty())) {
         std::error_code error;
-        const std::filesystem::path fallback = engine::platform::paths().userDir / "logs";
+        const std::filesystem::path fallback =
+            (!gameHome.empty() ? gameHome : engine::platform::paths().userDir) / "logs";
         std::filesystem::create_directories(fallback, error);
         artifactDir = fallback;
         logPath = artifactDir / "engine.log";

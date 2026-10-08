@@ -138,7 +138,7 @@ std::optional<core::EngineError> runLauncher(const EngineOptions& options)
     // for the game they made: the first version of this seeded the field from
     // `userDir` and put a new project inside `AppData`, where nobody would ever
     // find it. Blank when the platform has no such notion.
-    view.defaultParent = platform::paths().documentsDir;
+    view.defaultParent = platform::documentsFolder();
     view.canBrowse = platform::canPickFolder();
     overlay.setLauncherTarget(&view);
 

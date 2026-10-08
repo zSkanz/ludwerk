@@ -275,7 +275,10 @@ with half of itself not working.
 
 `Report` is one text file, written when there is something to report: what
 the game and the engine were, the crash note, and the end of that run's log.
-It is beside the log -- the game's own folder, and on a phone
+It is beside the log: the folder the game runs from, or -- when a player put
+the game where it may not write, a protected Desktop or Program Files -- the
+game's own folder under the user's application data
+(`%APPDATA%\<company>\<game>\logs` on Windows, beside its saves); on a phone
 `Android/data/<package>/files`, which a cable or the system's file browser
 opens with no permission asked. The engine uploads nothing and shows
 nothing: what you do with the path is yours, and so is whether to ask.
