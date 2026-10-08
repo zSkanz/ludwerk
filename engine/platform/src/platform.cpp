@@ -1,5 +1,6 @@
 #include "engine/platform/platform.h"
 
+#include <SDL3/SDL_cpuinfo.h>
 #include <SDL3/SDL_dialog.h>
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_filesystem.h>
@@ -329,6 +330,12 @@ core::i64 threadCpuNs() noexcept
         return -1;
     return static_cast<core::i64>(now.tv_sec) * 1'000'000'000 + static_cast<core::i64>(now.tv_nsec);
 #endif
+}
+
+u64 systemMemoryBytes() noexcept
+{
+    const int megabytes = SDL_GetSystemRAM();
+    return megabytes > 0 ? static_cast<u64>(megabytes) * 1024ull * 1024ull : 0;
 }
 
 u64 residentBytes() noexcept

@@ -1,0 +1,14 @@
+# Blended parts drawn as instanced runs, against the same parts drawn one at a
+# time: the same picture, in fewer draws. A project so it is opened as a game's
+# is.
+
+[project]
+name = "Ludwerk Blended Runs"
+id = "dev.ludwerk.blendedruns"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Blended Runs"
+width = 960
+height = 540

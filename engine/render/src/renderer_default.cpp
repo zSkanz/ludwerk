@@ -794,7 +794,7 @@ private:
         case Selection::Prepass:
             return decalMaskPass_ ? DrawKind::DecalMask : DrawKind::Prepass;
         case Selection::Transparent:
-            return DrawKind::Blended;
+            return run ? DrawKind::BlendedRun : DrawKind::Blended;
         case Selection::Opaque:
             break;
         }
@@ -985,6 +985,9 @@ private:
     rhi::PipelineHandle pbrPrepassedPipeline_{};
     rhi::PipelineHandle pbrSkinnedPrepassedPipeline_{};
     rhi::PipelineHandle pbrInstancedPrepassedPipeline_{};
+    // A run of blended parts: the instanced shaders, blended and writing no
+    // depth, as `pbrBlendPipeline_` is to the single draw.
+    rhi::PipelineHandle pbrInstancedBlendPipeline_{};
     rhi::PipelineHandle pbrSkinnedInstancedPrepassedPipeline_{};
     // The skinned variants. Same shading, same state; what differs is the vertex
     // input layout and one more uniform block, both of which are pipeline
@@ -2024,6 +2027,17 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .depthStencilFormat = kDepthFormat,
         .debugName = "pbr_instanced_prepassed",
     });
+    pbrInstancedBlendPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = pbrInstancedVertex,
+        .fragmentShader = pbrInstancedFragment,
+        .vertexBuffers = instancedBuffers,
+        .vertexAttributes = instancedAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = hdrBlendTarget,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "pbr_instanced_blend",
+    });
 
     ssaoPipeline_ = fullscreen(ssaoVertex, ssaoFragment, occlusionTarget, "ssao");
     ssaoBlurPipeline_ = fullscreen(ssaoBlurVertex, ssaoBlurFragment, occlusionTarget, "ssao_blur");
@@ -2536,6 +2550,7 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
                                           &pbrPrepassedPipeline_,
                                           &pbrSkinnedPrepassedPipeline_,
                                           &pbrInstancedPrepassedPipeline_,
+                                          &pbrInstancedBlendPipeline_,
                                           &pbrBlendPipeline_,
                                           &skyPipeline_,
                                           &tonemapPipeline_,
@@ -3222,11 +3237,28 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
     // would draw one mesh with another's index range.
     const f32 pixelsPerUnit = lodPixelsPerUnit(world.camera, height_);
 
+    // **A blended draw is batched where its order survives it.** Their order
+    // is their correctness, and `drawSortKey` sorts them by material and then
+    // from the far one to the near one -- so the members of one family that
+    // stand next to each other in the list are drawn one after another
+    // already, and a call that draws them as instances, in that same order,
+    // puts the same fragments down in the same sequence. What a run may not
+    // do is reorder, which is why it is staged as it was sorted and not as
+    // `orderInstanceRun` would have it. A fight's effects are this: forty
+    // shards of one mesh and one look were forty calls.
+    //
+    // Left alone: a part thinned by `Fade` (it still casts, as the solid part
+    // it is), a skinned one, a block world's chunk, a surface shader's
+    // material (its blended pipeline is not instanced), and anything thinned
+    // to nothing, which the pass skips by its first member.
+    const auto blendedRun = [&](const DrawItem& draw) {
+        return draw.transparent && pbrInstancedBlendPipeline_.valid() && !draw.fadedOnly && draw.boneCount == 0 &&
+               !draw.voxelBlock && !draw.terrain && draw.alpha > 0.0f &&
+               !(draw.material < materialSurface_.size() && materialSurface_[draw.material] != 0);
+    };
     const auto instanceable = [&](const DrawItem& draw) {
-        // Transparent draws are never batched: their ORDER is their
-        // correctness, and `drawSortKey` zeroes their mesh field for exactly
-        // that reason. Skinned draws are not batched either -- a joint palette
-        // is per draw and there is no room for one in a vertex stream.
+        // Skinned draws were not batched at first -- a joint palette is per
+        // draw and there is no room for one in a vertex stream.
         //
         // **Selection is NOT a reason to leave a batch** (D073). The first cut
         // of the outline pass excluded an outlined draw here, which split the
@@ -3240,7 +3272,9 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
         //
         // **A skinned draw is batched too** (H2), once the palettes can be
         // read by instance: five hundred animated enemies were 1,800 draws.
-        return !draw.transparent && (draw.boneCount == 0 || skinnedRuns);
+        if (draw.transparent)
+            return blendedRun(draw);
+        return draw.boneCount == 0 || skinnedRuns;
     };
 
     for (core::usize index = 0; index < world.draws.size();) {
@@ -3270,6 +3304,9 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             // colour is one call, each colour in its instance (D184).
             if (!instanceable(next) || !(next.mesh == first.mesh) || next.section != first.section ||
                 world.familyOf(next.material) != world.familyOf(first.material) || (next.boneCount > 0) != skinned)
+                break;
+            // The blended pass and the solid ones are two passes.
+            if (next.transparent != first.transparent)
                 break;
             // A run is drawn into a shadow map whole or not at all: one that
             // casts and one that does not are two runs (`BasePart.CastShadow`).
@@ -3334,7 +3371,16 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             runBounds_.push_back({world.draws[member].boundsCenter, world.draws[member].boundsRadius});
             runInFrustum_.push_back(world.draws[member].inCameraFrustum ? core::u8{1} : core::u8{0});
         }
-        batch.visibleCount = orderInstanceRun(runBounds_, runInFrustum_, runOrder_);
+        if (first.transparent) {
+            // As sorted, far to near, and all of it: see `blendedRun`.
+            runOrder_.resize(count);
+            for (u32 place = 0; place < count; ++place)
+                runOrder_[place] = place;
+            batch.visibleCount = count;
+        }
+        else {
+            batch.visibleCount = orderInstanceRun(runBounds_, runInFrustum_, runOrder_);
+        }
         batch.firstBounds = static_cast<u32>(batchBounds_.size());
         for (const u32 place : runOrder_) {
             const DrawItem& draw = world.draws[index + place];
@@ -3481,9 +3527,10 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
     // handle is clearer than a bool -- and `extract`'s sort keeps runs of each
     // together, so this switches a handful of times per pass whatever the scene.
     rhi::PipelineHandle currentPipeline = staticPipeline;
-    const rhi::PipelineHandle instancedPipeline = selection == Selection::Shadow    ? shadowInstancedPipeline_
-                                                  : selection == Selection::Prepass ? depthPrepassInstancedPipeline_
-                                                                                    : pbrInstancedPipeline_;
+    const rhi::PipelineHandle instancedPipeline = selection == Selection::Shadow        ? shadowInstancedPipeline_
+                                                  : selection == Selection::Prepass     ? depthPrepassInstancedPipeline_
+                                                  : selection == Selection::Transparent ? pbrInstancedBlendPipeline_
+                                                                                        : pbrInstancedPipeline_;
     const rhi::PipelineHandle skinnedInstancedPipeline =
         selection == Selection::Shadow    ? shadowSkinnedInstancedPipeline_
         : selection == Selection::Prepass ? depthPrepassSkinnedInstancedPipeline_

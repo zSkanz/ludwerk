@@ -104,6 +104,11 @@ void sleepNs(u64 ns) noexcept;
 // asserts is that the curve flattens, not what the absolute figure is.
 [[nodiscard]] u64 residentBytes() noexcept;
 
+// The machine's own memory, in bytes: what a phone with two gigabytes says
+// when a game asks before deciding how much of itself to load. Zero where the
+// system will not say.
+[[nodiscard]] u64 systemMemoryBytes() noexcept;
+
 // Asks the OS to schedule this process ahead of ordinary work (D193). Returns
 // whether it did.
 //

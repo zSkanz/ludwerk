@@ -106,6 +106,8 @@ struct TextureEntry
     u32 width = 0;
     u32 height = 0;
     u32 layers = 1;
+    // What it was counted as in `DeviceMemory`, to be taken back when it goes.
+    core::u64 bytes = 0;
     // Swapchain textures belong to SDL and must not be released. Their slot is
     // reused every frame, which is also what keeps the table from growing once
     // per frame forever.
@@ -476,6 +478,8 @@ public:
         }
     }
 
+    [[nodiscard]] DeviceMemory memory() const noexcept override { return memory_; }
+
     [[nodiscard]] BufferHandle createBuffer(const BufferDesc& desc) override
     {
         if (lost_)
@@ -495,6 +499,8 @@ public:
             SDL_SetGPUBufferName(device_, buffer, std::string(desc.debugName).c_str());
 
         bufferSizes_.push_back(desc.sizeBytes);
+        memory_.bufferBytes += desc.sizeBytes;
+        ++memory_.buffers;
         return {addSlot(buffers_, buffer)};
     }
 
@@ -522,12 +528,22 @@ public:
         if (!desc.debugName.empty())
             SDL_SetGPUTextureName(device_, texture, std::string(desc.debugName).c_str());
 
+        // Every level of it, each half the last: the library's own sum for a
+        // format, which knows a compressed one by its blocks.
+        core::u64 bytes = 0;
+        for (u32 level = 0; level < std::max(desc.mipLevels, 1u); ++level)
+            bytes += SDL_CalculateGPUTextureFormatSize(info.format, std::max(desc.width >> level, 1u),
+                                                       std::max(desc.height >> level, 1u), std::max(desc.layers, 1u));
+        memory_.textureBytes += bytes;
+        ++memory_.textures;
+
         return {addSlot(textures_, TextureEntry{
                                        .texture = texture,
                                        .format = desc.format,
                                        .width = desc.width,
                                        .height = desc.height,
                                        .layers = desc.layers,
+                                       .bytes = bytes,
                                        .owned = true,
                                    })};
     }
@@ -623,6 +639,10 @@ public:
         if (SDL_GPUBuffer** entry = slot(buffers_, handle.id); entry != nullptr && *entry != nullptr) {
             SDL_ReleaseGPUBuffer(device_, *entry);
             *entry = nullptr;
+            if (const u32* size = slot(bufferSizes_, handle.id); size != nullptr) {
+                memory_.bufferBytes -= std::min<core::u64>(memory_.bufferBytes, *size);
+                memory_.buffers -= std::min(memory_.buffers, 1u);
+            }
         }
     }
 
@@ -631,8 +651,11 @@ public:
         if (lost_)
             return;
         if (TextureEntry* entry = slot(textures_, handle.id); entry != nullptr && entry->texture != nullptr) {
-            if (entry->owned)
+            if (entry->owned) {
                 SDL_ReleaseGPUTexture(device_, entry->texture);
+                memory_.textureBytes -= std::min(memory_.textureBytes, entry->bytes);
+                memory_.textures -= std::min(memory_.textures, 1u);
+            }
             *entry = TextureEntry{};
         }
     }
@@ -920,6 +943,7 @@ private:
     std::vector<SDL_GPUBuffer*> buffers_;
     // Each buffer's size, by the same slot.
     std::vector<u32> bufferSizes_;
+    DeviceMemory memory_;
     std::vector<TextureEntry> textures_;
     std::vector<SDL_GPUSampler*> samplers_;
     SDL_GPUTexture* fallbackTexture_ = nullptr;

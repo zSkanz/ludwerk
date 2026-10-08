@@ -52,6 +52,18 @@ struct DeviceDesc
     bool driverIfSameCard = false;
 };
 
+// **What the device holds, in bytes**: every texture and every buffer made
+// and not yet destroyed, as their descriptions size them. Not what the driver
+// spends -- it pads, it keeps copies, it has pools of its own -- but the part
+// of it a game chose: its pictures, with their mips, and its meshes.
+struct DeviceMemory
+{
+    core::u64 textureBytes = 0;
+    core::u32 textures = 0;
+    core::u64 bufferBytes = 0;
+    core::u32 buffers = 0;
+};
+
 // Queried, never assumed. Interfaces here are coarse by design (architecture.md
 // §7): a capability exists when a render path gates on it, not before.
 struct Capabilities
@@ -282,6 +294,9 @@ public:
     // The last frame's, in the order the passes ran; empty when timing is off.
     // Valid until the next `submitAndPresent`.
     [[nodiscard]] virtual std::span<const PassTime> passTimes() const noexcept { return {}; }
+
+    // Nothing on a backend that holds nothing.
+    [[nodiscard]] virtual DeviceMemory memory() const noexcept { return {}; }
 
     // **Whether the device is gone**: the driver reset it, most often because
     // a shader ran past the time the operating system allows one. Once true

@@ -50,7 +50,8 @@ struct RenderTarget
 //
 // The mesh passes come first, each the same geometry submitted for another
 // reason; `Mesh` and `MeshRun` are the picture itself, one object to a call
-// and a run of them to a call; the rest are the kinds that are not meshes.
+// and a run of them to a call, and `Blended` and `BlendedRun` the same for
+// what is less than opaque; the rest are the kinds that are not meshes.
 enum class DrawKind : core::u8
 {
     SunShadow,
@@ -60,6 +61,7 @@ enum class DrawKind : core::u8
     Mesh,
     MeshRun,
     Blended,
+    BlendedRun,
     Outline,
     Highlight,
     Velocity,
@@ -78,8 +80,9 @@ inline constexpr core::usize DrawKindCount = static_cast<core::usize>(DrawKind::
 [[nodiscard]] constexpr const char* drawKindName(DrawKind kind) noexcept
 {
     constexpr std::array<const char*, DrawKindCount> Names{
-        "sun_shadow", "local_shadow", "prepass", "decal_mask", "mesh",   "mesh_run", "blended",  "outline",
-        "highlight",  "velocity",     "foliage", "decal",      "sprite", "ribbon",   "particle", "world_ui",
+        "sun_shadow", "local_shadow", "prepass", "decal_mask", "mesh",     "mesh_run",
+        "blended",    "blended_run",  "outline", "highlight",  "velocity", "foliage",
+        "decal",      "sprite",       "ribbon",  "particle",   "world_ui",
     };
     return Names[static_cast<core::usize>(kind)];
 }

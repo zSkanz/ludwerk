@@ -3177,6 +3177,29 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     const std::array<I18nArg, 1> split{I18nArg{"kinds", kinds}};
                     core::log(LogLevel::Info, ENG_TR("engine.frame.info.draws_by_kind"), split);
                 }
+                // **And what the game holds** -- the other thing a phone has
+                // no profiler to say. A game that stutters on two gigabytes
+                // is told apart from one that is merely slow by this line:
+                // the process against the machine, and the pictures and the
+                // meshes the game itself put on the card.
+                {
+                    const auto megabytes = [](core::u64 bytes) {
+                        return std::round(static_cast<f64>(bytes) / (1024.0 * 1024.0) * 10.0) / 10.0;
+                    };
+                    const rhi::DeviceMemory onCard = device != nullptr ? device->memory() : rhi::DeviceMemory{};
+                    const f64 scriptBytes =
+                        host != nullptr ? static_cast<f64>(lua_totalbytes(host->runtime().state(), 0)) : 0.0;
+                    const std::array<I18nArg, 7> memory{
+                        I18nArg{"process", megabytes(platform::residentBytes())},
+                        I18nArg{"machine", megabytes(platform::systemMemoryBytes())},
+                        I18nArg{"textures", megabytes(onCard.textureBytes)},
+                        I18nArg{"texture_count", static_cast<core::i64>(onCard.textures)},
+                        I18nArg{"buffers", megabytes(onCard.bufferBytes)},
+                        I18nArg{"buffer_count", static_cast<core::i64>(onCard.buffers)},
+                        I18nArg{"scripts", std::round(scriptBytes / (1024.0 * 1024.0) * 10.0) / 10.0},
+                    };
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.memory"), memory);
+                }
                 if (reportPasses.frames() != 0) {
                     sayPassTimes(reportPasses);
                     reportPasses.clear();

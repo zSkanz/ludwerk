@@ -247,11 +247,21 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Parts that are see-through are drawn in runs.** Blended parts of one
+  mesh and one look that stand together in the blended order are one call,
+  as solid ones have been -- each with its own colour and its own
+  `Transparency`, so the pieces of an effect at different ages are one run.
+  The picture is the same to the pixel: a run draws its members in the order
+  they were drawn in one at a time. A part thinned by `Fade`, a skinned one
+  and a surface shader's material are still a call each.
+- **The frame report says what the game holds.** A third line: the process's
+  memory against the machine's, the bytes and count of the textures and of
+  the buffers on the graphics card, and the scripts' heap.
 - **The frame report says what its draws were.** A second line follows each
   report (`--frame-report=N`, `[debug] frame_report_seconds`): the frame's draw calls
   by pass and kind -- `sun_shadow`, `local_shadow`, `prepass`, `decal_mask`,
   `mesh` (one object a call), `mesh_run` (an instanced run), `blended`,
-  `outline`, `highlight`, `velocity`, `foliage`, `decal`, `sprite`,
+  `blended_run`, `outline`, `highlight`, `velocity`, `foliage`, `decal`, `sprite`,
   `ribbon`, `particle`, `world_ui` -- which add up to the report's total.
   Kinds that drew nothing are left out.
 - **`--gpu=NAME` chooses the graphics API a run draws through** (D596):

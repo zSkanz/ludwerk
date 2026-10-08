@@ -1645,6 +1645,21 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # **A run of blended parts is the parts drawn one at a time**: panes of
+    # glass that overlap, in three colours at depths that interleave, drawn
+    # as runs and a copy at a time -- the same picture to the pixel, in fewer
+    # draws. The driver is the skinned crowd's, which asks exactly that.
+    add_test(NAME blended_runs
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DCOMPARE=$<TARGET_FILE:imgcmp>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/blendedruns
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/blended-runs
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_skinned_crowd.cmake)
+    set_tests_properties(blended_runs PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
     # **The report's draws by kind add up to its total**, and name the kinds
     # the scene has. See the driver.
     add_test(NAME frame_report_draws_by_kind

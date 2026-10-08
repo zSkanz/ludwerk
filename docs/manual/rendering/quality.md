@@ -387,10 +387,21 @@ Those draws, by what each was for: sun_shadow 812, prepass 640, mesh 402, mesh_r
 
 `sun_shadow`, `local_shadow`, `prepass` and `decal_mask` are the same
 geometry submitted again for another reason; `mesh` is one object to a call
-and `mesh_run` a run of them in one; `blended` is anything less than opaque,
-which is never drawn in runs. The numbers are one frame's -- the one before
+and `mesh_run` a run of them in one; `blended` and `blended_run` are the
+same for anything less than opaque. The numbers are one frame's -- the one before
 the report -- and add up to the report's total. The interface on the screen is
 not counted in either.
+
+And a third says what the game holds:
+
+```text
+Memory: the process holds 412.3 MiB of this machine's 1876; on the graphics card, 241.5 MiB in 268 textures and 38.2 MiB in 412 buffers; scripts 6.4 MiB.
+```
+
+The card's figures are the textures, with their mips, and the buffers the
+game's meshes are in, as the engine sized them -- what a game chose to load,
+not what the driver spends on top. On a phone, the first number against the
+second is the one to read first.
 
 ### Measuring a frame
 
