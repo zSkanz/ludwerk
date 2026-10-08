@@ -143,16 +143,27 @@ namespace {
 // machine has run. Until the Direct3D cause is found on such a machine, the
 // path that is known to draw is the one taken there. An environment that
 // already names a driver is left alone.
-[[maybe_unused]] [[nodiscard]] std::string gpuDriverFor(const EngineOptions& options)
+//
+// `byDefault` says the name is that rule's and nobody's order, which the
+// device takes only where it costs the machine nothing: Vulkan that sees only
+// a machine's weaker card is not a path "known to draw" worth a tenth of the
+// frame rate.
+struct GpuDriverChoice
+{
+    std::string name;
+    bool byDefault = false;
+};
+
+[[maybe_unused]] [[nodiscard]] GpuDriverChoice gpuDriverFor(const EngineOptions& options)
 {
     if (!options.gpuDriver.empty())
-        return options.gpuDriver;
+        return {.name = options.gpuDriver, .byDefault = false};
     if (platform::graphicsDriverNamed())
         return {};
     const unsigned long build = platform::windowsBuild();
     if (build != 0 && build < 22000 && options.backend == rhi::BackendId::SdlGpu) {
         core::log(core::LogLevel::Info, ENG_TR("rhi.info.driver_for_old_windows"));
-        return "vulkan";
+        return {.name = "vulkan", .byDefault = true};
     }
     return {};
 }
@@ -1423,11 +1434,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     const bool gpuDebug = gpuValidationWanted(ENG_PROFILE_NAME, options.gpuDebug);
     if (gpuDebug)
         core::log(LogLevel::Info, ENG_TR("engine.info.gpu_debug"));
+    const GpuDriverChoice gpuDriver = gpuDriverFor(options);
     const rhi::DeviceResult device = createDevice({.backend = options.backend,
                                                    .debug = gpuDebug,
                                                    .shaderFormat = rhi::ShaderFormat::Unknown,
                                                    .leastFeatures = options.gpuLeast,
-                                                   .driver = gpuDriverFor(options)},
+                                                   .driver = gpuDriver.name,
+                                                   .driverIfSameCard = gpuDriver.byDefault},
                                                   &error);
     if (device == nullptr)
         return error;
@@ -1755,6 +1768,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // with the same draw count is a different problem from one that got slower
     // because it drew more.
     core::u32 frameDrawCalls = 0;
+    // The same frame's calls by what each was for (`render::DrawKind`).
+    std::array<core::u32, render::DrawKindCount> frameDrawsByKind{};
     // How many objects the camera could see, which stopped being the same
     // number as `frameDrawCalls` at M7.5: a run of objects sharing a mesh and a
     // material is now one call. The roadmap's gate for the instanced path is
@@ -3143,6 +3158,25 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     I18nArg{"quality", render::qualityName(quality)},
                 };
                 core::log(LogLevel::Info, ENG_TR("engine.frame.info.report"), report);
+                // **What those draws were** -- the question a count that
+                // doubled asks, and one no total answers: a horde submitted
+                // again into each of the sun's cascades and the effects of a
+                // fight are the same number. Kinds that drew nothing are left
+                // out, so a quiet scene's line is short.
+                if (frameDrawCalls != 0) {
+                    std::string kinds;
+                    for (core::usize kind = 0; kind < render::DrawKindCount; ++kind) {
+                        if (frameDrawsByKind[kind] == 0)
+                            continue;
+                        if (!kinds.empty())
+                            kinds += ", ";
+                        kinds += render::drawKindName(static_cast<render::DrawKind>(kind));
+                        kinds += ' ';
+                        kinds += std::to_string(frameDrawsByKind[kind]);
+                    }
+                    const std::array<I18nArg, 1> split{I18nArg{"kinds", kinds}};
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.draws_by_kind"), split);
+                }
                 if (reportPasses.frames() != 0) {
                     sayPassTimes(reportPasses);
                     reportPasses.clear();
@@ -6904,6 +6938,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             const render::RendererStats rendererStats =
                 renderer != nullptr && renderer->valid() ? renderer->stats() : render::RendererStats{};
             frameDrawCalls = rendererStats.drawCalls;
+            frameDrawsByKind = rendererStats.drawsByKind;
             frameInstancedDraws = rendererStats.instancedDraws;
 
             // Everything in the buffer is in world coordinates until here: the

@@ -247,6 +247,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **The frame report says what its draws were.** A second line follows each
+  report (`--frame-report=N`, `[debug] frame_report_seconds`): the frame's draw calls
+  by pass and kind -- `sun_shadow`, `local_shadow`, `prepass`, `decal_mask`,
+  `mesh` (one object a call), `mesh_run` (an instanced run), `blended`,
+  `outline`, `highlight`, `velocity`, `foliage`, `decal`, `sprite`,
+  `ribbon`, `particle`, `world_ui` -- which add up to the report's total.
+  Kinds that drew nothing are left out.
 - **`--gpu=NAME` chooses the graphics API a run draws through** (D596):
   `vulkan`, `direct3d12` or `metal`, on the engine's host and on an exported
   game alike. A name no device can be made through warns and takes the
@@ -1486,7 +1493,8 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
-- **A game on Windows 10 starts on Vulkan** when the machine can (D596). One
+- **A game on Windows 10 starts on Vulkan** when the machine's strongest
+  card can be drawn on through it (D596). One
   player's Windows 10 machine drew a game's scene dark and with no interface
   through Direct3D 12, and right through Vulkan; the Direct3D cause is still
   open. `--gpu=direct3d12` asks for the old behaviour, and Windows 11 is

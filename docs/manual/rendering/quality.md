@@ -379,6 +379,19 @@ resolution and level the world was rendered at. It is how a phone, which has
 no profiler attached, says what it did in its first ten seconds and in its
 seventh.
 
+A second line says what those draws were, by pass and kind:
+
+```text
+Those draws, by what each was for: sun_shadow 812, prepass 640, mesh 402, mesh_run 96, blended 310, decal 44.
+```
+
+`sun_shadow`, `local_shadow`, `prepass` and `decal_mask` are the same
+geometry submitted again for another reason; `mesh` is one object to a call
+and `mesh_run` a run of them in one; `blended` is anything less than opaque,
+which is never drawn in runs. The numbers are one frame's -- the one before
+the report -- and add up to the report's total. The interface on the screen is
+not counted in either.
+
 ### Measuring a frame
 
 A phone takes no command line, so each of these is also a key of `[debug]` in

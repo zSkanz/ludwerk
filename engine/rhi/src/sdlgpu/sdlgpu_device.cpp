@@ -27,6 +27,7 @@
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
+#include "engine/platform/process.h"
 #include "engine/platform/sdl_interop.h"
 #include "engine/rhi/backends.h"
 #include "engine/rhi/sdlgpu_interop.h"
@@ -2178,6 +2179,22 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
     // and the game closed as it opened. So the three are never asked for, and
     // depth clamping is asked for first and done without where no device has
     // it. A backend that is not Vulkan reads none of these.
+    // Two APIs' names for one card, compared as a person would: letter case
+    // and the spaces at the ends are not a difference.
+    const auto sameCard = [](std::string_view a, std::string_view b) {
+        const auto trimmed = [](std::string_view text) {
+            while (!text.empty() && text.front() == ' ')
+                text.remove_prefix(1);
+            while (!text.empty() && text.back() == ' ')
+                text.remove_suffix(1);
+            return text;
+        };
+        a = trimmed(a);
+        b = trimmed(b);
+        return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+                   return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+               });
+    };
     const auto create = [&](bool depthClamp, const std::string& driver) {
         const SDL_PropertiesID props = SDL_CreateProperties();
         if (!driver.empty())
@@ -2221,6 +2238,27 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
         if (device == nullptr && depthClamp) {
             depthClamp = false;
             device = create(false, driver);
+        }
+    }
+    if (device != nullptr && !driver.empty() && desc.driverIfSameCard) {
+        // A default that would cost the machine its stronger card is not
+        // taken: the library's own choice instead, which is on it.
+        const std::string strongest = platform::strongestGraphicsCard();
+        const char* made =
+            SDL_GetStringProperty(SDL_GetGPUDeviceProperties(device), SDL_PROP_GPU_DEVICE_NAME_STRING, nullptr);
+        if (!strongest.empty() && made != nullptr && !sameCard(strongest, made)) {
+            const core::I18nArg args[] = {{"driver", std::string_view{driver}},
+                                          {"card", std::string_view{made}},
+                                          {"strongest", std::string_view{strongest}}};
+            core::log(core::LogLevel::Info, ENG_TR("rhi.info.default_driver_other_card"), args);
+            SDL_DestroyGPUDevice(device);
+            driver.clear();
+            depthClamp = !desc.leastFeatures;
+            device = create(depthClamp, driver);
+            if (device == nullptr && depthClamp) {
+                depthClamp = false;
+                device = create(false, driver);
+            }
         }
     }
     if (device == nullptr) {

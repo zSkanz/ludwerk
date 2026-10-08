@@ -287,8 +287,8 @@ nothing: what you do with the path is yours, and so is whether to ask.
 
 A game draws through the graphics API its system does best: Direct3D 12 on
 Windows 11, Metal on a Mac, Vulkan on Linux, on Android -- and on a Windows
-older than 11, where Vulkan is taken when the machine can make a device
-through it. The first lines of the log say which, and on what card.
+older than 11, where Vulkan is taken when it reaches the machine's strongest
+card. The first lines of the log say which, and on what card.
 
 A player whose picture is wrong -- a pass missing, the interface gone -- can
 be asked to start the game on the other one:

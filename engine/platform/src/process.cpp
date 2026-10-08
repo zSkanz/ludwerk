@@ -9,6 +9,7 @@
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include <dxgi1_6.h>
 #include <windows.h>
 #else
 #include <unistd.h>
@@ -63,6 +64,16 @@ unsigned long processId() noexcept
 unsigned long windowsBuild() noexcept
 {
 #if defined(_WIN32)
+    // **A build to answer as**, for exercising what an older Windows is given
+    // on a machine that is not one: there is no other way to run that branch
+    // short of owning the system.
+    char assumed[16];
+    const DWORD length = GetEnvironmentVariableA("ENG_ASSUME_WINDOWS_BUILD", assumed, sizeof(assumed));
+    if (length != 0 && length < sizeof(assumed)) {
+        const unsigned long build = std::strtoul(assumed, nullptr, 10);
+        if (build != 0)
+            return build;
+    }
     // `RtlGetVersion`, from the system's own library: `GetVersionEx` answers
     // "Windows 8" to any program whose manifest does not name a later one.
     struct Version
@@ -86,6 +97,34 @@ unsigned long windowsBuild() noexcept
     return ask(&version) == 0 ? version.build : 0;
 #else
     return 0;
+#endif
+}
+
+std::string strongestGraphicsCard()
+{
+#if defined(_WIN32)
+    IDXGIFactory6* factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory6), reinterpret_cast<void**>(&factory))) || factory == nullptr)
+        return {};
+    std::string name;
+    IDXGIAdapter1* adapter = nullptr;
+    if (SUCCEEDED(factory->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, __uuidof(IDXGIAdapter1),
+                                                      reinterpret_cast<void**>(&adapter))) &&
+        adapter != nullptr) {
+        DXGI_ADAPTER_DESC1 described{};
+        if (SUCCEEDED(adapter->GetDesc1(&described))) {
+            char utf8[512];
+            const int written = WideCharToMultiByte(CP_UTF8, 0, described.Description, -1, utf8,
+                                                    static_cast<int>(sizeof(utf8)), nullptr, nullptr);
+            if (written > 1)
+                name.assign(utf8, static_cast<std::size_t>(written - 1));
+        }
+        adapter->Release();
+    }
+    factory->Release();
+    return name;
+#else
+    return {};
 #endif
 }
 

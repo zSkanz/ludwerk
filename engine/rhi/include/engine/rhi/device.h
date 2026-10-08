@@ -44,6 +44,12 @@ struct DeviceDesc
     // for the library's own choice. Where the named one cannot be made the
     // library's choice is taken, and the log says which was (D596).
     std::string driver = {};
+    // **`driver` is a default, not somebody's order.** It is kept only when
+    // the device it makes is on the card the system calls its strongest: a
+    // machine whose stronger card that API cannot see would otherwise be
+    // moved onto its weaker one for a default's sake, and draw at a fraction
+    // of the rate with nothing wrong in the picture to say why.
+    bool driverIfSameCard = false;
 };
 
 // Queried, never assumed. Interfaces here are coarse by design (architecture.md

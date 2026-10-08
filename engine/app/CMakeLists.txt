@@ -1645,6 +1645,17 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # **The report's draws by kind add up to its total**, and name the kinds
+    # the scene has. See the driver.
+    add_test(NAME frame_report_draws_by_kind
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/instancestride
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_draw_kinds.cmake)
+    set_tests_properties(frame_report_draws_by_kind PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # **A part in an instanced run is lit as the same part alone** (D577): the
     # instanced shaders built their normal matrix transposed, and a turned
     # part's face in the sun was its dark one. See the driver.

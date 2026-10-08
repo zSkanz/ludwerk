@@ -32,7 +32,7 @@ engine_add_module(platform
 if(WIN32)
     # dbghelp: the crash handler's symbol resolution. psapi: `residentBytes`,
     # which M7's soak gate needs and which lives in neither kernel32 nor SDL.
-    target_link_libraries(engine_platform PRIVATE dbghelp psapi)
+    target_link_libraries(engine_platform PRIVATE dbghelp psapi dxgi)
 endif()
 if(ANDROID)
     # The system log, where an app's console output goes (console.cpp).

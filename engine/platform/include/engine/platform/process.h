@@ -51,6 +51,11 @@ struct ProcessOptions
 // without a manifest is told a lie by.
 [[nodiscard]] unsigned long windowsBuild() noexcept;
 
+// The name of the graphics card the system itself calls its strongest --
+// the one a game is given when it asks for nothing in particular -- or empty
+// where the system has no such answer (anything but Windows).
+[[nodiscard]] std::string strongestGraphicsCard();
+
 // Whether the environment already names a graphics driver for the platform
 // library (`SDL_GPU_DRIVER`): somebody's choice, which the engine's own
 // default does not override.

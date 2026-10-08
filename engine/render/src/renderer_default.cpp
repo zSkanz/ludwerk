@@ -561,6 +561,9 @@ struct ViewState
     // Set while that mask is being drawn: `drawGeometry` takes only the parts
     // that receive none.
     bool decalMaskPass_ = false;
+    // Set while the lamps' shadow tiles are drawn, which are the sun's
+    // cascades to `drawGeometry` in everything but what they are counted as.
+    bool localShadowPass_ = false;
     // Whether this frame drew the depth prepass: what an opaque draw's
     // pipeline assumes (ADR 0174), and whether the forward pass loads the
     // depth or clears it.
@@ -770,6 +773,33 @@ private:
         Opaque,
         Transparent,
     };
+
+    // One call issued, counted in the total and under what it was for.
+    void countDraw(DrawKind kind) noexcept
+    {
+        ++stats_.drawCalls;
+        ++stats_.drawsByKind[static_cast<usize>(kind)];
+    }
+    // What a mesh's call is counted as: the pass it was submitted into, and
+    // in the picture itself whether it was one object or a run.
+    [[nodiscard]] DrawKind meshDrawKind(Selection selection, bool run) const noexcept
+    {
+        switch (selection) {
+        case Selection::Shadow:
+            return localShadowPass_ ? DrawKind::LocalShadow : DrawKind::SunShadow;
+        case Selection::Outline:
+            return DrawKind::Outline;
+        case Selection::Highlight:
+            return DrawKind::Highlight;
+        case Selection::Prepass:
+            return decalMaskPass_ ? DrawKind::DecalMask : DrawKind::Prepass;
+        case Selection::Transparent:
+            return DrawKind::Blended;
+        case Selection::Opaque:
+            break;
+        }
+        return run ? DrawKind::MeshRun : DrawKind::Mesh;
+    }
 
     // `skinned` is the pipeline a draw with a joint palette switches to. The
     // caller sets the static one and this switches at most once per pass,
@@ -3901,13 +3931,13 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         if (batch == nullptr) {
             cmd.drawIndexed(section.indexCount, 1, resolved->firstIndex + section.firstIndex, resolved->vertexOffset,
                             0);
-            ++stats_.drawCalls;
+            countDraw(meshDrawKind(selection, false));
         }
         else {
             for (u32 piece = 0; piece < pieceCount; ++piece) {
                 cmd.drawIndexed(section.indexCount, pieces[piece].count, resolved->firstIndex + section.firstIndex,
                                 resolved->vertexOffset, batch->firstInstance + pieces[piece].first);
-                ++stats_.drawCalls;
+                countDraw(meshDrawKind(selection, true));
                 ++stats_.instancedDraws;
                 stats_.instances += pieces[piece].count;
             }
@@ -4492,7 +4522,7 @@ void DefaultRenderer::writeVelocity(rhi::IDevice& device, rhi::ICmdList& cmd, co
         }
         cmd.bindIndexBuffer(resolved->indices, rhi::IndexType::U32);
         cmd.drawIndexed(section.indexCount, 1, resolved->firstIndex + section.firstIndex, resolved->vertexOffset, 0);
-        ++stats_.drawCalls;
+        countDraw(DrawKind::Velocity);
     }
     if (begun)
         cmd.endRenderPass();
@@ -6494,7 +6524,7 @@ void DefaultRenderer::drawHighlights(rhi::ICmdList& cmd, rhi::IDevice& device, c
         const std::array<rhi::TextureBinding, 1> maskBinding{rhi::TextureBinding{outlineMask_, linearSampler_}};
         fullscreenPass(cmd, outlineCompositePipeline_, target.color, target.width, target.height, "highlight-composite",
                        maskBinding, asBytes(&outline, sizeof(outline)), rhi::LoadOp::Load);
-        stats_.drawCalls += 1;
+        countDraw(DrawKind::Highlight);
     }
     cmd.popDebugGroup();
 }
@@ -6846,7 +6876,7 @@ void DefaultRenderer::drawFoliage(rhi::ICmdList& cmd, const RenderWorld& world, 
                 cmd.drawIndexedIndirect(
                     foliageArguments_,
                     (firstCommand + section) * static_cast<u32>(sizeof(rhi::DrawIndexedIndirectCommand)), 1);
-                ++stats_.drawCalls;
+                countDraw(DrawKind::Foliage);
             }
         }
     }
@@ -8121,6 +8151,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             .depthStencil = {.texture = localShadowMap_, .loadOp = rhi::LoadOp::Clear, .storeOp = rhi::StoreOp::Store},
             .debugName = "local-shadow",
         });
+    localShadowPass_ = true;
     for (u32 entry = 0; entry < localShadows_.count; ++entry) {
         const LocalShadow& shadow = localShadows_.entries[entry];
         const LocalShadowCandidate& candidate = localCandidates_[shadow.candidate];
@@ -8143,6 +8174,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                          Selection::Shadow, &cull);
         }
     }
+    localShadowPass_ = false;
     if (localShadows_.count != 0)
         cmd.endRenderPass();
     cmd.popDebugGroup();
@@ -8711,7 +8743,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 };
                 cmd.bindTextures(rhi::ShaderStage::Fragment, 0, textures);
                 cmd.draw(36, 1, 0, 0);
-                stats_.drawCalls += 1;
+                countDraw(DrawKind::Decal);
             }
             cmd.endRenderPass();
 
@@ -8788,7 +8820,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                                         lead.nearest ? pointSampler_ : environmentSampler_}};
                 cmd.bindTextures(rhi::ShaderStage::Fragment, 0, texture);
                 cmd.draw(6, end - first, 0, first);
-                stats_.drawCalls += 1;
+                countDraw(DrawKind::Sprite);
                 first = end;
             }
             if (spriteExactLive_) {
@@ -8985,7 +9017,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                     };
                     cmd.bindTextures(rhi::ShaderStage::Fragment, 0, ribbonTextures);
                     cmd.draw(count, 1, run.firstVertex, 0);
-                    stats_.drawCalls += 1;
+                    countDraw(DrawKind::Ribbon);
                 }
             }
             if (particleCount_ > 0) {
@@ -9003,7 +9035,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                     };
                     cmd.bindTextures(rhi::ShaderStage::Fragment, 0, particleTextures);
                     cmd.draw(6, std::min(run.count, particleCount_ - run.first), 0, run.first);
-                    stats_.drawCalls += 1;
+                    countDraw(DrawKind::Particle);
                 }
             }
             // **And the ones simulated on the GPU** (ADR 0160): an emitter a
@@ -9046,7 +9078,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                     };
                     cmd.bindTextures(rhi::ShaderStage::Fragment, 0, particleTextures);
                     cmd.draw(6, held.capacity, 0, 0);
-                    stats_.drawCalls += 1;
+                    countDraw(DrawKind::Particle);
                 }
             }
             cmd.endRenderPass();
@@ -9099,7 +9131,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                                             environmentSampler_}};
                     cmd.bindTextures(rhi::ShaderStage::Fragment, 0, texture);
                     cmd.draw(run.vertexCount, 1, run.firstVertex, 0);
-                    stats_.drawCalls += 1;
+                    countDraw(DrawKind::WorldUi);
                 }
             }
         }

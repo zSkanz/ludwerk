@@ -15,6 +15,7 @@
 // host's business rather than the renderer's.
 #pragma once
 
+#include <array>
 #include <optional>
 
 #include "engine/core/error.h"
@@ -42,11 +43,54 @@ struct RenderTarget
     core::u32 view = 0;
 };
 
+// **What a draw call was for.** A frame's count is one number, and the
+// question a slow frame asks is which pass and which kind of thing made it:
+// a horde drawn four times over into the sun's cascades reads the same, as a
+// total, as four times the effects on screen.
+//
+// The mesh passes come first, each the same geometry submitted for another
+// reason; `Mesh` and `MeshRun` are the picture itself, one object to a call
+// and a run of them to a call; the rest are the kinds that are not meshes.
+enum class DrawKind : core::u8
+{
+    SunShadow,
+    LocalShadow,
+    Prepass,
+    DecalMask,
+    Mesh,
+    MeshRun,
+    Blended,
+    Outline,
+    Highlight,
+    Velocity,
+    Foliage,
+    Decal,
+    Sprite,
+    Ribbon,
+    Particle,
+    WorldUi,
+    Count,
+};
+
+inline constexpr core::usize DrawKindCount = static_cast<core::usize>(DrawKind::Count);
+
+// The name a report writes a kind by.
+[[nodiscard]] constexpr const char* drawKindName(DrawKind kind) noexcept
+{
+    constexpr std::array<const char*, DrawKindCount> Names{
+        "sun_shadow", "local_shadow", "prepass", "decal_mask", "mesh",   "mesh_run", "blended",  "outline",
+        "highlight",  "velocity",     "foliage", "decal",      "sprite", "ribbon",   "particle", "world_ui",
+    };
+    return Names[static_cast<core::usize>(kind)];
+}
+
 // The counters a frame leaves behind, for `DebugService` and the perf table.
 struct RendererStats
 {
     // Calls issued: `drawIndexed` and `draw`, across every pass of the frame.
     core::u32 drawCalls = 0;
+    // The same calls by what each was for: these sum to `drawCalls`.
+    std::array<core::u32, DrawKindCount> drawsByKind{};
     // How many of those were instanced, and how many objects they covered. A
     // frame where `instances` is far larger than `instancedDraws` is a frame the
     // instanced path did something in; a frame where they are equal is one where
