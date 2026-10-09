@@ -9,7 +9,32 @@ local projectlib = require("../project")
 local registry = require("./registry")
 local targets = require("../export/targets")
 
-export type Payload = { Item: registry.Module, Directory: string, GameConfig: string? }
+export type Payload = {
+    Item: registry.Module,
+    Directory: string,
+    GameConfig: string?,
+    -- Where the vendor's files are read from: the developer's installed SDK.
+    VendorDirectory: string?,
+}
+
+-- **Every file of the vendor's the game needs is in the developer's own
+-- SDK**, or the export stops and says which is not and where it was looked
+-- for (ADR 0188). The engine's module carries none of them, so this is the
+-- one place a missing one can be found before a player finds it.
+local function vendorMissing(item: registry.Module, directory: string): string?
+    local wanted: { { From: string, To: string } } = item.VendorFiles or {}
+    for _, file in wanted do
+        local source = projectlib.joined(directory, file.From)
+        if not fs.exists(source) then
+            return catalog.tr("cli.modules.vendor_file_missing", {
+                module = catalog.tr(item.Label),
+                file = file.To,
+                path = source,
+            })
+        end
+    end
+    return nil
+end
 local function field(config: any, key: string): any
     local value = config
     for _, part in string.split(key, ".") do
@@ -61,7 +86,18 @@ local function prepare(project: projectlib.Project, target: targets.Target, exec
             end
             gameConfig = resolved
         end
-        table.insert(payloads, { Item = item, Directory = directory, GameConfig = gameConfig })
+        local vendorDirectory: string? = nil
+        if item.VendorFiles ~= nil then
+            vendorDirectory = manager.nativeDirectory(item)
+            local missing = vendorMissing(item, vendorDirectory :: string)
+            if missing ~= nil then
+                return nil, missing
+            end
+        end
+        table.insert(
+            payloads,
+            { Item = item, Directory = directory, GameConfig = gameConfig, VendorDirectory = vendorDirectory }
+        )
     end
     return payloads, nil
 end
@@ -72,9 +108,18 @@ local function deploy(payloads: { Payload }, output: string)
         for _, file in payload.Item.NativeFiles or {} do
             fs.copy(projectlib.joined(payload.Directory, file), projectlib.joined(destination, file))
         end
+        if payload.VendorDirectory ~= nil then
+            local wanted: { { From: string, To: string } } = payload.Item.VendorFiles or {}
+            for _, file in wanted do
+                fs.copy(
+                    projectlib.joined(payload.VendorDirectory :: string, file.From),
+                    projectlib.joined(destination, file.To)
+                )
+            end
+        end
         if payload.GameConfig ~= nil then
             fs.copy(payload.GameConfig, projectlib.joined(output, payload.Item.GameConfigName :: string))
         end
     end
 end
-return { prepare = prepare, deploy = deploy }
+return { prepare = prepare, deploy = deploy, vendorMissing = vendorMissing }

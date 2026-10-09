@@ -200,6 +200,7 @@
     "cli.modules.licenses": "Review the SDK provider licenses, then pass --accept-licenses to install optional tools.",
     "cli.modules.scid": "Xbox service configuration ID (SCID)",
     "cli.modules.game_config": "MicrosoftGame.config (project-relative path)",
+    "cli.modules.vendor_file_missing": "{module} is enabled, but {file} is not in the SDK installed on this machine: looked for {path}. Install or repair the SDK; the engine's module does not carry the vendor's files.",
     "cli.modules.provider_missing": "The Xbox integration is enabled, but the prebuilt native provider is missing. Install a compatible Xbox provider module.",
     "cli.modules.config_missing": "The MicrosoftGame.config file is missing or outside the project. Set export.microsoft.config to a project-relative file.",
     "cli.modules.configuration_missing": "{module} is enabled but its service configuration is empty. Configure it in Platforms and Services.",

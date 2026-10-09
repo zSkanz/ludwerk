@@ -24,9 +24,9 @@ if(ENG_GDK_ROOT)
             "${ENG_GDK_ROOT}/bin/x64/libHttpClient.dll"
             "$<TARGET_FILE_DIR:engine_host>/integrations/xbox"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${ENG_XBOX_MODULE_DIR}"
+        # The module's directory takes the provider alone: the vendor's
+        # libraries above are for running here, from this developer's own
+        # SDK, and are not part of what the engine distributes (ADR 0188).
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:engine_xbox_provider>"
-            "${ENG_GDK_ROOT}/bin/x64/xgameruntime.dll" "${ENG_GDK_ROOT}/bin/x64/libHttpClient.dll"
-            "${ENG_XBOX_MODULE_DIR}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ENG_GDK_ROOT}/../../../LICENSE.md"
-            "${ENG_XBOX_MODULE_DIR}/GDK-LICENSE.md")
+            "${ENG_XBOX_MODULE_DIR}")
 endif()

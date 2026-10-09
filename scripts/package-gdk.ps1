@@ -34,7 +34,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Optional provider build failed.' }
     New-Item -ItemType Directory -Force -Path $moduleDestination | Out-Null
     $moduleHashes = @{}
-    foreach ($moduleFile in @('engine_xbox.dll', 'xgameruntime.dll', 'libHttpClient.dll', 'GDK-LICENSE.md')) {
+    # The engine's own provider and nothing of the vendor's (ADR 0188): the
+    # vendor's libraries are found in each developer's own SDK when a game is
+    # exported, and never ride in this archive.
+    foreach ($moduleFile in @('engine_xbox.dll')) {
         $moduleInput = Join-Path $moduleSource $moduleFile
         Copy-Item -LiteralPath $moduleInput -Destination (Join-Path $moduleDestination $moduleFile) -Force
         $moduleHashes[$moduleFile] = (Get-FileHash -LiteralPath $moduleInput -Algorithm SHA256).Hash.ToLowerInvariant()

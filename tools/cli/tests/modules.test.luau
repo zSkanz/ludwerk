@@ -70,4 +70,53 @@ test.suite("optional modules", function(suite)
         assert.eq(fs.exists(`{root}/output/integrations/test/private.h`), false)
         game.removeTree(root)
     end)
+    suite:case("the vendor's files come from the developer's SDK, never from the module", function()
+        -- ADR 0188, the owner's rule: we ship our layer, never their files.
+        local gdk = registry.find("microsoft-gdk") :: registry.Module
+        local ours: { string } = gdk.NativeFiles or {}
+        for _, file in ours do
+            assert.eq(file, "engine_xbox.dll")
+        end
+        assert.eq(#(gdk.VendorFiles :: { { From: string, To: string } }), 2)
+
+        local base = string.match(debug.info(1, "s"), "^(.*)[/\\][^/\\]+$") or "tools/cli/tests"
+        local root = `{base}/scratch-vendor-files`
+        if fs.exists(root) then
+            game.removeTree(root)
+        end
+        fs.createDirectory(`{root}/provider`, { makeParents = true })
+        fs.createDirectory(`{root}/sdk/bin`, { makeParents = true })
+        fs.writeStringToFile(`{root}/provider/ours.dll`, "ours")
+        fs.writeStringToFile(`{root}/sdk/bin/theirs.dll`, "theirs")
+        local item: registry.Module = {
+            Id = "test",
+            Label = "test",
+            Kind = "integration",
+            Targets = {},
+            Dependencies = {},
+            Integration = "test",
+            NativeFiles = { "ours.dll" },
+            VendorFiles = {
+                { From = "bin/theirs.dll", To = "theirs.dll" },
+                { From = "bin/absent.dll", To = "absent.dll" },
+            },
+        }
+        -- One of them is not in the SDK: said, with the file and where it was looked for.
+        local missing = exporter.vendorMissing(item, `{root}/sdk`)
+        assert.that(missing ~= nil)
+        assert.that(string.find(missing :: string, "absent.dll", 1, true) ~= nil)
+        assert.that(string.find(missing :: string, "bin", 1, true) ~= nil)
+
+        -- All there: none missing, and the export copies ours from the module and theirs from the SDK.
+        fs.writeStringToFile(`{root}/sdk/bin/absent.dll`, "theirs too")
+        assert.eq(exporter.vendorMissing(item, `{root}/sdk`), nil)
+        exporter.deploy(
+            { { Item = item, Directory = `{root}/provider`, GameConfig = nil, VendorDirectory = `{root}/sdk` } },
+            `{root}/output`
+        )
+        assert.eq(fs.readFileToString(`{root}/output/integrations/test/ours.dll`), "ours")
+        assert.eq(fs.readFileToString(`{root}/output/integrations/test/theirs.dll`), "theirs")
+        assert.eq(fs.readFileToString(`{root}/output/integrations/test/absent.dll`), "theirs too")
+        game.removeTree(root)
+    end)
 end)

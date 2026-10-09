@@ -16,6 +16,12 @@ export type Module = {
     NativeDirectory: string?,
     Payload: string?,
     NativeFiles: { string }?,
+    -- **The vendor's own files a game needs beside the provider** (ADR 0188):
+    -- never in the engine's module archive, which carries the engine's layer
+    -- and nothing of theirs. Each is found in the developer's installed SDK
+    -- (`From`, under its native directory) and copied into the exported game
+    -- (`To`) when it is exported.
+    VendorFiles: { { From: string, To: string } }?,
     RequiredFiles: { string }?,
     GameConfigKey: string?,
     GameConfigName: string?,
@@ -58,7 +64,11 @@ local Modules: { Module } = {
             { Key = "export.microsoft.config", Label = "cli.modules.game_config" },
         },
         Payload = "windows-x64",
-        NativeFiles = { "engine_xbox.dll", "xgameruntime.dll", "libHttpClient.dll", "GDK-LICENSE.md" },
+        NativeFiles = { "engine_xbox.dll" },
+        VendorFiles = {
+            { From = "bin/x64/xgameruntime.dll", To = "xgameruntime.dll" },
+            { From = "bin/x64/libHttpClient.dll", To = "libHttpClient.dll" },
+        },
         RequiredFiles = {
             "include/XGameRuntimeInit.h",
             "lib/x64/xgameruntime.lib",
