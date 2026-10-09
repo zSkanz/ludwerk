@@ -222,6 +222,94 @@ TEST_CASE("D507: opening a project again reads none of its unchanged sources, an
     CHECK(changed.compiled == std::vector<std::string>{"textures/base.png"});
 }
 
+TEST_CASE("D597: a material that names no image differently leaves every source compiled")
+{
+    // The stamps were good for as long as no material file's size or time
+    // moved: one material saved -- a new colour -- or merely touched, and
+    // every source of the project went back to the compiler. A project of 662
+    // sources took 114 seconds to open with nothing to compile.
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+    const Project project;
+    const std::filesystem::path material = project.content() / "materials" / "wall.material.json";
+    const auto write = [&material](std::string_view properties) {
+        std::error_code ec;
+        std::filesystem::create_directories(material.parent_path(), ec);
+        const std::string text = std::string(R"({"format":"material","version":1,"parent":"","properties":{)") +
+                                 std::string(properties) + "}}";
+        REQUIRE(platform::writeTextFile(material, text));
+    };
+    write(R"("Color":[0.8,0.1,0.1],"ColorMap":"asset://textures/base.png")");
+
+    asset::ContentMounts first;
+    const app::ContentImportReport compiled = app::openProjectContent(project.root, project.content(), first);
+    CHECK(compiled.failed.empty());
+    CHECK(compiled.compiled.size() == 2);
+
+    // **Another colour, and the image still its colour map**: nothing to do.
+    write(R"("Color":[0.1,0.1,0.9],"Roughness":0.35,"ColorMap":"asset://textures/base.png")");
+    asset::ContentMounts second;
+    const app::ContentImportReport recoloured = app::openProjectContent(project.root, project.content(), second);
+    CHECK(recoloured.compiled.empty());
+    CHECK(recoloured.cacheHits == 0);
+    CHECK(recoloured.cacheMisses == 0);
+    CHECK(second.resolve("asset://textures/base.png").found());
+
+    // **The image claimed as numbers instead**: its bytes are other bytes
+    // now, and it is compiled again -- for real, not from the cache.
+    write(R"("Color":[0.1,0.1,0.9],"NormalMap":"asset://textures/base.png")");
+    asset::ContentMounts third;
+    const app::ContentImportReport reclaimed = app::openProjectContent(project.root, project.content(), third);
+    CHECK(reclaimed.failed.empty());
+    CHECK(std::find(reclaimed.compiled.begin(), reclaimed.compiled.end(), "textures/base.png") !=
+          reclaimed.compiled.end());
+    CHECK(reclaimed.cacheMisses >= 1);
+}
+
+TEST_CASE("D597: sources compiled in batches are the sources compiled one at a time")
+{
+    // Forty copies of one image under forty names -- more than a batch -- and
+    // the mesh: every one compiled, every one named before it was, every one
+    // in the store, and the open after it with nothing left to do.
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+    const Project project;
+    for (int copy = 0; copy < 40; ++copy) {
+        std::error_code ec;
+        std::filesystem::copy_file(project.image(),
+                                   project.content() / "textures" / ("copy" + std::to_string(copy) + ".png"),
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        REQUIRE_FALSE(ec);
+    }
+
+    std::vector<std::string> told;
+    const app::ImportProgress progress = [&told](core::usize done, core::usize total, std::string_view name) {
+        if (done < total && std::find(told.begin(), told.end(), name) == told.end())
+            told.emplace_back(name);
+    };
+    asset::ContentMounts first;
+    const app::ContentImportReport compiled = app::openProjectContent(project.root, project.content(), first, progress);
+    CHECK(compiled.failed.empty());
+    CHECK(compiled.compiled.size() == 42);
+    CHECK(told.size() == 42);
+    CHECK(compiled.meshes == 1);
+    for (int copy = 0; copy < 40; ++copy)
+        CHECK(first.resolve("asset://textures/copy" + std::to_string(copy) + ".png").found());
+    CHECK(first.resolve("asset://models/quad.gltf").found());
+
+    asset::ContentMounts second;
+    const app::ContentImportReport again = app::openProjectContent(project.root, project.content(), second);
+    CHECK(again.compiled.empty());
+}
+
 TEST_CASE("D554: a source the store has lost is compiled again, whatever the stamps remember")
 {
     // Two processes opened one project at once -- two lanes of the gate, on

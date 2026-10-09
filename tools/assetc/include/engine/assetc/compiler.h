@@ -221,6 +221,14 @@ struct CompileResult
 // has seen without reading it (D507).
 [[nodiscard]] core::ContentHash importerFingerprint(const CompileOptions& options);
 
+// **What the project's materials say each loose image is for**, hashed: the
+// one thing outside a texture's own bytes that changes how it compiles. A
+// material file that was touched, or edited in a way that names no image
+// differently -- a colour, a roughness -- leaves this as it was, and that is
+// the point: the editor asked "did any material file change" (D597) and
+// recompiled a project of six hundred sources for a new shade of red.
+[[nodiscard]] core::ContentHash textureUseFingerprint(const CompileOptions& options);
+
 // One source, compiled exactly as a full build would compile it.
 //
 // **The editor's import and `assetc` produce the same blobs because they are the

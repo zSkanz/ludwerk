@@ -141,24 +141,30 @@ void writeStamps(const std::filesystem::path& projectRoot, std::string_view fing
 }
 
 // **What decides how a source compiles, apart from its own bytes**: the
-// importer's pinned options and rules, and the project's materials -- a
-// material decides whether a loose image is colour, and so its bytes.
-[[nodiscard]] std::string importFingerprint(const assetc::CompileOptions& options,
-                                            const std::filesystem::path& contentRoot)
+// importer's pinned options and rules, and what the project's materials say
+// each loose image is for -- colour or numbers, and so its bytes.
+//
+// It was every material file's size and time (D597). One material saved, or
+// touched, or written by the import of a model, and every source of the
+// project was back in the list: 114 seconds to open a project of 662 sources
+// in which nothing was compiled, because nothing had changed.
+[[nodiscard]] std::string importFingerprint(const assetc::CompileOptions& options)
 {
     core::ContentHasher hasher;
-    const core::ContentHash importer = assetc::importerFingerprint(options);
-    const std::string importerText = importer.toHex();
-    hasher.update(std::as_bytes(std::span<const char>(importerText.data(), importerText.size())));
-    ContentTree tree;
-    (void)tree.open(contentRoot);
-    for (const std::string& material : tree.filesOfKind(ContentKind::Material)) {
-        const std::optional<SourceStamp> stamp = stampOf(contentRoot / std::filesystem::path(material));
-        const std::string line = material + "|" + (stamp ? stamp->size + "|" + stamp->written : std::string());
-        hasher.update(std::as_bytes(std::span<const char>(line.data(), line.size())));
+    for (const core::ContentHash part :
+         {assetc::importerFingerprint(options), assetc::textureUseFingerprint(options)}) {
+        const std::string text = part.toHex();
+        hasher.update(std::as_bytes(std::span<const char>(text.data(), text.size())));
     }
     return hasher.finish().toHex();
 }
+
+// How many sources one call to the compiler is given. Enough that the tree is
+// walked, the materials read and the store's index written once for many of
+// them, and that its textures have workers to spread across; few enough that
+// the window's title moves and that one bad file costs its neighbours a
+// second try rather than the whole project one.
+constexpr core::usize ImportBatch = 32;
 
 } // namespace
 
@@ -184,7 +190,7 @@ ContentImportReport compileImported(const std::filesystem::path& projectRoot, co
     // 3.8 s before the first frame of a project of two hundred sources, with
     // nothing to do. A source the same size and time as when it compiled, under
     // the same importer and materials, is skipped without being opened.
-    const std::string fingerprint = skipUnchanged ? importFingerprint(options, contentRoot) : std::string();
+    const std::string fingerprint = skipUnchanged ? importFingerprint(options) : std::string();
     const std::map<std::string, SourceStamp> known =
         skipUnchanged ? readStamps(projectRoot, fingerprint) : std::map<std::string, SourceStamp>{};
     std::map<std::string, SourceStamp> stamps;
@@ -212,58 +218,15 @@ ContentImportReport compileImported(const std::filesystem::path& projectRoot, co
         todo.push_back(name);
     }
 
-    for (core::usize at = 0; at < todo.size(); ++at) {
-        const std::string name(todo[at]);
-        if (progress)
-            progress(at, todo.size(), name);
-
-        const std::filesystem::path source = contentRoot / std::filesystem::path(name);
-        const std::optional<SourceStamp> before = skipUnchanged ? stampOf(source) : std::nullopt;
-        // **On a thread of its own, one source at a time, while the caller's
-        // window keeps answering** (D507): one model took nine seconds, and a
-        // window silent for five is one Windows covers with a white copy of it.
-        // One at a time because the encoder's format setters are process-wide
-        // (`compiler.h`, rule 4).
-        assetc::CompileResult result;
-        if (progress) {
-            std::future<assetc::CompileResult> pending =
-                std::async(std::launch::async, [&options, &source] { return assetc::importOne(options, source); });
-            while (pending.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
-                progress(at, todo.size(), name);
-            result = pending.get();
-        }
-        else {
-            result = assetc::importOne(options, source);
-        }
-        if (!result.ok) {
-            report.failed.push_back(name);
-            if (report.diagnostic.empty())
-                report.diagnostic = result.diagnostic;
-            continue;
-        }
-
-        // **Written per source rather than once at the end**, so an import of
-        // forty files that fails on the thirty-first leaves thirty compiled
-        // rather than nothing. The store merges, which is what makes that safe.
-        if (const auto error =
-                assetc::writeObjectStore(result, importObjectsDir(projectRoot), importIndexPath(projectRoot))) {
-            report.failed.push_back(name);
-            if (report.diagnostic.empty())
-                report.diagnostic = error->message;
-            continue;
-        }
-
+    // What one compiled source leaves in the report: its counts are the
+    // call's, and its pieces are read off the rows it produced -- so the
+    // editor names an instance with the same word the store is keyed by,
+    // rather than deriving it a second time and hoping.
+    const auto noteCompiled = [&](const std::string& name, const assetc::CompileResult& result,
+                                  const std::optional<SourceStamp>& before) {
         report.compiled.push_back(name);
         if (before.has_value())
             stamps.emplace(name, *before);
-        report.meshes += result.meshCount;
-        report.textures += result.textureCount;
-        report.cacheHits += result.stats.cacheHits;
-        report.cacheMisses += result.stats.cacheMisses;
-
-        // The fragments this source produced, read off the rows it produced --
-        // so the editor names an instance with the same word the store is keyed
-        // by, rather than deriving it a second time and hoping.
         std::vector<std::string> fragments;
         const std::string urn = "asset://" + std::filesystem::path(name).generic_string();
         for (const assetc::ManifestEntry& entry : result.entries) {
@@ -274,6 +237,83 @@ ContentImportReport compileImported(const std::filesystem::path& projectRoot, co
         }
         if (!fragments.empty())
             report.pieces.emplace_back(name, std::move(fragments));
+    };
+    const auto noteTotals = [&](const assetc::CompileResult& result) {
+        report.meshes += result.meshCount;
+        report.textures += result.textureCount;
+        report.cacheHits += result.stats.cacheHits;
+        report.cacheMisses += result.stats.cacheMisses;
+    };
+    // **On a thread of its own while the caller's window keeps answering**
+    // (D507): one model took nine seconds, and a window silent for five is
+    // one Windows covers with a white copy of it.
+    const auto run = [&](const assetc::CompileOptions& asked, core::usize at, const std::string& name) {
+        if (!progress)
+            return assetc::compile(asked);
+        std::future<assetc::CompileResult> pending =
+            std::async(std::launch::async, [&asked] { return assetc::compile(asked); });
+        while (pending.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
+            progress(at, todo.size(), name);
+        return pending.get();
+    };
+
+    // **A batch of sources to a call** (D597). Each source was a call of its
+    // own, and a call walks the whole tree, reads every material and writes
+    // the store's whole index: for a project of six hundred sources that is
+    // six hundred walks, and it is paid in full when the cache answers every
+    // one. A batch pays it once, and its textures are encoded side by side.
+    for (core::usize first = 0; first < todo.size(); first += ImportBatch) {
+        const core::usize last = std::min(first + ImportBatch, todo.size());
+        std::vector<std::optional<SourceStamp>> before(last - first);
+        assetc::CompileOptions batch = options;
+        batch.only.clear();
+        for (core::usize at = first; at < last; ++at) {
+            // Each named before it compiles, as each was when it was a call.
+            if (progress)
+                progress(at, todo.size(), todo[at]);
+            const std::filesystem::path source = contentRoot / std::filesystem::path(std::string(todo[at]));
+            before[at - first] = skipUnchanged ? stampOf(source) : std::nullopt;
+            batch.only.push_back(source);
+        }
+
+        const assetc::CompileResult together = run(batch, last - 1, std::string(todo[last - 1]));
+        if (together.ok &&
+            !assetc::writeObjectStore(together, importObjectsDir(projectRoot), importIndexPath(projectRoot))) {
+            for (core::usize at = first; at < last; ++at)
+                noteCompiled(std::string(todo[at]), together, before[at - first]);
+            noteTotals(together);
+            continue;
+        }
+
+        // **One of them would not compile, so each is asked alone**: the one
+        // at fault is named, and its neighbours are compiled rather than lost
+        // with it -- an import of forty files that fails on the thirty-first
+        // leaves thirty-nine compiled rather than nothing. The store merges,
+        // which is what makes that safe.
+        for (core::usize at = first; at < last; ++at) {
+            const std::string name(todo[at]);
+            if (progress)
+                progress(at, todo.size(), name);
+            assetc::CompileOptions one = options;
+            one.only.clear();
+            one.only.push_back(contentRoot / std::filesystem::path(name));
+            const assetc::CompileResult result = run(one, at, name);
+            if (!result.ok) {
+                report.failed.push_back(name);
+                if (report.diagnostic.empty())
+                    report.diagnostic = result.diagnostic;
+                continue;
+            }
+            if (const auto error =
+                    assetc::writeObjectStore(result, importObjectsDir(projectRoot), importIndexPath(projectRoot))) {
+                report.failed.push_back(name);
+                if (report.diagnostic.empty())
+                    report.diagnostic = error->message;
+                continue;
+            }
+            noteCompiled(name, result, before[at - first]);
+            noteTotals(result);
+        }
     }
     if (progress && !todo.empty())
         progress(todo.size(), todo.size(), {});

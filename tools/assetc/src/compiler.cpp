@@ -5,6 +5,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <set>
 #include <system_error>
 #include <type_traits>
 
@@ -486,17 +487,48 @@ std::vector<SourceFile> collectSources(const std::filesystem::path& root, const 
     if (only.empty())
         return sources;
 
+    // **By name first, and by the filesystem only for what no name found**
+    // (D597). `equivalent` opens both files, and asking it of every source
+    // against every wanted one is the tree's size times the list's: a list of
+    // six hundred in a tree of a thousand is six hundred thousand pairs of
+    // opens before anything compiles. A caller that built its paths from the
+    // same root spells them as the walk does, and those are found in a set.
+    const auto spelled = [](const std::filesystem::path& path) { return path.lexically_normal().generic_string(); };
+    std::set<std::string> wantedNames;
+    for (const std::filesystem::path& wanted : only)
+        wantedNames.insert(spelled(wanted));
+
     std::vector<SourceFile> kept;
     kept.reserve(only.size());
+    std::vector<SourceFile> unmatched;
     for (SourceFile& source : sources) {
-        std::error_code ec;
-        for (const std::filesystem::path& wanted : only) {
-            if (std::filesystem::equivalent(source.path, wanted, ec)) {
+        if (wantedNames.contains(spelled(source.path)))
+            kept.push_back(std::move(source));
+        else
+            unmatched.push_back(std::move(source));
+    }
+    if (kept.size() == only.size())
+        return kept;
+    // Somebody named a source another way -- a relative path, another case, a
+    // link. Those are looked for as before, among what is left, and put back
+    // in the walk's order, which is the order everything downstream relies on.
+    std::set<std::string> foundNames;
+    for (const SourceFile& source : kept)
+        foundNames.insert(spelled(source.path));
+    for (const std::filesystem::path& wanted : only) {
+        if (foundNames.contains(spelled(wanted)))
+            continue;
+        for (SourceFile& source : unmatched) {
+            std::error_code ec;
+            if (!source.path.empty() && std::filesystem::equivalent(source.path, wanted, ec)) {
                 kept.push_back(std::move(source));
+                source.path.clear();
                 break;
             }
         }
     }
+    std::sort(kept.begin(), kept.end(),
+              [](const SourceFile& a, const SourceFile& b) { return a.relative < b.relative; });
     return kept;
 }
 
@@ -693,43 +725,56 @@ CompileResult compile(const CompileOptions& options)
         }
 
         if (textureIndices.size() > 1) {
-            jobs::parallelFor("assetc.texture.encode", jobs::Domain::Tooling, 0, textureIndices.size(), 1,
-                              [&](usize begin, usize end, core::u32 bucket) noexcept {
-                                  // The bucket index is what a stable commit would merge by;
-                                  // here every job writes into its own SOURCE slot, which is a
-                                  // stronger ordering than the bucket and makes it unused.
-                                  (void)bucket;
-                                  // **Nothing may leave this body.** `jobs` requires a
-                                  // `noexcept` callable, and on MSVC an exception escaping one
-                                  // is `__fastfail` -- the process died with 0xC0000409 and no
-                                  // output at all the first time this ran. A decode or an
-                                  // encode that throws leaves its slot empty, and the serial
-                                  // loop below then does the work and produces the diagnostic,
-                                  // which is where a diagnostic belongs anyway.
-                                  try {
-                                      for (usize at = begin; at < end; ++at) {
-                                          const usize index = textureIndices[at];
-                                          std::vector<std::byte> raw;
-                                          if (!readWhole(sources[index].path, raw))
-                                              continue;
-                                          asset::Image image;
-                                          if (asset::decodeImage(raw, image))
-                                              continue;
-                                          const std::string urn = urnFor(sources[index].relative);
-                                          std::vector<std::byte> encoded;
-                                          if (encodeTexture(image, looseTextureIsColour(textureUses, urn), encoded))
-                                              continue;
-                                          // Written into this source's OWN slot and read after
-                                          // the barrier, which is what makes the merge stable:
-                                          // no two workers touch one element and nothing is
-                                          // appended.
-                                          preEncoded[index] = std::move(encoded);
-                                      }
-                                  } catch (...) {
-                                      // Left for the serial loop, which will say what went
-                                      // wrong with the source it went wrong on.
-                                  }
-                              });
+            jobs::parallelFor(
+                "assetc.texture.encode", jobs::Domain::Tooling, 0, textureIndices.size(), 1,
+                [&](usize begin, usize end, core::u32 bucket) noexcept {
+                    // The bucket index is what a stable commit would merge by;
+                    // here every job writes into its own SOURCE slot, which is a
+                    // stronger ordering than the bucket and makes it unused.
+                    (void)bucket;
+                    // **Nothing may leave this body.** `jobs` requires a
+                    // `noexcept` callable, and on MSVC an exception escaping one
+                    // is `__fastfail` -- the process died with 0xC0000409 and no
+                    // output at all the first time this ran. A decode or an
+                    // encode that throws leaves its slot empty, and the serial
+                    // loop below then does the work and produces the diagnostic,
+                    // which is where a diagnostic belongs anyway.
+                    try {
+                        for (usize at = begin; at < end; ++at) {
+                            const usize index = textureIndices[at];
+                            std::vector<std::byte> raw;
+                            if (!readWhole(sources[index].path, raw))
+                                continue;
+                            const std::string urn = urnFor(sources[index].relative);
+                            const bool colour = looseTextureIsColour(textureUses, urn);
+                            // **Not encoded when the cache is about to answer**
+                            // (D597). The read and the key are this worker's, so
+                            // the disk is no more serial than it was; what is
+                            // saved is the encode, which was the whole cost of an
+                            // open that had nothing new to compile.
+                            if (!options.cacheRoot.empty()) {
+                                const ContentHash key = cacheKey(raw, urn, options, SourceKind::Texture, colour);
+                                std::error_code ec;
+                                if (std::filesystem::is_regular_file(cachePathFor(options.cacheRoot, key), ec))
+                                    continue;
+                            }
+                            asset::Image image;
+                            if (asset::decodeImage(raw, image))
+                                continue;
+                            std::vector<std::byte> encoded;
+                            if (encodeTexture(image, colour, encoded))
+                                continue;
+                            // Written into this source's OWN slot and read after
+                            // the barrier, which is what makes the merge stable:
+                            // no two workers touch one element and nothing is
+                            // appended.
+                            preEncoded[index] = std::move(encoded);
+                        }
+                    } catch (...) {
+                        // Left for the serial loop, which will say what went
+                        // wrong with the source it went wrong on.
+                    }
+                });
         }
     }
 
@@ -1254,6 +1299,20 @@ ContentHash importerFingerprint(const CompileOptions& options)
 {
     core::ContentHasher hasher;
     hashPinned(hasher, options);
+    return hasher.finish();
+}
+
+ContentHash textureUseFingerprint(const CompileOptions& options)
+{
+    core::ContentHasher hasher;
+    std::string diagnostic;
+    const std::vector<SourceFile> sources = collectSources(options.inputRoot, options.cacheRoot, diagnostic);
+    // Ordered by URN, as the map is: the same materials read in another order
+    // are the same answer.
+    for (const auto& [urn, colour] : collectTextureUses(sources)) {
+        const std::string line = urn + (colour ? "|colour\n" : "|data\n");
+        hasher.update(std::as_bytes(std::span<const char>(line.data(), line.size())));
+    }
     return hasher.finish();
 }
 

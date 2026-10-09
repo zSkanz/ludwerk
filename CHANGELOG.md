@@ -1503,6 +1503,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **Opening a project no longer recompiles it for a material that was
+  saved** (D597). Any material file saved or touched sent every source of
+  the project back to the compiler -- a minute and a half for a project of
+  six hundred sources, with nothing to compile. Sources are recompiled when
+  their own bytes change, or when a material starts or stops naming an image
+  as a normal, roughness or height map. And when there is something to
+  compile it is compiled thirty-two sources to a pass: a first open of that
+  project went from four minutes to under thirty seconds.
 - **A game on Windows 10 starts on Vulkan** when the machine's strongest
   card can be drawn on through it (D596). One
   player's Windows 10 machine drew a game's scene dark and with no interface
