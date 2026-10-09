@@ -221,6 +221,16 @@ struct CompileResult
 // has seen without reading it (D507).
 [[nodiscard]] core::ContentHash importerFingerprint(const CompileOptions& options);
 
+// **The files a source reads beside itself**: a glTF's external buffers and
+// images, by the `uri` it names them with, as absolute paths in the order
+// the file lists them. Empty for a source that is whole in one file -- a
+// `.glb`, an image -- and for a name the file gives that is not there.
+//
+// They decide what the source compiles to as much as its own bytes do, so
+// they are in its cache key and in the stamp the editor skips it by (D604):
+// a model whose texture was repainted compiled to the model with the old one.
+[[nodiscard]] std::vector<std::filesystem::path> companionsOf(const std::filesystem::path& source);
+
 // **What the project's materials say each loose image is for**, hashed: the
 // one thing outside a texture's own bytes that changes how it compiles. A
 // material file that was touched, or edited in a way that names no image

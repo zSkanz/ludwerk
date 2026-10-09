@@ -146,7 +146,7 @@ RNG/unordered iteration; stable parallel commit) · R11 main always green ·
 R12 conventional commits · R13 never edit `third_party/` in place ·
 R14 out-of-tree builds only · R15 v1 scope closed, and post-v1 phases open one
 at a time by human decision (1 editor, 2 effects/world, 3 2D and navmesh, and 4
-multiplayer are OPEN; mobile is OPEN for Android since 2026-09-26, iOS is not) · R16 interpreter-first perf (iOS has no
+multiplayer are OPEN; mobile is OPEN for Android since 2026-09-26, iOS is not; Xbox/UWP and local co-op are OPEN since 2026-10-09) · R16 interpreter-first perf (iOS has no
 JIT) · R17 no backend
 types in the public API · R18 rendering is judged against a stated reference,
 and visual fidelity is a v1 target (ADR 0038).
@@ -179,8 +179,16 @@ and visual fidelity is a v1 target (ADR 0038).
   navmesh, opened 2026-09-23) and 4 (multiplayer) ARE open. Mobile opened for
   **Android** on 2026-09-26 -- the owner asked for the platformer on his phone
   with touch controls; `scripts/android-player.ps1` -- and iOS is not open.
+  **Xbox/UWP** (a Developer Mode player and the optional Xbox provider, ADRs
+  0188, 0190, 0191, 0193) and **local co-op** (several players on one machine)
+  opened on 2026-10-09 -- the owner tested both and opened them as built.
   Opening one is the owner's decision — taking it for them is what R15 actually
   forbids.
+- Do not put a proprietary SDK in the engine. One is allowed only as an
+  **optional provider module outside the core** (ADR 0188): never a dependency
+  of the engine itself, never under `third_party/`, off by default, and never
+  redistributing the vendor's files -- the module finds them in the
+  developer's own installation.
 
 ## Map
 

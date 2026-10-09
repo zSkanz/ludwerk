@@ -143,6 +143,7 @@
   "platform.warn.io_pool_exhausted": "All {count} asynchronous read slots are in use; reads are falling back to the blocking path until one is released.",
   "platform.window.title": "{brand} {version}",
   "engine.frame.warn.catch_up_clamped": "Frame took {ms} ms; dropped simulated time after {ticks} catch-up ticks.",
+  "engine.frame.info.long_wait": "Frame waited {ms} ms in {operation} (requested sleep {requested} ms), while loading or with no window.",
   "engine.frame.warn.long_wait": "Frame waited {ms} ms in {operation}; requested sleep {requested} ms.",
   "engine.frame.warn.long_frame": "Frame took {ms} ms -- simulation and its scripts {simulation} ms, render-step scripts {scripts} ms, waiting for the GPU and the display {waiting} ms, the rest {other} ms; dropped simulated time after {ticks} catch-up ticks.",
   "engine.frame.info.draws_by_kind": "Those draws, by what each was for: {kinds}.",

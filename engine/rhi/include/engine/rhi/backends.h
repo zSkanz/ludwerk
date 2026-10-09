@@ -20,8 +20,8 @@ using DeviceResult = std::unique_ptr<IDevice>;
 
 #if ENG_RHI_D3D12
 [[nodiscard]] DeviceResult createD3D12Device(const DeviceDesc& desc, std::span<const std::byte> blitVertex,
-                                            std::span<const std::byte> blitFragment,
-                                            core::EngineError* outError = nullptr);
+                                             std::span<const std::byte> blitFragment,
+                                             core::EngineError* outError = nullptr);
 #endif
 
 #if ENG_RHI_NULL

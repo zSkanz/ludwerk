@@ -690,6 +690,22 @@ bool quietAtDefault(const World& world, core::InstanceId id, const PropertyDesc&
             return target != nullptr && !target->valid();
         }
     }
+    // **ADR 0192's additions to a class that already existed**, the same way
+    // (D603): a context made before a context could name its player or its
+    // controller says neither, and one made after says neither while it is
+    // the primary player's and reads every controller. Without this every
+    // trace with a context in it moved at tick zero for two properties
+    // nothing had set.
+    if (world.inputContexts().find(id) != nullptr) {
+        if (name == "Player") {
+            const auto* player = std::get_if<core::InstanceId>(&value);
+            return player == nullptr || !player->valid();
+        }
+        if (name == "GamepadId") {
+            const auto* pad = std::get_if<core::f64>(&value);
+            return pad != nullptr && *pad == 0.0;
+        }
+    }
     if (world.listLayouts().find(id) != nullptr &&
         (name == "HorizontalFlex" || name == "VerticalFlex" || name == "ItemLineAlignment")) {
         const auto* item = std::get_if<EnumValue>(&value);

@@ -270,6 +270,64 @@ TEST_CASE("D597: a material that names no image differently leaves every source 
     CHECK(reclaimed.cacheMisses >= 1);
 }
 
+TEST_CASE("D604: a model is compiled again when a file it reads beside itself changes")
+{
+    // A glTF's stamp and its cache key were its own bytes. The image it names
+    // beside it could be repainted and the model went on being drawn with the
+    // old one: skipped by the stamp, and answered from the cache had it not
+    // been. Found by a test scene that changes only that image, the day a
+    // compiled store was left in its folder.
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+    const Project project;
+    const std::filesystem::path cards = std::filesystem::path(ENG_TEST_CARD_DIR);
+    const std::filesystem::path model = project.content() / "models" / "card.gltf";
+    const std::filesystem::path beside = project.content() / "models" / "card.png";
+    const auto put = [&](const char* variant) {
+        std::error_code ec;
+        std::filesystem::copy_file(cards / "variants" / variant, beside,
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        REQUIRE_FALSE(ec);
+    };
+    {
+        std::error_code ec;
+        std::filesystem::copy_file(cards / "content" / "models" / "card.gltf", model,
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        REQUIRE_FALSE(ec);
+    }
+    put("solid.png");
+
+    asset::ContentMounts first;
+    const app::ContentImportReport compiled = app::openProjectContent(project.root, project.content(), first);
+    CHECK(compiled.failed.empty());
+    REQUIRE(first.resolve("asset://models/card.gltf").found());
+
+    asset::ContentMounts second;
+    CHECK(app::openProjectContent(project.root, project.content(), second).compiled.empty());
+
+    // **The image beside it, another image**: the model is compiled again, for
+    // real, and what it compiled to is something else.
+    put("holes.png");
+    asset::ContentMounts third;
+    const app::ContentImportReport repainted = app::openProjectContent(project.root, project.content(), third);
+    CHECK(repainted.failed.empty());
+    CHECK(std::find(repainted.compiled.begin(), repainted.compiled.end(), "models/card.gltf") !=
+          repainted.compiled.end());
+    CHECK(repainted.cacheMisses >= 1);
+
+    // **And back**: the first image again is the first answer again, from the
+    // cache this time -- the key is the bytes, not the day.
+    put("solid.png");
+    asset::ContentMounts fourth;
+    const app::ContentImportReport restored = app::openProjectContent(project.root, project.content(), fourth);
+    CHECK(std::find(restored.compiled.begin(), restored.compiled.end(), "models/card.gltf") != restored.compiled.end());
+    CHECK(restored.cacheHits >= 1);
+}
+
 TEST_CASE("D597: sources compiled in batches are the sources compiled one at a time")
 {
     // Forty copies of one image under forty names -- more than a batch -- and

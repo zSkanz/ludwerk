@@ -27,7 +27,10 @@ file(MAKE_DIRECTORY "${OUTPUT}")
 
 foreach(variant holes solid)
     set(project "${OUTPUT}/${variant}")
-    file(COPY "${SCRIPT}/" DESTINATION "${project}" PATTERN "variants" EXCLUDE)
+    # The scene's own compiled store is left behind too: somebody who ran
+    # the scene where it lies leaves one, and a copy that carried it measured
+    # the card that somebody had drawn, twice.
+    file(COPY "${SCRIPT}/" DESTINATION "${project}" PATTERN "variants" EXCLUDE PATTERN ".engine" EXCLUDE)
     file(COPY_FILE "${SCRIPT}/variants/${variant}.png" "${project}/content/models/card.png")
     execute_process(
         COMMAND "${HOST}" "${project}" --headless --frames=60 --exit "--screenshot=${OUTPUT}/${variant}.png"

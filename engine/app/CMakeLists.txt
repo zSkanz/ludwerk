@@ -467,6 +467,10 @@ if(ENG_BUILD_TESTS)
     # copies of one quad is two things to keep in step.
     target_compile_definitions(engine_app_tests PRIVATE
         ENG_TEST_MESH="${CMAKE_SOURCE_DIR}/engine/asset/tests/data/quad.gltf")
+    # And one model that reads an image beside itself, with two images to put
+    # there (D604): the foliage cards' own, borrowed for the same reason.
+    target_compile_definitions(engine_app_tests PRIVATE
+        ENG_TEST_CARD_DIR="${CMAKE_SOURCE_DIR}/tests/screenshots/foliagecards")
 
     # A folder of real textures for the skipped thumbnail bench, overridable
     # because the interesting answer comes from somebody's OWN 4K art rather than

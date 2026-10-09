@@ -1802,12 +1802,25 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     const auto msSince = [](core::u64 since) { return static_cast<f64>(platform::nowNs() - since) / 1'000'000.0; };
     // Keep long waits attributable on every backend, including SDL on phones.
     // A limiter sleep is not a GPU stall, even though both hold the frame.
-    const auto noteLongWait = [](std::string_view operation, f64 elapsedMs, core::u64 requestedNs = 0) {
+    //
+    // **A warning only where somebody is playing** (D605). With no window, or
+    // behind the loading curtain, or in the seconds after a scene or the
+    // device came up, a wait of a tenth of a second is what was expected --
+    // the driver is making its pipelines -- and it is said as information. It
+    // was a warning always, and on a software renderer every run that drew
+    // warned on its first frames: each test that takes a warning for a failure
+    // failed on the machines that have no graphics card.
+    bool waitsAreExpected = true;
+    const auto noteLongWait = [&waitsAreExpected](std::string_view operation, f64 elapsedMs,
+                                                  core::u64 requestedNs = 0) {
         if (elapsedMs < 100.0)
             return;
         const std::array<I18nArg, 3> args{I18nArg{"operation", operation}, I18nArg{"ms", elapsedMs},
                                           I18nArg{"requested", static_cast<f64>(requestedNs) / 1'000'000.0}};
-        core::log(LogLevel::Warn, ENG_TR("engine.frame.warn.long_wait"), args);
+        if (waitsAreExpected)
+            core::log(LogLevel::Info, ENG_TR("engine.frame.info.long_wait"), args);
+        else
+            core::log(LogLevel::Warn, ENG_TR("engine.frame.warn.long_wait"), args);
     };
     // Sixty warm-up frames rather than `--frame-stats`'s ten. A soak is minutes
     // long, so a second of startup costs it nothing -- and the streamed world
@@ -1815,6 +1828,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // put the whole materialisation burst in the measured window.
     SoakRecorder soak(60);
     core::u64 lastFrameNs = 0;
+    // The same for `noteLongWait`, which wants it in every run: five seconds
+    // from a scene's load, about what a driver takes to make what the scene
+    // first draws with.
+    constexpr core::u64 LongWaitSettleNs = 5'000'000'000ull;
+    bool waitSettleSeen = false;
+    core::u32 waitSettleLoads = 0;
+    core::u64 waitSettleUntilNs = 0;
     // The scene load the world last settled from, and until when (H11).
     bool settleSeen = false;
     core::u32 settleLoads = 0;
@@ -3240,6 +3260,20 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 reportStartNs = reportNs;
             }
         }
+
+        // Whether a long wait in this frame is news (`noteLongWait`): not
+        // without a window, not behind the curtain, and not in the first
+        // seconds of a scene, which are counted here whether or not anybody
+        // asked for frame statistics.
+        if (host != nullptr) {
+            const core::u32 loads = host->world().engineState().sceneLoads;
+            if (!waitSettleSeen || loads != waitSettleLoads) {
+                waitSettleSeen = true;
+                waitSettleLoads = loads;
+                waitSettleUntilNs = nowNs + LongWaitSettleNs;
+            }
+        }
+        waitsAreExpected = options.headless || window == nullptr || curtain.up() || nowNs < waitSettleUntilNs;
 
         // **The world settling** (H11): the frames of a scene load and the
         // few seconds after it, left out of the slowest-frames list so its

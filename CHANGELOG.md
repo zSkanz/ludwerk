@@ -1503,6 +1503,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A model is compiled again when a file it reads beside itself changes**
+  (D604). A glTF's external images and buffers were not part of what made it
+  stale: repaint a model's texture and the editor went on drawing the old
+  one. They are now, by their bytes.
 - **Opening a project no longer recompiles it for a material that was
   saved** (D597). Any material file saved or touched sent every source of
   the project back to the compiler -- a minute and a half for a project of

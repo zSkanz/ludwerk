@@ -71,6 +71,23 @@ struct SourceStamp
                        std::to_string(static_cast<long long>(written.time_since_epoch().count()))};
 }
 
+// A source's stamp with those of the files it reads beside itself (D604): a
+// model is its `.gltf` and the buffers and images that names, and one of
+// them saved is the model changed.
+[[nodiscard]] std::optional<SourceStamp> stampOfSource(const std::filesystem::path& file)
+{
+    std::optional<SourceStamp> stamp = stampOf(file);
+    if (!stamp.has_value())
+        return stamp;
+    for (const std::filesystem::path& companion : assetc::companionsOf(file)) {
+        if (const std::optional<SourceStamp> beside = stampOf(companion); beside.has_value()) {
+            stamp->size += "+" + beside->size;
+            stamp->written += "+" + beside->written;
+        }
+    }
+    return stamp;
+}
+
 // The stamps remembered under `fingerprint`, or none: a different importer, or
 // a store that is not there to have been compiled into, remembers nothing.
 [[nodiscard]] std::map<std::string, SourceStamp> readStamps(const std::filesystem::path& projectRoot,
@@ -205,7 +222,7 @@ ContentImportReport compileImported(const std::filesystem::path& projectRoot, co
         if (kind != ContentKind::Mesh && kind != ContentKind::Texture)
             continue;
         if (skipUnchanged) {
-            const std::optional<SourceStamp> stamp = stampOf(contentRoot / std::filesystem::path(name));
+            const std::optional<SourceStamp> stamp = stampOfSource(contentRoot / std::filesystem::path(name));
             const auto found = known.find(name);
             // Unchanged since it compiled, **and still in the store** (D554):
             // a stamp for a source the index has lost is no reason to skip it.
@@ -272,7 +289,7 @@ ContentImportReport compileImported(const std::filesystem::path& projectRoot, co
             if (progress)
                 progress(at, todo.size(), todo[at]);
             const std::filesystem::path source = contentRoot / std::filesystem::path(std::string(todo[at]));
-            before[at - first] = skipUnchanged ? stampOf(source) : std::nullopt;
+            before[at - first] = skipUnchanged ? stampOfSource(source) : std::nullopt;
             batch.only.push_back(source);
         }
 

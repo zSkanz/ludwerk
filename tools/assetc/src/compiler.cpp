@@ -129,11 +129,11 @@ constexpr core::u32 kCompilerRules = 7;
 // function, so a hit is not a guess: it is the same answer arrived at without
 // doing the work again. **A miss is never wrong, only slow.**
 //
-// **A COMPANION the source reads is NOT in the key**, and this comment used to
-// say it was. A glTF that names an external image beside it keys on its own
-// bytes alone, so editing that image leaves the mesh's compiled copy of it
-// stale while the loose image itself recompiles. Nothing outside these tests
-// sets `cacheRoot` yet, which is the only reason it has not bitten.
+// **A companion the source reads is in the key** (D604): a glTF that names
+// an external image or buffer beside it is keyed on their bytes with its own
+// (`companionsOf`, `keyedBytes`). It was not, and this comment said for a
+// while that nothing set `cacheRoot` so it could not bite; the editor's import
+// does, and a model whose texture was repainted kept the old one.
 struct CachedSource
 {
     // The blobs this source produced, in the order it produced them, each with
@@ -812,7 +812,26 @@ CompileResult compile(const CompileOptions& options)
         // written beside the pack rather than into it, so there is nothing here
         // to hand back.
         const bool cacheable = options.cacheRoot.empty() ? false : source.kind != SourceKind::Chunk;
-        const ContentHash key = cacheable ? cacheKey(bytes, urn, options, source.kind, textureIsColour) : ContentHash{};
+        // A source's companions are part of what it is: their names and
+        // bytes after its own, for the key alone.
+        std::vector<std::byte> withCompanions;
+        if (cacheable && source.kind == SourceKind::Mesh) {
+            const std::vector<std::filesystem::path> companions = companionsOf(source.path);
+            if (!companions.empty()) {
+                withCompanions = bytes;
+                for (const std::filesystem::path& companion : companions) {
+                    const std::string name = companion.filename().generic_string();
+                    const auto* text = reinterpret_cast<const std::byte*>(name.data());
+                    withCompanions.insert(withCompanions.end(), text, text + name.size());
+                    std::vector<std::byte> read;
+                    if (readWhole(companion, read))
+                        withCompanions.insert(withCompanions.end(), read.begin(), read.end());
+                }
+            }
+        }
+        const std::span<const std::byte> keyed =
+            withCompanions.empty() ? std::span<const std::byte>(bytes) : std::span<const std::byte>(withCompanions);
+        const ContentHash key = cacheable ? cacheKey(keyed, urn, options, source.kind, textureIsColour) : ContentHash{};
         if (cacheable) {
             std::vector<std::byte> cachedBytes;
             CachedSource cached;
@@ -1300,6 +1319,49 @@ ContentHash importerFingerprint(const CompileOptions& options)
     core::ContentHasher hasher;
     hashPinned(hasher, options);
     return hasher.finish();
+}
+
+std::vector<std::filesystem::path> companionsOf(const std::filesystem::path& source)
+{
+    std::vector<std::filesystem::path> companions;
+    std::string extension = source.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (extension != ".gltf")
+        return companions;
+    std::vector<std::byte> bytes;
+    if (!readWhole(source, bytes))
+        return companions;
+    core::JsonDocument document;
+    const std::string_view text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    if (!document.parse(text, source.filename().generic_string()))
+        return companions;
+    const core::JsonValue root = document.root();
+    for (const char* list : {"buffers", "images"}) {
+        const core::JsonValue entries = root[list];
+        for (core::usize at = 0; at < entries.size(); ++at) {
+            const std::string_view uri = entries.at(at)["uri"].asString();
+            // Embedded data is the file's own bytes already.
+            if (uri.empty() || uri.starts_with("data:"))
+                continue;
+            // The one escape an exporter writes into a file name.
+            std::string name;
+            for (core::usize i = 0; i < uri.size(); ++i) {
+                if (uri.compare(i, 3, "%20") == 0) {
+                    name += ' ';
+                    i += 2;
+                }
+                else {
+                    name += uri[i];
+                }
+            }
+            const std::filesystem::path companion = source.parent_path() / std::filesystem::path(name);
+            std::error_code ec;
+            if (std::filesystem::is_regular_file(companion, ec))
+                companions.push_back(companion);
+        }
+    }
+    return companions;
 }
 
 ContentHash textureUseFingerprint(const CompileOptions& options)
