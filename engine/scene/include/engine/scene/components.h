@@ -1884,6 +1884,11 @@ struct ScriptComponent
 // resolution walks.
 struct InputContextComponent
 {
+    // Zero keeps aggregate gamepad input. Positive ids isolate a local seat;
+    // keyboard and pointer bindings keep their normal meaning.
+    core::u32 gamepadId = 0;
+    // Invalid means the primary local player, preserving existing games.
+    core::InstanceId player;
     // Resolution order, highest first. It orders FALLTHROUGH only; the clock is
     // `rate` (ADR 0039), and conflating the two would change an action's
     // determinism class whenever somebody re-tuned a number.

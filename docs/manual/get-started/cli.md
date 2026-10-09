@@ -1,6 +1,6 @@
 # The ludwerk CLI
 
-Eight commands. Unknown flags are **refused**, not ignored.
+Unknown flags are **refused**, not ignored.
 
 ```bash
 ludwerk --help
@@ -345,3 +345,33 @@ decide what your players get.
 - [Anatomy of a project](manual:get-started/project-anatomy)
 - [Hot reload](manual:guides/hot-reload)
 - [Shipping a game](manual:guides/shipping)
+
+## Optional platform tools and integrations
+
+```bash
+ludwerk modules status --project=my-game
+ludwerk modules install android --accept-licenses
+ludwerk modules install microsoft-gdk --accept-licenses
+ludwerk modules update microsoft-gdk --accept-licenses
+ludwerk modules verify microsoft-gdk
+ludwerk modules remove microsoft-gdk
+```
+
+Windows and Linux use the installation's prebuilt players. Android and Microsoft
+GDK tooling are optional. Installing shared tools does not enable a project service,
+and enabling a service does not install an SDK. The editor exposes these operations
+through **Platforms and Services**, reached from Project Settings or Export.
+
+A compatible prebuilt native module can also be installed without the SDK or a
+C++ compiler. Supply the archive and its published SHA-256:
+
+```bash
+ludwerk modules install microsoft-gdk --accept-licenses --package=module.zip --sha256=PUBLISHED_SHA256
+```
+
+The archive's module ID, pinned version, ABI and individual file checksums must
+match. The editor offers the same package installation under the integration's
+card. The SDK installer checks its pinned download hash; Verify also detects
+changes to essential extracted SDK files. Removal applies only to this manager's
+owned module version. Built-in players and externally installed Android tools
+are kept.

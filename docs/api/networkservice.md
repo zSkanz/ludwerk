@@ -31,6 +31,10 @@ offers is on the base's page, which is what keeps one added member on
 
 ## Methods
 
+### `AddLocalPlayer(): Player?`
+
+Adds a guest participant to an offline authority, firing PlayerAdded. Returns nil on a dedicated server or networked world. Guest ids are session ids, not platform accounts. Games choose their local seat limit and assign InputContext.Player explicitly. Local guests cannot join online sessions in this version.
+
 ### `Disconnect()`
 
 Leaves the match, or stops hosting, and goes back to solo in the scene it is in; the game's code decides what next. Server code starts again, fresh, since this machine decides the world again. `Disconnected` fires. A dedicated server may not call it.
@@ -38,6 +42,10 @@ Leaves the match, or stops hosting, and goes back to solo in the scene it is in;
 ### `GetLocalAddresses(): {string}`
 
 **This machine's addresses on its networks**, best first: what a host shows the friends on its Wi-Fi to type. IPv4, from interfaces that are up -- never loopback, never link-local (169.254), never a virtual adapter that can be told apart (a hypervisor's or a container's) -- the private ranges first, the interface the default route leaves by first among them. A fact about this machine: it needs no match, is never replicated, and is empty offline.
+
+### `GetLocalPlayers(): {Player}`
+
+This machine's local players in join order, primary first. Excludes players whose removal has begun.
 
 ### `GetPlayers(): {Player}`
 
@@ -68,6 +76,10 @@ Connects to a server at `address` (`host` or `host:port`), or to `[network] serv
 **Yields.** The calling thread parks until it completes.
 
 **Asks a relay how far it is and what it carries** (ADR 0178), before hosting or joining through it: what a game with relays in several regions calls on each to choose one. `relay` is `host:port`, or the project's `[network] relay` when it is left out. Yields until the relay has answered -- it is asked three times, a tenth of a second apart -- or for `timeout` seconds, one and a half by default. The answer: the round trip in milliseconds, the least of the three (`Ping`); the matches registered with it (`Matches`), the players it is carrying (`Relayed`), the bytes a second through it (`BytesPerSecond`) and the seconds it has been up (`Uptime`). **`nil` when it did not answer**: nothing listens there, the name is nobody's, or the way to it is shut. It needs no match and does not disturb one; ask several at once from several tasks.
+
+### `RemoveLocalPlayer(player: Player): boolean`
+
+Removes an offline guest through PlayerRemoving. Refuses the primary LocalPlayer and remote players. Returns whether removal was requested.
 
 ## Events
 

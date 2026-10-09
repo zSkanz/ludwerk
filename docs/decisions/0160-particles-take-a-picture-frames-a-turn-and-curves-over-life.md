@@ -119,6 +119,14 @@ emission energy. Multiply-only is the odd one out.
    are one draw. A frame of untextured particles is still one draw. The
    instance grows from 48 bytes to 64 (rotation, a textured flag, the
    frame's rectangle).
+   - **2026-10-09 implementation update:** CPU particle draws now carry up to
+     seven pictures plus scene depth in eight explicit sampler bindings. The
+     same depth-sorted stream is retained; a new draw starts only when another
+     distinct picture would exhaust the palette. The existing flag becomes a
+     one-based picture slot (zero still means procedural shape), with no stride
+     change. Explicit resources and per-instance selection need no bindless
+     feature; gradients are computed before texture branching to preserve mip
+     selection. GPU-simulated emitters retain their two-sampler layout.
 6. **An emitter that asks for no spread is born as it was.** The random
    rotation, the random spin and the Random frame draw from the emitter's
    seeded generator only when they are asked for. Every emitter made before

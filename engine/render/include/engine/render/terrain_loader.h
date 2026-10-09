@@ -236,6 +236,12 @@ public:
     [[nodiscard]] core::u32 lastBuildsInFrame() const noexcept { return m_lastBuildsInFrame; }
     // Whether the last `sync` left anything it wanted unbuilt.
     [[nodiscard]] bool pending() const noexcept { return m_pending; }
+
+    // CPU geometry retained across scene changes, without keeping worlds or
+    // device handles alive. Zero disables reuse and drops retained geometry.
+    void setMeshReuseBudget(core::usize bytes);
+    [[nodiscard]] core::usize meshReuseBytes() const noexcept { return m_reuseBytes; }
+    [[nodiscard]] core::u64 meshReuseHits() const noexcept { return m_reuseHits; }
     // **Whether the ground within `radius` of `centre` is drawn as it will be**
     // (ADR 0159): every node the last `sync` of `world` wanted there -- of
     // `terrain`, or of any terrain when it is invalid -- has its mesh built and
@@ -333,6 +339,21 @@ private:
     void release(rhi::IDevice& device, MeshCache& cache, MeshLibrary& library, Node& node);
 
     struct Batch;
+    struct ReusableMesh;
+    using ReuseKey = std::tuple<TerrainNodeKey, TerrainSides, core::u64, float, float, float>;
+    struct ReuseEntry
+    {
+        std::shared_ptr<const ReusableMesh> mesh;
+        core::usize bytes = 0;
+        core::u64 used = 0;
+    };
+    void reuse(Batch& batch);
+    void trimReuse();
+    std::map<ReuseKey, ReuseEntry> m_reuse;
+    core::usize m_reuseBudget = 64 * 1024 * 1024;
+    core::usize m_reuseBytes = 0;
+    core::u64 m_reuseHits = 0;
+    core::u64 m_reuseClock = 0;
     [[nodiscard]] bool batchFinished(const std::unique_ptr<Batch>& batch) const noexcept;
     void waitBatch() noexcept;
     // Puts up at most `budget` of what a finished batch built, and lets the

@@ -1323,6 +1323,53 @@ TEST_CASE("one player over a Model drives every skinned mesh under it")
     CHECK(at.position.y == doctest::Approx(0.0).epsilon(0.01));
 }
 
+TEST_CASE("tracks sharing a drive root observe reparenting and skeleton arrival each sample")
+{
+    Fixture fixture;
+    auto body = twoJointSkeleton();
+    body.clips.push_back(slideClip("slide"));
+    const auto content = fixture.atoms.intern("asset://body");
+    const auto clothes = fixture.atoms.intern("asset://clothes");
+    fixture.skeletons.set(content, std::move(body));
+    const auto root = fixture.world.create(fixture.instanceClass);
+    const auto other = fixture.world.create(fixture.instanceClass);
+    const auto mesh = fixture.world.create(fixture.meshPartClass);
+    fixture.world.meshParts().find(mesh)->meshContent = content;
+    REQUIRE_FALSE(fixture.world.setParent(mesh, root).has_value());
+    const auto player = fixture.world.create(fixture.instanceClass);
+    REQUIRE_FALSE(fixture.world.setParent(player, root).has_value());
+    render::AnimationSystem animation(fixture.world, fixture.skeletons);
+    const auto walk = animation.createTrack(player, {}, "slide");
+    const auto attack = animation.createTrack(player, {}, "slide");
+    animation.play(walk, 0.0f, 1.0f, 1.0f);
+    animation.play(attack, 0.0f, 1.0f, 0.5f);
+    animation.sample(0.2);
+    core::CFrameD at;
+    REQUIRE(animation.jointModel(mesh, 1, at));
+    CHECK(at.position.y == doctest::Approx(1.3));
+
+    const auto shirt = fixture.world.create(fixture.meshPartClass);
+    fixture.world.meshParts().find(shirt)->meshContent = clothes;
+    REQUIRE_FALSE(fixture.world.setParent(shirt, root).has_value());
+    animation.sample(0.2);
+    CHECK(animation.pose(shirt) == nullptr);
+    fixture.skeletons.set(clothes, shirtSkeleton());
+    animation.sample(0.2);
+    REQUIRE(animation.jointModel(shirt, 0, at));
+    CHECK(at.position.y == doctest::Approx(1.9));
+
+    REQUIRE_FALSE(fixture.world.setParent(shirt, other).has_value());
+    animation.sample(0.2);
+    // Detached meshes keep their last pose, but no longer follow the tracks.
+    REQUIRE(animation.jointModel(shirt, 0, at));
+    CHECK(at.position.y == doctest::Approx(1.9));
+    REQUIRE_FALSE(fixture.world.setParent(shirt, root).has_value());
+    animation.stop(attack, 0.0f);
+    animation.sample(0.1);
+    REQUIRE(animation.jointModel(shirt, 0, at));
+    CHECK(at.position.y == doctest::Approx(2.8));
+}
+
 TEST_CASE("a joint the other rig does not have is skipped rather than guessed")
 {
     // A shirt with no fingers keeps its own sleeve rather than inheriting a
@@ -1499,4 +1546,33 @@ TEST_CASE("no file named still means the player's own mesh")
     render::AnimationSystem animation{fixture.world, fixture.skeletons};
     const scene::TrackId track = animation.createTrack(player, {}, "Walk");
     CHECK(close(animation.state(track).length, 1.0f));
+}
+
+TEST_CASE("animation drivers match instance order after lower slots are recycled")
+{
+    Fixture fixture;
+    const auto recycled = fixture.world.create(fixture.meshPartClass);
+    auto entry = twoJointSkeleton();
+    entry.clips.push_back(slideClip("Walk"));
+    const auto olderPlayer = fixture.rig(entry);
+    const auto olderMesh = fixture.mesh;
+    REQUIRE(fixture.world.destroy(recycled));
+    fixture.world.retireDestroyed();
+    const auto newerPlayer = fixture.rig(std::move(entry));
+    const auto newerMesh = fixture.mesh;
+    REQUIRE(newerMesh.index < olderMesh.index);
+    REQUIRE(newerMesh.generation > olderMesh.generation);
+
+    render::AnimationSystem animation{fixture.world, fixture.skeletons};
+    const auto olderTrack = animation.createTrack(olderPlayer, {}, "Walk");
+    const auto newerTrack = animation.createTrack(newerPlayer, {}, "Walk");
+    animation.play(olderTrack, 0.0f, 1.0f, 1.0f);
+    animation.play(newerTrack, 0.0f, 1.0f, 0.5f);
+    animation.sample(0.5);
+    const auto* olderPose = animation.pose(olderMesh);
+    const auto* newerPose = animation.pose(newerMesh);
+    REQUIRE(olderPose != nullptr);
+    REQUIRE(newerPose != nullptr);
+    CHECK(close(olderPose->model[1].m[3][1], 2.0f));
+    CHECK(close(newerPose->model[1].m[3][1], 1.5f));
 }

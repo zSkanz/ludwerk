@@ -258,6 +258,10 @@ struct ClassDescriptor
     // `InvalidClass` only for `Instance` itself.
     ClassId super = InvalidClass;
     ClassFlags flags = ClassFlags::None;
+    // Optional integration, from the API schema. Empty for built-in classes.
+    std::string_view integration{};
+    // GetService creates this service on demand rather than at world boot.
+    bool lazyService = false;
     // The `Name` a fresh instance carries; the class name unless the IDL says
     // otherwise.
     core::NameAtom defaultName{};
@@ -318,6 +322,9 @@ public:
     // for a name the class does not have, which is what raises
     // `scene.err.unknown_member` above.
     [[nodiscard]] const PropertyDesc* findProperty(ClassId id, core::NameAtom name) const noexcept;
+    // Resolve the descriptor and subscription slot together for a property write.
+    // Missing classes/members also set `slot` to NoSlot.
+    [[nodiscard]] const PropertyDesc* findProperty(ClassId id, core::NameAtom name, u16& slot) const noexcept;
 
     // The property's dense index within this class, inherited members included
     // and counted first. `NoSlot` for a name the class does not have.

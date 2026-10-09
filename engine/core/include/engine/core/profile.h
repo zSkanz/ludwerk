@@ -46,6 +46,9 @@ struct ScopeReport
     u32 depth = 0;
     f64 medianMs = 0.0;
     f64 p95Ms = 0.0;
+    f64 meanMs = 0.0;
+    f64 bestMs = 0.0;
+    f64 p99Ms = 0.0;
     // Its worst frame: where a spike shows that a median and a p95 hide.
     f64 worstMs = 0.0;
     // What of the scope the scopes under it do not account for.
@@ -58,6 +61,19 @@ struct ScopeReport
 // frame closed since it was turned on less the first `skipFrames`. A scope
 // that did not run in a frame counts that frame as zero.
 [[nodiscard]] std::vector<ScopeReport> report(usize skipFrames);
+
+// A bounded wall-clock capture, requested from a diagnostic client. Starts and
+// stops only at frame boundaries, so resetting never invalidates open scopes.
+// Returns false for an invalid duration or while another capture is pending.
+[[nodiscard]] bool requestCapture(f64 seconds, f64 warmupSeconds);
+struct CaptureReport
+{
+    u64 frames = 0;
+    f64 seconds = 0.0;
+    std::vector<ScopeReport> scopes;
+};
+// Null until a requested capture completes; retained until the next request.
+[[nodiscard]] const CaptureReport* captured() noexcept;
 
 // **One slow frame, scope by scope** (H11): what a median and a p95 over the
 // run cannot say about the frame a player felt.

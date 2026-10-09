@@ -551,6 +551,12 @@ The annotations are forward-compatible in the direction that matters: widening
 `Unsafe` to `ReadParallel` later is a compatible change and the reverse is not,
 which is why `services.api.luau` annotates conservatively today.
 
+**ADR 0123 (2026-09-27) decides how the windows open**: scripts under an
+`Actor` run in its own VM, enter window A or B, are checked against audited
+`ThreadSafety`, and commit in actor order. Until its ledger
+(`docs/briefs/parallel-kickoff.md`) is built, the paragraph above is still the
+state of the code.
+
 **GC step budgeting:** after task-resume phases,
 `ScriptRuntime::gcStep(budget)` runs `LUA_GCSTEP` with a step size derived
 from `lua_allocationrate` and the remaining frame headroom; target ≤ 1 ms at
@@ -1052,3 +1058,40 @@ audio/animation → asset/streaming → flagship.
 7. **SDL3 GPU Android maturity.** → Nightly NDK compile job from M1–M2, human
    device checkpoint before the RHI freeze (end of M4), bgfx hedge
    (ADR 0005).
+
+### Optional native game integrations (ADR 0188)
+
+Class descriptors carry the owning integration ID from the API schema. The host
+supplies enabled IDs and opaque configuration strings; service queries and actions
+remain callable without an SDK or provider. Disabled services are created only on
+explicit lookup, warn once in development and fail actions immediately. The editor
+uses the same metadata for visibility and diagnostics.
+
+Providers implement a versioned native function table owned by platform, with no
+SDK or STL ownership crossing DLL boundaries. Absolute trusted provider paths are
+loaded lazily. Polling runs at the existing task-resume point; completed waiters
+are detached before any script resumes. Default players neither link SDK libraries
+nor initialize SDK work queues. Native payload selection and tool installation
+extend the CLI exporter through module descriptors; SDK installations and project
+integration enablement are independent.
+
+### Retail Xbox Developer Mode probe (ADR 0191)
+
+`ENG_BUILD_UWP_PROBE` selects an isolated MSVC/WindowsStore host before the normal
+module graph. It reuses the pinned sandboxed Luau interpreter, deterministic math
+and catalog reader, with WinRT/CoreWindow, Direct3D 11 and Windows.Gaming.Input
+confined to `platforms/uwp`. It is not an RHI backend or an exportable engine
+player. The existing SDL3 shipping targets and PC GDK adapter remain separate.
+Local development packaging uses an externally installed Windows SDK; APPX files
+and signing keys stay outside the source tree. Hardware evidence and the remaining
+player-port work are recorded in the [probe checkpoint](briefs/xbox-uwp-probe-2026-10-09.md).
+
+### Gameplay and UI controller input (ADR 0192)
+
+Gameplay uses existing Input Actions, independently of OS and controller family.
+UIService owns automatic navigation; it restricts nearest-neighbour candidates
+to the highest selectable ScreenGui display layer, including equal-order peers.
+Decorative overlays do not capture focus. Games explicitly clear stale modal
+selection and disable AutoSelect during gameplay. Controller presentation reads
+PreferredInput while screen layout remains independent of that preference.
+[Hordewake continuation and results](briefs/hordewake-gamepad-and-uwp-player-2026-10-09.md).

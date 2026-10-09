@@ -619,6 +619,35 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         return config;
     }
 
+    for (const auto& [key, value] : document.stringValues("platform_services.")) {
+        const auto separator = key.find('.');
+        if (separator == std::string::npos || separator == 0)
+            continue;
+        const std::string service = key.substr(0, separator);
+        const std::string suffix = key.substr(separator + 1);
+        if (suffix == "provider") {
+            config.platformServices.providers.emplace(service, value);
+            continue;
+        }
+        const auto ids = suffix.find(".ids.");
+        if (ids == std::string::npos || ids == 0)
+            continue;
+        const std::string provider = suffix.substr(0, ids);
+        const std::string logicalId = suffix.substr(ids + 5);
+        if (!logicalId.empty() && logicalId.size() <= 128 && !value.empty() && value.size() <= 128)
+            config.platformServices.ids[service + "/" + provider].emplace(logicalId, value);
+    }
+    for (const std::string& id : document.strings("integrations.enabled")) {
+        // Identifiers also name trusted provider subdirectories, never arbitrary paths.
+        if (id.empty() || id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-_") != std::string::npos)
+            continue;
+        if (std::find(config.enabledIntegrations.begin(), config.enabledIntegrations.end(), id) !=
+            config.enabledIntegrations.end())
+            continue;
+        config.enabledIntegrations.push_back(id);
+        if (const auto value = document.string("integrations." + id + ".configuration"))
+            config.integrationConfigurations.emplace(id, *value);
+    }
     if (const std::optional<std::string_view> value = document.string("project.name"))
         config.name = *value;
     if (const std::optional<std::string_view> value = document.string("project.id"))

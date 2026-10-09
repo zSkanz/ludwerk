@@ -34,6 +34,8 @@ local buildAssets = require("./build-assets")
 local catalog = require("../catalog")
 local desktop = require("../export/desktop")
 local game = require("../export/game")
+local moduleExport = require("../modules/export")
+local moduleManager = require("../modules/manager")
 local output = require("../output")
 local progress = require("../export/progress")
 local projectlib = require("../project")
@@ -239,6 +241,7 @@ local function run(options: Options): number
     local androidTools: android.Tools? = nil
     local androidSettings: android.Settings? = nil
     local shaders: string? = nil
+    local integrationPayloads: { moduleExport.Payload } = {}
     local checked = progress.step(reporter, "check", function(): string?
         local configured, modeError = multiplayerMode(project)
         if configured == nil then
@@ -289,6 +292,12 @@ local function run(options: Options): number
                 return tr("cli.build.err.android_no_shaders")
             end
         end
+        local payloads, integrationError =
+            moduleExport.prepare(project, chosen, desktop.executableName(project, identity, chosen.platform))
+        if payloads == nil then
+            return integrationError
+        end
+        integrationPayloads = payloads
         return nil
     end)
     if not checked then
@@ -646,6 +655,7 @@ local function run(options: Options): number
         game.copyTree(engineContent, projectlib.joined(output, "content"), function(relative: string): boolean
             return relative == "templates" or relative == "icons"
         end)
+        moduleExport.deploy(integrationPayloads, output)
         composeGame(projectlib.joined(output, "game"))
         if chosen.platform == "linux" and not chosen.server then
             fs.writeStringToFile(
@@ -723,7 +733,7 @@ end
 --- it, as one JSON line, for the editor's target cards (ADR 0104 §4). Asked of
 --- the same searches an export makes, so a card that says "ready" is an
 --- export that finds its player.
-local function status(): number
+local function status(projectPath: string?): number
     local rows: { any } = {}
     local tools = android.findTools()
     for _, target in targets.All do
@@ -737,7 +747,8 @@ local function status(): number
             tools = target.platform ~= "android" or tools ~= nil,
         })
     end
-    local fields: { [string]: any } = { targets = rows }
+    local fields: { [string]: any } =
+        { targets = rows, modules = moduleManager.rows(projectlib.load(projectPath or ".").config) }
     if tools ~= nil then
         local adb = projectlib.joined(tools.sdk, "platform-tools", projectlib.executableName("adb"))
         if fs.exists(adb) then

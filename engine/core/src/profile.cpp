@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <mutex>
+#include <numeric>
 
 namespace engine::core::profile {
 
@@ -54,6 +56,19 @@ State g_state;
 // Only the thread that turned it on records.
 thread_local bool t_recording = false;
 thread_local u32 t_generation = 0;
+enum class CapturePhase
+{
+    Idle,
+    Warmup,
+    Recording,
+    Complete
+};
+thread_local CapturePhase t_capturePhase = CapturePhase::Idle;
+thread_local u64 t_captureRequested = 0;
+thread_local u64 t_captureBegan = 0;
+thread_local u64 t_captureDuration = 0;
+thread_local u64 t_captureWarmup = 0;
+thread_local CaptureReport t_captureReport;
 
 [[nodiscard]] i32 childOf(State& s, u32 site)
 {
@@ -91,6 +106,7 @@ u32 registerSite(const char* name)
 
 void setEnabled(bool on)
 {
+    t_capturePhase = CapturePhase::Idle;
     g_state.nodes.clear();
     g_state.roots.clear();
     g_state.current = -1;
@@ -161,6 +177,15 @@ void Sections::close() noexcept
 
 void endFrame()
 {
+    const bool warming = t_capturePhase == CapturePhase::Warmup;
+    if (warming && g_state.clock() - t_captureRequested >= t_captureWarmup) {
+        const u64 duration = t_captureDuration;
+        setEnabled(true);
+        t_captureDuration = duration;
+        t_captureBegan = g_state.clock();
+        t_capturePhase = CapturePhase::Recording;
+        return; // The frame just closed belongs to warm-up, not the sample.
+    }
     if (!t_recording)
         return;
     const usize slot = static_cast<usize>(g_state.frames % HistoryFrames);
@@ -180,6 +205,32 @@ void endFrame()
     g_state.settling[slot] = g_state.settlingNow ? 1 : 0;
     g_state.settlingNow = false;
     g_state.frames += 1;
+    if (t_capturePhase == CapturePhase::Recording && g_state.clock() - t_captureBegan >= t_captureDuration) {
+        t_captureReport.frames = g_state.frames;
+        t_captureReport.seconds = static_cast<f64>(g_state.clock() - t_captureBegan) / 1.0e9;
+        t_captureReport.scopes = report(0);
+        t_recording = false;
+        t_capturePhase = CapturePhase::Complete;
+    }
+}
+
+bool requestCapture(f64 seconds, f64 warmupSeconds)
+{
+    if (!std::isfinite(seconds) || !std::isfinite(warmupSeconds) || seconds <= 0.0 || seconds > 120.0 ||
+        warmupSeconds < 0.0 || warmupSeconds > 120.0 || t_capturePhase == CapturePhase::Warmup ||
+        t_capturePhase == CapturePhase::Recording)
+        return false;
+    t_captureReport = {};
+    t_captureDuration = static_cast<u64>(seconds * 1.0e9);
+    t_captureWarmup = static_cast<u64>(warmupSeconds * 1.0e9);
+    t_captureRequested = g_state.clock();
+    t_capturePhase = CapturePhase::Warmup;
+    return true;
+}
+
+const CaptureReport* captured() noexcept
+{
+    return t_capturePhase == CapturePhase::Complete ? &t_captureReport : nullptr;
 }
 
 void markSettling() noexcept
@@ -324,6 +375,10 @@ std::vector<ScopeReport> report(usize skipFrames)
         row.depth = depth;
         row.medianMs = at(total, 0.5);
         row.p95Ms = at(total, 0.95);
+        row.p99Ms = at(total, 0.99);
+        row.bestMs = total.empty() ? 0.0 : total.front();
+        row.meanMs =
+            total.empty() ? 0.0 : std::accumulate(total.begin(), total.end(), 0.0) / static_cast<f64>(total.size());
         row.worstMs = total.empty() ? 0.0 : total.back();
         row.selfMedianMs = at(self, 0.5);
         row.calls = at(calls, 0.5);

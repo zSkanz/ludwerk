@@ -107,6 +107,9 @@ endif()
 if(ENG_RHI_CAPTURE)
     target_link_libraries(engine_app PRIVATE engine::rhi_capture)
 endif()
+if(ENG_RHI_D3D12)
+    target_link_libraries(engine_app PRIVATE engine::rhi_d3d12)
+endif()
 if(ENG_RHI_NULL)
     target_link_libraries(engine_app PRIVATE engine::rhi_null)
 endif()
@@ -194,7 +197,12 @@ else()
 endif()
 
 
-if(ANDROID)
+if(ENG_PLATFORM_UWP)
+    add_executable(engine_host WIN32 src/main.cpp "${CMAKE_SOURCE_DIR}/platforms/uwp/player.cpp")
+    set_target_properties(engine_host PROPERTIES OUTPUT_NAME engine-host)
+    target_link_libraries(engine_host PRIVATE WindowsApp)
+    target_link_options(engine_host PRIVATE /APPCONTAINER)
+elseif(ANDROID)
     # **On Android the host is the library SDL's activity loads** -- `main`,
     # and its `main` resolved by dlsym, as the triangle sample's is
     # (samples/triangle/CMakeLists.txt says why each part is so).
@@ -861,6 +869,14 @@ if(ENG_BUILD_TESTS)
                 -DFRAMES=3
                 -P ${CMAKE_SOURCE_DIR}/tests/rendercapture/run_capture_gate.cmake)
         set_tests_properties(capture_gate PROPERTIES TIMEOUT 60)
+
+        add_test(NAME capture_gate_terrain_bindings
+            COMMAND ${CMAKE_COMMAND}
+                -DHOST=$<TARGET_FILE:engine_host>
+                -DSCENARIO=${CMAKE_SOURCE_DIR}/tests/rendercapture/terrain
+                -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/capture-terrain-bindings.jsonl
+                -P ${CMAKE_SOURCE_DIR}/tests/rendercapture/run_terrain_bindings.cmake)
+        set_tests_properties(capture_gate_terrain_bindings PROPERTIES TIMEOUT 60)
 
         # M4's gate: three camera angles by two lighting states, as six
         # consecutive frames of one stream. Every camera position and clock

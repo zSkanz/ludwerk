@@ -22,6 +22,33 @@ local function scratch(name: string): string
 end
 
 test.suite("check", function(suite)
+    suite:case("large analysis commands keep definitions and every file within the spawn budget", function()
+        local prefix = { "luau-lsp", "analyze", "--definitions=@engine=types.d.luau" }
+        local files: { string } = {}
+        for index = 1, 839 do
+            table.insert(files, `C:/Users/developer/Documents/A Game With Spaces/src/Module{index}.luau`)
+        end
+        local commands = check.analysisCommands(prefix, files)
+        assert.eq(#commands > 1, true)
+        local seen = 0
+        for _, command in commands do
+            local size = 0
+            for _, arg in command do
+                size += #arg + 3
+            end
+            assert.eq(size <= 24000, true)
+            for index, arg in prefix do
+                assert.eq(command[index], arg)
+            end
+            for index = #prefix + 1, #command do
+                seen += 1
+                assert.eq(command[index], files[seen])
+            end
+        end
+        assert.eq(seen, #files)
+        assert.eq(#check.analysisCommands(prefix, {}), 0)
+    end)
+
     suite:case("an exported game and the engine's own folder are never walked", function()
         -- **D211.** `ludwerk build` writes `dist/`, and check and fmt went
         -- through every exported copy of the game with the source.

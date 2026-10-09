@@ -22,6 +22,7 @@
 #include "engine/script/instance_binding.h"
 #include "engine/script/modules.h"
 #include "engine/script/net_module.h"
+#include "engine/script/optional_service.h"
 #include "engine/script/sandbox.h"
 #include "engine/script/save_service.h"
 #include "engine/script/scenes.h"
@@ -325,6 +326,18 @@ void ScriptRuntime::setSaveStore(SaveStore* store) noexcept
     m_impl->services.saves = store;
 }
 
+void ScriptRuntime::setPlatformServices(platform::PlatformServiceConfiguration configuration)
+{
+    m_impl->services.platformServices = std::move(configuration);
+}
+
+void ScriptRuntime::setIntegrationProvider(std::string id, std::string library, std::string configuration)
+{
+    auto& entry = m_impl->services.integrations[std::move(id)];
+    entry.library = std::move(library);
+    entry.configuration = std::move(configuration);
+}
+
 ScriptRuntime::~ScriptRuntime()
 {
     if (m_impl->state != nullptr) {
@@ -468,6 +481,11 @@ void ScriptRuntime::stepDetectors(core::f64 dt, std::span<const input::RawInputE
 {
     if (m_impl->state != nullptr)
         engine::script::stepDetectors(m_impl->state, dt, events);
+}
+
+void ScriptRuntime::fireInputDeviceEvents(std::span<const input::DeviceEvent> events)
+{
+    script::fireInputDeviceEvents(m_impl->state, events);
 }
 
 void ScriptRuntime::fireInputEvents(std::span<const input::RawInputEvent> events)
@@ -715,6 +733,7 @@ void ScriptRuntime::resumeTimers()
     resumeSaveWaiters(m_impl->state, m_world.engineState().fixedTimestep);
     // Passwords hashed on their own thread since the last tick (ADR 0151).
     resumeCryptoWaiters(m_impl->state);
+    resumeIntegrationWaiters(m_impl->state);
 }
 
 void ScriptRuntime::firePhase(core::Phase phase, f64 delta)

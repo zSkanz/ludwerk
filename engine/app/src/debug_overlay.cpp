@@ -1703,6 +1703,13 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
     // the root is hidden, zero when it is not -- and every position on a row is
     // measured from it.
     const u32 depthBase = drawRoot ? 0u : 1u;
+    const auto inactiveService = [&](core::InstanceId id) {
+        const auto* descriptor = world.classes().find(world.classOf(id));
+        if (descriptor == nullptr || descriptor->integration.empty())
+            return false;
+        const auto& enabled = world.engineState().enabledIntegrations;
+        return std::find(enabled.begin(), enabled.end(), descriptor->integration) == enabled.end();
+    };
 
     // **The search box, above the tree it searches.**
     //
@@ -1792,7 +1799,7 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                 g_searchHits.insert(row.id.index);
                 continue;
             }
-            if (!showGenerated && world.generated(row.id))
+            if (inactiveService(row.id) || (!showGenerated && world.generated(row.id)))
                 continue;
             if (containsFold(world.atoms().text(world.name(row.id)), explorerNeedle)) {
                 g_searchHits.insert(row.id.index);
@@ -1810,7 +1817,7 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
 
         g_visible.clear();
         for (const TreeRow& row : g_searchRows) {
-            if (!showGenerated && world.generated(row.id))
+            if (inactiveService(row.id) || (!showGenerated && world.generated(row.id)))
                 continue;
             if ((row.depth > 0 || drawRoot) && g_searchHits.contains(row.id.index))
                 g_visible.push_back(row);
@@ -1828,7 +1835,7 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                 // things they wrote is the root's own complaint again: scrolling
                 // past a world to find the thing you came for. Window > Streamed
                 // Content brings them back.
-                if (!showGenerated && world.generated(row.id))
+                if (inactiveService(row.id) || (!showGenerated && world.generated(row.id)))
                     return TreeVisit::Skip;
 
                 const bool hasChildren = world.childCount(row.id) > 0;
@@ -6906,6 +6913,7 @@ void drawConsole(script::ScriptRuntime* runtime, ScriptEditorCommands* scriptCom
 // **Play with players** (ADR 0106 §5): how many, and whether a dedicated
 // server runs them. One player with no server is the ordinary Play.
 void openExportWindow(Editor& editor);
+void openPlatformWindow(Editor& editor);
 
 void drawMatchControls(Editor& editor, bool locked)
 {
@@ -9895,6 +9903,10 @@ void drawProjectSettings(Editor& editor)
         pictures = projectPictures(root);
     }
 
+    if (ImGui::Button(core::tr(ENG_TR("engine.editor.modules.open")))) {
+        openPlatformWindow(editor);
+        ImGui::CloseCurrentPopup();
+    }
     ImGui::TextWrapped("%s", root.filename().string().c_str());
     ImGui::Spacing();
 
@@ -10074,6 +10086,15 @@ void drawProjectSettings(Editor& editor)
 struct ExportUi
 {
     bool open = false;
+    bool modulesOpen = false;
+    bool licensesAccepted = false;
+    bool toolsForModules = false;
+    std::array<char, 1024> modulePackage{};
+    std::array<char, 65> modulePackageHash{};
+    platform::PlatformServiceConfiguration platformServices;
+    int mappingService = 0;
+    std::array<char, 129> mappingId{};
+    std::array<char, 129> mappingNativeId{};
     std::filesystem::path root;
     std::optional<CliCommand> cli;
 
@@ -10221,6 +10242,7 @@ void openFolder(const std::filesystem::path& path)
 // The project's `[export]` settings, read into the window.
 void readExportSettings(ExportUi& ui)
 {
+    ui.platformServices = loadProjectConfig(ui.root, GraphicsOverrides{}).platformServices;
     std::string text;
     core::TomlDocument document;
     if (!platform::readTextFile(ui.root / "project.toml", text) || !document.parse(text).ok)
@@ -10269,7 +10291,7 @@ void startStatus(ExportUi& ui)
     platform::ChildProcess::Options options;
     options.workingDirectory = ui.cli->workingDirectory;
     ui.statusOutput.clear();
-    ui.statusProcess = platform::ChildProcess::start(ui.cli->command({"build", "--status"}), options);
+    ui.statusProcess = platform::ChildProcess::start(ui.cli->command({"build", ui.root.string(), "--status"}), options);
 }
 
 void startNextExport(ExportUi& ui)
@@ -10425,9 +10447,11 @@ void pollExport(ExportUi& ui)
         ui.toolsOutput += ui.tools->readAvailable();
         if (!ui.tools->running()) {
             ui.toolsOutput += ui.tools->readAvailable();
-            ui.toolsMessage = ui.tools->exitCode() == 0
-                                  ? std::string(core::tr(ENG_TR("engine.editor.export_window.tools_installed")))
-                                  : ui.toolsOutput;
+            ui.toolsMessage =
+                ui.tools->exitCode() == 0
+                    ? std::string(core::tr(ui.toolsForModules ? ENG_TR("engine.editor.modules.operation_done")
+                                                              : ENG_TR("engine.editor.export_window.tools_installed")))
+                    : ui.toolsOutput;
             ui.tools.reset();
             startStatus(ui);
         }
@@ -10469,6 +10493,215 @@ void openExportWindow(Editor& editor)
     readExportSettings(ui);
     ui.recent = loadRecentExports(recentExportsFile(), root);
     startStatus(ui);
+}
+
+void openPlatformWindow(Editor& editor)
+{
+    ExportUi& ui = exportUi();
+    const bool exportWasOpen = ui.open;
+    openExportWindow(editor);
+    ui.open = exportWasOpen;
+    ui.modulesOpen = true;
+}
+
+void drawGenericPlatformSettings(ExportUi& ui)
+{
+    ImGui::SeparatorText(core::tr(ENG_TR("engine.editor.modules.generic_title")));
+    ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.modules.generic_description")));
+    const std::pair<const char*, const char*> services[] = {
+        {"identity", "IdentityService"},    {"achievements", "AchievementService"}, {"store", "StoreService"},
+        {"cloud_save", "CloudSaveService"}, {"leaderboards", "LeaderboardService"}, {"social", "SocialService"}};
+    for (const auto& [key, name] : services) {
+        ImGui::PushID(key);
+        const auto choice = ui.platformServices.providers.find(key);
+        const std::string selected = choice == ui.platformServices.providers.end() ? "Auto" : choice->second;
+        const bool automatic = selected == "Auto";
+        const char* preview = automatic ? core::tr(ENG_TR("engine.editor.modules.auto_provider")) : selected.c_str();
+        ImGui::TextUnformatted(name);
+        if (ImGui::BeginCombo("##provider", preview)) {
+            const auto choose = [&](const std::string& provider) {
+                const std::string field = std::string("platform_services.") + key + ".provider";
+                writeExportSetting(ui, field.c_str(), core::tomlString(provider));
+                if (ui.problem.empty())
+                    ui.platformServices.providers[key] = provider;
+                ui.toolsMessage = core::tr(ENG_TR("engine.editor.modules.restart"));
+            };
+            if (ImGui::Selectable(core::tr(ENG_TR("engine.editor.modules.auto_provider")), automatic))
+                choose("Auto");
+            if (ui.status)
+                for (const auto& module : ui.status->modules) {
+                    if (!module.integration.empty() &&
+                        ImGui::Selectable(module.integration.c_str(), selected == module.integration))
+                        choose(module.integration);
+                }
+            ImGui::EndCombo();
+        }
+        ImGui::PopID();
+    }
+}
+void drawPlatformIdMappings(ExportUi& ui, const ModuleStatus& module)
+{
+    if (module.integration.empty() || !ImGui::CollapsingHeader(core::tr(ENG_TR("engine.editor.modules.id_mappings"))))
+        return;
+    const char* services[] = {"achievements", "store", "leaderboards"};
+    const char* names[] = {"AchievementService", "StoreService", "LeaderboardService"};
+    ImGui::Combo(core::tr(ENG_TR("engine.editor.modules.mapping_service")), &ui.mappingService, names, 3);
+    const std::string service = services[ui.mappingService];
+    const std::string mapKey = service + "/" + module.integration;
+    const std::string prefix = "platform_services." + service + "." + module.integration + ".ids.";
+    ImGui::InputText(core::tr(ENG_TR("engine.editor.modules.mapping_id")), ui.mappingId.data(), ui.mappingId.size());
+    ImGui::InputText(core::tr(ENG_TR("engine.editor.modules.mapping_native_id")), ui.mappingNativeId.data(),
+                     ui.mappingNativeId.size());
+    const std::string logicalId = ui.mappingId.data();
+    const bool valid = !logicalId.empty() &&
+                       logicalId.find_first_not_of(
+                           "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") == std::string::npos &&
+                       ui.mappingNativeId[0] != '\0';
+    ImGui::BeginDisabled(!valid);
+    if (ImGui::Button(core::tr(ENG_TR("engine.editor.modules.mapping_save")))) {
+        writeExportSetting(ui, (prefix + logicalId).c_str(), core::tomlString(ui.mappingNativeId.data()));
+        if (ui.problem.empty())
+            ui.platformServices.ids[mapKey][logicalId] = ui.mappingNativeId.data();
+    }
+    ImGui::EndDisabled();
+    const auto mapping = ui.platformServices.ids.find(mapKey);
+    std::string remove;
+    if (mapping != ui.platformServices.ids.end())
+        for (const auto& [id, nativeId] : mapping->second) {
+            ImGui::PushID(id.c_str());
+            ImGui::TextWrapped("%s: %s", id.c_str(), nativeId.c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton(core::tr(ENG_TR("engine.editor.modules.mapping_remove"))))
+                remove = id;
+            ImGui::PopID();
+        }
+    if (!remove.empty() && removeProjectSetting(ui.root, prefix + remove, &ui.problem))
+        ui.platformServices.ids[mapKey].erase(remove);
+}
+void drawPlatformWindow(ExportUi& ui)
+{
+    if (!ui.modulesOpen)
+        return;
+    ImGui::SetNextWindowSize(ImVec2(650.0f, 620.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin((std::string(core::tr(ENG_TR("engine.editor.modules.title"))) + "###Platforms").c_str(),
+                      &ui.modulesOpen)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.modules.description")));
+    ImGui::Checkbox(core::tr(ENG_TR("engine.editor.modules.licenses")), &ui.licensesAccepted);
+    ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.modules.licenses_tip")));
+    ImGui::BeginDisabled(ui.tools != nullptr || !ui.cli);
+    if (ImGui::Button(core::tr(ENG_TR("engine.editor.modules.refresh"))))
+        startStatus(ui);
+    drawGenericPlatformSettings(ui);
+    if (ui.status)
+        for (ModuleStatus& item : ui.status->modules) {
+            ImGui::PushID(item.id.c_str());
+            ImGui::SeparatorText(item.label.c_str());
+            ImGui::TextDisabled("%s", core::tr(item.installed ? ENG_TR("engine.editor.modules.installed")
+                                                              : ENG_TR("engine.editor.modules.missing")));
+            if (!item.integration.empty())
+                ImGui::TextDisabled("%s", core::tr(item.provider ? ENG_TR("engine.editor.modules.provider_ready")
+                                                                 : ENG_TR("engine.editor.modules.provider_missing")));
+            if (!item.version.empty())
+                ImGui::TextWrapped(
+                    "%s", core::tr(ENG_TR("engine.editor.modules.details"),
+                                   {{"version", item.version}, {"mb", static_cast<core::i64>(item.bytes / 1000000)}})
+                              .c_str());
+            if (!item.integration.empty() &&
+                ImGui::Checkbox(core::tr(ENG_TR("engine.editor.modules.enabled")), &item.enabled)) {
+                auto enabled = loadProjectConfig(ui.root, GraphicsOverrides{}).enabledIntegrations;
+                std::erase(enabled, item.integration);
+                if (item.enabled)
+                    enabled.push_back(item.integration);
+                std::sort(enabled.begin(), enabled.end());
+                std::string value = "[";
+                for (const auto& id : enabled) {
+                    if (value.size() > 1)
+                        value += ", ";
+                    value += core::tomlString(id);
+                }
+                value += ']';
+                writeExportSetting(ui, "integrations.enabled", value);
+                ui.toolsMessage = core::tr(ENG_TR("engine.editor.modules.restart"));
+            }
+            for (auto& field : item.settings) {
+                std::array<char, 512> value{};
+                std::snprintf(value.data(), value.size(), "%s", field.value.c_str());
+                ImGui::PushID(field.key.c_str());
+                ImGui::TextUnformatted(field.label.c_str());
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::InputText("##value", value.data(), value.size()))
+                    field.value = value.data();
+                if (ImGui::IsItemDeactivatedAfterEdit())
+                    writeExportSetting(ui, field.key.c_str(), core::tomlString(field.value));
+                ImGui::PopID();
+            }
+            drawPlatformIdMappings(ui, item);
+            if (item.kind == "builtin")
+                ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.modules.builtin")));
+            else {
+                const auto action = [&](const char* operation) {
+                    if (!ui.cli)
+                        return;
+                    platform::ChildProcess::Options options;
+                    options.workingDirectory = ui.cli->workingDirectory;
+                    std::vector<std::string> args{"modules", operation, item.id};
+                    if (std::string_view(operation) == "install")
+                        args.emplace_back("--accept-licenses");
+                    ui.toolsMessage.clear();
+                    ui.toolsOutput.clear();
+                    ui.toolsForModules = true;
+                    ui.tools = platform::ChildProcess::start(ui.cli->command(args), options);
+                };
+                ImGui::BeginDisabled(!item.supported || !ui.licensesAccepted);
+                if (ImGui::Button(core::tr(ENG_TR("engine.editor.modules.install"))))
+                    action("install");
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Button(core::tr(ENG_TR("engine.editor.modules.verify"))))
+                    action("verify");
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!item.removable);
+                if (ImGui::Button(core::tr(ENG_TR("engine.editor.modules.remove"))))
+                    action("remove");
+                ImGui::EndDisabled();
+                if (!item.integration.empty() &&
+                    ImGui::CollapsingHeader(core::tr(ENG_TR("engine.editor.modules.package_install")))) {
+                    ImGui::InputText(core::tr(ENG_TR("engine.editor.modules.package_path")), ui.modulePackage.data(),
+                                     ui.modulePackage.size());
+                    ImGui::InputText(core::tr(ENG_TR("engine.editor.modules.package_hash")),
+                                     ui.modulePackageHash.data(), ui.modulePackageHash.size());
+                    ImGui::BeginDisabled(!item.supported || !ui.licensesAccepted || ui.modulePackage[0] == '\0' ||
+                                         std::strlen(ui.modulePackageHash.data()) != 64);
+                    if (ImGui::Button(core::tr(ENG_TR("engine.editor.modules.package_install_button"))) && ui.cli) {
+                        platform::ChildProcess::Options options;
+                        options.workingDirectory = ui.cli->workingDirectory;
+                        ui.toolsForModules = true;
+                        ui.toolsMessage.clear();
+                        ui.toolsOutput.clear();
+                        ui.tools = platform::ChildProcess::start(
+                            ui.cli->command({"modules", "install", item.id, "--accept-licenses",
+                                             "--package=" + std::string(ui.modulePackage.data()),
+                                             "--sha256=" + std::string(ui.modulePackageHash.data())}),
+                            options);
+                    }
+                    ImGui::EndDisabled();
+                }
+                if (!item.supported)
+                    ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.modules.unsupported")));
+            }
+            ImGui::PopID();
+        }
+    ImGui::EndDisabled();
+    if (ui.tools)
+        ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.modules.busy")));
+    if (!ui.toolsMessage.empty())
+        ImGui::TextWrapped("%s", ui.toolsMessage.c_str());
+    if (!ui.problem.empty())
+        ImGui::TextWrapped("%s", ui.problem.c_str());
+    ImGui::End();
 }
 
 [[nodiscard]] const TargetStatus* statusOf(const ExportUi& ui, std::string_view name)
@@ -10856,6 +11089,7 @@ void drawExportWindow(Editor& editor, EditorDialogs& dialogs, const IconAtlas* i
 {
     ExportUi& ui = exportUi();
     pollExport(ui);
+    drawPlatformWindow(ui);
     drawKeystoreDialog(ui);
     if (!ui.open)
         return;
@@ -10874,6 +11108,8 @@ void drawExportWindow(Editor& editor, EditorDialogs& dialogs, const IconAtlas* i
         ImGui::End();
         return;
     }
+    if (ImGui::Button(core::tr(ENG_TR("engine.editor.modules.open"))))
+        ui.modulesOpen = true;
     // Escape closes it while it has the keyboard, as it closes every dialog.
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive() &&
         ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
@@ -10951,6 +11187,7 @@ void drawExportWindow(Editor& editor, EditorDialogs& dialogs, const IconAtlas* i
             options.workingDirectory = ui.cli->workingDirectory;
             ui.toolsOutput.clear();
             ui.toolsMessage.clear();
+            ui.toolsForModules = false;
             ui.tools = platform::ChildProcess::start(ui.cli->command({"android", "install-tools"}), options);
         }
         ImGui::EndDisabled();

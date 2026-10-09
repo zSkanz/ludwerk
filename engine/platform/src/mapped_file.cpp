@@ -17,8 +17,12 @@ bool MappedFile::open(const std::filesystem::path& path)
 {
     close();
 #ifdef _WIN32
+#if ENG_PLATFORM_UWP
+    HANDLE file = CreateFile2(path.c_str(), GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
+#else
     HANDLE file = CreateFileW(path.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                               FILE_ATTRIBUTE_NORMAL, nullptr);
+#endif
     if (file == INVALID_HANDLE_VALUE)
         return false;
     LARGE_INTEGER size{};
@@ -27,12 +31,20 @@ bool MappedFile::open(const std::filesystem::path& path)
         CloseHandle(file);
         return false;
     }
+#if ENG_PLATFORM_UWP
+    HANDLE mapping = CreateFileMappingFromApp(file, nullptr, PAGE_READONLY, 0, nullptr);
+#else
     HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+#endif
     // The mapping holds the file open; the handle is not needed past here.
     CloseHandle(file);
     if (mapping == nullptr)
         return false;
+#if ENG_PLATFORM_UWP
+    void* view = MapViewOfFileFromApp(mapping, FILE_MAP_READ, 0, 0);
+#else
     void* view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+#endif
     CloseHandle(mapping);
     if (view == nullptr)
         return false;

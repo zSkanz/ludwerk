@@ -2,6 +2,73 @@
   "Version": "0.0.1",
   "Classes": [
     {
+      "Name": "AchievementService",
+      "Extends": "Instance",
+      "LazyService": true,
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "GetProgressAsync",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["number?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "IsAvailable",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetProgressAsync",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "string"
+            },
+            {
+              "Name": "progress",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Supports",
+          "Parameters": [
+            {
+              "Name": "feature",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "UnlockAsync",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
       "Name": "AlignOrientation",
       "Extends": "Constraint",
       "Tags": [],
@@ -1151,6 +1218,85 @@
       "Events": []
     },
     {
+      "Name": "CloudSaveService",
+      "Extends": "Instance",
+      "LazyService": true,
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "DeleteAsync",
+          "Parameters": [
+            {
+              "Name": "slot",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ExistsAsync",
+          "Parameters": [
+            {
+              "Name": "slot",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "IsAvailable",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ReadAsync",
+          "Parameters": [
+            {
+              "Name": "slot",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["string?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Supports",
+          "Parameters": [
+            {
+              "Name": "feature",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "WriteAsync",
+          "Parameters": [
+            {
+              "Name": "slot",
+              "Type": "string"
+            },
+            {
+              "Name": "data",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
       "Name": "ColorCorrectionEffect",
       "Extends": "PostEffect",
       "Tags": [],
@@ -1571,6 +1717,22 @@
       ],
       "Methods": [
         {
+          "Name": "CaptureProfile",
+          "Parameters": [
+            {
+              "Name": "seconds",
+              "Type": "number"
+            },
+            {
+              "Name": "warmupSeconds",
+              "Type": "number?",
+              "Default": "0"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "DrawBox",
           "Parameters": [
             {
@@ -1628,6 +1790,12 @@
             }
           ],
           "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetProfileReport",
+          "Parameters": [],
+          "Returns": ["any"],
           "ThreadSafety": "Unsafe"
         },
         {
@@ -2679,6 +2847,41 @@
       ]
     },
     {
+      "Name": "IdentityService",
+      "Extends": "Instance",
+      "LazyService": true,
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "GetLocalUser",
+          "Parameters": [],
+          "Returns": ["{ Id: string, DisplayName: string, IsSignedIn: boolean, Platform: string }?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "IsAvailable",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "IsSignedIn",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SignInAsync",
+          "Parameters": [],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
       "Name": "ImageButton",
       "Extends": "ImageLabel",
       "Tags": [],
@@ -2844,6 +3047,15 @@
           "Default": "true"
         },
         {
+          "Name": "GamepadId",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Player",
+          "Type": "Player?"
+        },
+        {
           "Name": "Priority",
           "Type": "number",
           "Default": "0"
@@ -2897,6 +3109,24 @@
           "Transient": true
         },
         {
+          "Name": "PreferredGamepadId",
+          "Type": "number",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "PreferredGamepadType",
+          "Type": "Enum.GamepadType",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "PreferredInput",
+          "Type": "Enum.InputDeviceType",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
           "Name": "SwipeThreshold",
           "Type": "number",
           "Default": "6",
@@ -2911,9 +3141,28 @@
       ],
       "Methods": [
         {
+          "Name": "GetGamepads",
+          "Parameters": [],
+          "Returns": ["{number}"]
+        },
+        {
           "Name": "GetPointerPosition",
           "Parameters": [],
           "Returns": ["Vector2"]
+        },
+        {
+          "Name": "IsGamepadKeyDown",
+          "Parameters": [
+            {
+              "Name": "gamepadId",
+              "Type": "number"
+            },
+            {
+              "Name": "keyCode",
+              "Type": "Enum.KeyCode"
+            }
+          ],
+          "Returns": ["boolean"]
         },
         {
           "Name": "IsKeyDown",
@@ -2953,6 +3202,32 @@
         }
       ],
       "Events": [
+        {
+          "Name": "GamepadConnected",
+          "Parameters": [
+            {
+              "Name": "gamepadId",
+              "Type": "number"
+            },
+            {
+              "Name": "gamepadType",
+              "Type": "Enum.GamepadType"
+            }
+          ]
+        },
+        {
+          "Name": "GamepadDisconnected",
+          "Parameters": [
+            {
+              "Name": "gamepadId",
+              "Type": "number"
+            },
+            {
+              "Name": "gamepadType",
+              "Type": "Enum.GamepadType"
+            }
+          ]
+        },
         {
           "Name": "InputBegan",
           "Parameters": [
@@ -2998,6 +3273,24 @@
             {
               "Name": "uiConsumed",
               "Type": "boolean"
+            }
+          ]
+        },
+        {
+          "Name": "PreferredGamepadIdChanged",
+          "Parameters": [
+            {
+              "Name": "gamepadId",
+              "Type": "number"
+            }
+          ]
+        },
+        {
+          "Name": "PreferredGamepadTypeChanged",
+          "Parameters": [
+            {
+              "Name": "gamepadType",
+              "Type": "Enum.GamepadType"
             }
           ]
         },
@@ -3373,6 +3666,81 @@
           "Parameters": []
         }
       ]
+    },
+    {
+      "Name": "LeaderboardService",
+      "Extends": "Instance",
+      "LazyService": true,
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "GetAroundPlayerAsync",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "string"
+            },
+            {
+              "Name": "count",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["{ { UserId: string, DisplayName: string, Rank: number, Score: number } }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetTopAsync",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "string"
+            },
+            {
+              "Name": "count",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["{ { UserId: string, DisplayName: string, Rank: number, Score: number } }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "IsAvailable",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SubmitScoreAsync",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "string"
+            },
+            {
+              "Name": "score",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Supports",
+          "Parameters": [
+            {
+              "Name": "feature",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
     },
     {
       "Name": "Lighting",
@@ -3943,6 +4311,12 @@
       ],
       "Methods": [
         {
+          "Name": "AddLocalPlayer",
+          "Parameters": [],
+          "Returns": ["Player?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "Disconnect",
           "Parameters": [],
           "Returns": [],
@@ -3953,6 +4327,11 @@
           "Parameters": [],
           "Returns": ["{string}"],
           "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetLocalPlayers",
+          "Parameters": [],
+          "Returns": ["{Player}"]
         },
         {
           "Name": "GetPlayers",
@@ -4016,6 +4395,17 @@
           ],
           "Returns": ["{ Ping: number, Matches: number, Relayed: number, BytesPerSecond: number, Uptime: number }?"],
           "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "RemoveLocalPlayer",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["boolean"],
           "ThreadSafety": "Unsafe"
         }
       ],
@@ -4793,12 +5183,40 @@
           ],
           "Returns": [],
           "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FireServerFor",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
         }
       ],
       "Events": [
         {
           "Name": "ClientReceived",
           "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ]
+        },
+        {
+          "Name": "LocalClientReceived",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
             {
               "Name": "arguments",
               "Type": "...any"
@@ -4996,6 +5414,11 @@
             {
               "Name": "fn",
               "Type": "(intent: IntentWriter) -> ()"
+            },
+            {
+              "Name": "player",
+              "Type": "Player?",
+              "Default": "nil"
             }
           ],
           "Returns": [],
@@ -5568,6 +5991,76 @@
       "Events": []
     },
     {
+      "Name": "SocialService",
+      "Extends": "Instance",
+      "LazyService": true,
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "CanCommunicateWithAsync",
+          "Parameters": [
+            {
+              "Name": "userId",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetFriendsAsync",
+          "Parameters": [],
+          "Returns": ["{ { Id: string, DisplayName: string } }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetPresenceAsync",
+          "Parameters": [
+            {
+              "Name": "userId",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["{ IsOnline: boolean, Status: string? }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "IsAvailable",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "IsBlockedAsync",
+          "Parameters": [
+            {
+              "Name": "userId",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Supports",
+          "Parameters": [
+            {
+              "Name": "feature",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
       "Name": "Sound",
       "Extends": "Instance",
       "Tags": [],
@@ -5853,6 +6346,76 @@
         }
       ],
       "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "StoreService",
+      "Extends": "Instance",
+      "LazyService": true,
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "GetProductAsync",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["{ Id: string, DisplayName: string, Description: string, Price: string?, Currency: string? }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "IsAvailable",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "OwnsAsync",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "PurchaseAsync",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "RefreshEntitlementsAsync",
+          "Parameters": [],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Supports",
+          "Parameters": [
+            {
+              "Name": "feature",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
       "Events": []
     },
     {
@@ -8080,6 +8643,12 @@
           "Transient": true
         },
         {
+          "Name": "GamepadId",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
           "Name": "SafeAreaInsets",
           "Type": "Rect",
           "ReadOnly": true,
@@ -8278,12 +8847,40 @@
           ],
           "Returns": [],
           "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FireServerFor",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
         }
       ],
       "Events": [
         {
           "Name": "ClientReceived",
           "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ]
+        },
+        {
+          "Name": "LocalClientReceived",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
             {
               "Name": "arguments",
               "Type": "...any"
@@ -8955,6 +9552,59 @@
             }
           ],
           "Returns": ["RaycastResult?"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "XboxService",
+      "Extends": "Instance",
+      "Integration": "xbox",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "GetGamertag",
+          "Parameters": [],
+          "Returns": ["string?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetUserId",
+          "Parameters": [],
+          "Returns": ["string?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "IsAvailable",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "IsSignedIn",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SignInAsync",
+          "Parameters": [],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "UnlockAchievementAsync",
+          "Parameters": [
+            {
+              "Name": "achievementId",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
           "ThreadSafety": "Unsafe"
         }
       ],
@@ -9761,6 +10411,12 @@
         {
           "Name": "Delta",
           "Type": "vector",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "GamepadId",
+          "Type": "number",
           "ReadOnly": true,
           "ThreadSafety": "Safe"
         },
@@ -12309,6 +12965,31 @@
         {
           "Name": "Submitted",
           "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "GamepadType",
+      "Items": [
+        {
+          "Name": "Generic",
+          "Value": 4
+        },
+        {
+          "Name": "Nintendo",
+          "Value": 3
+        },
+        {
+          "Name": "PlayStation",
+          "Value": 2
+        },
+        {
+          "Name": "Unknown",
+          "Value": 0
+        },
+        {
+          "Name": "Xbox",
+          "Value": 1
         }
       ]
     },

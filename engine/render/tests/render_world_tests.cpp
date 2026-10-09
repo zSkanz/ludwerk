@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <doctest/doctest.h>
 #include <ostream>
 #include <string>
@@ -429,6 +431,87 @@ TEST_CASE("extraction orders draws near to far, stably")
     REQUIRE(again.draws.size() == snapshot.draws.size());
     for (std::size_t index = 0; index < again.draws.size(); ++index)
         CHECK(again.draws[index].sortKey == snapshot.draws[index].sortKey);
+}
+
+TEST_CASE("extraction uploads a shared pose once and keeps independent rigs and overrides separate")
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const auto root = fixture.world.create(fixture.workspaceClass);
+    (void)fixture.cameraLookingDownNegativeZ(root);
+    const auto content = fixture.atoms.intern("asset://models/shared-rig.glb");
+    render::MeshLibrary meshes;
+    render::MeshLibrary::Entry mesh;
+    mesh.mesh = render::MeshHandle{0, 1};
+    mesh.bounds = core::AABB::fromCenterSize({}, {1.0f, 1.0f, 1.0f});
+    mesh.sectionCount = 2;
+    meshes.set(content, mesh);
+
+    render::SkeletonLibrary skeletons;
+    render::SkeletonLibrary::Entry skeleton;
+    skeleton.joints.resize(2);
+    skeleton.joints[0].name = "root";
+    skeleton.joints[1].name = "child";
+    skeleton.joints[1].parent = 0;
+    asset::AnimationChannel channel;
+    channel.joint = 1;
+    channel.target = asset::AnimationChannel::Target::Translation;
+    channel.stride = 3;
+    channel.times = {0.0f, 1.0f};
+    channel.values = {0.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f};
+    asset::AnimationClip clip;
+    clip.name = "Slide";
+    clip.duration = 1.0f;
+    clip.channels.push_back(channel);
+    skeleton.clips.push_back(clip);
+    skeletons.set(content, std::move(skeleton));
+    render::AnimationSystem animation{fixture.world, skeletons};
+    std::array<core::InstanceId, 4> rigs{};
+    for (core::usize index = 0; index < rigs.size(); ++index) {
+        rigs[index] = fixture.meshPartAt(root, {static_cast<core::f64>(index * 2), 0.0, -10.0}, content);
+        if (index == 3)
+            continue; // This rig stays in bind pose.
+        const auto player = fixture.world.create(fixture.instanceClass);
+        REQUIRE_FALSE(fixture.world.setParent(player, rigs[index]).has_value());
+        const auto track = animation.createTrack(player, {}, "Slide");
+        animation.play(track, 0.0f, 1.0f, index == 2 ? 2.0f : 1.0f);
+    }
+    animation.sample(0.25);
+    REQUIRE(animation.pose(rigs[0]) == animation.pose(rigs[1]));
+    REQUIRE(animation.pose(rigs[0]) != animation.pose(rigs[2]));
+
+    render::RenderWorld snapshot;
+    const auto checkSnapshot = [&] {
+        render::extract(fixture.world, root, {}, meshes, 1.0f, 0.0f, &animation, 0.0f, nullptr, snapshot);
+        REQUIRE(snapshot.draws.size() == 8);
+        for (const auto& draw : snapshot.draws) {
+            const auto index = static_cast<core::usize>(draw.transform.m[3][0] / 2.0f);
+            REQUIRE(index < rigs.size());
+            const auto* pose = animation.pose(rigs[index]);
+            if (pose == nullptr) {
+                CHECK(draw.boneCount == 0);
+                continue;
+            }
+            REQUIRE(draw.boneCount == 2);
+            REQUIRE(draw.firstBone + draw.boneCount <= snapshot.bones.size());
+            for (core::usize joint = 0; joint < draw.boneCount; ++joint)
+                for (core::usize column = 0; column < 4; ++column)
+                    for (core::usize row = 0; row < 4; ++row)
+                        CHECK(snapshot.bones[draw.firstBone + joint].m[column][row] ==
+                              pose->palette[joint].m[column][row]);
+        }
+    };
+    checkSnapshot();
+    CHECK(snapshot.bones.size() == 4); // Two poses, not three rigs or six sections.
+    animation.sample(0.125);
+    checkSnapshot();
+    CHECK(snapshot.bones.size() == 4); // No offsets from the previous extract survive.
+    core::CFrameD overridden;
+    overridden.position.y = 9.0;
+    animation.setJointOverride(rigs[0], 0, overridden);
+    animation.commitOverrides();
+    checkSnapshot();
+    CHECK(snapshot.bones.size() == 6); // The overridden rig owns its palette.
 }
 
 TEST_CASE("extraction reads the environment from Lighting, and defaults without it")
@@ -1359,6 +1442,71 @@ TEST_CASE("a part wearing a material draws it as authored, and a declared overri
     }
 }
 
+TEST_CASE("authored blocks stay independent across frame cache growth and per-part shader overrides")
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const core::InstanceId workspace = fixture.world.create(fixture.workspaceClass);
+    (void)fixture.cameraLookingDownNegativeZ(workspace);
+    fixture.world.setMaterialLibrary(&fixture.materials);
+    render::MeshLibrary meshes;
+    registerBlock(fixture, meshes);
+    constexpr core::u32 Count = 300;
+    const auto urn = [](core::u32 index) { return "asset://materials/cache-growth-" + std::to_string(index); };
+    asset::MaterialAsset authored;
+    authored.properties.shader = "asset://shaders/shared-surface-with-a-long-name.surface.hlsl";
+    authored.properties.alphaMode = static_cast<core::i32>(asset::MaterialAlphaMode::Mask);
+    authored.properties.alphaCutoff = 0.37f;
+    authored.properties.shaderParameters = {{.name = "Glow", .value = {1.0f, 2.0f, 3.0f, 0.0f}, .texture = {}}};
+    authored.instanceShaderParameters = {"Added", "Glow"};
+    authored.written = asset::AllMaterialFields;
+    for (core::u32 index = 0; index < Count; ++index) {
+        authored.properties.color.r = static_cast<core::f32>(index) / static_cast<core::f32>(Count);
+        fixture.materials.put(urn(index), authored);
+        wear(fixture, blockAt(fixture, workspace), urn(index));
+    }
+    const auto repeated = blockAt(fixture, workspace);
+    wear(fixture, repeated, urn(0));
+    fixture.world.setPartShaderParameter(repeated, {.name = "Ignored", .value = {9.0f}, .texture = {}});
+    const auto overridden = blockAt(fixture, workspace);
+    wear(fixture, overridden, urn(0));
+    fixture.world.setPartShaderParameter(overridden,
+                                         {.name = "Glow", .value = {8.0f, 7.0f, 6.0f, 5.0f}, .texture = {}});
+    fixture.world.setPartShaderParameter(overridden, {.name = "Added", .value = {2.0f}, .texture = {}});
+    const auto equivalent = blockAt(fixture, workspace);
+    wear(fixture, equivalent, urn(0));
+    fixture.world.setPartShaderParameter(equivalent,
+                                         {.name = "Glow", .value = {1.0f, 2.0f, 3.0f, -0.0f}, .texture = {}});
+    render::RenderWorld snapshot;
+    render::extract(fixture.world, workspace, {}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+    REQUIRE(snapshot.materials.size() == Count + 1);
+    for (core::u32 index = 0; index < Count; ++index) {
+        const auto& block = snapshot.materials[index];
+        CHECK(block.surface == authored.properties.shader);
+        REQUIRE(block.surfaceValues.size() == 1);
+        CHECK(block.surfaceValues[0].name == "Glow");
+        CHECK(nearF(block.surfaceValues[0].value[0], 1.0f));
+        CHECK(nearF(block.uniforms.baseColor[0], static_cast<core::f32>(index) / static_cast<core::f32>(Count)));
+        CHECK(nearF(block.uniforms.metallicRoughnessNormalCutoff[3], 0.37f));
+    }
+    const auto& own = snapshot.materials.back();
+    REQUIRE(own.surfaceValues.size() == 2);
+    CHECK(own.surfaceValues[0].name == "Added");
+    CHECK(nearF(own.surfaceValues[0].value[0], 2.0f));
+    CHECK(own.surfaceValues[1].name == "Glow");
+    CHECK(nearF(own.surfaceValues[1].value[0], 8.0f));
+    // A new extraction observes material edits, without changing an earlier
+    // snapshot or allowing one part's shader parameters to mutate its peers.
+    authored.properties.shaderParameters[0].value[0] = 12.0f;
+    fixture.materials.put(urn(0), authored);
+    fixture.world.clearPartShaderParameter(equivalent, "Glow");
+    render::RenderWorld next;
+    render::extract(fixture.world, workspace, {}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, next);
+    CHECK(nearF(next.materials[0].surfaceValues[0].value[0], 12.0f));
+    CHECK(nearF(snapshot.materials[0].surfaceValues[0].value[0], 1.0f));
+    CHECK(nearF(next.materials.back().surfaceValues[1].value[0], 8.0f));
+}
+
 TEST_CASE("a material's Transparency fades the draw and puts it in the blended pass")
 {
     Fixture fixture;
@@ -2145,4 +2293,81 @@ TEST_CASE("ADR 0185: the rectangle a frame's decals can reach, which is where th
     CHECK(decalReach({}) == 0.0f);
     CHECK(nearF(decalReach(around), std::sqrt(0.75f)));
     CHECK(nearF(decalReach(ahead), std::sqrt(0.5f + 4.5f * 4.5f)));
+}
+
+TEST_CASE("render hierarchy extraction benchmark" * doctest::skip())
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const auto root = fixture.world.create(fixture.workspaceClass);
+    (void)fixture.cameraLookingDownNegativeZ(root);
+    auto parent = root;
+    for (int depth = 0; depth < 12; ++depth) {
+        const auto next = fixture.world.create(fixture.folderClass);
+        REQUIRE_FALSE(fixture.world.setParent(next, parent).has_value());
+        parent = next;
+    }
+    const auto content = fixture.atoms.intern("test://hierarchy-mesh");
+    render::MeshLibrary meshes;
+    render::MeshLibrary::Entry mesh;
+    mesh.mesh = {1, 1};
+    mesh.bounds = core::AABB::fromCenterSize({}, {1.0f, 1.0f, 1.0f});
+    mesh.sectionCount = 1;
+    meshes.set(content, mesh);
+    for (int i = 0; i < 1500; ++i) {
+        const auto model = fixture.world.create(fixture.folderClass);
+        REQUIRE_FALSE(fixture.world.setParent(model, parent).has_value());
+        (void)fixture.meshPartAt(model, {static_cast<double>(i % 20) - 10, 0, -20}, content);
+    }
+    render::RenderWorld snapshot;
+    for (int i = 0; i < 10; ++i)
+        render::extract(fixture.world, root, {}, meshes, 1.0f, 120.0f, nullptr, 0.0f, nullptr, snapshot);
+    for (int sample = 0; sample < 5; ++sample) {
+        const auto began = std::chrono::steady_clock::now();
+        for (int frame = 0; frame < 500; ++frame)
+            render::extract(fixture.world, root, {}, meshes, 1.0f, 120.0f, nullptr, 0.0f, nullptr, snapshot);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - began).count();
+        REQUIRE(snapshot.draws.size() == 1500);
+        std::printf("[hierarchy-benchmark] sample=%d meanMs=%.6f draws=%zu\n", sample, ms / 500, snapshot.draws.size());
+    }
+}
+
+TEST_CASE("extraction membership follows moved subtrees and each requested root")
+{
+    Fixture fixture;
+    const auto first = fixture.world.create(fixture.folderClass);
+    const auto second = fixture.world.create(fixture.folderClass);
+    auto branch = fixture.world.create(fixture.folderClass);
+    REQUIRE_FALSE(fixture.world.setParent(branch, first).has_value());
+    auto parent = branch;
+    for (int depth = 0; depth < 32; ++depth) {
+        const auto next = fixture.world.create(fixture.folderClass);
+        REQUIRE_FALSE(fixture.world.setParent(next, parent).has_value());
+        parent = next;
+    }
+    const auto a = fixture.part(parent);
+    const auto b = fixture.part(parent);
+    const auto outside = fixture.part(second);
+    (void)outside;
+    render::RenderWorld snapshot;
+    const auto count = [&](core::InstanceId root) {
+        render::extract(fixture.world, root, {}, kNoMeshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+        return snapshot.parts.size();
+    };
+    CHECK(count(first) == 2);
+    CHECK(count(second) == 1);
+    CHECK(count(a) == 1);
+    REQUIRE_FALSE(fixture.world.setParent(branch, second).has_value());
+    CHECK(count(first) == 0);
+    CHECK(count(second) == 3);
+    CHECK(count(branch) == 2);
+    REQUIRE_FALSE(fixture.world.setParent(b, first).has_value());
+    CHECK(count(first) == 1);
+    CHECK(count(second) == 2);
+    fixture.world.destroy(a);
+    CHECK(count(second) == 1);
+    const auto replacement = fixture.part(parent);
+    (void)replacement;
+    CHECK(count(second) == 2);
+    CHECK(count(core::InstanceId{first.index, first.generation + 1}) == 0);
 }

@@ -18,6 +18,12 @@ namespace engine::rhi {
 // Null on failure, with `outError` filled when it is not null.
 using DeviceResult = std::unique_ptr<IDevice>;
 
+#if ENG_RHI_D3D12
+[[nodiscard]] DeviceResult createD3D12Device(const DeviceDesc& desc, std::span<const std::byte> blitVertex,
+                                            std::span<const std::byte> blitFragment,
+                                            core::EngineError* outError = nullptr);
+#endif
+
 #if ENG_RHI_NULL
 [[nodiscard]] DeviceResult createNullDevice(const DeviceDesc& desc, core::EngineError* outError = nullptr);
 #endif

@@ -1,5 +1,8 @@
 # Shipping a game
 
+For identity, achievements and optional native features, see
+[Platform services](manual:guides/platform-services).
+
 A game is exported from one window, for Windows, Linux and Android, from any
 desktop. **File > Export...** (Ctrl+Shift+B), or the Export button beside
 Play.
@@ -457,3 +460,47 @@ no-ops, so debug drawing left in shared code costs nothing.
 - [The ludwerk CLI](manual:get-started/cli)
 - [Scenes](manual:guides/scenes)
 - [Talking to a backend](manual:guides/backend)
+
+## Optional Xbox services on Windows
+
+Scripts can use `XboxService` even when its integration is disabled. Queries then
+return false or nil, and asynchronous actions immediately return
+`false, "IntegrationDisabled"`. Development runs warn once per service. Existing
+references remain typed; inactive services are hidden from new service-name
+suggestions and the Explorer. Changing project enablement currently requires
+reopening the project.
+
+```lua
+local xbox = game:GetService("XboxService")
+if xbox:IsAvailable() then
+    local ok, reason = xbox:SignInAsync()
+    if not ok then
+        warn(reason)
+    end
+end
+```
+
+Enable the integration independently from SDK installation:
+
+```toml
+[integrations]
+enabled = ["xbox"]
+
+[integrations.xbox]
+configuration = "YOUR_SCID"
+
+[export.microsoft]
+config = "MicrosoftGame.config"
+```
+
+Use the SCID and game configuration belonging to your Microsoft title. The
+configuration must declare the exported executable's name. An enabled Windows
+export requires the compatible prebuilt provider; it copies only declared runtime
+files and the authored game configuration. A default export carries no GDK runtime
+files. On other targets this Windows provider is omitted and the service reports
+`BackendUnavailable` when called.
+
+The optional PC adapter covers identity and achievement updates. Microsoft Store
+submission/package validation still needs the official packaging tools and a
+configured title; the public SDK NuGet package does not provide MakePkg. Xbox
+console support requires separate licensed console tooling and an engine backend.

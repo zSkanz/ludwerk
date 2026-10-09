@@ -533,3 +533,52 @@ TEST_CASE("a swarm's ground is the terrain's own height to the bit, and follows 
     }
     CHECK(lowest < 2.0);
 }
+
+TEST_CASE("swarm ground queries see terrain edits, moves and membership changes within one tick")
+{
+    Rig rig;
+    World& world = rig.fixture.world;
+    const auto ground = [&](f64 height) {
+        const core::InstanceId id = rig.fixture.folder("Ground");
+        TerrainComponent terrain;
+        terrain.field = asset::TerrainField(asset::FieldSettings{.voxelSize = 1.0f});
+        (void)asset::fillFlat(terrain.field, core::DVec3{}, 32.0f, 2.0f, 1);
+        terrain.origin.y = height;
+        world.terrains().add(id, std::move(terrain));
+        return id;
+    };
+    const auto agrees = [&] {
+        const auto expected = swarmTerrainAt(std::as_const(world), 0.25, -0.25);
+        const auto actual = swarmTerrainAt(std::as_const(world), rig.swarm(), 0.25, -0.25);
+        REQUIRE(actual.has_value() == expected.has_value());
+        if (expected.has_value())
+            CHECK(*actual == *expected);
+        return actual;
+    };
+    CHECK_FALSE(agrees().has_value());
+    const core::InstanceId lower = ground(0.0);
+    REQUIRE(agrees().has_value());
+    const f64 before = *agrees();
+    TerrainComponent* terrain = world.terrains().find(lower);
+    REQUIRE(terrain != nullptr);
+    (void)asset::fillBall(terrain->field, core::DVec3{0.0, 2.0, 0.0}, 4.0, 1);
+    ++terrain->fieldRevision;
+    CHECK(*agrees() > before);
+    terrain->origin.y += 10.0;
+    CHECK(*agrees() > before + 10.0);
+
+    const core::InstanceId upper = ground(30.0);
+    CHECK(*agrees() > 30.0);
+    world.terrains().remove(upper);
+    CHECK(*agrees() < 30.0);
+    // Overflow keeps the same interpolation after discarding cached columns.
+    rig.swarm().groundTops.resize(16384, 99.0f);
+    REQUIRE(agrees().has_value());
+    CHECK(rig.swarm().groundTops.size() < 16384);
+
+    // Beyond the cache's terrain ordinal range the uncached fallback is exact.
+    for (int index = 0; index < 8; ++index)
+        (void)ground(40.0 + index);
+    CHECK(*agrees() > 47.0);
+    CHECK(world.engineState().tick == 0);
+}

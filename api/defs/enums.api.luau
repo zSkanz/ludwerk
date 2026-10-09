@@ -553,6 +553,21 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         {
+            Name = "GamepadType",
+            Doc = "Physical gamepad family, independent of operating system, input category and glyph/button layout.",
+            Items = {
+                {
+                    Name = "Unknown",
+                    Value = 0,
+                    Doc = "No active gamepad or a device whose family SDL cannot identify.",
+                },
+                { Name = "Xbox", Value = 1 },
+                { Name = "PlayStation", Value = 2 },
+                { Name = "Nintendo", Value = 3 },
+                { Name = "Generic", Value = 4, Doc = "An identified standard gamepad without a branded family." },
+            } :: { Schema.EnumItem },
+        },
+        {
             Name = "InputDeviceType",
             Doc = "A family of input hardware. Used for two things and neither of them is dispatch: "
                 .. "`InputService.LastInputDeviceType` says what the player touched most recently, so a HUD can "

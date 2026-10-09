@@ -282,6 +282,49 @@ TEST_CASE("the selection moves to the nearest selectable object in each directio
     }
 }
 
+TEST_CASE("automatic selection stays in the highest selectable display layer")
+{
+    Fixture fixture;
+    const InstanceId behind = fixture.box("TextButton", fixture.screen, 300, 100, 60, 40);
+    const InstanceId modal = fixture.child("ScreenGui", fixture.service);
+    fixture.world->screenGuis().find(modal)->displayOrder = 20;
+    const InstanceId first = fixture.box("TextButton", modal, 100, 100, 60, 40);
+    const InstanceId second = fixture.box("TextButton", modal, 200, 100, 60, 40);
+    (void)fixture.navigate(1, 0);
+    CHECK(fixture.selected() == first);
+    (void)fixture.navigate(1, 0);
+    CHECK(fixture.selected() == second);
+    (void)fixture.navigate(1, 0);
+    CHECK(fixture.selected() == second);
+
+    SUBCASE("screens at the same display order share navigation")
+    {
+        const InstanceId peer = fixture.child("ScreenGui", fixture.service);
+        fixture.world->screenGuis().find(peer)->displayOrder = 20;
+        const InstanceId next = fixture.box("TextButton", peer, 400, 100, 60, 40);
+        (void)fixture.navigate(1, 0);
+        CHECK(fixture.selected() == next);
+    }
+    SUBCASE("a disabled screen releases the layer")
+    {
+        fixture.world->screenGuis().find(modal)->enabled = false;
+        fixture.selected() = {};
+        (void)fixture.navigate(1, 0);
+        CHECK(fixture.selected() == behind);
+    }
+    SUBCASE("decorative and hidden overlays do not trap focus")
+    {
+        fixture.object(first).visible = false;
+        fixture.object(second).visible = false;
+        const InstanceId overlay = fixture.child("ScreenGui", fixture.service);
+        fixture.world->screenGuis().find(overlay)->displayOrder = 50;
+        (void)fixture.box("TextLabel", overlay, 500, 100, 60, 40);
+        fixture.selected() = {};
+        (void)fixture.navigate(1, 0);
+        CHECK(fixture.selected() == behind);
+    }
+}
+
 TEST_CASE("NextSelection says where the selection goes, and nearest is only the default")
 {
     Menu menu;

@@ -2499,7 +2499,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(uIStrokeDesc);
 
     // --- UIService ---
-    static std::array<scene::PropertyDesc, 6> uIServiceProperties;
+    static std::array<scene::PropertyDesc, 7> uIServiceProperties;
     uIServiceProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("SafeAreaInsets"),
@@ -2566,6 +2566,19 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
             .get = native::getUIServiceSelectedObject,
             .set = native::setUIServiceSelectedObject,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("GamepadId"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Controller instance allowed to navigate and activate SelectedObject. Zero accepts all controllers for compatibility. A positive id reserves shared menu navigation for that controller; other controllers still reach InputService and their InputContexts. Keyboard and pointer navigation remain available. Changing the id clears held navigation.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getUIServiceGamepadId,
+            .set = native::setUIServiceGamepadId,
         },
         scene::PropertyDesc{
             .name = atoms.intern("AutoSelect"),

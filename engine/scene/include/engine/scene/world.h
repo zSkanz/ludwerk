@@ -242,6 +242,11 @@ struct DetectorMessage
 
 struct EngineState
 {
+    // Guest ids occupy a separate range from transport-assigned peer ids.
+    u32 nextLocalPlayerId = 0x80000000u;
+    // Host configuration, not replicated simulation state (ADR 0188).
+    std::vector<std::string> enabledIntegrations;
+
     // Seconds, constant for the whole tick and advanced by the scheduler
     // (api-design.md §2.1).
     f64 simTime = 0.0;
@@ -312,6 +317,8 @@ struct EngineState
     bool pointerVisible = true;
     // `Enum.InputDeviceType`: 0 KeyboardMouse, 1 Gamepad, 2 Touch.
     i32 lastInputDeviceType = 0;
+    i32 preferredGamepadType = 0;
+    u32 preferredGamepadId = 0;
     // Players taken out of the list whose `PlayerRemoving` is still to be
     // heard (D459): destroyed at the start of the next tick.
     std::vector<core::InstanceId> leavingPlayers;
@@ -350,6 +357,7 @@ struct EngineState
     // the focus because a script writes it.
     core::InstanceId uiSelected;
     bool uiAutoSelect = true;
+    core::u32 uiGamepadId = 0;
     // `Camera.ViewportSize`: what the world is drawn into this frame, in pixels
     // -- the window, or the editor's Viewport panel. Written by the host.
     core::Vec2 viewportSize;

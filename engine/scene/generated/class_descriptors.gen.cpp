@@ -4501,6 +4501,332 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     waterPointDesc.detachComponents = native::detachWaterPointComponents;
     classes.registerClass(waterPointDesc);
 
+    // --- SocialService ---
+    static std::array<MethodDesc, 6> socialServiceMethods;
+    socialServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("IsAvailable"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the selected provider implements friend queries.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Supports"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Check GetFriends, GetPresence, IsBlocked or CanCommunicate. Unknown features return false.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetFriendsAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Friends visible under the current user's privacy/permission policy, or nil and an error. Id is provider-namespaced; no universal friend network is assumed.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetPresenceAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Basic presence for a user from the selected provider. Privacy, authentication and network failures stay explicit. No Xbox-specific activity schema is exposed.",
+        },
+        MethodDesc{
+            .name = atoms.intern("IsBlockedAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the provider reports this user blocked. Nil means the query failed or is unsupported, never that communication is allowed.",
+        },
+        MethodDesc{
+            .name = atoms.intern("CanCommunicateWithAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the platform permits communication. Unknown/unsupported results are nil and an error, never implicit permission. Does not open sockets or create sessions.",
+        },
+    }};
+    ClassDescriptor socialServiceDesc;
+    socialServiceDesc.name = atoms.intern("SocialService");
+    socialServiceDesc.super = instanceClass;
+    socialServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    socialServiceDesc.lazyService = true;
+    socialServiceDesc.defaultName = atoms.intern("SocialService");
+    socialServiceDesc.doc = "Basic platform social queries through declared capabilities. User IDs are provider-namespaced. Xbox social features are not implemented in the initial provider. This service does not replace NetworkService.";
+    socialServiceDesc.methods = socialServiceMethods;
+    classes.registerClass(socialServiceDesc);
+
+    // --- LeaderboardService ---
+    static std::array<MethodDesc, 5> leaderboardServiceMethods;
+    leaderboardServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("IsAvailable"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the selected provider implements top-score queries.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Supports"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Check SubmitScore, GetTop or GetAroundPlayer. Filters outside these contracts remain platform-specific.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SubmitScoreAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Submit a finite score in Lua's exact integer range to a mapped board. Provider rules decide updates, ordering and acceptance; no client-side authoritative ranking is created.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetTopAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Up to count entries (integer 1 through 100), or nil and an error. UserId is provider-namespaced; Rank is one-based.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetAroundPlayerAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Up to count entries around the current platform user when supported. Missing users/rankings remain explicit errors.",
+        },
+    }};
+    ClassDescriptor leaderboardServiceDesc;
+    leaderboardServiceDesc.name = atoms.intern("LeaderboardService");
+    leaderboardServiceDesc.super = instanceClass;
+    leaderboardServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    leaderboardServiceDesc.lazyService = true;
+    leaderboardServiceDesc.defaultName = atoms.intern("LeaderboardService");
+    leaderboardServiceDesc.doc = "Platform leaderboards addressed by provider-mapped project IDs. The initial Xbox provider does not implement these operations; no local or simulated rankings are supplied.";
+    leaderboardServiceDesc.methods = leaderboardServiceMethods;
+    classes.registerClass(leaderboardServiceDesc);
+
+    // --- CloudSaveService ---
+    static std::array<MethodDesc, 6> cloudSaveServiceMethods;
+    cloudSaveServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("IsAvailable"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the selected provider implements cloud reads.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Supports"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Check Read, Write, Delete or Exists. Unknown features return false.",
+        },
+        MethodDesc{
+            .name = atoms.intern("WriteAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Write textual/encoded save data to a user slot. The generic limit is 1 MiB; providers may impose lower quotas. Conflict, NotSignedIn, NetworkError and QuotaExceeded remain explicit failures, never silent overwrites or local fallback.",
+        },
+        MethodDesc{
+            .name = atoms.intern("ReadAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Read a user slot, or nil and an error such as NotFound, Conflict or NotSupported. Synchronization and offline access are provider capabilities.",
+        },
+        MethodDesc{
+            .name = atoms.intern("DeleteAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Delete a cloud slot using the provider's user/synchronization policy. Does not delete local saves.",
+        },
+        MethodDesc{
+            .name = atoms.intern("ExistsAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Check a cloud slot. False is a completed negative answer; nil is an error.",
+        },
+    }};
+    ClassDescriptor cloudSaveServiceDesc;
+    cloudSaveServiceDesc.name = atoms.intern("CloudSaveService");
+    cloudSaveServiceDesc.super = instanceClass;
+    cloudSaveServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    cloudSaveServiceDesc.lazyService = true;
+    cloudSaveServiceDesc.defaultName = atoms.intern("CloudSaveService");
+    cloudSaveServiceDesc.doc = "Platform cloud slots for the current user, separate from local SaveService/filesystem. No offline success or local fallback is simulated. The initial Xbox provider has no cloud capability.";
+    cloudSaveServiceDesc.methods = cloudSaveServiceMethods;
+    classes.registerClass(cloudSaveServiceDesc);
+
+    // --- StoreService ---
+    static std::array<MethodDesc, 6> storeServiceMethods;
+    storeServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("IsAvailable"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the selected provider implements product queries.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Supports"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Check GetProduct, Purchase, Owns or RefreshEntitlements. Unknown features return false.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetProductAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Product information for an internal project ID, or nil and a stable error. Price is localized display text, never a value to charge.",
+        },
+        MethodDesc{
+            .name = atoms.intern("PurchaseAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Request the native purchase flow. A missing store never simulates purchase success. Verify ownership through the provider after completion.",
+        },
+        MethodDesc{
+            .name = atoms.intern("OwnsAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the current user owns the mapped product. False is a completed negative answer; nil is an error.",
+        },
+        MethodDesc{
+            .name = atoms.intern("RefreshEntitlementsAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Refresh the provider's entitlements when supported. No local purchase cache or credential store is created.",
+        },
+    }};
+    ClassDescriptor storeServiceDesc;
+    storeServiceDesc.name = atoms.intern("StoreService");
+    storeServiceDesc.super = instanceClass;
+    storeServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    storeServiceDesc.lazyService = true;
+    storeServiceDesc.defaultName = atoms.intern("StoreService");
+    storeServiceDesc.doc = "Platform-neutral products and entitlements using project IDs. The initial Xbox provider does not yet implement store operations: availability is false and calls fail immediately.";
+    storeServiceDesc.methods = storeServiceMethods;
+    classes.registerClass(storeServiceDesc);
+
+    // --- AchievementService ---
+    static std::array<MethodDesc, 5> achievementServiceMethods;
+    achievementServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("IsAvailable"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the selected native provider supports unlocking achievements.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Supports"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Check Unlock, GetProgress or SetProgress. Unknown feature names return false.",
+        },
+        MethodDesc{
+            .name = atoms.intern("UnlockAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Report completion using a project achievement ID. UnknownAchievement means no ID mapping. Uses the same provider session as XboxService; failure codes are platform-neutral.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetProgressAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Read progress from 0 to 1, or nil and an error. The initial Xbox provider returns NotSupported immediately. Consult Supports before presenting this feature.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SetProgressAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Report progress from 0 to 1. The initial Xbox provider returns NotSupported immediately. Providers define monotonicity and synchronization; this is not a local progress cache.",
+        },
+    }};
+    ClassDescriptor achievementServiceDesc;
+    achievementServiceDesc.name = atoms.intern("AchievementService");
+    achievementServiceDesc.super = instanceClass;
+    achievementServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    achievementServiceDesc.lazyService = true;
+    achievementServiceDesc.defaultName = atoms.intern("AchievementService");
+    achievementServiceDesc.doc = "Platform-neutral achievements using internal project IDs mapped per provider. The Xbox provider currently supports completion only. Unsupported features never report success.";
+    achievementServiceDesc.methods = achievementServiceMethods;
+    classes.registerClass(achievementServiceDesc);
+
+    // --- IdentityService ---
+    static std::array<MethodDesc, 4> identityServiceMethods;
+    identityServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("IsAvailable"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the selected provider declares identity support and is available.",
+        },
+        MethodDesc{
+            .name = atoms.intern("IsSignedIn"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the selected platform session has an authenticated local user.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetLocalUser"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "A read-only user snapshot, or nil. Id is opaque and provider-namespaced, not a universal XUID. Platform names the identity provider, not the operating system.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SignInAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Use the provider's authentication flow. Returns success and an optional stable error code. IntegrationUnavailable, ProviderUnavailable and NotSupported finish immediately. Shares the native session and Busy state with the platform-specific service.",
+        },
+    }};
+    ClassDescriptor identityServiceDesc;
+    identityServiceDesc.name = atoms.intern("IdentityService");
+    identityServiceDesc.super = instanceClass;
+    identityServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    identityServiceDesc.lazyService = true;
+    identityServiceDesc.defaultName = atoms.intern("IdentityService");
+    identityServiceDesc.doc = "Platform-neutral identity using a registered provider. Always accessible without SDKs. The initial real provider is Xbox; absence never simulates authentication.";
+    identityServiceDesc.methods = identityServiceMethods;
+    classes.registerClass(identityServiceDesc);
+
+    // --- XboxService ---
+    static std::array<MethodDesc, 6> xboxServiceMethods;
+    xboxServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("IsAvailable"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether an enabled native provider is available. False without installing an SDK.",
+        },
+        MethodDesc{
+            .name = atoms.intern("IsSignedIn"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the provider currently has an authenticated player.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetUserId"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The player identifier as a decimal string, or nil. Identifiers are not floating-point numbers.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetGamertag"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The signed-in player display name, or nil.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SignInAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sign in through the native provider. Returns success and an optional failure code. Disabled integration returns false, IntegrationDisabled immediately.",
+        },
+        MethodDesc{
+            .name = atoms.intern("UnlockAchievementAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Report completion of a configured achievement for the signed-in player. Never simulates success.",
+        },
+    }};
+    ClassDescriptor xboxServiceDesc;
+    xboxServiceDesc.name = atoms.intern("XboxService");
+    xboxServiceDesc.super = instanceClass;
+    xboxServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    xboxServiceDesc.integration = "xbox";
+    xboxServiceDesc.defaultName = atoms.intern("XboxService");
+    xboxServiceDesc.doc = "Optional Xbox identity and achievements through the PC provider (ADR 0188). Console support is separate. GetService always succeeds. Without an enabled provider, queries are empty and actions return a failure code. No SDK is needed to write or check scripts.";
+    xboxServiceDesc.methods = xboxServiceMethods;
+    classes.registerClass(xboxServiceDesc);
+
     // --- DataModel ---
     static std::array<PropertyDesc, 2> dataModelProperties;
     dataModelProperties = {{
@@ -5586,7 +5912,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("PreloadAsync"),
             .yields = true,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Loads every item and yields until each has arrived or failed. An item is a content name, such as `asset://models/tree.gltf`, or an instance -- every asset it and its descendants name. `callback` runs once per item as it finishes, with `Enum.AssetFetchStatus.Success` or `Failure`. Meshes and pictures are loaded onto the GPU; a sound is opened and its length read; anything else is found or not. A name with no `://` is a STAMP, named as `Instance.stamp` names it: its file is read and kept, so its first copy reads nothing, and every asset it names is loaded with it (ADR 0155).",
+            .doc = "Loads every item and yields until each has arrived or failed. An item is a content name, such as `asset://models/tree.gltf`, or an instance -- every asset it and its descendants name. `callback` runs once per item as it finishes, with `Enum.AssetFetchStatus.Success` or `Failure`. Meshes and pictures are loaded onto the GPU; a `.surface.hlsl` URN prepares its native rendering pipelines, so its first appearance does not create them during play. Preload surfaces behind a loading screen. A sound is opened and its length read; anything else is found or not. A name with no `://` is a STAMP, named as `Instance.stamp` names it: its file is read and kept, so its first copy reads nothing, and every asset it names is loaded with it (ADR 0155).",
         },
     }};
     ClassDescriptor contentProviderDesc;
@@ -5823,8 +6149,26 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setNetworkServiceMaxPlayers,
         },
     }};
-    static std::array<MethodDesc, 7> networkServiceMethods;
+    static std::array<MethodDesc, 10> networkServiceMethods;
     networkServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("GetLocalPlayers"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "This machine's local players in join order, primary first. Excludes players whose removal has begun.",
+        },
+        MethodDesc{
+            .name = atoms.intern("AddLocalPlayer"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Adds a guest participant to an offline authority, firing PlayerAdded. Returns nil on a dedicated server or networked world. Guest ids are session ids, not platform accounts. Games choose their local seat limit and assign InputContext.Player explicitly. Local guests cannot join online sessions in this version.",
+        },
+        MethodDesc{
+            .name = atoms.intern("RemoveLocalPlayer"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Removes an offline guest through PlayerRemoving. Refuses the primary LocalPlayer and remote players. Returns whether removal was requested.",
+        },
         MethodDesc{
             .name = atoms.intern("GetPlayers"),
             .yields = false,
@@ -5918,8 +6262,14 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(networkServiceDesc);
 
     // --- RemoteEvent ---
-    static std::array<MethodDesc, 3> remoteEventMethods;
+    static std::array<MethodDesc, 4> remoteEventMethods;
     remoteEventMethods = {{
+        MethodDesc{
+            .name = atoms.intern("FireServerFor"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Submits this machine's local participant message to its own authority. Refuses replicas, remote players and removed guests; cannot impersonate a network peer. ServerReceived receives the selected local Player. Ordinary FireServer retains its primary-player behavior.",
+        },
         MethodDesc{
             .name = atoms.intern("FireServer"),
             .yields = false,
@@ -5939,16 +6289,21 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "Sends the arguments to every player's machine, a host's own included. Only the authority speaks to clients: a replica calling this is refused.",
         },
     }};
-    static std::array<EventDesc, 2> remoteEventEvents;
+    static std::array<EventDesc, 3> remoteEventEvents;
     remoteEventEvents = {{
         EventDesc{
-            .name = atoms.intern("ServerReceived"),
+            .name = atoms.intern("LocalClientReceived"),
             .slot = 7,
+            .doc = "Directed client message for an additional local guest, carrying that Player before the arguments. Primary and broadcast client messages retain ClientReceived; guest messages do not overwrite the primary player's HUD. Deferred like every remote signal.",
+        },
+        EventDesc{
+            .name = atoms.intern("ServerReceived"),
+            .slot = 8,
             .doc = "Fires on the authority when a player's machine calls `FireServer`, with the player who sent it first. Trust nothing else in it: it is what a client says it did.",
         },
         EventDesc{
             .name = atoms.intern("ClientReceived"),
-            .slot = 8,
+            .slot = 9,
             .doc = "Fires on a player's machine when the authority calls `FireClient` for this player or `FireAllClients`.",
         },
     }};
@@ -5963,8 +6318,14 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(remoteEventDesc);
 
     // --- UnreliableRemoteEvent ---
-    static std::array<MethodDesc, 3> unreliableRemoteEventMethods;
+    static std::array<MethodDesc, 4> unreliableRemoteEventMethods;
     unreliableRemoteEventMethods = {{
+        MethodDesc{
+            .name = atoms.intern("FireServerFor"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Submits this machine's local participant message to its own authority. Refuses replicas, remote players and removed guests; cannot impersonate a network peer. ServerReceived receives the selected local Player. Ordinary FireServer retains its primary-player behavior.",
+        },
         MethodDesc{
             .name = atoms.intern("FireServer"),
             .yields = false,
@@ -5984,16 +6345,21 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "Sends the arguments to every player's machine once, a host's own included. Only the authority speaks to clients: a replica calling this is refused.",
         },
     }};
-    static std::array<EventDesc, 2> unreliableRemoteEventEvents;
+    static std::array<EventDesc, 3> unreliableRemoteEventEvents;
     unreliableRemoteEventEvents = {{
         EventDesc{
-            .name = atoms.intern("ServerReceived"),
+            .name = atoms.intern("LocalClientReceived"),
             .slot = 7,
+            .doc = "Directed client message for an additional local guest, carrying that Player before the arguments. Primary and broadcast client messages retain ClientReceived; guest messages do not overwrite the primary player's HUD. Deferred like every remote signal.",
+        },
+        EventDesc{
+            .name = atoms.intern("ServerReceived"),
+            .slot = 8,
             .doc = "Fires on the authority when a player's machine's `FireServer` arrives, with the player who sent it first. Trust nothing else in it.",
         },
         EventDesc{
             .name = atoms.intern("ClientReceived"),
-            .slot = 8,
+            .slot = 9,
             .doc = "Fires on a player's machine when the authority's `FireClient` for this player, or its `FireAllClients`, arrives.",
         },
     }};
@@ -6157,7 +6523,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("BindToIntent"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Runs `fn(intent)` **every simulation tick**, right after this machine's input becomes its player's intents, in the order bound (G38). `intent:Set(action, value)` writes an intent by name -- a boolean, a number, a `Vector2` or a `vector` -- which every reader of `Player:GetIntent` sees, on this machine and, in a match, on the authority: input that is not an `InputAction`, such as a turn worked out from the mouse, a touch gesture or a bot.\012\012A value written wins over an `InputAction` of the same name. The writer is good only during the call. Binding a name already bound replaces it; a binding belongs to the script that made it and goes with its scene.",
+            .doc = "Optional player selects a live local guest; nil keeps the primary LocalPlayer. Removed guest bindings are skipped. Runs `fn(intent)` **every simulation tick**, right after this machine's input becomes its player's intents, in the order bound (G38). `intent:Set(action, value)` writes an intent by name -- a boolean, a number, a `Vector2` or a `vector` -- which every reader of `Player:GetIntent` sees, on this machine and, in a match, on the authority: input that is not an `InputAction`, such as a turn worked out from the mouse, a touch gesture or a bot.\012\012A value written wins over an `InputAction` of the same name. The writer is good only during the call. Binding a name already bound replaces it; a binding belongs to the script that made it and goes with its scene.",
         },
         MethodDesc{
             .name = atoms.intern("UnbindFromIntent"),
@@ -6470,7 +6836,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setDebugServiceOverlayVisible,
         },
     }};
-    static std::array<MethodDesc, 7> debugServiceMethods;
+    static std::array<MethodDesc, 9> debugServiceMethods;
     debugServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("DrawLine"),
@@ -6489,6 +6855,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Draws the wireframe of a sphere at this world position, with this radius in metres, for one frame. A silent no-op in a headless run, like every gizmo.",
+        },
+        MethodDesc{
+            .name = atoms.intern("CaptureProfile"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Requests a main-thread CPU scope capture at frame boundaries, using wall-clock seconds. Returns false while a capture is pending or for non-finite/out-of-range durations: measurement must be in (0, 120], warm-up in [0, 120]. Diagnostic only; never use for simulation.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetProfileReport"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns nil until CaptureProfile completes, then a table with frames, seconds and scopes. Each scope contains name, depth, meanMs, bestMs, medianMs, p95Ms, p99Ms, worstMs and selfMedianMs. Inclusive CPU times include child scopes and waits; they are not GPU execution timings. The most recent 16384 frames are retained. The report persists until the next request.",
         },
         MethodDesc{
             .name = atoms.intern("GetStat"),
@@ -7967,6 +8345,41 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     inputActionTypeDesc.docKey = {};
     inputActionTypeDesc.items = inputActionTypeItems;
     enums.registerEnum(inputActionTypeDesc);
+
+    // --- GamepadType ---
+    static std::array<EnumItemDesc, 5> gamepadTypeItems;
+    gamepadTypeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Unknown"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Xbox"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("PlayStation"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Nintendo"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Generic"),
+            .value = 4,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor gamepadTypeDesc;
+    gamepadTypeDesc.name = atoms.intern("GamepadType");
+    gamepadTypeDesc.docKey = {};
+    gamepadTypeDesc.items = gamepadTypeItems;
+    enums.registerEnum(gamepadTypeDesc);
 
     // --- InputDeviceType ---
     static std::array<EnumItemDesc, 3> inputDeviceTypeItems;

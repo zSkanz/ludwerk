@@ -80,6 +80,8 @@ public:
     // Where `SaveService` keeps its slots (ADR 0111). The host's, and it
     // outlives this VM; null answers every save call with an error.
     void setSaveStore(SaveStore* store) noexcept;
+    void setPlatformServices(platform::PlatformServiceConfiguration configuration);
+    void setIntegrationProvider(std::string id, std::string library, std::string configuration);
 
 private:
     // The same thing with the memory category chosen rather than derived. The
@@ -164,6 +166,7 @@ public:
     // Enqueues `InputBegan` / `InputChanged` / `InputEnded` for one tick's raw
     // events (ADR 0041). Called right after the simulation dispatch, so they
     // land in the same drain as the `InputAction` signals the same tick raised.
+    void fireInputDeviceEvents(std::span<const input::DeviceEvent> events);
     void fireInputEvents(std::span<const input::RawInputEvent> events);
     // The gestures the same dispatch recognised (D462), on `InputService`.
     void fireGestureEvents(std::span<const input::GestureEvent> events);

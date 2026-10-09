@@ -374,12 +374,25 @@ private:
     // The meshes whose pose this tick has to rebuild, collected before the walk
     // so it is one pass per mesh rather than one per track.
     std::vector<core::InstanceId> meshes_;
+    // Deduplicate while collecting, before sorting in instance order. A mesh
+    // can be named by a skipped pose, both tracks and their common drive root.
+    struct MeshMark
+    {
+        core::u64 stamp = 0;
+        core::u32 generation = 0;
+    };
+    std::vector<MeshMark> meshMarks_;
     core::u64 posesBuilt_ = 0;
     // **Which tracks drive which mesh this tick** (H10), as (mesh key, track)
-    // sorted: a pose asked every track in the world whether it drove its mesh
+    // sorted by instance index, generation and track: a pose asked every track in the world whether it drove its mesh
     // -- a thousand tracks for each of hundreds of meshes, each walking the
     // mesh's ancestors.
     std::vector<std::pair<core::u64, u32>> drivers_;
+    // Group tracks by drive root within one sample only: hierarchy and loaded
+    // skeleton changes are observed again on the next sample.
+    std::vector<std::pair<core::u64, u32>> rootDrivers_;
+    std::vector<core::InstanceId> descendants_;
+    std::vector<core::InstanceId> driveMeshes_;
     std::vector<u32> driving_;
     // **Poses shared** (H10): what a pose was built from -- the rig, and each
     // track's clip, time and weight -- to the pose. A mesh with the same

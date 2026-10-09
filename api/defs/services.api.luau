@@ -33,6 +33,384 @@ local Schema = require("../schema")
 -- outside `ClassTag` still fails analysis.
 local Classes: { Schema.Class } = {
     {
+        Name = "SocialService",
+        LazyService = true,
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "Basic platform social queries through declared capabilities. User IDs are provider-namespaced. "
+            .. "Xbox social features are not implemented in the initial provider. This service does not replace NetworkService.",
+        Methods = {
+            {
+                Name = "IsAvailable",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether the selected provider implements friend queries.",
+            },
+            {
+                Name = "Supports",
+                Parameters = { { Name = "feature", Type = "string" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Check GetFriends, GetPresence, IsBlocked or CanCommunicate. Unknown features return false.",
+            },
+            {
+                Name = "GetFriendsAsync",
+                Parameters = {},
+                Returns = { "{ { Id: string, DisplayName: string } }?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Friends visible under the current user's privacy/permission policy, or nil and an error. Id is provider-namespaced; no universal friend network is assumed.",
+            },
+            {
+                Name = "GetPresenceAsync",
+                Parameters = { { Name = "userId", Type = "string" } },
+                Returns = { "{ IsOnline: boolean, Status: string? }?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Basic presence for a user from the selected provider. Privacy, authentication and network failures stay explicit. No Xbox-specific activity schema is exposed.",
+            },
+            {
+                Name = "IsBlockedAsync",
+                Parameters = { { Name = "userId", Type = "string" } },
+                Returns = { "boolean?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Whether the provider reports this user blocked. Nil means the query failed or is unsupported, never that communication is allowed.",
+            },
+            {
+                Name = "CanCommunicateWithAsync",
+                Parameters = { { Name = "userId", Type = "string" } },
+                Returns = { "boolean?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Whether the platform permits communication. Unknown/unsupported results are nil and an error, never implicit permission. Does not open sockets or create sessions.",
+            },
+        } :: { Schema.Method },
+    },
+
+    {
+        Name = "LeaderboardService",
+        LazyService = true,
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "Platform leaderboards addressed by provider-mapped project IDs. The initial Xbox provider "
+            .. "does not implement these operations; no local or simulated rankings are supplied.",
+        Methods = {
+            {
+                Name = "IsAvailable",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether the selected provider implements top-score queries.",
+            },
+            {
+                Name = "Supports",
+                Parameters = { { Name = "feature", Type = "string" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Check SubmitScore, GetTop or GetAroundPlayer. Filters outside these contracts remain platform-specific.",
+            },
+            {
+                Name = "SubmitScoreAsync",
+                Parameters = { { Name = "id", Type = "string" }, { Name = "score", Type = "number" } },
+                Returns = { "boolean", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Submit a finite score in Lua's exact integer range to a mapped board. Provider rules decide updates, ordering and acceptance; no client-side authoritative ranking is created.",
+            },
+            {
+                Name = "GetTopAsync",
+                Parameters = { { Name = "id", Type = "string" }, { Name = "count", Type = "number" } },
+                Returns = { "{ { UserId: string, DisplayName: string, Rank: number, Score: number } }?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Up to count entries (integer 1 through 100), or nil and an error. UserId is provider-namespaced; Rank is one-based.",
+            },
+            {
+                Name = "GetAroundPlayerAsync",
+                Parameters = { { Name = "id", Type = "string" }, { Name = "count", Type = "number" } },
+                Returns = { "{ { UserId: string, DisplayName: string, Rank: number, Score: number } }?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Up to count entries around the current platform user when supported. Missing users/rankings remain explicit errors.",
+            },
+        } :: { Schema.Method },
+    },
+
+    {
+        Name = "CloudSaveService",
+        LazyService = true,
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "Platform cloud slots for the current user, separate from local SaveService/filesystem. "
+            .. "No offline success or local fallback is simulated. The initial Xbox provider has no cloud capability.",
+        Methods = {
+            {
+                Name = "IsAvailable",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether the selected provider implements cloud reads.",
+            },
+            {
+                Name = "Supports",
+                Parameters = { { Name = "feature", Type = "string" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Check Read, Write, Delete or Exists. Unknown features return false.",
+            },
+            {
+                Name = "WriteAsync",
+                Parameters = { { Name = "slot", Type = "string" }, { Name = "data", Type = "string" } },
+                Returns = { "boolean", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Write textual/encoded save data to a user slot. The generic limit is 1 MiB; providers may impose lower quotas. Conflict, NotSignedIn, NetworkError and QuotaExceeded remain explicit failures, never silent overwrites or local fallback.",
+            },
+            {
+                Name = "ReadAsync",
+                Parameters = { { Name = "slot", Type = "string" } },
+                Returns = { "string?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Read a user slot, or nil and an error such as NotFound, Conflict or NotSupported. Synchronization and offline access are provider capabilities.",
+            },
+            {
+                Name = "DeleteAsync",
+                Parameters = { { Name = "slot", Type = "string" } },
+                Returns = { "boolean", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Delete a cloud slot using the provider's user/synchronization policy. Does not delete local saves.",
+            },
+            {
+                Name = "ExistsAsync",
+                Parameters = { { Name = "slot", Type = "string" } },
+                Returns = { "boolean?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Check a cloud slot. False is a completed negative answer; nil is an error.",
+            },
+        } :: { Schema.Method },
+    },
+
+    {
+        Name = "StoreService",
+        LazyService = true,
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "Platform-neutral products and entitlements using project IDs. The initial Xbox provider "
+            .. "does not yet implement store operations: availability is false and calls fail immediately.",
+        Methods = {
+            {
+                Name = "IsAvailable",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether the selected provider implements product queries.",
+            },
+            {
+                Name = "Supports",
+                Parameters = { { Name = "feature", Type = "string" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Check GetProduct, Purchase, Owns or RefreshEntitlements. Unknown features return false.",
+            },
+            {
+                Name = "GetProductAsync",
+                Parameters = { { Name = "id", Type = "string" } },
+                Returns = {
+                    "{ Id: string, DisplayName: string, Description: string, Price: string?, Currency: string? }?",
+                    "string?",
+                },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Product information for an internal project ID, or nil and a stable error. Price is localized display text, never a value to charge.",
+            },
+            {
+                Name = "PurchaseAsync",
+                Parameters = { { Name = "id", Type = "string" } },
+                Returns = { "boolean", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Request the native purchase flow. A missing store never simulates purchase success. Verify ownership through the provider after completion.",
+            },
+            {
+                Name = "OwnsAsync",
+                Parameters = { { Name = "id", Type = "string" } },
+                Returns = { "boolean?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Whether the current user owns the mapped product. False is a completed negative answer; nil is an error.",
+            },
+            {
+                Name = "RefreshEntitlementsAsync",
+                Parameters = {},
+                Returns = { "boolean", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Refresh the provider's entitlements when supported. No local purchase cache or credential store is created.",
+            },
+        } :: { Schema.Method },
+    },
+
+    {
+        Name = "AchievementService",
+        LazyService = true,
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "Platform-neutral achievements using internal project IDs mapped per provider. "
+            .. "The Xbox provider currently supports completion only. Unsupported features never report success.",
+        Methods = {
+            {
+                Name = "IsAvailable",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether the selected native provider supports unlocking achievements.",
+            },
+            {
+                Name = "Supports",
+                Parameters = { { Name = "feature", Type = "string" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Check Unlock, GetProgress or SetProgress. Unknown feature names return false.",
+            },
+            {
+                Name = "UnlockAsync",
+                Parameters = { { Name = "id", Type = "string" } },
+                Returns = { "boolean", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Report completion using a project achievement ID. UnknownAchievement means no ID mapping. "
+                    .. "Uses the same provider session as XboxService; failure codes are platform-neutral.",
+            },
+            {
+                Name = "GetProgressAsync",
+                Parameters = { { Name = "id", Type = "string" } },
+                Returns = { "number?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Read progress from 0 to 1, or nil and an error. The initial Xbox provider returns "
+                    .. "NotSupported immediately. Consult Supports before presenting this feature.",
+            },
+            {
+                Name = "SetProgressAsync",
+                Parameters = { { Name = "id", Type = "string" }, { Name = "progress", Type = "number" } },
+                Returns = { "boolean", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Report progress from 0 to 1. The initial Xbox provider returns NotSupported immediately. "
+                    .. "Providers define monotonicity and synchronization; this is not a local progress cache.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "IdentityService",
+        LazyService = true,
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "Platform-neutral identity using a registered provider. Always accessible without SDKs. "
+            .. "The initial real provider is Xbox; absence never simulates authentication.",
+        Methods = {
+            {
+                Name = "IsAvailable",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether the selected provider declares identity support and is available.",
+            },
+            {
+                Name = "IsSignedIn",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether the selected platform session has an authenticated local user.",
+            },
+            {
+                Name = "GetLocalUser",
+                Parameters = {},
+                Returns = { "{ Id: string, DisplayName: string, IsSignedIn: boolean, Platform: string }?" },
+                ThreadSafety = "Unsafe",
+                Doc = "A read-only user snapshot, or nil. Id is opaque and provider-namespaced, not a universal XUID. "
+                    .. "Platform names the identity provider, not the operating system.",
+            },
+            {
+                Name = "SignInAsync",
+                Parameters = {},
+                Returns = { "boolean", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Use the provider's authentication flow. Returns success and an optional stable error code. "
+                    .. "IntegrationUnavailable, ProviderUnavailable and NotSupported finish immediately. "
+                    .. "Shares the native session and Busy state with the platform-specific service.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "XboxService",
+        Extends = "Instance",
+        Module = "scene",
+        Integration = "xbox",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "Optional Xbox identity and achievements through the PC provider (ADR 0188). Console support is separate. "
+            .. "GetService always succeeds. Without an enabled provider, queries are empty and actions "
+            .. "return a failure code. No SDK is needed to write or check scripts.",
+        Methods = {
+            {
+                Name = "IsAvailable",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether an enabled native provider is available. False without installing an SDK.",
+            },
+            {
+                Name = "IsSignedIn",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether the provider currently has an authenticated player.",
+            },
+            {
+                Name = "GetUserId",
+                Parameters = {},
+                Returns = { "string?" },
+                ThreadSafety = "Unsafe",
+                Doc = "The player identifier as a decimal string, or nil. Identifiers are not floating-point numbers.",
+            },
+            {
+                Name = "GetGamertag",
+                Parameters = {},
+                Returns = { "string?" },
+                ThreadSafety = "Unsafe",
+                Doc = "The signed-in player display name, or nil.",
+            },
+            {
+                Name = "SignInAsync",
+                Parameters = {},
+                Returns = { "boolean", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Sign in through the native provider. Returns success and an optional failure code. Disabled integration returns false, IntegrationDisabled immediately.",
+            },
+            {
+                Name = "UnlockAchievementAsync",
+                Parameters = { { Name = "achievementId", Type = "string" } },
+                Returns = { "boolean", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Report completion of a configured achievement for the signed-in player. Never simulates success.",
+            },
+        } :: { Schema.Method },
+    },
+    {
         Name = "DataModel",
         Extends = "Instance",
         Module = "scene",
@@ -1333,7 +1711,9 @@ local Classes: { Schema.Class } = {
                     .. "name, such as `asset://models/tree.gltf`, or an instance -- every asset it and its "
                     .. "descendants name. `callback` runs once per item as it finishes, with "
                     .. "`Enum.AssetFetchStatus.Success` or `Failure`. Meshes and pictures are loaded onto the "
-                    .. "GPU; a sound is opened and its length read; anything else is found or not. A name with no "
+                    .. "GPU; a `.surface.hlsl` URN prepares its native rendering pipelines, so its first "
+                    .. "appearance does not create them during play. Preload surfaces behind a loading screen. "
+                    .. "A sound is opened and its length read; anything else is found or not. A name with no "
                     .. "`://` is a STAMP, named as `Instance.stamp` names it: its file is read and kept, so its "
                     .. "first copy reads nothing, and every asset it names is loaded with it (ADR 0155).",
             },
@@ -1613,6 +1993,26 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Property },
         Methods = {
             {
+                Name = "GetLocalPlayers",
+                Parameters = {},
+                Returns = { "{Player}" },
+                Doc = "This machine's local players in join order, primary first. Excludes players whose removal has begun.",
+            },
+            {
+                Name = "AddLocalPlayer",
+                Parameters = {},
+                Returns = { "Player?" },
+                ThreadSafety = "Unsafe",
+                Doc = "Adds a guest participant to an offline authority, firing PlayerAdded. Returns nil on a dedicated server or networked world. Guest ids are session ids, not platform accounts. Games choose their local seat limit and assign InputContext.Player explicitly. Local guests cannot join online sessions in this version.",
+            },
+            {
+                Name = "RemoveLocalPlayer",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Removes an offline guest through PlayerRemoving. Refuses the primary LocalPlayer and remote players. Returns whether removal was requested.",
+            },
+            {
                 Name = "GetPlayers",
                 Parameters = {},
                 Returns = { "{Player}" },
@@ -1810,6 +2210,13 @@ local Classes: { Schema.Class } = {
             .. "at the start of the tick after they arrive.",
         Methods = {
             {
+                Name = "FireServerFor",
+                Parameters = { { Name = "player", Type = "Player" }, { Name = "arguments", Type = "...any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Submits this machine's local participant message to its own authority. Refuses replicas, remote players and removed guests; cannot impersonate a network peer. ServerReceived receives the selected local Player. Ordinary FireServer retains its primary-player behavior.",
+            },
+            {
                 Name = "FireServer",
                 Parameters = { { Name = "arguments", Type = "...any" } },
                 Returns = {},
@@ -1836,6 +2243,11 @@ local Classes: { Schema.Class } = {
             },
         } :: { Schema.Method },
         Events = {
+            {
+                Name = "LocalClientReceived",
+                Parameters = { { Name = "player", Type = "Player" }, { Name = "arguments", Type = "...any" } },
+                Doc = "Directed client message for an additional local guest, carrying that Player before the arguments. Primary and broadcast client messages retain ClientReceived; guest messages do not overwrite the primary player's HUD. Deferred like every remote signal.",
+            },
             {
                 Name = "ServerReceived",
                 Parameters = { { Name = "player", Type = "Player" }, { Name = "arguments", Type = "...any" } },
@@ -1871,6 +2283,13 @@ local Classes: { Schema.Class } = {
             .. "sender the authority learns from the connection. Never use it for what must arrive.",
         Methods = {
             {
+                Name = "FireServerFor",
+                Parameters = { { Name = "player", Type = "Player" }, { Name = "arguments", Type = "...any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Submits this machine's local participant message to its own authority. Refuses replicas, remote players and removed guests; cannot impersonate a network peer. ServerReceived receives the selected local Player. Ordinary FireServer retains its primary-player behavior.",
+            },
+            {
                 Name = "FireServer",
                 Parameters = { { Name = "arguments", Type = "...any" } },
                 Returns = {},
@@ -1898,6 +2317,11 @@ local Classes: { Schema.Class } = {
             },
         } :: { Schema.Method },
         Events = {
+            {
+                Name = "LocalClientReceived",
+                Parameters = { { Name = "player", Type = "Player" }, { Name = "arguments", Type = "...any" } },
+                Doc = "Directed client message for an additional local guest, carrying that Player before the arguments. Primary and broadcast client messages retain ClientReceived; guest messages do not overwrite the primary player's HUD. Deferred like every remote signal.",
+            },
             {
                 Name = "ServerReceived",
                 Parameters = { { Name = "player", Type = "Player" }, { Name = "arguments", Type = "...any" } },
@@ -2106,10 +2530,12 @@ local Classes: { Schema.Class } = {
                 Parameters = {
                     { Name = "name", Type = "string" },
                     { Name = "fn", Type = "(intent: IntentWriter) -> ()" },
+                    { Name = "player", Type = "Player?", Default = "nil" },
                 },
                 Returns = {},
                 ThreadSafety = "Unsafe",
-                Doc = "Runs `fn(intent)` **every simulation tick**, right after this machine's input becomes its "
+                Doc = "Optional player selects a live local guest; nil keeps the primary LocalPlayer. Removed guest bindings are skipped. "
+                    .. "Runs `fn(intent)` **every simulation tick**, right after this machine's input becomes its "
                     .. "player's intents, in the order bound (G38). `intent:Set(action, value)` writes an intent "
                     .. "by name -- a boolean, a number, a `Vector2` or a `vector` -- which every reader of "
                     .. "`Player:GetIntent` sees, on this machine and, in a match, on the authority: input that "
@@ -2578,6 +3004,28 @@ local Classes: { Schema.Class } = {
                     .. "frame. A silent no-op in a headless run, like every gizmo.",
             },
             {
+                Name = "CaptureProfile",
+                Parameters = {
+                    { Name = "seconds", Type = "number" },
+                    { Name = "warmupSeconds", Type = "number?", Default = "0" },
+                },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Requests a main-thread CPU scope capture at frame boundaries, using wall-clock seconds. "
+                    .. "Returns false while a capture is pending or for non-finite/out-of-range durations: "
+                    .. "measurement must be in (0, 120], warm-up in [0, 120]. Diagnostic only; never use for simulation.",
+            },
+            {
+                Name = "GetProfileReport",
+                Parameters = {},
+                Returns = { "any" },
+                ThreadSafety = "Unsafe",
+                Doc = "Returns nil until CaptureProfile completes, then a table with frames, seconds and scopes. "
+                    .. "Each scope contains name, depth, meanMs, bestMs, medianMs, p95Ms, p99Ms, worstMs and selfMedianMs. "
+                    .. "Inclusive CPU times include child scopes and waits; they are not GPU execution timings. "
+                    .. "The most recent 16384 frames are retained. The report persists until the next request.",
+            },
+            {
                 Name = "GetStat",
                 Parameters = { { Name = "name", Type = "string" } },
                 Returns = { "number" },
@@ -2797,6 +3245,31 @@ local Classes: { Schema.Class } = {
                     .. "separate wishes: a strategy game hides the cursor during a cutscene without locking it.",
             },
             {
+                Name = "PreferredInput",
+                Type = "Enum.InputDeviceType",
+                ReadOnly = true,
+                Transient = true,
+                -- Presentation alias; LastInputDeviceType already hashes the category.
+                Presentation = true,
+                Doc = "The current input category: KeyboardMouse, Gamepad or Touch. Alias of LastInputDeviceType; InputDeviceChanged reports changes. Controller family is PreferredGamepadType, never this property.",
+            },
+            {
+                Name = "PreferredGamepadType",
+                Type = "Enum.GamepadType",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "Physical family of the last gamepad actually used. Connecting a controller does not select it. Retained when keyboard or touch becomes preferred; Unknown when that controller disconnects. Independent of button layout and glyph selection.",
+            },
+            {
+                Name = "PreferredGamepadId",
+                Type = "number",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "Connection ID of the gamepad actually used, or zero when none is selected. Reconnecting a controller produces a new ID. Retained when the input category changes; never a platform or player index.",
+            },
+            {
                 Name = "LastInputDeviceType",
                 Type = "Enum.InputDeviceType",
                 ReadOnly = true,
@@ -2847,6 +3320,18 @@ local Classes: { Schema.Class } = {
             },
         } :: { Schema.Property },
         Methods = {
+            {
+                Name = "GetGamepads",
+                Parameters = {},
+                Returns = { "{number}" },
+                Doc = "Connected controller instance ids in ascending order, from the current input snapshot. Use GamepadConnected and GamepadDisconnected for changes. Connecting does not change PreferredInput or assign a local player.",
+            },
+            {
+                Name = "IsGamepadKeyDown",
+                Parameters = { { Name = "gamepadId", Type = "number" }, { Name = "keyCode", Type = "Enum.KeyCode" } },
+                Returns = { "boolean" },
+                Doc = "Polls one positive controller instance id independently of UI consumption. Missing controllers and non-gamepad keys return false. An analogue key counts as held past half deflection, as IsKeyDown does.",
+            },
             {
                 Name = "GetPointerPosition",
                 Parameters = {},
@@ -2991,6 +3476,32 @@ local Classes: { Schema.Class } = {
                     .. "dragged follows, with one finger or two.",
             },
             {
+                Name = "PreferredGamepadTypeChanged",
+                Parameters = { { Name = "gamepadType", Type = "Enum.GamepadType" } },
+                Doc = "Fired when the preferred physical controller family changes, independently of InputDeviceChanged.",
+            },
+            {
+                Name = "PreferredGamepadIdChanged",
+                Parameters = { { Name = "gamepadId", Type = "number" } },
+                Doc = "Fired when the preferred connection ID changes, including switching between two controllers in the same family.",
+            },
+            {
+                Name = "GamepadConnected",
+                Parameters = {
+                    { Name = "gamepadId", Type = "number" },
+                    { Name = "gamepadType", Type = "Enum.GamepadType" },
+                },
+                Doc = "A gamepad connected. Does not change the preferred input category or active gamepad. Delivered on the simulation tick through the deferred event queue.",
+            },
+            {
+                Name = "GamepadDisconnected",
+                Parameters = {
+                    { Name = "gamepadId", Type = "number" },
+                    { Name = "gamepadType", Type = "Enum.GamepadType" },
+                },
+                Doc = "A gamepad disconnected, carrying its former connection ID and physical family. Other connected controllers remain tracked.",
+            },
+            {
                 Name = "InputDeviceChanged",
                 Parameters = { { Name = "deviceType", Type = "Enum.InputDeviceType" } },
                 Doc = "Fired when `LastInputDeviceType` changes, so a prompt redraws once rather than polling.",
@@ -3113,6 +3624,17 @@ local Classes: { Schema.Class } = {
                     .. "`ButtonA` or Enter fires its `Activated`. Write it to put the selection somewhere: "
                     .. "a menu that opens selects its first button. An object that is not `Selectable` is "
                     .. "refused.",
+            },
+            {
+                Name = "GamepadId",
+                Type = "number",
+                Default = "0",
+                Transient = true,
+                HostFact = true,
+                Doc = "Controller instance allowed to navigate and activate SelectedObject. Zero accepts all "
+                    .. "controllers for compatibility. A positive id reserves shared menu navigation for "
+                    .. "that controller; other controllers still reach InputService and their InputContexts. "
+                    .. "Keyboard and pointer navigation remain available. Changing the id clears held navigation.",
             },
             {
                 Name = "AutoSelect",

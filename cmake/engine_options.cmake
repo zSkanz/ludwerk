@@ -77,6 +77,10 @@ option(ENG_LAVAPIPE_GOLDENS "Register the lavapipe real-image golden tests (non-
 option(ENG_RHI_SDLGPU "Build the SDL3 GPU render backend (the v1 default)" ON)
 option(ENG_RHI_NULL "Build the no-op render backend" ON)
 option(ENG_RHI_CAPTURE "Build the command-stream recording render backend" ON)
+option(ENG_RHI_D3D12 "Build the native Windows/AppContainer D3D12 player backend" OFF)
+if(ENG_RHI_D3D12 AND NOT WIN32)
+    message(FATAL_ERROR "ENG_RHI_D3D12 requires Windows or WindowsStore")
+endif()
 
 # --- Shader toolchain (ADR 0006, ADR 0032) ----------------------------------
 # The defaults encode decisions rather than discovering them at build time.

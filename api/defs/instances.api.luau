@@ -4238,6 +4238,18 @@ local Classes: { Schema.Class } = {
             .. "reached by being enabled, not by where it sits.",
         Properties = {
             {
+                Name = "Player",
+                Type = "Player?",
+                Doc = "Local player whose simulation intents receive this context's actions. Nil retains the primary LocalPlayer. Only live local players are accepted. A removed explicit owner does not redirect guest input to the primary player.",
+            },
+            {
+                Name = "GamepadId",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Controller instance id read by this context. Zero preserves aggregate input from all controllers. A positive id reads only that controller; a disconnected id reads neutral gamepad values. Keyboard, mouse and touch bindings are unchanged. Sinking gamepad input is isolated per controller.",
+            },
+            {
                 Name = "Enabled",
                 Type = "boolean",
                 Default = "true",

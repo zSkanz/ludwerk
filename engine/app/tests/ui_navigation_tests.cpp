@@ -190,3 +190,58 @@ TEST_CASE("a stick bound whole is bound on both its axes")
     // The d-pad is another thing.
     CHECK(rig.frame({button(platform::GamepadButton::DpadLeft)}).navigateX == -1);
 }
+
+TEST_CASE("a gameplay modal releases the whole stick and confirm to UI, then restores gameplay ownership")
+{
+    NavigationRig rig;
+    const core::InstanceId stick = rig.bind("LeftThumbstick");
+    const core::InstanceId confirm = rig.bind("ButtonSouth");
+    CHECK(rig.frame({axis(platform::GamepadAxis::LeftX, 1.0f)}).navigateX == 0);
+    CHECK_FALSE(rig.frame({button(platform::GamepadButton::South)}).navigateActivate);
+    rig.world->inputContexts().find(stick)->enabled = false;
+    rig.world->inputContexts().find(confirm)->enabled = false;
+    (void)rig.frame({axis(platform::GamepadAxis::LeftX, 0.0f), button(platform::GamepadButton::South, false)});
+    const auto menu = rig.frame({axis(platform::GamepadAxis::LeftX, 1.0f), button(platform::GamepadButton::South)});
+    CHECK(menu.navigateX == 1);
+    CHECK(menu.navigateActivate);
+    rig.world->inputContexts().find(stick)->enabled = true;
+    rig.world->inputContexts().find(confirm)->enabled = true;
+    CHECK(rig.frame({axis(platform::GamepadAxis::LeftY, 1.0f)}).navigateY == 0);
+    CHECK_FALSE(rig.frame({button(platform::GamepadButton::South)}).navigateActivate);
+}
+
+TEST_CASE("shared menu navigation belongs to its selected controller")
+{
+    NavigationRig rig;
+    rig.navigation.setGamepadId(11);
+    auto guest = button(platform::GamepadButton::South);
+    guest.gamepadId = 22;
+    CHECK_FALSE(rig.frame({guest}).navigateActivate);
+    auto owner = guest;
+    owner.gamepadId = 11;
+    CHECK(rig.frame({owner}).navigateActivate);
+    CHECK(rig.frame({key(platform::Key::Return)}).navigateActivate);
+    auto right = button(platform::GamepadButton::DpadRight);
+    right.gamepadId = 11;
+    CHECK(rig.frame({right}, 1).navigateX == 1);
+    platform::Event removed;
+    removed.type = platform::EventType::GamepadRemoved;
+    removed.gamepadId = 22;
+    CHECK(rig.frame({removed}, 1.5).navigateX == 1);
+    rig.navigation.setGamepadId(22);
+    CHECK(rig.frame({}, 2).navigateX == 0);
+    rig.navigation.letGo();
+    CHECK_FALSE(rig.frame({owner}).navigateActivate);
+    CHECK(rig.frame({guest}).navigateActivate);
+    const auto context = rig.bind(platform::gamepadButtonName(platform::GamepadButton::South));
+    rig.world->inputContexts().find(context)->gamepadId = 11;
+    CHECK(rig.frame({guest}).navigateActivate);
+    rig.navigation.setGamepadId(11);
+    CHECK_FALSE(rig.frame({owner}).navigateActivate);
+    const auto arrows = rig.bind(platform::keyName(platform::Key::Down));
+    rig.world->inputContexts().find(arrows)->gamepadId = 22;
+    CHECK(rig.frame({key(platform::Key::Down)}).navigateY == 0);
+    rig.navigation.setGamepadId(0);
+    rig.world->inputContexts().find(context)->enabled = false;
+    CHECK(rig.frame({guest}).navigateActivate);
+}

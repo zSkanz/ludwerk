@@ -231,6 +231,41 @@ TEST_CASE("a reordered child list is still linked both ways")
     CHECK_FALSE(fixture.world.firstChild(root).valid());
 }
 
+TEST_CASE("descendant collection appends preorder and stays within a deep subtree")
+{
+    Fixture fixture;
+    const auto parent = fixture.folder("Parent");
+    const auto root = fixture.folder("Root");
+    const auto outside = fixture.folder("Outside");
+    REQUIRE_FALSE(fixture.world.setParent(root, parent).has_value());
+    REQUIRE_FALSE(fixture.world.setParent(outside, parent).has_value());
+    const auto a = fixture.folder("A");
+    const auto b = fixture.folder("B");
+    REQUIRE_FALSE(fixture.world.setParent(a, root).has_value());
+    REQUIRE_FALSE(fixture.world.setParent(b, root).has_value());
+    std::vector<InstanceId> expected{outside, a};
+    auto cursor = a;
+    for (int depth = 0; depth < 1024; ++depth) {
+        const auto child = fixture.folder("Deep");
+        REQUIRE_FALSE(fixture.world.setParent(child, cursor).has_value());
+        expected.push_back(child);
+        cursor = child;
+    }
+    expected.push_back(b);
+    std::vector<InstanceId> result{outside};
+    fixture.world.collectDescendants(root, result);
+    CHECK(result == expected);
+    fixture.world.collectDescendants(b, result);
+    fixture.world.collectDescendants({}, result);
+    CHECK(result == expected);
+    REQUIRE(fixture.world.moveChild(root, b, 0) == World::MoveResult::Moved);
+    result.clear();
+    fixture.world.collectDescendants(root, result);
+    CHECK(result.front() == b);
+    CHECK(result[1] == a);
+    CHECK(result.back() == cursor);
+}
+
 TEST_CASE("moving a child to where it already is changes nothing and says so")
 {
     Fixture fixture;

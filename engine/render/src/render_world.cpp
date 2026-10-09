@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <limits>
 #include <unordered_map>
 #include <vector>
@@ -26,18 +28,59 @@ namespace {
 constexpr f32 kPi = 3.14159265358979323846f;
 constexpr f32 kDegreesToRadians = kPi / 180.0f;
 
-// Walks up rather than down. A downward walk from the root would visit every
-// instance in the world to find the parts; this visits only the parts, and pays
-// the depth of each. A world where that is the wrong trade is a world with deep
-// trees and few parts, which is not the shape any of this is built for.
-[[nodiscard]] bool inWorld(const scene::World& world, core::InstanceId id, core::InstanceId root) noexcept
+// Membership is immutable during extraction. Resolve each ancestor once, then
+// reuse its answer for siblings and for the other component pools. Generations
+// distinguish stale handles; the cache belongs to this extract, never a tick.
+class WorldMembership
 {
-    for (core::InstanceId cursor = id; cursor.valid(); cursor = world.parentOf(cursor)) {
-        if (cursor == root)
-            return true;
+public:
+    WorldMembership(const scene::World& world, core::InstanceId root) : world_(world), root_(root) {}
+
+    [[nodiscard]] bool contains(core::InstanceId id)
+    {
+        path_.clear();
+        bool inside = false;
+        for (auto cursor = id; cursor.valid();) {
+            if (cursor == root_) {
+                inside = true;
+                break;
+            }
+            if (cursor.index < entries_.size() && entries_[cursor.index].generation == cursor.generation) {
+                inside = entries_[cursor.index].inside;
+                break;
+            }
+            const auto parent = world_.parentOf(cursor);
+            // Invalid/stale and detached handles terminate without indexing
+            // scratch storage by an arbitrary caller-provided slot number.
+            if (!parent.valid())
+                break;
+            // Flat worlds need no membership storage at all.
+            if (parent == root_) {
+                inside = true;
+                break;
+            }
+            path_.push_back(cursor);
+            cursor = parent;
+        }
+        for (const auto member : path_) {
+            if (member.index >= entries_.size())
+                entries_.resize(static_cast<usize>(member.index) + 1);
+            entries_[member.index] = {member.generation, inside};
+        }
+        return inside;
     }
-    return false;
-}
+
+private:
+    struct Entry
+    {
+        u32 generation = 0;
+        bool inside = false;
+    };
+    const scene::World& world_;
+    core::InstanceId root_;
+    std::vector<Entry> entries_;
+    std::vector<core::InstanceId> path_;
+};
 
 // The generated mesh for a `Part`'s shape, or null before the loader has
 // uploaded them -- which is the first frame of any run, and is why the debug
@@ -303,6 +346,31 @@ namespace {
     return out;
 }
 
+// Canonical values, not addresses: an explicit override equal to the authored
+// value must still share its material. Negative zero compares as zero.
+[[nodiscard]] u64 surfaceValuesKey(std::span<const SurfaceValue> values) noexcept
+{
+    u64 hash = 1469598103934665603ull;
+    const auto mix = [&hash](const void* data, usize size) {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (usize index = 0; index < size; ++index) {
+            hash ^= bytes[index];
+            hash *= 1099511628211ull;
+        }
+    };
+    for (const auto& value : values) {
+        mix(value.name.data(), value.name.size());
+        for (const f32 channel : value.value) {
+            hash ^= std::bit_cast<u32>(channel + 0.0f);
+            hash *= 0xFF51AFD7ED558CCDull;
+            hash ^= hash >> 33;
+        }
+        mix(&value.texture.id, sizeof(value.texture.id));
+        mix(&value.isTexture, sizeof(value.isTexture));
+    }
+    return hash;
+}
+
 // What a part draws with, split the way the draw loops consume it.
 struct PartLook
 {
@@ -313,8 +381,12 @@ struct PartLook
     Color3 tint{1.0f, 1.0f, 1.0f};
     // Into the draw's alpha, as `BasePart.Transparency` always went.
     f32 transparency = 0.0f;
-    // An authored material's block, when `builtIn` is false.
-    RenderMaterial block;
+    // Borrow the frame's immutable authored block. Deep-copy its strings and
+    // surface values only when publishing a distinct output material.
+    const RenderMaterial* source = nullptr;
+    std::vector<SurfaceValue> ownValues;
+    bool overridesSurface = false;
+    u64 authoredSurfaceKey = surfaceValuesKey({});
     // What makes two looks one bind set: the material, and every value that
     // reaches the block. Transparency does not -- it is the draw's.
     core::NameAtom material;
@@ -326,12 +398,41 @@ struct PartLook
     f32 normalScale = 0.0f;
     f32 alphaCutoff = 0.0f;
 
+    [[nodiscard]] std::span<const SurfaceValue> surfaceValues() const noexcept
+    {
+        if (overridesSurface)
+            return ownValues;
+        return source != nullptr ? std::span<const SurfaceValue>{source->surfaceValues}
+                                 : std::span<const SurfaceValue>{};
+    }
+
+    [[nodiscard]] RenderMaterial materialBlock() const
+    {
+        RenderMaterial block = source != nullptr ? *source : RenderMaterial{};
+        block.uniforms.baseColor[0] = color.r;
+        block.uniforms.baseColor[1] = color.g;
+        block.uniforms.baseColor[2] = color.b;
+        block.uniforms.emissive[0] = emissive.r;
+        block.uniforms.emissive[1] = emissive.g;
+        block.uniforms.emissive[2] = emissive.b;
+        block.uniforms.metallicRoughnessNormalCutoff[0] = metalness;
+        block.uniforms.metallicRoughnessNormalCutoff[1] = roughness;
+        block.uniforms.metallicRoughnessNormalCutoff[2] = normalScale;
+        if (block.masked)
+            block.uniforms.metallicRoughnessNormalCutoff[3] = alphaCutoff;
+        if (overridesSurface)
+            block.surfaceValues = ownValues;
+        return block;
+    }
+
     [[nodiscard]] bool sameBlock(const PartLook& other) const noexcept
     {
         return material == other.material && clone == other.clone && color == other.color &&
                emissive == other.emissive && metalness == other.metalness && roughness == other.roughness &&
                normalScale == other.normalScale && alphaCutoff == other.alphaCutoff &&
-               block.surfaceValues == other.block.surfaceValues;
+               ((!overridesSurface && !other.overridesSurface && source == other.source) ||
+                std::equal(surfaceValues().begin(), surfaceValues().end(), other.surfaceValues().begin(),
+                           other.surfaceValues().end()));
     }
 
     // **What `sameBlock` compares, as one number** (audit R4): two looks
@@ -349,9 +450,13 @@ struct PartLook
                 hash *= 1099511628211ull;
             }
         };
-        const auto number = [&mix](f32 value) {
+        const auto number = [&hash](f32 value) {
             const f32 plain = value + 0.0f;
-            mix(&plain, sizeof(plain));
+            // Equality uses floats, not their byte order. Mix each canonical
+            // word once rather than four byte-at-a-time FNV steps per value.
+            hash ^= std::bit_cast<u32>(plain);
+            hash *= 0xFF51AFD7ED558CCDull;
+            hash ^= hash >> 33;
         };
         mix(&builtIn, sizeof(builtIn));
         mix(&material.id, sizeof(material.id));
@@ -359,13 +464,8 @@ struct PartLook
         for (const f32 channel : {color.r, color.g, color.b, emissive.r, emissive.g, emissive.b, metalness, roughness,
                                   normalScale, alphaCutoff})
             number(channel);
-        for (const SurfaceValue& value : block.surfaceValues) {
-            mix(value.name.data(), value.name.size());
-            for (const f32 channel : value.value)
-                number(channel);
-            mix(&value.texture.id, sizeof(value.texture.id));
-            mix(&value.isTexture, sizeof(value.isTexture));
-        }
+        hash ^= overridesSurface ? surfaceValuesKey(ownValues) : authoredSurfaceKey;
+        hash *= 0xFF51AFD7ED558CCDull;
         return hash;
     }
 };
@@ -377,10 +477,11 @@ struct FrameMaterial
     u32 clone = 0;
     asset::ResolvedMaterial resolved;
     RenderMaterial block;
+    u64 surfaceKey = 0;
 };
 
 [[nodiscard]] PartLook lookOf(const scene::World& world, core::InstanceId id, const scene::PartComponent& part,
-                              const TextureLibrary* textures, std::vector<FrameMaterial>& frame,
+                              const TextureLibrary* textures, std::deque<FrameMaterial>& frame,
                               usize& lastFrameMaterial)
 {
     PartLook look;
@@ -422,6 +523,7 @@ struct FrameMaterial
         made.clone = part.materialClone;
         made.resolved = world.resolveMaterial(part.material, part.materialClone);
         made.block = blockOf(world, made.resolved.properties, textures);
+        made.surfaceKey = surfaceValuesKey(made.block.surfaceValues);
         frame.push_back(std::move(made));
         found = &frame.back();
         lastFrameMaterial = frame.size() - 1;
@@ -442,28 +544,22 @@ struct FrameMaterial
     look.alphaCutoff = wants(asset::MaterialField::AlphaCutoff) ? overrides.alphaCutoff : base.alphaCutoff;
     look.transparency = wants(asset::MaterialField::Transparency) ? overrides.transparency : base.transparency;
 
-    look.block = found->block;
-    look.block.uniforms.baseColor[0] = look.color.r;
-    look.block.uniforms.baseColor[1] = look.color.g;
-    look.block.uniforms.baseColor[2] = look.color.b;
-    look.block.uniforms.emissive[0] = look.emissive.r;
-    look.block.uniforms.emissive[1] = look.emissive.g;
-    look.block.uniforms.emissive[2] = look.emissive.b;
-    look.block.uniforms.metallicRoughnessNormalCutoff[0] = look.metalness;
-    look.block.uniforms.metallicRoughnessNormalCutoff[1] = look.roughness;
-    look.block.uniforms.metallicRoughnessNormalCutoff[2] = look.normalScale;
-    if (base.alphaMode == static_cast<core::i32>(asset::MaterialAlphaMode::Mask))
-        look.block.uniforms.metallicRoughnessNormalCutoff[3] = look.alphaCutoff;
+    look.source = &found->block;
+    look.authoredSurfaceKey = found->surfaceKey;
 
     // **The part's own surface shader parameters** (ADR 0091), where its
     // material declares them. A part that sets one is a block of its own --
     // `sameBlock` compares the values -- so it is drawn apart from the parts
     // that do not, as a part with its own colour is.
     if (const std::vector<asset::ShaderParameter>* own = world.partShaderParameters(id); own != nullptr) {
-        std::vector<SurfaceValue>& values = look.block.surfaceValues;
         for (const asset::ShaderParameter& parameter : *own) {
             if (parameter.isTexture() || !found->resolved.declaresShaderParameter(parameter.name))
                 continue;
+            if (!look.overridesSurface) {
+                look.ownValues = found->block.surfaceValues;
+                look.overridesSurface = true;
+            }
+            std::vector<SurfaceValue>& values = look.ownValues;
             const auto at =
                 std::lower_bound(values.begin(), values.end(), parameter.name,
                                  [](const SurfaceValue& value, const std::string& name) { return value.name < name; });
@@ -646,6 +742,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     out.clear();
     if (!root.valid())
         return;
+    WorldMembership membership(world, root);
     // What an extract spends, by what it is walking: the camera and what is
     // highlighted, the lights, the meshes, the ground and what lies on it, the
     // parts, and the order they are drawn in.
@@ -691,7 +788,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     marked.clear();
     everyHighlight.clear();
     world.highlights().forEach([&](core::InstanceId id, const scene::HighlightComponent& highlight) {
-        if (!highlight.enabled || world.destroyed(id) || !inWorld(world, id, root))
+        if (!highlight.enabled || world.destroyed(id) || !membership.contains(id))
             return;
         // A byte names it on a draw; past 255 in one world the rest are not
         // marked, and are counted as dropped below.
@@ -906,7 +1003,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         const scene::MeshPartComponent* mesh = world.meshParts().find(id);
         if (mesh == nullptr && out.camera.valid && primitivesReady && part.shape >= 0 && part.shape < kPrimitiveShapes)
             return;
-        if (!inWorld(world, id, root))
+        if (!membership.contains(id))
             return;
         if (mesh != nullptr) {
             const MeshLibrary::Entry* loaded = meshes.find(mesh->meshContent);
@@ -944,7 +1041,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         // the scene the slots back.
         if (!light.enabled)
             return;
-        if (!inWorld(world, id, root))
+        if (!membership.contains(id))
             return;
         // Where it shines from (`lightAnchorOf`): the part, interpolated, then
         // the attachment's offset from it.
@@ -971,7 +1068,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     world.spotLights().forEach([&](core::InstanceId id, const scene::SpotLightComponent& light) {
         if (!light.enabled)
             return;
-        if (!inWorld(world, id, root))
+        if (!membership.contains(id))
             return;
         // Where it shines from (`lightAnchorOf`): the part, interpolated, then
         // the attachment's offset from it.
@@ -1023,8 +1120,13 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         return look.key() ^ (static_cast<u64>(content.id) * 0x9E3779B97F4A7C15ull) ^ (static_cast<u64>(local) << 1);
     };
     // The authored materials this frame draws, each resolved once.
-    std::vector<FrameMaterial> frameMaterials;
+    // Stable addresses: PartLook borrows blocks until this extract completes.
+    std::deque<FrameMaterial> frameMaterials;
     usize lastFrameMaterial = std::numeric_limits<usize>::max();
+    // Animation already shares immutable poses with identical inputs. Keep
+    // one palette per pose in this snapshot too; draw transforms and motion
+    // keys remain per instance. Never carry pointers across extracts or ticks.
+    std::unordered_map<const Pose*, u32> paletteOffsets;
 
     // **Every material a part adds goes in through here**, which files it in
     // its family (D184): the first earlier material that is the same bind set
@@ -1052,7 +1154,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
 
     ENG_PROFILE_NEXT(stretch, "extract.meshes");
     world.meshParts().forEach([&](core::InstanceId id, const scene::MeshPartComponent& meshPart) {
-        if (!inWorld(world, id, root))
+        if (!membership.contains(id))
             return;
         const scene::PartComponent* part = world.parts().find(id);
         if (part == nullptr)
@@ -1111,7 +1213,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             out.seenSkins.push_back(SeenSkin{id, covered});
         }
 
-        // The palette, appended once per MESH rather than once per section: a
+        // The palette, appended once per POSE rather than once per section: a
         // character with four submeshes is one skeleton, and uploading its pose
         // four times would be four times the bytes for one answer. Truncated at
         // `kMaxSkinJoints` rather than refused -- a rig past the budget draws
@@ -1121,10 +1223,12 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         u32 boneCount = 0;
         if (animation != nullptr) {
             if (const Pose* pose = animation->pose(id); pose != nullptr && !pose->palette.empty()) {
-                firstBone = static_cast<u32>(out.bones.size());
                 boneCount = static_cast<u32>(std::min<usize>(pose->palette.size(), kMaxSkinJoints));
-                out.bones.insert(out.bones.end(), pose->palette.begin(),
-                                 pose->palette.begin() + static_cast<std::ptrdiff_t>(boneCount));
+                const auto [palette, inserted] = paletteOffsets.try_emplace(pose, static_cast<u32>(out.bones.size()));
+                firstBone = palette->second;
+                if (inserted)
+                    out.bones.insert(out.bones.end(), pose->palette.begin(),
+                                     pose->palette.begin() + static_cast<std::ptrdiff_t>(boneCount));
             }
         }
 
@@ -1182,7 +1286,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                     glowBy(block, look.emissive);
                 }
                 else {
-                    block = look.block;
+                    block = look.materialBlock();
                 }
                 // A mesh keeps the UVs its file gives it; tiling by size is a
                 // primitive's, whose faces have none worth keeping.
@@ -1263,7 +1367,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     // of their own and this emits their draws directly.
     for (const TerrainNodeDraw& node : terrainNodes) {
         const scene::TerrainComponent* component = world.terrains().find(node.terrain);
-        if (component == nullptr || !inWorld(world, node.terrain, root))
+        if (component == nullptr || !membership.contains(node.terrain))
             continue;
         const scene::TerrainComponent& terrain = *component;
         const core::NameAtom urn = node.urn;
@@ -1363,7 +1467,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         if (const core::NameAtom urn = world.atoms().lookup(waterGridUrn()); urn.id != 0)
             grid = meshes.find(urn);
         world.waters().forEach([&](core::InstanceId id, const scene::WaterComponent& water) {
-            if (grid == nullptr || !inWorld(world, id, root))
+            if (grid == nullptr || !membership.contains(id))
                 return;
             const scene::WaterSurface surface = scene::surfaceOf(world, id);
             RenderMaterial material;
@@ -1534,7 +1638,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     // moving crate moves with it. Skipped when fully transparent, and when the
     // box is nowhere near the view -- the renderer draws every one it is given.
     world.decals().forEach([&](core::InstanceId id, const scene::DecalComponent& decal) {
-        if (!inWorld(world, id, root) || decal.transparency >= 1.0f)
+        if (!membership.contains(id) || decal.transparency >= 1.0f)
             return;
         // A decal's own `CFrame` is its offset from its part, carried by the
         // part as drawn; a decal on no part is placed by hand, never simulated.
@@ -1585,7 +1689,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         };
 
         world.parts2d().forEach([&](core::InstanceId id, const scene::Part2DComponent& part) {
-            if (!inWorld(world, id, root) || part.transparency >= 1.0f)
+            if (!membership.contains(id) || part.transparency >= 1.0f)
                 return;
             // A circle is drawn as wide as its smaller side, as it collides.
             core::Vec2 half{part.size.x * 0.5f, part.size.y * 0.5f};
@@ -1644,7 +1748,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         });
 
         world.tilemaps2d().forEach([&](core::InstanceId id, const scene::Tilemap2DComponent& tilemap) {
-            if (!inWorld(world, id, root) || tilemap.chunks.empty())
+            if (!membership.contains(id) || tilemap.chunks.empty())
                 return;
             const rhi::TextureHandle texture = textureOf(tilemap.tileset);
             const core::Vec2 pixels = materials != nullptr ? materials->sizeOf(tilemap.tileset) : core::Vec2{};
@@ -1736,7 +1840,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
 
     ENG_PROFILE_NEXT(stretch, "extract.parts");
     world.parts().forEach([&](core::InstanceId id, const scene::PartComponent& part) {
-        if (!inWorld(world, id, root))
+        if (!membership.contains(id))
             return;
         // A `MeshPart` is a `BasePart` and is in this pool too; its geometry
         // came from a file and the loop above already drew it.
@@ -1816,7 +1920,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 glowBy(material, look.emissive);
             }
             else {
-                material = look.block;
+                material = look.materialBlock();
             }
             materialSlot = addMaterial(material);
             partMaterials.push_back(ResolvedPartMaterial{look, materialSlot});
@@ -1878,7 +1982,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         };
         world.constraints().forEach([&](core::InstanceId id, const scene::ConstraintComponent& line) {
             if (!line.visible || line.kind != distanceKind || cylinder == nullptr || line.thickness <= 0.0f ||
-                !inWorld(world, id, root))
+                !membership.contains(id))
                 return;
             DVec3 from;
             DVec3 to;

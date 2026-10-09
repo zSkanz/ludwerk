@@ -51,6 +51,37 @@ SamplerState SceneDepthSampler : register(s0, space2);
 Texture2D ParticleTexture : register(t1, space2);
 SamplerState ParticleSampler : register(s1, space2);
 
+#ifndef ENG_PARTICLE_GPU
+// A bounded palette preserves depth order without a draw per texture change.
+// Explicit resources work on ordinary SDL_GPU and native D3D12 devices without
+// bindless descriptors. Keep the seven slots in sync with MaxParticleTextures.
+Texture2D ParticleTexture2 : register(t2, space2);
+SamplerState ParticleSampler2 : register(s2, space2);
+Texture2D ParticleTexture3 : register(t3, space2);
+SamplerState ParticleSampler3 : register(s3, space2);
+Texture2D ParticleTexture4 : register(t4, space2);
+SamplerState ParticleSampler4 : register(s4, space2);
+Texture2D ParticleTexture5 : register(t5, space2);
+SamplerState ParticleSampler5 : register(s5, space2);
+Texture2D ParticleTexture6 : register(t6, space2);
+SamplerState ParticleSampler6 : register(s6, space2);
+Texture2D ParticleTexture7 : register(t7, space2);
+SamplerState ParticleSampler7 : register(s7, space2);
+
+float4 particlePicture(uint slot, float2 uv, float2 dx, float2 dy)
+{
+    switch (slot) {
+    case 2u: return ParticleTexture2.SampleGrad(ParticleSampler2, uv, dx, dy);
+    case 3u: return ParticleTexture3.SampleGrad(ParticleSampler3, uv, dx, dy);
+    case 4u: return ParticleTexture4.SampleGrad(ParticleSampler4, uv, dx, dy);
+    case 5u: return ParticleTexture5.SampleGrad(ParticleSampler5, uv, dx, dy);
+    case 6u: return ParticleTexture6.SampleGrad(ParticleSampler6, uv, dx, dy);
+    case 7u: return ParticleTexture7.SampleGrad(ParticleSampler7, uv, dx, dy);
+    default: return ParticleTexture.SampleGrad(ParticleSampler, uv, dx, dy);
+    }
+}
+#endif
+
 #ifdef ENG_PARTICLE_GPU
 // One particle as the compute pass keeps it (`particle_sim.hlsl`).
 struct SimParticle
@@ -93,8 +124,8 @@ struct VertexInput
     float4 PositionSize : TEXCOORD0;
     // Linear colour times brightness, and opacity.
     float4 Color : TEXCOORD1;
-    // x emission, y shape, z rotation in radians, w 1 when drawn from its
-    // picture.
+    // x emission, y shape, z rotation in radians, w one-based picture slot
+    // (zero for a procedural shape).
     float4 Params : TEXCOORD2;
     // The picture's frame: left, top, right, bottom.
     float4 Frame : TEXCOORD3;
@@ -113,7 +144,7 @@ struct Interpolants
     float ViewDepth : TEXCOORD4;
     float HalfSize : TEXCOORD5;
     float2 Uv : TEXCOORD6;
-    float Textured : TEXCOORD7;
+    nointerpolation float Textured : TEXCOORD7;
 };
 
 // One corner of one particle: `centre` camera-relative, `size` metres across,
@@ -205,9 +236,19 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     const uint shape = uint(input.Params.y + 0.5f);
     float coverage = 1.0f;
     float3 picture = float3(1.0f, 1.0f, 1.0f);
+#ifndef ENG_PARTICLE_GPU
+    // Derivatives must be computed before branching on the instance's picture;
+    // neighbouring pixel lanes may belong to different particles.
+    const float2 uvDx = ddx(input.Uv);
+    const float2 uvDy = ddy(input.Uv);
+#endif
     if (input.Textured > 0.5f) {
         // A picture is its own outline: the shape is not cut out of it.
+#ifdef ENG_PARTICLE_GPU
         const float4 texel = ParticleTexture.Sample(ParticleSampler, input.Uv);
+#else
+        const float4 texel = particlePicture(uint(input.Textured + 0.5f), input.Uv, uvDx, uvDy);
+#endif
         picture = texel.rgb;
         coverage = texel.a;
     }

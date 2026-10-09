@@ -111,7 +111,9 @@ void collectScriptFiles(const std::filesystem::path& root, const std::filesystem
 {
     std::error_code ec;
     if (sealed != nullptr) {
-        const std::string under = toProjectPath(std::filesystem::relative(folder, root, ec));
+        // These folders live inside the pack, not on the host filesystem.
+        // Canonicalizing nonexistent paths also fails in an AppContainer.
+        const std::string under = toProjectPath(folder.lexically_relative(root));
         for (const std::string& file : sealed->filesUnder(under)) {
             const std::filesystem::path path(file);
             if (path.extension() != ".luau" && path.extension() != script::CompiledExtension)
@@ -331,6 +333,9 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
         .maxSlots = options.saveMaxSlots,
     });
     m_developer = options.developer;
+    m_world->engineState().enabledIntegrations = options.enabledIntegrations;
+    m_integrationConfigurations = options.integrationConfigurations;
+    m_platformServices = options.platformServices;
     m_sceneCloseGrace = options.sceneCloseGrace;
     m_scriptMemoryMb = options.scriptMemoryMb;
     m_prepareInBackground = !options.headless;
@@ -338,6 +343,20 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_warmedContent = options.warmedContent;
     m_runtime.emplace(*m_world);
     m_runtime->setSaveStore(m_saves.get());
+    m_runtime->setPlatformServices(m_platformServices);
+    for (const std::string& id : m_world->engineState().enabledIntegrations) {
+#if defined(_WIN32)
+        const std::string filename = "engine_" + id + ".dll";
+#elif defined(__APPLE__)
+        const std::string filename = "libengine_" + id + ".dylib";
+#else
+        const std::string filename = "libengine_" + id + ".so";
+#endif
+        const auto configuration = m_integrationConfigurations.find(id);
+        m_runtime->setIntegrationProvider(
+            id, (platform::paths().executableDir / "integrations" / id / filename).string(),
+            configuration == m_integrationConfigurations.end() ? "" : configuration->second);
+    }
     if (std::optional<core::EngineError> error = m_runtime->boot(); error.has_value())
         return error;
     script::setDeveloperWarnings(m_runtime->state(), m_developer);
@@ -697,6 +716,20 @@ std::optional<core::EngineError> WorldHost::restartRuntime()
 
     m_runtime.emplace(*m_world);
     m_runtime->setSaveStore(m_saves.get());
+    m_runtime->setPlatformServices(m_platformServices);
+    for (const std::string& id : m_world->engineState().enabledIntegrations) {
+#if defined(_WIN32)
+        const std::string filename = "engine_" + id + ".dll";
+#elif defined(__APPLE__)
+        const std::string filename = "libengine_" + id + ".dylib";
+#else
+        const std::string filename = "libengine_" + id + ".so";
+#endif
+        const auto configuration = m_integrationConfigurations.find(id);
+        m_runtime->setIntegrationProvider(
+            id, (platform::paths().executableDir / "integrations" / id / filename).string(),
+            configuration == m_integrationConfigurations.end() ? "" : configuration->second);
+    }
     if (std::optional<core::EngineError> error = m_runtime->boot(dataModel); error.has_value())
         return error;
     script::setDeveloperWarnings(m_runtime->state(), m_developer);
@@ -1112,6 +1145,7 @@ void WorldHost::tick()
         // Clicks and prompts (ADR 0126) first: the same events, resolved against
         // the world as this tick begins.
         m_runtime->stepDetectors(state.fixedTimestep, rawEvents);
+        m_runtime->fireInputDeviceEvents(m_input.drainDeviceEvents());
         m_runtime->fireInputEvents(rawEvents);
         m_runtime->fireGestureEvents(m_input.drainGestures());
     }
@@ -1428,7 +1462,8 @@ script::ContentState WorldHost::contentState(std::string_view content)
             return *warmed ? script::ContentState::Loaded : script::ContentState::Failed;
         // On its way, or not a kind the loader warms: which is it?
         const bool loaderKind = content.ends_with(".gltf") || content.ends_with(".glb") || content.ends_with(".png") ||
-                                content.ends_with(".jpg") || content.ends_with(".jpeg") || content.ends_with(".ktx2");
+                                content.ends_with(".jpg") || content.ends_with(".jpeg") || content.ends_with(".ktx2") ||
+                                content.ends_with(".surface.hlsl");
         if (loaderKind)
             return script::ContentState::Pending;
     }

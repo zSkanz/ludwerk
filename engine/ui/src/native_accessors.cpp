@@ -23,6 +23,7 @@
 // include path would resolve by search order. `scene`, `render` and `input` all
 // reach theirs the same way.
 #include <cmath>
+#include <limits>
 
 #include "../generated/class_descriptors.gen.h"
 
@@ -2401,6 +2402,21 @@ bool setUIServiceSelectedObject(scene::World& world, core::InstanceId, const Val
     if (selected.valid() && (!world.alive(selected) || world.destroyed(selected) || !isSelectable(world, selected)))
         return false;
     world.engineState().uiSelected = selected;
+    return true;
+}
+
+Value getUIServiceGamepadId(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<core::f64>(world.engineState().uiGamepadId)};
+}
+
+bool setUIServiceGamepadId(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* number = std::get_if<core::f64>(&value);
+    if (number == nullptr || !std::isfinite(*number) || *number < 0 ||
+        *number > static_cast<core::f64>(std::numeric_limits<core::u32>::max()) || std::floor(*number) != *number)
+        return false;
+    world.engineState().uiGamepadId = static_cast<core::u32>(*number);
     return true;
 }
 

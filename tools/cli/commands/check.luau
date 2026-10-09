@@ -400,6 +400,34 @@ local function editorCheck(engine: string, root: string): EditorReport
     return report
 end
 
+-- Windows limits a spawned command to 32767 UTF-16 units. Large games can
+-- exceed it even though every individual file is valid. Leave room for the
+-- executable, quoting and process wrapper; dependencies still resolve normally
+-- inside each analysis invocation.
+local function analysisCommands(prefix: { string }, files: { string }, budget: number?): { { string } }
+    local limit = budget or 24000
+    local base = 0
+    for _, arg in prefix do
+        base += #arg + 3
+    end
+    local commands: { { string } } = {}
+    local current = table.clone(prefix)
+    local size = base
+    for _, file in files do
+        if #current > #prefix and size + #file + 3 > limit then
+            table.insert(commands, current)
+            current = table.clone(prefix)
+            size = base
+        end
+        table.insert(current, file)
+        size += #file + 3
+    end
+    if #current > #prefix then
+        table.insert(commands, current)
+    end
+    return commands
+end
+
 local function run(options: Options): number
     local files = collectLuau(options.path, options.ignore)
     if #files == 0 then
@@ -436,14 +464,12 @@ local function run(options: Options): number
     for _, pattern in options.ignore do
         table.insert(analyze, `--ignore=**/{pattern}/**`)
     end
-    for _, file in files do
-        table.insert(analyze, file)
-    end
-
-    local analyzed = process.run(analyze, { stdio = "inherit" })
-    if not analyzed.ok then
-        print(tr("cli.check.err.analyze"))
-        return 1
+    for _, command in analysisCommands(analyze, files) do
+        local analyzed = process.run(command, { stdio = "inherit" })
+        if not analyzed.ok then
+            print(tr("cli.check.err.analyze"))
+            return 1
+        end
     end
 
     if formatter ~= nil then
@@ -518,6 +544,7 @@ end
 return {
     run = run,
     collectLuau = collectLuau,
+    analysisCommands = analysisCommands,
     styluaCommand = styluaCommand,
     definitionName = definitionName,
     checkCatalogs = checkCatalogs,

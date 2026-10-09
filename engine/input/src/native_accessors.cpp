@@ -14,6 +14,7 @@
 // include path would make the include resolve by search order. `render` and
 // `scene` reach theirs the same way.
 #include <cmath>
+#include <limits>
 
 #include "../generated/class_descriptors.gen.h"
 
@@ -116,6 +117,46 @@ using BindingKeyField = i32 scene::InputBindingComponent::*;
 } // namespace
 
 // --- InputContext ------------------------------------------------------------
+
+Value getInputContextPlayer(const scene::World& world, core::InstanceId id)
+{
+    const auto* context = readContext(world, id);
+    return context == nullptr || !world.alive(context->player) ? Value{} : Value{context->player};
+}
+
+bool setInputContextPlayer(scene::World& world, core::InstanceId id, const Value& value)
+{
+    auto* context = writeContext(world, id);
+    if (context == nullptr)
+        return false;
+    if (std::holds_alternative<std::monostate>(value)) {
+        context->player = {};
+        return true;
+    }
+    const auto* idValue = std::get_if<core::InstanceId>(&value);
+    const auto* player = idValue != nullptr ? world.players().find(*idValue) : nullptr;
+    if (player == nullptr || !player->local || world.destroyed(*idValue))
+        return false;
+    context->player = *idValue;
+    return true;
+}
+
+Value getInputContextGamepadId(const scene::World& world, core::InstanceId id)
+{
+    const auto* context = readContext(world, id);
+    return context == nullptr ? Value{} : Value{static_cast<f64>(context->gamepadId)};
+}
+
+bool setInputContextGamepadId(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* number = std::get_if<f64>(&value);
+    auto* context = writeContext(world, id);
+    if (number == nullptr || context == nullptr || !finite(*number) || *number < 0 ||
+        *number > static_cast<f64>(std::numeric_limits<core::u32>::max()) || std::floor(*number) != *number)
+        return false;
+    context->gamepadId = static_cast<core::u32>(*number);
+    return true;
+}
 
 Value getInputContextEnabled(const scene::World& world, core::InstanceId id)
 {
@@ -391,6 +432,19 @@ bool setInputServicePointerVisible(scene::World& world, core::InstanceId, const 
         return false;
     world.engineState().pointerVisible = *flag;
     return true;
+}
+
+Value getInputServicePreferredInput(const scene::World& world, core::InstanceId)
+{
+    return enumValue(generated::InputDeviceTypeEnumId, world.engineState().lastInputDeviceType);
+}
+Value getInputServicePreferredGamepadType(const scene::World& world, core::InstanceId)
+{
+    return enumValue(generated::GamepadTypeEnumId, world.engineState().preferredGamepadType);
+}
+Value getInputServicePreferredGamepadId(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<core::f64>(world.engineState().preferredGamepadId)};
 }
 
 Value getInputServiceLastInputDeviceType(const scene::World& world, core::InstanceId)

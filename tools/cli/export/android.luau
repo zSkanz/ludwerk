@@ -802,6 +802,10 @@ local function assemble(options: AssembleOptions): (string?, string?)
     end
 
     local buildRoot = gradleBuildRoot()
+    local kind = if options.release then "release" else "debug"
+    local made = if options.packDir ~= nil
+        then projectlib.joined(buildRoot, "android-player-gradle", "app", "outputs", "bundle", kind, `app-{kind}.aab`)
+        else projectlib.joined(buildRoot, "android-player-gradle", "app", "outputs", "apk", kind, `app-{kind}.apk`)
     local command = { java(tools), "-Xmx64m", "-Xms64m" }
     if agent ~= nil then
         table.insert(command, `-javaagent:{agent}`)
@@ -849,6 +853,15 @@ local function assemble(options: AssembleOptions): (string?, string?)
     -- (`ORG_GRADLE_PROJECT_<name>`), so they are on no command line.
     env["ORG_GRADLE_PROJECT_engine.storePassword"] = options.passwords.store
     env["ORG_GRADLE_PROJECT_engine.keyPassword"] = options.passwords.key
+    -- Zipflinger can retain an obsolete pack's compressed bytes as a hole in
+    -- an incrementally updated APK. Repeated exports nearly doubled a real
+    -- game's APK without adding an entry. Removing only this cache-owned final
+    -- APK before Gradle evaluates outputs forces fresh packaging, preserving
+    -- compiled Java/resources and every other build cache. Bundles are rebuilt
+    -- by their own task and do not use the incremental APK writer.
+    if options.packDir == nil and fs.exists(made) then
+        fs.remove(made)
+    end
     local built = process.run(command, { env = env })
     -- **Once more, with nothing kept, when it is Gradle's own incremental
     -- packaging that fell over.** The Android plugin keeps what it packaged
@@ -866,10 +879,6 @@ local function assemble(options: AssembleOptions): (string?, string?)
     if not built.ok then
         return nil, built.stdout .. built.stderr .. "\n" .. tr("cli.build.err.android_gradle")
     end
-    local kind = if options.release then "release" else "debug"
-    local made = if options.packDir ~= nil
-        then projectlib.joined(buildRoot, "android-player-gradle", "app", "outputs", "bundle", kind, `app-{kind}.aab`)
-        else projectlib.joined(buildRoot, "android-player-gradle", "app", "outputs", "apk", kind, `app-{kind}.apk`)
     if not fs.exists(made) then
         return nil, tr("cli.build.err.android_gradle")
     end

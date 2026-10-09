@@ -135,6 +135,35 @@ TEST_CASE("H0: a scope that ran only in frames left out is not reported")
     CHECK(rows[0].name == "test.frame");
 }
 
+TEST_CASE("profile captures exclude warm-up and finish at a frame boundary")
+{
+    Rig rig;
+    CHECK_FALSE(profile::requestCapture(0.0, 0.0));
+    CHECK_FALSE(profile::requestCapture(121.0, 0.0));
+    REQUIRE(profile::requestCapture(0.010, 0.005));
+    CHECK_FALSE(profile::requestCapture(0.010, 0.0));
+    frame(true); // Six ms of warm-up must not enter the report.
+    profile::endFrame();
+    CHECK(profile::captured() == nullptr);
+    frame(true);
+    profile::endFrame();
+    CHECK(profile::captured() == nullptr);
+    frame(false);
+    profile::endFrame();
+    const auto* capture = profile::captured();
+    REQUIRE(capture != nullptr);
+    CHECK(capture->frames == 2);
+    CHECK(capture->seconds == doctest::Approx(0.012));
+    REQUIRE(capture->scopes.size() == 4);
+    const auto& scripts = capture->scopes[3];
+    CHECK(scripts.meanMs == doctest::Approx(1.0));
+    CHECK(scripts.bestMs == 0.0);
+    CHECK(scripts.worstMs == doctest::Approx(2.0));
+    CHECK(scripts.p99Ms == doctest::Approx(2.0));
+    CHECK_FALSE(profile::enabled());
+    CHECK(profile::captured() == capture);
+}
+
 TEST_CASE("H11: the slowest frames are given each as its own tree, the worst first")
 {
     Rig rig;

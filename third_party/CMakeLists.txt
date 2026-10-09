@@ -69,6 +69,7 @@ endif()
 # Kept ON deliberately: the offscreen and dummy video drivers, which are how
 # `--headless` gets a GPU device on a machine with no display (roadmap M1).
 # ---------------------------------------------------------------------------
+if(NOT ENG_PLATFORM_UWP)
 set(SDL_SHARED        OFF CACHE BOOL "" FORCE)  # static only: consoles and iOS
 set(SDL_STATIC        ON  CACHE BOOL "" FORCE)  # want one dead-strippable binary (ADR 0023)
 set(SDL_TEST_LIBRARY  OFF CACHE BOOL "" FORCE)
@@ -99,6 +100,7 @@ set(SDL_TRAY          OFF CACHE BOOL "" FORCE)
 set(SDL_POWER         OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(sdl3 ${CMAKE_BINARY_DIR}/third_party/sdl3 SYSTEM)
+endif()
 
 # ---------------------------------------------------------------------------
 # The shader toolchain (ADR 0006: HLSL is the one authoring language;

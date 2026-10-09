@@ -776,8 +776,8 @@ struct GpuParticle
     f32 positionSize[4]{};
     // Linear colour times brightness, and opacity.
     f32 color[4]{};
-    // x emission, y shape, z rotation in radians, w 1 when it is drawn from
-    // its picture (ADR 0160).
+    // x emission, y shape, z rotation in radians, w one-based picture slot
+    // in the batch (zero for a procedural shape); see particle.hlsl.
     f32 params[4]{};
     // The picture's frame: left, top, right, bottom in texture space.
     f32 uv[4]{0.0f, 0.0f, 1.0f, 1.0f};

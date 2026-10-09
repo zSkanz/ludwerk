@@ -185,6 +185,7 @@ local Sections: { Section } = {
             { Slug = "i18n", Title = "Localization" },
             { Slug = "debug-overlay", Title = "The debug overlay" },
             { Slug = "shipping", Title = "Shipping a game" },
+            { Slug = "platform-services", Title = "Platform services" },
             { Slug = "multiplayer", Title = "Multiplayer" },
             { Slug = "scenes", Title = "Scenes at run time" },
             { Slug = "backend", Title = "Talking to a backend" },

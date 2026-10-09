@@ -20,6 +20,7 @@ target_compile_definitions(engine_rhi_api INTERFACE
     ENG_RHI_NULL=$<BOOL:${ENG_RHI_NULL}>
     ENG_RHI_SDLGPU=$<BOOL:${ENG_RHI_SDLGPU}>
     ENG_RHI_CAPTURE=$<BOOL:${ENG_RHI_CAPTURE}>
+    ENG_RHI_D3D12=$<BOOL:${ENG_RHI_D3D12}>
 )
 
 
@@ -27,6 +28,26 @@ target_compile_definitions(engine_rhi_api INTERFACE
 # backends this configuration built. Naming one unconditionally would turn
 # switching a backend off into a confusing CMake error in an unrelated file.
 set(engine_rhi_test_modules rhi_api)
+
+# Native queue/CoreWindow foundation for the UWP player. Kept separate from
+# SDL_GPU: neither its device nor its swapchain reaches a desktop window API.
+# The selectable adapter is compiled only with ENG_RHI_D3D12; default builds
+# retain the foundation solely for native GPU ownership tests on Windows.
+if(WIN32)
+    engine_add_module(rhi_d3d12
+        LAYER 2
+        SOURCES src/d3d12/context.cpp src/d3d12/resources.cpp src/d3d12/pipelines.cpp src/d3d12/descriptors.cpp src/d3d12/commands.cpp
+        DEPS core platform
+        API_DEPS rhi_api
+    )
+    target_link_libraries(engine_rhi_d3d12 PRIVATE d3d12 dxgi)
+    set_target_properties(engine_rhi_d3d12 PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    list(APPEND engine_rhi_test_modules rhi_d3d12)
+endif()
+
+if(ENG_RHI_D3D12)
+    target_sources(engine_rhi_d3d12 PRIVATE src/d3d12/device.cpp)
+endif()
 
 if(ENG_RHI_NULL)
     engine_add_module(rhi_null
@@ -86,6 +107,9 @@ endif()
 # grown an implementation dependency and the neutrality claim is gone. The
 # others come with theirs.
 set(engine_rhi_test_sources tests/rhi_api_tests.cpp)
+if(WIN32)
+    list(APPEND engine_rhi_test_sources tests/rhi_d3d12_context_tests.cpp)
+endif()
 if(ENG_RHI_NULL)
     list(APPEND engine_rhi_test_sources tests/rhi_null_tests.cpp)
 endif()
@@ -100,6 +124,18 @@ engine_add_module_tests(rhi
     MODULES ${engine_rhi_test_modules}
     SOURCES ${engine_rhi_test_sources}
 )
+
+if(ENG_BUILD_TESTS)
+    target_compile_definitions(engine_rhi_tests PRIVATE
+        ENG_TEST_SHADER_CONTENT="${CMAKE_BINARY_DIR}/engine/app/content/shaders")
+endif()
+
+if(WIN32 AND ENG_BUILD_TESTS)
+    target_compile_definitions(engine_rhi_tests PRIVATE
+        ENG_TEST_NATIVE_SHADERS="${CMAKE_BINARY_DIR}/engine/app/content/shaders/dxil")
+    add_test(NAME rhi_d3d12_shaders COMMAND engine_rhi_tests "--test-case=native D3D12 shipping*")
+    set_tests_properties(rhi_d3d12_shaders PROPERTIES SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP" TIMEOUT 120)
+endif()
 
 # **The SDL_GPU cases, registered again on their own so a skip is visible**
 # (S7.10). Inside the `rhi` suite they cannot be: the API and null-backend cases

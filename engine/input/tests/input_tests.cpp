@@ -370,6 +370,52 @@ TEST_CASE("a stick reports up as +Y, the direction the Up composite means")
     CHECK(fixture.state(move).axis.y == doctest::Approx(1.0));
 }
 
+TEST_CASE("unplugging or losing focus releases gamepad actions and both analogue sticks")
+{
+    Fixture fixture;
+    const InstanceId context = fixture.context();
+    const InstanceId jump = fixture.action(context, input::ActionType::Bool);
+    const InstanceId move = fixture.action(context, input::ActionType::Direction2D);
+    const InstanceId look = fixture.action(context, input::ActionType::Direction2D);
+    fixture.world->inputBindings().find(fixture.binding(jump))->keyCode = fixture.keyCode("ButtonSouth");
+    fixture.world->inputBindings().find(fixture.binding(move))->keyCode = fixture.keyCode("LeftThumbstick");
+    fixture.world->inputBindings().find(fixture.binding(look))->keyCode = fixture.keyCode("RightThumbstick");
+    platform::Event pad;
+    pad.gamepadId = 19;
+    pad.gamepadFamily = platform::GamepadType::Generic;
+    pad.type = platform::EventType::GamepadButtonDown;
+    pad.gamepadButton = platform::GamepadButton::South;
+    fixture.system.pumpFrame({&pad, 1});
+    pad.type = platform::EventType::GamepadAxisMoved;
+    pad.gamepadAxis = platform::GamepadAxis::LeftX;
+    pad.axisValue = 0.8f;
+    fixture.system.pumpFrame({&pad, 1});
+    pad.gamepadAxis = platform::GamepadAxis::RightY;
+    pad.axisValue = -0.7f;
+    fixture.system.pumpFrame({&pad, 1});
+    fixture.system.dispatchSimTick(*fixture.world, 1);
+    REQUIRE(fixture.state(jump).pressed);
+    REQUIRE(fixture.state(move).axis.x > 0.0f);
+    REQUIRE(fixture.state(look).axis.y > 0.0f);
+    (void)fixture.drainEvents();
+
+    SUBCASE("disconnect")
+    {
+        pad.type = platform::EventType::GamepadRemoved;
+        fixture.system.pumpFrame({&pad, 1});
+        fixture.system.dispatchSimTick(*fixture.world, 2);
+    }
+    SUBCASE("focus loss")
+    {
+        fixture.system.releaseAll(*fixture.world);
+    }
+    CHECK_FALSE(fixture.state(jump).pressed);
+    CHECK(fixture.state(move).axis == core::Vec3{});
+    CHECK(fixture.state(look).axis == core::Vec3{});
+    const auto events = fixture.drainEvents();
+    CHECK(std::ranges::find(events, "Released") != events.end());
+}
+
 TEST_CASE("a Direction3D action reports zero, which is what v1 promises")
 {
     Fixture fixture;
@@ -408,14 +454,134 @@ TEST_CASE("a resting stick does not steal the prompts from the keyboard")
     fixture.system.pumpFrame(pushed);
     CHECK(fixture.system.snapshot().lastDevice == input::DeviceType::Gamepad);
 
-    // And pointer MOTION does not claim the device either: a desk bump would
-    // otherwise flip every prompt on screen while the player holds a pad.
+    // Actual mouse movement selects keyboard/mouse; a zero delta does not.
     platform::Event moved;
     moved.type = platform::EventType::MouseMoved;
     moved.pointerDeltaX = 3.0f;
     const platform::Event nudge[] = {moved};
     fixture.system.pumpFrame(nudge);
+    CHECK(fixture.system.snapshot().lastDevice == input::DeviceType::KeyboardMouse);
+}
+
+TEST_CASE("gamepad connection metadata does not change the deterministic world hash")
+{
+    Fixture fixture;
+    (void)fixture.make("InputService");
+    const auto before = fixture.world->worldHash();
+    fixture.world->engineState().preferredGamepadType = static_cast<core::i32>(platform::GamepadType::PlayStation);
+    fixture.world->engineState().preferredGamepadId = 42;
+    CHECK(fixture.world->worldHash() == before);
+
+    // The category remains simulation input through the existing property.
+    fixture.world->engineState().lastInputDeviceType = static_cast<core::i32>(input::DeviceType::Gamepad);
+    CHECK(fixture.world->worldHash() != before);
+}
+
+TEST_CASE("connecting a pad leaves preference alone; usage selects physical family and id")
+{
+    Fixture fixture;
+    platform::Event pad;
+    pad.type = platform::EventType::GamepadAdded;
+    pad.gamepadId = 41;
+    pad.gamepadFamily = platform::GamepadType::PlayStation;
+    fixture.system.pumpFrame({&pad, 1});
+    fixture.system.dispatchSimTick(*fixture.world, 1);
+    CHECK(fixture.system.snapshot().lastDevice == input::DeviceType::KeyboardMouse);
+    CHECK(fixture.system.snapshot().preferredGamepadId == 0);
+    auto events = fixture.system.drainDeviceEvents();
+    REQUIRE(events.size() == 1);
+    CHECK(events[0].kind == input::DeviceEvent::Kind::Connected);
+    CHECK(events[0].family == platform::GamepadType::PlayStation);
+
+    pad.type = platform::EventType::GamepadButtonDown;
+    pad.gamepadButton = platform::GamepadButton::South;
+    pad.gamepadFamily = platform::GamepadType::Unknown; // Retain connection metadata.
+    fixture.system.pumpFrame({&pad, 1});
+    fixture.system.dispatchSimTick(*fixture.world, 2);
+    CHECK(fixture.world->engineState().preferredGamepadId == 41);
+    CHECK(fixture.system.snapshot().preferredGamepadType == platform::GamepadType::PlayStation);
+    CHECK(fixture.system.drainDeviceEvents().size() == 3);
+    fixture.system.dispatchSimTick(*fixture.world, 3);
+    CHECK(fixture.system.drainDeviceEvents().empty());
+
+    fixture.press("Space");
+    fixture.system.dispatchSimTick(*fixture.world, 4);
+    events = fixture.system.drainDeviceEvents();
+    REQUIRE(events.size() == 1);
+    CHECK(events[0].kind == input::DeviceEvent::Kind::InputChanged);
+    CHECK(fixture.system.snapshot().preferredGamepadId == 41);
+    CHECK(fixture.system.snapshot().preferredGamepadType == platform::GamepadType::PlayStation);
+
+    pad.gamepadId = 42;
+    pad.gamepadFamily = platform::GamepadType::PlayStation;
+    fixture.system.pumpFrame({&pad, 1});
+    fixture.system.dispatchSimTick(*fixture.world, 5);
+    (void)fixture.system.drainDeviceEvents();
+    pad.gamepadId = 41;
+    fixture.system.pumpFrame({&pad, 1});
+    fixture.system.dispatchSimTick(*fixture.world, 6);
+    events = fixture.system.drainDeviceEvents();
+    REQUIRE(events.size() == 1);
+    CHECK(events[0].kind == input::DeviceEvent::Kind::GamepadIdChanged);
+    CHECK(events[0].id == 41);
+}
+
+TEST_CASE("unplugging one pad preserves another pad's held input")
+{
+    Fixture fixture;
+    platform::Event pad;
+    pad.type = platform::EventType::GamepadButtonDown;
+    pad.gamepadButton = platform::GamepadButton::South;
+    pad.gamepadId = 1;
+    pad.gamepadFamily = platform::GamepadType::Xbox;
+    fixture.system.pumpFrame({&pad, 1});
+    fixture.system.dispatchSimTick(*fixture.world, 1);
+    pad.gamepadId = 2;
+    pad.gamepadFamily = platform::GamepadType::Nintendo;
+    fixture.system.pumpFrame({&pad, 1});
+    fixture.system.dispatchSimTick(*fixture.world, 2);
+    (void)fixture.system.drainDeviceEvents();
+    pad.type = platform::EventType::GamepadRemoved;
+    pad.gamepadId = 1;
+    pad.gamepadFamily = platform::GamepadType::Unknown;
+    fixture.system.pumpFrame({&pad, 1});
+    fixture.system.dispatchSimTick(*fixture.world, 3);
+    CHECK(fixture.system.snapshot().held[static_cast<core::usize>(fixture.keyCode("ButtonSouth"))]);
+    CHECK(fixture.system.snapshot().preferredGamepadId == 2);
+    const auto events = fixture.system.drainDeviceEvents();
+    REQUIRE(events.size() == 1);
+    CHECK(events[0].family == platform::GamepadType::Xbox);
+    pad.gamepadId = 2;
+    fixture.system.pumpFrame({&pad, 1});
+    fixture.system.dispatchSimTick(*fixture.world, 4);
+    CHECK_FALSE(fixture.system.snapshot().held[static_cast<core::usize>(fixture.keyCode("ButtonSouth"))]);
+    CHECK(fixture.system.snapshot().preferredGamepadId == 0);
+    CHECK(fixture.system.snapshot().preferredGamepadType == platform::GamepadType::Unknown);
+}
+
+TEST_CASE("unknown pads work, drift and idle motion do not select them, focus loss clears their buttons")
+{
+    Fixture fixture;
+    platform::Event pad;
+    pad.type = platform::EventType::GamepadAxisMoved;
+    pad.gamepadAxis = platform::GamepadAxis::LeftX;
+    pad.gamepadId = 9;
+    pad.axisValue = 0.1f;
+    fixture.system.pumpFrame({&pad, 1});
+    CHECK(fixture.system.snapshot().preferredGamepadId == 0);
+    pad.type = platform::EventType::GamepadButtonDown;
+    pad.gamepadButton = platform::GamepadButton::South;
+    fixture.system.pumpFrame({&pad, 1});
+    CHECK(fixture.system.snapshot().preferredGamepadId == 9);
+    CHECK(fixture.system.snapshot().preferredGamepadType == platform::GamepadType::Unknown);
+    platform::Event mouse;
+    mouse.type = platform::EventType::MouseMoved;
+    fixture.system.pumpFrame({&mouse, 1});
     CHECK(fixture.system.snapshot().lastDevice == input::DeviceType::Gamepad);
+    fixture.system.releaseAll(*fixture.world);
+    pad.type = platform::EventType::GamepadAxisMoved;
+    fixture.system.pumpFrame({&pad, 1});
+    CHECK_FALSE(fixture.system.snapshot().held[static_cast<core::usize>(fixture.keyCode("ButtonSouth"))]);
 }
 
 // --- The raw event surface (ADR 0041) ----------------------------------------
@@ -1288,4 +1454,102 @@ TEST_CASE("NA25: a key pressed and let go between two ticks is down for one of t
     fixture.release("Space");
     fixture.system.dispatchSimTick(*fixture.world, 5);
     CHECK_FALSE(fixture.state(jump).pressed);
+}
+
+TEST_CASE("local gamepad contexts isolate sticks and sinking while aggregate input remains compatible")
+{
+    Fixture fixture;
+    const auto high = fixture.context(10, true);
+    const auto second = fixture.context(0, false);
+    const auto aggregate = fixture.context(-1, false);
+    fixture.world->inputContexts().find(high)->gamepadId = 11;
+    fixture.world->inputContexts().find(second)->gamepadId = 22;
+    const auto actionFor = [&](InstanceId context) {
+        const auto action = fixture.action(context, input::ActionType::Direction2D);
+        const auto binding = fixture.binding(action);
+        fixture.world->inputBindings().find(binding)->keyCode = fixture.keyCode("LeftThumbstick");
+        return action;
+    };
+    const auto one = actionFor(high);
+    const auto two = actionFor(second);
+    const auto all = actionFor(aggregate);
+    input::DeviceState snapshot;
+    input::GamepadSnapshot a;
+    a.id = 11;
+    a.axes[static_cast<core::usize>(platform::GamepadAxis::LeftX)] = 0.9f;
+    input::GamepadSnapshot b;
+    b.id = 22;
+    b.axes[static_cast<core::usize>(platform::GamepadAxis::LeftX)] = -0.5f;
+    snapshot.gamepads = {a, b};
+    fixture.system.setSnapshot(snapshot);
+    fixture.system.dispatchSimTick(*fixture.world, 1);
+    CHECK(fixture.state(one).axis.x == doctest::Approx(0.9));
+    CHECK(fixture.state(two).axis.x == doctest::Approx(-0.5));
+    CHECK(fixture.state(all).axis.x == doctest::Approx(-0.5));
+    fixture.world->inputContexts().find(high)->gamepadId = 99;
+    fixture.system.dispatchSimTick(*fixture.world, 2);
+    CHECK(fixture.state(one).axis.x == 0.0f);
+    CHECK(fixture.state(two).axis.x == doctest::Approx(-0.5));
+    CHECK(fixture.state(all).axis.x == doctest::Approx(0.9));
+}
+
+TEST_CASE("four controllers preserve simultaneous presses short taps disconnects and snapshot replay")
+{
+    Fixture fixture;
+    std::vector<platform::Event> events;
+    for (core::u32 id : {40u, 10u, 30u, 20u}) {
+        platform::Event event;
+        event.type = platform::EventType::GamepadButtonDown;
+        event.gamepadId = id;
+        event.gamepadButton = platform::GamepadButton::South;
+        events.push_back(event);
+    }
+    fixture.system.pumpFrame(events);
+    fixture.system.dispatchSimTick(*fixture.world, 1);
+    auto raw = fixture.system.drainRawEvents();
+    REQUIRE(raw.size() == 4);
+    for (core::usize at = 0; at < raw.size(); ++at) {
+        CHECK(raw[at].gamepadId == (at + 1) * 10);
+        CHECK(raw[at].phase == input::RawInputEvent::Phase::Began);
+    }
+    const auto recorded = fixture.system.snapshot();
+    Fixture replay;
+    replay.system.setSnapshot(recorded);
+    replay.system.dispatchSimTick(*replay.world, 1);
+    const auto replayed = replay.system.drainRawEvents();
+    REQUIRE(replayed.size() == raw.size());
+    for (core::usize at = 0; at < raw.size(); ++at) {
+        CHECK(replayed[at].gamepadId == raw[at].gamepadId);
+        CHECK(replayed[at].keyCode == raw[at].keyCode);
+    }
+    events.resize(1);
+    events[0].type = platform::EventType::GamepadRemoved;
+    events[0].gamepadId = 20;
+    fixture.system.pumpFrame(events);
+    fixture.system.dispatchSimTick(*fixture.world, 2);
+    raw = fixture.system.drainRawEvents();
+    REQUIRE(raw.size() == 1);
+    CHECK(raw[0].gamepadId == 20);
+    CHECK(raw[0].phase == input::RawInputEvent::Phase::Ended);
+    CHECK(fixture.system.isGamepadKeyDown(10, fixture.keyCode("ButtonSouth")));
+    CHECK_FALSE(fixture.system.isGamepadKeyDown(20, fixture.keyCode("ButtonSouth")));
+    CHECK_FALSE(fixture.system.isGamepadKeyDown(10, fixture.keyCode("Space")));
+    events[0].gamepadId = 50;
+    events[0].type = platform::EventType::GamepadButtonDown;
+    events.push_back(events[0]);
+    events[1].type = platform::EventType::GamepadButtonUp;
+    fixture.system.pumpFrame(events);
+    CHECK_FALSE(fixture.system.isGamepadKeyDown(50, fixture.keyCode("ButtonSouth")));
+    fixture.system.dispatchSimTick(*fixture.world, 3);
+    raw = fixture.system.drainRawEvents();
+    REQUIRE(raw.size() == 1);
+    CHECK(raw[0].gamepadId == 50);
+    CHECK(raw[0].phase == input::RawInputEvent::Phase::Began);
+    fixture.system.dispatchSimTick(*fixture.world, 4);
+    raw = fixture.system.drainRawEvents();
+    REQUIRE(raw.size() == 1);
+    CHECK(raw[0].gamepadId == 50);
+    CHECK(raw[0].phase == input::RawInputEvent::Phase::Ended);
+    fixture.system.releaseAll(*fixture.world);
+    CHECK_FALSE(fixture.system.isGamepadKeyDown(10, fixture.keyCode("ButtonSouth")));
 }

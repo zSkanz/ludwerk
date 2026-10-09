@@ -183,6 +183,35 @@ std::optional<ExportStatus> parseExportStatus(std::string_view output)
                                                       row["ready"].asBool(), row["player"].asBool(),
                                                       row["tools"].asBool()});
             }
+            const core::JsonValue modules = root["modules"];
+            if (modules.type() == core::JsonType::Array) {
+                for (std::size_t index = 0; index < modules.size(); ++index) {
+                    const auto row = modules.at(index);
+                    ModuleStatus item;
+                    item.id = stringField(row, "id");
+                    item.label = stringField(row, "label");
+                    item.kind = stringField(row, "kind");
+                    item.integration = stringField(row, "integration");
+                    item.version = stringField(row, "version");
+                    item.enabled = row["enabled"].asBool();
+                    item.installed = row["installed"].asBool();
+                    item.supported = row["supported"].asBool();
+                    item.removable = row["removable"].asBool();
+                    item.provider = row["provider"].asBool();
+                    const double bytes = row["bytes"].asNumber();
+                    if (bytes > 0.0 && bytes <= 1.0e12)
+                        item.bytes = static_cast<core::u64>(bytes);
+                    const auto settings = row["settings"];
+                    if (settings.type() == core::JsonType::Array)
+                        for (std::size_t field = 0; field < settings.size(); ++field) {
+                            const auto value = settings.at(field);
+                            item.settings.push_back(
+                                {stringField(value, "key"), stringField(value, "label"), stringField(value, "value")});
+                        }
+                    if (!item.id.empty())
+                        status.modules.push_back(std::move(item));
+                }
+            }
             status.adb = stringField(root, "adb");
             return status;
         }

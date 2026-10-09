@@ -21,8 +21,10 @@ guided tour.
 
 | Class | Inherits | Summary |
 |---|---|---|
+| [`AchievementService`](achievementservice.md) | [`Instance`](instance.md) | Platform-neutral achievements using internal project IDs mapped per provider. |
 | [`AudioService`](audioservice.md) | [`Instance`](instance.md) | Mixing and the listener (§2.1). |
 | [`ClientScriptService`](clientscriptservice.md) | [`Instance`](instance.md) | This scene's player code (ADR 0105): its HUD, its menu's buttons, a camera. |
+| [`CloudSaveService`](cloudsaveservice.md) | [`Instance`](instance.md) | Platform cloud slots for the current user, separate from local SaveService/filesystem. |
 | [`ContentProvider`](contentprovider.md) | [`Instance`](instance.md) | Loads assets before anything shows them (ADR 0131): a level's meshes and pictures read and on the GPU while a loading screen is up, so the first frame of play has nothing popping in. |
 | [`CryptoService`](cryptoservice.md) | [`Instance`](instance.md) | What a game keeps a secret with, and tells one player from another by (ADR 0151): chance that nobody can predict, two hashes, and a hash meant for passwords. |
 | [`DebugService`](debugservice.md) | [`Instance`](instance.md) | The debug overlay and the engine's own instrumentation. |
@@ -30,7 +32,9 @@ guided tour.
 | [`GraphicsService`](graphicsservice.md) | [`Instance`](instance.md) | The machine's graphics and display settings (ADR 0147): how good the picture is, how the window sits on the display and how fast frames are made. |
 | [`HapticService`](hapticservice.md) | [`Instance`](instance.md) | What a player feels in their hands (ADR 0131): a gamepad's motors, and a phone's own vibration. |
 | [`HotReloadService`](hotreloadservice.md) | [`Instance`](instance.md) | The hot-reload loop as a script can see it (ADR 0024). |
+| [`IdentityService`](identityservice.md) | [`Instance`](instance.md) | Platform-neutral identity using a registered provider. |
 | [`InputService`](inputservice.md) | [`Instance`](instance.md) | The host of the Input Action System (§2.4, ADR 0029) and the only place device-wide state is readable. |
+| [`LeaderboardService`](leaderboardservice.md) | [`Instance`](instance.md) | Platform leaderboards addressed by provider-mapped project IDs. |
 | [`Lighting`](lighting.md) | [`Instance`](instance.md) | Day/night and the environment every surface is lit against. |
 | [`LocalizationService`](localizationservice.md) | [`Instance`](instance.md) | A game's text by key, in the player's language (ADR 0154). |
 | [`NavigationService`](navigationservice.md) | [`Instance`](instance.md) | Where an agent can walk, and how it gets somewhere (ADR 0089). |
@@ -42,12 +46,15 @@ guided tour.
 | [`SceneService`](sceneservice.md) | [`Instance`](instance.md) | Which scene the game is in, and the way to go to another (ADR 0106). |
 | [`ServerScriptService`](serverscriptservice.md) | [`Instance`](instance.md) | This scene's server code (ADR 0105): the arena's rules, the lobby's countdown. |
 | [`ServerStorage`](serverstorage.md) | [`Instance`](instance.md) | What only the authority has (ADR 0080): templates and data a client has no business holding. |
+| [`SocialService`](socialservice.md) | [`Instance`](instance.md) | Basic platform social queries through declared capabilities. |
+| [`StoreService`](storeservice.md) | [`Instance`](instance.md) | Platform-neutral products and entitlements using project IDs. |
 | [`StreamingService`](streamingservice.md) | [`Instance`](instance.md) | The streamed world's controls (api-design.md §2.1). |
 | [`TagService`](tagservice.md) | [`Instance`](instance.md) | Finds instances by tag. |
 | [`TweenService`](tweenservice.md) | [`Instance`](instance.md) | Property animation (§2.1). |
 | [`UIService`](uiservice.md) | [`Instance`](instance.md) | The parent of every `ScreenGui` and the source of the two numbers a layout needs about the screen it is on (§2.1). |
 | [`VoxelService`](voxelservice.md) | [`Instance`](instance.md) | A world made of blocks: the service for block games -- mining, building, a world of cubes in chunks. |
 | [`Workspace`](workspace.md) | [`Instance`](instance.md) | The root of the 3D scene, reached through the `workspace` global as well as through `game:GetService`. |
+| [`XboxService`](xboxservice.md) | [`Instance`](instance.md) | Optional Xbox identity and achievements through the PC provider (ADR 0188). |
 
 ## Instances
 

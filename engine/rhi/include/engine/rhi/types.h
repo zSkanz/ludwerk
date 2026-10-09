@@ -30,6 +30,7 @@ enum class BackendId : u8
     SdlGpu,
     Capture,
     Null,
+    D3D12,
 };
 
 // Resources are named by opaque, typed ids rather than pointers. Distinct

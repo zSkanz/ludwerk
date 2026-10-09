@@ -17,10 +17,12 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "engine/app/frame_pacing.h"
 #include "engine/core/types.h"
+#include "engine/platform/game_integration.h"
 #include "engine/render/settings.h"
 #include "engine/scene/graphics_model.h"
 
@@ -114,6 +116,9 @@ struct ProjectConfig
     // asks (ADR 0178): `relay.example.com:7789`. Empty: no relay, and a match
     // is joined by its address.
     std::string networkRelay;
+    std::vector<std::string> enabledIntegrations{};
+    std::unordered_map<std::string, std::string> integrationConfigurations{};
+    platform::PlatformServiceConfiguration platformServices{};
 
     // `[network] role = "server"`: the project is a dedicated server's package,
     // and the player given no posture starts as `--serve` (ADR 0105). Written

@@ -68,7 +68,7 @@ public:
     // records the frame it was told to record.
     void setDeferredImages(bool deferred) noexcept { deferredImages_ = deferred; }
 
-    // How many pictures are on their way in. Zero in the synchronous mode.
+    // How many pictures are queued or on their way in. Zero in synchronous mode.
     [[nodiscard]] core::usize imagesInFlight() const noexcept;
 
     // **A request, not a load.** The draw list is built before `sync` runs, and
@@ -199,6 +199,7 @@ private:
     static constexpr core::usize MaxImagesInFlight = 4;
 
     bool deferredImages_ = false;
+    void queueImageDecode(Image& image);
     void pumpImages(rhi::IDevice& device, rhi::ICmdList& cmd);
     void releasePendingImages() noexcept;
     [[nodiscard]] bool imageInFlight(std::string_view urn) const noexcept;

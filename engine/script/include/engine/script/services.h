@@ -32,6 +32,7 @@
 #include "engine/net/async_client.h"
 #include "engine/net/relay_ping.h"
 #include "engine/platform/event.h"
+#include "engine/platform/game_integration.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/physics_sync.h"
 #include "engine/scene/physics_sync_2d.h"
@@ -42,6 +43,7 @@
 #include "engine/script/content_provider.h"
 #include "engine/script/crypto_service.h"
 #include "engine/script/detectors.h"
+#include "engine/script/optional_service.h"
 #include "engine/script/reload_state.h"
 #include "engine/script/save_store.h"
 #include "engine/script/scenes.h"
@@ -165,6 +167,19 @@ public:
     // Invalid until `registerServices` runs. Every service is a child of it,
     // and `game` is the only way a script reaches it.
     core::InstanceId dataModel;
+    struct OptionalIntegration
+    {
+        std::string library;
+        std::string configuration;
+        std::unique_ptr<platform::GameIntegration> provider;
+        bool attempted = false;
+        bool warned = false;
+        int waiter = -1;
+        IntegrationResponse response = IntegrationResponse::Action;
+        bool generic = false;
+    };
+    std::map<std::string, OptionalIntegration, std::less<>> integrations;
+    platform::PlatformServiceConfiguration platformServices;
 
     GizmoSink gizmos;
     DrawnPoseSink drawnPoses;

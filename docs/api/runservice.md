@@ -21,9 +21,9 @@ offers is on the base's page, which is what keeps one added member on
 
 ## Methods
 
-### `BindToIntent(name: string, fn: (intent: IntentWriter) -> ())`
+### `BindToIntent(name: string, fn: (intent: IntentWriter) -> (), player: Player? = nil)`
 
-Runs `fn(intent)` **every simulation tick**, right after this machine's input becomes its player's intents, in the order bound (G38). `intent:Set(action, value)` writes an intent by name -- a boolean, a number, a `Vector2` or a `vector` -- which every reader of `Player:GetIntent` sees, on this machine and, in a match, on the authority: input that is not an `InputAction`, such as a turn worked out from the mouse, a touch gesture or a bot.
+Optional player selects a live local guest; nil keeps the primary LocalPlayer. Removed guest bindings are skipped. Runs `fn(intent)` **every simulation tick**, right after this machine's input becomes its player's intents, in the order bound (G38). `intent:Set(action, value)` writes an intent by name -- a boolean, a number, a `Vector2` or a `vector` -- which every reader of `Player:GetIntent` sees, on this machine and, in a match, on the authority: input that is not an `InputAction`, such as a turn worked out from the mouse, a touch gesture or a bot.
 
 A value written wins over an `InputAction` of the same name. The writer is good only during the call. Binding a name already bound replaces it; a binding belongs to the script that made it and goes with its scene.
 

@@ -129,6 +129,9 @@ struct RawInputEvent
     // `Ended` -- the slot it holds in `DeviceState::fingers`, plus one. Zero
     // for everything else.
     i32 touchId = 0;
+    // Physical controller that produced this event; zero for other devices
+    // and legacy aggregate recordings without controller identities.
+    u32 gamepadId = 0;
     // Whether the interface already took this input -- the second argument of
     // every one of the three events, and the one a handler that ignores it
     // regrets: it is what stops a click on a button also firing the gun and a
@@ -231,6 +234,30 @@ struct GestureEvent
     i32 fingers = 1;
 };
 
+struct DeviceEvent
+{
+    enum class Kind : core::u8
+    {
+        InputChanged,
+        GamepadTypeChanged,
+        GamepadIdChanged,
+        Connected,
+        Disconnected
+    };
+    Kind kind = Kind::InputChanged;
+    DeviceType device = DeviceType::KeyboardMouse;
+    platform::GamepadType family = platform::GamepadType::Unknown;
+    u32 id = 0;
+};
+
+struct GamepadSnapshot
+{
+    u32 id = 0;
+    platform::GamepadType family = platform::GamepadType::Unknown;
+    std::array<bool, static_cast<usize>(platform::GamepadButton::Count)> buttons{};
+    std::array<f32, static_cast<usize>(platform::GamepadAxis::Count)> axes{};
+};
+
 struct DeviceState
 {
     std::array<bool, kKeyCodeCount> held{};
@@ -244,6 +271,11 @@ struct DeviceState
     std::array<Finger, kMaxFingers> fingers{};
     bool focused = true;
     DeviceType lastDevice = DeviceType::KeyboardMouse;
+    platform::GamepadType preferredGamepadType = platform::GamepadType::Unknown;
+    u32 preferredGamepadId = 0;
+    // Sorted by id. Replays carry individual pads alongside the compatible
+    // aggregate keys, so local seats never depend on an OS query in a tick.
+    std::vector<GamepadSnapshot> gamepads;
 };
 
 // The system's own state. Held by `app`, handed to `script` the way the physics
@@ -262,6 +294,8 @@ public:
     // game rather than a bot calling the API underneath it.
     void setSnapshot(const DeviceState& state) noexcept;
 
+    [[nodiscard]] std::span<const DeviceEvent> drainDeviceEvents() noexcept;
+
     [[nodiscard]] const DeviceState& snapshot() const noexcept { return m_state; }
     // Whether the last dispatch gave this `Enum.KeyCode` to something above the
     // engine's own uses of it -- the interface, or a context that sinks it. An
@@ -278,6 +312,7 @@ public:
     // consumed: a poll asks what the HARDWARE is doing, and an event asks what
     // happened to the game.
     [[nodiscard]] bool isKeyDown(i32 keyCode) const noexcept;
+    [[nodiscard]] bool isGamepadKeyDown(u32 id, i32 keyCode) const noexcept;
 
     // Writes one of the virtual axes. Ignores a code that is not virtual, which
     // is what keeps the seam one-way: a script drives the four channels the
@@ -365,6 +400,20 @@ private:
     // actions rather than about hardware.
     void collectRawEvents(core::Vec2 pointerDelta, core::Vec2 wheel);
 
+    struct GamepadState : GamepadSnapshot
+    {
+        std::array<bool, static_cast<usize>(platform::GamepadButton::Count)> unseen{};
+        std::array<bool, static_cast<usize>(platform::GamepadButton::Count)> releasing{};
+    };
+    std::vector<GamepadState> m_gamepads;
+    std::vector<DeviceEvent> m_deviceEvents;
+    std::vector<DeviceEvent> m_devicesDrained;
+    DeviceType m_reportedDevice = DeviceType::KeyboardMouse;
+    platform::GamepadType m_reportedGamepadType = platform::GamepadType::Unknown;
+    u32 m_reportedGamepadId = 0;
+    GamepadState& gamepad(const platform::Event& event);
+    void preferGamepad(const GamepadState& pad) noexcept;
+    void rebuildGamepadState();
     DeviceState m_state;
     // **A press a tick has not seen yet, and a release that waits for it**
     // (NA25). Buttons were recorded as held or not when the frame's events

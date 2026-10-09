@@ -33,6 +33,10 @@ engine_add_module(audio
 )
 
 target_include_directories(engine_audio SYSTEM PRIVATE "${ENG_THIRD_PARTY_DIR}/miniaudio")
+if(ENG_PLATFORM_UWP)
+    target_sources(engine_audio PRIVATE src/uwp_output.cpp)
+    target_link_libraries(engine_audio PRIVATE xaudio2)
+endif()
 
 engine_add_module_tests(audio
     MODULES

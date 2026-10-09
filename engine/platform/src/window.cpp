@@ -25,9 +25,21 @@
 #include <string>
 #include <string_view>
 
+#include "engine/platform/windows_interop.h"
 #include "window_impl.h"
 
 namespace engine::platform {
+
+WindowsSurface windowsSurface(const Window& window) noexcept
+{
+#if defined(_WIN32)
+    return {WindowsSurfaceKind::Hwnd, SDL_GetPointerProperty(SDL_GetWindowProperties(nativeWindow(window)),
+                                                             SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)};
+#else
+    (void)window;
+    return {};
+#endif
+}
 
 namespace {
 

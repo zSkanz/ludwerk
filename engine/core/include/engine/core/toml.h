@@ -24,6 +24,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "engine/core/types.h"
@@ -62,6 +63,9 @@ public:
     // anything else. `[window] size = [1280, 720]` is the whole of why this
     // exists.
     [[nodiscard]] std::span<const f64> numbers(std::string_view key) const;
+    [[nodiscard]] std::span<const std::string> strings(std::string_view key) const;
+    // Startup configuration sections with project-defined keys (platform ID maps).
+    [[nodiscard]] std::vector<std::pair<std::string, std::string>> stringValues(std::string_view prefix) const;
 
 private:
     enum class Kind : u8

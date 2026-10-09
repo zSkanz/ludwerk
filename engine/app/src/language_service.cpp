@@ -63,6 +63,12 @@ namespace {
 LanguageTree captureLanguageTree(const scene::World& world, core::InstanceId dataModel, const LanguageFiles* files)
 {
     LanguageTree tree;
+    tree.enabledIntegrations = world.engineState().enabledIntegrations;
+    for (scene::ClassId id = 1; id < static_cast<scene::ClassId>(world.classes().classCount()); ++id) {
+        const auto* descriptor = world.classes().find(id);
+        if (descriptor != nullptr && !descriptor->integration.empty())
+            tree.optionalServices.emplace(std::string(world.atoms().text(descriptor->name)), descriptor->integration);
+    }
     if (files != nullptr) {
         tree.projectRoot = files->projectRoot;
         tree.aliases = files->aliases;
@@ -1200,6 +1206,40 @@ void LanguageCore::update(LanguageTree tree)
         m_impl->frontend.markDirty(name);
 }
 
+namespace {
+struct OptionalServiceReferences final : Luau::AstVisitor
+{
+    const LanguageTree& tree;
+    std::vector<Diagnostic>& diagnostics;
+    OptionalServiceReferences(const LanguageTree& value, std::vector<Diagnostic>& out) : tree(value), diagnostics(out)
+    {}
+    bool visit(Luau::AstExprCall* call) override
+    {
+        const auto* method = call->func->as<Luau::AstExprIndexName>();
+        if (method == nullptr || std::string_view(method->index.value) != "GetService" || call->args.size != 1)
+            return true;
+        const auto* owner = method->expr->as<Luau::AstExprGlobal>();
+        const auto* name = call->args.data[0]->as<Luau::AstExprConstantString>();
+        if (!owner || std::string_view(owner->name.value) != "game" || !name)
+            return true;
+        const std::string service(name->value.data, name->value.size);
+        const auto found = tree.optionalServices.find(service);
+        if (found == tree.optionalServices.end() ||
+            std::find(tree.enabledIntegrations.begin(), tree.enabledIntegrations.end(), found->second) !=
+                tree.enabledIntegrations.end())
+            return true;
+        Diagnostic warning;
+        warning.at = Position{name->location.begin.line, name->location.begin.column};
+        warning.length = name->location.end.column - name->location.begin.column;
+        warning.message = core::tr(ENG_TR("engine.editor.script.check.integration_disabled"),
+                                   {{"service", service}, {"integration", found->second}});
+        warning.severity = Severity::Warning;
+        diagnostics.push_back(std::move(warning));
+        return true;
+    }
+};
+} // namespace
+
 LanguageCheck LanguageCore::check(const std::string& module)
 {
     LanguageCheck out;
@@ -1250,6 +1290,10 @@ LanguageCheck LanguageCore::check(const std::string& module)
             diagnostic.message += core::tr(ENG_TR("engine.editor.script.check.takes_a_type_pack"));
         diagnostic.severity = Severity::Error;
         out.diagnostics.push_back(std::move(diagnostic));
+    }
+    if (const auto* source = m_impl->frontend.getSourceModule(module); source != nullptr && source->root != nullptr) {
+        OptionalServiceReferences references(m_impl->tree, out.diagnostics);
+        source->root->visit(&references);
     }
     return out;
 }

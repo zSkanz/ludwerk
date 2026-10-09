@@ -57,6 +57,7 @@ struct IntentBinding
     core::u64 order = 0;
     int functionRef = -1;
     core::InstanceId owner;
+    core::InstanceId player;
 };
 
 // A `RunService:BindToPredictedStep` function, or -- with its part -- a

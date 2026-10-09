@@ -303,6 +303,9 @@ local function run(): number
 end
 
 return {
+    sha256Of = sha256Of,
+    download = download,
+    unpack = unpack,
     run = run,
     JdkVersion = JdkVersion,
     GradleVersion = GradleVersion,

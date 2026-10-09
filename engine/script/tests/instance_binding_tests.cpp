@@ -593,8 +593,9 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // **It earned its keep at F1.** Five methods were declared in the IDL in one
     // commit and this failed on the next build, before anything could reach a
     // script and find a name that answered nothing.
-    CHECK(coverage.declared == 247);
-    CHECK(coverage.bound == 247);
+    // 294: per-device input inventory, local guests and explicitly owned remote sends.
+    CHECK(coverage.declared == 294);
+    CHECK(coverage.bound == 294);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

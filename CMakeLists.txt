@@ -92,6 +92,36 @@ set(ENG_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
 # landmine: LUA_VECTOR_DOUBLE alone moves LUA_TVECTOR's ordinal in `lua_Type`.
 add_compile_definitions(LUA_VECTOR_SIZE=3 LUA_VECTOR_DOUBLE=0)
 
+# An opt-in UWP feasibility build, not an exportable engine player (ADR 0191).
+# It must not pull SDL or desktop SDKs into the app-container target.
+option(ENG_BUILD_UWP_PROBE "Build the isolated Xbox Developer Mode platform probe" OFF)
+if(ENG_BUILD_UWP_PROBE)
+    if(NOT MSVC OR NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
+        message(FATAL_ERROR "The UWP probe requires MSVC and CMAKE_SYSTEM_NAME=WindowsStore")
+    endif()
+    include(${ENG_CMAKE_DIR}/engine_provenance.cmake)
+    add_subdirectory(platforms/uwp)
+    return()
+endif()
+
+option(ENG_BUILD_UWP_PLAYER "Build the native AppContainer game player" OFF)
+if(ENG_BUILD_UWP_PLAYER)
+    if(NOT MSVC OR NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
+        message(FATAL_ERROR "The UWP player requires MSVC and CMAKE_SYSTEM_NAME=WindowsStore")
+    endif()
+    set(ENG_PROFILE player CACHE STRING "Engine profile" FORCE)
+    set(ENG_BUILD_TESTS OFF CACHE BOOL "Build tests" FORCE)
+    set(ENG_DEBUG_UI OFF CACHE BOOL "Build debug UI" FORCE)
+    set(ENG_SHADER_TOOLCHAIN OFF CACHE BOOL "Host shader compiler" FORCE)
+    set(ENG_RHI_SDLGPU OFF CACHE BOOL "SDL GPU backend" FORCE)
+    set(ENG_RHI_CAPTURE OFF CACHE BOOL "Capture backend" FORCE)
+    set(ENG_RHI_NULL OFF CACHE BOOL "Null backend" FORCE)
+    set(ENG_RHI_D3D12 ON CACHE BOOL "Native D3D12 backend" FORCE)
+    set(ENG_ENABLE_REPLICATION ON CACHE BOOL "Multiplayer support" FORCE)
+    add_compile_definitions(WINAPI_FAMILY=WINAPI_FAMILY_APP)
+endif()
+set(ENG_PLATFORM_UWP ${ENG_BUILD_UWP_PLAYER})
+add_compile_definitions(ENG_PLATFORM_UWP=$<BOOL:${ENG_PLATFORM_UWP}>)
 include(${ENG_CMAKE_DIR}/engine_options.cmake)
 include(${ENG_CMAKE_DIR}/engine_warnings.cmake)
 include(${ENG_CMAKE_DIR}/engine_sanitizers.cmake)
@@ -173,3 +203,6 @@ add_subdirectory(samples)
 engine_add_shaders(engine_host GLOB "${CMAKE_CURRENT_SOURCE_DIR}/shaders/src/*.hlsl"
     SURFACES "${CMAKE_CURRENT_SOURCE_DIR}/shaders/surface/*.surface.hlsl"
     COMPUTE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/compute/*.hlsl")
+
+# Optional proprietary adapters stay outside the default dependency graph.
+add_subdirectory(platforms/xbox)

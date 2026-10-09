@@ -387,9 +387,11 @@ static float s_leanPatch = 0.5f;
 void readPlane(Plane plane, float slice, float normalScale, float4 tiling, out float3 albedo, out float2 bend,
                out float3 surface)
 {
+#ifndef ENG_TERRAIN_NO_HEX
     [branch] if (tiling.z > 0.5f && !s_lean)
         readHexPlane(plane, slice, normalScale, albedo, bend, surface);
     else
+#endif
         readPlainPlane(plane, slice, normalScale, albedo, bend, surface);
     [branch] if (tiling.y < 0.999f && s_lean)
     {
@@ -487,7 +489,11 @@ LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 nor
     float3 albedo = 0.0f;
     float3 surface = 0.0f;
     float3 bent = normal;
+#ifdef ENG_TERRAIN_TRIPLANAR_ONLY
+    if (true) {
+#else
     if ((flags & 1u) != 0u) {
+#endif
         // **Triplanar**, each plane only where the surface faces it enough to
         // matter, and the normal bent along each plane's own axes.
         float kept = 0.0f;

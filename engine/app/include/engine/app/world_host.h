@@ -31,6 +31,7 @@
 #include "engine/input/input.h"
 #include "engine/nav/nav.h"
 #include "engine/physics/backends.h"
+#include "engine/platform/game_integration.h"
 #include "engine/render/animation.h"
 #include "engine/render/draw_poses.h"
 #include "engine/render/transform_history.h"
@@ -230,6 +231,9 @@ struct WorldHostOptions
     // player's own folder for a game, `.engine/saves/` in the project for the
     // editor's Play and `ludwerk dev`. Empty keeps saves in memory.
     std::filesystem::path saveDirectory{};
+    std::vector<std::string> enabledIntegrations{};
+    std::unordered_map<std::string, std::string> integrationConfigurations{};
+    platform::PlatformServiceConfiguration platformServices{};
     // `[save] max_slot_bytes` and `max_slots`.
     core::u64 saveMaxSlotBytes = 4u * 1024u * 1024u;
     core::u32 saveMaxSlots = 64;
@@ -751,6 +755,8 @@ private:
     [[nodiscard]] script::ContentState contentState(std::string_view content);
     f64 m_sceneCloseGrace = 5.0;
     bool m_developer = false;
+    std::unordered_map<std::string, std::string> m_integrationConfigurations;
+    platform::PlatformServiceConfiguration m_platformServices;
     core::u32 m_scriptMemoryMb = 0;
     // The watchdog and the heap cap onto a runtime just made (audit S5, S8).
     void configureRuntime();

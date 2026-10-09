@@ -8,16 +8,427 @@
 #include <string>
 #include <vector>
 
+#include "engine/core/json.h"
+#include "engine/input/input.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/localization.h"
+#include "engine/scene/players.h"
 #include "engine/scene/world.h"
 #include "engine/script/remote.h"
+#include "engine/script/scenes.h"
 #include "engine/script/services.h"
 #include "script_fixture.h"
 
 namespace core = engine::core;
 namespace scene = engine::scene;
 using engine::script::testing::Fixture;
+
+namespace {
+// Test-only native implementation, never registered in the editor/module catalog.
+class IdentityTestProvider final : public engine::platform::GameIntegration
+{
+public:
+    bool authenticated = false;
+    bool pending = false;
+    std::string failure;
+    bool achievements = false;
+    std::string lastArgument;
+    std::vector<std::string> capabilities;
+    std::string payload;
+    bool available() const override { return true; }
+    bool signedIn() const override { return authenticated; }
+    engine::platform::IntegrationUser user() const override { return {"42", "Test Player"}; }
+    bool supports(std::string_view operation) const override
+    {
+        return operation == "Identity" || operation == "SignIn" || (achievements && operation == "UnlockAchievement") ||
+               std::find(capabilities.begin(), capabilities.end(), operation) != capabilities.end();
+    }
+    std::string begin(std::string_view, std::string_view argument) override
+    {
+        if (!failure.empty())
+            return failure;
+        pending = true;
+        lastArgument = argument;
+        return {};
+    }
+    bool poll(bool& success, std::string& reason) override
+    {
+        if (!pending)
+            return false;
+        pending = false;
+        success = failure.empty();
+        authenticated = success;
+        reason = failure;
+        return true;
+    }
+    std::string response() const override { return payload; }
+};
+} // namespace
+
+TEST_CASE("generic identity exists without integrations and its async failure does not park")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        assert(game:FindService("IdentityService") == nil)
+        local identity = game:GetService("IdentityService")
+        assert(identity.Parent == game)
+        assert(game:GetService("IdentityService") == identity)
+        assert(game:FindService("IdentityService") == identity)
+        assert(not identity:IsAvailable() and not identity:IsSignedIn())
+        assert(identity:GetLocalUser() == nil)
+        local co = coroutine.create(function()
+            local ok, reason = identity:SignInAsync()
+            assert(not ok and reason == "IntegrationUnavailable")
+        end)
+        assert(coroutine.resume(co))
+        assert(coroutine.status(co) == "dead")
+    )") == "");
+}
+
+TEST_CASE("generic achievements resolve project IDs and do not invent unsupported progress")
+{
+    Fixture fixture;
+    fixture.world->engineState().enabledIntegrations = {"xbox"};
+    auto native = std::make_unique<IdentityTestProvider>();
+    auto* provider = native.get();
+    provider->authenticated = true;
+    provider->achievements = true;
+    auto& entry = engine::script::context(fixture.runtime->state()).services->integrations["xbox"];
+    entry.attempted = true;
+    entry.provider = std::move(native);
+    engine::platform::PlatformServiceConfiguration config;
+    config.ids["achievements/xbox"]["FIRST_WIN"] = "17";
+    fixture.runtime->setPlatformServices(std::move(config));
+    CHECK(fixture.failure(R"(
+        local achievements = game:GetService("AchievementService")
+        assert(achievements:IsAvailable() and achievements:Supports("Unlock"))
+        assert(not achievements:Supports("GetProgress"))
+        assert(not achievements:Supports("SetProgress"))
+        assert(not achievements:Supports("invented"))
+        local progress, reason = achievements:GetProgressAsync("FIRST_WIN")
+        assert(progress == nil and reason == "NotSupported")
+        local ok, errorCode = achievements:UnlockAsync("MISSING")
+        assert(not ok and errorCode == "UnknownAchievement")
+        task.spawn(function()
+            local unlocked, error = achievements:UnlockAsync("FIRST_WIN")
+            assert(unlocked and error == nil)
+            game:SetAttribute("AchievementCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(provider->lastArgument == "17");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("AchievementCompleted") == true))") == "");
+    provider->failure = "NativeFailure:0x80004005";
+    CHECK(fixture.failure(R"(
+        local ok, reason = game:GetService("AchievementService"):UnlockAsync("FIRST_WIN")
+        assert(not ok and reason == "ProviderError")
+        local nativeOk, nativeReason = game:GetService("XboxService"):UnlockAchievementAsync("17")
+        assert(not nativeOk and nativeReason == "NativeFailure:0x80004005")
+    )") == "");
+}
+
+TEST_CASE("generic store is honest about absent capabilities and validates native product results")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local store = game:GetService("StoreService")
+        assert(not store:IsAvailable())
+        local owned, reason = store:OwnsAsync("DLC_01")
+        assert(owned == nil and reason == "IntegrationUnavailable")
+    )") == "");
+    fixture.world->engineState().enabledIntegrations = {"xbox"};
+    auto native = std::make_unique<IdentityTestProvider>();
+    auto* provider = native.get();
+    auto& entry = engine::script::context(fixture.runtime->state()).services->integrations["xbox"];
+    entry.attempted = true;
+    entry.provider = std::move(native);
+    CHECK(fixture.failure(R"(
+        local store = game:GetService("StoreService")
+        assert(not store:IsAvailable() and not store:Supports("Purchase"))
+        local ok, reason = store:PurchaseAsync("DLC_01")
+        assert(not ok and reason == "NotSupported")
+    )") == "");
+    provider->capabilities = {"GetProduct", "OwnsProduct"};
+    provider->payload = R"({"Id":"DLC_01","DisplayName":"Test product","Description":"Test only"})";
+    engine::platform::PlatformServiceConfiguration config;
+    config.ids["store/xbox"]["DLC_01"] = "native-product";
+    fixture.runtime->setPlatformServices(std::move(config));
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local product, reason = game:GetService("StoreService"):GetProductAsync("DLC_01")
+            assert(product ~= nil and reason == nil and product.Id == "DLC_01")
+            game:SetAttribute("ProductCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(provider->lastArgument.find("native-product") != std::string::npos);
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("ProductCompleted") == true))") == "");
+    provider->payload = "{}";
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local product, reason = game:GetService("StoreService"):GetProductAsync("DLC_01")
+            assert(product == nil and reason == "InvalidProviderResponse")
+            game:SetAttribute("InvalidProductRejected", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("InvalidProductRejected") == true))") == "");
+    provider->payload = "false";
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local owns, reason = game:GetService("StoreService"):OwnsAsync("DLC_01")
+            assert(owns == false and reason == nil)
+            game:SetAttribute("OwnershipCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("OwnershipCompleted") == true))") == "");
+}
+
+TEST_CASE("generic cloud slots use the shared async seam and retain explicit conflicts")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local cloud = game:GetService("CloudSaveService")
+        assert(not cloud:IsAvailable())
+        local data, reason = cloud:ReadAsync("save_1")
+        assert(data == nil and reason == "IntegrationUnavailable")
+    )") == "");
+    fixture.world->engineState().enabledIntegrations = {"test"};
+    auto native = std::make_unique<IdentityTestProvider>();
+    auto* provider = native.get();
+    provider->capabilities = {"CloudRead", "CloudWrite"};
+    auto& entry = engine::script::context(fixture.runtime->state()).services->integrations["test"];
+    entry.attempted = true;
+    entry.provider = std::move(native);
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local ok, reason = game:GetService("CloudSaveService"):WriteAsync("save_1", 'quoted "save"\nline')
+            assert(ok and reason == nil)
+            game:SetAttribute("CloudWriteCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("CloudWriteCompleted") == true))") == "");
+    core::JsonDocument request;
+    REQUIRE(request.parse(provider->lastArgument));
+    CHECK(request.root()["id"].asString() == "save_1");
+    CHECK(request.root()["data"].asString() == "quoted \"save\"\nline");
+    provider->failure = "Conflict";
+    CHECK(fixture.failure(R"(
+        local data, reason = game:GetService("CloudSaveService"):ReadAsync("save_1")
+        assert(data == nil and reason == "Conflict")
+    )") == "");
+    provider->failure.clear();
+    provider->payload = "\"remote save\"";
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local data, reason = game:GetService("CloudSaveService"):ReadAsync("save_1")
+            assert(data == "remote save" and reason == nil)
+            game:SetAttribute("CloudReadCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("CloudReadCompleted") == true))") == "");
+}
+
+TEST_CASE("generic leaderboards map boards and validate scores, counts and ranked responses")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local boards = game:GetService("LeaderboardService")
+        assert(not boards:IsAvailable())
+        local rows, reason = boards:GetTopAsync("HIGH_SCORE", 10)
+        assert(rows == nil and reason == "IntegrationUnavailable")
+    )") == "");
+    fixture.world->engineState().enabledIntegrations = {"test"};
+    auto native = std::make_unique<IdentityTestProvider>();
+    auto* provider = native.get();
+    provider->capabilities = {"GetLeaderboardTop", "SubmitLeaderboardScore"};
+    provider->payload = R"([{"UserId":"test:42","DisplayName":"Player","Rank":1,"Score":100}])";
+    auto& entry = engine::script::context(fixture.runtime->state()).services->integrations["test"];
+    entry.attempted = true;
+    entry.provider = std::move(native);
+    engine::platform::PlatformServiceConfiguration config;
+    config.ids["leaderboards/test"]["HIGH_SCORE"] = "native-board";
+    fixture.runtime->setPlatformServices(std::move(config));
+    CHECK(fixture.failure(R"(
+        local boards = game:GetService("LeaderboardService")
+        assert(boards:IsAvailable() and not boards:Supports("GetAroundPlayer"))
+        local rows, reason = boards:GetTopAsync("HIGH_SCORE", 101)
+        assert(rows == nil and reason == "InvalidArgument")
+        local ok, errorCode = boards:SubmitScoreAsync("HIGH_SCORE", math.huge)
+        assert(not ok and errorCode == "InvalidArgument")
+        task.spawn(function()
+            local rows, reason = boards:GetTopAsync("HIGH_SCORE", 10)
+            assert(rows ~= nil and reason == nil and rows[1].UserId == "test:42")
+            assert(rows[1].Rank == 1 and rows[1].Score == 100)
+            game:SetAttribute("LeaderboardCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    core::JsonDocument request;
+    REQUIRE(request.parse(provider->lastArgument));
+    CHECK(request.root()["id"].asString() == "native-board");
+    CHECK(request.root()["count"].asInteger() == 10);
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("LeaderboardCompleted") == true))") == "");
+}
+
+TEST_CASE("generic social queries preserve namespaces and never infer communication permission from errors")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local social = game:GetService("SocialService")
+        assert(not social:IsAvailable())
+        local permission, reason = social:CanCommunicateWithAsync("test:7")
+        assert(permission == nil and reason == "IntegrationUnavailable")
+    )") == "");
+    fixture.world->engineState().enabledIntegrations = {"test"};
+    auto native = std::make_unique<IdentityTestProvider>();
+    auto* provider = native.get();
+    provider->capabilities = {"GetFriends", "CanCommunicate", "GetPresence"};
+    provider->payload = "false";
+    auto& entry = engine::script::context(fixture.runtime->state()).services->integrations["test"];
+    entry.attempted = true;
+    entry.provider = std::move(native);
+    CHECK(fixture.failure(R"(
+        local social = game:GetService("SocialService")
+        assert(social:IsAvailable() and not social:Supports("IsBlocked"))
+        local permission, reason = social:CanCommunicateWithAsync("different:7")
+        assert(permission == nil and reason == "InvalidUser")
+        task.spawn(function()
+            local allowed, reason = social:CanCommunicateWithAsync("test:7")
+            assert(allowed == false and reason == nil)
+            game:SetAttribute("CommunicationChecked", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("CommunicationChecked") == true))") == "");
+    core::JsonDocument request;
+    REQUIRE(request.parse(provider->lastArgument));
+    CHECK(request.root()["id"].asString() == "7");
+    provider->payload = R"({"IsOnline":false,"Status":null})";
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local presence, reason = game:GetService("SocialService"):GetPresenceAsync("test:7")
+            assert(presence ~= nil and presence.IsOnline == false and presence.Status == nil and reason == nil)
+            game:SetAttribute("PresenceChecked", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("PresenceChecked") == true))") == "");
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local friends, reason = game:GetService("SocialService"):GetFriendsAsync()
+            assert(friends == nil and reason == "NotSignedIn")
+            game:SetAttribute("SocialFailureReceived", true)
+        end)
+    )") == "");
+    provider->failure = "NotSignedIn";
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("SocialFailureReceived") == true))") == "");
+}
+
+TEST_CASE("generic identity shares platform authentication and reports explicit errors")
+{
+    Fixture fixture;
+    fixture.world->engineState().enabledIntegrations = {"xbox"};
+    auto native = std::make_unique<IdentityTestProvider>();
+    auto* provider = native.get();
+    auto& entry = engine::script::context(fixture.runtime->state()).services->integrations["xbox"];
+    entry.attempted = true;
+    entry.provider = std::move(native);
+    CHECK(fixture.failure(R"(
+        local identity = game:GetService("IdentityService")
+        assert(identity:IsAvailable() and not identity:IsSignedIn())
+        assert(identity:GetLocalUser() == nil)
+        task.spawn(function()
+            local ok, errorCode = identity:SignInAsync()
+            assert(ok and errorCode == nil)
+            local user = identity:GetLocalUser()
+            assert(user ~= nil and user.Id == "xbox:42")
+            assert(user.DisplayName == "Test Player" and user.Platform == "xbox")
+            assert(user.IsSignedIn and identity:IsSignedIn())
+            assert(game:GetService("XboxService"):GetUserId() == "42")
+            game:SetAttribute("IdentityCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("IdentityCompleted") == true))") == "");
+    provider->failure = "PermissionDenied";
+    CHECK(fixture.failure(R"(
+        local ok, reason = game:GetService("IdentityService"):SignInAsync()
+        assert(not ok and reason == "PermissionDenied")
+    )") == "");
+    engine::platform::PlatformServiceConfiguration config;
+    config.providers["identity"] = "unregistered";
+    fixture.runtime->setPlatformServices(std::move(config));
+    CHECK(fixture.failure(R"(
+        local identity = game:GetService("IdentityService")
+        assert(not identity:IsAvailable())
+        local ok, reason = identity:SignInAsync()
+        assert(not ok and reason == "ProviderUnavailable")
+    )") == "");
+}
+
+TEST_CASE("InputService preference aliases and device signals reach deferred Luau handlers")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local input = game:GetService("InputService")
+        assert(input.PreferredInput == input.LastInputDeviceType)
+        assert(input.PreferredGamepadType == Enum.GamepadType.Unknown)
+        assert(input.PreferredGamepadId == 0)
+        game:SetAttribute("DeviceChanges", 0)
+        input.InputDeviceChanged:Connect(function(kind)
+            assert(kind == Enum.InputDeviceType.Gamepad)
+            assert(input.PreferredInput == kind)
+            game:SetAttribute("DeviceChanges", game:GetAttribute("DeviceChanges") + 1)
+        end)
+        input.PreferredGamepadTypeChanged:Connect(function(kind)
+            assert(kind == Enum.GamepadType.PlayStation)
+            game:SetAttribute("DeviceChanges", game:GetAttribute("DeviceChanges") + 1)
+        end)
+        input.PreferredGamepadIdChanged:Connect(function(id)
+            assert(id == 73)
+            game:SetAttribute("DeviceChanges", game:GetAttribute("DeviceChanges") + 1)
+        end)
+        input.GamepadConnected:Connect(function(id, kind)
+            assert(id == 73 and kind == Enum.GamepadType.PlayStation)
+            game:SetAttribute("DeviceChanges", game:GetAttribute("DeviceChanges") + 1)
+        end)
+    )") == "");
+    engine::input::InputSystem system;
+    engine::platform::Event events[2];
+    events[0].type = engine::platform::EventType::GamepadAdded;
+    events[0].gamepadId = 73;
+    events[0].gamepadFamily = engine::platform::GamepadType::PlayStation;
+    events[1] = events[0];
+    events[1].type = engine::platform::EventType::GamepadButtonDown;
+    events[1].gamepadButton = engine::platform::GamepadButton::South;
+    system.pumpFrame(events);
+    system.dispatchSimTick(*fixture.world, 1);
+    fixture.runtime->fireInputDeviceEvents(system.drainDeviceEvents());
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("DeviceChanges") == 0))") == "");
+    fixture.tick();
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("DeviceChanges") == 4))") == "");
+    system.dispatchSimTick(*fixture.world, 2);
+    fixture.runtime->fireInputDeviceEvents(system.drainDeviceEvents());
+    fixture.tick();
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("DeviceChanges") == 4))") == "");
+}
 
 TEST_CASE("the world boots with game, Workspace and the three script services")
 {
@@ -54,7 +465,7 @@ TEST_CASE("the world boots with game, Workspace and the three script services")
     )") == "");
 }
 
-TEST_CASE("every service exists from boot and GetService is a lookup")
+TEST_CASE("default eager services exist from boot and GetService is a lookup")
 {
     Fixture fixture;
 
@@ -85,7 +496,7 @@ TEST_CASE("every service exists from boot and GetService is a lookup")
     )") == "");
 }
 
-TEST_CASE("every service class in the build has an instance under game")
+TEST_CASE("every default service class in the build has an instance under game")
 {
     // **Counted against the registry rather than named**, because a list written
     // by hand is a list that goes stale the day somebody adds a service -- and
@@ -101,7 +512,8 @@ TEST_CASE("every service class in the build has an instance under game")
     core::usize present = 0;
     for (scene::ClassId id = 1; id < static_cast<scene::ClassId>(classes.classCount()); ++id) {
         const scene::ClassDescriptor* descriptor = classes.find(id);
-        if (descriptor == nullptr || !hasFlag(descriptor->flags, scene::ClassFlags::Service))
+        if (descriptor == nullptr || !hasFlag(descriptor->flags, scene::ClassFlags::Service) ||
+            !descriptor->integration.empty() || descriptor->lazyService)
             continue;
         ++services;
         if (world.findFirstChildOfClass(dataModel, id).valid())
@@ -513,6 +925,17 @@ TEST_CASE("an unbounded wait warns after five sim-seconds and keeps waiting")
 }
 
 // --- DebugService ------------------------------------------------------------
+
+TEST_CASE("DebugService exposes bounded diagnostic CPU captures")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local debug = game:GetService("DebugService")
+        assert(debug:GetProfileReport() == nil)
+        assert(not debug:CaptureProfile(0))
+        assert(not debug:CaptureProfile(121))
+    )") == "");
+}
 
 TEST_CASE("MessageOut carries every print and warn with its level")
 {
@@ -1084,4 +1507,160 @@ TEST_CASE("LocalizationService: with no catalogs at all the engine's text is sti
         assert(Localization:Translate("scene.err.number_positive") == "It takes a number greater than zero.")
         assert(Localization:Translate("nobody.has.this") == "nobody.has.this")
     )") == "");
+}
+
+TEST_CASE("inactive optional services remain callable without yielding or simulating success")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        assert(game:FindService("XboxService") == nil)
+        local xbox = game:GetService("XboxService")
+        assert(xbox == game:GetService("XboxService"))
+        assert(not xbox:IsAvailable())
+        assert(not xbox:IsSignedIn())
+        assert(xbox:GetUserId() == nil and xbox:GetGamertag() == nil)
+        local co = coroutine.create(function()
+            local ok, code = xbox:SignInAsync()
+            assert(not ok and code == "IntegrationDisabled")
+            ok, code = xbox:UnlockAchievementAsync("FIRST_KILL")
+            assert(not ok and code == "IntegrationDisabled")
+        end)
+        assert(coroutine.resume(co))
+        assert(coroutine.status(co) == "dead")
+        local ok, code = xbox:UnlockAchievementAsync("")
+        assert(not ok and code == "InvalidArgument")
+    )") == "");
+    CHECK(fixture.errors().empty());
+}
+
+TEST_CASE("enabled integration without a provider reports BackendUnavailable")
+{
+    Fixture fixture;
+    fixture.world->engineState().enabledIntegrations.push_back("xbox");
+    CHECK(fixture.failure(R"(
+        local xbox = game:GetService("XboxService")
+        assert(not xbox:IsAvailable())
+        local ok, code = xbox:SignInAsync()
+        assert(not ok and code == "BackendUnavailable")
+    )") == "");
+    CHECK(fixture.errors().empty());
+}
+
+TEST_CASE("inactive service warns once in development and stays silent in players")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local xbox = game:GetService("XboxService")
+        xbox:IsAvailable()
+        xbox:SignInAsync()
+    )") == "");
+    CHECK(fixture.logCount("XboxService") == 0);
+    engine::script::setDeveloperWarnings(fixture.runtime->state(), true);
+    CHECK(fixture.failure(R"(
+        local xbox = game:GetService("XboxService")
+        xbox:IsAvailable()
+        xbox:SignInAsync()
+        game:GetService("XboxService")
+    )") == "");
+    CHECK(fixture.logCount("XboxService") == 1);
+}
+
+TEST_CASE("local guests own independent intents and directed remote replies without peer impersonation")
+{
+    Fixture fixture;
+    REQUIRE(fixture.failure(R"(game:GetService("NetworkService"))") == "");
+    const auto service = scene::networkServiceOf(*fixture.world, fixture.runtime->dataModel());
+    REQUIRE(service.valid());
+    (void)scene::createPlayer(*fixture.world, service, 1, true);
+    const auto remotePeer = scene::createPlayer(*fixture.world, service, 9, false);
+    REQUIRE(remotePeer.valid());
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        assert(#net:GetLocalPlayers() == 1)
+        local guest = net:AddLocalPlayer()
+        assert(guest ~= nil and guest ~= net.LocalPlayer)
+        guest.Name = "Guest"
+        assert(guest.UserId >= 2147483648)
+        assert(#net:GetLocalPlayers() == 2 and #net:GetPlayers() == 3)
+        local context = Instance.new("InputContext")
+        context.Name = "GuestContext"
+        context.Player = guest
+        context.GamepadId = 22
+        assert(context.Player == guest and context.GamepadId == 22)
+        context.Parent = game:GetService("InputService")
+        local action = Instance.new("InputAction")
+        action.Name = "Move"
+        action.Type = Enum.InputActionType.Direction2D
+        action.Parent = context
+        local remote = Instance.new("RemoteEvent")
+        remote.Name = "GuestReply"
+        remote.Parent = workspace
+        remote.ServerReceived:Connect(function(player, value)
+            assert(player == guest and value == "choose")
+            remote:FireClient(player, "cards")
+        end)
+        remote.LocalClientReceived:Connect(function(player, value)
+            assert(player == guest and value == "cards")
+            game:SetAttribute("GuestReply", true)
+        end)
+        remote.ClientReceived:Connect(function(value)
+            assert(value == "primary")
+            game:SetAttribute("PrimaryReply", true)
+        end)
+        remote:FireServerFor(guest, "choose")
+        remote:FireClient(net.LocalPlayer, "primary")
+        assert(not pcall(function() remote:FireServerFor(net:FindFirstChild("Player9"), "forged") end))
+        assert(not pcall(function() net:Host(31000) end))
+        assert(not pcall(function() net:Join("127.0.0.1:31000") end))
+        assert(not pcall(function() context.GamepadId = -1 end))
+        assert(not pcall(function() context.GamepadId = 1.5 end))
+        assert(not pcall(function() context.Player = net:FindFirstChild("Player9") end))
+    )") == "");
+    fixture.world->inputActions().forEach(
+        [](core::InstanceId, scene::InputActionComponent& action) { action.axis = core::Vec3{0.75f, -0.25f, 0.0f}; });
+    scene::captureLocalIntents(*fixture.world);
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        assert(net:FindFirstChild("Guest"):GetIntent("Move") == Vector2.new(0.75, -0.25))
+        assert(net.LocalPlayer:GetIntent("Move") == false)
+    )") == "");
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        game:GetService("RunService"):BindToIntent("GuestMovement", function(intent)
+            intent:Set("Move", Vector2.new(-0.5, 0.25))
+        end, net:FindFirstChild("Guest"))
+        game:GetService("RunService"):BindToIntent("PrimaryJump", function(intent)
+            intent:Set("Jump", true)
+        end)
+        assert(not pcall(function()
+            game:GetService("RunService"):BindToIntent("Forged", function() end, net:FindFirstChild("Player9"))
+        end))
+    )") == "");
+    engine::script::runIntentWriters(fixture.runtime->state());
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        assert(net:FindFirstChild("Guest"):GetIntent("Move") == Vector2.new(-0.5, 0.25))
+        assert(net.LocalPlayer:GetIntent("Move") == false)
+        assert(net.LocalPlayer:GetIntent("Jump") == true)
+    )") == "");
+    for (int pass = 0; pass < 3; ++pass) {
+        engine::script::fireRemoteMessages(fixture.runtime->state());
+        fixture.tick();
+    }
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(
+        assert(game:GetAttribute("GuestReply") == true and game:GetAttribute("PrimaryReply") == true)
+        local net = game:GetService("NetworkService")
+        assert(not net:RemoveLocalPlayer(net.LocalPlayer))
+        assert(not net:RemoveLocalPlayer(net:FindFirstChild("Player9")))
+        local guest = net:FindFirstChild("Guest")
+        assert(net:RemoveLocalPlayer(guest))
+        assert(not net:RemoveLocalPlayer(guest))
+        assert(#net:GetLocalPlayers() == 1)
+        assert(not pcall(function() workspace:FindFirstChild("GuestReply"):FireServerFor(guest) end))
+    )") == "");
+    scene::captureLocalIntents(*fixture.world);
+    CHECK(fixture.failure(R"(assert(game:GetService("NetworkService").LocalPlayer:GetIntent("Move") == false))") == "");
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Replica;
+    CHECK(fixture.failure(R"(assert(game:GetService("NetworkService"):AddLocalPlayer() == nil))") == "");
 }

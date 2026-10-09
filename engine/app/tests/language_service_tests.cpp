@@ -707,3 +707,31 @@ TEST_CASE("what a string in require names is one rule")
     CHECK(named("src/client/Main.luau", "@nobody/Signal") == "-");
     CHECK(named("src/client/Main.luau", "../../../outside") == "-");
 }
+
+TEST_CASE("inactive service references warn without rejecting their types or matching comments")
+{
+    LanguageCore language(definitions());
+    TreeBuilder builder;
+    builder.tree.optionalServices.emplace("XboxService", "xbox");
+    const auto folder = builder.add(0, "ClientScriptService", "ClientScriptService");
+    (void)builder.add(folder, "Main", "Script", R"(
+local xbox = game:GetService("XboxService")
+local available: boolean = xbox:IsAvailable()
+-- game:GetService("XboxService")
+local text = 'game:GetService("XboxService")'
+print(available, text)
+)");
+    language.update(builder.tree);
+    const auto disabled = language.check("game.ClientScriptService.Main");
+    const auto count = [](const app::LanguageCheck& result) {
+        return std::count_if(result.diagnostics.begin(), result.diagnostics.end(), [](const app::Diagnostic& d) {
+            return d.severity == app::Severity::Warning && d.message.find("XboxService") != std::string::npos;
+        });
+    };
+    CHECK(count(disabled) == 1);
+    CHECK(std::none_of(disabled.diagnostics.begin(), disabled.diagnostics.end(),
+                       [](const app::Diagnostic& d) { return d.severity == app::Severity::Error; }));
+    builder.tree.enabledIntegrations.push_back("xbox");
+    language.update(builder.tree);
+    CHECK(count(language.check("game.ClientScriptService.Main")) == 0);
+}

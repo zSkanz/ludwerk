@@ -1235,6 +1235,16 @@ TEST_CASE("D513: an anchored part nothing can meet has no body, however often it
     mirror.step();
     CHECK(mirror.sync.bodyCount() == 0);
     CHECK(mirror.backend.destroyed.size() == 1);
+
+    // The high-index visual never needed a mirror slot. Enabling queries must
+    // still allocate and create it, then remove it when made visual again.
+    mirror.body(figures.back()).canQuery = true;
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 1);
+    mirror.body(figures.back()).canQuery = false;
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 0);
+    CHECK(mirror.backend.destroyed.size() == 2);
 }
 
 TEST_CASE("D513: an anchored part a joint holds keeps its body, colliding or not")

@@ -235,6 +235,18 @@ Why a `TextInput` stopped taking the keyboard (ADR 0139): what `FocusLost` says 
 | `Cancelled` | 2 | Escape; with `RevertOnEscape` the text is what it was when focus came. |
 | `Script` | 3 | `ReleaseFocus`, another field's `CaptureFocus`, or the field leaving the screen. |
 
+## Enum.GamepadType
+
+Physical gamepad family, independent of operating system, input category and glyph/button layout.
+
+| Item | Value | Description |
+|---|---|---|
+| `Unknown` | 0 | No active gamepad or a device whose family SDL cannot identify. |
+| `Xbox` | 1 |  |
+| `PlayStation` | 2 |  |
+| `Nintendo` | 3 |  |
+| `Generic` | 4 | An identified standard gamepad without a branded family. |
+
 ## Enum.GradientTileMode
 
 What a `UIGradient` draws past the end of its sequence.

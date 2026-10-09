@@ -224,6 +224,17 @@ enum class MouseButton : u8
 // The paddles, touchpad button and the `MISC` range are deliberately absent:
 // they exist on a minority of hardware, and an enum item nothing can produce on
 // the machine in front of you is a binding that silently never fires.
+// Physical controller family, independent of button labels and the host OS.
+enum class GamepadType : u8
+{
+    Unknown = 0,
+    Xbox = 1,
+    PlayStation = 2,
+    Nintendo = 3,
+    Generic = 4
+};
+[[nodiscard]] GamepadType gamepadType(u32 id) noexcept;
+
 enum class GamepadButton : u8
 {
     Unknown = 0,
@@ -342,6 +353,7 @@ struct Event
     // the connection and is NOT a player index -- unplugging and replugging one
     // pad produces a new id, which is why a binding is never stored against it.
     u32 gamepadId = 0;
+    GamepadType gamepadFamily = GamepadType::Unknown;
     GamepadButton gamepadButton = GamepadButton::Unknown;
     GamepadAxis gamepadAxis = GamepadAxis::Unknown;
     // GamepadAxisMoved. -1..1 for a stick, 0..1 for a trigger. No dead zone is

@@ -29,7 +29,9 @@
 #include "engine/render/shader_types.h"
 #include "engine/render/shadow.h"
 #include "engine/render/surface_source.h"
+#include "particle_batches.h"
 #include "smaa_tables.h"
+#include "terrain_variants.h"
 
 namespace engine::render {
 namespace {
@@ -722,6 +724,7 @@ public:
     void setSettings(const GraphicsSettings& settings) override;
     void setSurfaceSource(ISurfaceSource* source) override { surfaceSource_ = source; }
     void warm(rhi::IDevice& device) override;
+    [[nodiscard]] std::optional<bool> warmSurface(rhi::IDevice& device, std::string_view name) override;
     [[nodiscard]] const GraphicsSettings& settings() const noexcept override { return settings_; }
     [[nodiscard]] core::Vec2 cameraJitter(const RenderWorld& world, u32 targetWidth, u32 targetHeight) const override;
     [[nodiscard]] bool generatesFrames(const RenderWorld& world) const noexcept override;
@@ -1130,6 +1133,12 @@ private:
     bool terrainTried_ = false;
     bool terrainValid_ = false;
     rhi::PipelineHandle terrainPipeline_{};
+    rhi::PipelineHandle terrainNoHexPipeline_{};
+    rhi::PipelineHandle terrainTriplanarNoHexPipeline_{};
+    bool terrainNoHexTried_ = false;
+    bool terrainNoHexNow_ = false;
+    bool terrainTriplanarNoHexTried_ = false;
+    bool terrainTriplanarNoHexNow_ = false;
     // The ground's compiled variants (ADR 0179): made when a frame first asks
     // for one, and the one a frame's terrain draws go through.
     rhi::PipelineHandle terrainFastPipeline_{};
@@ -1143,7 +1152,7 @@ private:
     bool terrainFullTried_ = false;
     bool terrainFastTried_ = false;
     bool terrainFlatTried_ = false;
-    void ensureTerrainForward(rhi::IDevice& device);
+    void ensureTerrainForward(rhi::IDevice& device, const RenderWorld& world);
     [[nodiscard]] rhi::PipelineHandle makeTerrainForward(rhi::IDevice& device, rhi::ShaderHandle vertex,
                                                          rhi::ShaderHandle fragment, const char* debugName);
     // Which of them a frame's terrain draws go through, by the surface asked
@@ -1231,14 +1240,8 @@ private:
     bool foliageCulled_ = false;
     bool particleTried_ = false;
     std::vector<GpuParticle> particleStaging_;
-    // Consecutive particles of one picture, drawn as one (ADR 0160).
-    struct ParticleRun
-    {
-        rhi::TextureHandle texture;
-        u32 first = 0;
-        u32 count = 0;
-    };
-    std::vector<ParticleRun> particleRuns_;
+    // Consecutive particles sharing a bounded set of pictures, in depth order.
+    std::vector<ParticleBatch> particleRuns_;
 
     // **Particles simulated on the GPU** (ADR 0160): a buffer an emitter, kept
     // from frame to frame and stepped by a compute pass, and drawn from where
@@ -2238,6 +2241,7 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
 // dial that buys memory (settings.h).
 std::optional<core::EngineError> DefaultRenderer::ensureShadowMap(rhi::IDevice& device)
 {
+    ENG_PROFILE_SCOPE("prepare.shadow_map");
     if (shadowMap_.valid() && shadowTile_ == settings_.shadowTileResolution)
         return std::nullopt;
 
@@ -2281,16 +2285,34 @@ void DefaultRenderer::warm(rhi::IDevice& device)
 {
     if (!valid_)
         return;
+    core::profile::Sections sections;
     // Each makes its family once and answers from then on; one that cannot be
     // made -- a shader the content does not carry -- is tried once here as it
     // would have been in play, and draws nothing either way.
+    ENG_PROFILE_NEXT(sections, "warm.particles");
     (void)ensureParticles(device);
+    ENG_PROFILE_NEXT(sections, "warm.gpu_particles");
     (void)ensureGpuParticles(device);
+    ENG_PROFILE_NEXT(sections, "warm.ribbons");
     (void)ensureRibbons(device);
+    ENG_PROFILE_NEXT(sections, "warm.decals");
     (void)ensureDecals(device);
+    ENG_PROFILE_NEXT(sections, "warm.world_ui");
     (void)ensureWorldUi(device);
+    ENG_PROFILE_NEXT(sections, "warm.highlight");
     (void)ensureHighlightMasks(device);
+    ENG_PROFILE_NEXT(sections, "warm.skinning");
     (void)ensureSkinnedInstancing(device);
+}
+
+std::optional<bool> DefaultRenderer::warmSurface(rhi::IDevice& device, std::string_view name)
+{
+    if (!valid_ || shaderLibrary_ == nullptr)
+        return std::nullopt;
+    bool failed = false;
+    if (surfaceFor(device, name, failed) != 0)
+        return true;
+    return failed ? std::optional<bool>{false} : std::nullopt;
 }
 
 void DefaultRenderer::setSettings(const GraphicsSettings& settings)
@@ -2379,6 +2401,7 @@ void DefaultRenderer::releaseView(rhi::IDevice& device, u32 view)
 
 std::optional<core::EngineError> DefaultRenderer::ensureTargets(rhi::IDevice& device, u32 width, u32 height)
 {
+    ENG_PROFILE_SCOPE("prepare.targets");
     if (!ensureEnvironmentMap(device))
         return core::makeError(ENG_TR("render.err.target_create_failed"));
     if (hdr_.valid() && width == width_ && height == height_)
@@ -2603,11 +2626,17 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     voxelBlocksSent_ = false;
 
     terrainFullTried_ = false;
+    terrainNoHexTried_ = false;
+    terrainNoHexNow_ = false;
+    terrainTriplanarNoHexTried_ = false;
+    terrainTriplanarNoHexNow_ = false;
     terrainFastTried_ = false;
     terrainFlatTried_ = false;
     terrainVertex_ = {};
     terrainFragment_ = {};
     for (rhi::PipelineHandle* pipeline : {&terrainPipeline_,
+                                          &terrainNoHexPipeline_,
+                                          &terrainTriplanarNoHexPipeline_,
                                           &terrainFastPipeline_,
                                           &terrainFlatPipeline_,
                                           &terrainShadowPipeline_,
@@ -3011,6 +3040,7 @@ bool DefaultRenderer::buildSurfacePipelines(rhi::IDevice& device, SurfaceSet& se
 
 void DefaultRenderer::prepareSurfaces(rhi::IDevice& device, const RenderWorld& world)
 {
+    ENG_PROFILE_SCOPE("prepare.surfaces");
     materialSurface_.assign(world.materials.size(), 0u);
     materialError_.assign(world.materials.size(), false);
     materialBlock_.resize(world.materials.size());
@@ -3412,6 +3442,9 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
 
 void DefaultRenderer::updateEnvironment(rhi::ICmdList& cmd, const SkyParams& params)
 {
+    ENG_PROFILE_SCOPE("render.environment");
+    core::profile::Sections sections;
+    ENG_PROFILE_NEXT(sections, "environment.brdf");
     const auto uploadLevel = [&](u32 level) {
         const std::vector<core::u16>& pixels = environment_.levels[level];
         if (!pixels.empty())
@@ -3450,11 +3483,13 @@ void DefaultRenderer::updateEnvironment(rhi::ICmdList& cmd, const SkyParams& par
     // threshold, which set the diffuse one by what the expensive half could
     // afford -- and a light every matte surface receives is exactly the one that
     // must not arrive in steps.
+    ENG_PROFILE_NEXT(sections, "environment.irradiance");
     if (environment_.irradianceStale(params)) {
         environment_.irradianceSky = params;
         bakeIrradianceSh(params, environment_.irradianceTarget);
     }
 
+    ENG_PROFILE_NEXT(sections, "environment.prefilter");
     if (environment_.stale(params)) {
         environment_.target = params;
         for (bool& level : environment_.dirty)
@@ -3817,7 +3852,7 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                     // map and the three light tables -- five textures where
                     // the full ground's layout is sixteen -- and `Flat` none.
                     const rhi::PipelineHandle forward = terrainForwardPipeline();
-                    if (forward != terrainPipeline_) {
+                    if (forward == terrainFastPipeline_ || forward == terrainFlatPipeline_) {
                         cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&block, sizeof(block)));
                         if (forward == terrainFastPipeline_) {
                             const std::array<rhi::TextureBinding, 5> compact{
@@ -4171,6 +4206,7 @@ bool DefaultRenderer::ensureDecals(rhi::IDevice& device)
 bool DefaultRenderer::ensureLookPipeline(rhi::IDevice& device, LookPipeline& slot, const char* shader,
                                          rhi::TextureFormat format, LookBlend blend)
 {
+    ENG_PROFILE_SCOPE("prepare.look_pipeline");
     if (slot.tried)
         return slot.handle.valid();
     slot.tried = true;
@@ -5194,6 +5230,7 @@ void DefaultRenderer::failFsr2()
 
 bool DefaultRenderer::ensureFsr2(rhi::IDevice& device)
 {
+    ENG_PROFILE_SCOPE("prepare.fsr2");
     const auto whole = [this]() {
         for (const rhi::ComputePipelineHandle& pipeline : fsr2Pipelines_) {
             if (!pipeline.valid())
@@ -5949,6 +5986,7 @@ void DefaultRenderer::blurImage(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::T
 
 bool DefaultRenderer::ensureSkyLook(rhi::IDevice& device)
 {
+    ENG_PROFILE_SCOPE("prepare.sky_pipeline");
     if (skyLook_.tried)
         return skyLook_.handle.valid();
     skyLook_.tried = true;
@@ -7172,6 +7210,7 @@ const DefaultRenderer::TerrainArrays* DefaultRenderer::terrainArraysOf(core::Ins
 
 void DefaultRenderer::updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world)
 {
+    ENG_PROFILE_SCOPE("prepare.terrain_arrays");
     for (TerrainArrays& entry : terrainArrays_)
         ++entry.unseen;
 
@@ -7378,6 +7417,7 @@ void DefaultRenderer::updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& c
 
 bool DefaultRenderer::ensureTerrain(rhi::IDevice& device)
 {
+    ENG_PROFILE_SCOPE("prepare.terrain_pipeline");
     if (terrainTried_)
         return terrainValid_;
     terrainTried_ = true;
@@ -7491,6 +7531,10 @@ rhi::PipelineHandle DefaultRenderer::terrainForwardPipeline() const noexcept
 {
     using Surface = GraphicsSettings::TerrainSurface;
     const Surface wanted = terrainForwardWanted();
+    if (wanted == Surface::Full && terrainTriplanarNoHexNow_ && terrainTriplanarNoHexPipeline_.valid())
+        return terrainTriplanarNoHexPipeline_;
+    if (wanted == Surface::Full && terrainNoHexNow_ && terrainNoHexPipeline_.valid())
+        return terrainNoHexPipeline_;
     return wanted == Surface::Fast   ? terrainFastPipeline_
            : wanted == Surface::Flat ? terrainFlatPipeline_
                                      : terrainPipeline_;
@@ -7525,8 +7569,9 @@ rhi::PipelineHandle DefaultRenderer::makeTerrainForward(rhi::IDevice& device, rh
     });
 }
 
-void DefaultRenderer::ensureTerrainForward(rhi::IDevice& device)
+void DefaultRenderer::ensureTerrainForward(rhi::IDevice& device, const RenderWorld& world)
 {
+    ENG_PROFILE_SCOPE("prepare.terrain_forward");
     if (!terrainValid_ || shaderLibrary_ == nullptr)
         return;
     using Surface = GraphicsSettings::TerrainSurface;
@@ -7553,6 +7598,27 @@ void DefaultRenderer::ensureTerrainForward(rhi::IDevice& device)
     if (terrainForwardWanted() == Surface::Flat && !terrainFlatTried_) {
         terrainFlatTried_ = true;
         terrainFlatPipeline_ = variant("terrain_flat", "terrain_flat");
+    }
+    // A material-dependent permutation, not a quality tier. None of the
+    // world's layers can enter the omitted branch. Re-evaluate every frame
+    // so edits and views with another terrain retain the complete feature.
+    terrainNoHexNow_ = !terrainNeedsHexSampling(world);
+    terrainTriplanarNoHexNow_ = terrainNoHexNow_ && terrainIsTriplanarOnly(world);
+    if (terrainForwardWanted() == Surface::Full && terrainTriplanarNoHexNow_) {
+        if (!terrainTriplanarNoHexTried_) {
+            terrainTriplanarNoHexTried_ = true;
+            terrainTriplanarNoHexPipeline_ = variant("terrain_triplanar_no_hex", "terrain_triplanar_no_hex");
+        }
+        if (terrainTriplanarNoHexPipeline_.valid())
+            return;
+    }
+    if (terrainForwardWanted() == Surface::Full && terrainNoHexNow_) {
+        if (!terrainNoHexTried_) {
+            terrainNoHexTried_ = true;
+            terrainNoHexPipeline_ = variant("terrain_no_hex", "terrain_no_hex");
+        }
+        if (terrainNoHexPipeline_.valid())
+            return;
     }
     if (terrainForwardWanted() == Surface::Full && !terrainFullTried_) {
         terrainFullTried_ = true;
@@ -7780,16 +7846,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             gpu.params[0] = particle.emission;
             gpu.params[1] = static_cast<f32>(particle.shape);
             gpu.params[2] = particle.rotation;
-            gpu.params[3] = particle.texture.valid() ? 1.0f : 0.0f;
+            gpu.params[3] = static_cast<f32>(appendParticle(particleRuns_, particle.texture, static_cast<u32>(at)));
             for (usize corner = 0; corner < 4; ++corner)
                 gpu.uv[corner] = particle.uv[corner];
             particleStaging_.push_back(gpu);
-            // **Runs of one picture** (ADR 0160), in the order drawn: back
-            // to front across every emitter, so neighbours of one picture
-            // are one draw and blending is never out of order.
-            if (particleRuns_.empty() || particleRuns_.back().texture != particle.texture)
-                particleRuns_.push_back(ParticleRun{particle.texture, static_cast<u32>(at), 0});
-            particleRuns_.back().count += 1;
         }
         cmd.upload(particleBuffer_, asBytes(particleStaging_.data(), particleStaging_.size() * sizeof(GpuParticle)), 0);
         particleCount_ = static_cast<u32>(count);
@@ -7986,7 +8046,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // are drawn with two of them.
     if (!world.terrains.empty()) {
         (void)ensureTerrain(device);
-        ensureTerrainForward(device);
+        ensureTerrainForward(device, world);
     }
     updateTerrainArrays(device, cmd, world);
 
@@ -9073,13 +9133,14 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&lighting, sizeof(lighting)));
                 const std::array<rhi::BufferHandle, 1> particleBuffers{particleBuffer_};
                 cmd.bindVertexBuffers(0, particleBuffers);
-                for (const ParticleRun& run : particleRuns_) {
+                for (const ParticleBatch& run : particleRuns_) {
                     if (run.first >= particleCount_)
                         break;
-                    const std::array<rhi::TextureBinding, 2> particleTextures{
-                        rhi::TextureBinding{depth_, pointSampler_},
-                        rhi::TextureBinding{run.texture.valid() ? run.texture : whitePixel_, linearSampler_},
-                    };
+                    std::array<rhi::TextureBinding, MaxParticleTextures + 1> particleTextures;
+                    particleTextures[0] = {depth_, pointSampler_};
+                    for (u32 index = 0; index < MaxParticleTextures; ++index)
+                        particleTextures[index + 1] = {index < run.textureCount ? run.textures[index] : whitePixel_,
+                                                       linearSampler_};
                     cmd.bindTextures(rhi::ShaderStage::Fragment, 0, particleTextures);
                     cmd.draw(6, std::min(run.count, particleCount_ - run.first), 0, run.first);
                     countDraw(DrawKind::Particle);

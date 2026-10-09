@@ -30,9 +30,10 @@ struct InputObjectData
     core::Vec3 position;
     core::Vec3 delta;
     i32 touchId = 0;
+    u32 gamepadId = 0;
 };
 
-static_assert(sizeof(InputObjectData) == 36, "the InputObject payload's size is an ABI decision");
+static_assert(sizeof(InputObjectData) == 40, "the InputObject payload's size is an ABI decision");
 
 [[nodiscard]] const InputObjectData& checkInputObject(lua_State* L, int index)
 {
@@ -49,6 +50,13 @@ void pushInputObject(lua_State* L, const input::RawInputEvent& event)
     data->position = event.position;
     data->delta = event.delta;
     data->touchId = event.touchId;
+    data->gamepadId = event.gamepadId;
+}
+
+int inputObjectGetGamepadId(lua_State* L)
+{
+    lua_pushnumber(L, static_cast<double>(checkInputObject(L, 1).gamepadId));
+    return 1;
 }
 
 int inputObjectGetTouchId(lua_State* L)
@@ -124,11 +132,56 @@ void registerInputTypes(lua_State* L)
     addMember(getters, atoms, "Position", inputObjectGetPosition);
     addMember(getters, atoms, "Delta", inputObjectGetDelta);
     addMember(getters, atoms, "TouchId", inputObjectGetTouchId);
+    addMember(getters, atoms, "GamepadId", inputObjectGetGamepadId);
 
     // No `__eq`: two snapshots of one press are two facts about one tick, and
     // the bitwise comparison a trivially-copyable payload gives is the right
     // answer for a value type anyway.
     installTagMetatable(L, UserdataTag::InputObject, nullptr, inputObjectToString);
+}
+
+void fireInputDeviceEvents(lua_State* L, std::span<const input::DeviceEvent> events)
+{
+    if (events.empty())
+        return;
+    auto& ctx = context(L);
+    auto& w = *ctx.world;
+    const auto serviceClass = w.classes().findId(w.atoms().lookup("InputService"));
+    const auto service = w.findFirstChildOfClass(ctx.services->dataModel, serviceClass);
+    if (!service.valid())
+        return;
+    for (const auto& event : events) {
+        const char* name = "";
+        int arguments = 1;
+        switch (event.kind) {
+        case input::DeviceEvent::Kind::InputChanged:
+            name = "InputDeviceChanged";
+            pushEnumItem(
+                L, scene::EnumValue{scene::generated::InputDeviceTypeEnumId, static_cast<core::i32>(event.device)});
+            break;
+        case input::DeviceEvent::Kind::GamepadTypeChanged:
+            name = "PreferredGamepadTypeChanged";
+            pushEnumItem(L,
+                         scene::EnumValue{scene::generated::GamepadTypeEnumId, static_cast<core::i32>(event.family)});
+            break;
+        case input::DeviceEvent::Kind::GamepadIdChanged:
+            name = "PreferredGamepadIdChanged";
+            lua_pushnumber(L, static_cast<double>(event.id));
+            break;
+        case input::DeviceEvent::Kind::Connected:
+        case input::DeviceEvent::Kind::Disconnected:
+            name = event.kind == input::DeviceEvent::Kind::Connected ? "GamepadConnected" : "GamepadDisconnected";
+            lua_pushnumber(L, static_cast<double>(event.id));
+            pushEnumItem(L,
+                         scene::EnumValue{scene::generated::GamepadTypeEnumId, static_cast<core::i32>(event.family)});
+            arguments = 2;
+            break;
+        }
+        const auto* descriptor = w.classes().findEvent(serviceClass, w.atoms().intern(name));
+        if (descriptor != nullptr)
+            fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L) - arguments + 1, arguments);
+        lua_pop(L, arguments);
+    }
 }
 
 void fireInputEvents(lua_State* L, std::span<const input::RawInputEvent> events)

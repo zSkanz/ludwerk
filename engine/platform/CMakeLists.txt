@@ -6,9 +6,20 @@
 # must also link SDL3 itself. That makes crossing this seam a deliberate edit to
 # a CMakeLists rather than something that can happen by adding an #include.
 
+if(ENG_PLATFORM_UWP)
+engine_add_module(platform
+    LAYER 1
+    SOURCES src/uwp/platform.cpp src/uwp/file.cpp src/uwp/async_io.cpp src/uwp/host_support.cpp
+            src/mapped_file.cpp src/event_names.cpp src/path_component.cpp src/game_integration.cpp
+    DEPS core)
+target_link_libraries(engine_platform PRIVATE WindowsApp mincore)
+return()
+endif()
+
 engine_add_module(platform
     LAYER 1
     SOURCES
+        src/game_integration.cpp
         src/platform.cpp
         src/async_io.cpp
         src/file.cpp
@@ -16,6 +27,8 @@ engine_add_module(platform
         src/window.cpp
         src/process.cpp
         src/events.cpp
+        src/event_names.cpp
+        src/path_component.cpp
         src/clipboard.cpp
         src/console.cpp
         src/crash.cpp
@@ -44,6 +57,7 @@ endif()
 # rather than testing a mock of it.
 engine_add_module_tests(platform
     SOURCES
+        tests/game_integration_tests.cpp
         tests/platform_tests.cpp
         tests/async_io_tests.cpp
         tests/console_tests.cpp
@@ -52,6 +66,15 @@ engine_add_module_tests(platform
     DEPS
         SDL3::SDL3-static
 )
+
+# Exercise the native AppContainer IO implementation against the SAME queue
+# contract on a desktop test runner, without requiring package activation.
+if(WIN32 AND ENG_BUILD_TESTS)
+    engine_add_module_tests(platform_uwp_io
+        MODULES platform
+        SOURCES tests/async_io_tests.cpp src/uwp/async_io.cpp src/uwp/file.cpp
+        DEPS mincore WindowsApp)
+endif()
 
 # The same icon resource `engine_host` carries, linked into the test binary so
 # that `applicationIconBytes()` has something to find. An executable is the only
@@ -85,4 +108,14 @@ if(ENG_BUILD_TESTS)
             -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/crash-gate
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_crash_gate.cmake)
     set_tests_properties(crash_gate PROPERTIES TIMEOUT 60)
+endif()
+
+if(ENG_BUILD_TESTS)
+    add_library(engine_test_game_integration SHARED tests/game_integration_provider.cpp)
+    target_include_directories(engine_test_game_integration PRIVATE include)
+    target_link_libraries(engine_test_game_integration PRIVATE engine::warnings)
+    target_compile_features(engine_test_game_integration PRIVATE cxx_std_20)
+    add_dependencies(engine_platform_tests engine_test_game_integration)
+    target_compile_definitions(engine_platform_tests PRIVATE
+        ENG_TEST_PROVIDER_PATH="$<TARGET_FILE:engine_test_game_integration>")
 endif()

@@ -73,7 +73,8 @@ TEST_CASE("an empty world still boots, with game and every service under it")
     const scene::ClassRegistry& classes = host.world().classes();
     for (scene::ClassId id = 1; id < static_cast<scene::ClassId>(classes.classCount()); ++id) {
         const scene::ClassDescriptor* descriptor = classes.find(id);
-        if (descriptor != nullptr && hasFlag(descriptor->flags, scene::ClassFlags::Service))
+        if (descriptor != nullptr && hasFlag(descriptor->flags, scene::ClassFlags::Service) &&
+            descriptor->integration.empty() && !descriptor->lazyService)
             ++services;
     }
     CHECK(services > 5);
@@ -2976,6 +2977,54 @@ TEST_CASE("LoadScene is the authority's: a client in a match is refused, and the
     CHECK(host.world().engineState().currentScene == "scenes/a.scene.json");
 }
 
+TEST_CASE("platform authentication survives actual scene changes and closes with the runtime")
+{
+    class Provider final : public platform::GameIntegration
+    {
+    public:
+        explicit Provider(int& destroyed) : m_destroyed(destroyed) {}
+        ~Provider() override { ++m_destroyed; }
+        bool available() const override { return true; }
+        bool signedIn() const override { return true; }
+        platform::IntegrationUser user() const override { return {"42", "Scene test user"}; }
+        bool supports(std::string_view operation) const override { return operation == "Identity"; }
+        std::string begin(std::string_view, std::string_view) override { return "NotSupported"; }
+        bool poll(bool&, std::string&) override { return false; }
+
+    private:
+        int& m_destroyed;
+    };
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    int destroyed = 0;
+    {
+        app::WorldHost host;
+        auto options = sceneOptions(project);
+        options.enabledIntegrations = {"xbox"};
+        REQUIRE_FALSE(host.boot(options).has_value());
+        auto& entry = script::context(host.runtime().state()).services->integrations["xbox"];
+        entry.attempted = true;
+        entry.provider = std::make_unique<Provider>(destroyed);
+        auto* native = entry.provider.get();
+        lua_State* vm = host.runtime().state();
+        const std::string source = R"(
+            local identity = game:GetService("IdentityService")
+            assert(identity:IsSignedIn())
+            assert(identity:GetLocalUser().Id == "xbox:42")
+        )";
+        REQUIRE_FALSE(host.runtime().runSource(source, "platform-before-scene").has_value());
+        REQUIRE_FALSE(host.loadScene("scenes/b.scene.json").has_value());
+        REQUIRE_FALSE(host.loadScene("scenes/a.scene.json").has_value());
+        CHECK(host.runtime().state() == vm);
+        CHECK(script::context(vm).services->integrations.at("xbox").provider.get() == native);
+        CHECK(destroyed == 0);
+        CHECK_FALSE(host.runtime().runSource(source, "platform-after-scene").has_value());
+        CHECK(log.errors.empty());
+    }
+    CHECK(destroyed == 1);
+}
+
 TEST_CASE("a host loads a scene by path and it is the one path the editor takes too")
 {
     Captured log;
@@ -3650,6 +3699,48 @@ TEST_CASE("PreloadAsync waits for every item, reports each, and names what an in
 }
 
 // --- The display's rate (ADR 0136) --------------------------------------------------
+
+TEST_CASE("PreloadAsync keeps a surface pending until native pipelines are ready")
+{
+    Captured log;
+    Project project;
+    // Finding source on disk must not make its native pipelines ready.
+    project.write("content/shaders/pickup.surface.hlsl", "// source");
+    project.write("src/client/preload.luau", R"(
+        game:GetService("ContentProvider"):PreloadAsync({ "asset://shaders/pickup.surface.hlsl" },
+            function(_item: any, status: Enum.AssetFetchStatus)
+                print(`surface {status.Name}`)
+            end)
+        print("surface preload done")
+    )");
+    auto options = bootOptions(project.root);
+    std::optional<bool> ready;
+    int requested = 0;
+    options.warmContent = [&](scene::World&, const std::vector<std::string>& names) {
+        REQUIRE(names == std::vector<std::string>{"asset://shaders/pickup.surface.hlsl"});
+        ++requested;
+    };
+    options.warmedContent = [&](scene::World&, std::string_view) { return ready; };
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(options).has_value());
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    CHECK(requested == 1);
+    CHECK_FALSE(log.contains("surface preload done"));
+    SUBCASE("ready")
+    {
+        ready = true;
+    }
+    SUBCASE("failed")
+    {
+        ready = false;
+    }
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    CHECK(log.contains(*ready ? "surface Success" : "surface Failure"));
+    CHECK(log.contains("surface preload done"));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
 
 namespace {
 

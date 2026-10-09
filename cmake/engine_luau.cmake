@@ -42,7 +42,10 @@ add_subdirectory(${ENG_THIRD_PARTY_DIR}/luau ${CMAKE_BINARY_DIR}/third_party/lua
 add_library(engine_luau INTERFACE)
 add_library(engine::luau ALIAS engine_luau)
 
-target_link_libraries(engine_luau INTERFACE Luau.VM Luau.CodeGen)
+target_link_libraries(engine_luau INTERFACE Luau.VM)
+if(NOT ENG_PLATFORM_UWP)
+    target_link_libraries(engine_luau INTERFACE Luau.CodeGen)
+endif()
 
 if(ENG_LUAU_COMPILER)
     target_link_libraries(engine_luau INTERFACE Luau.Compiler Luau.Ast)

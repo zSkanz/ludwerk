@@ -23,8 +23,11 @@ local check = require("./commands/check")
 local dev = require("./commands/dev")
 local edit = require("./commands/edit")
 local fmt = require("./commands/fmt")
+local json = require("@std/json")
 local keystore = require("./commands/keystore")
 local migrate = require("./commands/migrate")
+local moduleManager = require("./modules/manager")
+local moduleRegistry = require("./modules/registry")
 local new = require("./commands/new")
 local projectlib = require("./project")
 local saves = require("./commands/saves")
@@ -270,7 +273,7 @@ local function main(): number
         -- What each target needs and whether this machine has it, for the
         -- editor's Export window.
         if parsed.flags.status ~= nil then
-            return build.status()
+            return build.status(firstPositional(parsed, "."))
         end
         -- `--progress=json` is the only format there is; anything else is a
         -- typo rather than a request for a format this does not have.
@@ -288,6 +291,57 @@ local function main(): number
             progress = progressFlag == "json",
             bumpVersionCode = parsed.flags["bump-version-code"] ~= nil,
         })
+    end
+
+    if parsed.command == "modules" then
+        if not rejectUnknownFlags(parsed, { "project", "accept-licenses", "package", "sha256" }) then
+            return 2
+        end
+        local operation = parsed.positional[1] or "status"
+        if operation == "status" then
+            local project = projectlib.load(parsed.flags.project or ".")
+            print(json.serialize({ modules = moduleManager.rows(project.config) } :: any))
+            return 0
+        end
+        local item = moduleRegistry.find(parsed.positional[2] or "")
+        if item == nil then
+            print(tr("cli.modules.usage"))
+            return 2
+        end
+        if operation == "remove" then
+            return moduleManager.remove(item)
+        end
+        if operation == "verify" then
+            print(
+                tr(
+                    if moduleManager.verify(item) then "cli.modules.present" else "cli.modules.missing",
+                    { module = tr(item.Label) }
+                )
+            )
+            return if moduleManager.verify(item) then 0 else 1
+        end
+        if operation == "install" or operation == "update" then
+            if item.Kind ~= "builtin" and parsed.flags["accept-licenses"] == nil then
+                print(tr("cli.modules.licenses"))
+                return 2
+            end
+            if parsed.flags.package ~= nil then
+                return moduleManager.installPackage(item, parsed.flags.package, parsed.flags.sha256 or "")
+            end
+            local ordered = moduleRegistry.resolve(item.Id)
+            if ordered == nil then
+                return 2
+            end
+            for _, dependency in ordered do
+                local result = moduleManager.install(dependency)
+                if result ~= 0 then
+                    return result
+                end
+            end
+            return 0
+        end
+        print(tr("cli.modules.usage"))
+        return 2
     end
 
     if parsed.command == "android" then

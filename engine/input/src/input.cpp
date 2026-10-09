@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 #include "engine/scene/world.h"
 
@@ -278,6 +279,56 @@ void InputSystem::setHeld(i32 code, bool down) noexcept
     }
 }
 
+InputSystem::GamepadState& InputSystem::gamepad(const platform::Event& event)
+{
+    auto found =
+        std::find_if(m_gamepads.begin(), m_gamepads.end(), [&](const auto& pad) { return pad.id == event.gamepadId; });
+    if (found == m_gamepads.end()) {
+        m_gamepads.push_back(GamepadState{});
+        found = m_gamepads.end() - 1;
+        found->id = event.gamepadId;
+    }
+    if (event.gamepadFamily != platform::GamepadType::Unknown)
+        found->family = event.gamepadFamily;
+    return *found;
+}
+void InputSystem::preferGamepad(const GamepadState& pad) noexcept
+{
+    m_state.lastDevice = DeviceType::Gamepad;
+    m_state.preferredGamepadId = pad.id;
+    m_state.preferredGamepadType = pad.family;
+}
+void InputSystem::rebuildGamepadState()
+{
+    m_state.gamepads.clear();
+    for (const auto& pad : m_gamepads)
+        m_state.gamepads.push_back(pad);
+    std::sort(m_state.gamepads.begin(), m_state.gamepads.end(),
+              [](const auto& a, const auto& b) { return a.id < b.id; });
+    for (i32 button = 1; button <= PadButtonCount; ++button) {
+        const bool held = std::any_of(m_gamepads.begin(), m_gamepads.end(),
+                                      [button](const auto& pad) { return pad.buttons[static_cast<usize>(button)]; });
+        const i32 code = PadButtonFirst + button - 1;
+        if (!held || !m_state.held[static_cast<usize>(code)])
+            setHeld(code, held);
+    }
+    for (i32 axis = 1; axis <= PadAxisCount; ++axis) {
+        f32 value = 0.0f;
+        for (const auto& pad : m_gamepads) {
+            const f32 candidate = pad.axes[static_cast<usize>(axis)];
+            if (std::abs(candidate) > std::abs(value))
+                value = candidate;
+        }
+        m_state.axis[static_cast<usize>(PadAxisFirst + axis - 1)] = value;
+    }
+}
+std::span<const DeviceEvent> InputSystem::drainDeviceEvents() noexcept
+{
+    m_devicesDrained.swap(m_deviceEvents);
+    m_deviceEvents.clear();
+    return m_devicesDrained;
+}
+
 void InputSystem::pumpFrame(std::span<const platform::Event> events)
 {
     for (const platform::Event& event : events) {
@@ -315,45 +366,73 @@ void InputSystem::pumpFrame(std::span<const platform::Event> events)
             // is +Y, which is the direction the `Up` composite means.
             m_simPointerDelta = m_simPointerDelta + core::Vec2{event.pointerDeltaX, -event.pointerDeltaY};
             m_renderPointerDelta = m_renderPointerDelta + core::Vec2{event.pointerDeltaX, -event.pointerDeltaY};
-            // Deliberately does NOT set `lastDevice`: a mouse nudged by a desk
-            // bump would otherwise steal every prompt on screen from a gamepad
-            // the player is holding.
+            if (event.pointerDeltaX != 0.0f || event.pointerDeltaY != 0.0f)
+                m_state.lastDevice = DeviceType::KeyboardMouse;
             break;
         case platform::EventType::MouseWheel:
             m_simWheel = m_simWheel + core::Vec2{event.wheelX, event.wheelY};
             m_renderWheel = m_renderWheel + core::Vec2{event.wheelX, event.wheelY};
             m_state.lastDevice = DeviceType::KeyboardMouse;
             break;
+        case platform::EventType::GamepadAdded: {
+            const bool known = std::any_of(m_gamepads.begin(), m_gamepads.end(),
+                                           [&](const auto& pad) { return pad.id == event.gamepadId; });
+            const auto& pad = gamepad(event);
+            if (!known && pad.id != 0)
+                m_deviceEvents.push_back({DeviceEvent::Kind::Connected, DeviceType::Gamepad, pad.family, pad.id});
+            rebuildGamepadState();
+            break;
+        }
         case platform::EventType::GamepadButtonDown:
         case platform::EventType::GamepadButtonUp: {
-            const i32 code = keyCodeOf(event.gamepadButton);
-            if (!valid(code))
+            if (!valid(keyCodeOf(event.gamepadButton)))
                 break;
-            setHeld(code, event.type == platform::EventType::GamepadButtonDown);
-            m_state.lastDevice = DeviceType::Gamepad;
+            auto& pad = gamepad(event);
+            const auto button = static_cast<usize>(event.gamepadButton);
+            const bool down = event.type == platform::EventType::GamepadButtonDown;
+            if (down) {
+                pad.unseen[button] = pad.unseen[button] || !pad.buttons[button];
+                pad.buttons[button] = true;
+                pad.releasing[button] = false;
+            }
+            else if (pad.unseen[button]) {
+                pad.releasing[button] = true;
+            }
+            else {
+                pad.buttons[button] = false;
+            }
+            if (event.type == platform::EventType::GamepadButtonDown)
+                preferGamepad(pad);
+            rebuildGamepadState();
             break;
         }
         case platform::EventType::GamepadAxisMoved: {
-            const i32 code = keyCodeOf(event.gamepadAxis);
-            if (!valid(code))
+            if (!valid(keyCodeOf(event.gamepadAxis)))
                 break;
-            m_state.axis[static_cast<usize>(code)] = event.axisValue;
-            // Only a real deflection claims the device. A stick resting inside
-            // its dead zone still emits events on most hardware, and letting
-            // those set `lastDevice` would flip a HUD's prompts to gamepad
-            // while nobody is touching one.
+            auto& pad = gamepad(event);
+            pad.axes[static_cast<usize>(event.gamepadAxis)] = event.axisValue;
+            // Preference uses a dead zone; the action's unprocessed value does not.
             if (std::abs(event.axisValue) > AnalogPressThreshold)
-                m_state.lastDevice = DeviceType::Gamepad;
+                preferGamepad(pad);
+            rebuildGamepadState();
             break;
         }
-        case platform::EventType::GamepadRemoved:
-            // Every gamepad input goes to rest. The pad is gone; anything still
-            // recorded as held would stay held forever.
-            for (i32 code = PadButtonFirst; code < PadButtonFirst + PadButtonCount; ++code)
-                m_state.held[static_cast<usize>(code)] = false;
-            for (i32 code = PadAxisFirst; code < PadAxisFirst + PadAxisCount; ++code)
-                m_state.axis[static_cast<usize>(code)] = 0.0f;
+        case platform::EventType::GamepadRemoved: {
+            const auto found = std::find_if(m_gamepads.begin(), m_gamepads.end(),
+                                            [&](const auto& pad) { return pad.id == event.gamepadId; });
+            if (found != m_gamepads.end()) {
+                if (found->id != 0)
+                    m_deviceEvents.push_back(
+                        {DeviceEvent::Kind::Disconnected, DeviceType::Gamepad, found->family, found->id});
+                m_gamepads.erase(found);
+            }
+            if (m_state.preferredGamepadId == event.gamepadId) {
+                m_state.preferredGamepadId = 0;
+                m_state.preferredGamepadType = platform::GamepadType::Unknown;
+            }
+            rebuildGamepadState();
             break;
+        }
         case platform::EventType::FingerDown: {
             // The slot this finger already holds, or the first free one.
             Finger* slot = nullptr;
@@ -413,6 +492,11 @@ void InputSystem::pumpFrame(std::span<const platform::Event> events)
 void InputSystem::setSnapshot(const DeviceState& state) noexcept
 {
     m_state = state;
+    std::sort(m_state.gamepads.begin(), m_state.gamepads.end(),
+              [](const GamepadSnapshot& a, const GamepadSnapshot& b) { return a.id < b.id; });
+    m_gamepads.clear();
+    m_downUnseen.fill(false);
+    m_releaseDeferred.fill(false);
     // The deltas come from the snapshot rather than accumulating on top of it:
     // a replay hands the state a tick should see, and adding the live mouse to
     // it would make the replay depend on whether anybody moved the pointer.
@@ -576,6 +660,31 @@ bool InputSystem::isKeyDown(i32 keyCode) const noexcept
     return digital(m_state, nothingConsumed, keyCode);
 }
 
+bool InputSystem::isGamepadKeyDown(u32 id, i32 keyCode) const noexcept
+{
+    if (deviceOf(keyCode) != DeviceType::Gamepad)
+        return false;
+    DeviceState state;
+    for (const auto& pad : m_state.gamepads) {
+        if (pad.id != id)
+            continue;
+        for (i32 button = 1; button <= PadButtonCount; ++button)
+            state.held[static_cast<usize>(PadButtonFirst + button - 1)] = pad.buttons[static_cast<usize>(button)];
+        for (i32 axis = 1; axis <= PadAxisCount; ++axis)
+            state.axis[static_cast<usize>(PadAxisFirst + axis - 1)] = pad.axes[static_cast<usize>(axis)];
+        break;
+    }
+    if (inRange(keyCode, PadButtonFirst, PadButtonCount)) {
+        const auto button = static_cast<usize>(keyCode - PadButtonFirst + 1);
+        for (const auto& pad : m_gamepads) {
+            if (pad.id == id && pad.releasing[button])
+                return false;
+        }
+    }
+    static const std::array<bool, kKeyCodeCount> nothingConsumed{};
+    return digital(state, nothingConsumed, keyCode);
+}
+
 std::span<const RawInputEvent> InputSystem::drainRawEvents() noexcept
 {
     m_rawDrained.swap(m_rawEvents);
@@ -593,6 +702,8 @@ void InputSystem::collectRawEvents(core::Vec2 pointerDelta, core::Vec2 wheel)
     // a handler may write to the world -- so it has to come from something that
     // promises one (R10), and an array index is the cheapest promise there is.
     for (i32 code = 1; code < static_cast<i32>(kKeyCodeCount); ++code) {
+        if ((!m_state.gamepads.empty() || !m_previous.gamepads.empty()) && deviceOf(code) == DeviceType::Gamepad)
+            continue;
         // The composites are a way of READING two axes together, not inputs of
         // their own: a stick pushed left is one event about `LeftStickX`, and
         // a second one saying `LeftThumbstick` began would be the same fact
@@ -658,6 +769,8 @@ void InputSystem::collectRawEvents(core::Vec2 pointerDelta, core::Vec2 wheel)
     // `InputChanged` with its deflection, and one resting at the same value
     // produces nothing at all.
     for (i32 code = PadAxisFirst; code < PadAxisFirst + PadAxisCount; ++code) {
+        if (!m_state.gamepads.empty() || !m_previous.gamepads.empty())
+            break;
         const auto slot = static_cast<usize>(code);
         const f32 value = m_state.axis[slot];
         const f32 was = m_hasPrevious ? m_previous.axis[slot] : 0.0f;
@@ -671,6 +784,58 @@ void InputSystem::collectRawEvents(core::Vec2 pointerDelta, core::Vec2 wheel)
         event.position = core::Vec3{value, 0.0f, 0.0f};
         event.delta = core::Vec3{value - was, 0.0f, 0.0f};
         m_rawEvents.push_back(event);
+    }
+
+    // Individual pads, including one removed since the previous tick: its
+    // held inputs must end even while another controller keeps its own held.
+    std::vector<u32> pads;
+    for (const auto& pad : m_state.gamepads)
+        pads.push_back(pad.id);
+    for (const auto& pad : m_previous.gamepads)
+        pads.push_back(pad.id);
+    std::sort(pads.begin(), pads.end());
+    pads.erase(std::unique(pads.begin(), pads.end()), pads.end());
+    const auto stateFor = [](const DeviceState& state, u32 id) {
+        DeviceState out;
+        for (const auto& pad : state.gamepads) {
+            if (pad.id != id)
+                continue;
+            for (i32 button = 1; button <= PadButtonCount; ++button)
+                out.held[static_cast<usize>(PadButtonFirst + button - 1)] = pad.buttons[static_cast<usize>(button)];
+            for (i32 axis = 1; axis <= PadAxisCount; ++axis)
+                out.axis[static_cast<usize>(PadAxisFirst + axis - 1)] = pad.axes[static_cast<usize>(axis)];
+            break;
+        }
+        return out;
+    };
+    for (const u32 id : pads) {
+        const DeviceState now = stateFor(m_state, id);
+        const DeviceState before = m_hasPrevious ? stateFor(m_previous, id) : DeviceState{};
+        static const std::array<bool, kKeyCodeCount> nothingConsumed{};
+        for (i32 code = PadButtonFirst; code < PadAxisFirst + PadAxisCount; ++code) {
+            const auto slot = static_cast<usize>(code);
+            const bool down = digital(now, nothingConsumed, code);
+            const bool was = digital(before, nothingConsumed, code);
+            if (down != was) {
+                RawInputEvent event;
+                event.phase = down ? RawInputEvent::Phase::Began : RawInputEvent::Phase::Ended;
+                event.userInputType = UserInputType::Gamepad;
+                event.gamepadId = id;
+                event.keyCode = code;
+                event.position = core::Vec3{now.axis[slot], 0.0f, 0.0f};
+                m_rawEvents.push_back(event);
+            }
+            if (isAnalog(code) && now.axis[slot] != before.axis[slot]) {
+                RawInputEvent event;
+                event.phase = RawInputEvent::Phase::Changed;
+                event.userInputType = UserInputType::Gamepad;
+                event.gamepadId = id;
+                event.keyCode = code;
+                event.position = core::Vec3{now.axis[slot], 0.0f, 0.0f};
+                event.delta = core::Vec3{now.axis[slot] - before.axis[slot], 0.0f, 0.0f};
+                m_rawEvents.push_back(event);
+            }
+        }
     }
 
     // **Fingers, by slot**: each begins, moves and ends on its own, and its
@@ -969,10 +1134,38 @@ void InputSystem::dispatch(scene::World& world, Rate rate)
     if (simulation)
         collectRawEvents(pointerDelta, wheel);
 
+    std::map<u32, std::array<bool, kKeyCodeCount>> padConsumed;
     for (const auto& [priority, contextId] : m_contexts) {
         const scene::InputContextComponent* context = world.inputContexts().find(contextId);
         if (context == nullptr)
             continue;
+
+        DeviceState selected;
+        selected.held = m_state.held;
+        selected.axis = m_state.axis;
+        if (context->gamepadId != 0 || !m_state.gamepads.empty()) {
+            for (i32 code = PadButtonFirst; code < PadAxisFirst + PadAxisCount; ++code) {
+                const auto slot = static_cast<usize>(code);
+                selected.held[slot] = false;
+                selected.axis[slot] = 0.0f;
+            }
+            for (const auto& pad : m_state.gamepads) {
+                if (context->gamepadId != 0 && context->gamepadId != pad.id)
+                    continue;
+                const auto& consumed = padConsumed[pad.id];
+                for (i32 button = 1; button <= PadButtonCount; ++button) {
+                    const auto slot = static_cast<usize>(PadButtonFirst + button - 1);
+                    selected.held[slot] =
+                        selected.held[slot] || (pad.buttons[static_cast<usize>(button)] && !consumed[slot]);
+                }
+                for (i32 axis = 1; axis <= PadAxisCount; ++axis) {
+                    const auto slot = static_cast<usize>(PadAxisFirst + axis - 1);
+                    const f32 value = consumed[slot] ? 0.0f : pad.axes[static_cast<usize>(axis)];
+                    if (std::abs(value) > std::abs(selected.axis[slot]))
+                        selected.axis[slot] = value;
+                }
+            }
+        }
 
         for (core::InstanceId actionId = world.firstChild(contextId); actionId.valid();
              actionId = world.nextSibling(actionId)) {
@@ -1009,32 +1202,32 @@ void InputSystem::dispatch(scene::World& world, Rate rate)
                     const f32 scale = binding->scale;
                     switch (type) {
                     case ActionType::Bool:
-                        pressed = pressed || digital(m_state, m_consumed, binding->keyCode);
+                        pressed = pressed || digital(selected, m_consumed, binding->keyCode);
                         break;
                     case ActionType::Direction1D: {
-                        f32 amount = composite(m_state, m_consumed, binding->up, binding->down);
+                        f32 amount = composite(selected, m_consumed, binding->up, binding->down);
                         const i32 code = binding->keyCode;
                         if (valid(code) && !m_consumed[static_cast<usize>(code)]) {
                             if (code == MouseWheel)
                                 amount += wheel.y;
                             else if (isAnalog(code))
-                                amount += m_state.axis[static_cast<usize>(code)];
-                            else if (m_state.held[static_cast<usize>(code)])
+                                amount += selected.axis[static_cast<usize>(code)];
+                            else if (selected.held[static_cast<usize>(code)])
                                 amount += 1.0f;
                         }
                         value.x += amount * scale;
                         break;
                     }
                     case ActionType::Direction2D: {
-                        core::Vec2 amount{composite(m_state, m_consumed, binding->right, binding->left),
-                                          composite(m_state, m_consumed, binding->up, binding->down)};
+                        core::Vec2 amount{composite(selected, m_consumed, binding->right, binding->left),
+                                          composite(selected, m_consumed, binding->up, binding->down)};
                         const i32 code = binding->keyCode;
                         if (valid(code) && !m_consumed[static_cast<usize>(code)]) {
                             if (code == MouseMovement)
                                 amount = amount + pointerDelta;
                             else if (code == LeftThumbstick || code == RightThumbstick || code == VirtualStick1 ||
                                      code == VirtualStick2)
-                                amount = amount + stick(m_state, code);
+                                amount = amount + stick(selected, code);
                             else if (code == MouseWheel)
                                 amount = amount + wheel;
                         }
@@ -1101,8 +1294,27 @@ void InputSystem::dispatch(scene::World& world, Rate rate)
                 if (binding == nullptr)
                     continue;
                 for (const i32 code : {binding->keyCode, binding->up, binding->down, binding->left, binding->right}) {
-                    if (valid(code))
-                        m_consumed[static_cast<usize>(code)] = true;
+                    if (!valid(code))
+                        continue;
+                    const auto slot = static_cast<usize>(code);
+                    if (deviceOf(code) != DeviceType::Gamepad || m_state.gamepads.empty()) {
+                        if (context->gamepadId == 0 || deviceOf(code) != DeviceType::Gamepad)
+                            m_consumed[slot] = true;
+                        continue;
+                    }
+                    const auto consume = [&](u32 id) {
+                        auto& consumed = padConsumed[id];
+                        consumed[slot] = true;
+                        if (code == LeftThumbstick || code == RightThumbstick) {
+                            const auto first = static_cast<usize>(code == LeftThumbstick ? LeftStickX : RightStickX);
+                            consumed[first] = true;
+                            consumed[first + 1] = true;
+                        }
+                    };
+                    for (const auto& pad : m_state.gamepads) {
+                        if (context->gamepadId == 0 || context->gamepadId == pad.id)
+                            consume(pad.id);
+                    }
                 }
             }
         }
@@ -1110,6 +1322,21 @@ void InputSystem::dispatch(scene::World& world, Rate rate)
 
     world.engineState().pointerPosition = m_state.pointer;
     world.engineState().lastInputDeviceType = static_cast<i32>(m_state.lastDevice);
+    world.engineState().preferredGamepadType = static_cast<i32>(m_state.preferredGamepadType);
+    world.engineState().preferredGamepadId = m_state.preferredGamepadId;
+    if (simulation) {
+        if (m_reportedDevice != m_state.lastDevice)
+            m_deviceEvents.push_back({DeviceEvent::Kind::InputChanged, m_state.lastDevice});
+        if (m_reportedGamepadType != m_state.preferredGamepadType)
+            m_deviceEvents.push_back({DeviceEvent::Kind::GamepadTypeChanged, m_state.lastDevice,
+                                      m_state.preferredGamepadType, m_state.preferredGamepadId});
+        if (m_reportedGamepadId != m_state.preferredGamepadId)
+            m_deviceEvents.push_back({DeviceEvent::Kind::GamepadIdChanged, m_state.lastDevice,
+                                      m_state.preferredGamepadType, m_state.preferredGamepadId});
+        m_reportedDevice = m_state.lastDevice;
+        m_reportedGamepadType = m_state.preferredGamepadType;
+        m_reportedGamepadId = m_state.preferredGamepadId;
+    }
 
     if (simulation) {
         m_simPointerDelta = core::Vec2{};
@@ -1132,6 +1359,16 @@ void InputSystem::dispatchSimTick(scene::World& world, u64)
             m_state.held[at] = false;
         }
     }
+    for (auto& pad : m_gamepads) {
+        pad.unseen.fill(false);
+        for (usize button = 0; button < pad.buttons.size(); ++button) {
+            if (pad.releasing[button])
+                pad.buttons[button] = false;
+        }
+        pad.releasing.fill(false);
+    }
+    if (!m_gamepads.empty())
+        rebuildGamepadState();
 }
 
 void InputSystem::dispatchRenderRate(scene::World& world)
@@ -1145,6 +1382,16 @@ void InputSystem::releaseAll(scene::World& world)
     m_downUnseen.fill(false);
     m_releaseDeferred.fill(false);
     m_state.axis.fill(0.0f);
+    for (auto& pad : m_gamepads) {
+        pad.buttons.fill(false);
+        pad.axes.fill(0.0f);
+        pad.unseen.fill(false);
+        pad.releasing.fill(false);
+    }
+    for (auto& pad : m_state.gamepads) {
+        pad.buttons.fill(false);
+        pad.axes.fill(0.0f);
+    }
     m_state.fingers.fill(Finger{});
     // Nothing a lost window was in the middle of is finished as a gesture.
     m_tracks.fill(GestureTrack{});

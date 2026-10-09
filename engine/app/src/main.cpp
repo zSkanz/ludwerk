@@ -1263,6 +1263,9 @@ static int hostMain(int argc, char** argv)
         if (!options.startupSceneFromFlag)
             options.startupScene = config.scene;
         options.defaultServer = config.networkServer;
+        options.enabledIntegrations = config.enabledIntegrations;
+        options.integrationConfigurations = config.integrationConfigurations;
+        options.platformServices = config.platformServices;
         // The run's own relay wins over the project's.
         if (options.defaultRelay.empty())
             options.defaultRelay = config.networkRelay;
@@ -1373,7 +1376,7 @@ static int hostMain(int argc, char** argv)
     // Neither failure is fatal. An engine that refuses to start because it could
     // not open a log is an engine that a read-only directory takes away
     // entirely, which is a worse trade than losing the log.
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || ENG_PLATFORM_UWP
     // An app's working directory is `/`, which it may not write. **Its
     // external files folder first** (D569) -- `Android/data/<id>/files`,
     // which a tester opens with a file manager or a cable and sends from --
@@ -1626,7 +1629,7 @@ static int hostMain(int argc, char** argv)
     return kExitOk;
 }
 
-int main(int argc, char** argv)
+int engineHostMain(int argc, char** argv)
 {
     const int code = hostMain(argc, argv);
     // It ended because it was asked to, whatever it has to say about how: the
@@ -1636,3 +1639,10 @@ int main(int argc, char** argv)
     sayStartFailure(code);
     return code;
 }
+
+#if !ENG_PLATFORM_UWP
+int main(int argc, char** argv)
+{
+    return engineHostMain(argc, argv);
+}
+#endif

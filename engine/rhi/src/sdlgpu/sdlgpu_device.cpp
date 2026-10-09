@@ -220,6 +220,7 @@ private:
     void closeTimedBuffer();
     void addTime(std::string_view name, f64 milliseconds);
     void pushHeldUniforms() noexcept;
+    [[nodiscard]] bool holdUniform(usize stage, u32 slot, std::span<const std::byte> data);
 
     // Where one upload's bytes were put: a range of the frame's staging buffer,
     // or -- for an upload that does not fit it -- a transfer buffer of its own,
@@ -250,9 +251,9 @@ private:
     std::vector<std::string> screenLabels_;
     std::vector<std::string> groups_;
     std::vector<Timed> times_;
-    // What `bindUniforms` last pushed, by stage and slot: pushed data belongs
-    // to the command buffer, and a timed frame changes buffers under the
-    // renderer's feet.
+    // Uniform snapshots avoid identical uploads by stage and slot. Pushed
+    // data belongs to the command buffer, so timed frames replay these
+    // snapshots when they switch command buffers.
     struct HeldUniform
     {
         std::vector<std::byte> data;
@@ -269,6 +270,7 @@ private:
     std::array<SDL_GPUBuffer*, 16> boundVertex_{};
     SDL_GPUBuffer* boundIndex_ = nullptr;
     IndexType boundIndexType_ = IndexType::U16;
+    SDL_GPUGraphicsPipeline* boundPipeline_ = nullptr;
 
     // **One transfer buffer for a frame's uploads, not one per upload.** Every
     // `upload` used to create a transfer buffer and release it: an allocation
@@ -1310,6 +1312,9 @@ void SdlGpuCmdList::begin(SDL_GPUCommandBuffer* buffer, bool timed) noexcept
     timed_ = false;
     timedUsed_ = false;
     onScreen_ = false;
+    for (auto& stage : heldUniforms_)
+        for (HeldUniform& held : stage)
+            held.set = false;
     if (buffer == nullptr)
         return;
 
@@ -1320,9 +1325,6 @@ void SdlGpuCmdList::begin(SDL_GPUCommandBuffer* buffer, bool timed) noexcept
         screenLabels_.clear();
         groups_.clear();
         times_.clear();
-        for (auto& stage : heldUniforms_)
-            for (HeldUniform& held : stage)
-                held.set = false;
         if (SDL_GPUCommandBuffer* first = SDL_AcquireGPUCommandBuffer(device_.handle()); first != nullptr) {
             buffer_ = first;
             timed_ = true;
@@ -1465,6 +1467,18 @@ void SdlGpuCmdList::pushHeldUniforms() noexcept
                 SDL_PushGPUComputeUniformData(buffer_, slotIndex, held.data.data(), size);
         }
     }
+}
+
+bool SdlGpuCmdList::holdUniform(usize stage, u32 slot, std::span<const std::byte> data)
+{
+    if (slot >= UniformSlots)
+        return true;
+    HeldUniform& held = heldUniforms_[stage][slot];
+    if (held.set && held.data.size() == data.size() && std::equal(data.begin(), data.end(), held.data.begin()))
+        return false;
+    held.data.assign(data.begin(), data.end());
+    held.set = true;
+    return true;
 }
 
 void SdlGpuCmdList::closeTimedBuffer()
@@ -1634,6 +1648,7 @@ void SdlGpuCmdList::beginRenderPass(const RenderPassDesc& desc)
     }
     boundVertex_.fill(nullptr);
     boundIndex_ = nullptr;
+    boundPipeline_ = nullptr;
 
     BindList<SDL_GPUColorTargetInfo> colors(desc.colorAttachments.size());
     usize colorCount = 0;
@@ -1681,8 +1696,10 @@ void SdlGpuCmdList::setPipeline(PipelineHandle pipeline)
 {
     if (renderPass_ == nullptr)
         return;
-    if (SDL_GPUGraphicsPipeline* native = device_.pipeline(pipeline); native != nullptr)
+    if (SDL_GPUGraphicsPipeline* native = device_.pipeline(pipeline); native != nullptr && native != boundPipeline_) {
         SDL_BindGPUGraphicsPipeline(renderPass_, native);
+        boundPipeline_ = native;
+    }
 }
 
 void SdlGpuCmdList::setViewport(const Viewport& viewport)
@@ -1744,11 +1761,8 @@ void SdlGpuCmdList::bindUniforms(ShaderStage stage, u32 slotIndex, std::span<con
 {
     if (buffer_ == nullptr)
         return;
-    if (timed_ && slotIndex < UniformSlots) {
-        HeldUniform& held = heldUniforms_[stage == ShaderStage::Vertex ? 0 : 1][slotIndex];
-        held.data.assign(data.begin(), data.end());
-        held.set = true;
-    }
+    if (!holdUniform(stage == ShaderStage::Vertex ? 0 : 1, slotIndex, data))
+        return;
 
     switch (stage) {
     case ShaderStage::Vertex:
@@ -2101,11 +2115,8 @@ void SdlGpuCmdList::bindComputeUniforms(u32 slot, std::span<const std::byte> dat
 {
     if (buffer_ == nullptr)
         return;
-    if (timed_ && slot < UniformSlots) {
-        HeldUniform& held = heldUniforms_[2][slot];
-        held.data.assign(data.begin(), data.end());
-        held.set = true;
-    }
+    if (!holdUniform(2, slot, data))
+        return;
     SDL_PushGPUComputeUniformData(buffer_, slot, data.data(), static_cast<Uint32>(data.size()));
 }
 

@@ -1800,6 +1800,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     f64 phaseRenderScriptsMs = 0.0;
     std::vector<f64> frameRenderScriptsMs;
     const auto msSince = [](core::u64 since) { return static_cast<f64>(platform::nowNs() - since) / 1'000'000.0; };
+    // Keep long waits attributable on every backend, including SDL on phones.
+    // A limiter sleep is not a GPU stall, even though both hold the frame.
+    const auto noteLongWait = [](std::string_view operation, f64 elapsedMs, core::u64 requestedNs = 0) {
+        if (elapsedMs < 100.0)
+            return;
+        const std::array<I18nArg, 3> args{I18nArg{"operation", operation}, I18nArg{"ms", elapsedMs},
+                                          I18nArg{"requested", static_cast<f64>(requestedNs) / 1'000'000.0}};
+        core::log(LogLevel::Warn, ENG_TR("engine.frame.warn.long_wait"), args);
+    };
     // Sixty warm-up frames rather than `--frame-stats`'s ten. A soak is minutes
     // long, so a second of startup costs it nothing -- and the streamed world
     // has not finished its first ring of chunks inside ten frames, which would
@@ -2220,10 +2229,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     if (options.screenshotEvery != 0)
         terrainLoader.setBuildsPerSync(256);
     // **Built off the main thread** (terrain audit TA14) -- except in a run
-    // that takes a picture, which is of what the frames before it built, not
-    // of what a worker happened to finish by then: headless frames run flat
-    // out, and thirty of them are over before a worker has built the ground.
-    terrainLoader.setAsync(options.screenshotPath.empty());
+    // that takes a picture or records commands. These capture what the frames
+    // before them built, not what a worker happened to finish by then: headless
+    // frames run flat out, and thirty are over before a worker built the ground.
+    terrainLoader.setAsync(options.screenshotPath.empty() && options.capturePath.empty());
     // The block world's chunks (V1), meshed and uploaded the same way.
     render::VoxelLoader voxelLoader;
     render::WaterLoader waterLoader;
@@ -2598,6 +2607,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         .networkTopology = static_cast<scene::NetworkTopology>(options.network.topology),
         .maxSubWorlds = options.maxSubWorlds,
         .saveDirectory = options.saveDirectory,
+        .enabledIntegrations = options.enabledIntegrations,
+        .integrationConfigurations = options.integrationConfigurations,
+        .platformServices = options.platformServices,
         .saveMaxSlotBytes = options.saveMaxSlotBytes,
         .saveMaxSlots = options.saveMaxSlots,
         .sceneCloseGrace = options.sceneCloseGrace,
@@ -2606,7 +2618,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // A prepared scene's meshes (ADR 0125), through the loader that draws
         // them. Headless, nothing loads meshes, so nothing is warmed.
         .warmContent = options.headless ? std::function<void(scene::World&, const std::vector<std::string>&)>{}
-                                        : [&meshLoader](scene::World& world, const std::vector<std::string>& names) {
+                                        : [&meshLoader, &renderer, &device](scene::World& world,
+                                                                          const std::vector<std::string>& names) {
                                               std::vector<core::NameAtom> meshes;
                                               std::vector<core::NameAtom> images;
                                               for (const std::string& name : names) {
@@ -2615,14 +2628,19 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                                   else if (name.ends_with(".png") || name.ends_with(".jpg") ||
                                                            name.ends_with(".jpeg") || name.ends_with(".ktx2"))
                                                       images.push_back(world.atoms().intern(name));
+                                                  else if (name.ends_with(".surface.hlsl") && renderer != nullptr)
+                                                      (void)renderer->warmSurface(*device, name);
                                               }
                                               meshLoader.warmMeshes(meshes);
                                               meshLoader.warmTextures(images);
                                           },
         .warmedContent = options.headless
                              ? std::function<std::optional<bool>(scene::World&, std::string_view)>{}
-                             : [&meshLoader, &meshLibrary, &textureLibrary](scene::World& world,
-                                                                            std::string_view name) {
+                             : [&meshLoader, &meshLibrary, &textureLibrary, &renderer, &device](scene::World& world,
+                                                                                              std::string_view name) {
+                                   if (name.ends_with(".surface.hlsl"))
+                                       return renderer != nullptr ? renderer->warmSurface(*device, name)
+                                                                  : std::optional<bool>{false};
                                    return meshLoader.warmed(world.atoms().intern(name), meshLibrary, textureLibrary);
                                },
     };
@@ -2997,12 +3015,20 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
     auto headlessStepNs = static_cast<u64>(std::ceil(scheduler.timing().fixedDt * kNanosPerSecond));
     bool quit = false;
+    bool backgroundGpuDrain = false;
     TextInputFocus textInputFocus;
     FrameClock frameClock;
     // When the loop began, for the conformance run's ceiling below.
     const u64 loopBeganNs = platform::nowNs();
 
     while (!quit) {
+        // A native mobile/console suspension deferral completes at the next
+        // event pump. Saves were flushed when the background event arrived;
+        // finish the submitted frame before returning that deferral to the OS.
+        if (backgroundGpuDrain) {
+            device->waitIdle();
+            backgroundGpuDrain = false;
+        }
         // A damaged game is not played on (ADR 0183).
         if (packCheck->state.load(std::memory_order_relaxed) == 2)
             break;
@@ -3342,6 +3368,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 ENG_PROFILE_SCOPE("wait.cap");
                 platform::sleepNs(wait);
                 capWaitMs = msSince(fromNs);
+                noteLongWait("frame_cap", capWaitMs, wait);
                 phaseWaitMs += capWaitMs;
             };
             // **A handheld in front is paced at a rate it holds** (ADR 0173),
@@ -5649,13 +5676,6 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // because they change with a window drag between two monitors and
             // there is no event for that worth subscribing to at this price.
             engineState.displayScale = platform::windowDisplayScale(*window);
-            // And what is plugged in, as it comes and goes (D456).
-            {
-                const platform::InputDevices devices = platform::inputDevices();
-                engineState.touchAvailable = devices.touch;
-                engineState.keyboardAvailable = devices.keyboard;
-                engineState.gamepadAvailable = devices.gamepad;
-            }
 
             // **`UIService.ScreenOrientation`, applied when it changes** -- from
             // a script, from the scene that was loaded, or from the Properties
@@ -5923,7 +5943,16 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         ENG_PROFILE_NEXT(stretch, "frame.events");
         if (!options.headless) {
             const std::span<const platform::Event> events = platform::pumpEvents();
+            // Pump first: connection events and availability must describe the
+            // same snapshot when scripts receive them on the next tick.
+            const platform::InputDevices devices = platform::inputDevices();
+            scene::EngineState& inputState = host->world().engineState();
+            inputState.touchAvailable = devices.touch;
+            inputState.keyboardAvailable = devices.keyboard;
+            inputState.gamepadAvailable = devices.gamepad;
             for (const platform::Event& event : events) {
+                if (event.type == platform::EventType::WillEnterBackground)
+                    backgroundGpuDrain = true;
                 if (event.type != platform::EventType::Quit &&
                     event.type != platform::EventType::WindowCloseRequested) {
                     continue;
@@ -6061,6 +6090,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             uiCommandTexts.clear();
             uiCompositionChanged = false;
             uiPointer.beginFrame();
+            uiNavigation.setGamepadId(host->world().engineState().uiGamepadId);
             uiNavigation.beginFrame();
             for (const platform::Event& event : heard) {
                 // The pointer's own events: where it is, and its presses.
@@ -6250,9 +6280,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             ENG_PROFILE_SCOPE("wait.frame");
             cmd = device->beginFrame();
         }
-        phaseWaitMs += msSince(beginWaitNs);
-        if (cmd == nullptr)
+        const f64 beginFrameMs = msSince(beginWaitNs);
+        noteLongWait("begin_frame", beginFrameMs);
+        phaseWaitMs += beginFrameMs;
+        if (cmd == nullptr) {
+            if (device->lost())
+                break;
+            platform::sleepNs(1000000);
             continue;
+        }
 
         // An invalid target is normal, not an error: a minimized window has no
         // backbuffer this frame. Submitting the empty command buffer keeps the
@@ -6268,7 +6304,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 ENG_PROFILE_SCOPE("wait.swapchain");
                 return device->acquireSwapchain(*window);
             }();
-            phaseWaitMs += msSince(acquireNs);
+            const f64 acquireMs = msSince(acquireNs);
+            noteLongWait("acquire_swapchain", acquireMs);
+            phaseWaitMs += acquireMs;
             framePresented = swapchain.texture.valid();
             target = swapchain.texture;
             targetFormat = swapchain.format;
@@ -7148,8 +7186,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         // And what grows on the ground (D542), which is
                         // grown off this thread now: a meadow is not lifted
                         // onto bare.
-                        .loadersIdle =
-                            meshLoader.meshesWaiting() == 0 && meshLoader.texturesInFlight() == 0 && !foliage.pending(),
+                        .loadersIdle = meshLoader.meshesWaiting() == 0 && meshLoader.texturesInFlight() == 0 &&
+                                       uiText.imagesInFlight() == 0 && !foliage.pending(),
                         .groundMeshed = ground,
                         .holds = engineNow.loadingHolds,
                     });
@@ -7521,8 +7559,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     if (auto shotError = pictureEvery(frame.index + madeFrames.made); shotError.has_value())
                         return shotError;
                     cmd = device->beginFrame();
-                    if (cmd == nullptr)
+                    if (cmd == nullptr) {
+                        if (device->lost())
+                            break;
                         continue;
+                    }
                     renderer->showPicture(*device, *cmd, picture, screen);
                 }
                 else {
@@ -7622,9 +7663,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         if (heldRate != 0) {
             ENG_PROFILE_SCOPE("wait.pace");
             const core::u64 holdNs = platform::nowNs();
-            if (const core::u64 wait = frameLimiter.waitNs(holdNs, heldRate); wait > 0)
+            const core::u64 wait = frameLimiter.waitNs(holdNs, heldRate);
+            if (wait > 0)
                 platform::sleepNs(wait);
             heldNs = platform::nowNs() - holdNs;
+            noteLongWait("present_pacing", static_cast<f64>(heldNs) / 1'000'000.0, wait);
             phaseWaitMs += static_cast<f64>(heldNs) / 1'000'000.0;
         }
         const core::u64 presentNs = platform::nowNs();
@@ -7633,7 +7676,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             device->submitAndPresent();
         }
         notePassTimes();
-        phaseWaitMs += msSince(presentNs);
+        const f64 presentMs = msSince(presentNs);
+        noteLongWait("submit_present", presentMs);
+        phaseWaitMs += presentMs;
 
         // When the made frame was sent, and how long a frame is: what the
         // drawn frame that waits is timed by (ADR 0165).

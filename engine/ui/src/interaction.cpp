@@ -362,8 +362,9 @@ void pointEvent(scene::World& world, core::InstanceId subject, const char* event
 }
 
 // Every object a selection could go to: selectable, shown, on an enabled
-// screen. In `DisplayOrder` then document order, which is what "the first"
-// means and what breaks a tie (R10).
+// screen in the highest selectable display layer. Decorative overlays do not
+// trap focus; screens sharing that layer remain navigable together. Document
+// order determines the first candidate and breaks a tie (R10).
 void collectSelectable(const scene::World& world, core::InstanceId uiService, std::vector<core::InstanceId>& out)
 {
     out.clear();
@@ -376,13 +377,18 @@ void collectSelectable(const scene::World& world, core::InstanceId uiService, st
     // The topmost screen first: a menu over a HUD is where a selection starts.
     std::stable_sort(screens.begin(), screens.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
     std::vector<core::InstanceId> all;
+    std::optional<f32> selectionOrder;
     for (const auto& [order, screen] : screens) {
+        if (selectionOrder.has_value() && order < *selectionOrder)
+            break;
         all.clear();
         world.collectDescendants(screen, all);
         for (const core::InstanceId id : all) {
             if (isSelectable(world, id) && shown(world, id))
                 out.push_back(id);
         }
+        if (!out.empty())
+            selectionOrder = order;
     }
 }
 

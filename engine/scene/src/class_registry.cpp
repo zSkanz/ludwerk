@@ -106,22 +106,29 @@ bool ClassRegistry::isA(ClassId derived, ClassId base) const noexcept
 
 const PropertyDesc* ClassRegistry::findProperty(ClassId id, core::NameAtom name) const noexcept
 {
+    u16 slot = NoSlot;
+    return findProperty(id, name, slot);
+}
+
+const PropertyDesc* ClassRegistry::findProperty(ClassId id, core::NameAtom name, u16& slot) const noexcept
+{
+    slot = NoSlot;
     const Entry* entry = entryAt(m_classes, id);
     if (entry == nullptr)
         return nullptr;
 
     const auto it = entry->properties.find(name.id);
-    return it == entry->properties.end() ? nullptr : it->second.descriptor;
+    if (it == entry->properties.end())
+        return nullptr;
+    slot = it->second.slot;
+    return it->second.descriptor;
 }
 
 u16 ClassRegistry::propertySlot(ClassId id, core::NameAtom name) const noexcept
 {
-    const Entry* entry = entryAt(m_classes, id);
-    if (entry == nullptr)
-        return NoSlot;
-
-    const auto it = entry->properties.find(name.id);
-    return it == entry->properties.end() ? NoSlot : it->second.slot;
+    u16 slot = NoSlot;
+    (void)findProperty(id, name, slot);
+    return slot;
 }
 
 const MethodDesc* ClassRegistry::findMethod(ClassId id, core::NameAtom name) const noexcept

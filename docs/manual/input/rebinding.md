@@ -108,3 +108,33 @@ Where that gets written is your backend — see
 
 - [Actions, bindings and contexts](manual:input/actions)
 - [`InputBinding`](api:InputBinding) · [`InputService`](api:InputService)
+## Controller family and prompt selection
+
+`InputService.PreferredInput` is an alias of `LastInputDeviceType`; both use
+`Enum.InputDeviceType`. `InputDeviceChanged` is their existing category signal.
+`PreferredGamepadType` and `PreferredGamepadId` describe the last used controller,
+independently of the operating system. Connecting a controller does not select it.
+
+```luau
+local input = game:GetService("InputService")
+if input.PreferredInput == Enum.InputDeviceType.Gamepad then
+    if input.PreferredGamepadType == Enum.GamepadType.PlayStation then
+        -- Select the game's PlayStation prompt artwork for the current binding.
+    end
+end
+input.PreferredGamepadTypeChanged:Connect(function(family)
+    -- Refresh prompts when the physical controller family changes.
+end)
+```
+
+Families are Xbox, PlayStation, Nintendo, Generic and Unknown. Provide a neutral
+fallback for Generic and Unknown. Family is a prompt hint, not a button layout:
+resolve the current binding before selecting artwork, and allow remapped layouts.
+No glyph assets or `GetInputIcon` method are provided by this extension.
+
+`PreferredGamepadIdChanged` also covers switching between controllers of the
+same family. `GamepadConnected` and `GamepadDisconnected` carry `(id, family)`.
+Zero ID means no selected controller. Keyboard, mouse or touch use changes the
+category without discarding controller metadata; unplugging the selected pad
+clears its ID and family. Drift below the preference threshold does not steal
+the category from keyboard/mouse. Signals use the normal deferred event system.

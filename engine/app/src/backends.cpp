@@ -1,6 +1,10 @@
 #include "engine/app/backends.h"
 
 #include "engine/core/text_key.h"
+#if ENG_RHI_D3D12
+#include "engine/platform/file.h"
+#include "engine/platform/platform.h"
+#endif
 
 namespace engine::app {
 namespace {
@@ -34,6 +38,10 @@ constexpr bool kHasNull =
 
 std::optional<rhi::BackendId> parseBackendId(std::string_view name)
 {
+#if ENG_RHI_D3D12
+    if (name == "d3d12")
+        return rhi::BackendId::D3D12;
+#endif
     if (name == "sdlgpu" && kHasSdlGpu)
         return rhi::BackendId::SdlGpu;
     if (name == "capture" && kHasCapture)
@@ -45,6 +53,20 @@ std::optional<rhi::BackendId> parseBackendId(std::string_view name)
 
 std::string_view availableBackendNames()
 {
+#if ENG_RHI_D3D12
+    static constexpr std::string_view names =
+#if ENG_RHI_SDLGPU
+        "sdlgpu, "
+#endif
+#if ENG_RHI_CAPTURE
+        "capture, "
+#endif
+#if ENG_RHI_NULL
+        "null, "
+#endif
+        "d3d12";
+    return names;
+#else
     // Spelled out per combination rather than assembled at runtime: this is a
     // compile-time fact, and building it into a string would allocate to
     // describe something that cannot change.
@@ -64,6 +86,7 @@ std::string_view availableBackendNames()
         return "null";
     else
         return "(none)";
+#endif
 }
 
 std::string_view backendName(rhi::BackendId backend)
@@ -75,6 +98,8 @@ std::string_view backendName(rhi::BackendId backend)
         return "capture";
     case rhi::BackendId::Null:
         return "null";
+    case rhi::BackendId::D3D12:
+        return "d3d12";
     }
     return "unknown";
 }
@@ -82,6 +107,29 @@ std::string_view backendName(rhi::BackendId backend)
 rhi::DeviceResult createDevice(const rhi::DeviceDesc& desc, core::EngineError* outError)
 {
     switch (desc.backend) {
+    case rhi::BackendId::D3D12:
+#if ENG_RHI_D3D12
+    {
+        const auto directory = platform::paths().contentDir / "shaders" / "dxil";
+        std::vector<std::byte> vertex, fragment;
+        const auto readShader = [&](const char* name, std::vector<std::byte>& bytes) {
+            const auto path = directory / name;
+            if (platform::readFile(path, bytes))
+                return true;
+            if (outError) {
+                const core::I18nArg args[]{{"path", path.string()}};
+                *outError = core::makeError(ENG_TR("render.err.shader_blob_missing"), args);
+            }
+            return false;
+        };
+        if (!readShader("rhi_blit.vertex.dxil", vertex) || !readShader("rhi_blit.fragment.dxil", fragment)) {
+            return nullptr;
+        }
+        return rhi::createD3D12Device(desc, vertex, fragment, outError);
+    }
+#else
+        break;
+#endif
     case rhi::BackendId::SdlGpu:
 #if ENG_RHI_SDLGPU
         return rhi::createSdlGpuDevice(desc, outError);

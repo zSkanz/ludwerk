@@ -421,6 +421,10 @@ local function classNode(class: Schema.Class): Node
     local fields: { Field } = { field("Name", stringNode(class.Name)) }
     appendOptional(fields, "Extends", class.Extends)
     appendOptional(fields, "DefaultName", class.DefaultName)
+    appendOptional(fields, "Integration", class.Integration)
+    if class.LazyService == true then
+        table.insert(fields, field("LazyService", booleanNode(true)))
+    end
     table.insert(fields, field("Tags", tagsNode(class.Tags)))
     table.insert(fields, field("Properties", memberArray(class.Properties, propertyKey, propertyNode)))
     table.insert(fields, field("Methods", memberArray(class.Methods, methodKey, methodNode)))

@@ -5,6 +5,7 @@
 #include <optional>
 #include <vector>
 
+#include "../src/particle_batches.h"
 #include "engine/asset/terrain.h"
 #include "engine/render/particles.h"
 #include "engine/render/render_world.h"
@@ -55,6 +56,40 @@ struct ParticleFixture
 };
 
 } // namespace
+
+TEST_CASE("particle batches retain depth order across alternating pictures and procedural shapes")
+{
+    std::vector<ParticleBatch> batches;
+    for (core::u32 at = 0; at < 1000; ++at) {
+        const core::u32 picture = at % 4;
+        CHECK(appendParticle(batches, rhi::TextureHandle{picture}, at) == picture);
+    }
+    REQUIRE(batches.size() == 1);
+    CHECK(batches[0].first == 0);
+    CHECK(batches[0].count == 1000);
+    CHECK(batches[0].textureCount == 3);
+    for (core::u32 picture = 1; picture <= 3; ++picture)
+        CHECK(batches[0].textures[picture - 1] == rhi::TextureHandle{picture});
+}
+
+TEST_CASE("particle batches split only at palette exhaustion and retain exact instance ranges")
+{
+    std::vector<ParticleBatch> batches;
+    for (core::u32 picture = 1; picture <= MaxParticleTextures; ++picture)
+        CHECK(appendParticle(batches, rhi::TextureHandle{picture}, picture - 1) == picture);
+    CHECK(appendParticle(batches, {}, MaxParticleTextures) == 0);
+    CHECK(appendParticle(batches, rhi::TextureHandle{1}, MaxParticleTextures + 1) == 1);
+    REQUIRE(batches.size() == 1);
+    CHECK(appendParticle(batches, rhi::TextureHandle{MaxParticleTextures + 1}, MaxParticleTextures + 2) == 1);
+    CHECK(appendParticle(batches, rhi::TextureHandle{1}, MaxParticleTextures + 3) == 2);
+    REQUIRE(batches.size() == 2);
+    CHECK(batches[0].count == MaxParticleTextures + 2);
+    CHECK(batches[1].first == batches[0].first + batches[0].count);
+    CHECK(batches[1].count == 2);
+    CHECK(batches[1].textureCount == 2);
+    CHECK(batches[1].textures[0] == rhi::TextureHandle{MaxParticleTextures + 1});
+    CHECK(batches[1].textures[1] == rhi::TextureHandle{1});
+}
 
 TEST_CASE("a stream is born at its rate, whatever the frame rate")
 {

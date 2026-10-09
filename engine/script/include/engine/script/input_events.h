@@ -33,6 +33,8 @@ void registerInputTypes(lua_State* L);
 //
 // A no-op when `InputService` was never created, which is the common case in a
 // world whose scripts do not read input at all.
+void fireInputDeviceEvents(lua_State* L, std::span<const input::DeviceEvent> events);
+
 void fireInputEvents(lua_State* L, std::span<const input::RawInputEvent> events);
 
 // `InputService.TouchSwiped`, `TouchTapped`, `TouchLongPressed`, `TouchPinched` and

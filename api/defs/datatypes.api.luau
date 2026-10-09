@@ -2272,6 +2272,13 @@ local Datatypes: { Schema.Datatype } = {
             .. "come from the recorded stream, so a recorded run reproduces every input a game reads.",
         Properties = {
             {
+                Name = "GamepadId",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Controller instance id that produced a gamepad input. Independent simultaneous presses retain their own ids. Zero for other devices or legacy aggregate recordings without controller identities. Reconnection may assign a new id.",
+            },
+            {
                 Name = "UserInputType",
                 Type = "Enum.UserInputType",
                 ReadOnly = true,

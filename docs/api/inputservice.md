@@ -21,14 +21,25 @@ offers is on the base's page, which is what keeps one added member on
 | `LastInputDeviceType` | `Enum.InputDeviceType` | — | read-only | The device family the player most recently used, which is what a HUD switches its prompts on. It changes on a real input and not on a resting one: a gamepad stick drifting inside its dead zone does not steal the prompts from a keyboard. |
 | `PointerLocked` | `boolean` | `false` | read/write | Whether the pointer is locked to the window and reporting motion instead of position -- what a first-person camera wants. While it is locked, `GetPointerPosition` keeps reporting the position the pointer had when it was locked, because there is no other honest answer, and a `Direction2D` action bound to `MouseMovement` is the way to read the motion.<br><br>**A locked pointer is the game's.** Nothing of the interface is under it: no hover, no press, and no `Active` object takes its motion, whatever was left under the place it was locked at. The keyboard and a gamepad still select the interface. A game that wants a click on its interface lets the pointer go first, as a menu does. |
 | `PointerVisible` | `boolean` | `true` | read/write | Whether the system cursor is drawn. Independent of `PointerLocked`, because the two are separate wishes: a strategy game hides the cursor during a cutscene without locking it. |
+| `PreferredGamepadId` | `number` | — | read-only | Connection ID of the gamepad actually used, or zero when none is selected. Reconnecting a controller produces a new ID. Retained when the input category changes; never a platform or player index. |
+| `PreferredGamepadType` | `Enum.GamepadType` | — | read-only | Physical family of the last gamepad actually used. Connecting a controller does not select it. Retained when keyboard or touch becomes preferred; Unknown when that controller disconnects. Independent of button layout and glyph selection. |
+| `PreferredInput` | `Enum.InputDeviceType` | — | read-only | The current input category: KeyboardMouse, Gamepad or Touch. Alias of LastInputDeviceType; InputDeviceChanged reports changes. Controller family is PreferredGamepadType, never this property. |
 | `SwipeThreshold` | `number` | `6` | read/write | How far a finger travels before it is a swipe, in MILLIMETRES of screen -- a length under a thumb, the same on a phone and on a monitor, where a number of pixels would be a nudge on one and a reach across on the other. Six by default; the engine turns it into pixels from the display's density. |
 | `TouchAvailable` | `boolean` | — | read-only | Whether this machine has a touchscreen. **Known from a script's first line**, before anybody has touched anything -- which `LastInputDeviceType` cannot say -- so a game can decide which HUD to build and how far to draw before its first frame. True on a phone and on a laptop with a touchscreen alike. |
 
 ## Methods
 
+### `GetGamepads(): {number}`
+
+Connected controller instance ids in ascending order, from the current input snapshot. Use GamepadConnected and GamepadDisconnected for changes. Connecting does not change PreferredInput or assign a local player.
+
 ### `GetPointerPosition(): Vector2`
 
 The pointer in window pixels, origin at the top left, as of the current tick. A snapshot like every other input read: two calls inside one tick agree.
+
+### `IsGamepadKeyDown(gamepadId: number, keyCode: Enum.KeyCode): boolean`
+
+Polls one positive controller instance id independently of UI consumption. Missing controllers and non-gamepad keys return false. An analogue key counts as held past half deflection, as IsKeyDown does.
 
 ### `IsKeyDown(keyCode: Enum.KeyCode): boolean`
 
@@ -61,6 +72,14 @@ The value STICKS until it is written again -- a button that is held is a 1 nobod
 Every signal here is **deferred** (ADR 0015): a handler runs at the next
 drain point, never inside the call that fired it.
 
+### `GamepadConnected(gamepadId: number, gamepadType: Enum.GamepadType)`
+
+A gamepad connected. Does not change the preferred input category or active gamepad. Delivered on the simulation tick through the deferred event queue.
+
+### `GamepadDisconnected(gamepadId: number, gamepadType: Enum.GamepadType)`
+
+A gamepad disconnected, carrying its former connection ID and physical family. Other connected controllers remain tracked.
+
 ### `InputBegan(input: InputObject, uiConsumed: boolean)`
 
 Fired on the tick an input STARTS -- a key pressed, a button pushed, a trigger crossing half deflection (§2.4, ADR 0041).
@@ -86,6 +105,14 @@ Fired when `LastInputDeviceType` changes, so a prompt redraws once rather than p
 Fired on the tick an input STOPS. It fires for everything held when the window loses focus, so a handler that pairs `InputBegan` with this one never leaks a press -- which is the failure that leaves a character walking into a wall after an alt-tab.
 
 `uiConsumed` carries what it carried when the input began, so a press that started on a button is still marked consumed when it is released off one.
+
+### `PreferredGamepadIdChanged(gamepadId: number)`
+
+Fired when the preferred connection ID changes, including switching between two controllers in the same family.
+
+### `PreferredGamepadTypeChanged(gamepadType: Enum.GamepadType)`
+
+Fired when the preferred physical controller family changes, independently of InputDeviceChanged.
 
 ### `TouchLongPressed(position: Vector2)`
 

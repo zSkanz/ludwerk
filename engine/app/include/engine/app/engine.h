@@ -5,11 +5,13 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 #include "engine/app/frame_pacing.h"
 #include "engine/core/error.h"
 #include "engine/core/types.h"
 #include "engine/platform/event.h"
+#include "engine/platform/game_integration.h"
 #include "engine/platform/window.h"
 #include "engine/render/settings.h"
 #include "engine/replication/types.h"
@@ -186,6 +188,9 @@ struct EngineOptions
     // `[network] relay`, or `--relay=` (ADR 0178): where `Host` registers and
     // a `Join` by code asks when the call names no relay.
     std::string defaultRelay;
+    std::vector<std::string> enabledIntegrations{};
+    std::unordered_map<std::string, std::string> integrationConfigurations{};
+    platform::PlatformServiceConfiguration platformServices{};
     // `[render]` (ADR 0107): how many camera textures a frame draws, and the
     // largest side one may have.
     core::u32 maxViewsPerFrame = 4;

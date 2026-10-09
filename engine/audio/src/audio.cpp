@@ -20,6 +20,9 @@
 #include "engine/platform/async_io.h"
 #include "engine/platform/file.h"
 #include "engine/scene/world.h"
+#if ENG_PLATFORM_UWP
+#include "uwp_output.h"
+#endif
 
 // The one translation unit that defines miniaudio. Nothing else in the engine
 // includes it, which is what makes ADR 0009's "the public API never leaks
@@ -698,6 +701,9 @@ struct Audition
 struct AudioSystem::Impl
 {
     ma_device device{};
+#if ENG_PLATFORM_UWP
+    std::unique_ptr<detail::UwpOutput> output;
+#endif
     bool deviceStarted = false;
 
     std::mutex mutex;
@@ -799,7 +805,12 @@ struct AudioSystem::Impl
     static void dataCallback(ma_device* device, void* output, const void* input, ma_uint32 frameCount)
     {
         (void)input;
-        auto* self = static_cast<Impl*>(device->pUserData);
+        render(device->pUserData, static_cast<float*>(output), frameCount);
+    }
+
+    static void render(void* context, float* output, core::u32 frameCount)
+    {
+        auto* self = static_cast<Impl*>(context);
         auto* samples = static_cast<float*>(output);
         std::memset(samples, 0, static_cast<core::usize>(frameCount) * kChannels * sizeof(float));
         if (self == nullptr)
@@ -971,6 +982,16 @@ std::optional<core::EngineError> AudioSystem::start(bool headless)
         return std::nullopt;
     }
 
+#if ENG_PLATFORM_UWP
+    // The platform output owns its asynchronous callbacks. In particular it
+    // never passes a stack completion handler to ActivateAudioInterfaceAsync.
+    m_impl->output = std::make_unique<detail::UwpOutput>();
+    if (!m_impl->output->start(&Impl::render, m_impl)) {
+        m_impl->output.reset();
+        core::logText(core::LogLevel::Info, core::engineCatalog().format(ENG_TR("audio.info.no_device"), {}));
+        return std::nullopt;
+    }
+#else
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
     config.playback.format = ma_format_f32;
     config.playback.channels = kChannels;
@@ -992,6 +1013,7 @@ std::optional<core::EngineError> AudioSystem::start(bool headless)
         return std::nullopt;
     }
 
+#endif
     m_impl->deviceStarted = true;
     return std::nullopt;
 }
@@ -1005,7 +1027,11 @@ void AudioSystem::stop()
     // fast machine and never on a slow one.
     m_impl->releasePrefetch();
     if (m_impl->deviceStarted) {
+#if ENG_PLATFORM_UWP
+        m_impl->output.reset();
+#else
         ma_device_uninit(&m_impl->device);
+#endif
         m_impl->deviceStarted = false;
     }
     delete m_impl;

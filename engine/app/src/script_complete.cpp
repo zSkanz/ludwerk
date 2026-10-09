@@ -513,12 +513,19 @@ void collectChildren(const CompletionWorld& tree, const core::AtomTable& atoms, 
 
 // Every class flagged as a service, which is what `GetService("` accepts.
 void collectServices(const scene::ClassRegistry& classes, const core::AtomTable& atoms,
-                     const CompletionRequest& request, std::vector<Completion>& out)
+                     const CompletionRequest& request, const CompletionWorld& tree, std::vector<Completion>& out)
 {
     for (scene::ClassId id = 1; id < static_cast<scene::ClassId>(classes.classCount()); ++id) {
         const scene::ClassDescriptor* descriptor = classes.find(id);
         if (descriptor == nullptr || !hasFlag(descriptor->flags, scene::ClassFlags::Service))
             continue;
+        if (!descriptor->integration.empty()) {
+            if (tree.world == nullptr)
+                continue;
+            const auto& enabled = tree.world->engineState().enabledIntegrations;
+            if (std::find(enabled.begin(), enabled.end(), descriptor->integration) == enabled.end())
+                continue;
+        }
         push(out, request, std::string(atoms.text(descriptor->name)),
              core::tr(ENG_TR("engine.editor.script.kind.service")), descriptor->doc != nullptr ? descriptor->doc : "",
              CompletionKind::Service);
@@ -746,7 +753,7 @@ void collectCompletions(const ScriptDocument& document, const CompletionRequest&
     // member.** `GetService("` takes a service; `WaitForChild("` takes the name
     // of a child, which only the tree knows.
     if (request.quoted == CompletionQuoted::Service) {
-        collectServices(classes, atoms, request, out);
+        collectServices(classes, atoms, request, tree, out);
         sortCompletions(out, request.prefix);
         return;
     }

@@ -5,6 +5,7 @@
 #include <functional>
 #include <limits>
 #include <string>
+#include <type_traits>
 
 #include "engine/asset/field_cells.h"
 #include "engine/asset/terrain_layers.h"
@@ -303,28 +304,25 @@ struct ChunkSpan
     return packed;
 }
 
-// `packed` is `packedForGpu(meshed)`, when a worker made it already.
 [[nodiscard]] MeshHandle upload(rhi::IDevice& device, rhi::ICmdList& cmd, MeshCache& cache, MeshLibrary& library,
-                                core::NameAtom urn, const asset::TerrainMesh& meshed,
-                                const asset::Mesh* packed = nullptr)
+                                core::NameAtom urn, const asset::Mesh& packed, std::span<const u8> sectionMaterials)
 {
-    if (meshed.mesh.indices.empty())
+    if (packed.indices.empty())
         return {};
     core::EngineError uploadError;
-    const MeshHandle handle =
-        cache.create(device, cmd, packed != nullptr ? *packed : packedForGpu(meshed), MeshUsage::Static, &uploadError);
+    const MeshHandle handle = cache.create(device, cmd, packed, MeshUsage::Static, &uploadError);
     if (!handle.valid()) {
         core::logText(core::LogLevel::Warn, uploadError.message);
         return {};
     }
     MeshLibrary::Entry entry;
     entry.mesh = handle;
-    entry.bounds = meshed.mesh.bounds;
-    entry.sectionCount = static_cast<u32>(meshed.mesh.submeshes.size());
+    entry.bounds = packed.bounds;
+    entry.sectionCount = static_cast<u32>(packed.submeshes.size());
     entry.sectionMaterial.resize(entry.sectionCount);
     entry.materials.reserve(entry.sectionCount);
     for (u32 section = 0; section < entry.sectionCount; ++section) {
-        const core::u8 materialId = section < meshed.sectionMaterials.size() ? meshed.sectionMaterials[section] : 0;
+        const core::u8 materialId = section < sectionMaterials.size() ? sectionMaterials[section] : 0;
         const core::Vec3 tint = asset::terrainColorOf(materialId);
         RenderMaterial material;
         material.uniforms.baseColor[0] = tint.x;
@@ -869,6 +867,22 @@ u64 terrainNodeContent(const asset::TerrainField& resident, const asset::Terrain
 // snapshot: its chunks are shared with the live one, which clones a chunk
 // before it writes to one another snapshot holds, so what a worker reads never
 // changes under it.
+struct TerrainLoader::ReusableMesh
+{
+    asset::Mesh packed;
+    std::vector<u8> sectionMaterials;
+    float error = 0.0f;
+
+    [[nodiscard]] usize bytes() const noexcept
+    {
+        const auto storage = [](const auto& values) {
+            return values.capacity() * sizeof(typename std::decay_t<decltype(values)>::value_type);
+        };
+        return sizeof(ReusableMesh) + storage(packed.vertices) + storage(packed.indices) + storage(packed.submeshes) +
+               storage(sectionMaterials);
+    }
+};
+
 struct TerrainLoader::Batch
 {
     struct Item
@@ -893,6 +907,7 @@ struct TerrainLoader::Batch
         // The same, in the GPU's layout: made here rather than on the frame.
         asset::Mesh packed;
         u64 content = 0;
+        std::shared_ptr<const ReusableMesh> reused;
     };
     std::vector<Item> items;
     std::vector<jobs::JobHandle> lanes;
@@ -915,6 +930,8 @@ struct TerrainLoader::Batch
         std::vector<asset::SurfaceWant> wants;
         for (usize at = lane; at < items.size(); at += laneCount) {
             Item& item = items[at];
+            if (item.reused != nullptr)
+                continue;
             if (item.far) {
                 buildFar(item);
                 continue;
@@ -964,6 +981,45 @@ struct TerrainLoader::Batch
 };
 
 TerrainLoader::TerrainLoader() = default;
+
+void TerrainLoader::setMeshReuseBudget(usize bytes)
+{
+    m_reuseBudget = bytes;
+    trimReuse();
+}
+
+void TerrainLoader::trimReuse()
+{
+    // Empty nodes also take an entry, so bytes alone are not a metadata bound.
+    while (!m_reuse.empty() && (m_reuseBytes > m_reuseBudget || m_reuse.size() > 1024)) {
+        const auto oldest = std::min_element(
+            m_reuse.begin(), m_reuse.end(), [](const auto& a, const auto& b) { return a.second.used < b.second.used; });
+        m_reuseBytes -= oldest->second.bytes;
+        m_reuse.erase(oldest);
+    }
+}
+
+void TerrainLoader::reuse(Batch& batch)
+{
+    if (m_reuse.empty())
+        return;
+    for (Batch::Item& item : batch.items) {
+        // Disk-backed fields can change outside the resident snapshot. Their
+        // normal cell revision/surface path remains responsible for freshness.
+        if (item.cells != nullptr || item.far)
+            continue;
+        item.content = contentOf(*item.field, item.key);
+        const asset::FieldSettings& settings = item.field->settings();
+        const ReuseKey key{item.key,           item.sides,         item.content,
+                           settings.voxelSize, settings.minHeight, settings.maxHeight};
+        const auto found = m_reuse.find(key);
+        if (found == m_reuse.end())
+            continue;
+        found->second.used = ++m_reuseClock;
+        item.reused = found->second.mesh;
+        ++m_reuseHits;
+    }
+}
 
 TerrainLoader::~TerrainLoader()
 {
@@ -1019,7 +1075,9 @@ u32 TerrainLoader::integrate(rhi::IDevice& device, rhi::ICmdList& cmd, MeshCache
         Variant& variant = node->variants[slot];
         if (variant.mesh.valid())
             cache.release(device, variant.mesh);
-        variant.mesh = upload(device, cmd, cache, library, variant.urn, item.mesh, &item.packed);
+        const asset::Mesh& packed = item.reused != nullptr ? item.reused->packed : item.packed;
+        const auto& materials = item.reused != nullptr ? item.reused->sectionMaterials : item.mesh.sectionMaterials;
+        variant.mesh = upload(device, cmd, cache, library, variant.urn, packed, materials);
         if (!variant.mesh.valid())
             library.remove(variant.urn);
         variant.content = item.content;
@@ -1034,7 +1092,25 @@ u32 TerrainLoader::integrate(rhi::IDevice& device, rhi::ICmdList& cmd, MeshCache
         if (!node->built)
             countBuilt(item.world, item.terrain, item.key, true);
         node->built = true;
-        node->error = static_cast<f64>(item.mesh.error);
+        node->error = static_cast<f64>(item.reused != nullptr ? item.reused->error : item.mesh.error);
+        if (m_reuseBudget != 0 && item.reused == nullptr && item.cells == nullptr && !item.far) {
+            const asset::FieldSettings& settings = item.field->settings();
+            const ReuseKey key{item.key,           item.sides,         item.content,
+                               settings.voxelSize, settings.minHeight, settings.maxHeight};
+            auto saved = std::make_shared<ReusableMesh>();
+            saved->packed = std::move(item.packed);
+            saved->sectionMaterials = std::move(item.mesh.sectionMaterials);
+            saved->error = item.mesh.error;
+            const usize bytes = saved->bytes();
+            if (bytes <= m_reuseBudget) {
+                const auto previous = m_reuse.find(key);
+                if (previous != m_reuse.end())
+                    m_reuseBytes -= previous->second.bytes;
+                m_reuse.insert_or_assign(key, ReuseEntry{std::move(saved), bytes, ++m_reuseClock});
+                m_reuseBytes += bytes;
+                trimReuse();
+            }
+        }
         count += 1;
     }
     if (batch->next < batch->items.size())
@@ -1821,6 +1897,7 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                 item.cells = terrain->cellSource;
                 batch->items.push_back(std::move(item));
             }
+            reuse(*batch);
             Batch* running = batch.get();
             running->seamsAhead = false;
             running->laneCount = std::clamp<u32>(jobs::workerCount(), 1u, static_cast<u32>(running->items.size()));
@@ -1909,6 +1986,7 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
             (apart ? *farBatch : *batch).items.push_back(std::move(item));
         }
         requests = std::move(left);
+        reuse(*batch);
         if (m_async && !farBatch->items.empty()) {
             // Two lanes at most, and one on a machine of eight threads or
             // fewer: far ground is a few seconds' work once, and the near
@@ -1922,7 +2000,10 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
             m_farBatch = std::move(farBatch);
         }
         if (!batch->items.empty()) {
-            if (m_async) {
+            const bool ready =
+                m_fastUploads && std::all_of(batch->items.begin(), batch->items.end(),
+                                             [](const Batch::Item& item) { return item.reused != nullptr; });
+            if (m_async && !ready) {
                 // **A few lanes**: a quarter of the workers, at least one and
                 // at most four, so the frame's own jobs are never queued behind
                 // the ground.
@@ -1945,7 +2026,7 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                 std::vector<MissingSurface> missing;
                 std::vector<asset::SurfaceWant> wants;
                 for (const Batch::Item& item : batch->items) {
-                    if (item.far)
+                    if (item.far || item.reused != nullptr)
                         continue;
                     wants.clear();
                     missingTerrainSurfaces(*item.field, item.key, item.sides, wants);
@@ -1958,6 +2039,8 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                                   [&built](usize begin, usize end, u32) noexcept {
                                       for (usize at = begin; at < end; ++at) {
                                           Batch::Item& item = built.items[at];
+                                          if (item.reused != nullptr)
+                                              continue;
                                           if (item.far) {
                                               Batch::buildFar(item);
                                               continue;
@@ -2198,6 +2281,8 @@ void TerrainLoader::destroy(rhi::IDevice& device, MeshCache& cache, MeshLibrary&
         release(device, cache, library, node);
     m_nodes.clear();
     m_drawn.clear();
+    m_reuse.clear();
+    m_reuseBytes = 0;
 }
 
 usize TerrainLoader::residentCount() const noexcept

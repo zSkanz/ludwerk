@@ -20,6 +20,10 @@ offers is on the base's page, which is what keeps one added member on
 
 ## Methods
 
+### `CaptureProfile(seconds: number, warmupSeconds: number? = 0): boolean`
+
+Requests a main-thread CPU scope capture at frame boundaries, using wall-clock seconds. Returns false while a capture is pending or for non-finite/out-of-range durations: measurement must be in (0, 120], warm-up in [0, 120]. Diagnostic only; never use for simulation.
+
 ### `DrawBox(cframe: CFrame, size: vector, color: Color3? = nil)`
 
 Draws the wireframe of a box at this frame, with these dimensions in metres, for one frame. A silent no-op in a headless run, like every gizmo.
@@ -31,6 +35,10 @@ Draws a line between two world positions for one frame. Headless there is no ren
 ### `DrawSphere(position: vector, radius: number, color: Color3? = nil)`
 
 Draws the wireframe of a sphere at this world position, with this radius in metres, for one frame. A silent no-op in a headless run, like every gizmo.
+
+### `GetProfileReport(): any`
+
+Returns nil until CaptureProfile completes, then a table with frames, seconds and scopes. Each scope contains name, depth, meanMs, bestMs, medianMs, p95Ms, p99Ms, worstMs and selfMedianMs. Inclusive CPU times include child scopes and waits; they are not GPU execution timings. The most recent 16384 frames are retained. The report persists until the next request.
 
 ### `GetStat(name: string): number`
 

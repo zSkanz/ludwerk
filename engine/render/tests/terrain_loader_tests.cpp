@@ -1,3 +1,4 @@
+#include "../src/terrain_variants.h"
 // Terrain on the GPU (ADR 0082): which nodes are drawn, and what is meshed.
 //
 // **Testable with no device worth the name.** The loader runs against the null
@@ -807,4 +808,114 @@ TEST_CASE("a streamed terrain is drawn whole, once everywhere, however little of
     }
     CHECK(missing == 0);
     CHECK(twice == 0);
+}
+
+TEST_CASE("terrain shader permutations preserve hex layers across views and live material edits")
+{
+    engine::render::RenderWorld world;
+    CHECK_FALSE(engine::render::terrainNeedsHexSampling(world));
+    world.terrains.resize(2);
+    world.terrains[0].layers.resize(2);
+    world.terrains[1].layers.resize(2);
+    CHECK_FALSE(engine::render::terrainNeedsHexSampling(world));
+    auto& layer = world.terrains[1].layers[1];
+    layer.tiling[2] = 0.5f;
+    CHECK_FALSE(engine::render::terrainNeedsHexSampling(world));
+    layer.tiling[2] = 1.0f;
+    layer.waiting = true;
+    CHECK(engine::render::terrainNeedsHexSampling(world));
+    layer.waiting = false;
+    CHECK(engine::render::terrainNeedsHexSampling(world));
+    layer.tiling[2] = 0.0f;
+    CHECK_FALSE(engine::render::terrainNeedsHexSampling(world));
+    world.terrains[0].layers[0].tiling[2] = 1.0f;
+    CHECK(engine::render::terrainNeedsHexSampling(world));
+    world.terrains.erase(world.terrains.begin());
+    CHECK_FALSE(engine::render::terrainNeedsHexSampling(world));
+}
+
+TEST_CASE("triplanar terrain permutation falls back for a planar layer without losing height-map flags")
+{
+    engine::render::RenderWorld world;
+    world.terrains.resize(2);
+    world.terrains[0].layers.resize(1);
+    world.terrains[1].layers.resize(1);
+    world.terrains[0].layers[0].surface[3] = 1.0f;
+    world.terrains[1].layers[0].surface[3] = 3.0f;
+    CHECK(engine::render::terrainIsTriplanarOnly(world));
+    world.terrains[1].layers[0].surface[3] = 2.0f;
+    CHECK_FALSE(engine::render::terrainIsTriplanarOnly(world));
+    world.terrains[1].layers[0].surface[3] = 0.0f;
+    CHECK_FALSE(engine::render::terrainIsTriplanarOnly(world));
+    world.terrains[1].layers[0].surface[3] = 1.0f;
+    CHECK(engine::render::terrainIsTriplanarOnly(world));
+}
+
+TEST_CASE("terrain geometry reuse survives scene replacement without retaining instance handles")
+{
+    LoaderFixture fixture(64.0f);
+    fixture.loader.setFocus(core::DVec3{8.0, 4.0, 8.0});
+    const auto first = fixture.settle();
+    REQUIRE_FALSE(first.empty());
+    REQUIRE(fixture.loader.meshReuseBytes() > 0);
+    const auto old = fixture.terrain;
+    const auto component = fixture.component();
+    const auto hits = fixture.loader.meshReuseHits();
+    fixture.world.terrains().remove(old);
+    REQUIRE(fixture.world.destroy(old));
+    fixture.terrain = fixture.world.create(fixture.terrainClass);
+    fixture.world.terrains().add(fixture.terrain, component);
+    REQUIRE(fixture.world.setParent(fixture.terrain, fixture.root) == std::nullopt);
+    const auto next = fixture.settle();
+    REQUIRE(next.size() == first.size());
+    CHECK(fixture.loader.meshReuseHits() > hits);
+    CHECK(fixture.loader.meshReuseBytes() <= 64 * 1024 * 1024);
+    for (const auto& draw : next) {
+        CHECK(draw.terrain == fixture.terrain);
+        REQUIRE(fixture.library.find(draw.urn) != nullptr);
+        CHECK(fixture.cache.resolve(fixture.library.find(draw.urn)->mesh) != nullptr);
+    }
+    for (const auto& draw : first)
+        CHECK(fixture.library.find(draw.urn) == nullptr);
+    CHECK(fixture.loader.drawnOutOfDate(fixture.world).empty());
+    fixture.loader.setMeshReuseBudget(0);
+    CHECK(fixture.loader.meshReuseBytes() == 0);
+}
+
+TEST_CASE("terrain geometry reuse respects edits paint scale and its memory ceiling")
+{
+    LoaderFixture fixture(64.0f);
+    fixture.loader.setFocus(core::DVec3{8.0, 4.0, 8.0});
+    (void)fixture.settle();
+    const auto original = fixture.component().field;
+    const auto replace = [&](asset::TerrainField field) {
+        fixture.world.terrains().remove(fixture.terrain);
+        REQUIRE(fixture.world.destroy(fixture.terrain));
+        fixture.terrain = fixture.world.create(fixture.terrainClass);
+        scene::TerrainComponent component;
+        component.field = std::move(field);
+        fixture.world.terrains().add(fixture.terrain, std::move(component));
+        REQUIRE(fixture.world.setParent(fixture.terrain, fixture.root) == std::nullopt);
+        (void)fixture.settle();
+        CHECK(fixture.loader.drawnOutOfDate(fixture.world).empty());
+    };
+    auto changed = original;
+    (void)asset::fillBall(changed, core::DVec3{0.0, 0.0, 0.0}, 100.0, 2);
+    const auto beforePaint = fixture.loader.meshReuseHits();
+    replace(changed);
+    CHECK(fixture.loader.meshReuseHits() == beforePaint);
+    const auto beforeRestore = fixture.loader.meshReuseHits();
+    replace(original);
+    CHECK(fixture.loader.meshReuseHits() > beforeRestore);
+    asset::TerrainField scaled(asset::FieldSettings{.voxelSize = 2.0f, .minHeight = -32.0f, .maxHeight = 64.0f});
+    (void)asset::fillFlat(scaled, core::DVec3{}, 128.0f, 0.0f, 1);
+    const auto beforeScale = fixture.loader.meshReuseHits();
+    replace(std::move(scaled));
+    CHECK(fixture.loader.meshReuseHits() == beforeScale);
+    fixture.loader.setMeshReuseBudget(1024);
+    CHECK(fixture.loader.meshReuseBytes() <= 1024);
+    replace(original);
+    CHECK(fixture.loader.meshReuseBytes() <= 1024);
+    fixture.loader.destroy(*fixture.device, fixture.cache, fixture.library);
+    CHECK(fixture.loader.meshReuseBytes() == 0);
 }

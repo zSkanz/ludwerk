@@ -63,11 +63,26 @@ void UiNavigation::beginFrame() noexcept
 
 void UiNavigation::letGo() noexcept
 {
+    const auto id = m_gamepadId;
     *this = UiNavigation{};
+    m_gamepadId = id;
+}
+
+void UiNavigation::setGamepadId(core::u32 id) noexcept
+{
+    if (id != m_gamepadId) {
+        letGo();
+        m_gamepadId = id;
+    }
 }
 
 void UiNavigation::feed(const platform::Event& event) noexcept
 {
+    const bool gamepad =
+        event.type == platform::EventType::GamepadButtonDown || event.type == platform::EventType::GamepadButtonUp ||
+        event.type == platform::EventType::GamepadAxisMoved || event.type == platform::EventType::GamepadRemoved;
+    if (gamepad && m_gamepadId != 0 && event.gamepadId != m_gamepadId)
+        return;
     switch (event.type) {
     case platform::EventType::KeyDown:
         // A repeat is a step: holding an arrow walks the selection.
@@ -139,10 +154,11 @@ void UiNavigation::feed(const platform::Event& event) noexcept
     }
 }
 
-bool UiNavigation::boundByGame(const scene::World& world, core::i32 keyCode)
+bool UiNavigation::boundByGame(const scene::World& world, core::i32 keyCode, core::u32 gamepadId)
 {
     if (keyCode == 0)
         return false;
+    const auto controller = input::deviceOf(keyCode) == input::DeviceType::Gamepad ? gamepadId : 0;
     bool bound = false;
     world.inputBindings().forEach([&](core::InstanceId id, const scene::InputBindingComponent& binding) {
         if (bound)
@@ -157,6 +173,7 @@ bool UiNavigation::boundByGame(const scene::World& world, core::i32 keyCode)
         const scene::InputActionComponent* actionState = world.inputActions().find(action);
         const scene::InputContextComponent* contextState = world.inputContexts().find(context);
         bound = actionState != nullptr && actionState->enabled && contextState != nullptr && contextState->enabled &&
+                (controller == 0 || contextState->gamepadId == 0 || contextState->gamepadId == controller) &&
                 !world.destroyed(context);
     });
     return bound;
@@ -164,7 +181,7 @@ bool UiNavigation::boundByGame(const scene::World& world, core::i32 keyCode)
 
 void UiNavigation::fill(const scene::World& world, ui::InteractionInput& out, core::f64 now) noexcept
 {
-    const auto free = [&world](i32 code) { return !boundByGame(world, code); };
+    const auto free = [this, &world](i32 code) { return !boundByGame(world, code, m_gamepadId); };
     // Each way of giving a direction, where the game has not taken it. A stick
     // bound whole -- as `LeftThumbstick` -- is bound on both its axes.
     const bool arrowsX = free(codeOf(platform::Key::Left)) && free(codeOf(platform::Key::Right));

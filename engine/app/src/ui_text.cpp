@@ -237,18 +237,36 @@ void UiText::loadPendingImages(rhi::IDevice& device, rhi::ICmdList& cmd)
     }
 
     bool changed = false;
+    core::usize started = 0;
     for (Image& image : imageEntries_) {
         if (image.state != ImageState::Requested) {
             continue;
         }
 
+        // A full pipeline leaves later names queued. Falling through here
+        // decoded the overflow synchronously, making the bound ineffective.
+        // Also bound attempts when async IO is unavailable and falls back.
+        if (deferredImages_) {
+            if (bytesInFlight_ >= MaxImagesInFlight || started >= MaxImagesInFlight)
+                break;
+            ++started;
+        }
+
         const asset::ResolvedContent resolved = mounts_->resolve(image.urn);
+
+        if (deferredImages_ && !resolved.bytes.empty()) {
+            image.work = std::make_unique<ImageWork>();
+            // Mounts may be cleared/replaced while a decode is outstanding.
+            // Resolve on the frame, then give the job its own bounded storage.
+            image.work->bytes.assign(resolved.bytes.begin(), resolved.bytes.end());
+            queueImageDecode(image);
+            continue;
+        }
 
         // **Queued rather than read, and only up to a bound.** A screen naming
         // three hundred icons must not open three hundred files and hold three
         // hundred decoded images at the same time.
-        if (deferredImages_ && bytesInFlight_ < MaxImagesInFlight && resolved.bytes.empty() &&
-            resolved.source == asset::ResolvedContent::Source::Loose) {
+        if (deferredImages_ && resolved.source == asset::ResolvedContent::Source::Loose) {
             image.read = platform::readFileAsync(resolved.path, platform::IoPriority::Low);
             if (image.read.valid()) {
                 image.state = ImageState::Reading;
@@ -326,7 +344,8 @@ void UiText::loadPendingImages(rhi::IDevice& device, rhi::ICmdList& cmd)
 bool UiText::imageInFlight(std::string_view urn) const noexcept
 {
     for (const Image& image : imageEntries_) {
-        if (image.urn == urn && (image.state == ImageState::Reading || image.state == ImageState::Decoding))
+        if (image.urn == urn && ((deferredImages_ && image.state == ImageState::Requested) ||
+                                 image.state == ImageState::Reading || image.state == ImageState::Decoding))
             return true;
     }
     return false;
@@ -336,7 +355,8 @@ core::usize UiText::imagesInFlight() const noexcept
 {
     core::usize count = 0;
     for (const Image& image : imageEntries_) {
-        if (image.state == ImageState::Reading || image.state == ImageState::Decoding)
+        if ((deferredImages_ && image.state == ImageState::Requested) || image.state == ImageState::Reading ||
+            image.state == ImageState::Decoding)
             ++count;
     }
     return count;
@@ -357,6 +377,39 @@ void UiText::releasePendingImages() noexcept
         image.work.reset();
     }
     bytesInFlight_ = 0;
+}
+
+void UiText::queueImageDecode(Image& image)
+{
+    // **One pointer, to memory that does not move.** Another label
+    // naming a new URN reallocates `imageEntries_`, so anything the job
+    // addresses has to live somewhere the vector is not.
+    ImageWork* work = image.work.get();
+    image.decode = jobs::schedule("ui-image-decode", jobs::Domain::AssetIo, [work]() noexcept {
+        // A compiled texture first, then an encoded one -- the same
+        // order and the same reason as the synchronous path: a project
+        // built through `assetc` carries KTX2, one run out of its source
+        // tree carries the PNG the artist saved.
+        if (!asset::transcodeTexture(work->bytes, asset::TranscodeOptions{}, work->compiled).has_value() &&
+            work->compiled.valid()) {
+            work->ok = true;
+        }
+        else if (asset::Image decoded; !asset::decodeImage(work->bytes, decoded).has_value()) {
+            // With its smaller levels, made here and not on the frame.
+            work->compiled = asset::mipChainOf(decoded, true);
+            work->ok = work->compiled.valid();
+        }
+        work->bytes.clear();
+        work->bytes.shrink_to_fit();
+    });
+    if (!image.decode.valid()) {
+        image.state = ImageState::Failed;
+        image.work.reset();
+        imagesChanged_ = true;
+        return;
+    }
+    image.state = ImageState::Decoding;
+    ++bytesInFlight_;
 }
 
 // The read and the decode stages of a deferred image. Only the upload is left
@@ -395,35 +448,7 @@ void UiText::pumpImages(rhi::IDevice& device, rhi::ICmdList& cmd)
                 continue;
             }
 
-            // **One pointer, to memory that does not move.** Another label
-            // naming a new URN reallocates `imageEntries_`, so anything the job
-            // addresses has to live somewhere the vector is not.
-            ImageWork* work = image.work.get();
-            image.decode = jobs::schedule("ui-image-decode", jobs::Domain::AssetIo, [work]() noexcept {
-                // A compiled texture first, then an encoded one -- the same
-                // order and the same reason as the synchronous path: a project
-                // built through `assetc` carries KTX2, one run out of its source
-                // tree carries the PNG the artist saved.
-                if (!asset::transcodeTexture(work->bytes, asset::TranscodeOptions{}, work->compiled).has_value() &&
-                    work->compiled.valid()) {
-                    work->ok = true;
-                }
-                else if (asset::Image decoded; !asset::decodeImage(work->bytes, decoded).has_value()) {
-                    // With its smaller levels, made here and not on the frame.
-                    work->compiled = asset::mipChainOf(decoded, true);
-                    work->ok = work->compiled.valid();
-                }
-                work->bytes.clear();
-                work->bytes.shrink_to_fit();
-            });
-            if (!image.decode.valid()) {
-                image.state = ImageState::Failed;
-                image.work.reset();
-                imagesChanged_ = true;
-                continue;
-            }
-            image.state = ImageState::Decoding;
-            ++bytesInFlight_;
+            queueImageDecode(image);
             continue;
         }
 

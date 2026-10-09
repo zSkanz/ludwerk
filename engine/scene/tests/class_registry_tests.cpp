@@ -89,6 +89,17 @@ TEST_CASE("member lookup resolves through the hierarchy")
 
     CHECK(classes.findProperty(schema.partClass, schema.atoms.intern("NoSuchThing")) == nullptr);
     CHECK(classes.findProperty(InvalidClass, schema.nameProperty) == nullptr);
+
+    engine::core::u16 slot = 999;
+    const auto* inherited = classes.findProperty(schema.partClass, schema.nameProperty, slot);
+    REQUIRE(inherited != nullptr);
+    CHECK(slot == classes.propertySlot(schema.instanceClass, schema.nameProperty));
+    CHECK(slot != engine::scene::ClassRegistry::NoSlot);
+    CHECK(classes.findProperty(schema.basePartClass, schema.shapeProperty, slot) == nullptr);
+    CHECK(slot == engine::scene::ClassRegistry::NoSlot);
+    slot = 999;
+    CHECK(classes.findProperty(InvalidClass, schema.nameProperty, slot) == nullptr);
+    CHECK(slot == engine::scene::ClassRegistry::NoSlot);
 }
 
 TEST_CASE("a redeclared member shadows the inherited one")
@@ -117,6 +128,9 @@ TEST_CASE("a redeclared member shadows the inherited one")
     CHECK(base != derived);
     CHECK(derived->readOnly);
     CHECK_FALSE(base->readOnly);
+    engine::core::u16 slot = engine::scene::ClassRegistry::NoSlot;
+    CHECK(schema.classes.findProperty(shadowedClass, schema.nameProperty, slot) == derived);
+    CHECK(slot == schema.classes.propertySlot(schema.folderClass, schema.nameProperty));
 }
 
 TEST_CASE("descriptors carry their flags and default names")

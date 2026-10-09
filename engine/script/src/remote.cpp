@@ -488,7 +488,7 @@ struct Decoder
     raise(L, ENG_TR("net.err.remote_authority_only"), args);
 }
 
-int fireServer(lua_State* L, bool unreliable)
+int fireServer(lua_State* L, bool unreliable, bool explicitPlayer = false)
 {
     const core::InstanceId remote = checkInstance(L, 1);
     World& w = world(L);
@@ -496,14 +496,24 @@ int fireServer(lua_State* L, bool unreliable)
     message.remote = remote;
     message.toServer = true;
     message.unreliable = unreliable;
-    encodeRemoteArguments(L, 2, lua_gettop(L) - 1, message.payload, message.refs, unreliable);
+    core::InstanceId sender;
+    if (explicitPlayer) {
+        sender = checkInstance(L, 2);
+        const auto* player = w.players().find(sender);
+        if (onReplica(w) || player == nullptr || !player->local || w.destroyed(sender) ||
+            std::find(w.engineState().leavingPlayers.begin(), w.engineState().leavingPlayers.end(), sender) !=
+                w.engineState().leavingPlayers.end())
+            raise(L, ENG_TR("net.err.remote_not_player"));
+    }
+    const int first = explicitPlayer ? 3 : 2;
+    encodeRemoteArguments(L, first, lua_gettop(L) - first + 1, message.payload, message.refs, unreliable);
     if (onReplica(w)) {
         w.engineState().remoteOutbox.push_back(std::move(message));
         return 0;
     }
     // **The authority is its own server**: solo or hosting, its player's
     // message is delivered here, the way a replica's would be.
-    const core::InstanceId local = scene::localPlayerOf(w);
+    const core::InstanceId local = explicitPlayer ? sender : scene::localPlayerOf(w);
     if (!local.valid())
         raise(L, ENG_TR("net.err.remote_no_player"));
     message.player = local;
@@ -521,6 +531,16 @@ int unreliableFireServer(lua_State* L)
     return fireServer(L, true);
 }
 
+int remoteFireServerFor(lua_State* L)
+{
+    return fireServer(L, false, true);
+}
+
+int unreliableFireServerFor(lua_State* L)
+{
+    return fireServer(L, true, true);
+}
+
 int fireClient(lua_State* L, bool unreliable)
 {
     const core::InstanceId remote = checkInstance(L, 1);
@@ -536,6 +556,7 @@ int fireClient(lua_State* L, bool unreliable)
     message.unreliable = unreliable;
     encodeRemoteArguments(L, 3, lua_gettop(L) - 2, message.payload, message.refs, unreliable);
     if (who->local) {
+        message.player = player;
         w.engineState().remoteInbox.push_back(std::move(message));
         return 0;
     }
@@ -831,9 +852,11 @@ void finishRunningInvokes(lua_State* L)
 
 constexpr InstanceMethodBinding RemoteMethods[] = {
     {"RemoteEvent", "FireServer", remoteFireServer},
+    {"RemoteEvent", "FireServerFor", remoteFireServerFor},
     {"RemoteEvent", "FireClient", remoteFireClient},
     {"RemoteEvent", "FireAllClients", remoteFireAllClients},
     {"UnreliableRemoteEvent", "FireServer", unreliableFireServer},
+    {"UnreliableRemoteEvent", "FireServerFor", unreliableFireServerFor},
     {"UnreliableRemoteEvent", "FireClient", unreliableFireClient},
     {"UnreliableRemoteEvent", "FireAllClients", unreliableFireAllClients},
     {"RemoteFunction", "InvokeServerAsync", remoteInvokeServer},
@@ -932,6 +955,7 @@ void fireRemoteMessages(lua_State* L)
         return;
     const core::NameAtom serverEvent = w.atoms().intern("ServerReceived");
     const core::NameAtom clientEvent = w.atoms().intern("ClientReceived");
+    const core::NameAtom localClientEvent = w.atoms().intern("LocalClientReceived");
     for (scene::RemoteMessage& message : inbox) {
         // An answer is for a caller, and finds it by number whatever became
         // of the instance it named.
@@ -945,8 +969,12 @@ void fireRemoteMessages(lua_State* L)
             startInvoke(L, message);
             continue;
         }
-        const scene::EventDesc* event =
-            w.classes().findEvent(w.classOf(message.remote), message.toServer ? serverEvent : clientEvent);
+        const bool guest = !message.toServer && message.player.valid() && message.player != scene::localPlayerOf(w);
+        if (guest && (!w.alive(message.player) || w.players().find(message.player) == nullptr ||
+                      !w.players().find(message.player)->local))
+            continue;
+        const scene::EventDesc* event = w.classes().findEvent(
+            w.classOf(message.remote), message.toServer ? serverEvent : (guest ? localClientEvent : clientEvent));
         if (event == nullptr)
             continue;
         // **A call that arrives before anybody listens is kept for the first
@@ -987,7 +1015,7 @@ void fireRemoteMessages(lua_State* L)
             continue;
         const int top = lua_gettop(L);
         int count = 0;
-        if (message.toServer) {
+        if (message.toServer || guest) {
             pushInstance(L, message.player);
             count = 1;
         }

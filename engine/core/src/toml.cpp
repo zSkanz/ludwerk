@@ -6,6 +6,15 @@
 #include "engine/core/number_parse.h"
 
 namespace engine::core {
+std::vector<std::pair<std::string, std::string>> TomlDocument::stringValues(std::string_view prefix) const
+{
+    std::vector<std::pair<std::string, std::string>> result;
+    for (const auto& entry : entries_) {
+        if (entry.kind == Kind::String && entry.key.starts_with(prefix))
+            result.emplace_back(entry.key.substr(prefix.size()), entry.text);
+    }
+    return result;
+}
 namespace {
 
 constexpr std::string_view kSpaces = " \t";
@@ -415,6 +424,13 @@ std::span<const f64> TomlDocument::numbers(std::string_view key) const
     if (entry == nullptr || entry->kind != Kind::NumberArray)
         return {};
     return entry->numbers;
+}
+
+std::span<const std::string> TomlDocument::strings(std::string_view key) const
+{
+    const Entry* entry = find(key);
+    return entry != nullptr && entry->kind == Kind::StringArray ? std::span<const std::string>(entry->strings)
+                                                                : std::span<const std::string>{};
 }
 
 } // namespace engine::core

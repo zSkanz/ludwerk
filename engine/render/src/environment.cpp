@@ -1,6 +1,7 @@
 #include "engine/render/environment.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <utility>
@@ -54,13 +55,18 @@ constexpr f32 kPi = 3.14159265358979323846f;
 
 // GGX's own distribution, sampled: `alpha` is roughness squared, and the half
 // vector comes out in the tangent frame of `normal`.
-[[nodiscard]] Vec3 importanceSampleGgx(f32 u1, f32 u2, f32 alpha, Vec3 normal) noexcept
+[[nodiscard]] Vec3 localSampleGgx(f32 u1, f32 u2, f32 alpha) noexcept
 {
     const f32 phi = 2.0f * kPi * u1;
     const f32 cosTheta = std::sqrt((1.0f - u2) / (1.0f + (alpha * alpha - 1.0f) * u2));
     const f32 sinTheta = std::sqrt(std::max(0.0f, 1.0f - cosTheta * cosTheta));
 
-    const Vec3 local{sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta};
+    return {sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta};
+}
+
+[[nodiscard]] Vec3 importanceSampleGgx(f32 u1, f32 u2, f32 alpha, Vec3 normal) noexcept
+{
+    const Vec3 local = localSampleGgx(u1, u2, alpha);
 
     // The usual degenerate-basis guard: a normal along +Z makes the obvious
     // helper vector parallel to it.
@@ -76,8 +82,7 @@ struct LevelJob
 {
     const SkyParams* params = nullptr;
     u32 size = 0;
-    f32 alpha = 0.0f;
-    u32 sampleCount = 0;
+    std::span<const Vec3> samples;
     bool mirror = false;
     u16* out = nullptr;
 };
@@ -147,14 +152,15 @@ void bakeRows(void* user, usize begin, usize end, u32) noexcept
                 color = evaluateSky(*job.params, normal);
             }
             else {
+                const Vec3 helper = std::fabs(normal.z) < 0.999f ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{1.0f, 0.0f, 0.0f};
+                const Vec3 tangentX = core::normalize(core::cross(helper, normal));
+                const Vec3 tangentY = core::cross(normal, tangentX);
                 // Karis's assumption: view == normal == reflection. It is what
                 // makes the integral independent of the view and therefore
                 // precomputable at all.
                 f32 totalWeight = 0.0f;
-                for (u32 sample = 0; sample < job.sampleCount; ++sample) {
-                    const f32 u1 = (static_cast<f32>(sample) + 0.5f) / static_cast<f32>(job.sampleCount);
-                    const f32 u2 = radicalInverse(sample);
-                    const Vec3 half = importanceSampleGgx(u1, u2, job.alpha, normal);
+                for (const Vec3 local : job.samples) {
+                    const Vec3 half = tangentX * local.x + tangentY * local.y + normal * local.z;
                     const Vec3 light = half * (2.0f * core::dot(normal, half)) - normal;
                     const f32 nol = core::dot(normal, light);
                     if (nol <= 0.0f)
@@ -532,11 +538,22 @@ void bakeEnvironmentLevel(const SkyParams& params, u32 size, f32 roughness, u32 
     if (size == 0 || out.size() < static_cast<usize>(size) * size * 4)
         return;
 
+    // Local GGX samples depend on roughness, not the texel's direction. Keep
+    // their order and arithmetic while sharing them across every row job.
+    const f32 alpha = std::max(roughness * roughness, 1e-3f);
+    const u32 count = std::max(sampleCount, 1u);
+    std::vector<Vec3> samples;
+    if (roughness > 0.0f) {
+        samples.reserve(count);
+        for (u32 sample = 0; sample < count; ++sample) {
+            const f32 u1 = (static_cast<f32>(sample) + 0.5f) / static_cast<f32>(count);
+            samples.push_back(localSampleGgx(u1, radicalInverse(sample), alpha));
+        }
+    }
     LevelJob job{
         .params = &params,
         .size = size,
-        .alpha = std::max(roughness * roughness, 1e-3f),
-        .sampleCount = std::max(sampleCount, 1u),
+        .samples = samples,
         .mirror = roughness <= 0.0f,
         .out = out.data(),
     };
@@ -613,6 +630,13 @@ void bakeBrdfRows(void* user, usize begin, usize end, u32) noexcept
         // Smith's geometry term for IBL uses k = alpha / 2, which is the
         // remapping Karis publishes and is NOT the direct-lighting one.
         const f32 k = alpha * 0.5f;
+        // Every column in this row uses the same half vectors. No samples or
+        // contributions are dropped, and each texel accumulates in sample order.
+        std::array<Vec3, kSamples> halves;
+        for (u32 sample = 0; sample < kSamples; ++sample) {
+            const f32 u1 = (static_cast<f32>(sample) + 0.5f) / static_cast<f32>(kSamples);
+            halves[sample] = importanceSampleGgx(u1, radicalInverse(sample), alpha, normal);
+        }
 
         for (u32 x = 0; x < job.size; ++x) {
             const f32 nov = std::max((static_cast<f32>(x) + 0.5f) / static_cast<f32>(job.size), 1e-3f);
@@ -620,10 +644,9 @@ void bakeBrdfRows(void* user, usize begin, usize end, u32) noexcept
 
             f32 scaleTerm = 0.0f;
             f32 biasTerm = 0.0f;
+            const f32 g1v = nov / (nov * (1.0f - k) + k);
             for (u32 sample = 0; sample < kSamples; ++sample) {
-                const f32 u1 = (static_cast<f32>(sample) + 0.5f) / static_cast<f32>(kSamples);
-                const f32 u2 = radicalInverse(sample);
-                const Vec3 half = importanceSampleGgx(u1, u2, alpha, normal);
+                const Vec3 half = halves[sample];
                 const Vec3 light = half * (2.0f * core::dot(view, half)) - view;
 
                 const f32 nol = saturate(light.z);
@@ -632,7 +655,6 @@ void bakeBrdfRows(void* user, usize begin, usize end, u32) noexcept
                 if (nol <= 0.0f)
                     continue;
 
-                const f32 g1v = nov / (nov * (1.0f - k) + k);
                 const f32 g1l = nol / (nol * (1.0f - k) + k);
                 const f32 visibility = g1v * g1l * voh / std::max(noh * nov, 1e-4f);
                 const f32 fc = std::pow(1.0f - voh, 5.0f);

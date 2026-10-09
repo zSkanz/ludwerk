@@ -17,6 +17,7 @@
 
 #include <array>
 #include <optional>
+#include <string_view>
 
 #include "engine/core/error.h"
 #include "engine/render/mesh_cache.h"
@@ -220,6 +221,17 @@ public:
     // milliseconds a pipeline. Called behind a loading curtain. What the scene
     // itself shows is made by drawing it there; this is for what it will show.
     virtual void warm(rhi::IDevice& device) { (void)device; }
+
+    // Explicit content preloading includes a user's surface pipelines, not
+    // just its bytecode. Null means pending, false a terminal failure. The
+    // resulting pipelines are shared with normal rendering and live until
+    // the source revision changes. Call behind a loading curtain.
+    [[nodiscard]] virtual std::optional<bool> warmSurface(rhi::IDevice& device, std::string_view name)
+    {
+        (void)device;
+        (void)name;
+        return false;
+    }
 
     // What the last frame actually submitted.
     //

@@ -33,6 +33,8 @@ engine_add_module(script
         src/save_service.cpp
         src/crypto_service.cpp
         src/scenes.cpp
+        src/optional_service.cpp
+    src/platform_services.cpp
         src/services.cpp
         src/remote.cpp
         src/signals.cpp

@@ -858,6 +858,16 @@ int runServiceBindToIntent(lua_State* L)
     luaL_checktype(L, 3, LUA_TFUNCTION);
     if (length == 0)
         raise(L, ENG_TR("script.err.intent_binding_name"));
+    core::InstanceId player;
+    if (lua_gettop(L) >= 4 && !lua_isnil(L, 4)) {
+        player = checkInstance(L, 4);
+        const auto& w = *context(L).world;
+        const auto* participant = w.players().find(player);
+        if (participant == nullptr || !participant->local || w.destroyed(player) ||
+            std::find(w.engineState().leavingPlayers.begin(), w.engineState().leavingPlayers.end(), player) !=
+                w.engineState().leavingPlayers.end())
+            raise(L, ENG_TR("script.err.intent_local_player"));
+    }
     const std::string name{text, length};
     SceneState& state = scenes(L);
     std::erase_if(state.intentBindings, [&](const IntentBinding& binding) {
@@ -869,7 +879,7 @@ int runServiceBindToIntent(lua_State* L)
     lua_pushvalue(L, 3);
     const int ref = lua_ref(L, -1);
     lua_pop(L, 1);
-    state.intentBindings.push_back(IntentBinding{name, state.nextIntentBinding++, ref, scriptOfThread(L)});
+    state.intentBindings.push_back(IntentBinding{name, state.nextIntentBinding++, ref, scriptOfThread(L), player});
     return 0;
 }
 
@@ -893,6 +903,7 @@ namespace {
 struct IntentWriterUserdata
 {
     core::u32 run = 0;
+    core::InstanceId player;
 };
 
 // `IntentWriter:Set(action, value)`: the local player's intent named
@@ -942,7 +953,7 @@ int intentWriterSet(lua_State* L)
 
     scene::World& world = *context(L).world;
     intent.action = world.atoms().intern(std::string_view{text, length});
-    scene::PlayerComponent* player = world.players().find(scene::localPlayerOf(world));
+    scene::PlayerComponent* player = world.players().find(writer->player);
     if (player == nullptr)
         return 0;
     for (scene::PlayerIntent& held : player->intents) {
@@ -978,12 +989,21 @@ void runIntentWriters(lua_State* L)
         lua_pop(L, 1);
         if (reason != SuppressReason::None)
             continue;
+        const auto& w = *context(L).world;
+        const auto player = binding.player.valid() ? binding.player : scene::localPlayerOf(w);
+        const auto* participant = w.players().find(player);
+        if (binding.player.valid() &&
+            (participant == nullptr || !participant->local || w.destroyed(player) ||
+             std::find(w.engineState().leavingPlayers.begin(), w.engineState().leavingPlayers.end(), player) !=
+                 w.engineState().leavingPlayers.end()))
+            continue;
         lua_State* co = lua_newthread(L);
         lua_getref(L, binding.functionRef);
         lua_xmove(L, co, 1);
         void* memory = lua_newuserdatataggedwithmetatable(co, sizeof(IntentWriterUserdata),
                                                           static_cast<int>(UserdataTag::IntentWriter));
         static_cast<IntentWriterUserdata*>(memory)->run = scenes(L).intentRun;
+        static_cast<IntentWriterUserdata*>(memory)->player = player;
         (void)resumeScheduled(L, co, 1);
         lua_pop(L, 1);
     }

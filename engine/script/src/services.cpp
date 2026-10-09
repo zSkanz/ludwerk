@@ -18,6 +18,7 @@
 #include "engine/asset/terrain.h"
 #include "engine/asset/voxel_mesher.h"
 #include "engine/core/content_path.h"
+#include "engine/core/profile.h"
 #include "engine/core/run_record.h"
 #include "engine/input/input.h"
 #include "engine/net/local_address.h"
@@ -32,6 +33,8 @@
 #include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/modules.h"
+#include "engine/script/optional_service.h"
+#include "engine/script/platform_services.h"
 #include "engine/script/remote.h"
 #include "engine/script/save_service.h"
 #include "engine/script/scenes.h"
@@ -115,7 +118,10 @@ using scene::World;
 int dataModelGetService(lua_State* L)
 {
     (void)checkInstance(L, 1);
-    pushInstance(L, getServiceOfClass(L, checkServiceClass(L, 2)));
+    const auto service = checkServiceClass(L, 2);
+    const auto* descriptor = world(L).classes().find(service);
+    warnOptionalIntegration(L, descriptor->integration, world(L).atoms().text(descriptor->name));
+    pushInstance(L, getServiceOfClass(L, service));
     return 1;
 }
 
@@ -360,6 +366,50 @@ int debugServiceDrawSphere(lua_State* L)
     if (sink.sphere != nullptr)
         sink.sphere(sink.user, position, radius, color);
     return 0;
+}
+
+int debugServiceCaptureProfile(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    lua_pushboolean(L, core::profile::requestCapture(luaL_checknumber(L, 2), luaL_optnumber(L, 3, 0.0)));
+    return 1;
+}
+
+int debugServiceGetProfileReport(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const auto* capture = core::profile::captured();
+    if (capture == nullptr) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 3);
+    lua_pushnumber(L, static_cast<f64>(capture->frames));
+    lua_setfield(L, -2, "frames");
+    lua_pushnumber(L, capture->seconds);
+    lua_setfield(L, -2, "seconds");
+    lua_createtable(L, static_cast<int>(capture->scopes.size()), 0);
+    int index = 0;
+    for (const auto& row : capture->scopes) {
+        lua_createtable(L, 0, 9);
+        lua_pushlstring(L, row.name.data(), row.name.size());
+        lua_setfield(L, -2, "name");
+        const auto number = [L](const char* name, f64 value) {
+            lua_pushnumber(L, value);
+            lua_setfield(L, -2, name);
+        };
+        number("depth", row.depth);
+        number("meanMs", row.meanMs);
+        number("bestMs", row.bestMs);
+        number("medianMs", row.medianMs);
+        number("p95Ms", row.p95Ms);
+        number("p99Ms", row.p99Ms);
+        number("worstMs", row.worstMs);
+        number("selfMedianMs", row.selfMedianMs);
+        lua_rawseti(L, -2, ++index);
+    }
+    lua_setfield(L, -2, "scopes");
+    return 1;
 }
 
 int debugServiceGetStat(lua_State* L)
@@ -1426,6 +1476,55 @@ int trailClear(lua_State* L)
 
 // --- NetworkService and Player (N1) -------------------------------------------
 
+int networkServiceAddLocalPlayer(lua_State* L)
+{
+    const auto self = checkInstance(L, 1);
+    auto& w = world(L);
+    auto& state = w.engineState();
+    if (state.networkTopology != scene::NetworkTopology::Solo || !scene::localPlayerOf(w).valid() ||
+        state.nextLocalPlayerId == 0 || state.pendingNetwork.has_value()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const auto player = scene::createPlayer(w, self, state.nextLocalPlayerId++, true);
+    pushInstance(L, player);
+    return 1;
+}
+
+int networkServiceRemoveLocalPlayer(lua_State* L)
+{
+    const auto self = checkInstance(L, 1);
+    const auto player = checkInstance(L, 2);
+    auto& w = world(L);
+    const auto* who = w.players().find(player);
+    const bool allowed = who != nullptr && who->local && player != scene::localPlayerOf(w) &&
+                         w.engineState().networkTopology == scene::NetworkTopology::Solo && !w.destroyed(player) &&
+                         std::find(w.engineState().leavingPlayers.begin(), w.engineState().leavingPlayers.end(),
+                                   player) == w.engineState().leavingPlayers.end();
+    if (allowed)
+        scene::removePlayer(w, self, player);
+    lua_pushboolean(L, allowed);
+    return 1;
+}
+
+int networkServiceGetLocalPlayers(lua_State* L)
+{
+    const auto self = checkInstance(L, 1);
+    const auto& w = world(L);
+    lua_newtable(L);
+    int index = 1;
+    for (auto child = w.firstChild(self); child.valid(); child = w.nextSibling(child)) {
+        const auto* who = w.players().find(child);
+        if (who != nullptr && who->local && !w.destroyed(child) &&
+            std::find(w.engineState().leavingPlayers.begin(), w.engineState().leavingPlayers.end(), child) ==
+                w.engineState().leavingPlayers.end()) {
+            pushInstance(L, child);
+            lua_rawseti(L, -2, index++);
+        }
+    }
+    return 1;
+}
+
 int networkServiceGetPlayers(lua_State* L)
 {
     const core::InstanceId self = checkInstance(L, 1);
@@ -1690,6 +1789,21 @@ void refuseOnDedicated(lua_State* L)
         raise(L, ENG_TR("scene.err.network_dedicated"));
 }
 
+void refuseWithLocalGuests(lua_State* L)
+{
+    const auto& w = world(L);
+    const auto primary = scene::localPlayerOf(w);
+    bool guests = false;
+    w.players().forEach([&](core::InstanceId id, const scene::PlayerComponent& player) {
+        if (player.local && id != primary && !w.destroyed(id) &&
+            std::find(w.engineState().leavingPlayers.begin(), w.engineState().leavingPlayers.end(), id) ==
+                w.engineState().leavingPlayers.end())
+            guests = true;
+    });
+    if (guests)
+        raise(L, ENG_TR("scene.err.network_local_guests"));
+}
+
 // `{ Relay = "host:port", Direct = false }`, the last argument of `Host` and
 // `Join` (ADR 0178): the relay a call names over `[network] relay`, and
 // whether a join tries a path each to the other before the relay carries it.
@@ -1729,6 +1843,7 @@ int networkServiceJoin(lua_State* L)
 {
     (void)checkInstance(L, 1);
     refuseOnDedicated(L);
+    refuseWithLocalGuests(L);
     scene::EngineState& state = world(L).engineState();
     std::string address;
     if (lua_gettop(L) >= 2 && !lua_isnil(L, 2)) {
@@ -1794,6 +1909,7 @@ int networkServiceHost(lua_State* L)
 {
     (void)checkInstance(L, 1);
     refuseOnDedicated(L);
+    refuseWithLocalGuests(L);
     u16 port = 7777;
     if (lua_gettop(L) >= 2 && !lua_isnil(L, 2)) {
         const double requested = luaL_checknumber(L, 2);
@@ -1944,6 +2060,38 @@ int inputServiceSetClipboard(lua_State* L)
     }
     services(L).clipboard = std::string(text, length);
     return 0;
+}
+
+int inputServiceGetGamepads(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const auto* devices = services(L).input;
+    lua_newtable(L);
+    if (devices != nullptr) {
+        int index = 1;
+        for (const auto& pad : devices->snapshot().gamepads) {
+            if (pad.id == 0)
+                continue;
+            lua_pushnumber(L, static_cast<double>(pad.id));
+            lua_rawseti(L, -2, index++);
+        }
+    }
+    return 1;
+}
+
+int inputServiceIsGamepadKeyDown(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const double id = luaL_checknumber(L, 2);
+    if (!std::isfinite(id) || id <= 0 || id > static_cast<double>(std::numeric_limits<core::u32>::max()) ||
+        std::floor(id) != id)
+        luaL_argerror(L, 2, "positive controller instance id");
+    const scene::EnumValue item = checkEnumItem(L, 3);
+    if (item.enumId != scene::generated::KeyCodeEnumId)
+        luaL_argerror(L, 3, "Enum.KeyCode");
+    const auto* devices = services(L).input;
+    lua_pushboolean(L, devices != nullptr && devices->isGamepadKeyDown(static_cast<core::u32>(id), item.value));
+    return 1;
 }
 
 int inputServiceIsKeyDown(lua_State* L)
@@ -2819,6 +2967,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"DebugService", "DrawBox", debugServiceDrawBox},
     {"DebugService", "DrawSphere", debugServiceDrawSphere},
     {"DebugService", "GetStat", debugServiceGetStat},
+    {"DebugService", "CaptureProfile", debugServiceCaptureProfile},
+    {"DebugService", "GetProfileReport", debugServiceGetProfileReport},
     {"DebugService", "SetCustomStat", debugServiceSetCustomStat},
     {"DebugService", "ShowPanel", debugServiceShowPanel},
     {"DebugService", "HidePanel", debugServiceHidePanel},
@@ -2828,6 +2978,9 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
 
     {"InputAction", "GetState", inputActionGetState},
     {"NetworkService", "GetPlayers", networkServiceGetPlayers},
+    {"NetworkService", "GetLocalPlayers", networkServiceGetLocalPlayers},
+    {"NetworkService", "AddLocalPlayer", networkServiceAddLocalPlayer},
+    {"NetworkService", "RemoveLocalPlayer", networkServiceRemoveLocalPlayer},
     {"NetworkService", "GetStats", networkServiceGetStats},
     {"NetworkService", "GetLocalAddresses", networkServiceGetLocalAddresses},
     {"SaveService", "GetSlotAsync", saveServiceGetSlotAsync},
@@ -2865,6 +3018,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"GraphicsService", "LoadAsync", graphicsServiceLoadAsync},
     {"InputService", "GetPointerPosition", inputServiceGetPointerPosition},
     {"InputService", "IsKeyDown", inputServiceIsKeyDown},
+    {"InputService", "GetGamepads", inputServiceGetGamepads},
+    {"InputService", "IsGamepadKeyDown", inputServiceIsGamepadKeyDown},
     {"InputService", "SetVirtualState", inputServiceSetVirtualState},
     {"InputService", "SetClipboard", inputServiceSetClipboard},
 
@@ -2935,6 +3090,8 @@ void registerServices(lua_State* L, core::InstanceId adopt)
     state.postReload = atoms.intern("PostReload");
 
     bindInstanceMethods(L, ServiceMethods);
+    bindInstanceMethods(L, optionalServiceMethods());
+    bindInstanceMethods(L, platformServiceMethods());
     bindInstanceMethods(L, remoteMethodBindings());
 
     // **Adopted when there is one, created when there is not.** A `DataModel` is
@@ -3021,6 +3178,14 @@ void registerServices(lua_State* L, core::InstanceId adopt)
     core::InstanceId workspace;
     core::InstanceId globalScripts;
     for (const ClassId id : serviceClasses) {
+        const auto* descriptor = w.classes().find(id);
+        if (descriptor->lazyService)
+            continue;
+        if (!descriptor->integration.empty()) {
+            const auto& enabled = w.engineState().enabledIntegrations;
+            if (std::find(enabled.begin(), enabled.end(), descriptor->integration) == enabled.end())
+                continue;
+        }
         const core::InstanceId created = getServiceOfClass(L, id);
         if (id == workspaceClass)
             workspace = created;

@@ -390,11 +390,6 @@ namespace {
 
 void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyComponent& body)
 {
-    if (id.index >= m_bodies.size())
-        m_bodies.resize(static_cast<usize>(id.index) + 1);
-
-    BodyRecord& record = m_bodies[id.index];
-
     // **A part nothing can meet has no body** (D513). Anchored, it does not
     // fall; neither colliding, nor queried, nor touched, nothing asks the
     // solver about it. It was still a body -- a sensor, made kinematic the
@@ -406,6 +401,12 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
     const bool inert = body.anchored && !body.canCollide && !body.canQuery && !body.canTouch &&
                        !std::binary_search(m_constrainedParts.begin(), m_constrainedParts.end(), id, byInstance);
     if (inert) {
+        // A purely visual part needs no mirror slot either. Growing the sparse
+        // mirror to every decoration's id made its clear/retire walks scale
+        // with render-only crowds, even though none had a physics body.
+        if (id.index >= m_bodies.size())
+            return;
+        BodyRecord& record = m_bodies[id.index];
         if (record.generation == id.generation && record.live) {
             m_backend.destroyBody(m_world, record.handle);
             --m_bodyCount;
@@ -414,6 +415,10 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
             record = BodyRecord{};
         return;
     }
+
+    if (id.index >= m_bodies.size())
+        m_bodies.resize(static_cast<usize>(id.index) + 1);
+    BodyRecord& record = m_bodies[id.index];
 
     // A script's write, told apart from the mirror's own the same way the
     // transform sync below does it: the component differs from what this mirror

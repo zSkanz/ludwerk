@@ -5,6 +5,95 @@ log entries to `docs/progress-archive/YYYY-MM.md`.
 
 ## State
 
+- **Eighth optimization batch (2026-10-09, PC only, validated):** native D3D12
+  reuses immutable sampled descriptor tables within each fenced recording;
+  cache hits preserve resource transitions, mip/layer identity and fresh UAVs.
+  Two control/two candidate 1500-mob/12-weapon offscreen runs: render CPU
+  4.6640 -> 3.9489 ms (-15.33%), shadows -9.84%, forward -26.64%, total
+  frame wall time 10.7537 -> 9.9339 ms (-7.62%). No quality reduction.
+  Windows full RHI 30 cases / 1311 assertions and seven capture gates pass.
+  Offline UWP native backend compiles. Native D3D12 only: no SDL_GPU/Vulkan
+  gain or physical Xbox/Android result claimed. No mouse capture/device access.
+  Normal optimized8 Windows folder/ZIP exported; explicit D3D12 launcher added.
+  Exported native smoke test: 240 frames, exit 0, no window/capture. See
+  [handoff](docs/briefs/hordewake-profile-optimization-batch8-2026-10-09.md).
+
+- **Seventh optimization batch (2026-10-09, PC only, validated/exported):**
+  prioritized heavy-game extraction and Heartbeat. Frame-local ancestor
+  memoization; horde borrows the existing hero-position snapshot per batch.
+  Two control/two candidate offscreen 1500-mob/12-weapon runs: horde follow
+  .8825 -> .8175 ms (-7.37%), Heartbeat median 1.6776 -> 1.6015 ms (-4.54%),
+  simulation -2.68%. Rendering gain small; no large FPS/hitch fix claim.
+  Synthetic deep hierarchy -36.69%, not an actual-game gain. Pair experiment
+  reverted. Windows/Linux 280 render cases pass; final shortcut: 51 extraction
+  cases and seven capture gates per OS. 8008 target-query parity assertions.
+  103 shipping scripts pass type analysis; unrelated whole-project lint/format
+  issues remain documented. Fresh optimized7 Windows folder/ZIP exported.
+  Xbox/phone untouched; no PC pointer capture. See
+  [handoff](docs/briefs/hordewake-profile-optimization-batch7-2026-10-09.md).
+
+- **Sixth optimization batch (2026-10-09, PC only):** bounded deferred UI image
+  loading for packs and queue overflow; queued pictures remain pending and hold
+  the native loading curtain. Isolated 232-image Null-RHI benchmark: worst sync
+  CPU median 55.075 -> .0523 ms; elapsed completion 55 -> 90 ms, not faster total
+  loading or a game FPS gain. Windows UI/mip-pixel parity tests, frame pacing and
+  Windows/Linux seven capture gates pass. Fresh optimized6 Windows ZIP exported.
+  Xbox is off; no Xbox/phone requests, no PC pointer capture. See
+  [handoff](docs/briefs/hordewake-profile-optimization-batch6-2026-10-09.md).
+
+- **Fifth optimization batch (2026-10-09):** property writes resolve descriptor
+  and subscription slot in one registry lookup. Isolated metadata lookup median
+  -46.76%; whole-game FPS effectively unchanged (Xbox v31 52.31 / v33 52.47,
+  live draw workloads differ). Earlier terrain-validation experiment v32 showed
+  no gain and was reverted. Windows/Linux 353 scene cases pass, Linux 124
+  replication cases and Windows seven capture gates pass; UWP/offline Android
+  builds and fresh normal exports pass. Normal v34 installed, menu ~60 FPS.
+  Lobby transition logged 232 UI pictures / 149 ms, inside a 158 ms frame.
+  No hitch fix or physical mobile gain claimed; phone remains forbidden. See
+  [handoff](docs/briefs/hordewake-profile-optimization-batch5-2026-10-09.md).
+
+- **Fourth optimization batch (2026-10-09):** reuse shared immutable
+  animation palettes within each render snapshot instead of copying/uploading
+  them once per rig. Windows/Linux tests and seven capture gates pass; UWP and
+  offline Android builds/exports pass. Two old/two new Xbox runs: preparation
+  CPU .693 -> .587 ms (-15.28%); general FPS unchanged, tail not improved.
+  Normal v29 installed/open, menu ~60 FPS; Portal screenshot capture failed.
+  Matrix and terrain binding regressions pass. No hitch fix claimed.
+  Phone remains forbidden. See
+  [active handoff](docs/briefs/hordewake-profile-optimization-batch4-2026-10-09.md).
+
+- **Third optimization batch (2026-10-09):** shared GGX/BRDF arithmetic reuse
+  preserves captured output. Material-driven terrain permutations reduce cold
+  PSO creation; corrected their missing full texture bindings after owner report.
+  Normal Xbox v27 visibly restores textured ground, menu ~60 FPS. Fresh heavy
+  capture: 52.24 FPS, no general FPS gain claimed. Regression capture gate rejects
+  the broken binding branch and passes the fix. Disk-cache experiment removed;
+  intermittent hitch remains open. Phone withdrawn; no device operations. See
+  [active handoff](docs/briefs/hordewake-profile-optimization-batch3-2026-10-09.md).
+
+- **Second profile batch (2026-10-09):** allocation-free descendant traversal
+  and per-sample animation root grouping validated on Windows/Linux, UWP/Android
+  builds and physical captures. Xbox drivers -19.1%, total animation -6.4%; no
+  clear general FPS gain, mobile conditions differ. Updated normal v13 Xbox and
+  Android menus run near 60 FPS; cold load remains open. See
+  [handoff and limits](docs/briefs/hordewake-profile-optimization-batch2-2026-10-09.md).
+
+- **Profile-driven optimization (2026-10-09):** reusable horde buffers, animation
+  candidate deduplication, word material hashes and inert-physics mirror avoidance
+  built/tested across Windows/Linux/UWP/Android. Repeat heavy captures: Windows
+  111.49 FPS (+5.12%); Xbox/phone mean unchanged, with lower tail times. See
+  [batch and validation limits](docs/briefs/hordewake-profile-optimization-2026-10-09.md)
+  and [before/after measurements](docs/briefs/hordewake-profile-optimization-results-2026-10-09.md).
+  Fresh normal builds exported. Xbox v10 first start lost its graphics device;
+  relaunch menu stable 59.9 FPS, cold loading still 18 s. Neither issue declared fixed.
+
+- **Cross-device stress profile (2026-10-09):** one real measured minute per
+  Windows PC / Xbox Series S / Android phone with 1500 target enemies and twelve
+  max-level weapons: 106.06 / 52.25 / 38.13 FPS. Per-scope CPU mean/best/worst/p99,
+  raw evidence paths, platform differences and next candidates are recorded in
+  [the profiling handoff](docs/briefs/hordewake-cross-device-profile-2026-10-09.md).
+  No direct GPU execution timing or claim that the intermittent hitch is solved.
+
 - **Exporting is done** (ADR 0104, 0105, 0106; ledger
   [`docs/briefs/export-and-server-kickoff.md`](docs/briefs/export-and-server-kickoff.md),
   every stage ticked, 2026-09-26/27). Code lives in three script services;
@@ -90,6 +179,97 @@ approximating one, and the packaged game ships Luau SOURCE rather than bytecode
 
 ## Now / Next
 
+- **Shared particle batching, 2026-10-09: verified across renderer backends.**
+  Seven-picture palettes retain exact depth order/UVs/effects in the same64-byte
+  instance stream; shader uses explicit samplers, no bindless requirement. Same
+  Series S workload: extreme draws1392->604 (ON),1401->606 (OFF), up to56.7%
+  fewer calls. FPS increase is small: extreme55.83->56.17 ON,54.93->56.17 OFF.
+  OFF550 worst39.04ms (previous33.37); keep this tail visible, no hitch-solved
+  claim. Windows/Linux particles18/1601 each, Windows RHI29/1181 passed; full
+  AndroidARM64 player/UWP/Windows builds. Headless SDL_GPU D3D12/NVIDIA and
+  Vulkan/Intel180-frame functional images match; no PC window/mouse capture.
+  Android hardware/Metal runtime FPS remains unmeasured. Benchmark v7 complete,
+  normal v8 deployed/launched in Game mode. [Measurements](docs/briefs/hordewake-particle-performance-results-2026-10-09.md),
+  [handoff](docs/briefs/hordewake-render-performance-2026-10-09.md).
+
+- **Native D3D12 performance, 2026-10-09: first measured optimization batch.**
+  Completed-fence retirement/upload reuse and three fenced descriptor heaps
+  replace two full GPU waits per frame. Windows RHI 28 / 1137 passed; Windows
+  host and UWP Release build. Same Series S 1080p High benchmark: 300 mobs
+  51.90 -> 59.94 FPS, 550 mobs 46.41 -> 59.71, 1000 mobs/12 weapons
+  39.38 -> 55.83 with VSync; gain up to 43.4% across eight ON/OFF cases.
+  No measured sample >50ms; OFF300/550 have isolated ~33ms tails. Normal v7
+  deployed/launched with Game budget; benchmark v6 stopped after completion.
+  No quality reduction, PC window or mouse capture. SDL_GPU/Android and
+  cross-platform hitch work remain separate; no competitor parity claim.
+  [Implementation/handoff](docs/briefs/hordewake-render-performance-2026-10-09.md),
+  [measured comparison](docs/briefs/hordewake-render-performance-results-2026-10-09.md).
+
+- **Native Xbox player port, 2026-10-09: real gameplay confirmed on Series S.**
+  [Implementation and hardware handoff](docs/briefs/xbox-native-player-port-2026-10-09.md).
+  Native D3D12 CoreWindow presentation, existing DXIL and shared resources/pipelines
+  verified on Series S (120 frames, renderer check 0.1.0.10). Private RHI command
+  encoder adds graphics/indirect/compute operations, copied bindings and safe
+  shutdown; Windows RHI 26 cases / 989 assertions, no skips; UWP `/W4 /WX` passes.
+  Native renderer/runtime port and actual APPX now run Hordewake. Owner confirmed
+  entering a match; Game mode measures 5120 MiB / ~60 FPS menu at 1080p high.
+  Follow-up fixes: release gameplay input ownership under cards/pause and preload
+  native surface pipelines to remove a measured 910 ms first-essence hitch.
+  Owner confirmed cards and pause on v0.8.49.5. A periodic ~0.52 s GPU/display
+  wait persisted with VSync. Diagnostic v0.8.49.6 is deployed; owner's Game-mode
+  retest improved: 75 s of post-loading samples at 58.1–60.2 FPS, worst 69.66 ms,
+  no repeat of the 520 ms stall in that interval. Cross-platform hitches also
+  reported; shared wait diagnostics compile on Windows/UWP/Linux. Full Windows
+  app tests 1042 / 38847 passed (two skipped). Android build and 180 s PC soak
+  passed; no proven common hitch root cause. Separate Series S benchmark v0.8.49.5
+  runs high1080p,100/300/550/1000 mobs,1/6/6/12 weapons,VSync ON/OFF. Native
+  startup dump isolated a WASAPI activation AV; UWP now uses XAudio2 output,
+  preserving the mixer/effects/decoders and desktop/mobile backends. Owner
+  confirms music/effects; Windows+Linux audio41/1157 each and Android compile
+  pass. Eight clean hardware stages completed without Portal screenshots during
+  samples:100/300/550/1000 mobs,VSync ON=59.91/51.90/46.41/39.38 FPS;
+  OFF=58.85/50.73/45.29/38.29. Worst33.89ms, no frame>50ms, peak996.8MiB.
+  The ~500ms waits in captured runs did not recur; PC/mobile hitch investigation
+  remains open. Raw data/report/capture saved alongside benchmark in Downloads.
+  [Benchmark checkpoint/results](docs/briefs/hordewake-series-s-benchmark-2026-10-09.md).
+
+- **Hordewake controller support, 2026-10-09: implemented; exports 0.8.49.**
+  [Handoff/tests/remaining Xbox work](docs/briefs/hordewake-gamepad-and-uwp-player-2026-10-09.md),
+  ADR 0192. Scoped gameplay Input Actions, analogue camera, menu/card focus,
+  interaction/pause/stats/spectating and dynamic phone touch controls. Native
+  Windows/Linux UI 158/158 and input 47/47; CLI 67/67; real-host virtual-action
+  regression, desktop/touch cards and 600-enemy stress passed. Players rebuilt
+  for Windows/Android. D598 fixes large-game checks, D599 keeps repeated APK
+  exports compact; D601 suppresses held modal buttons until release. Physical
+  gamepad PC/Android test remains unverified;
+  retail Xbox now runs the real game; follow the native-player handoff above.
+
+- **Xbox Developer Mode probe, 2026-10-09: running on the owner's console.**
+  [Hardware checkpoint](docs/briefs/xbox-uwp-probe-2026-10-09.md), ADR 0191.
+  Opt-in WindowsStore x64 host compiled, APPX validated/signed and installed via
+  Device Portal. Console screenshot and logs confirm graphics, packaged assets,
+  sandboxed pinned Luau and physical gamepad input; owner confirmed movement/A.
+  Corrected B being translated to the desktop Escape quit shortcut; owner retest
+  passed, as did controller reconnect and nondefault saved-position restoration.
+  Existing Windows default build and docs passed. Linux gate passed (536.5 s):
+  CTest 145/145, conformance 1642/1642 and hot reload 3/3.
+  Live Resuming callback remains unverified: portal suspend led to cold relaunch.
+  Full engine/Hordewake UWP port remains outstanding; this is a platform probe.
+
+- **Owner-authorized optional platforms and services, 2026-10-09: locally verified.**
+  [Handoff/results](docs/briefs/optional-platforms-and-services-2026-10-09.md),
+  [generic services plan](docs/briefs/generic-platform-services-2026-10-09.md),
+  ADRs 0188/0189/0190. Corrected deterministic hashes without trace changes
+  (lazy generic singletons and input metadata annotations); registered manual page.
+  Final Windows 138/138 and Linux 145/145 CTest passed, conformance 1642/1642 on
+  both, hot reload 3/3, Windows packaging 5/5, Android APK/AAB 2/2, Luau CLI 66/66,
+  docs and pinned format. Script 190/190; input 46/46; platform 56/56. Fresh exported
+  disabled player and enabled native payload hashes verified. Xbox only real provider;
+  identity/sign-in/completion implemented, other operations explicitly unavailable.
+  External SDK discovery/location UI newly discussed, NOT implemented; current
+  managed installs and CMake ENG_GDK_ROOT remain supported. Real title/account,
+  hardware controllers, console, macOS and visual UI validation remain unverified.
+
 - **The owner's queue of 2026-09-27 is the order of work**
   ([`docs/briefs/owner-queue-2026-09-27.md`](docs/briefs/owner-queue-2026-09-27.md)):
   defects first -- an export sweep found five, fixed the same day -- then
@@ -102,6 +282,17 @@ approximating one, and the packaged game ships Luau SOURCE rather than bytecode
   (`examples/27-mirrors-and-portals`), and `SubWorld`, a scene running in a
   world of its own beside the game (`examples/28-arcade`). The game-ready
   plan is next.
+
+- **After Views and before the AI panel: the game-ready plan**
+  ([`docs/briefs/game-ready-plan.md`](docs/briefs/game-ready-plan.md)),
+  approved in full by the owner on 2026-09-27 with its three new dependencies
+  (libsodium, dav1d, libopus). Four ledgers -- foundation (HTTPS, `SaveService`,
+  bytecode in the export), world (terrain layers as engine materials, rules by
+  slope and height, two materials a voxel, wind, foliage, water, friction and
+  footsteps), network (`NetworkService` connections, encryption with a player
+  as a key, relay) and media (`EditableImage`, `AudioStream`, `EditableMesh`,
+  `VideoPlayer`) -- and ADRs 0111 to 0122; and a fifth, parallel scripts in actors (ADR 0123),
+  added the same day. Not started.
 
 - **Post-v1 phases 2 and 4 are OPEN and being built.** The owner opened both on
   2026-08-27 in one instruction — *"terrain editor multiplayer voxels etc."* —
@@ -332,6 +523,21 @@ What this section used to hold, resolved, for whoever remembers it:
   2026-09-23.
 
 ## Decisions taken
+
+- **The engine becomes one a game is shipped with** (the owner, 2026-09-27;
+  [`docs/briefs/game-ready-plan.md`](docs/briefs/game-ready-plan.md), ADRs
+  0111 to 0123). A game saves (`SaveService`, into the player's own folder),
+  reaches the internet over the platform's TLS, and ships bytecode; terrain
+  layers are engine materials, painted by rules and blended two to a voxel;
+  wind is a `Workspace` property; foliage is drawn from rules and never
+  simulated; water is one wave definition read by the renderer and by physics;
+  `NetworkService` opens every kind of connection and a project declares what
+  it may do (amends 0070); the transport is encrypted with Noise over ENet and a
+  player is a key (amends 0012 and 0085); a script can write an image, a sound
+  and a mesh; a `VideoPlayer` decodes AV1 and Opus, and the platform's H.264.
+  Scripts run in parallel inside actors and commit in a fixed order (ADR
+  0123, block E). New dependencies approved: libsodium, dav1d, libopus.
+  Order: after Views, before the AI panel.
 
 - **Code lives in three script services, and each side's package carries only
   its own** (the owner, 2026-09-26, settled in two passes the same day;
@@ -660,3 +866,72 @@ navigation, and materials as assets -- joined them on 2026-09-25.
   automatic `end` after a return type; and lights that stand on their own
   (ADR 0095). One full gate for the whole batch, at the owner's request
   rather than one per commit.
+
+
+### Hordewake optimization batch 9 (2026-10-09, validated and exported)
+
+Sustained PC-only work, no mouse capture, phone or Xbox access. Accepted shared
+lazy material copies/hash reuse, SDL uniform/pipeline reuse, native D3D12
+uniform/state reuse, linear animation driver merge/deduplication, and lazy native
+horde snapshot headings. Same graphics/gameplay quality. Two matched controls
+and candidates per backend: frame CPU median -4.95% SDL_GPU, -6.38% native;
+animation driver association about -32%, total animation sampling about -11%,
+mesh extraction about -8%. Comparisons use dev/GPU validation on both sides.
+
+Windows full render 282 cases / 103508 assertions, RHI 31 / 1500; Linux affected
+render 95 / 3473, RHI 23 / 652; 14 capture gates, all pass. Two Windows manually
+skipped timing benchmarks are intentional. All 103 shipping Luau files typecheck;
+changed game file is formatted; actual Visible source parity passes 10144
+comparisons. Offline UWP native RHI library compiles.
+
+Built proper Release/player with both backends. Discarded initial source-fixture
+Release observations because a custom surface was uncompiled; fully exported
+fixture then passed two 5100-frame workloads, shader present and no errors.
+Valid Release frame medians: SDL 5.1851 ms, native 5.4728 ms (one run each,
+not before/after gains). Normal Release folder/ZIP exported to Downloads as
+Hordewake-0.8.49-optimized9-windows; both 240-frame smoke runs, PE code-section
+parity and ZIP parity pass. GPU validation off. Isolated worst frames have not
+improved consistently; do not claim all stutters fixed or device performance.
+
+Handoff: docs/briefs/hordewake-profile-optimization-batch9-2026-10-09.md.
+Evidence: C:/Users/juanr/Downloads/Hordewake-Heavy-opt9-results.
+Preserve existing dirty worktrees and untracked native backend sources.
+
+
+## Hordewake loading batch 10 and local co-op (2026-10-09)
+
+Loading reuse implemented and exported as Downloads/Hordewake-0.8.49-loading10-windows
+and matching ZIP. Three exported Release runs each: Play-to-card-removal median
+0.888 to 0.561 s (-36.9%), PC/headless only. Bounded packed CPU terrain geometry
+reuse, cached camp samples, readiness-based removal of padding and shorter
+menu/lobby fade. Windows/Linux terrain tests 23 cases / 11813 assertions each,
+Windows 7 captures, strict game types, both normal Windows backend startup smokes
+pass. Read hordewake-lobby-loading-audit-2026-10-09.md for evidence/limits.
+
+Owner additionally authorized full local co-op up to four controllers, shared
+higher camera with adaptive framing, simultaneous independent card hands (wait
+for everyone), full lobby/pause/reconnect/end flows. Not implemented yet; source
+audit found missing per-controller raw input/action filtering and singular local
+player routing. Read hordewake-local-coop-2026-10-09.md. Xbox remains off, phone
+permission withdrawn, no pointer capture or interactive PC launches.
+
+
+### Hordewake local co-op Xbox export checkpoint (2026-10-09)
+First integrated offline 2-4 player co-op Release exported, signed and installed
+as Ludwerk.Hordewake.Dev 0.8.49.35. Xbox startup verified in Game budget (5120 MiB),
+menu around 60 FPS. Synthetic two/four-player PC flows, engine tests on Windows
+and Linux and strict shipping Luau source analysis passed. Physical controller
+feedback pending; full console port is not yet declared complete. Cold Xbox
+startup stalls/readiness warning and guest stats-sheet ownership remain open.
+Full handoff: docs/briefs/hordewake-local-coop-2026-10-09.md.
+Artifact: C:/Users/juanr/Downloads/Hordewake-0.8.49-coop-xbox/.
+Phone remains off limits; PC game testing remains windowless/no pointer capture.
+
+
+Xbox co-op follow-up: owner confirmed independent movement with two controllers.
+Lobby now identifies local players over figures and on hero portraits; local
+readiness uses actual ready state. Strict source analysis and reviewed four-seat
+windowless capture passed. Xbox package updated to 0.8.49.36. See co-op brief.
+
+
+C drive archive checkpoint 2026-10-09: before 9427001344 bytes free; after 29495492608 bytes free. Archived old loading-profile fixture, 41 obsolete UWP stages and historical Downloads builds to D:/Ludwerk-Archive/C-space-2026-10-09. Manifest moved-files.jsonl records original paths. Preserved active toolchains/build trees, current UWP stage, loading10 Windows release, coop Xbox release, latest optimized5 Android release, all profiling evidence and original projects. No phone or console access. Initial recursive deletion was rejected by automatic policy; used reversible archive transfer instead. Restore archived fixtures before running historical commands referencing old paths.

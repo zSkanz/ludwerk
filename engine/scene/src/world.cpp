@@ -720,20 +720,21 @@ void World::collectDescendants(core::InstanceId id, std::vector<core::InstanceId
     // which is the document order `FindFirstChild` tie-breaks on
     // (api-design.md §2.2). Iterative because a deep tree is a script's to
     // build, and a recursive walk would put the stack depth in its hands.
-    std::vector<core::InstanceId> stack;
-    for (core::InstanceId child = firstChild(id); child.valid(); child = nextSibling(child))
-        stack.push_back(child);
-    std::reverse(stack.begin(), stack.end());
-
-    while (!stack.empty()) {
-        const core::InstanceId current = stack.back();
-        stack.pop_back();
+    // Parent/sibling links already encode the return path, without a temporary
+    // stack allocation for every hierarchy query.
+    core::InstanceId current = firstChild(id);
+    while (current.valid()) {
         out.push_back(current);
-
-        const usize mark = stack.size();
-        for (core::InstanceId child = firstChild(current); child.valid(); child = nextSibling(child))
-            stack.push_back(child);
-        std::reverse(stack.begin() + static_cast<std::ptrdiff_t>(mark), stack.end());
+        const core::InstanceId child = firstChild(current);
+        if (child.valid()) {
+            current = child;
+            continue;
+        }
+        while (current != id && !nextSibling(current).valid())
+            current = parentOf(current);
+        if (current == id)
+            break;
+        current = nextSibling(current);
     }
 }
 
@@ -889,7 +890,8 @@ World::SetResult World::setProperty(core::InstanceId id, core::NameAtom property
     if (record == nullptr)
         return SetResult::UnknownProperty;
 
-    const PropertyDesc* descriptor = m_classes.findProperty(record->classId, property);
+    u16 slot = ClassRegistry::NoSlot;
+    const PropertyDesc* descriptor = m_classes.findProperty(record->classId, property, slot);
     if (descriptor == nullptr)
         return SetResult::UnknownProperty;
     if (descriptor->readOnly)
@@ -913,7 +915,6 @@ World::SetResult World::setProperty(core::InstanceId id, core::NameAtom property
     // answered yes for ever.
     ++m_mutations;
 
-    const u16 slot = m_classes.propertySlot(record->classId, property);
     // Past 64 properties the mask cannot say, so the write is loud. Correct,
     // and slower, for a class nothing in v1 has.
     const bool subscribed = slot >= 64 || (record->subscribedProperties & (u64{1} << slot)) != 0;

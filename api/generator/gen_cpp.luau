@@ -802,6 +802,12 @@ local function generate(target: Module)
             emit(`    {descriptor}.super = {classIdVariable(class.Extends)};`)
         end
         emit(`    {descriptor}.flags = {flagsExpression(class)};`)
+        if class.LazyService == true then
+            emit(`    {descriptor}.lazyService = true;`)
+        end
+        if class.Integration ~= nil then
+            emit(`    {descriptor}.integration = {cppString(class.Integration)};`)
+        end
         emit(`    {descriptor}.defaultName = atoms.intern("{class.DefaultName or class.Name}");`)
         emit(`    {descriptor}.doc = {cppString(class.Doc)};`)
         -- Where it does its job (`Schema.Class.Parents`), as plain text: a

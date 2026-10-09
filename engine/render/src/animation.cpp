@@ -164,6 +164,13 @@ using core::Vec3;
     return static_cast<core::u64>(id.index) | (static_cast<core::u64>(id.generation) << 32);
 }
 
+// The pose walk is index first, generation second. Its driver runs use that
+// same order so one forward cursor replaces a binary search for each rig.
+[[nodiscard]] core::u64 driverKeyOf(core::InstanceId id) noexcept
+{
+    return (static_cast<core::u64>(id.index) << 32) | id.generation;
+}
+
 // A tick that has at least this much of the fade's remaining time in it
 // finishes the fade. The slack is what stops one tick's worth of remaining time
 // taking two ticks to spend: fifteen subtractions of 1/60 from 0.25 leave
@@ -364,6 +371,8 @@ scene::TrackState AnimationSystem::state(scene::TrackId id) const
 
 void AnimationSystem::sample(f64 fixedDt)
 {
+    core::profile::Sections sections;
+    ENG_PROFILE_NEXT(sections, "animation.tracks");
     // Every skinned mesh with at least one live track under it, collected first
     // so the pose walk is one pass per mesh rather than one per track.
     meshes_.clear();
@@ -371,8 +380,16 @@ void AnimationSystem::sample(f64 fixedDt)
     // Collected, then sorted and made unique below: a search per note was a
     // pass over every mesh for every track, quadratic in a crowd.
     const auto note = [this](core::InstanceId mesh) {
-        if (mesh.valid())
-            meshes_.push_back(mesh);
+        if (!mesh.valid())
+            return;
+        if (mesh.index >= meshMarks_.size())
+            meshMarks_.resize(static_cast<usize>(mesh.index) + 1);
+        MeshMark& mark = meshMarks_[mesh.index];
+        const core::u64 stamp = sampled_ + 1;
+        if (mark.stamp == stamp && mark.generation == mesh.generation)
+            return;
+        mark = MeshMark{stamp, mesh.generation};
+        meshes_.push_back(mesh);
     };
     // A track whose player says `AlwaysAnimate` (H3): its meshes are posed
     // every tick, seen or not.
@@ -457,33 +474,51 @@ void AnimationSystem::sample(f64 fixedDt)
     // skinned mesh under its drive root -- found here, once a tick, rather than
     // asked of every track by every pose.
     drivers_.clear();
-    std::vector<core::InstanceId> descendants;
+    ENG_PROFILE_NEXT(sections, "animation.drivers");
+    rootDrivers_.clear();
     for (usize index = 1; index < tracks_.size(); ++index) {
         const Track& track = tracks_[index];
         if (!track.alive || track.clip == NoClip)
             continue;
         const bool contributes = (track.playing || track.holding) && track.weight > 0.0f;
         if (contributes && track.meshPart.valid())
-            drivers_.emplace_back(keyOf(track.meshPart), static_cast<u32>(index));
+            drivers_.emplace_back(driverKeyOf(track.meshPart), static_cast<u32>(index));
         const bool noting = !quiet(track);
         if (!track.driveRoot.valid() || (!noting && !contributes))
             continue;
-        descendants.clear();
-        world_->collectDescendants(track.driveRoot, descendants);
-        const bool always = alwaysFor(track);
-        for (const core::InstanceId id : descendants) {
-            const scene::MeshPartComponent* mesh = world_->meshParts().find(id);
-            if (mesh == nullptr)
-                continue;
-            if (const SkeletonLibrary::Entry* entry = skeletons_->find(mesh->meshContent);
-                entry != nullptr && !entry->joints.empty()) {
-                if (noting)
-                    note(id);
-                if (always)
-                    always_.push_back(id);
-                if (contributes)
-                    drivers_.emplace_back(keyOf(id), static_cast<u32>(index));
+        rootDrivers_.emplace_back(keyOf(track.driveRoot), static_cast<u32>(index));
+    }
+    std::sort(rootDrivers_.begin(), rootDrivers_.end());
+    core::InstanceId lastRoot;
+    for (const auto& driver : rootDrivers_) {
+        const u32 index = driver.second;
+        const Track& track = tracks_[index];
+        if (track.driveRoot != lastRoot) {
+            lastRoot = track.driveRoot;
+            descendants_.clear();
+            driveMeshes_.clear();
+            world_->collectDescendants(lastRoot, descendants_);
+            for (const core::InstanceId id : descendants_) {
+                const scene::MeshPartComponent* mesh = world_->meshParts().find(id);
+                if (mesh == nullptr)
+                    continue;
+                const SkeletonLibrary::Entry* entry = skeletons_->find(mesh->meshContent);
+                if (entry != nullptr && !entry->joints.empty())
+                    driveMeshes_.push_back(id);
             }
+        }
+        const bool contributes = (track.playing || track.holding) && track.weight > 0.0f;
+        const bool noting = !quiet(track);
+        const bool always = alwaysFor(track);
+        for (const core::InstanceId id : driveMeshes_) {
+            if (noting)
+                note(id);
+            if (always)
+                always_.push_back(id);
+            // The track's own mesh was already indexed above. Avoid sorting
+            // a second copy of that pair for every track in a crowd.
+            if (contributes && id != track.meshPart)
+                drivers_.emplace_back(driverKeyOf(id), index);
         }
     }
     std::sort(drivers_.begin(), drivers_.end());
@@ -500,6 +535,7 @@ void AnimationSystem::sample(f64 fixedDt)
     }
     turned_.clear();
     boned_.clear();
+    ENG_PROFILE_NEXT(sections, "animation.bones");
     world_->attachments().forEach([&](core::InstanceId id, const scene::AttachmentComponent& bone) {
         if (bone.jointIndex < 0)
             return;
@@ -526,6 +562,7 @@ void AnimationSystem::sample(f64 fixedDt)
     // changed no observable behaviour, so it is not here.
     // In id order: what a pose is does not depend on which is built first,
     // and a sorted list is the same list on every run (R10).
+    ENG_PROFILE_NEXT(sections, "animation.prepare");
     std::sort(meshes_.begin(), meshes_.end(), [](core::InstanceId a, core::InstanceId b) {
         return a.index != b.index ? a.index < b.index : a.generation < b.generation;
     });
@@ -567,6 +604,8 @@ void AnimationSystem::sample(f64 fixedDt)
             }
         }
     }
+    ENG_PROFILE_NEXT(sections, "animation.poses");
+    auto driver = drivers_.begin();
     for (const core::InstanceId meshPart : meshes_) {
         const scene::MeshPartComponent* mesh = world_->meshParts().find(meshPart);
         if (mesh == nullptr)
@@ -593,17 +632,19 @@ void AnimationSystem::sample(f64 fixedDt)
         }
         // This mesh's drivers, in track order: the sorted index's run of it.
         const core::u64 key = keyOf(meshPart);
-        const auto first = std::lower_bound(drivers_.begin(), drivers_.end(), std::pair<core::u64, u32>{key, 0u});
-        auto last = first;
+        const core::u64 driverKey = driverKeyOf(meshPart);
+        while (driver != drivers_.end() && driver->first < driverKey)
+            ++driver;
         driving_.clear();
-        while (last != drivers_.end() && last->first == key) {
-            driving_.push_back(last->second);
-            ++last;
+        while (driver != drivers_.end() && driver->first == driverKey) {
+            driving_.push_back(driver->second);
+            ++driver;
         }
         rebuildPose(meshPart, *entry, driving_, true, reduced);
         stale_.erase(key);
     }
 
+    ENG_PROFILE_NEXT(sections, "animation.history");
     // Every track is now as the poses took it in.
     for (usize index = 1; index < tracks_.size(); ++index) {
         Track& track = tracks_[index];

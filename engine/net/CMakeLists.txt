@@ -41,7 +41,10 @@ endif()
 # TLS its operating system keeps patched. Linux loads the system's OpenSSL at
 # the first request (`dl`), so no OpenSSL is needed to build and a machine
 # without one fails that request rather than refusing to start.
-if(WIN32)
+if(ENG_PLATFORM_UWP)
+    target_sources(engine_net_api PRIVATE src/https_uwp.cpp)
+    target_link_libraries(engine_net_api PUBLIC WindowsApp)
+elseif(WIN32)
     target_sources(engine_net_api PRIVATE src/https_winhttp.cpp)
     target_link_libraries(engine_net_api PUBLIC winhttp)
 elseif(ANDROID)

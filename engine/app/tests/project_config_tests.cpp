@@ -917,3 +917,47 @@ TEST_CASE("the player's choices are written to their file and read back, and wha
     std::error_code ignored;
     std::filesystem::remove_all(folder, ignored);
 }
+
+TEST_CASE("optional integration configuration is independent of installed SDKs")
+{
+    ProjectDir project(R"(
+[integrations]
+enabled = ["xbox", "xbox", "../unsafe", "other"]
+[integrations.xbox]
+configuration = "configured-scid"
+[integrations.other]
+configuration = "another-provider"
+)");
+    const auto config = app::loadProjectConfig(project.path, {});
+    CHECK(config.enabledIntegrations == std::vector<std::string>{"xbox", "other"});
+    CHECK(config.integrationConfigurations.at("xbox") == "configured-scid");
+    CHECK(config.integrationConfigurations.at("other") == "another-provider");
+    CHECK(app::loadProjectConfig({}, {}).enabledIntegrations.empty());
+}
+
+TEST_CASE("generic platform providers and ID mappings remain per project and per provider")
+{
+    ProjectDir project(R"(
+[platform_services.identity]
+provider = "Auto"
+[platform_services.achievements]
+provider = "xbox"
+[platform_services.achievements.xbox.ids]
+FIRST_WIN = "17"
+[platform_services.achievements.future.ids]
+FIRST_WIN = "future-achievement"
+[platform_services.store.xbox.ids]
+DLC_01 = "native-product"
+[platform_services.leaderboards.xbox.ids]
+HIGH_SCORE = "native-board"
+)");
+    const auto config = app::loadProjectConfig(project.path, {});
+    CHECK(config.enabledIntegrations.empty());
+    CHECK(config.platformServices.providers.at("identity") == "Auto");
+    CHECK(config.platformServices.providers.at("achievements") == "xbox");
+    CHECK(config.platformServices.ids.at("achievements/xbox").at("FIRST_WIN") == "17");
+    CHECK(config.platformServices.ids.at("achievements/future").at("FIRST_WIN") == "future-achievement");
+    CHECK(config.platformServices.ids.at("store/xbox").at("DLC_01") == "native-product");
+    CHECK(config.platformServices.ids.at("leaderboards/xbox").at("HIGH_SCORE") == "native-board");
+    CHECK(app::loadProjectConfig({}, {}).platformServices.providers.empty());
+}

@@ -242,6 +242,10 @@ export type Class = {
     --- module that gives them meaning.
     Module: string,
     Tags: { ClassTag }?,
+    --- Optional integration owning this service; scripts retain its inactive API.
+    Integration: string?,
+    --- Available through GetService, but instantiated only on first request.
+    LazyService: boolean?,
     --- The `Name` a fresh instance carries. Defaults to the class name.
     DefaultName: string?,
     --- The base name of the hand-written hooks that attach and detach this
@@ -629,6 +633,9 @@ function Schema.validate(definition: Definition): { string }
 
     for _, class in classes do
         classNames[class.Name] = true
+        if class.LazyService == true and not hasTag(class, "Service") then
+            table.insert(errors, `{class.Name}: LazyService requires the Service tag`)
+        end
         if not isPascalCase(class.Name) then
             table.insert(errors, `{class.Name}: class names are PascalCase (§9)`)
         end

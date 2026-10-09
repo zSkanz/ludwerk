@@ -29,6 +29,10 @@ Sends the arguments to one player's machine, where `ClientReceived` fires. Only 
 
 Sends the arguments to the authority, where `ServerReceived` fires with this machine's player first. On an authority with a player of its own -- solo or hosting -- it is delivered there directly; a dedicated server has no player to send as, and refuses.
 
+### `FireServerFor(player: Player, arguments: ...any)`
+
+Submits this machine's local participant message to its own authority. Refuses replicas, remote players and removed guests; cannot impersonate a network peer. ServerReceived receives the selected local Player. Ordinary FireServer retains its primary-player behavior.
+
 ## Events
 
 Every signal here is **deferred** (ADR 0015): a handler runs at the next
@@ -37,6 +41,10 @@ drain point, never inside the call that fired it.
 ### `ClientReceived(arguments: ...any)`
 
 Fires on a player's machine when the authority calls `FireClient` for this player or `FireAllClients`.
+
+### `LocalClientReceived(player: Player, arguments: ...any)`
+
+Directed client message for an additional local guest, carrying that Player before the arguments. Primary and broadcast client messages retain ClientReceived; guest messages do not overwrite the primary player's HUD. Deferred like every remote signal.
 
 ### `ServerReceived(player: Player, arguments: ...any)`
 

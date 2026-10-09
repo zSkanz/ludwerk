@@ -34,6 +34,8 @@ class UiNavigation
 public:
     // The frame's edges are over; what is held stays held.
     void beginFrame() noexcept;
+    // Zero keeps aggregate navigation; a positive id reserves it for one pad.
+    void setGamepadId(core::u32 id) noexcept;
     // One event of the frame, in order. Anything that is none of the above is
     // ignored.
     void feed(const platform::Event& event) noexcept;
@@ -44,7 +46,7 @@ public:
     void fill(const scene::World& world, ui::InteractionInput& out, core::f64 now) noexcept;
 
     // Whether an enabled `InputContext` of the game binds `keyCode`.
-    [[nodiscard]] static bool boundByGame(const scene::World& world, core::i32 keyCode);
+    [[nodiscard]] static bool boundByGame(const scene::World& world, core::i32 keyCode, core::u32 gamepadId = 0);
 
 private:
     // One way a direction is given: its presses this frame, and what is held.
@@ -57,6 +59,7 @@ private:
     };
     // The arrows repeat by themselves -- the system's key repeat is a press --
     // and the other two are repeated here.
+    core::u32 m_gamepadId = 0;
     Source m_arrows;
     Source m_dpad;
     Source m_stick;

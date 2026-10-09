@@ -26,8 +26,10 @@ export window and targets), `rename-kickoff.md` (ADR 0109: the brand becomes
 **Ludwerk**, and the code takes the neutral internal name `engine` --
 `engine::`, `ENG_*`, `project.toml`, `@engine/` -- with the brand read from
 `branding/brand.toml` alone), `views-kickoff.md` (ADR 0107, cameras into
-textures, `ViewportFrame`, sub-worlds) and `ai-kickoff.md` (ADR 0108, the MCP
-server and the AI panel). `PROGRESS.md` says where things stand, and it is the
+textures, `ViewportFrame`, sub-worlds), then `game-ready-plan.md` (ADRs 0111
+to 0123: saves, HTTPS, terrain materials, foliage, wind, water, the network
+service, encryption, editable primitives, video and parallel scripts, in five
+ledgers it orders), and `ai-kickoff.md` (ADR 0108, the MCP server and the AI panel). `PROGRESS.md` says where things stand, and it is the
 file to trust when this paragraph and it disagree.
 
 ## Commands

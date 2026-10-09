@@ -132,3 +132,21 @@ TEST_CASE("a CLI inside the project, or above it, is never the one run (audit T1
     CHECK(cli->script == root / "repo" / "tools" / "cli" / "main.luau");
     std::filesystem::remove_all(root, ec);
 }
+
+TEST_CASE("module status keeps SDK installation separate from project enablement and provider readiness")
+{
+    const auto status = app::parseExportStatus(
+        R"({"targets":[],"modules":[{"id":"microsoft-gdk","label":"Microsoft GDK for PC","kind":"integration","integration":"xbox","enabled":true,"installed":false,"provider":true,"supported":true,"bytes":141346554,"settings":[{"key":"integrations.xbox.configuration","label":"SCID","value":"authored"}]}]})");
+    REQUIRE(status.has_value());
+    REQUIRE(status->modules.size() == 1);
+    const auto& module = status->modules.front();
+    CHECK(module.enabled);
+    CHECK_FALSE(module.installed);
+    CHECK(module.provider);
+    CHECK(module.bytes == 141346554);
+    REQUIRE(module.settings.size() == 1);
+    CHECK(module.settings.front().value == "authored");
+    const auto old = app::parseExportStatus("{\"targets\":[]}");
+    REQUIRE(old.has_value());
+    CHECK(old->modules.empty());
+}

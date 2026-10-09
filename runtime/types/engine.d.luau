@@ -63,6 +63,9 @@ end
 declare extern type EnumInputActionType extends EnumItem with
 end
 
+declare extern type EnumGamepadType extends EnumItem with
+end
+
 declare extern type EnumInputDeviceType extends EnumItem with
 end
 
@@ -737,6 +740,10 @@ declare extern type SceneLoad with
 end
 
 declare extern type InputObject with
+    --- Controller instance id that produced a gamepad input. Independent simultaneous presses retain
+    --- their own ids. Zero for other devices or legacy aggregate recordings without controller
+    --- identities. Reconnection may assign a new id.
+    read GamepadId: number
     --- What kind of input this is. The coarse question, for a handler that does not care which key.
     read UserInputType: EnumUserInputType
     --- Which key, button or axis. `Unknown` for pointer motion and the wheel, which are not keys -- and
@@ -2513,6 +2520,15 @@ declare extern type Sky extends Instance with
 end
 
 declare extern type InputContext extends Instance with
+    --- Local player whose simulation intents receive this context's actions. Nil retains the primary
+    --- LocalPlayer. Only live local players are accepted. A removed explicit owner does not redirect
+    --- guest input to the primary player.
+    Player: Player?
+    --- Controller instance id read by this context. Zero preserves aggregate input from all
+    --- controllers. A positive id reads only that controller; a disconnected id reads neutral gamepad
+    --- values. Keyboard, mouse and touch bindings are unchanged. Sinking gamepad input is isolated per
+    --- controller.
+    GamepadId: number
     --- Whether this context and its actions take part in resolution at all. A disabled context consumes
     --- nothing, so a lower-priority one bound to the same key starts firing the tick this goes false --
     --- which is exactly what closing a menu should do.
@@ -3898,6 +3914,126 @@ declare extern type WaterPoint extends Instance with
     Sharp: boolean
 end
 
+declare extern type SocialService extends Instance with
+    --- Whether the selected provider implements friend queries.
+    function IsAvailable(self): boolean
+    --- Check GetFriends, GetPresence, IsBlocked or CanCommunicate. Unknown features return false.
+    function Supports(self, feature: string): boolean
+    --- Friends visible under the current user's privacy/permission policy, or nil and an error. Id is
+    --- provider-namespaced; no universal friend network is assumed.
+    function GetFriendsAsync(self): ({ { Id: string, DisplayName: string } }?, string?)
+    --- Basic presence for a user from the selected provider. Privacy, authentication and network
+    --- failures stay explicit. No Xbox-specific activity schema is exposed.
+    function GetPresenceAsync(self, userId: string): ({ IsOnline: boolean, Status: string? }?, string?)
+    --- Whether the provider reports this user blocked. Nil means the query failed or is unsupported,
+    --- never that communication is allowed.
+    function IsBlockedAsync(self, userId: string): (boolean?, string?)
+    --- Whether the platform permits communication. Unknown/unsupported results are nil and an error,
+    --- never implicit permission. Does not open sockets or create sessions.
+    function CanCommunicateWithAsync(self, userId: string): (boolean?, string?)
+end
+
+declare extern type LeaderboardService extends Instance with
+    --- Whether the selected provider implements top-score queries.
+    function IsAvailable(self): boolean
+    --- Check SubmitScore, GetTop or GetAroundPlayer. Filters outside these contracts remain
+    --- platform-specific.
+    function Supports(self, feature: string): boolean
+    --- Submit a finite score in Lua's exact integer range to a mapped board. Provider rules decide
+    --- updates, ordering and acceptance; no client-side authoritative ranking is created.
+    function SubmitScoreAsync(self, id: string, score: number): (boolean, string?)
+    --- Up to count entries (integer 1 through 100), or nil and an error. UserId is provider-namespaced;
+    --- Rank is one-based.
+    function GetTopAsync(self, id: string, count: number): ({ { UserId: string, DisplayName: string, Rank: number, Score: number } }?, string?)
+    --- Up to count entries around the current platform user when supported. Missing users/rankings
+    --- remain explicit errors.
+    function GetAroundPlayerAsync(self, id: string, count: number): ({ { UserId: string, DisplayName: string, Rank: number, Score: number } }?, string?)
+end
+
+declare extern type CloudSaveService extends Instance with
+    --- Whether the selected provider implements cloud reads.
+    function IsAvailable(self): boolean
+    --- Check Read, Write, Delete or Exists. Unknown features return false.
+    function Supports(self, feature: string): boolean
+    --- Write textual/encoded save data to a user slot. The generic limit is 1 MiB; providers may impose
+    --- lower quotas. Conflict, NotSignedIn, NetworkError and QuotaExceeded remain explicit failures,
+    --- never silent overwrites or local fallback.
+    function WriteAsync(self, slot: string, data: string): (boolean, string?)
+    --- Read a user slot, or nil and an error such as NotFound, Conflict or NotSupported.
+    --- Synchronization and offline access are provider capabilities.
+    function ReadAsync(self, slot: string): (string?, string?)
+    --- Delete a cloud slot using the provider's user/synchronization policy. Does not delete local
+    --- saves.
+    function DeleteAsync(self, slot: string): (boolean, string?)
+    --- Check a cloud slot. False is a completed negative answer; nil is an error.
+    function ExistsAsync(self, slot: string): (boolean?, string?)
+end
+
+declare extern type StoreService extends Instance with
+    --- Whether the selected provider implements product queries.
+    function IsAvailable(self): boolean
+    --- Check GetProduct, Purchase, Owns or RefreshEntitlements. Unknown features return false.
+    function Supports(self, feature: string): boolean
+    --- Product information for an internal project ID, or nil and a stable error. Price is localized
+    --- display text, never a value to charge.
+    function GetProductAsync(self, id: string): ({ Id: string, DisplayName: string, Description: string, Price: string?, Currency: string? }?, string?)
+    --- Request the native purchase flow. A missing store never simulates purchase success. Verify
+    --- ownership through the provider after completion.
+    function PurchaseAsync(self, id: string): (boolean, string?)
+    --- Whether the current user owns the mapped product. False is a completed negative answer; nil is
+    --- an error.
+    function OwnsAsync(self, id: string): (boolean?, string?)
+    --- Refresh the provider's entitlements when supported. No local purchase cache or credential store
+    --- is created.
+    function RefreshEntitlementsAsync(self): (boolean, string?)
+end
+
+declare extern type AchievementService extends Instance with
+    --- Whether the selected native provider supports unlocking achievements.
+    function IsAvailable(self): boolean
+    --- Check Unlock, GetProgress or SetProgress. Unknown feature names return false.
+    function Supports(self, feature: string): boolean
+    --- Report completion using a project achievement ID. UnknownAchievement means no ID mapping. Uses
+    --- the same provider session as XboxService; failure codes are platform-neutral.
+    function UnlockAsync(self, id: string): (boolean, string?)
+    --- Read progress from 0 to 1, or nil and an error. The initial Xbox provider returns NotSupported
+    --- immediately. Consult Supports before presenting this feature.
+    function GetProgressAsync(self, id: string): (number?, string?)
+    --- Report progress from 0 to 1. The initial Xbox provider returns NotSupported immediately.
+    --- Providers define monotonicity and synchronization; this is not a local progress cache.
+    function SetProgressAsync(self, id: string, progress: number): (boolean, string?)
+end
+
+declare extern type IdentityService extends Instance with
+    --- Whether the selected provider declares identity support and is available.
+    function IsAvailable(self): boolean
+    --- Whether the selected platform session has an authenticated local user.
+    function IsSignedIn(self): boolean
+    --- A read-only user snapshot, or nil. Id is opaque and provider-namespaced, not a universal XUID.
+    --- Platform names the identity provider, not the operating system.
+    function GetLocalUser(self): { Id: string, DisplayName: string, IsSignedIn: boolean, Platform: string }?
+    --- Use the provider's authentication flow. Returns success and an optional stable error code.
+    --- IntegrationUnavailable, ProviderUnavailable and NotSupported finish immediately. Shares the
+    --- native session and Busy state with the platform-specific service.
+    function SignInAsync(self): (boolean, string?)
+end
+
+declare extern type XboxService extends Instance with
+    --- Whether an enabled native provider is available. False without installing an SDK.
+    function IsAvailable(self): boolean
+    --- Whether the provider currently has an authenticated player.
+    function IsSignedIn(self): boolean
+    --- The player identifier as a decimal string, or nil. Identifiers are not floating-point numbers.
+    function GetUserId(self): string?
+    --- The signed-in player display name, or nil.
+    function GetGamertag(self): string?
+    --- Sign in through the native provider. Returns success and an optional failure code. Disabled
+    --- integration returns false, IntegrationDisabled immediately.
+    function SignInAsync(self): (boolean, string?)
+    --- Report completion of a configured achievement for the signed-in player. Never simulates success.
+    function UnlockAchievementAsync(self, achievementId: string): (boolean, string?)
+end
+
 declare extern type DataModel extends Instance with
     --- The version of the engine runtime executing this VM, as `project.toml` pins it. Read-only: the
     --- runtime is chosen before the VM exists, so nothing a script does can change it.
@@ -3910,6 +4046,13 @@ declare extern type DataModel extends Instance with
     --- inside an entry script still works: the fire is deferred like every other, so a handler
     --- registered while the world is still being built is registered in time. It carries no arguments.
     read Loaded: Signal<()>
+    function GetService(self, name: "SocialService"): SocialService
+    function GetService(self, name: "LeaderboardService"): LeaderboardService
+    function GetService(self, name: "CloudSaveService"): CloudSaveService
+    function GetService(self, name: "StoreService"): StoreService
+    function GetService(self, name: "AchievementService"): AchievementService
+    function GetService(self, name: "IdentityService"): IdentityService
+    function GetService(self, name: "XboxService"): XboxService
     function GetService(self, name: "Workspace"): Workspace
     function GetService(self, name: "Lighting"): Lighting
     function GetService(self, name: "ReplicatedStorage"): ReplicatedStorage
@@ -4360,10 +4503,11 @@ declare extern type ContentProvider extends Instance with
     --- Loads every item and yields until each has arrived or failed. An item is a content name, such as
     --- `asset://models/tree.gltf`, or an instance -- every asset it and its descendants name.
     --- `callback` runs once per item as it finishes, with `Enum.AssetFetchStatus.Success` or `Failure`.
-    --- Meshes and pictures are loaded onto the GPU; a sound is opened and its length read; anything
-    --- else is found or not. A name with no `://` is a STAMP, named as `Instance.stamp` names it: its
-    --- file is read and kept, so its first copy reads nothing, and every asset it names is loaded with
-    --- it (ADR 0155).
+    --- Meshes and pictures are loaded onto the GPU; a `.surface.hlsl` URN prepares its native rendering
+    --- pipelines, so its first appearance does not create them during play. Preload surfaces behind a
+    --- loading screen. A sound is opened and its length read; anything else is found or not. A name
+    --- with no `://` is a STAMP, named as `Instance.stamp` names it: its file is read and kept, so its
+    --- first copy reads nothing, and every asset it names is loaded with it (ADR 0155).
     function PreloadAsync(self, items: { string | Instance }, callback: ((item: string | Instance, status: EnumAssetFetchStatus) -> ())?): ()
 end
 
@@ -4489,6 +4633,17 @@ declare extern type NetworkService extends Instance with
     --- Somebody is leaving: the player still resolves inside the handler, for the reason `Destroying`
     --- does, so a game can save what it needs from them.
     read PlayerRemoving: Signal<Player>
+    --- This machine's local players in join order, primary first. Excludes players whose removal has
+    --- begun.
+    function GetLocalPlayers(self): {Player}
+    --- Adds a guest participant to an offline authority, firing PlayerAdded. Returns nil on a dedicated
+    --- server or networked world. Guest ids are session ids, not platform accounts. Games choose their
+    --- local seat limit and assign InputContext.Player explicitly. Local guests cannot join online
+    --- sessions in this version.
+    function AddLocalPlayer(self): Player?
+    --- Removes an offline guest through PlayerRemoving. Refuses the primary LocalPlayer and remote
+    --- players. Returns whether removal was requested.
+    function RemoveLocalPlayer(self, player: Player): boolean
     --- Everybody taking part, in the order they joined. **The same call solo** -- one player -- so a
     --- game that loops over its players is already a multiplayer game.
     function GetPlayers(self): {Player}
@@ -4557,12 +4712,20 @@ declare extern type NetworkService extends Instance with
 end
 
 declare extern type RemoteEvent extends Instance with
+    --- Directed client message for an additional local guest, carrying that Player before the
+    --- arguments. Primary and broadcast client messages retain ClientReceived; guest messages do not
+    --- overwrite the primary player's HUD. Deferred like every remote signal.
+    read LocalClientReceived: Signal<(Player, ...any)>
     --- Fires on the authority when a player's machine calls `FireServer`, with the player who sent it
     --- first. Trust nothing else in it: it is what a client says it did.
     read ServerReceived: Signal<(Player, ...any)>
     --- Fires on a player's machine when the authority calls `FireClient` for this player or
     --- `FireAllClients`.
     read ClientReceived: Signal<...any>
+    --- Submits this machine's local participant message to its own authority. Refuses replicas, remote
+    --- players and removed guests; cannot impersonate a network peer. ServerReceived receives the
+    --- selected local Player. Ordinary FireServer retains its primary-player behavior.
+    function FireServerFor(self, player: Player, ...: any): ()
     --- Sends the arguments to the authority, where `ServerReceived` fires with this machine's player
     --- first. On an authority with a player of its own -- solo or hosting -- it is delivered there
     --- directly; a dedicated server has no player to send as, and refuses.
@@ -4576,12 +4739,20 @@ declare extern type RemoteEvent extends Instance with
 end
 
 declare extern type UnreliableRemoteEvent extends Instance with
+    --- Directed client message for an additional local guest, carrying that Player before the
+    --- arguments. Primary and broadcast client messages retain ClientReceived; guest messages do not
+    --- overwrite the primary player's HUD. Deferred like every remote signal.
+    read LocalClientReceived: Signal<(Player, ...any)>
     --- Fires on the authority when a player's machine's `FireServer` arrives, with the player who sent
     --- it first. Trust nothing else in it.
     read ServerReceived: Signal<(Player, ...any)>
     --- Fires on a player's machine when the authority's `FireClient` for this player, or its
     --- `FireAllClients`, arrives.
     read ClientReceived: Signal<...any>
+    --- Submits this machine's local participant message to its own authority. Refuses replicas, remote
+    --- players and removed guests; cannot impersonate a network peer. ServerReceived receives the
+    --- selected local Player. Ordinary FireServer retains its primary-player behavior.
+    function FireServerFor(self, player: Player, ...: any): ()
     --- Sends the arguments to the authority once, where `ServerReceived` fires with this machine's
     --- player first -- if it arrives. On an authority with a player of its own it is delivered there
     --- directly; a dedicated server has no player to send as, and refuses.
@@ -4696,14 +4867,16 @@ declare extern type RunService extends Instance with
     --- replaces it. Nothing runs without a window. A binding belongs to the script that made it and
     --- goes with its scene (ADR 0124).
     function BindToRenderStep(self, name: string, priority: number, fn: (dt: number) -> ()): ()
-    --- Runs `fn(intent)` **every simulation tick**, right after this machine's input becomes its
-    --- player's intents, in the order bound (G38). `intent:Set(action, value)` writes an intent by name
-    --- -- a boolean, a number, a `Vector2` or a `vector` -- which every reader of `Player:GetIntent`
-    --- sees, on this machine and, in a match, on the authority: input that is not an `InputAction`,
-    --- such as a turn worked out from the mouse, a touch gesture or a bot. A value written wins over an
-    --- `InputAction` of the same name. The writer is good only during the call. Binding a name already
-    --- bound replaces it; a binding belongs to the script that made it and goes with its scene.
-    function BindToIntent(self, name: string, fn: (intent: IntentWriter) -> ()): ()
+    --- Optional player selects a live local guest; nil keeps the primary LocalPlayer. Removed guest
+    --- bindings are skipped. Runs `fn(intent)` **every simulation tick**, right after this machine's
+    --- input becomes its player's intents, in the order bound (G38). `intent:Set(action, value)` writes
+    --- an intent by name -- a boolean, a number, a `Vector2` or a `vector` -- which every reader of
+    --- `Player:GetIntent` sees, on this machine and, in a match, on the authority: input that is not an
+    --- `InputAction`, such as a turn worked out from the mouse, a touch gesture or a bot. A value
+    --- written wins over an `InputAction` of the same name. The writer is good only during the call.
+    --- Binding a name already bound replaces it; a binding belongs to the script that made it and goes
+    --- with its scene.
+    function BindToIntent(self, name: string, fn: (intent: IntentWriter) -> (), player: Player?): ()
     --- Stops the intent writer bound under `name`. A name nothing is bound under is not an error.
     function UnbindFromIntent(self, name: string): ()
     --- Runs `fn(step)` **inside the simulation step** (ADR 0157), before the physics solves it, once
@@ -4878,6 +5051,15 @@ declare extern type DebugService extends Instance with
     --- Draws the wireframe of a sphere at this world position, with this radius in metres, for one
     --- frame. A silent no-op in a headless run, like every gizmo.
     function DrawSphere(self, position: vector, radius: number, color: Color3?): ()
+    --- Requests a main-thread CPU scope capture at frame boundaries, using wall-clock seconds. Returns
+    --- false while a capture is pending or for non-finite/out-of-range durations: measurement must be
+    --- in (0, 120], warm-up in [0, 120]. Diagnostic only; never use for simulation.
+    function CaptureProfile(self, seconds: number, warmupSeconds: number?): boolean
+    --- Returns nil until CaptureProfile completes, then a table with frames, seconds and scopes. Each
+    --- scope contains name, depth, meanMs, bestMs, medianMs, p95Ms, p99Ms, worstMs and selfMedianMs.
+    --- Inclusive CPU times include child scopes and waits; they are not GPU execution timings. The most
+    --- recent 16384 frames are retained. The report persists until the next request.
+    function GetProfileReport(self): any
     --- Reads a named instrumentation counter -- `FPS`, `FrameTimeMs`, `PhysicsBodies`, `InstanceCount`,
     --- `DrawCalls`, `MeshLodDraws`, `LuaMemoryKB` and the rest, plus whatever `SetCustomStat` has
     --- published. An unregistered name raises `scene.err.unknown_stat` instead of returning zero: a
@@ -4957,6 +5139,18 @@ declare extern type InputService extends Instance with
     --- Whether the system cursor is drawn. Independent of `PointerLocked`, because the two are separate
     --- wishes: a strategy game hides the cursor during a cutscene without locking it.
     PointerVisible: boolean
+    --- The current input category: KeyboardMouse, Gamepad or Touch. Alias of LastInputDeviceType;
+    --- InputDeviceChanged reports changes. Controller family is PreferredGamepadType, never this
+    --- property.
+    read PreferredInput: EnumInputDeviceType
+    --- Physical family of the last gamepad actually used. Connecting a controller does not select it.
+    --- Retained when keyboard or touch becomes preferred; Unknown when that controller disconnects.
+    --- Independent of button layout and glyph selection.
+    read PreferredGamepadType: EnumGamepadType
+    --- Connection ID of the gamepad actually used, or zero when none is selected. Reconnecting a
+    --- controller produces a new ID. Retained when the input category changes; never a platform or
+    --- player index.
+    read PreferredGamepadId: number
     --- The device family the player most recently used, which is what a HUD switches its prompts on. It
     --- changes on a real input and not on a resting one: a gamepad stick drifting inside its dead zone
     --- does not steal the prompts from a keyboard.
@@ -5022,11 +5216,31 @@ declare extern type InputService extends Instance with
     --- is), as one motion however many fingers made it. What a camera that is dragged follows, with one
     --- finger or two.
     read TouchPanned: Signal<Vector2, number>
+    --- Fired when the preferred physical controller family changes, independently of
+    --- InputDeviceChanged.
+    read PreferredGamepadTypeChanged: Signal<EnumGamepadType>
+    --- Fired when the preferred connection ID changes, including switching between two controllers in
+    --- the same family.
+    read PreferredGamepadIdChanged: Signal<number>
+    --- A gamepad connected. Does not change the preferred input category or active gamepad. Delivered
+    --- on the simulation tick through the deferred event queue.
+    read GamepadConnected: Signal<number, EnumGamepadType>
+    --- A gamepad disconnected, carrying its former connection ID and physical family. Other connected
+    --- controllers remain tracked.
+    read GamepadDisconnected: Signal<number, EnumGamepadType>
     --- Fired when `LastInputDeviceType` changes, so a prompt redraws once rather than polling.
     read InputDeviceChanged: Signal<EnumInputDeviceType>
     --- Fired when the game window gains or loses keyboard focus. Losing focus releases every held
     --- input, so an alt-tab does not leave a character walking into a wall.
     read WindowFocusChanged: Signal<boolean>
+    --- Connected controller instance ids in ascending order, from the current input snapshot. Use
+    --- GamepadConnected and GamepadDisconnected for changes. Connecting does not change PreferredInput
+    --- or assign a local player.
+    function GetGamepads(self): {number}
+    --- Polls one positive controller instance id independently of UI consumption. Missing controllers
+    --- and non-gamepad keys return false. An analogue key counts as held past half deflection, as
+    --- IsKeyDown does.
+    function IsGamepadKeyDown(self, gamepadId: number, keyCode: EnumKeyCode): boolean
     --- The pointer in window pixels, origin at the top left, as of the current tick. A snapshot like
     --- every other input read: two calls inside one tick agree.
     function GetPointerPosition(self): Vector2
@@ -5101,6 +5315,11 @@ declare extern type UIService extends Instance with
     --- it to put the selection somewhere: a menu that opens selects its first button. An object that is
     --- not `Selectable` is refused.
     SelectedObject: UIObject?
+    --- Controller instance allowed to navigate and activate SelectedObject. Zero accepts all
+    --- controllers for compatibility. A positive id reserves shared menu navigation for that
+    --- controller; other controllers still reach InputService and their InputContexts. Keyboard and
+    --- pointer navigation remain available. Changing the id clears held navigation.
+    GamepadId: number
     --- Whether the engine manages the selection when the game does not: with nothing selected, the
     --- first move of a d-pad, a stick or an arrow selects the first selectable object on the topmost
     --- screen, and a press of the pointer clears the selection -- a player who picks up the mouse sees
@@ -5471,6 +5690,14 @@ declare Enum: {
         Direction3D: EnumInputActionType,
         ViewportPosition: EnumInputActionType,
         GetEnumItems: (self: any) -> { EnumInputActionType },
+    },
+    GamepadType: {
+        Unknown: EnumGamepadType,
+        Xbox: EnumGamepadType,
+        PlayStation: EnumGamepadType,
+        Nintendo: EnumGamepadType,
+        Generic: EnumGamepadType,
+        GetEnumItems: (self: any) -> { EnumGamepadType },
     },
     InputDeviceType: {
         KeyboardMouse: EnumInputDeviceType,

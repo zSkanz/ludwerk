@@ -52,8 +52,31 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     const scene::ClassId instanceClass = classes.findId(atoms.intern("Instance"));
 
     // --- InputContext ---
-    static std::array<scene::PropertyDesc, 4> inputContextProperties;
+    static std::array<scene::PropertyDesc, 6> inputContextProperties;
     inputContextProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Player"),
+            .type = scene::ValueType::Instance,
+            .instanceClass = atoms.intern("Player"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Local player whose simulation intents receive this context's actions. Nil retains the primary LocalPlayer. Only live local players are accepted. A removed explicit owner does not redirect guest input to the primary player.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getInputContextPlayer,
+            .set = native::setInputContextPlayer,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("GamepadId"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Controller instance id read by this context. Zero preserves aggregate input from all controllers. A positive id reads only that controller; a disconnected id reads neutral gamepad values. Keyboard, mouse and touch bindings are unchanged. Sinking gamepad input is isolated per controller.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getInputContextGamepadId,
+            .set = native::setInputContextGamepadId,
+        },
         scene::PropertyDesc{
             .name = atoms.intern("Enabled"),
             .type = scene::ValueType::Bool,
@@ -310,7 +333,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(inputBindingDesc);
 
     // --- InputService ---
-    static std::array<scene::PropertyDesc, 7> inputServiceProperties;
+    static std::array<scene::PropertyDesc, 10> inputServiceProperties;
     inputServiceProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("PointerLocked"),
@@ -335,6 +358,47 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getInputServicePointerVisible,
             .set = native::setInputServicePointerVisible,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("PreferredInput"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("InputDeviceType"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The current input category: KeyboardMouse, Gamepad or Touch. Alias of LastInputDeviceType; InputDeviceChanged reports changes. Controller family is PreferredGamepadType, never this property.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getInputServicePreferredInput,
+            .set = nullptr,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("PreferredGamepadType"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("GamepadType"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Physical family of the last gamepad actually used. Connecting a controller does not select it. Retained when keyboard or touch becomes preferred; Unknown when that controller disconnects. Independent of button layout and glyph selection.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getInputServicePreferredGamepadType,
+            .set = nullptr,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("PreferredGamepadId"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Connection ID of the gamepad actually used, or zero when none is selected. Reconnecting a controller produces a new ID. Retained when the input category changes; never a platform or player index.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getInputServicePreferredGamepadId,
+            .set = nullptr,
         },
         scene::PropertyDesc{
             .name = atoms.intern("LastInputDeviceType"),
@@ -401,8 +465,20 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<scene::MethodDesc, 4> inputServiceMethods;
+    static std::array<scene::MethodDesc, 6> inputServiceMethods;
     inputServiceMethods = {{
+        scene::MethodDesc{
+            .name = atoms.intern("GetGamepads"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Connected controller instance ids in ascending order, from the current input snapshot. Use GamepadConnected and GamepadDisconnected for changes. Connecting does not change PreferredInput or assign a local player.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("IsGamepadKeyDown"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Polls one positive controller instance id independently of UI consumption. Missing controllers and non-gamepad keys return false. An analogue key counts as held past half deflection, as IsKeyDown does.",
+        },
         scene::MethodDesc{
             .name = atoms.intern("GetPointerPosition"),
             .yields = false,
@@ -428,7 +504,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "Puts text on the player's clipboard: a room's code, a seed, a link -- what a player clicks to copy rather than selects and copies (ADR 0177).\012\012**Written, never read.** There is no way to ask what the clipboard holds: what a player copied somewhere else is theirs, and no game needs it.\012\012The text is the machine's that runs the script: call it from a client script, where the player is. On a server and in a headless run there is no clipboard and nothing happens. At most 64 KiB; longer text is cut at a character's boundary. The last call of a frame is the one the clipboard keeps.",
         },
     }};
-    static std::array<scene::EventDesc, 10> inputServiceEvents;
+    static std::array<scene::EventDesc, 14> inputServiceEvents;
     inputServiceEvents = {{
         scene::EventDesc{
             .name = atoms.intern("InputBegan"),
@@ -471,13 +547,33 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "What is down moved: how far this tick, in window pixels (down the window is +Y, as `Position` is), as one motion however many fingers made it. What a camera that is dragged follows, with one finger or two.",
         },
         scene::EventDesc{
-            .name = atoms.intern("InputDeviceChanged"),
+            .name = atoms.intern("PreferredGamepadTypeChanged"),
             .slot = 15,
+            .doc = "Fired when the preferred physical controller family changes, independently of InputDeviceChanged.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("PreferredGamepadIdChanged"),
+            .slot = 16,
+            .doc = "Fired when the preferred connection ID changes, including switching between two controllers in the same family.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("GamepadConnected"),
+            .slot = 17,
+            .doc = "A gamepad connected. Does not change the preferred input category or active gamepad. Delivered on the simulation tick through the deferred event queue.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("GamepadDisconnected"),
+            .slot = 18,
+            .doc = "A gamepad disconnected, carrying its former connection ID and physical family. Other connected controllers remain tracked.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("InputDeviceChanged"),
+            .slot = 19,
             .doc = "Fired when `LastInputDeviceType` changes, so a prompt redraws once rather than polling.",
         },
         scene::EventDesc{
             .name = atoms.intern("WindowFocusChanged"),
-            .slot = 16,
+            .slot = 20,
             .doc = "Fired when the game window gains or loses keyboard focus. Losing focus releases every held input, so an alt-tab does not leave a character walking into a wall.",
         },
     }};

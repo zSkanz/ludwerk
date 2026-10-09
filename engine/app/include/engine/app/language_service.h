@@ -17,6 +17,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -73,6 +74,8 @@ struct LanguageTree
         std::string file;
     };
     std::vector<Node> nodes;
+    std::map<std::string, std::string, std::less<>> optionalServices;
+    std::vector<std::string> enabledIntegrations;
 
     // The project's folder; empty when there is none, and a path then names
     // nothing.

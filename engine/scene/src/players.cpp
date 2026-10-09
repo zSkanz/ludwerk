@@ -107,11 +107,12 @@ core::InstanceId playerByUserId(const World& world, core::u32 userId) noexcept
 void captureLocalIntents(World& world)
 {
     const core::InstanceId localId = localPlayerOf(world);
-    PlayerComponent* local = localId.valid() ? world.players().find(localId) : nullptr;
-    if (local == nullptr)
-        return;
-    local->intents.clear();
-    local->intentTick = world.engineState().tick;
+    world.players().forEach([&](core::InstanceId id, PlayerComponent& player) {
+        if (player.local && present(world, id)) {
+            player.intents.clear();
+            player.intentTick = world.engineState().tick;
+        }
+    });
     world.inputActions().forEach([&](core::InstanceId id, const InputActionComponent& action) {
         if (!action.enabled || world.destroyed(id))
             return;
@@ -120,6 +121,10 @@ void captureLocalIntents(World& world)
         // about what the player did in the world (ADR 0039).
         const InputContextComponent* context = world.inputContexts().find(world.parentOf(id));
         if (context == nullptr || context->rate != 0 || !context->enabled)
+            return;
+        const core::InstanceId owner = context->player.valid() ? context->player : localId;
+        PlayerComponent* local = world.players().find(owner);
+        if (local == nullptr || !local->local || !present(world, owner))
             return;
         const core::NameAtom name = world.name(id);
         const bool seen = std::any_of(local->intents.begin(), local->intents.end(),

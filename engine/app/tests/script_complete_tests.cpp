@@ -1148,3 +1148,12 @@ TEST_CASE("a string that begins asset: completes to the project's files")
     // A string that is somebody else's stays theirs.
     CHECK_FALSE(has(with("game:GetService(\"as"), "asset://textures/dirt.png"));
 }
+
+TEST_CASE("optional service name suggestions follow project enablement")
+{
+    Reflection fixture;
+    Tree tree(fixture);
+    CHECK_FALSE(has(at(fixture, tree, "game:GetService(\"Xb"), "XboxService"));
+    tree.world.engineState().enabledIntegrations.push_back("xbox");
+    CHECK(has(at(fixture, tree, "game:GetService(\"Xb"), "XboxService"));
+}

@@ -11,19 +11,24 @@
 // frame, with no bound. So there are two modes now, and both are asserted here:
 // one that finishes before the frame does, because a capture records the frame
 // it was told to, and one that lets the frame finish first.
+#include <algorithm>
 #include <chrono>
 #include <doctest/doctest.h>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <thread>
 
 #include "engine/app/ui_text.h"
 #include "engine/asset/content.h"
+#include "engine/asset/image.h"
+#include "engine/asset/pack.h"
 #include "engine/core/i18n.h"
 #include "engine/platform/async_io.h"
 #include "engine/rhi/backends.h"
+#include "engine/rhi/capture.h"
 #include "engine/ui/ui.h"
 
 using namespace engine;
@@ -33,11 +38,14 @@ namespace {
 
 struct Fixture
 {
-    rhi::DeviceResult device = rhi::createNullDevice({.backend = rhi::BackendId::Null});
+    rhi::DeviceResult device;
     rhi::ICmdList* cmd = nullptr;
     asset::ContentMounts mounts;
+    std::filesystem::path root;
 
-    Fixture()
+    explicit Fixture(bool capture = false)
+        : device(capture ? rhi::createCaptureDevice({.backend = rhi::BackendId::Capture})
+                         : rhi::createNullDevice({.backend = rhi::BackendId::Null}))
     {
         REQUIRE(device != nullptr);
         cmd = device->beginFrame();
@@ -47,6 +55,59 @@ struct Fixture
         // carries.
         mounts.mountDirectory(std::filesystem::path(ENG_TEST_IMAGE).parent_path());
         REQUIRE(platform::initIo());
+    }
+
+    ~Fixture()
+    {
+        mounts.clear();
+        if (!root.empty()) {
+            std::error_code ignored;
+            std::filesystem::remove_all(root, ignored);
+        }
+    }
+
+    void pictures(core::usize count, bool packed, core::u32 side = 0)
+    {
+        root = std::filesystem::temp_directory_path() /
+               ("engine-ui-pictures-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        REQUIRE(std::filesystem::create_directories(root));
+        std::ifstream source(ENG_TEST_IMAGE, std::ios::binary);
+        REQUIRE(source.is_open());
+        std::vector<char> encoded((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>());
+        if (side != 0) {
+            std::vector<std::byte> pixels(static_cast<core::usize>(side) * side * 4);
+            for (core::usize index = 0; index < pixels.size(); ++index)
+                pixels[index] = static_cast<std::byte>(index % 251);
+            std::vector<std::byte> png;
+            REQUIRE_FALSE(asset::encodePng(pixels, side, side, png).has_value());
+            const auto* data = reinterpret_cast<const char*>(png.data());
+            encoded.assign(data, data + png.size());
+        }
+        const auto bytes = std::as_bytes(std::span(encoded));
+        asset::PackWriter writer;
+        const core::ContentHash hash = writer.addContent(asset::AssetKind::Raw, bytes);
+        std::vector<asset::PackName> names;
+        for (core::usize index = 0; index < count; ++index) {
+            const std::string name = "picture-" + std::to_string(index) + ".png";
+            if (packed)
+                names.push_back({core::hashText("asset://" + name), hash, asset::AssetKind::Raw});
+            else {
+                std::ofstream file(root / name, std::ios::binary);
+                file.write(encoded.data(), static_cast<std::streamsize>(encoded.size()));
+                REQUIRE(file.good());
+            }
+        }
+        if (packed) {
+            (void)writer.addContent(asset::AssetKind::Names, asset::encodePackNames(std::move(names)));
+            const auto pack = writer.buildSealed();
+            std::ofstream file(root / "pictures.lpack", std::ios::binary);
+            file.write(reinterpret_cast<const char*>(pack.data()), static_cast<std::streamsize>(pack.size()));
+            file.close();
+            const auto error = mounts.mountPack(root / "pictures.lpack");
+            REQUIRE_MESSAGE(!error.has_value(), (error.has_value() ? error->message : ""));
+        }
+        else
+            mounts.mountDirectory(root);
     }
 };
 
@@ -172,6 +233,161 @@ TEST_CASE("a picture that is not there is refused once, in either mode")
         CHECK(text.imagesInFlight() == 0);
 
         text.destroy(*fixture.device);
+    }
+}
+
+TEST_CASE("deferred image batches keep queued pictures pending instead of decoding the overflow on the frame")
+{
+    for (const bool packed : {false, true}) {
+        CAPTURE(packed);
+        Fixture fixture;
+        fixture.pictures(9, packed);
+        UiText text;
+        text.setMounts(&fixture.mounts);
+        text.setDeferredImages(true);
+        for (int index = 0; index < 9; ++index)
+            CHECK_FALSE(resolves(text, "asset://picture-" + std::to_string(index) + ".png"));
+        text.sync(*fixture.device, *fixture.cmd);
+        CHECK(text.imageLevelsUploaded() == 0);
+        CHECK(text.imagesInFlight() == 9);
+        for (int index = 0; index < 9; ++index)
+            CHECK_FALSE(resolves(text, "asset://picture-" + std::to_string(index) + ".png"));
+
+        settle(text, *fixture.device, *fixture.cmd);
+        CHECK(text.imagesInFlight() == 0);
+        for (int index = 0; index < 9; ++index)
+            CHECK(resolves(text, "asset://picture-" + std::to_string(index) + ".png"));
+        CHECK(text.imageLevelsUploaded() == 18);
+        text.destroy(*fixture.device);
+    }
+}
+
+TEST_CASE("UI packed image loading benchmark" * doctest::skip())
+{
+    const bool startedJobs = !jobs::initialized();
+    if (startedJobs)
+        jobs::init(4);
+    for (int sample = 0; sample < 3; ++sample) {
+        for (const bool deferred : {false, true}) {
+            Fixture fixture;
+            fixture.pictures(232, true, 128);
+            UiText text;
+            text.setMounts(&fixture.mounts);
+            text.setDeferredImages(deferred);
+            for (int index = 0; index < 232; ++index)
+                CHECK_FALSE(resolves(text, "asset://picture-" + std::to_string(index) + ".png"));
+            const auto begin = std::chrono::steady_clock::now();
+            double firstMs = 0.0;
+            double worstMs = 0.0;
+            double totalCpuMs = 0.0;
+            int calls = 0;
+            do {
+                const auto before = std::chrono::steady_clock::now();
+                text.sync(*fixture.device, *fixture.cmd);
+                const double elapsed =
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - before).count();
+                if (calls++ == 0)
+                    firstMs = elapsed;
+                worstMs = std::max(worstMs, elapsed);
+                totalCpuMs += elapsed;
+                if (text.imagesInFlight() > 0)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            } while (text.imagesInFlight() > 0 && calls < 2000);
+            CHECK(text.imagesInFlight() == 0);
+            CHECK(text.imageLevelsUploaded() == 232 * 8);
+            for (int index = 0; index < 232; ++index)
+                CHECK(resolves(text, "asset://picture-" + std::to_string(index) + ".png"));
+            const double wallMs =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+            MESSAGE("UI-loading sample=", sample, " deferred=", deferred, " firstMs=", firstMs, " worstMs=", worstMs,
+                    " syncCpuMs=", totalCpuMs, " wallMs=", wallMs, " calls=", calls);
+            text.destroy(*fixture.device);
+        }
+    }
+    if (startedJobs)
+        jobs::shutdown();
+}
+
+TEST_CASE("packed deferred UI images upload the same format and every mip pixel as synchronous images")
+{
+    std::vector<std::string> expected;
+    for (const bool deferred : {false, true}) {
+        Fixture fixture(true);
+        fixture.pictures(1, true);
+        UiText text;
+        text.setMounts(&fixture.mounts);
+        text.setDeferredImages(deferred);
+        CHECK_FALSE(resolves(text, "asset://picture-0.png"));
+        text.sync(*fixture.device, *fixture.cmd);
+        settle(text, *fixture.device, *fixture.cmd);
+        REQUIRE(resolves(text, "asset://picture-0.png"));
+        const std::string texture = "\"texture\":" + std::to_string(text.images()[0].id) + ",";
+        std::vector<std::string> commands;
+        std::istringstream stream(rhi::captureStream(*fixture.device));
+        for (std::string line; std::getline(stream, line);) {
+            if (line.find(texture) == std::string::npos)
+                continue;
+            // Resource numbers can differ when the atlas arrives first.
+            if (line.starts_with("{\"op\":\"createTexture\""))
+                commands.push_back(line.substr(line.find("\"format\"")));
+            else if (line.starts_with("{\"op\":\"uploadTexture\""))
+                commands.push_back(line.substr(line.find("\"bytes\"")));
+        }
+        // The two-by-two image and its one-by-one mip fit entirely in the
+        // capture's packed words: this compares all five RGBA pixels.
+        REQUIRE(commands.size() == 3);
+        if (!deferred)
+            expected = commands;
+        else
+            CHECK(commands == expected);
+        text.destroy(*fixture.device);
+    }
+}
+
+TEST_CASE("queued UI images stay bounded when async IO is unavailable")
+{
+    Fixture fixture;
+    fixture.pictures(9, false);
+    UiText text;
+    text.setMounts(&fixture.mounts);
+    text.setDeferredImages(true);
+    for (int index = 0; index < 9; ++index)
+        CHECK_FALSE(resolves(text, "asset://picture-" + std::to_string(index) + ".png"));
+    platform::shutdownIo();
+    text.sync(*fixture.device, *fixture.cmd);
+    CHECK(text.imageLevelsUploaded() == 8);
+    CHECK(text.imagesInFlight() == 5);
+    settle(text, *fixture.device, *fixture.cmd);
+    CHECK(text.imagesInFlight() == 0);
+    CHECK(text.imageLevelsUploaded() == 18);
+    text.destroy(*fixture.device);
+    CHECK(platform::initIo());
+}
+
+TEST_CASE("packed UI decode jobs survive mount clearing and entry growth, and teardown drains queued work")
+{
+    for (const bool finish : {false, true}) {
+        CAPTURE(finish);
+        Fixture fixture;
+        fixture.pictures(4, true);
+        UiText text;
+        text.setMounts(&fixture.mounts);
+        text.setDeferredImages(true);
+        for (int index = 0; index < 4; ++index)
+            CHECK_FALSE(resolves(text, "asset://picture-" + std::to_string(index) + ".png"));
+        text.sync(*fixture.device, *fixture.cmd);
+        fixture.mounts.clear();
+        for (int index = 0; index < 32; ++index)
+            CHECK_FALSE(resolves(text, "asset://absent-" + std::to_string(index) + ".png"));
+        if (finish) {
+            settle(text, *fixture.device, *fixture.cmd);
+            CHECK(text.imagesInFlight() == 0);
+            for (int index = 0; index < 4; ++index)
+                CHECK(resolves(text, "asset://picture-" + std::to_string(index) + ".png"));
+            CHECK(text.imageLevelsUploaded() == 8);
+        }
+        text.destroy(*fixture.device);
+        CHECK(text.imagesInFlight() == 0);
     }
 }
 

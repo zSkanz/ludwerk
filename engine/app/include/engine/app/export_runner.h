@@ -101,9 +101,25 @@ private:
 };
 
 // `ludwerk build --status`'s one line, or nothing when it is not that shape.
+struct ModuleSettingStatus
+{
+    std::string key, label, value;
+};
+struct ModuleStatus
+{
+    std::string id, label, kind, integration, version;
+    bool enabled = false;
+    bool installed = false;
+    bool supported = false;
+    bool removable = false;
+    bool provider = false;
+    core::u64 bytes = 0;
+    std::vector<ModuleSettingStatus> settings;
+};
 struct ExportStatus
 {
     std::vector<TargetStatus> targets;
+    std::vector<ModuleStatus> modules;
     std::string adb;
 };
 [[nodiscard]] std::optional<ExportStatus> parseExportStatus(std::string_view output);

@@ -1,6 +1,9 @@
 #include <array>
 #include <cstddef>
 #include <doctest/doctest.h>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <span>
 #include <string>
 #include <string_view>
@@ -58,6 +61,108 @@ struct GpuFixture
 } // namespace
 
 TEST_SUITE_BEGIN("sdlgpu");
+
+TEST_CASE("uniform snapshots preserve repeated values, edits, pipeline changes and timed buffer replay")
+{
+    GpuFixture gpu;
+    if (gpu.device == nullptr)
+        return;
+    IDevice& device = *gpu.device;
+    const ShaderFormat format = device.caps().shaderFormat;
+    const char* directory = format == ShaderFormat::Dxil ? "dxil" : format == ShaderFormat::Msl ? "msl" : "spirv";
+    const char* suffix = format == ShaderFormat::Dxil ? ".dxil" : format == ShaderFormat::Msl ? ".msl" : ".spv";
+    const auto load = [&](const char* stage) {
+        const auto path =
+            std::filesystem::path(ENG_TEST_SHADER_CONTENT) / directory / (std::string("debug_line.") + stage + suffix);
+        std::ifstream file(path, std::ios::binary);
+        const std::vector<char> bytes{std::istreambuf_iterator<char>(file), {}};
+        const auto view = std::as_bytes(std::span(bytes));
+        return std::vector<std::byte>(view.begin(), view.end());
+    };
+    const auto vertex = load("vertex"), fragment = load("fragment");
+    if (vertex.empty() || fragment.empty()) {
+        MESSAGE("ENG_TEST_SKIP: build host shaders before uniform GPU validation");
+        return;
+    }
+    const auto vs = device.createShader({.stage = ShaderStage::Vertex,
+                                         .format = format,
+                                         .code = vertex,
+                                         .entryPoint = "VertexMain",
+                                         .uniformBufferCount = 1});
+    const auto fs = device.createShader(
+        {.stage = ShaderStage::Fragment, .format = format, .code = fragment, .entryPoint = "FragmentMain"});
+    REQUIRE(vs.valid());
+    REQUIRE(fs.valid());
+    const VertexBufferLayout buffers[] = {{.strideBytes = 7 * sizeof(f32)}};
+    const VertexAttribute attributes[] = {
+        {.location = 0, .format = VertexFormat::Float3},
+        {.location = 1, .format = VertexFormat::Float4, .offsetBytes = 3 * sizeof(f32)}};
+    const ColorTargetDesc targets[] = {{.format = TextureFormat::Rgba8Unorm}};
+    const GraphicsPipelineDesc desc{.vertexShader = vs,
+                                    .fragmentShader = fs,
+                                    .vertexBuffers = buffers,
+                                    .vertexAttributes = attributes,
+                                    .rasterizer = {.cullMode = CullMode::None},
+                                    .colorTargets = targets};
+    const auto pipeline = device.createGraphicsPipeline(desc);
+    const auto other = device.createGraphicsPipeline(desc);
+    REQUIRE(pipeline.valid());
+    REQUIRE(other.valid());
+    const std::array<f32, 21> vertices{-1, -1, 0, 1, 0, 0, 1, 3, -1, 0, 1, 0, 0, 1, -1, 3, 0, 1, 0, 0, 1};
+    const auto stream = device.createBuffer({.usage = BufferUsage::Vertex, .sizeBytes = sizeof(vertices)});
+    const auto target = device.createTexture(
+        {.format = TextureFormat::Rgba8Unorm, .usage = TextureUsage::ColorTarget, .width = 8, .height = 1});
+    REQUIRE(stream.valid());
+    REQUIRE(target.valid());
+    for (u32 frame = 0; frame < 7; ++frame) {
+        device.setPassTiming(frame == 2 || frame == 3);
+        auto* cmd = device.beginFrame();
+        REQUIRE(cmd != nullptr);
+        if (frame == 0)
+            cmd->upload(stream, std::as_bytes(std::span(vertices)), 0);
+        std::array<f32, 16> matrix{};
+        matrix[0] = matrix[5] = matrix[10] = matrix[15] = 1.0f;
+        matrix[12] = frame % 2 == 0 ? 0.0f : 4.0f;
+        const ColorAttachment clear[] = {{.texture = target, .clearColor = {0, 0, 0, 1}}};
+        cmd->beginRenderPass({.colorAttachments = clear, .debugName = "uniform-first"});
+        cmd->setPipeline(pipeline);
+        cmd->setPipeline(pipeline);
+        const BufferHandle streams[] = {stream};
+        cmd->bindVertexBuffers(0, streams);
+        cmd->bindUniforms(ShaderStage::Vertex, 0, std::as_bytes(std::span(matrix)));
+        cmd->setScissor({0, 0, 4, 1});
+        cmd->draw(3, 1, 0, 0);
+        cmd->endRenderPass();
+        const ColorAttachment loadTarget[] = {{.texture = target, .loadOp = LoadOp::Load}};
+        cmd->beginRenderPass({.colorAttachments = loadTarget, .debugName = "uniform-second"});
+        cmd->setPipeline(other);
+        cmd->bindVertexBuffers(0, streams);
+        cmd->bindUniforms(ShaderStage::Vertex, 0, std::as_bytes(std::span(matrix)));
+        cmd->setScissor({4, 0, 2, 1});
+        cmd->draw(3, 1, 0, 0);
+        cmd->setPipeline(pipeline);
+        matrix[12] = frame % 2 == 0 ? 4.0f : 0.0f;
+        cmd->bindUniforms(ShaderStage::Vertex, 0, std::as_bytes(std::span(matrix)));
+        cmd->setScissor({6, 0, 2, 1});
+        cmd->draw(3, 1, 0, 0);
+        cmd->endRenderPass();
+        device.submitAndPresent();
+        std::array<std::byte, 32> pixels{};
+        REQUIRE(device.readTexture(target, pixels));
+        for (u32 x = 0; x < 8; ++x) {
+            const bool red = (x < 6) == (frame % 2 == 0);
+            CHECK(pixels[x * 4] == (red ? std::byte{255} : std::byte{0}));
+            CHECK(pixels[x * 4 + 1] == std::byte{0});
+            CHECK(pixels[x * 4 + 3] == std::byte{255});
+        }
+    }
+    device.destroy(target);
+    device.destroy(stream);
+    device.destroy(other);
+    device.destroy(pipeline);
+    device.destroy(fs);
+    device.destroy(vs);
+}
 
 TEST_CASE("a real device reports itself and a usable shader format")
 {

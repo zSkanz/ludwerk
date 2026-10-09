@@ -66,6 +66,17 @@ void pushObjects(lua_State* L)
 {
     lua_pushlightuserdata(L, const_cast<char*>(&ObjectsKey));
     lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_createtable(L, 0, 0);
+        lua_createtable(L, 0, 1);
+        lua_pushliteral(L, "k");
+        lua_setfield(L, -2, "__mode");
+        lua_setmetatable(L, -2);
+        lua_pushlightuserdata(L, const_cast<char*>(&ObjectsKey));
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
 }
 
 // Marks the table on top of the stack as an object.
@@ -265,6 +276,7 @@ struct Reader
     lua_State* L = nullptr;
     std::string_view text;
     usize at = 0;
+    bool nullAsNil = false;
 
     [[noreturn]] void fail() const
     {
@@ -494,7 +506,10 @@ struct Reader
             return;
         }
         if (takeWord("null")) {
-            pushNull(L);
+            if (nullAsNil)
+                lua_pushnil(L);
+            else
+                pushNull(L);
             return;
         }
         if (takeWord("true")) {
@@ -577,17 +592,30 @@ int jsonAsArray(lua_State* L)
 
 } // namespace
 
+void markJsonObject(lua_State* L)
+{
+    markObject(L);
+}
+std::string serializeJsonValue(lua_State* L, int index)
+{
+    std::string result;
+    writeValue(L, index, result, false, 0);
+    return result;
+}
+void deserializeJsonValue(lua_State* L, std::string_view text, bool nullAsNil)
+{
+    Reader reader{L, text, 0, nullAsNil};
+    reader.value(0);
+    reader.skipSpace();
+    if (reader.at != text.size())
+        reader.fail();
+}
 int openStdJson(lua_State* L)
 {
     // The table of which tables are objects: its keys held weakly, so a
     // reply read and thrown away is thrown away.
-    lua_pushlightuserdata(L, const_cast<char*>(&ObjectsKey));
-    lua_createtable(L, 0, 0);
-    lua_createtable(L, 0, 1);
-    lua_pushliteral(L, "k");
-    lua_setfield(L, -2, "__mode");
-    lua_setmetatable(L, -2);
-    lua_rawset(L, LUA_REGISTRYINDEX);
+    pushObjects(L);
+    lua_pop(L, 1);
 
     lua_createtable(L, 0, 6);
     pushNull(L);
