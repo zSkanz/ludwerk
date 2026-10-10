@@ -514,6 +514,93 @@ TEST_CASE("extraction uploads a shared pose once and keeps independent rigs and 
     CHECK(snapshot.bones.size() == 6); // The overridden rig owns its palette.
 }
 
+TEST_CASE("ADR 0201: a mesh that wears another's pose is drawn in its leader's place, with the leader's joints")
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const auto root = fixture.world.create(fixture.workspaceClass);
+    (void)fixture.cameraLookingDownNegativeZ(root);
+    const auto bodyContent = fixture.atoms.intern("asset://models/body.glb");
+    const auto pieceContent = fixture.atoms.intern("asset://models/piece.glb");
+    render::MeshLibrary meshes;
+    render::MeshLibrary::Entry mesh;
+    mesh.mesh = render::MeshHandle{0, 1};
+    mesh.bounds = core::AABB::fromCenterSize({}, {1.0f, 1.0f, 1.0f});
+    mesh.sectionCount = 1;
+    meshes.set(bodyContent, mesh);
+    mesh.mesh = render::MeshHandle{1, 1};
+    meshes.set(pieceContent, mesh);
+
+    // A body of two joints with a clip that slides the second, and a piece
+    // that has that second joint and no other.
+    render::SkeletonLibrary skeletons;
+    render::SkeletonLibrary::Entry body;
+    body.joints.resize(2);
+    body.joints[0].name = "root";
+    body.joints[1].name = "child";
+    body.joints[1].parent = 0;
+    asset::AnimationChannel channel;
+    channel.joint = 1;
+    channel.target = asset::AnimationChannel::Target::Translation;
+    channel.stride = 3;
+    channel.times = {0.0f, 1.0f};
+    channel.values = {0.0f, 2.0f, 0.0f, 0.0f, 2.0f, 0.0f};
+    asset::AnimationClip clip;
+    clip.name = "Slide";
+    clip.duration = 1.0f;
+    clip.channels.push_back(channel);
+    body.clips.push_back(clip);
+    skeletons.set(bodyContent, std::move(body));
+    render::SkeletonLibrary::Entry piece;
+    piece.joints.resize(1);
+    piece.joints[0].name = "child";
+    skeletons.set(pieceContent, std::move(piece));
+
+    render::AnimationSystem animation{fixture.world, skeletons};
+    const core::InstanceId hero = fixture.meshPartAt(root, {4.0, 0.0, -10.0}, bodyContent);
+    // The piece's own part was left well away from the body.
+    const core::InstanceId worn = fixture.meshPartAt(root, {-6.0, 0.0, -10.0}, pieceContent);
+    const auto player = fixture.world.create(fixture.instanceClass);
+    REQUIRE_FALSE(fixture.world.setParent(player, hero).has_value());
+    animation.play(animation.createTrack(player, {}, "Slide"), 0.0f, 1.0f, 1.0f);
+
+    const auto drawOf = [&](const render::RenderWorld& snapshot, render::MeshHandle wanted) -> const render::DrawItem* {
+        for (const render::DrawItem& draw : snapshot.draws) {
+            if (draw.mesh == wanted)
+                return &draw;
+        }
+        return nullptr;
+    };
+
+    // On its own it is where its part is.
+    animation.sample(0.25);
+    render::RenderWorld snapshot;
+    render::extract(fixture.world, root, {}, meshes, 1.0f, 0.0f, &animation, 0.0f, nullptr, snapshot);
+    const render::DrawItem* alone = drawOf(snapshot, render::MeshHandle{1, 1});
+    REQUIRE(alone != nullptr);
+    CHECK(static_cast<double>(alone->transform.m[3][0]) == doctest::Approx(-6.0));
+
+    // Worn, it is where the BODY is -- and its one joint is the body's
+    // second, slid two metres up by the clip the body plays.
+    fixture.world.meshParts().find(worn)->poseFrom = hero;
+    animation.sample(0.25);
+    render::extract(fixture.world, root, {}, meshes, 1.0f, 0.0f, &animation, 0.0f, nullptr, snapshot);
+    const render::DrawItem* on = drawOf(snapshot, render::MeshHandle{1, 1});
+    const render::DrawItem* under = drawOf(snapshot, render::MeshHandle{0, 1});
+    REQUIRE(on != nullptr);
+    REQUIRE(under != nullptr);
+    CHECK(static_cast<double>(on->transform.m[3][0]) == doctest::Approx(4.0));
+    for (core::usize column = 0; column < 4; ++column)
+        for (core::usize row = 0; row < 4; ++row)
+            CHECK(on->transform.m[column][row] == under->transform.m[column][row]);
+    REQUIRE(on->boneCount == 1);
+    REQUIRE(under->boneCount == 2);
+    const render::Pose* led = animation.pose(hero);
+    REQUIRE(led != nullptr);
+    CHECK(static_cast<double>(snapshot.bones[on->firstBone].m[3][1]) == doctest::Approx(2.0));
+    CHECK(snapshot.bones[on->firstBone].m[3][1] == led->model[1].m[3][1]);
+}
+
 TEST_CASE("extraction reads the environment from Lighting, and defaults without it")
 {
     Fixture fixture;

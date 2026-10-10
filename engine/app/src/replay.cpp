@@ -108,6 +108,11 @@ std::optional<core::EngineError> loadScenario(const std::filesystem::path& direc
     out.checkpointEvery = static_cast<u64>(std::max<core::i64>(1, root["checkpointEvery"].asInteger(1)));
     out.sameBuildOnly = root["sameBuildOnly"].asBool(false);
     out.requireAttribute = std::string(root["requireAttribute"].asString(""));
+    const core::JsonValue voices = root["voiceLocales"];
+    for (usize index = 0; index < voices.size(); ++index) {
+        if (const std::string_view voice = voices.at(index).asString(); !voice.empty())
+            out.voiceLocales.emplace_back(voice);
+    }
 
     const std::string_view script = root["script"].asString("init.luau");
     out.scriptPath = std::filesystem::absolute(directory / script);
@@ -261,6 +266,8 @@ std::optional<core::EngineError> runScenario(const ReplayScenario& scenario, Rep
             .bootScene = {},
             .bootSceneText = {},
             .bootGlobalText = {},
+            // The language the run is heard in, which must change nothing.
+            .voiceChoice = scenario.voiceLocale,
         });
         error.has_value())
         return error;
@@ -571,6 +578,20 @@ std::optional<core::EngineError> runReplayGate(const std::filesystem::path& root
 
         if (auto error = compareTraces(first, second, "run 1", "run 2"); error.has_value())
             return error;
+
+        // **And heard in another language it is the same simulation** (ADR
+        // 0200): the files found are other files, of other lengths, and not
+        // a tick moves.
+        for (const std::string& voice : scenario.voiceLocales) {
+            ReplayScenario heard = scenario;
+            heard.voiceLocale = voice;
+            ReplayTrace other;
+            if (auto error = runScenario(heard, other); error.has_value())
+                return error;
+            const std::string label = "voice " + voice;
+            if (auto error = compareTraces(first, other, "run 1", label); error.has_value())
+                return error;
+        }
 
         // A missing trace is an error, never a skip. A gate
         // that quietly degrades to "the two in-process runs agreed" is the

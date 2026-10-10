@@ -21,18 +21,26 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
+| `Category` | `Enum.SoundCategory` | `Enum.SoundCategory.Effects` | read/write | What kind of sound it is (ADR 0200): `Effects`, `Music` or `Voice`. It decides which of the player's volumes turns it (`AudioService.MusicVolume`, `EffectsVolume`, `VoiceVolume`), and music lowers itself while a voice is heard. On the sound and not on its `Group`, because a group is each machine's own and a line a server starts has to arrive as a voice. |
 | `Content` | `Content` | `""` | read/write | The audio, as an `asset://` URI. WAV, MP3, FLAC and Ogg Vorbis. A file of up to ten seconds is decoded once and held; a longer one STREAMS -- its encoded bytes are kept and each voice decodes just ahead of the speakers, so three minutes of music costs the file's size rather than about 70 MB. Either way a sound does not re-read its file sixty times a second.<br><br>A URI that names nothing still PLAYS, as a generated tone whose pitch comes from a hash of the id. A sound that went silent because a file was missing is a bug report about the sound; a placeholder that is audibly a placeholder is one about the file. `DebugService:GetStat("AudioClipsMissing")` is how a script asks which it got.<br><br>**The file's length is the sound's length**, read from its header rather than by decoding it. `Ended` fires when `TimePosition` reaches it, so a two-minute track plays for two minutes; a content that names nothing is one second long, because that is how long the placeholder tone is.<br><br>The mixer keeps its own cursor and takes `TimePosition` whenever the two part company -- a seek, a rewind, a sound stopped and started. It has to: the timeline moves in whole ticks and a device moves in buffers, so a cursor re-read every frame stutters between them. Nothing in the simulation reads that cursor, which is what keeps a replay exact (R10). |
 | `Group` | `AudioGroup?` | `nil` | read/write | The bus this sound's volume is multiplied by, or nil for none. |
 | `Looped` | `boolean` | `false` | read/write | Whether reaching the end wraps to the start instead of stopping. A looped sound never fires `Ended`, because it never does. |
+| `Loudness` | `number` | — | read-only | How loud what THIS machine is playing of the sound is right now, 0 to 1 (ADR 0200): the level of the recording over about the last twentieth of a second at `TimePosition`, where a tone at full scale reads 1. What opens a jaw with a line.<br><br>**It is the recording's own level**: no volume is in it -- not the sound's, not a group's, not the player's -- and no distance, so a mouth opens the same whatever a slider says. It is the language this machine hears, which may be another machine's other language: picture, each machine's own, and nothing a game's rules may read. 0 while the sound is not playing, in the silence after a shorter language, and for a sound with no file. |
 | `PlaybackSpeed` | `number` | `1` | read/write | How fast the timeline runs, and therefore the pitch. 2 is an octave up and half the duration. Zero is refused rather than treated as a pause -- `Playing` is what pauses, and a speed of zero would be a sound that never ends. |
-| `Playing` | `boolean` | `false` | read/write | Whether the timeline is advancing. Writing it is the same as calling `Play` or `Stop`, and reading it is how a script asks without keeping its own flag. |
+| `Playing` | `boolean` | `false` | read/write | Whether the timeline is advancing. Writing it is `Resume` and `Pause`, never a rewind: `true` carries on from `TimePosition` and `false` stops there. `Play` is what starts from the beginning and `Stop` what rewinds. Reading it is how a script asks without keeping its own flag. |
 | `RollOffMaxDistance` | `number` | `80` | read/write | How far the listener can be before a positional sound is silent. Between the two distances it fades linearly -- linear rather than inverse-square because a game's audible range is a design decision rather than a physical one, and an inverse square makes the far half of it inaudible. |
 | `RollOffMinDistance` | `number` | `8` | read/write | How far the listener can be before a positional sound starts getting quieter. Inside it the sound is at full `Volume`; ignored entirely for a 2D sound. |
-| `TimeLength` | `number` | — | read-only | How long `Content` is, in seconds: the file's own length, read from its header, or the placeholder tone's one second when it names nothing. 0 until the length has been read: the world's first tick after `Content` is set reads it, and the editor reads it for the sound it shows. |
+| `TimeLength` | `number` | — | read-only | How long `Content` is, in seconds: the file's own length, read from its header, or the placeholder tone's one second when it names nothing. 0 until the length has been read: the world's first tick after `Content` is set reads it, and the editor reads it for the sound it shows.<br><br>**A sound recorded in several languages is as long as its longest** (ADR 0200): the same number on every machine whatever language each one hears, so `Ended` lands on the same tick everywhere. A shorter language is followed by silence until the sound ends. A sound with a `Caption` and no file in any language lasts its caption. |
 | `TimePosition` | `number` | `0` | read/write | Where the timeline is, in seconds, from 0 to `TimeLength`. Writable, which is how a script seeks: a write below zero is refused, and one past the end is clamped to it -- or wrapped, for a `Looped` sound -- exactly as arriving there would. |
 | `Volume` | `number` | `0.5` | read/write | A multiplier, combined with the group's and with the listener distance. The default is half rather than full because a game with several sounds at once and every one at 1 is a game that clips, and the first thing anybody does is turn them all down. |
 
 ## Methods
+
+### `GetBands(): (number, number, number)`
+
+The moment `Loudness` measures, split in three (ADR 0200): how much of it is low (80 to 500 Hz), middle (500 to 2,500 Hz) and high (2,500 to 10,000 Hz), each 0 to 1, as three numbers. A tone at full scale inside a band reads 1 there and 0 in the others. Enough to tell an open mouth from a wide or a round one, and what a visualiser reads.
+
+**Worked out when asked and not otherwise**: a sound nobody asks about costs nothing, and two askers in one tick pay once. Each machine's own, as `Loudness` is.
 
 ### `Pause()`
 
@@ -41,6 +49,8 @@ Stops the timeline where it is. `Resume` carries on from there; `Play` starts ag
 ### `Play()`
 
 Plays it from the start -- or from `TimePosition`, when a script set it since the sound last started. Playing one that is already playing starts it again. `Resume` is what carries on from where `Pause` left it.
+
+**This is where a sound's language is chosen** (ADR 0200): `Content` is looked for under `l10n/<VoiceLocale>/`, then under the language alone, then as it is named, and what is playing finishes in the language it started in.
 
 ### `Resume()`
 

@@ -61,6 +61,20 @@ struct SealReport
 [[nodiscard]] std::optional<core::EngineError> unsealGame(const std::filesystem::path& gameDir,
                                                           const std::filesystem::path& outDir);
 
+// The manifest a pack that is not sealed has beside it: `<pack-stem>.manifest.json`,
+// which is where `ContentMounts::mountPack` looks for it.
+[[nodiscard]] std::filesystem::path packManifestPath(const std::filesystem::path& pack);
+
+// **A pack that is no game's, sealed as a game's is** (ADR 0200 §7): a
+// language pack, which a game mounts after its own and so has to be the same
+// kind of container. `pack` is written again with the names the manifest
+// beside it gave it, hashed, and the manifest is removed. It takes in no file
+// of a game's and carries no listing, so `SealedGame` does not open it;
+// `ContentMounts::mountPack` does, as it does any sealed pack. A pack already
+// sealed is an error, and one that cannot be read is left as it was.
+[[nodiscard]] std::optional<core::EngineError> sealPack(const std::filesystem::path& pack,
+                                                        SealReport* report = nullptr);
+
 // **A sealed game's own files, read where they are** -- what the host asks in
 // place of the disk when a game's folder has no `src/`: is this file there,
 // what is under this folder, what does it hold.

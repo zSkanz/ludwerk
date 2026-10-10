@@ -99,6 +99,13 @@ holds("${carried}" "lamp=12")
 holds("${carried}" "hum=true,0.25")
 holds("${carried}" "streak=1.5")
 
+# The piece the character wears arrived wearing it: its `PoseFrom` names the
+# joiner's own copy of the body (ADR 0201, protocol 45).
+line_of(worn "worn ")
+holds("${worn}" "piece=MeshPart")
+holds("${worn}" "from=Body")
+holds("${worn}" "same=true")
+
 line_of(done "done")
 
 # **The same states from the same inputs**: what the joiner's graph did, in

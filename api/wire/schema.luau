@@ -171,6 +171,14 @@ export type Field = {
     --- named as it appears in `ENG_SCENE_POOL_LIST`. Absent for properties,
     --- which are read through the generated accessor by name.
     Component: string?,
+    --- **The properties this field is the value of, when its name is not
+    --- theirs.** A field read from a component is named after the component's
+    --- member, and one member may back properties of other names: a hinge's
+    --- `LowerAngle` and a slider's `LowerLimit` are both `LimitLow`, and a
+    --- part's `Position` and `Orientation` are its `CFrame`. Said here so the
+    --- lint can hold every writable property of a replicated class to a
+    --- decision -- sent, or withheld with a reason -- by name.
+    Carries: { string }?,
     --- Why this field is on the wire, in one sentence. Not decoration: the
     --- alternative to writing it down is a schema where nobody can tell an
     --- expensive field from a necessary one two years later.

@@ -2,5 +2,8 @@
   "spec.menu.play": "Play",
   "spec.menu.quit": "Quit",
   "spec.hud.score": "Score: {points}",
-  "spec.hud.greeting": "Hello, {name}!"
+  "spec.hud.greeting": "Hello, {name}!",
+  "spec.speaker.guide": "Guide",
+  "spec.hello": "Hello.",
+  "spec.written": "Not recorded yet."
 }

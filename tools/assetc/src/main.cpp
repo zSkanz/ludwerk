@@ -1,5 +1,7 @@
 // `assetc` -- argv plumbing and exit codes. The work is in the library beside
 // it, so the tests exercise the same code the binary runs (the `imgcmp` shape).
+#include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -14,6 +16,7 @@
 #include "engine/asset/mesh_format.h"
 #include "engine/asset/seal.h"
 #include "engine/assetc/compiler.h"
+#include "engine/assetc/l10n.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/jobs/jobs.h"
@@ -224,6 +227,113 @@ void usage()
     return 0;
 }
 
+// **`assetc seal-pack`** (ADR 0200 §7): a pack that is no game's -- a
+// language pack -- sealed as a game's is, so the game mounts it the same way.
+// The manifest beside it goes into it, hashed, and is removed.
+//
+//   assetc seal-pack <pack>
+[[nodiscard]] int runSealPack(int argc, char** argv)
+{
+    std::string pack;
+    for (int i = 2; i < argc; ++i) {
+        if (argv[i][0] != '-' && pack.empty()) {
+            pack = argv[i];
+            continue;
+        }
+        std::cout << "assetc: unknown option " << argv[i] << "\n";
+        return 2;
+    }
+    if (pack.empty()) {
+        std::cout << "usage: assetc seal-pack <pack>\n";
+        return 2;
+    }
+    engine::asset::SealReport report;
+    if (const std::optional<engine::core::EngineError> error = engine::asset::sealPack(pack, &report)) {
+        std::cout << "assetc: " << error->message << "\n";
+        return 1;
+    }
+    std::cout << "assetc: sealed " << report.assets << " asset(s), " << report.bytesBefore << " -> "
+              << report.bytesAfter << " bytes\n";
+    return 0;
+}
+
+// **`assetc l10n-index`** (ADR 0200 §2): the localization index of the
+// content about to be packed -- the voice languages, which of them are in the
+// game's own pack, each localized sound's longest length, and the lines
+// files. `ludwerk build` writes it into the staged content as
+// `l10n/index.json`. A tree with nothing localized and no lines gets no file.
+//
+// `--shipped` is the languages whose sounds stay in the game's pack; left
+// out, all do, and a list with no name in it (`,`) is none.
+//
+// `--per-file` is the other reading of the same files, for `ludwerk voice`:
+// each file's own length, printed when no `--output` names a file.
+//
+//   assetc l10n-index --input <content-dir> --output <file> [--shipped <a,b,...>]
+//   assetc l10n-index --input <content-dir> --per-file [--output <file>]
+[[nodiscard]] int runL10nIndex(int argc, char** argv)
+{
+    std::string input;
+    std::string output;
+    std::string shippedArgument;
+    bool shippedGiven = false;
+    bool perFile = false;
+    for (int i = 2; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--per-file") == 0) {
+            perFile = true;
+            continue;
+        }
+        if (flagValue(argc, argv, i, "--input", input) || flagValue(argc, argv, i, "--output", output))
+            continue;
+        if (flagValue(argc, argv, i, "--shipped", shippedArgument)) {
+            shippedGiven = true;
+            continue;
+        }
+        std::cout << "assetc: unknown option " << argv[i] << "\n";
+        return 2;
+    }
+    if (input.empty() || (output.empty() && !perFile) || (perFile && shippedGiven)) {
+        std::cout << "usage: assetc l10n-index --input <content-dir> --output <file> [--shipped <a,b,...>]\n"
+                     "       assetc l10n-index --input <content-dir> --per-file [--output <file>]\n";
+        return 2;
+    }
+
+    std::optional<std::vector<std::string>> shipped;
+    if (shippedGiven) {
+        shipped.emplace();
+        std::size_t at = 0;
+        while (at <= shippedArgument.size()) {
+            const std::size_t end = std::min(shippedArgument.find(',', at), shippedArgument.size());
+            if (end > at)
+                shipped->push_back(shippedArgument.substr(at, end - at));
+            at = end + 1;
+        }
+    }
+
+    const engine::assetc::L10nResult result =
+        perFile ? engine::assetc::measureL10n(input) : engine::assetc::buildL10nIndex(input, shipped);
+    if (!result.ok) {
+        std::cout << "assetc: " << result.diagnostic << "\n";
+        return 1;
+    }
+    if (result.json.empty()) {
+        std::cout << "assetc: nothing is localized and there are no lines; no index was written\n";
+        return 0;
+    }
+    if (output.empty()) {
+        std::cout << result.json;
+        return 0;
+    }
+    const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(result.json.data()), result.json.size());
+    std::string diagnostic;
+    if (!engine::assetc::writeFile(output, bytes, diagnostic)) {
+        std::cout << "assetc: " << diagnostic << "\n";
+        return 1;
+    }
+    std::cout << "assetc: localization " << (perFile ? "lengths" : "index") << " -> " << output << "\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -244,6 +354,14 @@ int main(int argc, char** argv)
             (engine::platform::paths().contentDir / "i18n" / "en.json").string());
         return runSeal(argc, argv, std::strcmp(argv[1], "unseal") == 0);
     }
+    if (argc > 1 && std::strcmp(argv[1], "seal-pack") == 0) {
+        (void)engine::core::engineCatalog().loadFromFile(
+            (engine::platform::paths().contentDir / "i18n" / "en.json").string());
+        return runSealPack(argc, argv);
+    }
+    // No catalog: what this says is its own, and it relays no engine error.
+    if (argc > 1 && std::strcmp(argv[1], "l10n-index") == 0)
+        return runL10nIndex(argc, argv);
     if (argc > 1 && std::strcmp(argv[1], "archive") == 0) {
         (void)engine::core::engineCatalog().loadFromFile(
             (engine::platform::paths().contentDir / "i18n" / "en.json").string());

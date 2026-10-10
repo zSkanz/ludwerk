@@ -105,6 +105,8 @@ engine_add_module_tests(render
         tests/animation_retarget_tests.cpp
         tests/ik_controls_tests.cpp
         tests/ik_tests.cpp
+        tests/pose_follow_tests.cpp
+        tests/partition_follow_tests.cpp
         tests/retarget_tests.cpp
         tests/mesh_loader_tests.cpp
         tests/terrain_loader_tests.cpp

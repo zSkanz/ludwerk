@@ -19,6 +19,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **The wire protocol is 45** (ADRs 0200, 0201). Every machine in a match
+  must run a build that speaks it. `Sound.Category`, `Caption`, `LipSync` and
+  `MeshPart.PoseFrom` travel, as authored, when an instance is made and when
+  one changes. And **every property a script can write on a class that travels is now
+  either sent or named as withheld** -- a lint, so a property added later
+  cannot be forgotten the way D617's were.
+- **`AudioService:PlayLocal` destroys its sound** a moment after it ends
+  (D621). A caller that kept the handle to destroy it itself still may; one
+  that read the sound long after it ended finds it gone.
+- **A model with a piece parented to a joint is compiled again** (D624), once,
+  the first time a project is opened: the piece now goes with its joint.
+
 - **The wire protocol is 44: what a character carries reaches the other
   machines** (D612, D613). Every machine in a match must run a build that
   speaks it. A thing a server-side script spawns -- from a stamp, as a
@@ -283,6 +295,70 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
     instance, and the data model's services changed. The simulation did not.
 
 ### Added
+
+- **Dubbing: a voice a language** (ADR 0200). A recording of a line in
+  another language is the same file under `content/l10n/<locale>/`; a game
+  names the default one and each machine plays its own language's.
+  `LocalizationService.VoiceLocale` is the language that is heard, apart from
+  `Locale`, which is read -- it follows the text until the player chooses,
+  and the choice is kept (`VoiceFollowsLocale`, `GetVoiceLocales`,
+  `GetSystemLocales`, `VoiceLocaleChanged`). **A line lasts as long as its
+  longest language on every machine**, so a match and a replay agree whatever
+  anybody hears; `Sound.TimeLength` is that length. An image under
+  `l10n/<locale>/` is drawn in place of the one named when the text is read
+  in that language.
+- **`DialogueService`, `Caption` and `@engine/subtitles`.** Lines live in
+  `content/dialogue/<name>.lines.json` -- who says each, in what colour, its
+  words' catalog key and its recording -- and `DialogueService:Say("act1.
+  intro_01", speaker)` says one. A line with no recording is silent and lasts
+  a reading time, so a game can be written and timed before it is recorded.
+  `require("@engine/subtitles").mount()` is subtitles: the speaker in their
+  colour, the words in the language being read, shown when the player wants
+  them (`DialogueService.Subtitles`: when needed, always, never), at the size
+  and over the background they chose (`SubtitleScale`,
+  `SubtitleBackground`). `GetCaptions`, `ShowsCaption`, `CaptionStarted` and
+  `CaptionEnded` are what a game's own subtitles are written with.
+- **The player's volumes, and music that gives way to a voice.**
+  `Sound.Category` is `Effects`, `Music` or `Voice`;
+  `AudioService.PlayerVolume`, `MusicVolume`, `EffectsVolume` and
+  `VoiceVolume` are the player's and are kept for them, beside whatever the
+  game's own groups say; and music lowers itself to
+  `AudioService.MusicUnderVoice` while a voice is heard.
+- **An Audio page on the options screen** (`@engine/settings`): the four
+  volumes, the text's language, the voice's language and the three subtitle
+  settings, written the moment they are chosen.
+- **A mouth that moves with the line: `LipSync`.** Under a `MeshPart` with
+  shape keys, it moves the mouth while a voice is heard from that character,
+  with no script: by a viseme track beside the recording
+  (`<name>.visemes.json`, one for each language, as the free lip-sync tools
+  write it), else by three frequency bands of the sound, else by its
+  loudness. `<model>.face.json` says what each shape does to that face.
+  `Sound.Loudness`, `Sound:GetBands()` and `AudioService:GetBands(category)`
+  are the numbers, for a script that wants them.
+- **Language packs.** `[export] voice = ["en"]` names the voice languages
+  inside the game; each of the others is built as
+  `dist/languages/l10n-<locale>.lpack`, which a player adds beside the game's
+  pack. Every package times every line the same, with a language or without.
+- **`ludwerk voice`**: what each language of a dubbed game still lacks --
+  words, recordings, recordings no line names, takes of one line that differ
+  by more than 0.35 seconds, recordings with no viseme track -- and
+  `--visemes`, which makes the missing tracks with a lip-sync tool you have
+  installed. `ludwerk check` says the totals.
+- **A mesh that wears another's pose: `MeshPart.PoseFrom`** (ADR 0201). A
+  piece exported on a body's skeleton -- armour, a hood, hair -- names the
+  body and is on it joint for joint, whatever moved the joint: a clip, a
+  reach, feet on a stair, a spring chain, a ragdoll. A thing with joints of
+  its own -- a bow, a rifle -- hangs from a `Bone` of the body when parented
+  under it, and its joints are moved by the tracks of that name in the clip
+  the body plays; handing it over is parenting it under another bone. A
+  piece worn costs its draw and not a pose.
+- **`engine-host --describe-rig=<model>`** prints each joint's role, what has
+  none, and whether the rig is a body clips can be carried to; and
+  `--locale=` and `--voice-locale=` start a run in a language of your
+  choosing.
+- **`examples/38-dubbing`**, and `examples/37-character` remade on free
+  characters and clips (CC0, with their licences beside them), with a
+  crossbow that is held and a hood that is worn.
 
 - **Animation graphs: a character that mixes its own clips** (ADR 0197). An
   `.animgraph.json` says which clips play in which state, how a walk becomes
@@ -1611,6 +1687,25 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   parameter*: such a name may be a surface shader's.
 
 ### Fixed
+
+- **A helmet, a cape or a sword parented to a bone goes with it** (D624). A
+  mesh with no weights of its own under a joint of a skinned model stayed
+  where the file rested it while the body moved.
+- **A walk does not slide on a body of other proportions** (D625). A graph
+  that blends by speed read every body's speed in metres a second; a clip
+  carried to shorter or longer legs covers ground in proportion to them, so
+  the blend was off by that ratio. A body's speed now reaches its graph in
+  the strides of the body the clips were made on. **A graph tuned by hand for
+  a retargeted body, to hide this, wants its numbers put back to the
+  library's.**
+- **A worn piece in a large scene stays on its body** (D626): a scene's
+  partition took it into a streamed cell, where its `PoseFrom` was lost.
+- **A label sized to its words keeps them on one line** (D623). On a screen
+  with a `ReferenceHeight`, a line that fitted exactly could put its last
+  word on a second line, outside its box.
+- **Choosing the voice language you are already hearing is kept** (D622).
+- **A sound recorded again is heard again** without restarting the game
+  (D620).
 
 - **What a character carries is not ground under it** (D615). A part that
   does not collide -- a hero's own body welded inside its capsule, a staff or

@@ -127,6 +127,9 @@ inline constexpr EnumId DecalBlendModeEnumId = 86;
 inline constexpr EnumId ParticleFlipbookModeEnumId = 87;
 inline constexpr EnumId SwarmAgentRemovalEnumId = 88;
 inline constexpr EnumId RelayStateEnumId = 89;
+inline constexpr EnumId SoundCategoryEnumId = 90;
+inline constexpr EnumId SubtitleModeEnumId = 91;
+inline constexpr EnumId LipSyncModeEnumId = 92;
 
 } // namespace generated
 
@@ -861,6 +864,9 @@ bool setSaveServiceVersion(World& world, core::InstanceId id, const Value& value
 // LocalizationService
 Value getLocalizationServiceLocale(const World& world, core::InstanceId id);
 bool setLocalizationServiceLocale(World& world, core::InstanceId id, const Value& value);
+Value getLocalizationServiceVoiceLocale(const World& world, core::InstanceId id);
+bool setLocalizationServiceVoiceLocale(World& world, core::InstanceId id, const Value& value);
+Value getLocalizationServiceVoiceFollowsLocale(const World& world, core::InstanceId id);
 
 // GraphicsService
 Value getGraphicsServiceQualityLevel(const World& world, core::InstanceId id);

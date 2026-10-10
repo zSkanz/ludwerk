@@ -21,13 +21,21 @@
 	names each one that is not -- a missing translation is shown to a player
 	as another language's text. A key only another locale has is said and does
 	not fail: it is text nobody asks for.
+
+	**And its dialogue** (ADR 0200 §8), for a project that has lines files: a
+	line with no text in the default language fails the check, as does a lines
+	file the engine would refuse. What is still to translate and to record is
+	work, not a mistake: one line sums it up and names `ludwerk voice`, which
+	lists it.
 ]]
 
 local fs = require("@std/fs")
 local json = require("@std/json")
 local process = require("@std/process")
 
+local buildAssets = require("./build-assets")
 local catalog = require("../catalog")
+local dialogue = require("../dialogue")
 local projectlib = require("../project")
 local tools = require("../tools")
 
@@ -292,6 +300,33 @@ local function checkCatalogs(root: string, engineKeys: { [string]: boolean }?): 
     return report
 end
 
+--- **A project's dialogue against its catalogs and its recordings** (ADR 0200
+--- §8), or nil for a project with no lines file. `measured` asks the asset
+--- compiler how long each localized recording is, where there is one.
+---
+--- Here, beside the two readers it is made with -- the default locale's and a
+--- catalog's -- so that `ludwerk voice` and this check read a project one way.
+local function voiceReport(root: string, measured: boolean): dialogue.Report?
+    local project: projectlib.Project = { root = root, config = {} }
+    if fs.exists(projectlib.joined(root, "project.toml")) then
+        project = projectlib.load(root)
+    end
+    local content = buildAssets.contentDirectory(project)
+    if content == nil or #dialogue.lineFiles(content) == 0 then
+        return nil
+    end
+    return dialogue.report({
+        root = root,
+        content = content,
+        defaultLocale = defaultLocale(root),
+        catalogKeys = catalogKeys,
+        lengths = if measured then dialogue.measure(content) else nil,
+    })
+end
+
+--- How many of a list of failures are said before the rest are counted.
+local VoiceCap = 20
+
 export type EditorProblem = {
     --- The line as the engine printed it: `src/a.luau(3,7): error: ...`.
     line: string,
@@ -533,6 +568,44 @@ local function run(options: Options): number
         return 1
     end
 
+    -- The game's dialogue (ADR 0200 §8), where it has any.
+    local voice = voiceReport(options.path, true)
+    if voice ~= nil then
+        for _, problem in voice.problems do
+            print(problem.message)
+        end
+        local sums = dialogue.totals(voice)
+        for _, language in voice.languages do
+            if language.default then
+                for index, line in language.noText do
+                    if index > VoiceCap then
+                        print(tr("cli.check.err.voice_more", { count = #language.noText - VoiceCap }))
+                        break
+                    end
+                    print(tr("cli.check.err.voice_no_text", { line = line, locale = language.locale }))
+                end
+            end
+        end
+        if #voice.problems > 0 or sums.untranslatedDefault > 0 then
+            print(tr("cli.check.err.voice"))
+            return 1
+        end
+        print(tr("cli.check.voice_summary", {
+            lines = voice.lines,
+            languages = #voice.languages,
+            untranslated = sums.untranslated,
+            unrecorded = sums.unrecorded,
+            silent = #voice.silent,
+            unused = sums.unused,
+            spread = if voice.measured
+                then tr("cli.check.voice_spread", {
+                    count = voice.flagged,
+                    limit = string.format("%.2f", dialogue.SpreadLimit),
+                })
+                else tr("cli.check.voice_unmeasured"),
+        }))
+    end
+
     if warnings > 0 then
         print(tr("cli.check.ok_warnings", { count = #files, warnings = warnings }))
     else
@@ -548,6 +621,9 @@ return {
     styluaCommand = styluaCommand,
     definitionName = definitionName,
     checkCatalogs = checkCatalogs,
+    catalogKeys = catalogKeys,
+    defaultLocale = defaultLocale,
+    voiceReport = voiceReport,
     projectScenes = projectScenes,
     editorCheck = editorCheck,
 }

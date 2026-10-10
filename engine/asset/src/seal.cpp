@@ -79,6 +79,55 @@ constexpr std::string_view OwnFolders[] = {"src", "i18n"};
     return out;
 }
 
+// A built pack's blobs into `writer`, and the names its manifest gives them
+// into `names`, hashed. Every blob against its name on the way in: what is
+// sealed is what was built, or nothing is. The pack is let go of before this
+// returns, because its file is about to be written over.
+[[nodiscard]] std::optional<core::EngineError> takeBuiltPack(const std::filesystem::path& packPath,
+                                                             const std::filesystem::path& manifestPath,
+                                                             core::TextKey alreadySealed, PackWriter& writer,
+                                                             std::vector<PackName>& names, SealReport& told)
+{
+    Pack source;
+    if (auto error = openPackFile(packPath, source, true))
+        return error;
+    if (source.names() != nullptr)
+        return failed(alreadySealed, packPath);
+    std::vector<ManifestRow> rows;
+    if (auto error = readContentManifest(manifestPath, rows))
+        return error;
+    for (const PackEntry& entry : source.entries())
+        writer.add(entry.hash, entry.kind, source.blob(entry.hash));
+    for (const ManifestRow& row : rows) {
+        if (!source.contains(row.hash)) {
+            const I18nArg args[] = {{"content", row.urn}};
+            return core::makeError(ENG_TR("asset.manifest.err.missing_blob"), args);
+        }
+        names.push_back(PackName{core::hashText(row.urn), row.hash, row.kind});
+    }
+    std::error_code ec;
+    told.assets = rows.size();
+    told.bytesBefore += std::filesystem::file_size(packPath, ec) + std::filesystem::file_size(manifestPath, ec);
+    return std::nullopt;
+}
+
+// The sealed file over `packPath`. Beside it first, then over it: a build
+// stopped half way leaves the pack it had.
+[[nodiscard]] std::optional<core::EngineError> writeSealed(const std::filesystem::path& packPath,
+                                                           const PackWriter& writer, SealReport& told)
+{
+    const std::vector<std::byte> sealed = writer.buildSealed();
+    std::filesystem::path fresh = packPath;
+    fresh += ".sealing";
+    if (!platform::createDirectories(packPath.parent_path()) || !platform::writeFile(fresh, sealed))
+        return failed(ENG_TR("asset.seal.err.write_failed"), fresh);
+    (void)platform::removeFile(packPath);
+    if (!platform::renameFile(fresh, packPath))
+        return failed(ENG_TR("asset.seal.err.write_failed"), packPath);
+    told.bytesAfter = sealed.size();
+    return std::nullopt;
+}
+
 } // namespace
 
 std::filesystem::path gamePackPath(const std::filesystem::path& gameDir)
@@ -91,6 +140,33 @@ std::filesystem::path gameManifestPath(const std::filesystem::path& gameDir)
     return gameDir / ".engine" / "content.manifest.json";
 }
 
+std::filesystem::path packManifestPath(const std::filesystem::path& pack)
+{
+    std::filesystem::path manifest = pack;
+    manifest.replace_extension();
+    manifest += ".manifest.json";
+    return manifest;
+}
+
+std::optional<core::EngineError> sealPack(const std::filesystem::path& pack, SealReport* report)
+{
+    const std::filesystem::path manifestPath = packManifestPath(pack);
+    SealReport told;
+    PackWriter writer;
+    std::vector<PackName> names;
+    if (auto error =
+            takeBuiltPack(pack, manifestPath, ENG_TR("asset.seal.err.pack_already_sealed"), writer, names, told))
+        return error;
+    (void)writer.addContent(AssetKind::Names, encodePackNames(std::move(names)));
+    if (auto error = writeSealed(pack, writer, told))
+        return error;
+    // The names are in it now, and are not left beside it to be read.
+    (void)platform::removeFile(manifestPath);
+    if (report != nullptr)
+        *report = told;
+    return std::nullopt;
+}
+
 std::optional<core::EngineError> sealGame(const std::filesystem::path& gameDir, SealReport* report)
 {
     const std::filesystem::path packPath = gamePackPath(gameDir);
@@ -101,29 +177,9 @@ std::optional<core::EngineError> sealGame(const std::filesystem::path& gameDir, 
     std::error_code ec;
 
     if (std::filesystem::is_regular_file(packPath, ec)) {
-        // Every blob against its name on the way in: what is sealed is what
-        // was built, or nothing is.
-        Pack source;
-        if (auto error = openPackFile(packPath, source, true))
+        if (auto error =
+                takeBuiltPack(packPath, manifestPath, ENG_TR("asset.seal.err.already_sealed"), writer, names, told))
             return error;
-        if (source.names() != nullptr)
-            return failed(ENG_TR("asset.seal.err.already_sealed"), packPath);
-        std::vector<ManifestRow> rows;
-        if (auto error = readContentManifest(manifestPath, rows))
-            return error;
-        for (const PackEntry& entry : source.entries())
-            writer.add(entry.hash, entry.kind, source.blob(entry.hash));
-        for (const ManifestRow& row : rows) {
-            if (!source.contains(row.hash)) {
-                const I18nArg args[] = {{"content", row.urn}};
-                return core::makeError(ENG_TR("asset.manifest.err.missing_blob"), args);
-            }
-            names.push_back(PackName{core::hashText(row.urn), row.hash, row.kind});
-        }
-        told.assets = rows.size();
-        told.bytesBefore += std::filesystem::file_size(packPath, ec) + std::filesystem::file_size(manifestPath, ec);
-        // The pack goes out of scope here, and its file is let go: it is about
-        // to be written over.
     }
 
     const std::vector<std::string> files = ownFiles(gameDir);
@@ -144,17 +200,8 @@ std::optional<core::EngineError> sealGame(const std::filesystem::path& gameDir, 
         PackName{core::hashText(GameScheme), writer.addContent(AssetKind::Raw, bytesOf(listing)), AssetKind::Raw});
     (void)writer.addContent(AssetKind::Names, encodePackNames(std::move(names)));
 
-    const std::vector<std::byte> sealed = writer.buildSealed();
-    // Beside it first, then over it: a build stopped half way leaves the pack
-    // it had.
-    std::filesystem::path fresh = packPath;
-    fresh += ".sealing";
-    if (!platform::createDirectories(packPath.parent_path()) || !platform::writeFile(fresh, sealed))
-        return failed(ENG_TR("asset.seal.err.write_failed"), fresh);
-    (void)platform::removeFile(packPath);
-    if (!platform::renameFile(fresh, packPath))
-        return failed(ENG_TR("asset.seal.err.write_failed"), packPath);
-    told.bytesAfter = sealed.size();
+    if (auto error = writeSealed(packPath, writer, told))
+        return error;
 
     // And what it now holds is not left beside it.
     (void)platform::removeFile(manifestPath);

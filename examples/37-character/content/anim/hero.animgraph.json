@@ -1,7 +1,7 @@
 {
   "format": "animgraph",
   "version": 1,
-  "library": "asset://clips/humanoid.gltf",
+  "library": "asset://clips/adventurer.glb",
   "parameters": {
     "Speed":    { "number": 0,     "from": "CharacterBody.Speed" },
     "MoveX":    { "number": 0,     "from": "CharacterBody.MoveX" },
@@ -9,12 +9,14 @@
     "Grounded": { "boolean": true, "from": "CharacterBody.Grounded" },
     "Rise":     { "number": 0,     "from": "CharacterBody.VerticalSpeed" },
     "Attack":   { "trigger": true, "from": "Attribute.Attack" },
+    "Shoot":    { "trigger": true, "from": "Attribute.Shoot" },
     "Aim":      { "number": 0,     "from": "Attribute.Aim" }
   },
   "events": {
-    "Walk":  [ { "at": 0.25, "name": "Step" }, { "at": 0.75, "name": "Step" } ],
-    "Run":   [ { "at": 0.25, "name": "Step" }, { "at": 0.75, "name": "Step" } ],
-    "Slash": [ { "at": 0.5, "name": "Hit" } ]
+    "Walk":  [ { "at": 0.125, "name": "Step" }, { "at": 0.625, "name": "Step" } ],
+    "Run":   [ { "at": 0.19, "name": "Step" }, { "at": 0.69, "name": "Step" } ],
+    "Slash": [ { "at": 0.2, "name": "Hit" } ],
+    "Shoot": [ { "at": 0.1, "name": "Loosed" } ]
   },
   "layers": [
     {
@@ -26,11 +28,11 @@
           "sync": true,
           "clips": [
             { "clip": "Idle",        "at": [ 0, 0 ] },
-            { "clip": "Walk",        "at": [ 0, 1.5 ] },
-            { "clip": "Run",         "at": [ 0, 3.6 ] },
-            { "clip": "WalkBack",    "at": [ 0, -1.2 ] },
-            { "clip": "StrafeLeft",  "at": [ -0.8, 0 ] },
-            { "clip": "StrafeRight", "at": [ 0.8, 0 ] }
+            { "clip": "Walk",        "at": [ 0, 0.54 ] },
+            { "clip": "Run",         "at": [ 0, 2.38 ] },
+            { "clip": "WalkBack",    "at": [ 0, -0.55 ] },
+            { "clip": "StrafeLeft",  "at": [ -2.2, 1.27 ] },
+            { "clip": "StrafeRight", "at": [ 2.2, 1.27 ] }
           ]
         },
         "Jump": { "clip": "Jump", "loop": false },
@@ -49,11 +51,16 @@
       "start": "None",
       "states": {
         "None": {},
-        "Slash": { "clip": "Slash", "loop": false }
+        "Slash": { "clip": "Slash", "loop": false },
+        "Shoot": { "clip": "Shoot", "loop": false },
+        "Reload": { "clip": "Reload", "loop": false }
       },
       "transitions": [
-        { "from": "None",  "to": "Slash", "when": [ [ "Attack" ] ], "fade": 0.06 },
-        { "from": "Slash", "to": "None",  "after": 1.0, "fade": 0.2 }
+        { "from": "None",   "to": "Slash",  "when": [ [ "Attack" ] ], "fade": 0.06 },
+        { "from": "Slash",  "to": "None",   "after": 1.0, "fade": 0.2 },
+        { "from": "None",   "to": "Shoot",  "when": [ [ "Shoot" ] ], "fade": 0.1 },
+        { "from": "Shoot",  "to": "Reload", "after": 1.0, "fade": 0.12 },
+        { "from": "Reload", "to": "None",   "after": 1.0, "fade": 0.25 }
       ]
     },
     {

@@ -1,0 +1,9 @@
+{
+  "speakers": {
+    "guide": { "name": "speaker.guide" }
+  },
+  "lines": {
+    "recorded": { "speaker": "guide", "sound": "asset://voice/line.wav" },
+    "written": { "speaker": "guide" }
+  }
+}

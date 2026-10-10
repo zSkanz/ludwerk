@@ -8,6 +8,8 @@ local testing = require("@engine/testing")
 
 local describe, it, expect = testing.describe, testing.it, testing.expect
 
+local Audio = game:GetService("AudioService")
+local Dialogue = game:GetService("DialogueService")
 local Graphics = game:GetService("GraphicsService")
 local Localization = game:GetService("LocalizationService")
 local UIService = game:GetService("UIService")
@@ -17,6 +19,14 @@ local function fresh()
     Localization.Locale = "en"
     Graphics:ResetToDefaults()
     Graphics:SaveAsync()
+    Audio.PlayerVolume = 1
+    Audio.MusicVolume = 1
+    Audio.EffectsVolume = 1
+    Audio.VoiceVolume = 1
+    Localization.VoiceLocale = ""
+    Dialogue.Subtitles = Enum.SubtitleMode.Auto
+    Dialogue.SubtitleScale = 1
+    Dialogue.SubtitleBackground = 0.6
 end
 
 --- A thing of the screen by the names on the way to it.
@@ -219,6 +229,79 @@ describe("@engine/settings", function()
         expect(UIService.SelectedObject):ToBe(nil)
         second:Close()
         under:Destroy()
+    end)
+
+    it("has a page for what the player hears and reads, written the moment it is chosen", function()
+        fresh()
+        local screen = settings.open()
+        screen:ShowPage("Audio")
+        local page = find(screen.Gui, { "Backdrop", "Window", "Body", "Audio" }) :: ScrollFrame
+        expect(page.Visible):ToBe(true)
+        expect((find(screen.Gui, { "Backdrop", "Window", "Pages", "Audio" }) :: TextButton).Text):ToBe("Audio")
+
+        expect(screen:GetValueText("PlayerVolume")):ToBe("100%")
+        expect(screen:GetValueText("VoiceVolume")):ToBe("100%")
+        expect(screen:GetValueText("Subtitles")):ToBe("When needed")
+        expect(screen:GetValueText("SubtitleScale")):ToBe("100%")
+        expect(screen:GetValueText("SubtitleBackground")):ToBe("60%")
+
+        -- A volume is the player's the moment it is stepped: nothing is held
+        -- for Apply, and Revert has nothing of it to put back.
+        expect(screen:Step("VoiceVolume", -1)):ToBe(true)
+        expect(Audio.VoiceVolume):ToBeCloseTo(0.9, 4)
+        expect(screen:GetValueText("VoiceVolume")):ToBe("90%")
+        expect(screen:Step("PlayerVolume", 1)):ToBe(false)
+        screen:Revert()
+        expect(Audio.VoiceVolume):ToBeCloseTo(0.9, 4)
+
+        expect(screen:Step("Subtitles", 1)):ToBe(true)
+        expect(Dialogue.Subtitles):ToBe(Enum.SubtitleMode.On)
+        expect(screen:GetValueText("Subtitles")):ToBe("Always")
+        expect(screen:Step("SubtitleScale", 1)):ToBe(true)
+        expect(Dialogue.SubtitleScale):ToBeCloseTo(1.25, 4)
+        expect(screen:Step("SubtitleBackground", -1)):ToBe(true)
+        expect(Dialogue.SubtitleBackground):ToBeCloseTo(0.4, 4)
+
+        -- Defaults are for what is heard too.
+        screen:ResetToDefaults()
+        expect(Audio.VoiceVolume):ToBe(1)
+        expect(Dialogue.Subtitles):ToBe(Enum.SubtitleMode.Auto)
+        expect(screen:GetValueText("SubtitleBackground")):ToBe("60%")
+        screen:Close()
+    end)
+
+    it("chooses the voice's language apart from the text's", function()
+        fresh()
+        local screen = settings.open()
+        -- Until the player chooses, the voice is the text's.
+        expect(screen:GetValueText("Locale")):ToBe("en")
+        expect(screen:GetValueText("VoiceLocale")):ToBe("Same as the text")
+        expect(Localization.VoiceFollowsLocale):ToBe(true)
+
+        expect(screen:Step("VoiceLocale", 1)):ToBe(true)
+        expect(Localization.VoiceLocale):ToBe("en")
+        expect(Localization.VoiceFollowsLocale):ToBe(false)
+        expect(screen:Step("VoiceLocale", 1)):ToBe(true)
+        expect(Localization.VoiceLocale):ToBe("pt-BR")
+        expect(screen:GetValueText("VoiceLocale")):ToBe("pt-BR")
+        -- The text is still the player's other choice.
+        expect(Localization.Locale):ToBe("en")
+        expect(screen:Step("VoiceLocale", 1)):ToBe(false)
+
+        -- And back to following it, which "defaults" means as well.
+        expect(screen:Step("VoiceLocale", -1)):ToBe(true)
+        expect(screen:Step("VoiceLocale", -1)):ToBe(true)
+        expect(Localization.VoiceFollowsLocale):ToBe(true)
+        expect(screen:Step("VoiceLocale", -1)):ToBe(false)
+
+        Localization.VoiceLocale = "pt-BR"
+        task.wait()
+        task.wait()
+        expect(screen:GetValueText("VoiceLocale")):ToBe("pt-BR")
+        screen:ResetToDefaults()
+        expect(Localization.VoiceFollowsLocale):ToBe(true)
+        expect(Localization.Locale):ToBe("en")
+        screen:Close()
     end)
 
     it("is written in the player's language, and a game's own word wins", function()

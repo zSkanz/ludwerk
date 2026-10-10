@@ -32,8 +32,10 @@ local process = require("@std/process")
 local android = require("../export/android")
 local buildAssets = require("./build-assets")
 local catalog = require("../catalog")
+local check = require("./check")
 local desktop = require("../export/desktop")
 local game = require("../export/game")
+local l10n = require("../export/l10n")
 local moduleExport = require("../modules/export")
 local moduleManager = require("../modules/manager")
 local output = require("../output")
@@ -149,9 +151,16 @@ local function sealsGame(project: projectlib.Project): boolean
     return not shipsSource(project)
 end
 
---- `[export] multiplayer`, or `none`.
+--- `[export] multiplayer`, or `none`. A mode is a word: `true` is not one, and
+--- is refused rather than read as `none` -- which is what it was, without a
+--- word, while the manual wrote it that way.
 local function multiplayerMode(project: projectlib.Project): (string?, string?)
-    local mode = stringField(project.config.export, "multiplayer") or "none"
+    local section = project.config.export
+    local written = if typeof(section) == "table" then section.multiplayer else nil
+    if written ~= nil and typeof(written) ~= "string" then
+        return nil, tr("cli.build.err.multiplayer_mode", { mode = tostring(written) })
+    end
+    local mode = stringField(section, "multiplayer") or "none"
     if not MultiplayerModes[mode] then
         return nil, tr("cli.build.err.multiplayer_mode", { mode = mode })
     end
@@ -242,6 +251,9 @@ local function run(options: Options): number
     local androidSettings: android.Settings? = nil
     local shaders: string? = nil
     local integrationPayloads: { moduleExport.Payload } = {}
+    -- Which voice languages are in the game's own pack and which get a pack
+    -- of their own (ADR 0200 §7). A phone gets none apart.
+    local voices: l10n.Plan = { voice = {}, shipped = {}, apart = {}, overruled = {} }
     local checked = progress.step(reporter, "check", function(): string?
         local configured, modeError = multiplayerMode(project)
         if configured == nil then
@@ -298,6 +310,14 @@ local function run(options: Options): number
             return integrationError
         end
         integrationPayloads = payloads
+        if fs.exists(content) then
+            local planned, voiceError =
+                l10n.plan(project, content, check.defaultLocale(project.root), chosen.platform == "android")
+            if planned == nil then
+                return voiceError
+            end
+            voices = planned
+        end
         return nil
     end)
     if not checked then
@@ -309,6 +329,8 @@ local function run(options: Options): number
     -- that leaves the other side's scenes and storage out.
     local sidePack: string? = nil
     local sideManifest: string? = nil
+    -- Where the language packs are built, when there are any.
+    local languagePacks: string? = nil
     if fs.exists(content) then
         local packed = progress.step(reporter, "pack", function(): string?
             local assetc = projectlib.findToolFor("assetc", player)
@@ -341,6 +363,43 @@ local function run(options: Options): number
                 local compiled = process.run({ host :: string, "--compile-content-scripts", staged })
                 if not compiled.ok then
                     return compiled.stdout .. compiled.stderr
+                end
+            end
+            -- **The voices** (ADR 0200). The index first, over every
+            -- language: it holds each localized sound's longest length, which
+            -- a machine without a language's files still needs. Then the
+            -- sounds of each language that ships apart leave the staged
+            -- content, and are packed by themselves under the names they had.
+            -- A project with no language and no lines file passes through
+            -- here untouched, and its pack is the bytes it always was.
+            if l10n.hasAnything(staged) then
+                local indexError = l10n.writeIndex(assetc, staged, voices.shipped)
+                if indexError ~= nil then
+                    return indexError
+                end
+                local built = projectlib.joined(stage, "languages")
+                removeTree(built)
+                for _, locale in voices.apart do
+                    local apart = projectlib.joined(built, locale, "content")
+                    l10n.takeApart(staged, locale, apart)
+                    local packError = l10n.buildPack(
+                        assetc,
+                        apart,
+                        projectlib.joined(built, `l10n-{locale}.lpack`),
+                        sealsGame(project)
+                    )
+                    if packError ~= nil then
+                        return packError
+                    end
+                end
+                if #voices.apart > 0 then
+                    languagePacks = built
+                end
+                if #voices.overruled > 0 then
+                    progress.note(
+                        reporter,
+                        tr("cli.build.android_voice", { locales = table.concat(voices.overruled, ", ") })
+                    )
                 end
             end
             local pack = projectlib.joined(stage, "content.lpack")
@@ -724,8 +783,34 @@ local function run(options: Options): number
         return 1
     end
 
+    -- **The language packs, beside the export and not in it** (ADR 0200 §7):
+    -- in `languages/` next to the game's folder, so the archive of the game
+    -- does not carry them. One folder for every desktop target, because a
+    -- language pack is the same bytes for each: sounds are packed as they
+    -- are, under names that do not say what machine they are for.
+    local languages = projectlib.joined(path.dirname(output), "languages")
+    local made: { [string]: string } =
+        { target = chosen.name, folder = output, executable = executable, archive = archive }
+    if languagePacks ~= nil or fs.exists(languages) then
+        l10n.publish(languagePacks or languages, languages, voices.apart, sealsGame(project))
+    end
+    if languagePacks ~= nil then
+        made.languages = languages
+        progress.note(
+            reporter,
+            tr("cli.build.languages", {
+                locales = table.concat(voices.apart, ", "),
+                path = languages,
+                engine = projectlib.joined(output, "game", ".engine"),
+            })
+        )
+        if not sealsGame(project) then
+            progress.note(reporter, tr("cli.build.languages_plain"))
+        end
+    end
+
     progress.note(reporter, tr("cli.build.done", { path = output, executable = executableName, archive = archive }))
-    progress.result(reporter, { target = chosen.name, folder = output, executable = executable, archive = archive })
+    progress.result(reporter, made)
     return 0
 end
 

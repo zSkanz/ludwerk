@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "class_descriptors.gen.h"
+#include "engine/asset/localized.h"
 #include "engine/audio/audio.h"
 #include "engine/audio/scene_types.h"
 #include "engine/platform/async_io.h"
@@ -1339,4 +1341,485 @@ TEST_CASE("D546: a long Ogg Vorbis file streams, seeks, and loops with no gap")
     const std::vector<float> head = listen(content.mounts, "asset://song.ogg", 0.0, 4800u);
     CHECK(std::equal(head.begin(), head.end(), looped.begin() + 4800 * 2));
     CHECK(largestStep(looped, 4700u * 2u, 4900u * 2u) < 0.04f);
+}
+
+// --- A sound in the player's language (ADR 0200) ---------------------------------
+
+namespace {
+
+// A tone of a pitch and a level of the test's choosing, 48 kHz unless said.
+void writeSine(const std::filesystem::path& path, double seconds, double hertz, double level = 0.6,
+               engine::core::u32 rate = 48000u)
+{
+    std::vector<char> bytes;
+    const auto put = [&bytes](const void* data, std::size_t size) {
+        const auto* const at = static_cast<const char*>(data);
+        bytes.insert(bytes.end(), at, at + size);
+    };
+    const auto putU32 = [&put](engine::core::u32 value) { put(&value, sizeof(value)); };
+    const auto putU16 = [&put](engine::core::u16 value) { put(&value, sizeof(value)); };
+    const auto frames = static_cast<engine::core::u32>(std::llround(seconds * static_cast<double>(rate)));
+    const engine::core::u32 dataBytes = frames * 2u;
+    put("RIFF", 4);
+    putU32(36u + dataBytes);
+    put("WAVE", 4);
+    put("fmt ", 4);
+    putU32(16u);
+    putU16(1u);
+    putU16(1u);
+    putU32(rate);
+    putU32(rate * 2u);
+    putU16(2u);
+    putU16(16u);
+    put("data", 4);
+    putU32(dataBytes);
+    for (engine::core::u32 frame = 0; frame < frames; ++frame) {
+        const double phase = 2.0 * 3.14159265358979 * hertz * static_cast<double>(frame) / static_cast<double>(rate);
+        const auto sample = static_cast<engine::core::i16>(32767.0 * level * std::sin(phase));
+        putU16(static_cast<engine::core::u16>(sample));
+    }
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream file(path, std::ios::binary);
+    file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+
+// A project's content with one line in three languages of three lengths --
+// half a second in the default, eight tenths in Portuguese, three tenths in
+// Japanese -- and one line recorded in the default alone.
+struct VoiceFixture
+{
+    std::filesystem::path root;
+    engine::asset::ContentMounts mounts;
+    engine::asset::LocalizationIndex index;
+
+    explicit VoiceFixture(const char* folder = "engine-audio-voices")
+    {
+        std::error_code ec;
+        root = std::filesystem::temp_directory_path(ec) / folder;
+        std::filesystem::remove_all(root, ec);
+        writeSine(root / "voice" / "line.wav", 0.5, 440.0);
+        writeSine(root / "l10n" / "pt-BR" / "voice" / "line.wav", 0.8, 440.0);
+        writeSine(root / "l10n" / "ja" / "voice" / "line.wav", 0.3, 440.0);
+        writeSine(root / "voice" / "default_only.wav", 0.5, 440.0);
+        mounts.mountDirectory(root);
+        engine::asset::scanLocalizedContent(root, index);
+    }
+
+    ~VoiceFixture()
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+    }
+
+    void serve(Fixture& fixture, const char* voice)
+    {
+        fixture.system.setContentMounts(&mounts);
+        fixture.system.setLocalized(&index);
+        fixture.system.setVoiceLocale(voice);
+    }
+};
+
+[[nodiscard]] InstanceId playing(Fixture& fixture, const char* content, int category = 0)
+{
+    const InstanceId id = fixture.make("Sound");
+    fixture.sound(id).content = content;
+    fixture.sound(id).category = category;
+    fixture.sound(id).playing = true;
+    return id;
+}
+
+// The loudest sample of a rendered stretch.
+[[nodiscard]] float loudest(Fixture& fixture, std::size_t frames)
+{
+    std::vector<float> out(frames * 2u);
+    fixture.system.renderInto(out);
+    float most = 0.0f;
+    for (const float sample : out)
+        most = std::max(most, std::abs(sample));
+    return most;
+}
+
+// How many ticks a sound plays for before it says it ended.
+[[nodiscard]] int ticksUntilEnded(Fixture& fixture, InstanceId id)
+{
+    int ticks = 0;
+    while (fixture.sound(id).playing && ticks < 600) {
+        fixture.system.tick(*fixture.world, Tick);
+        ++ticks;
+    }
+    return ticks;
+}
+
+} // namespace
+
+TEST_CASE("ADR 0200: a sound is heard in the voice language, and in the default one where that has no file")
+{
+    VoiceFixture voices;
+    Fixture fixture;
+    voices.serve(fixture, "pt-BR");
+    REQUIRE(voices.index.voice == std::vector<std::string>{"ja", "pt-BR"});
+
+    const InstanceId line = playing(fixture, "asset://voice/line.wav");
+    const InstanceId plain = playing(fixture, "asset://voice/default_only.wav");
+    fixture.system.update(*fixture.world, InstanceId{});
+    // The game named one file, and what is heard is the language's.
+    CHECK(fixture.system.heardAs(*fixture.world, line) == "asset://l10n/pt-BR/voice/line.wav");
+    // A line nobody recorded in it is the default language's, never silence.
+    CHECK(fixture.system.heardAs(*fixture.world, plain) == "asset://voice/default_only.wav");
+    CHECK(loudest(fixture, 480u) > 0.2f);
+
+    // A language the game has nothing in hears the files as written.
+    Fixture other;
+    voices.serve(other, "de");
+    const InstanceId same = playing(other, "asset://voice/line.wav");
+    other.system.update(*other.world, InstanceId{});
+    CHECK(other.system.heardAs(*other.world, same) == "asset://voice/line.wav");
+}
+
+TEST_CASE("ADR 0200: a localized sound lasts as long as its longest language, whatever language is heard")
+{
+    // R10: `TimeLength` and the tick `Ended` fires on are in the world's
+    // hash, and two machines in a match hear different languages. The
+    // default is half a second, Portuguese eight tenths, Japanese three.
+    VoiceFixture voices;
+    int ticks[3] = {0, 0, 0};
+    const char* languages[3] = {"", "pt-BR", "ja"};
+    for (int index = 0; index < 3; ++index) {
+        Fixture fixture;
+        voices.serve(fixture, languages[index]);
+        CHECK(fixture.system.clipDuration("asset://voice/line.wav") == doctest::Approx(0.8).epsilon(0.0001));
+        const InstanceId id = playing(fixture, "asset://voice/line.wav");
+        fixture.system.tick(*fixture.world, Tick);
+        CHECK(fixture.sound(id).timeLength == doctest::Approx(0.8).epsilon(0.0001));
+        ticks[index] = 1 + ticksUntilEnded(fixture, id);
+        // A line with one language is as long as its file, as it always was.
+        CHECK(fixture.system.clipDuration("asset://voice/default_only.wav") == doctest::Approx(0.5).epsilon(0.0001));
+    }
+    CHECK(ticks[0] >= 48);
+    CHECK(ticks[0] <= 49);
+    CHECK(ticks[1] == ticks[0]);
+    CHECK(ticks[2] == ticks[0]);
+}
+
+TEST_CASE("ADR 0200: a machine without a language's files has the long length from the export's index")
+{
+    // A dedicated server, or a player who did not install a language pack:
+    // the default's half second is all there is to measure, and the line is
+    // eight tenths long all the same.
+    std::error_code ec;
+    const std::filesystem::path root = std::filesystem::temp_directory_path(ec) / "engine-audio-index-only";
+    std::filesystem::remove_all(root, ec);
+    writeSine(root / "voice" / "line.wav", 0.5, 440.0);
+    engine::asset::ContentMounts mounts;
+    mounts.mountDirectory(root);
+    engine::asset::LocalizationIndex index;
+    REQUIRE(engine::asset::readLocalizationIndex(
+        R"({ "version": 1, "voice": ["pt-BR"], "shipped": [], "lengths": { "voice/line.wav": 38400 }, "lines": [] })",
+        index));
+
+    Fixture fixture;
+    fixture.system.setContentMounts(&mounts);
+    fixture.system.setLocalized(&index);
+    fixture.system.setVoiceLocale("pt-BR");
+    CHECK(fixture.system.clipDuration("asset://voice/line.wav") == doctest::Approx(0.8).epsilon(0.0001));
+    const InstanceId id = playing(fixture, "asset://voice/line.wav");
+    fixture.system.tick(*fixture.world, Tick);
+    const int ticks = 1 + ticksUntilEnded(fixture, id);
+    CHECK(ticks >= 48);
+    CHECK(ticks <= 49);
+    // And it is heard in what is here: the default's recording.
+    fixture.sound(id).playing = true;
+    fixture.system.update(*fixture.world, InstanceId{});
+    CHECK(fixture.system.heardAs(*fixture.world, id) == "asset://voice/line.wav");
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("ADR 0200: a shorter language is followed by silence until the line ends, and a loop turns at the slot")
+{
+    VoiceFixture voices;
+    // Japanese is three tenths of a second inside a slot of eight.
+    {
+        Fixture fixture;
+        voices.serve(fixture, "ja");
+        const InstanceId id = playing(fixture, "asset://voice/line.wav");
+        fixture.sound(id).timePosition = 0.1;
+        fixture.system.update(*fixture.world, InstanceId{});
+        CHECK(loudest(fixture, 480u) > 0.2f);
+    }
+    {
+        Fixture fixture;
+        voices.serve(fixture, "ja");
+        const InstanceId id = playing(fixture, "asset://voice/line.wav");
+        fixture.sound(id).timePosition = 0.5;
+        fixture.system.update(*fixture.world, InstanceId{});
+        CHECK(loudest(fixture, 480u) == 0.0f);
+    }
+    {
+        // Looped, from just before the slot's end: silence, then the top of
+        // the recording again -- at eight tenths, not at three.
+        Fixture fixture;
+        voices.serve(fixture, "ja");
+        const InstanceId id = playing(fixture, "asset://voice/line.wav");
+        fixture.sound(id).looped = true;
+        fixture.sound(id).timePosition = 0.79;
+        fixture.system.update(*fixture.world, InstanceId{});
+        // Ten milliseconds of silence to the slot's end...
+        CHECK(loudest(fixture, 470u) == 0.0f);
+        // ...and then it is playing.
+        CHECK(loudest(fixture, 960u) > 0.2f);
+    }
+}
+
+TEST_CASE("ADR 0200: a language changed while a line plays leaves the line, and the next Play takes it")
+{
+    VoiceFixture voices;
+    Fixture fixture;
+    voices.serve(fixture, "pt-BR");
+    const InstanceId id = playing(fixture, "asset://voice/line.wav");
+    fixture.system.update(*fixture.world, InstanceId{});
+    REQUIRE(fixture.system.heardAs(*fixture.world, id) == "asset://l10n/pt-BR/voice/line.wav");
+
+    fixture.system.setVoiceLocale("ja");
+    fixture.system.update(*fixture.world, InstanceId{});
+    CHECK(fixture.system.heardAs(*fixture.world, id) == "asset://l10n/pt-BR/voice/line.wav");
+
+    // `Play` again, as a script's call counts it.
+    fixture.sound(id).plays += 1;
+    fixture.sound(id).timePosition = 0.0;
+    fixture.system.update(*fixture.world, InstanceId{});
+    CHECK(fixture.system.heardAs(*fixture.world, id) == "asset://l10n/ja/voice/line.wav");
+}
+
+TEST_CASE("ADR 0200: the player's volumes are by category, and a muted voice is still being said")
+{
+    VoiceFixture voices;
+    Fixture fixture;
+    voices.serve(fixture, "");
+    const InstanceId voice = playing(fixture, "asset://voice/line.wav", 2);
+    fixture.sound(voice).volume = 1.0f;
+
+    fixture.system.update(*fixture.world, InstanceId{});
+    const float full = loudest(fixture, 480u);
+    REQUIRE(full > 0.3f);
+
+    scene::PlayerSound& player = fixture.world->engineState().playerSound;
+    // The effects' volume is not a voice's.
+    player.effectsVolume = 0.0f;
+    fixture.sound(voice).timePosition = 0.0;
+    fixture.system.update(*fixture.world, InstanceId{});
+    CHECK(loudest(fixture, 480u) == doctest::Approx(static_cast<double>(full)).epsilon(0.05));
+
+    player.voiceVolume = 0.5f;
+    player.playerVolume = 0.5f;
+    fixture.sound(voice).timePosition = 0.0;
+    fixture.system.update(*fixture.world, InstanceId{});
+    CHECK(loudest(fixture, 480u) == doctest::Approx(static_cast<double>(full * 0.25f)).epsilon(0.05));
+
+    // Turned off, nothing sounds -- and it can still be heard here, which
+    // is what a caption is current by.
+    player.voiceVolume = 0.0f;
+    fixture.sound(voice).timePosition = 0.0;
+    fixture.system.update(*fixture.world, InstanceId{});
+    CHECK(loudest(fixture, 480u) == 0.0f);
+    REQUIRE(fixture.system.heardNow().size() == 1);
+    CHECK(fixture.system.heardNow()[0] == voice);
+}
+
+TEST_CASE("ADR 0200: music lowers itself under a voice and comes back, and a voice turned off lowers nothing")
+{
+    VoiceFixture voices;
+    Fixture fixture;
+    voices.serve(fixture, "");
+    const InstanceId music = playing(fixture, "asset://voice/default_only.wav", 1);
+    fixture.sound(music).looped = true;
+    fixture.system.update(*fixture.world, InstanceId{});
+    (void)loudest(fixture, 4800u);
+    CHECK(fixture.system.musicDuck() == doctest::Approx(1.0));
+
+    const InstanceId voice = playing(fixture, "asset://voice/line.wav", 2);
+    fixture.sound(voice).looped = true;
+    fixture.system.update(*fixture.world, InstanceId{});
+    // A quarter of a second of audio: down, in well under that.
+    for (int block = 0; block < 25; ++block)
+        (void)loudest(fixture, 480u);
+    CHECK(static_cast<double>(fixture.system.musicDuck()) == doctest::Approx(0.4).epsilon(0.03));
+
+    // The game's own number is what it is lowered to.
+    fixture.world->engineState().musicUnderVoice = 0.7f;
+    fixture.system.update(*fixture.world, InstanceId{});
+    for (int block = 0; block < 100; ++block)
+        (void)loudest(fixture, 480u);
+    CHECK(static_cast<double>(fixture.system.musicDuck()) == doctest::Approx(0.7).epsilon(0.03));
+
+    // The voice stops: back, in about six tenths.
+    fixture.sound(voice).playing = false;
+    fixture.system.update(*fixture.world, InstanceId{});
+    for (int block = 0; block < 20; ++block)
+        (void)loudest(fixture, 480u);
+    CHECK(fixture.system.musicDuck() < 0.95f);
+    for (int block = 0; block < 100; ++block)
+        (void)loudest(fixture, 480u);
+    CHECK(static_cast<double>(fixture.system.musicDuck()) == doctest::Approx(1.0).epsilon(0.01));
+
+    // A voice the player turned off is not something music makes room for.
+    fixture.world->engineState().playerSound.voiceVolume = 0.0f;
+    fixture.sound(voice).playing = true;
+    fixture.system.update(*fixture.world, InstanceId{});
+    for (int block = 0; block < 50; ++block)
+        (void)loudest(fixture, 480u);
+    CHECK(static_cast<double>(fixture.system.musicDuck()) == doctest::Approx(1.0).epsilon(0.01));
+}
+
+TEST_CASE("ADR 0200: a line with a caption and no recording is silent and lasts its caption")
+{
+    VoiceFixture voices;
+    Fixture fixture;
+    voices.serve(fixture, "");
+
+    // With no caption a missing file is the tone, one second of it.
+    const InstanceId bare = playing(fixture, "asset://voice/not_recorded.wav");
+    fixture.system.tick(*fixture.world, Tick);
+    CHECK(fixture.sound(bare).timeLength == doctest::Approx(1.0));
+    fixture.system.update(*fixture.world, InstanceId{});
+    CHECK(loudest(fixture, 480u) > 0.05f);
+    fixture.sound(bare).playing = false;
+
+    const InstanceId line = playing(fixture, "asset://voice/not_recorded.wav", 2);
+    const InstanceId caption = fixture.make("Caption");
+    REQUIRE_FALSE(fixture.world->setParent(caption, line).has_value());
+    // Eleven characters and no catalog: the key is the text. A second and a
+    // half, and six hundredths a character.
+    fixture.world->captions().find(caption)->text = fixture.atoms.intern("hello there");
+    fixture.system.tick(*fixture.world, Tick);
+    CHECK(fixture.sound(line).timeLength == doctest::Approx(1.5 + 11 * 0.06).epsilon(0.001));
+    fixture.system.update(*fixture.world, InstanceId{});
+    // No tone: a line that is only text makes no sound, and music is not
+    // lowered for it.
+    CHECK(loudest(fixture, 4800u) == 0.0f);
+    CHECK(fixture.system.musicDuck() == doctest::Approx(1.0));
+    // It is being said all the same.
+    REQUIRE(fixture.system.heardNow().size() == 1);
+    CHECK(fixture.system.heardNow()[0] == line);
+
+    // The author's own number, when they gave one.
+    fixture.world->captions().find(caption)->seconds = 3.0f;
+    fixture.system.tick(*fixture.world, Tick);
+    CHECK(fixture.sound(line).timeLength == doctest::Approx(3.0));
+}
+
+TEST_CASE("ADR 0200: loudness and three bands of what a machine is playing, worked out only when asked")
+{
+    std::error_code ec;
+    const std::filesystem::path root = std::filesystem::temp_directory_path(ec) / "engine-audio-bands";
+    std::filesystem::remove_all(root, ec);
+    writeSine(root / "low.wav", 1.0, 200.0, 1.0);
+    writeSine(root / "mid.wav", 1.0, 1000.0, 1.0);
+    writeSine(root / "high.wav", 1.0, 5000.0, 1.0);
+    writeSine(root / "quiet.wav", 1.0, 1000.0, 0.25);
+    engine::asset::ContentMounts mounts;
+    mounts.mountDirectory(root);
+
+    Fixture fixture;
+    fixture.system.setContentMounts(&mounts);
+    const InstanceId low = playing(fixture, "asset://low.wav");
+    const InstanceId mid = playing(fixture, "asset://mid.wav", 1);
+    const InstanceId high = playing(fixture, "asset://high.wav");
+    const InstanceId quiet = playing(fixture, "asset://quiet.wav");
+    const InstanceId still = fixture.make("Sound");
+    fixture.sound(still).content = "asset://mid.wav";
+    for (const InstanceId id : {low, mid, high, quiet})
+        fixture.sound(id).timePosition = 0.5;
+    fixture.system.update(*fixture.world, InstanceId{});
+
+    // **A sound nobody asked about cost nothing.**
+    CHECK(fixture.system.meterWork() == 0);
+
+    // A tone at full scale reads one, and a quarter of it a quarter: the
+    // recording's own level, with no volume in it.
+    fixture.sound(low).volume = 0.1f;
+    CHECK(static_cast<double>(fixture.system.loudness(*fixture.world, low)) == doctest::Approx(1.0).epsilon(0.03));
+    CHECK(static_cast<double>(fixture.system.loudness(*fixture.world, quiet)) == doctest::Approx(0.25).epsilon(0.03));
+    CHECK(fixture.system.loudness(*fixture.world, still) == 0.0f);
+    CHECK(fixture.system.meterWork() == 2);
+    // Asked again the same frame, it is the answer it had.
+    CHECK(static_cast<double>(fixture.system.loudness(*fixture.world, low)) == doctest::Approx(1.0).epsilon(0.03));
+    CHECK(fixture.system.meterWork() == 2);
+
+    const std::array<float, 3> lows = fixture.system.bands(*fixture.world, low);
+    const std::array<float, 3> mids = fixture.system.bands(*fixture.world, mid);
+    const std::array<float, 3> highs = fixture.system.bands(*fixture.world, high);
+    CHECK(lows[0] > 0.9f);
+    CHECK(lows[1] < 0.1f);
+    CHECK(lows[2] < 0.1f);
+    CHECK(mids[0] < 0.1f);
+    CHECK(mids[1] > 0.9f);
+    CHECK(mids[2] < 0.1f);
+    CHECK(highs[0] < 0.1f);
+    CHECK(highs[1] < 0.1f);
+    CHECK(highs[2] > 0.9f);
+    const std::array<float, 3> silence = fixture.system.bands(*fixture.world, still);
+    CHECK(silence[0] + silence[1] + silence[2] == 0.0f);
+
+    // A category is what the game mixes of it: the music here is the mid tone.
+    const std::array<float, 3> music = fixture.system.categoryBands(*fixture.world, 1);
+    CHECK(music[1] > 0.4f);
+    CHECK(music[0] < 0.1f);
+    const std::array<float, 3> nobody = fixture.system.categoryBands(*fixture.world, 2);
+    CHECK(nobody[0] + nobody[1] + nobody[2] == 0.0f);
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("D620: a sound recorded again is heard as it is now, without the world being made anew")
+{
+    // The cache of what was read lived as long as the audio system, and hot
+    // reload forgot meshes, materials and skeletons and never a sound: a
+    // line recorded again was the old line until the game was restarted.
+    std::error_code ec;
+    const std::filesystem::path root = std::filesystem::temp_directory_path(ec) / "engine-audio-again";
+    std::filesystem::remove_all(root, ec);
+    writeSine(root / "line.wav", 0.5, 440.0);
+    engine::asset::ContentMounts mounts;
+    mounts.mountDirectory(root);
+
+    Fixture fixture;
+    fixture.system.setContentMounts(&mounts);
+    const InstanceId id = playing(fixture, "asset://line.wav");
+    fixture.system.tick(*fixture.world, Tick);
+    fixture.system.update(*fixture.world, InstanceId{});
+    REQUIRE(fixture.system.clipDuration("asset://line.wav") == doctest::Approx(0.5).epsilon(0.0001));
+
+    writeSine(root / "line.wav", 1.25, 440.0);
+    // Until it is told, it has what it read.
+    CHECK(fixture.system.clipDuration("asset://line.wav") == doctest::Approx(0.5).epsilon(0.0001));
+    const std::vector<std::string> changed{"asset://line.wav"};
+    fixture.system.forget(changed);
+    CHECK(fixture.system.clipDuration("asset://line.wav") == doctest::Approx(1.25).epsilon(0.0001));
+    // And the sound that was playing it goes on, in the new recording.
+    fixture.sound(id).timePosition = 1.0;
+    fixture.system.update(*fixture.world, InstanceId{});
+    CHECK(loudest(fixture, 480u) > 0.2f);
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("D621: a sound made to be played once is gone a couple of ticks after it ends")
+{
+    // `PlayLocal` parented a sound to the service and left it there for
+    // ever: a click a frame was a thousand instances a quarter of a minute.
+    Fixture fixture;
+    ContentFixture content;
+    fixture.system.setContentMounts(&content.mounts);
+    const InstanceId kept = playing(fixture, "asset://sfx/tone.wav");
+    const InstanceId once = playing(fixture, "asset://sfx/tone.wav");
+    fixture.sound(once).ownsItself = true;
+
+    // A quarter of a second, and the two ticks it is kept for whoever
+    // listens to `Ended`.
+    fixture.run(16);
+    REQUIRE_FALSE(fixture.sound(once).playing);
+    CHECK_FALSE(fixture.world->destroyed(once));
+    fixture.run(scene::SoundLinger + 1);
+    // Destroyed: it resolves until the drain that carries its `Destroying`.
+    CHECK(fixture.world->destroyed(once));
+    // One that nobody said was to be played once stays.
+    CHECK_FALSE(fixture.world->destroyed(kept));
 }

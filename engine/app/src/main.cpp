@@ -27,7 +27,9 @@
 #include "engine/app/script_package.h"
 #include "engine/app/script_sides.h"
 #include "engine/app/two_worlds.h"
+#include "engine/asset/gltf.h"
 #include "engine/asset/mesh_format.h"
+#include "engine/asset/model.h"
 #include "engine/core/brand.h"
 #include "engine/core/build_info.h"
 #include "engine/core/content_path.h"
@@ -42,6 +44,7 @@
 #include "engine/platform/platform.h"
 #include "engine/platform/process.h"
 #include "engine/platform/stop_signal.h"
+#include "engine/render/retarget.h"
 
 #if defined(_WIN32) && defined(ENG_GUI_SUBSYSTEM)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -288,10 +291,10 @@ void sayStartFailure(int code)
 // closed without a word.
 [[nodiscard]] bool runsWithNoWindow(int argc, char** argv)
 {
-    constexpr std::array<std::string_view, 16> Quiet{
-        "--headless",   "--serve",        "--version",           "--run-tests",    "--check-scripts", "--replay",
-        "--bench",      "--write-types",  "--import-",           "--partition",    "--save-scene",    "--capture-out",
-        "--two-worlds", "--replica-gate", "--reads-mesh-format", "--record-replay"};
+    constexpr std::array<std::string_view, 17> Quiet{
+        "--headless",   "--serve",        "--version",           "--run-tests",     "--check-scripts", "--replay",
+        "--bench",      "--write-types",  "--import-",           "--partition",     "--save-scene",    "--capture-out",
+        "--two-worlds", "--replica-gate", "--reads-mesh-format", "--record-replay", "--describe-rig"};
     for (int index = 1; index < argc; ++index) {
         const std::string_view arg = argv[index];
         for (const std::string_view quiet : Quiet) {
@@ -693,6 +696,16 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
         // The render target's size. Windowed it is the window; headless it is the
         // offscreen texture. The M4 gate records a frame-time baseline at 1080p
         // and the host had no way to be asked for one.
+        // The text and the voice language for this run (ADR 0200), in front
+        // of what the player saved and never written to it.
+        if (arg.starts_with("--locale=")) {
+            options.localeOverride = std::string{arg.substr(std::string_view("--locale=").size())};
+            continue;
+        }
+        if (arg.starts_with("--voice-locale=")) {
+            options.voiceLocaleOverride = std::string{arg.substr(std::string_view("--voice-locale=").size())};
+            continue;
+        }
         // **Which scene the run starts in, and what it is handed** (D468):
         // content-relative, as the project file names one, and JSON for the
         // scene's `GetLoadData`. Checked here, where a mistake is a usage
@@ -1230,6 +1243,115 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
     return kExitOk;
 }
 
+// **`--describe-rig=<model>`: what the role mapper makes of one file** (ADR
+// 0199). A body that moves wrongly under another rig's clips is read here
+// before anything is guessed at: each joint with the role its name gave it,
+// then the roles that found no joint and the joints that found no role. The
+// file is named by its own path and need not be in a project; a `.rig.json`
+// beside it counts, as it does when a game loads the model.
+[[nodiscard]] int describeRig(const std::filesystem::path& path)
+{
+    namespace retarget = engine::render::retarget;
+    const std::string shown = path.generic_string();
+    const std::array<I18nArg, 1> named{I18nArg{"path", shown}};
+
+    std::vector<std::byte> bytes;
+    if (!engine::platform::readFile(path, bytes)) {
+        engine::core::log(LogLevel::Error, ENG_TR("engine.rig.err.unreadable"), named);
+        return kExitScriptError;
+    }
+    engine::asset::GltfImportOptions options;
+    options.skeletonOnly = true;
+    engine::asset::Model model;
+    if (const std::optional<engine::core::EngineError> error =
+            engine::asset::importGltf(bytes, path.parent_path(), options, model)) {
+        engine::core::logText(LogLevel::Error, error->message, error->detail);
+        return kExitScriptError;
+    }
+    if (model.joints.empty()) {
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.no_skeleton"), named);
+        return kExitOk;
+    }
+
+    std::vector<retarget::RoleOverride> overrides;
+    std::filesystem::path beside = path;
+    beside.replace_extension(".rig.json");
+    if (std::vector<std::byte> text; engine::platform::readFile(beside, text)) {
+        const std::string besideShown = beside.generic_string();
+        std::string reason;
+        if (std::optional<std::vector<retarget::RoleOverride>> read = retarget::readRigRoles(
+                std::string_view(reinterpret_cast<const char*>(text.data()), text.size()), &reason)) {
+            overrides = std::move(*read);
+            const std::array<I18nArg, 1> from{I18nArg{"path", besideShown}};
+            engine::core::log(LogLevel::Info, ENG_TR("engine.rig.roles_file"), from);
+        }
+        else {
+            const std::array<I18nArg, 2> failed{I18nArg{"path", besideShown}, I18nArg{"reason", reason}};
+            engine::core::log(LogLevel::Warn, ENG_TR("asset.rig.err.unreadable"), failed);
+        }
+    }
+
+    const retarget::RigRoles roles = retarget::assignRoles(model.joints, overrides);
+
+    std::string clips;
+    for (const engine::asset::AnimationClip& clip : model.clips) {
+        if (!clips.empty())
+            clips += ", ";
+        clips += clip.name;
+    }
+    const std::array<I18nArg, 3> summary{I18nArg{"path", shown},
+                                         I18nArg{"joints", static_cast<engine::core::i64>(model.joints.size())},
+                                         I18nArg{"clips", static_cast<engine::core::i64>(model.clips.size())}};
+    engine::core::log(LogLevel::Info, ENG_TR("engine.rig.summary"), summary);
+    if (!clips.empty()) {
+        const std::array<I18nArg, 1> listed{I18nArg{"clips", clips}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.clips"), listed);
+    }
+
+    std::string unassigned;
+    for (engine::core::usize joint = 0; joint < model.joints.size(); ++joint) {
+        const engine::asset::Joint& bone = model.joints[joint];
+        const std::string_view parent = bone.parent < joint ? std::string_view(model.joints[bone.parent].name) : "-";
+        const retarget::Role role = roles.ofJoint[joint];
+        if (role == retarget::Role::None) {
+            const std::array<I18nArg, 2> line{I18nArg{"joint", bone.name}, I18nArg{"parent", parent}};
+            engine::core::log(LogLevel::Info, ENG_TR("engine.rig.joint_no_role"), line);
+            if (!unassigned.empty())
+                unassigned += ", ";
+            unassigned += bone.name;
+            continue;
+        }
+        const std::array<I18nArg, 3> line{I18nArg{"joint", bone.name}, I18nArg{"parent", parent},
+                                          I18nArg{"role", retarget::roleName(role)}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.joint"), line);
+    }
+
+    std::string missing;
+    for (engine::core::usize role = 1; role < retarget::RoleCount; ++role) {
+        if (roles.jointOf[role] >= 0)
+            continue;
+        if (!missing.empty())
+            missing += ", ";
+        missing += retarget::roleName(static_cast<retarget::Role>(role));
+    }
+    if (missing.empty()) {
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.roles_all_found"));
+    }
+    else {
+        const std::array<I18nArg, 1> listed{I18nArg{"roles", missing}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.roles_missing"), listed);
+    }
+    if (unassigned.empty()) {
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.joints_all_given"));
+    }
+    else {
+        const std::array<I18nArg, 1> listed{I18nArg{"joints", unassigned}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.joints_without_role"), listed);
+    }
+    engine::core::log(LogLevel::Info, roles.body() ? ENG_TR("engine.rig.is_body") : ENG_TR("engine.rig.not_body"));
+    return kExitOk;
+}
+
 } // namespace
 
 static int hostMain(int argc, char** argv)
@@ -1376,6 +1498,8 @@ static int hostMain(int argc, char** argv)
         engine::core::log(LogLevel::Info, ENG_TR("engine.cli.sides_checked"), counted);
         return kExitOk;
     }
+    if (args.size() == 1 && args[0].starts_with("--describe-rig="))
+        return describeRig(std::filesystem::path(args[0].substr(std::string_view{"--describe-rig="}.size())));
     if (args.size() == 2 && args[0] == "--compile-content-scripts") {
         engine::app::ScriptPackageReport report;
         if (!engine::app::compileContentScripts(std::filesystem::path(args[1]), report)) {

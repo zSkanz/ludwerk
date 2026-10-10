@@ -113,6 +113,14 @@ print(
         .. `hum={if hum then `{hum.Looped},{hum.Volume}` else "MISSING"} `
         .. `streak={if streak then `{streak.Lifetime}` else "MISSING"}`
 )
+-- And the piece it wears (ADR 0201, protocol 45): the reference came with
+-- it, and names THIS machine's copy of the body.
+local piece = hero:FindFirstChild("Piece") :: MeshPart?
+print(
+    `[animated] worn piece={if piece then piece.ClassName else "MISSING"} `
+        .. `from={if piece and piece.PoseFrom then piece.PoseFrom.Name else "nil"} `
+        .. `same={piece ~= nil and piece.PoseFrom == body}`
+)
 print("[animated] done")
 -- Nothing more to see: the run ends here and the server's with it.
 game:Shutdown()

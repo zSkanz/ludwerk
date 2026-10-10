@@ -396,3 +396,82 @@ TEST_CASE("ADR 0183: a game with no content is sealed too, and one that is not s
     // And a folder with nothing in it at all is none.
     CHECK(SealedGame::open(freshDir("empty")) == nullptr);
 }
+
+TEST_CASE("ADR 0200: a pack that is no game's is sealed the same way, and mounted by the names it had")
+{
+    seedRealCatalog();
+    const std::filesystem::path dir = freshDir("language");
+    const std::filesystem::path packPath = dir / "l10n-pt-BR.lpack";
+    const std::filesystem::path manifestPath = packManifestPath(packPath);
+    CHECK(manifestPath == dir / "l10n-pt-BR.manifest.json");
+
+    const std::vector<std::byte> line = noise(20000, 31);
+    const std::vector<std::byte> other = noise(9000, 32);
+    PackWriter writer;
+    const ContentHash lineHash = writer.addContent(AssetKind::Raw, line);
+    const ContentHash otherHash = writer.addContent(AssetKind::Raw, other);
+    const std::string manifest = "{\"format\":\"content-manifest\",\"version\":1,\"assets\":["
+                                 "{\"urn\":\"asset://l10n/pt-BR/voice/SENTINEL-intro.ogg\",\"hash\":\"" +
+                                 lineHash.toHex() +
+                                 "\",\"kind\":\"raw\",\"bytes\":1},"
+                                 "{\"urn\":\"asset://l10n/pt-BR/voice/SENTINEL-outro.ogg\",\"hash\":\"" +
+                                 otherHash.toHex() + "\",\"kind\":\"raw\",\"bytes\":1}]}";
+    write(packPath, textOf(writer.build()));
+    write(manifestPath, manifest);
+
+    SealReport report;
+    REQUIRE_FALSE(sealPack(packPath, &report).has_value());
+    CHECK(report.assets == 2);
+    CHECK(report.files == 0);
+    std::error_code ec;
+    CHECK_FALSE(std::filesystem::exists(manifestPath, ec));
+    CHECK(report.bytesAfter == std::filesystem::file_size(packPath, ec));
+
+    // A sealed container like a game's: format 2, no name to read in it.
+    const std::string sealed = read(packPath);
+    CHECK(static_cast<unsigned>(static_cast<unsigned char>(sealed[4])) == PackFormatVersion);
+    for (const std::string_view word : {"SENTINEL", "asset://", "l10n", "pt-BR", "voice", "game://"}) {
+        CAPTURE(word);
+        CHECK(sealed.find(word) == std::string::npos);
+    }
+
+    // It is no game, and a game's folder is not what opens it.
+    CHECK(SealedGame::open(dir) == nullptr);
+
+    // Mounted as any sealed pack is, it answers to the names it was built
+    // with and to no other.
+    ContentMounts mounts;
+    REQUIRE_FALSE(mounts.mountPack(packPath).has_value());
+    const ResolvedContent resolved = mounts.resolve("asset://l10n/pt-BR/voice/SENTINEL-intro.ogg");
+    REQUIRE(resolved.source == ResolvedContent::Source::Pack);
+    CHECK(resolved.hash == lineHash);
+    CHECK(resolved.bytes.size() == line.size());
+    CHECK(mounts.resolve("asset://l10n/pt-BR/voice/SENTINEL-outro.ogg").hash == otherHash);
+    CHECK_FALSE(mounts.contains("asset://voice/SENTINEL-intro.ogg"));
+    CHECK(mounts.named("game://").empty());
+    REQUIRE(mounts.packs().size() == 1);
+    CHECK_FALSE(mounts.packs().front()->verify().has_value());
+    mounts.clear();
+
+    // Sealed once; and the same content sealed again is the same file.
+    const auto again = sealPack(packPath);
+    REQUIRE(again.has_value());
+    CHECK(again->message.find("sealed already") != std::string::npos);
+    const std::filesystem::path twin = freshDir("language-twin") / "l10n-pt-BR.lpack";
+    write(twin, textOf(writer.build()));
+    write(packManifestPath(twin), manifest);
+    REQUIRE_FALSE(sealPack(twin).has_value());
+    CHECK(read(twin) == sealed);
+
+    // A pack with no manifest beside it, or one naming what it does not hold,
+    // is left as it was.
+    const std::filesystem::path bare = freshDir("language-bare") / "l10n-ja.lpack";
+    write(bare, textOf(writer.build()));
+    CHECK(sealPack(bare).has_value());
+    CHECK(read(bare) == textOf(writer.build()));
+    write(packManifestPath(bare), "{\"format\":\"content-manifest\",\"version\":1,\"assets\":["
+                                  "{\"urn\":\"asset://l10n/ja/voice/a.ogg\",\"hash\":\"" +
+                                      hashText("not in the pack").toHex() + "\",\"kind\":\"raw\",\"bytes\":1}]}");
+    CHECK(sealPack(bare).has_value());
+    CHECK(read(bare) == textOf(writer.build()));
+}

@@ -27,19 +27,20 @@ For a 2D sound, `AudioService` is the natural parent.
 
 | Method | Does |
 |---|---|
-| `Sound.Play` | Starts from `Sound.TimePosition`. |
-| `Sound.Pause` | Stops the timeline where it is; `Play` resumes from there. |
+| `Sound.Play` | Starts it from the beginning -- or from `Sound.TimePosition`, when a script set that since the sound last started. |
+| `Sound.Pause` | Stops the timeline where it is. |
+| `Sound.Resume` | Carries on from where `Pause` left it. |
 | `Sound.Stop` | Stops **and rewinds to the start**. |
 
-`Play` on a sound that is already playing is a **no-op, not a restart**.
-Restarting is `TimePosition = 0` then `Play()`.
+`Play` on a sound that is already playing **starts it again**. Carrying on
+after a pause is `Resume`, not `Play`.
 
 `Sound.Stop` does **not** fire `Sound.Ended`: `Ended` is a past-tense fact about
 reaching the end, and code that awards something when a jingle finishes must not
 be fooled by one that was cut off.
 
-`Sound.Playing` is a property, and writing it is the same as calling `Play` or
-`Stop`.
+`Sound.Playing` is a property, and writing it is `Resume` and `Pause`, never a
+rewind: `true` carries on from `TimePosition` and `false` stops there.
 
 ## The properties
 
@@ -50,6 +51,8 @@ be fooled by one that was cut off.
 | `Sound.Looped` | `false` | A looped sound never fires `Ended`. |
 | `Sound.PlaybackSpeed` | 1 | 2 is an octave up and half the duration. **Zero is refused**, not treated as pause. |
 | `Sound.TimePosition` | 0 | Writable — this is how a script seeks. |
+| `Sound.TimeLength` | — | Read-only: how long the sound is, in seconds. |
+| `Sound.Category` | `Effects` | `Effects`, `Music` or `Voice`: which of the player's volumes turns it. See [Dubbing](manual:audio/dubbing). |
 | `Sound.RollOffMinDistance` | 8 | Metres. Full volume inside it. Ignored for a 2D sound. |
 | `Sound.RollOffMaxDistance` | 80 | Metres. Silent beyond. |
 | `Sound.Group` | `nil` | An `AudioGroup` to mix through. |
@@ -63,9 +66,12 @@ Linear rather than inverse-square because a game's audible range is a design
 decision rather than a physical one — an inverse square makes the far half of a
 range inaudible.
 
-**There is no panning.** Spatialization in this release is distance attenuation
-only: no stereo image, no Doppler, no occlusion. The listener's position is used
-and its orientation is not.
+**Left and right.** A positional sound is also placed across the two speakers
+by where it is from the listener: to the listener's right it is in the right
+one, straight ahead or behind it is in both, and one directly above, below or
+on the listener has no side. The two gains keep the same power across the
+range, so a sound crossing in front does not dip in the middle. There is no
+Doppler and no occlusion.
 
 ## The timeline is the simulation's
 
@@ -84,7 +90,11 @@ reaches the file's length, and a `Looped` sound wraps there.
 The length is read from the file's header, not from decoding it, so the tick
 that plays a sound never waits for a decode. The header is part of the file's
 bytes, so every machine reads the same length and a replay is exact. A format
-that declares no length is decoded once to count it.
+that declares no length is decoded once to count it. `Sound.TimeLength` is that
+number.
+
+**A sound recorded in several languages is as long as its longest**, whatever
+language a machine hears: [Dubbing](manual:audio/dubbing) says why.
 
 ## Formats, memory, and the placeholder tone
 
@@ -147,4 +157,5 @@ from its start.
 ## Where to look next
 
 - [Groups, mixing and the listener](manual:audio/mixing)
+- [Dubbing: voices, languages and subtitles](manual:audio/dubbing)
 - [`Sound`](api:Sound)

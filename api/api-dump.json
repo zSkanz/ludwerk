@@ -409,12 +409,51 @@
       "Tags": ["NotCreatable", "Service"],
       "Properties": [
         {
+          "Name": "EffectsVolume",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        },
+        {
           "Name": "MasterVolume",
           "Type": "number",
           "Default": "1"
+        },
+        {
+          "Name": "MusicUnderVoice",
+          "Type": "number",
+          "Default": "0.4"
+        },
+        {
+          "Name": "MusicVolume",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        },
+        {
+          "Name": "PlayerVolume",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        },
+        {
+          "Name": "VoiceVolume",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
         }
       ],
       "Methods": [
+        {
+          "Name": "GetBands",
+          "Parameters": [
+            {
+              "Name": "category",
+              "Type": "Enum.SoundCategory"
+            }
+          ],
+          "Returns": ["number", "number", "number"]
+        },
         {
           "Name": "PlayLocal",
           "Parameters": [
@@ -1120,6 +1159,35 @@
           "Name": "GroupTransparency",
           "Type": "number",
           "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Caption",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Color",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "Seconds",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Speaker",
+          "Type": "string",
+          "Default": "\"\""
+        },
+        {
+          "Name": "Text",
+          "Type": "string",
+          "Default": "\"\""
         }
       ],
       "Methods": [],
@@ -2044,6 +2112,84 @@
       ],
       "Methods": [],
       "Events": []
+    },
+    {
+      "Name": "DialogueService",
+      "Extends": "Instance",
+      "LazyService": true,
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "SubtitleBackground",
+          "Type": "number",
+          "Default": "0.6",
+          "Transient": true
+        },
+        {
+          "Name": "SubtitleScale",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        },
+        {
+          "Name": "Subtitles",
+          "Type": "Enum.SubtitleMode",
+          "Default": "Enum.SubtitleMode.Auto",
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetCaptions",
+          "Parameters": [],
+          "Returns": ["{ Caption }"]
+        },
+        {
+          "Name": "Say",
+          "Parameters": [
+            {
+              "Name": "line",
+              "Type": "string"
+            },
+            {
+              "Name": "at",
+              "Type": "Instance?"
+            }
+          ],
+          "Returns": ["Sound"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ShowsCaption",
+          "Parameters": [
+            {
+              "Name": "caption",
+              "Type": "Caption"
+            }
+          ],
+          "Returns": ["boolean"]
+        }
+      ],
+      "Events": [
+        {
+          "Name": "CaptionEnded",
+          "Parameters": [
+            {
+              "Name": "caption",
+              "Type": "Caption"
+            }
+          ]
+        },
+        {
+          "Name": "CaptionStarted",
+          "Parameters": [
+            {
+              "Name": "caption",
+              "Type": "Caption"
+            }
+          ]
+        }
+      ]
     },
     {
       "Name": "DistortionSoundEffect",
@@ -4099,6 +4245,45 @@
       "Events": []
     },
     {
+      "Name": "LipSync",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Map",
+          "Type": "string",
+          "Default": "\"\""
+        },
+        {
+          "Name": "Mode",
+          "Type": "Enum.LipSyncMode",
+          "Default": "Enum.LipSyncMode.Auto"
+        },
+        {
+          "Name": "Smoothing",
+          "Type": "number",
+          "Default": "0.06"
+        },
+        {
+          "Name": "Source",
+          "Type": "Instance?",
+          "Default": "nil"
+        },
+        {
+          "Name": "Weight",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "LocalizationService",
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
@@ -4108,11 +4293,33 @@
           "Type": "string",
           "Default": "\"en\"",
           "Transient": true
+        },
+        {
+          "Name": "VoiceFollowsLocale",
+          "Type": "boolean",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "VoiceLocale",
+          "Type": "string",
+          "Default": "\"en\"",
+          "Transient": true
         }
       ],
       "Methods": [
         {
           "Name": "GetLocales",
+          "Parameters": [],
+          "Returns": ["{ string }"]
+        },
+        {
+          "Name": "GetSystemLocales",
+          "Parameters": [],
+          "Returns": ["{ string }"]
+        },
+        {
+          "Name": "GetVoiceLocales",
           "Parameters": [],
           "Returns": ["{ string }"]
         },
@@ -4134,6 +4341,15 @@
       "Events": [
         {
           "Name": "LocaleChanged",
+          "Parameters": [
+            {
+              "Name": "locale",
+              "Type": "string"
+            }
+          ]
+        },
+        {
+          "Name": "VoiceLocaleChanged",
           "Parameters": [
             {
               "Name": "locale",
@@ -4179,6 +4395,11 @@
           "Name": "MeshSize",
           "Type": "vector",
           "Default": "vector.create(1, 1, 1)"
+        },
+        {
+          "Name": "PoseFrom",
+          "Type": "MeshPart?",
+          "Default": "nil"
         }
       ],
       "Methods": [
@@ -6326,6 +6547,11 @@
       "Tags": [],
       "Properties": [
         {
+          "Name": "Category",
+          "Type": "Enum.SoundCategory",
+          "Default": "Enum.SoundCategory.Effects"
+        },
+        {
           "Name": "Content",
           "Type": "Content",
           "Default": "\"\""
@@ -6339,6 +6565,12 @@
           "Name": "Looped",
           "Type": "boolean",
           "Default": "false"
+        },
+        {
+          "Name": "Loudness",
+          "Type": "number",
+          "ReadOnly": true,
+          "Transient": true
         },
         {
           "Name": "PlaybackSpeed",
@@ -6379,6 +6611,11 @@
         }
       ],
       "Methods": [
+        {
+          "Name": "GetBands",
+          "Parameters": [],
+          "Returns": ["number", "number", "number"]
+        },
         {
           "Name": "Pause",
           "Parameters": [],
@@ -14224,6 +14461,23 @@
       ]
     },
     {
+      "Name": "LipSyncMode",
+      "Items": [
+        {
+          "Name": "Auto",
+          "Value": 0
+        },
+        {
+          "Name": "Bands",
+          "Value": 1
+        },
+        {
+          "Name": "Loudness",
+          "Value": 2
+        }
+      ]
+    },
+    {
       "Name": "LogLevel",
       "Items": [
         {
@@ -14829,6 +15083,23 @@
       ]
     },
     {
+      "Name": "SoundCategory",
+      "Items": [
+        {
+          "Name": "Effects",
+          "Value": 0
+        },
+        {
+          "Name": "Music",
+          "Value": 1
+        },
+        {
+          "Name": "Voice",
+          "Value": 2
+        }
+      ]
+    },
+    {
       "Name": "StartCorner",
       "Items": [
         {
@@ -14875,6 +15146,23 @@
         },
         {
           "Name": "ScaledSize",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "SubtitleMode",
+      "Items": [
+        {
+          "Name": "Auto",
+          "Value": 0
+        },
+        {
+          "Name": "Off",
+          "Value": 2
+        },
+        {
+          "Name": "On",
           "Value": 1
         }
       ]

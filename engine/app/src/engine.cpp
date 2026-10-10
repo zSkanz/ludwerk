@@ -53,6 +53,7 @@
 #include "engine/app/frame_scheduler.h"
 #include "engine/app/icons.h"
 #include "engine/app/inspector.h"
+#include "engine/app/language_packs.h"
 #include "engine/app/launcher.h"
 #include "engine/app/partition_cache.h"
 #include "engine/app/picking.h"
@@ -1249,11 +1250,16 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     FramePacing livePacing = options.pacing;
     // The language the player chose last time, from the same file (ADR 0154).
     std::string savedLocale;
+    // And what they hear, from the same file (ADR 0200): the voice language
+    // they chose, their volumes, how they want subtitles.
+    PlayerHearing hearing;
+    // The languages whose packs are installed beside the game's own.
+    std::vector<std::string> mountedVoices;
     {
         const core::u64 before = graphicsHost.revision();
         std::vector<std::string> refused;
         scene::GraphicsLayer saved;
-        if (graphicsDisplay && readPlayerGraphics(playerSettingsFile, saved, &refused, &savedLocale)) {
+        if (graphicsDisplay && readPlayerGraphics(playerSettingsFile, saved, &refused, &savedLocale, &hearing)) {
             // A display that is not there any more is not gone to: the
             // project's default stands, and the log says so.
             if (saved.says(scene::GraphicsSetting::Monitor) &&
@@ -1385,9 +1391,37 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     (void)readCatalogs();
     // Where the player starts: what they chose, else the system's language,
     // else the project's default -- each narrowed to a catalog there is.
+    //
+    // **And, between the two, the platform provider's** (ADR 0200): a store's
+    // client has a language setting of its own for a game, and a player who
+    // set this one to French there expects French on a machine whose system
+    // is in English. Nobody answers it until an optional provider module does.
     std::string hostLocale = localization.narrow(savedLocale);
-    if (hostLocale.empty() && graphicsDisplay) {
+    // For this run and not kept: what a developer asked for on the command
+    // line stands in front of all of them.
+    if (!options.localeOverride.empty()) {
+        if (std::string asked = localization.narrow(options.localeOverride); !asked.empty())
+            hostLocale = std::move(asked);
+    }
+    // The system's own list, as a script may read it: in its order, written
+    // as locales are, narrowed to nothing.
+    std::vector<std::string> systemLocales;
+    if (graphicsDisplay) {
         for (const std::string& preferred : platform::preferredLocales()) {
+            std::string locale = scene::canonicalLocale(preferred);
+            if (!locale.empty() && std::find(systemLocales.begin(), systemLocales.end(), locale) == systemLocales.end())
+                systemLocales.push_back(std::move(locale));
+        }
+    }
+    if (hostLocale.empty() && graphicsDisplay) {
+        for (const std::string& preferred : platform::providerLocales()) {
+            hostLocale = localization.narrow(preferred);
+            if (!hostLocale.empty())
+                break;
+        }
+    }
+    if (hostLocale.empty() && graphicsDisplay) {
+        for (const std::string& preferred : systemLocales) {
             hostLocale = localization.narrow(preferred);
             if (!hostLocale.empty())
                 break;
@@ -2215,6 +2249,19 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             else {
                 const std::array<core::I18nArg, 1> mountArgs{core::I18nArg{"path", pack.string()}};
                 core::log(LogLevel::Info, ENG_TR("app.info.pack_mounted"), mountArgs);
+                // **The languages installed beside it** (ADR 0200): each a
+                // pack of its own in the same folder, for the voice languages
+                // the game has and did not ship inside its own pack. Mounted
+                // after it, so what they hold is found.
+                if (const asset::ResolvedContent listed = contentMounts.resolve(asset::LocalizationIndexUrn);
+                    listed.found() && !listed.bytes.empty()) {
+                    asset::LocalizationIndex shipped;
+                    const std::string_view text{reinterpret_cast<const char*>(listed.bytes.data()),
+                                                listed.bytes.size()};
+                    if (asset::readLocalizationIndex(text, shipped))
+                        mountedVoices = mountLanguagePacks(contentMounts, options.scriptPath / ".engine", shipped.voice,
+                                                           shipped.shipped);
+                }
                 // The job holds the game it checks, through what it is handed
                 // and lets go of when it is done: it may outlast this run.
                 if (sealedGame != nullptr) {
@@ -2701,6 +2748,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     worldOptions.graphicsDisplay = graphicsDisplay;
     worldOptions.localization = &localization;
     worldOptions.locale = hostLocale;
+    // What the player hears (ADR 0200). A voice language asked for on the
+    // command line is this run's and is not kept.
+    worldOptions.voiceChoice =
+        options.voiceLocaleOverride.empty() ? hearing.voiceLocale : scene::canonicalLocale(options.voiceLocaleOverride);
+    worldOptions.systemLocales = systemLocales;
+    worldOptions.mountedVoices = mountedVoices;
+    worldOptions.playerSound = hearing.sound;
+    // What the world was given, to tell a script's write from it.
+    std::string liveVoiceChoice = worldOptions.voiceChoice;
 
     auto host = std::make_unique<WorldHost>();
     // **The script pane follows a require by path through the host's mounts**
@@ -3585,9 +3641,29 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             if (graphicsState.locale != hostLocale) {
                 hostLocale = graphicsState.locale;
                 chosenLocale = hostLocale;
+                // A world made again starts in the language the player is in.
+                worldOptions.locale = hostLocale;
                 if (!playerSettingsFile.empty())
-                    (void)writePlayerGraphics(playerSettingsFile, graphicsHost.player, chosenLocale);
+                    (void)writePlayerGraphics(playerSettingsFile, graphicsHost.player, chosenLocale, &hearing);
             }
+            // **And what they hear** (ADR 0200), kept the same way: a voice
+            // language, a volume and how subtitles look are chosen from a
+            // menu, and are theirs from the moment they are.
+            if (graphicsState.voiceChoice != liveVoiceChoice || !(graphicsState.playerSound == hearing.sound)) {
+                if (graphicsState.voiceChoice != liveVoiceChoice) {
+                    liveVoiceChoice = graphicsState.voiceChoice;
+                    hearing.voiceLocale = liveVoiceChoice;
+                    worldOptions.voiceChoice = liveVoiceChoice;
+                }
+                hearing.sound = graphicsState.playerSound;
+                worldOptions.playerSound = hearing.sound;
+                if (!playerSettingsFile.empty())
+                    (void)writePlayerGraphics(playerSettingsFile, graphicsHost.player, chosenLocale, &hearing);
+            }
+            // A picture with words in it follows the language being read; the
+            // default language's are the names as written.
+            uiText.setLocale(hostLocale == localization.defaultLocale() ? std::string_view{}
+                                                                        : std::string_view{hostLocale});
             if (options.developerWarnings && ++catalogFrame % 30 == 0 && readCatalogs()) {
                 scene::World& world = host->world();
                 const core::InstanceId service = world.findFirstChildOfClass(
@@ -3603,8 +3679,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             if (live.saveRequested) {
                 live.saveRequested = false;
                 const scene::GraphicsLayer choices = live.playerChoices();
-                const bool done =
-                    !playerSettingsFile.empty() && writePlayerGraphics(playerSettingsFile, choices, chosenLocale);
+                const bool done = !playerSettingsFile.empty() &&
+                                  writePlayerGraphics(playerSettingsFile, choices, chosenLocale, &hearing);
                 if (done) {
                     // From here they are the player's, and nothing a script
                     // has yet to save.
@@ -5915,7 +5991,14 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // The whole frame: the rotation is what decides left from right, so an
         // ear given only a position hears everything in the middle.
         const core::CFrameD editorEar = editor.cameraCFrame();
+        // In the language this machine hears, which a script may have just
+        // changed: an identity check when it has not.
+        host->audio().setVoiceLocale(host->world().engineState().voiceLocale);
         host->audio().update(host->world(), listener, listenWithEditor ? &editorEar : nullptr);
+        // What is being said, from what that frame can hear (ADR 0200), and
+        // the mouths that say it.
+        host->stepCaptions();
+        host->stepMouths(static_cast<f32>(frame.renderDt));
 
         // The physics wireframe (roadmap M5, "Jolt debug-draw bridge"): what the
         // SOLVER thinks the world looks like, which is the only picture that can

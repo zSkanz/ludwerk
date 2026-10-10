@@ -72,6 +72,8 @@ engine_add_module(app
         src/icons.cpp
         src/thumbnails.cpp
         src/dev_control.cpp
+        src/language_packs.cpp
+        src/mouths.cpp
     DEPS
         asset
         audio
@@ -392,6 +394,8 @@ engine_add_module_tests(app
         tests/editor_performance_tests.cpp
         tests/script_editor_tests.cpp
         tests/script_complete_tests.cpp
+        tests/language_packs_tests.cpp
+        tests/mouths_tests.cpp
 )
 
 # The wire and the world hash describe the same state: a gate that needs the
@@ -830,6 +834,22 @@ if(ENG_BUILD_TESTS)
             -DPORT=47980
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_animated.cmake)
     set_tests_properties(netcode_animated PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
+
+    # **A line a server says is heard in each joiner's own language** (ADR
+    # 0200, protocol 45), and is as long on both. The server resolves in the
+    # project's default language, whose recording is half a second; the
+    # joiner runs in another, whose recording is nine tenths. Both hold the
+    # line for nine tenths and the same number of ticks, the joiner reads the
+    # caption in its own text language, and a line nobody recorded is silent
+    # and lasts its caption on both. Eight seconds of real time.
+    add_test(NAME netcode_dubbed
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/dubbed
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-dubbed
+            -DPORT=47990
+            -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_dubbed.cmake)
+    set_tests_properties(netcode_dubbed PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
 
     add_test(NAME openworld_soak
         COMMAND ${CMAKE_COMMAND}
@@ -1878,7 +1898,7 @@ if(ENG_BUILD_TESTS)
                     21-navigation 22-atmosphere 23-surfaces 24-scenes 25-gradients-and-strokes
                     26-security-cameras 27-mirrors-and-portals 28-arcade 29-meadow
                     30-interactions 31-lake-and-river 32-menus 33-options 34-settings-list
-                    35-cape 37-character)
+                    35-cape 37-character 38-dubbing)
         add_test(NAME example_boot_${example}
             COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/${example}"
                     --headless --frames=20 --exit --rhi=null)
@@ -1918,6 +1938,20 @@ if(ENG_BUILD_TESTS)
     set_tests_properties(example_navigation_arrives PROPERTIES
         PASS_REGULAR_EXPRESSION "reached goal 1"
         TIMEOUT 120)
+
+    # `examples/38-dubbing` says its lines (ADR 0200): twenty frames of a boot
+    # end before the first of them. Eleven seconds is a round and a half --
+    # every line found in the language asked for, each recording's viseme
+    # track and the face map read, the line nobody dubbed and the one nobody
+    # recorded -- in each of the two voices, and neither may warn.
+    foreach(voice en pt-BR)
+        add_test(NAME example_dubbing_speaks_${voice}
+            COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/38-dubbing" --headless --frames=660 --exit --rhi=null
+                    --locale=en --voice-locale=${voice})
+        set_tests_properties(example_dubbing_speaks_${voice} PROPERTIES
+            FAIL_REGULAR_EXPRESSION "\\[error\\];\\[warn\\]"
+            TIMEOUT 300)
+    endforeach()
 
     # `examples/37-character`'s walker walks at the speed it is asked for
     # (D615): a hero's own body and the staff in its hand, which collide with
@@ -2253,6 +2287,7 @@ if(ENG_BUILD_TESTS)
         "examples/05-streaming|asset_determinism,streaming_soak"
         "examples/12-ragdoll|example_boot_12-ragdoll,example_ragdoll_builds"
         "examples/21-navigation|example_boot_21-navigation,example_navigation_arrives"
+        "examples/38-dubbing|example_boot_38-dubbing,example_dubbing_speaks_en,example_dubbing_speaks_pt-BR"
         "tests/rendercapture/meshes|capture_gate_meshes,surface_contract_proof_meshes"
         "tests/rendercapture/uipanel|capture_gate_ui_1280x720,capture_gate_ui_640x360,screenshot_gate_ui"
         "tests/screenshots/specular|graphics_settings_differential,screenshot_gate_instanced,surface_contract_proof_specular"

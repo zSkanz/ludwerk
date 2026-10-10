@@ -57,6 +57,14 @@ struct MeshInstance
     // pieces with three names and one shared geometry -- and it is the node
     // names an author recognises in an outliner.
     std::string name;
+    // **For a mesh with no skin of its own: the joint it hangs from** (D624),
+    // as the file's node index -- the nearest node above it that the file's
+    // skin lists -- and `NoNode` for one under no joint. A helmet, a cape, a
+    // sword in a hand are exported this way, and ride that joint.
+    static constexpr std::size_t NoNode = static_cast<std::size_t>(-1);
+    std::size_t ridesNode = NoNode;
+    // Resolved once the skeleton is read: the joint, in our order.
+    u32 ridesJoint = Joint::NoParent;
 };
 
 // One primitive's attributes, in the file's own vertex order, before they are
@@ -307,9 +315,15 @@ public:
 
 private:
     [[nodiscard]] std::optional<core::EngineError> collectInstances();
-    [[nodiscard]] std::optional<core::EngineError> visitNode(std::size_t nodeIndex, const core::Mat4& parent);
-    [[nodiscard]] std::optional<core::EngineError> appendPrimitive(const fg::Primitive& primitive,
-                                                                   const core::Mat4& transform, std::size_t meshIndex);
+    [[nodiscard]] std::optional<core::EngineError> visitNode(std::size_t nodeIndex, const core::Mat4& parent,
+                                                             std::size_t underJoint = MeshInstance::NoNode);
+    // Which joint each mesh with no skin rides, and its vertices taken into
+    // that joint's bind space. After `readSkin`.
+    void resolveRiders();
+    // `rides` is the joint a primitive with no skin of its own is wholly
+    // weighted to, or `Joint::NoParent`.
+    [[nodiscard]] std::optional<core::EngineError>
+    appendPrimitive(const fg::Primitive& primitive, const core::Mat4& transform, std::size_t meshIndex, u32 rides);
     // The model's target for the `target`th of a file's mesh, made the first
     // time it is named (ADR 0196).
     [[nodiscard]] std::size_t morphOf(std::size_t meshIndex, std::size_t target);
@@ -351,6 +365,8 @@ private:
     // condition for generating tangents it does not carry.
     bool materialWantsTangents_ = false;
     std::vector<bool> visitedNodes_;
+    // Which nodes the file's skin lists as joints; empty for a file with none.
+    std::vector<bool> jointNodes_;
     // Every node's world transform, filled by the walk. `readSkin` runs after it
     // and needs the graph, not the joint chain -- see `Model::restPalette`.
     std::vector<core::Mat4> nodeWorld_;
@@ -364,6 +380,13 @@ std::optional<core::EngineError> Importer::run()
     imageSlots_.assign(asset_.images.size(), TextureRef::Missing);
     visitedNodes_.assign(asset_.nodes.size(), false);
     nodeWorld_.assign(asset_.nodes.size(), core::Mat4{});
+    if (!asset_.skins.empty()) {
+        jointNodes_.assign(asset_.nodes.size(), false);
+        for (const std::size_t joint : asset_.skins[0].joints) {
+            if (joint < jointNodes_.size())
+                jointNodes_[joint] = true;
+        }
+    }
 
     if (auto error = collectInstances())
         return error;
@@ -373,6 +396,7 @@ std::optional<core::EngineError> Importer::run()
     // whether `joints` is empty.
     if (auto error = readSkin())
         return error;
+    resolveRiders();
     // The targets' names first: a clip's weight channels say which target by
     // its place among them.
     readMorphNames();
@@ -389,7 +413,7 @@ std::optional<core::EngineError> Importer::run()
         const fg::Mesh& mesh = asset_.meshes[instance.meshIndex];
         for (const fg::Primitive& primitive : mesh.primitives) {
             const std::size_t before = out_.mesh.submeshes.size();
-            if (auto error = appendPrimitive(primitive, instance.transform, instance.meshIndex))
+            if (auto error = appendPrimitive(primitive, instance.transform, instance.meshIndex, instance.ridesJoint))
                 return error;
             // One name per submesh the primitive actually produced, so the two
             // arrays cannot drift -- a primitive that appended nothing appends
@@ -454,7 +478,8 @@ std::optional<core::EngineError> Importer::collectInstances()
     return std::nullopt;
 }
 
-std::optional<core::EngineError> Importer::visitNode(std::size_t nodeIndex, const core::Mat4& parent)
+std::optional<core::EngineError> Importer::visitNode(std::size_t nodeIndex, const core::Mat4& parent,
+                                                     std::size_t underJoint)
 {
     if (nodeIndex >= asset_.nodes.size())
         return core::makeError(ENG_TR("asset.gltf.err.invalid_document"), {}, "node index is out of range");
@@ -472,6 +497,9 @@ std::optional<core::EngineError> Importer::visitNode(std::size_t nodeIndex, cons
     const core::Mat4 nodeLocal = toMat4(fg::getTransformMatrix(node));
     const core::Mat4 combined = parent * nodeLocal;
     nodeWorld_[nodeIndex] = combined;
+    // A joint is the joint everything under it hangs from, itself included.
+    if (nodeIndex < jointNodes_.size() && jointNodes_[nodeIndex])
+        underJoint = nodeIndex;
 
     if (node.meshIndex.has_value()) {
         // **A SKINNED mesh node's own transform is not the mesh's**, and glTF
@@ -491,12 +519,15 @@ std::optional<core::EngineError> Importer::visitNode(std::size_t nodeIndex, cons
         std::string name(node.name);
         if (name.empty() && node.meshIndex.value() < asset_.meshes.size())
             name = std::string(asset_.meshes[node.meshIndex.value()].name);
-        instances_.push_back(MeshInstance{node.meshIndex.value(), node.skinIndex.has_value() ? core::Mat4{} : combined,
-                                          std::move(name)});
+        MeshInstance instance{node.meshIndex.value(), node.skinIndex.has_value() ? core::Mat4{} : combined,
+                              std::move(name)};
+        if (!node.skinIndex.has_value())
+            instance.ridesNode = underJoint;
+        instances_.push_back(std::move(instance));
     }
 
     for (const std::size_t child : node.children) {
-        if (auto error = visitNode(child, combined))
+        if (auto error = visitNode(child, combined, underJoint))
             return error;
     }
     return std::nullopt;
@@ -1141,7 +1172,7 @@ void Importer::readMorphNames()
 }
 
 std::optional<core::EngineError> Importer::appendPrimitive(const fg::Primitive& primitive, const core::Mat4& transform,
-                                                           std::size_t meshIndex)
+                                                           std::size_t meshIndex, u32 rides)
 {
     // One vertex layout, one topology. A points or lines primitive has no
     // triangle for the renderer to draw, and a strip or a fan would have to be
@@ -1255,10 +1286,17 @@ std::optional<core::EngineError> Importer::appendPrimitive(const fg::Primitive& 
         out_.mesh.vertices.push_back(vertex);
         // The skin stream is parallel to the vertex stream BY CONSTRUCTION, and
         // this is the line that constructs it: a primitive with no skin still
-        // appends a rest entry, so a file whose second primitive is unskinned
-        // cannot silently shift every joint index after it.
-        if (!out_.joints.empty())
-            out_.skin.push_back(staging.hasSkin ? staging.skin[slot] : SkinVertex{});
+        // appends an entry, so a file whose second primitive is unskinned
+        // cannot silently shift every joint index after it. Wholly the joint
+        // it hangs from (D624), or at rest when it hangs from none.
+        if (!out_.joints.empty()) {
+            SkinVertex riding;
+            if (rides != Joint::NoParent) {
+                riding.joints[0] = static_cast<f32>(rides);
+                riding.weights[0] = 1.0f;
+            }
+            out_.skin.push_back(staging.hasSkin ? staging.skin[slot] : riding);
+        }
     }
 
     // What each target moves of these vertices, and only that. Under a
@@ -1399,6 +1437,35 @@ std::optional<core::EngineError> Importer::readSkin()
     // here, which is why the remap is kept.
     jointRemap_ = std::move(sortedOf);
     return std::nullopt;
+}
+
+void Importer::resolveRiders()
+{
+    // **A mesh with no skin, under a joint, is that joint's** (D624). It was
+    // appended with no weight at all, which the skinning reads as "at rest":
+    // a helmet stayed where the file rested it while the head under it turned.
+    //
+    // Wholly weighted to the joint, its vertices have to be where that joint's
+    // palette expects them. At rest the palette is `restPalette[joint]` -- the
+    // joint's place times its inverse bind, the identity for most rigs and not
+    // for all -- so the vertices are taken back through it: at rest they land
+    // exactly where the node graph put them, and posed they go with the joint.
+    if (out_.joints.empty() || asset_.skins.empty())
+        return;
+    std::vector<u32> jointOfNode(asset_.nodes.size(), Joint::NoParent);
+    for (std::size_t slot = 0; slot < asset_.skins[0].joints.size() && slot < jointRemap_.size(); ++slot) {
+        if (asset_.skins[0].joints[slot] < jointOfNode.size())
+            jointOfNode[asset_.skins[0].joints[slot]] = jointRemap_[slot];
+    }
+    for (MeshInstance& instance : instances_) {
+        if (instance.ridesNode == MeshInstance::NoNode || instance.ridesNode >= jointOfNode.size())
+            continue;
+        const u32 joint = jointOfNode[instance.ridesNode];
+        if (joint == Joint::NoParent || joint >= out_.restPalette.size())
+            continue;
+        instance.ridesJoint = joint;
+        instance.transform = core::inverse(out_.restPalette[joint]) * instance.transform;
+    }
 }
 
 std::optional<core::EngineError> Importer::readAnimations()

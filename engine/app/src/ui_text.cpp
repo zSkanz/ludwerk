@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "engine/asset/image.h"
+#include "engine/asset/localized.h"
 #include "engine/asset/texture.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
@@ -297,6 +298,21 @@ void UiText::trimImages(rhi::IDevice& device)
     }
 }
 
+void UiText::setLocale(std::string_view locale)
+{
+    if (locale_ == locale)
+        return;
+    locale_ = std::string(locale);
+    localeChanged_ = true;
+}
+
+std::string UiText::localizedName(std::string_view urn) const
+{
+    if (locale_.empty() || mounts_ == nullptr)
+        return std::string(urn);
+    return asset::resolveLocalized(*mounts_, urn, locale_);
+}
+
 void UiText::loadPendingImages(rhi::IDevice& device, rhi::ICmdList& cmd)
 {
     // A pass: what was asked for since the last one is this one's.
@@ -304,6 +320,28 @@ void UiText::loadPendingImages(rhi::IDevice& device, rhi::ICmdList& cmd)
     trimImages(device);
     if (mounts_ == nullptr) {
         return;
+    }
+
+    // **The player changed language** (ADR 0200): a picture that is another
+    // file in the new one is let go as the budget lets one go, and is read
+    // again -- from the new file -- when it is next drawn. One that is the
+    // same file in both stays where it is.
+    if (localeChanged_) {
+        localeChanged_ = false;
+        for (Image& image : imageEntries_) {
+            if (image.borrowed || (image.state != ImageState::Ready && image.state != ImageState::Failed))
+                continue;
+            if (image.resolved.empty() || localizedName(image.urn) == image.resolved)
+                continue;
+            if (image.texture.valid()) {
+                device.destroy(image.texture);
+                image.texture = {};
+                imageBytes_ -= std::min(imageBytes_, image.bytes);
+                image.bytes = 0;
+            }
+            image.state = ImageState::Released;
+            imagesChanged_ = true;
+        }
     }
 
     if (deferredImages_) {
@@ -326,7 +364,9 @@ void UiText::loadPendingImages(rhi::IDevice& device, rhi::ICmdList& cmd)
             ++started;
         }
 
-        const asset::ResolvedContent resolved = mounts_->resolve(image.urn);
+        // The file of the language being read, when it has one of its own.
+        image.resolved = localizedName(image.urn);
+        const asset::ResolvedContent resolved = mounts_->resolve(image.resolved);
 
         if (deferredImages_ && !resolved.bytes.empty()) {
             image.work = std::make_unique<ImageWork>();

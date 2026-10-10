@@ -269,6 +269,226 @@ bool setAudioServiceMasterVolume(scene::World& world, core::InstanceId, const Va
     return takeAtLeastZero(value, world.engineState().masterVolume);
 }
 
+// --- Categories, the player's volumes, captions (ADR 0200) -------------------------
+
+namespace {
+
+// A number from `low` to `high`, both included.
+[[nodiscard]] bool takeBetween(const Value& value, f32 low, f32 high, f32& out)
+{
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number) || *number < static_cast<f64>(low) || *number > static_cast<f64>(high))
+        return false;
+    out = static_cast<f32>(*number);
+    return true;
+}
+
+// One of the player's own settings: a machine with no player has nobody to
+// ask, as `LocalizationService.Locale` has it.
+[[nodiscard]] bool takePlayers(scene::World& world, const Value& value, f32 low, f32 high, f32& out)
+{
+    return world.engineState().graphicsDisplay && takeBetween(value, low, high, out);
+}
+
+} // namespace
+
+Value getSoundCategory(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundComponent* self = sound(world, id);
+    return self == nullptr ? Value{} : Value{scene::EnumValue{generated::SoundCategoryEnumId, self->category}};
+}
+
+bool setSoundCategory(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundComponent* self = sound(world, id);
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    if (self == nullptr || item == nullptr || item->enumId != generated::SoundCategoryEnumId ||
+        world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    self->category = item->value;
+    return true;
+}
+
+// What this machine's mixer says of it, asked of the host's audio system: a
+// world with none hears nothing.
+Value getSoundLoudness(const scene::World& world, core::InstanceId id)
+{
+    scene::SoundMeter* meter = world.soundMeter();
+    return Value{meter != nullptr ? static_cast<f64>(meter->loudness(world, id)) : 0.0};
+}
+
+// A caption's two keys are atoms (see `CaptionComponent`): made here, where the
+// text arrives, as a sound's content is.
+Value getCaptionText(const scene::World& world, core::InstanceId id)
+{
+    const scene::CaptionComponent* self = world.captions().find(id);
+    return self == nullptr ? Value{} : Value{std::string(world.atoms().text(self->text))};
+}
+
+bool setCaptionText(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    scene::CaptionComponent* self = world.captions().find(id);
+    if (text == nullptr || self == nullptr)
+        return false;
+    self->text = text->empty() ? core::NameAtom{} : world.atoms().intern(*text);
+    return true;
+}
+
+Value getCaptionSpeaker(const scene::World& world, core::InstanceId id)
+{
+    const scene::CaptionComponent* self = world.captions().find(id);
+    return self == nullptr ? Value{} : Value{std::string(world.atoms().text(self->speaker))};
+}
+
+bool setCaptionSpeaker(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    scene::CaptionComponent* self = world.captions().find(id);
+    if (text == nullptr || self == nullptr)
+        return false;
+    self->speaker = text->empty() ? core::NameAtom{} : world.atoms().intern(*text);
+    return true;
+}
+
+Value getCaptionColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::CaptionComponent* self = world.captions().find(id);
+    return self == nullptr ? Value{} : Value{self->color};
+}
+
+bool setCaptionColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* color = std::get_if<core::Color3>(&value);
+    scene::CaptionComponent* self = world.captions().find(id);
+    if (color == nullptr || self == nullptr)
+        return false;
+    self->color = *color;
+    return true;
+}
+
+Value getCaptionSeconds(const scene::World& world, core::InstanceId id)
+{
+    const scene::CaptionComponent* self = world.captions().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->seconds)};
+}
+
+bool setCaptionSeconds(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::CaptionComponent* self = world.captions().find(id);
+    return self != nullptr && takeAtLeastZero(value, self->seconds);
+}
+
+void attachCaptionComponents(scene::World& world, core::InstanceId id)
+{
+    world.captions().add(id, scene::CaptionComponent{});
+}
+
+void detachCaptionComponents(scene::World& world, core::InstanceId id)
+{
+    world.captions().remove(id);
+}
+
+Value getAudioServicePlayerVolume(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().playerSound.playerVolume)};
+}
+
+bool setAudioServicePlayerVolume(scene::World& world, core::InstanceId, const Value& value)
+{
+    return takePlayers(world, value, 0.0f, 1.0f, world.engineState().playerSound.playerVolume);
+}
+
+Value getAudioServiceMusicVolume(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().playerSound.musicVolume)};
+}
+
+bool setAudioServiceMusicVolume(scene::World& world, core::InstanceId, const Value& value)
+{
+    return takePlayers(world, value, 0.0f, 1.0f, world.engineState().playerSound.musicVolume);
+}
+
+Value getAudioServiceEffectsVolume(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().playerSound.effectsVolume)};
+}
+
+bool setAudioServiceEffectsVolume(scene::World& world, core::InstanceId, const Value& value)
+{
+    return takePlayers(world, value, 0.0f, 1.0f, world.engineState().playerSound.effectsVolume);
+}
+
+Value getAudioServiceVoiceVolume(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().playerSound.voiceVolume)};
+}
+
+bool setAudioServiceVoiceVolume(scene::World& world, core::InstanceId, const Value& value)
+{
+    return takePlayers(world, value, 0.0f, 1.0f, world.engineState().playerSound.voiceVolume);
+}
+
+Value getAudioServiceMusicUnderVoice(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().musicUnderVoice)};
+}
+
+bool setAudioServiceMusicUnderVoice(scene::World& world, core::InstanceId, const Value& value)
+{
+    return takeBetween(value, 0.0f, 1.0f, world.engineState().musicUnderVoice);
+}
+
+// --- DialogueService (ADR 0200) -----------------------------------------------------
+//
+// The three subtitle settings are the player's: each remembers that it was
+// said, which is what puts it in their file.
+
+Value getDialogueServiceSubtitles(const scene::World& world, core::InstanceId)
+{
+    return Value{scene::EnumValue{generated::SubtitleModeEnumId, world.engineState().playerSound.subtitles}};
+}
+
+bool setDialogueServiceSubtitles(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    scene::EngineState& state = world.engineState();
+    if (item == nullptr || !state.graphicsDisplay || item->enumId != generated::SubtitleModeEnumId ||
+        world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    state.playerSound.subtitles = item->value;
+    state.playerSound.subtitlesSaid = true;
+    return true;
+}
+
+Value getDialogueServiceSubtitleScale(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().playerSound.subtitleScale)};
+}
+
+bool setDialogueServiceSubtitleScale(scene::World& world, core::InstanceId, const Value& value)
+{
+    scene::PlayerSound& player = world.engineState().playerSound;
+    if (!takePlayers(world, value, 0.75f, 2.0f, player.subtitleScale))
+        return false;
+    player.subtitleScaleSaid = true;
+    return true;
+}
+
+Value getDialogueServiceSubtitleBackground(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().playerSound.subtitleBackground)};
+}
+
+bool setDialogueServiceSubtitleBackground(scene::World& world, core::InstanceId, const Value& value)
+{
+    scene::PlayerSound& player = world.engineState().playerSound;
+    if (!takePlayers(world, value, 0.0f, 1.0f, player.subtitleBackground))
+        return false;
+    player.subtitleBackgroundSaid = true;
+    return true;
+}
+
 // --- Sound effects (ADR 0131) ---------------------------------------------------
 //
 // Nine classes over one component. Every number has a range its page says,

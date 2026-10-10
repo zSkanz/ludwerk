@@ -2188,6 +2188,76 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "SoundCategory",
+            Doc = "What kind of sound a `Sound` is (ADR 0200): which of the player's three volumes it is "
+                .. "turned by, and whether music lowers itself under it.",
+            Items = {
+                {
+                    Name = "Effects",
+                    Value = 0,
+                    Doc = "Everything that is neither of the other two: a step, a door, a shot, the wind.",
+                },
+                {
+                    Name = "Music",
+                    Value = 1,
+                    Doc = "The score. It is turned down while a `Voice` sound is heard "
+                        .. "(`AudioService.MusicUnderVoice`).",
+                },
+                {
+                    Name = "Voice",
+                    Value = 2,
+                    Doc = "Somebody speaking: a line of dialogue, a narrator, a shout with words in it.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "SubtitleMode",
+            Doc = "When captions are shown (ADR 0200): what `DialogueService.Subtitles` says.",
+            Items = {
+                {
+                    Name = "Auto",
+                    Value = 0,
+                    Doc = "Shown when what is heard is not in the language being read: the voice is in "
+                        .. "another language than the text, the line fell back to the default language's "
+                        .. "recording, or it has no recording at all.",
+                },
+                {
+                    Name = "On",
+                    Value = 1,
+                    Doc = "Always shown.",
+                },
+                {
+                    Name = "Off",
+                    Value = 2,
+                    Doc = "Never shown.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "LipSyncMode",
+            Doc = "How a `LipSync` may move a mouth (ADR 0200).",
+            Items = {
+                {
+                    Name = "Auto",
+                    Value = 0,
+                    Doc = "By the line's viseme track when the language being heard has one; by the sound's "
+                        .. "frequency bands when it has none and the face has keys for them; by its "
+                        .. "loudness otherwise.",
+                },
+                {
+                    Name = "Bands",
+                    Value = 1,
+                    Doc = "By the sound's frequency bands, track or no track: an open, a wide and a round "
+                        .. "mouth told apart by what is being heard.",
+                },
+                {
+                    Name = "Loudness",
+                    Value = 2,
+                    Doc = "By how loud the sound is, and nothing else: one key that opens.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

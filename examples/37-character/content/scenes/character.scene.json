@@ -295,11 +295,11 @@
    },
    {
     "class": "CharacterBody",
-    "name": "Tall",
+    "name": "Rogue",
     "properties": {
      "CFrame": [
       0.0,
-      1.06,
+      0.9005,
       4.0,
       1.0,
       0.0,
@@ -312,11 +312,11 @@
       1.0
      ],
      "Size": [
-      0.5,
-      2.12,
-      0.5
+      0.6,
+      1.801,
+      0.6
      ],
-     "WalkSpeed": 3.6,
+     "WalkSpeed": 2.38,
      "JumpSpeed": 4.6,
      "AutoStepHeight": 0.3,
      "MaterialParameters": {
@@ -328,7 +328,7 @@
       "class": "MeshPart",
       "name": "Hero",
       "properties": {
-       "MeshContent": "asset://models/tall.gltf",
+       "MeshContent": "asset://models/rogue.glb",
        "CFrame": [
         0.0,
         0.0,
@@ -350,10 +350,10 @@
         "class": "FootPlacement",
         "name": "Feet",
         "properties": {
-         "LeftFoot": "LeftFoot",
-         "RightFoot": "RightFoot",
-         "Hips": "Hips",
-         "FootHeight": 0.09,
+         "LeftFoot": "foot.l",
+         "RightFoot": "foot.r",
+         "Hips": "hips",
+         "FootHeight": 0.1162,
          "StepHeight": 0.3
         }
        },
@@ -362,8 +362,8 @@
         "name": "Look",
         "properties": {
          "Type": "LookAt",
-         "EndJoint": "Head",
-         "Target": "Workspace.Stocky.Hero.Eyes",
+         "EndJoint": "head",
+         "Target": "Workspace.Skeleton.Hero.Eyes",
          "ChainLength": 1,
          "MaxAngle": 75.0,
          "Smoothing": 0.25
@@ -373,16 +373,55 @@
         "class": "Bone",
         "name": "Eyes",
         "properties": {
-         "JointName": "Head",
+         "JointName": "head",
+         "CFrame": [
+          -0.0,
+          0.3231,
+          0.3635,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+         ]
+        }
+       },
+       {
+        "class": "Bone",
+        "name": "RightHold",
+        "properties": {
+         "JointName": "handslot.r"
+        },
+        "children": [
+         {
+          "class": "MeshPart",
+          "name": "Crossbow",
+          "properties": {
+           "MeshContent": "asset://models/crossbow.glb",
+           "PoseFrom": "Workspace.Rogue.Hero",
+           "CanCollide": false
+          }
+         }
+        ]
+       },
+       {
+        "class": "Bone",
+        "name": "LeftHold",
+        "properties": {
+         "JointName": "handslot.l",
          "CFrame": [
           0.0,
-          0.13800000000000012,
-          0.0,
-          1.0,
           0.0,
           0.0,
+          -1.0,
+          1.2246467991473532e-16,
           0.0,
-          1.0,
+          -1.2246467991473532e-16,
+          -1.0,
           0.0,
           0.0,
           0.0,
@@ -396,11 +435,11 @@
       "class": "Weld",
       "name": "HeroWeld",
       "properties": {
-       "Part0": "Workspace.Tall",
-       "Part1": "Workspace.Tall.Hero",
+       "Part0": "Workspace.Rogue",
+       "Part1": "Workspace.Rogue.Hero",
        "C0": [
         0.0,
-        -1.06,
+        -0.9005,
         0.0,
         -1.0,
         0.0,
@@ -420,16 +459,25 @@
       "properties": {
        "Graph": "asset://anim/hero.animgraph.json"
       }
+     },
+     {
+      "class": "MeshPart",
+      "name": "Head",
+      "properties": {
+       "MeshContent": "asset://models/rogue_hood.glb",
+       "PoseFrom": "Workspace.Rogue.Hero",
+       "CanCollide": false
+      }
      }
     ]
    },
    {
     "class": "CharacterBody",
-    "name": "Stocky",
+    "name": "Skeleton",
     "properties": {
      "CFrame": [
       -7.5,
-      0.75,
+      0.9964,
       0.5,
       1.0,
       0.0,
@@ -442,11 +490,11 @@
       1.0
      ],
      "Size": [
-      0.7,
-      1.5,
-      0.7
+      0.55,
+      1.9928,
+      0.55
      ],
-     "WalkSpeed": 1.1,
+     "WalkSpeed": 0.62,
      "JumpSpeed": 4.6,
      "AutoStepHeight": 0.3,
      "MaterialParameters": {
@@ -458,7 +506,7 @@
       "class": "MeshPart",
       "name": "Hero",
       "properties": {
-       "MeshContent": "asset://models/stocky.gltf",
+       "MeshContent": "asset://models/skeleton.glb",
        "CFrame": [
         -7.5,
         0.0,
@@ -480,10 +528,10 @@
         "class": "FootPlacement",
         "name": "Feet",
         "properties": {
-         "LeftFoot": "foot_l",
-         "RightFoot": "foot_r",
-         "Hips": "pelvis",
-         "FootHeight": 0.08,
+         "LeftFoot": "foot.l",
+         "RightFoot": "foot.r",
+         "Hips": "hips",
+         "FootHeight": 0.1336,
          "StepHeight": 0.3
         }
        },
@@ -493,7 +541,7 @@
         "properties": {
          "Type": "LookAt",
          "EndJoint": "head",
-         "Target": "Workspace.Tall.Hero.Eyes",
+         "Target": "Workspace.Rogue.Hero.Eyes",
          "ChainLength": 1,
          "MaxAngle": 75.0,
          "Smoothing": 0.25
@@ -505,9 +553,9 @@
         "properties": {
          "JointName": "head",
          "CFrame": [
-          0.0,
-          0.13799999999999998,
-          0.0,
+          -0.0,
+          0.3403,
+          0.3828,
           1.0,
           0.0,
           0.0,
@@ -524,21 +572,7 @@
         "class": "Bone",
         "name": "RightGrip",
         "properties": {
-         "JointName": "hand_r",
-         "CFrame": [
-          -0.07,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-          0.0,
-          0.0,
-          1.0
-         ]
+         "JointName": "handslot.r"
         }
        },
        {
@@ -546,24 +580,9 @@
         "name": "LeftHandOnStaff",
         "properties": {
          "Type": "TwoBone",
-         "EndJoint": "hand_l",
-         "Target": "Workspace.Stocky.Staff.Grip",
-         "Pole": "Workspace.Stocky.LeftElbow",
-         "TargetOffset": [
-          -0.07,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-          0.0,
-          0.0,
-          1.0
-         ],
-         "AlignRotation": true,
+         "EndJoint": "wrist.l",
+         "Target": "Workspace.Skeleton.Staff.Grip",
+         "Pole": "Workspace.Skeleton.LeftElbow",
          "Smoothing": 0.0
         }
        }
@@ -573,11 +592,11 @@
       "class": "Weld",
       "name": "HeroWeld",
       "properties": {
-       "Part0": "Workspace.Stocky",
-       "Part1": "Workspace.Stocky.Hero",
+       "Part0": "Workspace.Skeleton",
+       "Part1": "Workspace.Skeleton.Hero",
        "C0": [
         0.0,
-        -0.75,
+        -0.9964,
         0.0,
         -1.0,
         0.0,
@@ -618,7 +637,7 @@
        ],
        "Size": [
         0.05,
-        1.5,
+        1.6,
         0.05
        ],
        "CanCollide": false,
@@ -637,17 +656,17 @@
         "properties": {
          "CFrame": [
           0.0,
-          0.10000000000000003,
-          0.0,
-          -0.9792103223346492,
-          -5.551115123125783e-17,
-          -0.20284758966591726,
-          -0.20284758966591726,
-          0.0,
-          0.9792103223346493,
+          0.2,
           0.0,
           1.0,
-          -5.551115123125783e-17
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
          ]
         }
        }
@@ -677,25 +696,11 @@
       "class": "Weld",
       "name": "StaffWeld",
       "properties": {
-       "Part0": "Workspace.Stocky.Hero.RightGrip",
-       "Part1": "Workspace.Stocky.Staff",
-       "C0": [
-        0.0,
-        0.0,
-        0.0,
-        -0.057907002566429666,
-        -0.8010599098281265,
-        -0.5957766359298805,
-        0.8010599098281265,
-        -0.3934277988735104,
-        0.451129236405377,
-        -0.5957766359298805,
-        -0.451129236405377,
-        0.6644792036929192
-       ],
+       "Part0": "Workspace.Skeleton.Hero.RightGrip",
+       "Part1": "Workspace.Skeleton.Staff",
        "C1": [
         0.0,
-        -0.45,
+        -0.25,
         0.0,
         1.0,
         0.0,
@@ -713,11 +718,11 @@
    },
    {
     "class": "CharacterBody",
-    "name": "Small",
+    "name": "Mannequin",
     "properties": {
      "CFrame": [
       -6.6,
-      0.59,
+      0.9146,
       -1.4,
       -0.6332377902572628,
       0.0,
@@ -730,9 +735,9 @@
       -0.6332377902572628
      ],
      "Size": [
-      0.4,
-      1.18,
-      0.4
+      0.5,
+      1.8292,
+      0.5
      ],
      "WalkSpeed": 1.0,
      "JumpSpeed": 4.6,
@@ -746,7 +751,7 @@
       "class": "MeshPart",
       "name": "Hero",
       "properties": {
-       "MeshContent": "asset://models/small.gltf",
+       "MeshContent": "asset://models/mannequin.glb",
        "CFrame": [
         -6.6,
         0.0,
@@ -768,10 +773,10 @@
         "class": "FootPlacement",
         "name": "Feet",
         "properties": {
-         "LeftFoot": "foot.L",
-         "RightFoot": "foot.R",
-         "Hips": "hips",
-         "FootHeight": 0.06,
+         "LeftFoot": "DEF-foot.L",
+         "RightFoot": "DEF-foot.R",
+         "Hips": "DEF-hips",
+         "FootHeight": 0.1037,
          "StepHeight": 0.15
         }
        },
@@ -780,8 +785,8 @@
         "name": "Look",
         "properties": {
          "Type": "LookAt",
-         "EndJoint": "head",
-         "Target": "Workspace.Tall.Hero.Eyes",
+         "EndJoint": "DEF-head",
+         "Target": "Workspace.Rogue.Hero.Eyes",
          "ChainLength": 2,
          "MaxAngle": 75.0,
          "Smoothing": 0.25
@@ -791,11 +796,11 @@
         "class": "Bone",
         "name": "Eyes",
         "properties": {
-         "JointName": "head",
+         "JointName": "DEF-head",
          "CFrame": [
-          0.0,
-          0.17999999999999997,
-          0.0,
+          -0.0,
+          0.1079,
+          0.1138,
           1.0,
           0.0,
           0.0,
@@ -814,11 +819,11 @@
       "class": "Weld",
       "name": "HeroWeld",
       "properties": {
-       "Part0": "Workspace.Small",
-       "Part1": "Workspace.Small.Hero",
+       "Part0": "Workspace.Mannequin",
+       "Part1": "Workspace.Mannequin.Hero",
        "C0": [
         0.0,
-        -0.59,
+        -0.9146,
         0.0,
         -1.0,
         0.0,

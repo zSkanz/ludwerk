@@ -3353,16 +3353,32 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
     const auto byKey = [](const std::pair<u64, u32>& entry, u64 wanted) { return entry.first < wanted; };
     // The capture before, which an instance nothing has touched is kept from
     // -- of this same world: a world changed under the session is read whole.
-    const WorldState* before = m_readWorld == &world && !m_history.empty() ? m_history.back().get() : nullptr;
+    // And not of a world that was put back to an earlier state since: its
+    // stamps went back with it, and say nothing about what changed.
+    const WorldState* before = m_readWorld == &world && m_readRestores == world.restores() && !m_history.empty()
+                                   ? m_history.back().get()
+                                   : nullptr;
+    // **A property a script wrote is read at the next capture** (protocol
+    // 45): the world stamps the instance at the write, and one stamped since
+    // the capture before is not kept. A write that changes no byte the digest
+    // below compares -- a pivot's offset, which is known and not read -- was
+    // late by the periodic reading, and the periodic reading was a third of a
+    // send for it.
+    const u64 writtenBefore = m_readMutations;
     // Another world has classes of its own.
     if (m_readWorld != &world) {
         m_schemaAsked.clear();
         m_schemaOfClass.clear();
     }
     const usize nameField = commonIndex("Name");
-    // How often an instance is read whatever its stamps say, in captures, each
-    // on a capture of its own.
-    constexpr u64 RereadEvery = 8;
+    // How often an instance is read whatever its bytes and its stamp say, in
+    // captures, each on a capture of its own. **A net, and nothing is known to
+    // fall into it**: every field is read from a component the digest
+    // compares, from a table whose revision it mixes in, or through a
+    // property whose write stamps the instance. It was one in eight while a
+    // pivot waited on it, which read an eighth of a world every send -- a
+    // third of what a send cost (0.35 ms of 1.07 on 2,700 instances).
+    constexpr u64 RereadEvery = 64;
     // **Counted in captures, not ticks**: a game sends one tick in two, and
     // by the tick's own number an instance whose id was of the other parity
     // never had its turn -- what a capture cannot see change was not late by
@@ -3475,7 +3491,8 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
                 if (source == 0)
                     source = 1;
             }
-            if (known && before != nullptr && source != 0 && (turn + netId) % RereadEvery != 0) {
+            if (known && before != nullptr && source != 0 && world.writtenAt(id) <= writtenBefore &&
+                (turn + netId) % RereadEvery != 0) {
                 const EntityState* held = findEntity(*before, netId);
                 if (held != nullptr && held->schema == schema && held->hash != 0 && held->source == source &&
                     asU32(held->fields[nameField]) == world.name(id).id &&
@@ -3569,6 +3586,8 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
         entity.hash = hashOf(entity);
     }
     m_readWorld = &world;
+    m_readMutations = world.mutations();
+    m_readRestores = world.restores();
 
     // Instances gone since the last capture give their ids up for good: both
     // lists are in id order, so one walk of the two finds them.

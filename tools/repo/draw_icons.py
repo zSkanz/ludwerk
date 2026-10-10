@@ -785,6 +785,18 @@ def draw_icon(group, name):
         # The capsule a chain is kept out of, and the chain's joint against it.
         i.arc(10,8,5,180,360).arc(10,16,5,0,180).line((5,8),(5,16)).line((15,8),(15,16))
         i.circle(20,12,2)
+    elif name == "Caption":
+        # What a sound says (ADR 0200): two lines of text under a bar, as a
+        # subtitle sits at the foot of a picture.
+        i.rect(3,4,18,10,2).line((5,18),(19,18)).line((8,21.2),(16,21.2))
+    elif name == "LipSync":
+        # A mouth, open, and the sound that opens it (ADR 0200).
+        i.ellipse_arc(10,13,7,4.5).line((4.5,13),(15.5,13))
+        i.arc(17.5,6,3,-60,60).arc(17.5,6,6,-50,50)
+    elif name == "DialogueService":
+        # A line being said: a speech balloon with its tail, and words in it.
+        i.line((4,5),(20,5),(20,16),(11,16),(7,20),(7,16),(4,16),closed=True)
+        i.line((7.5,9),(16.5,9)).line((7.5,12),(13.5,12))
     elif name == "IKControl":
         # A limb of two bones bent to put its end on a target (ADR 0198): the
         # shoulder, the elbow, and the hand on the filled mark it reaches for.

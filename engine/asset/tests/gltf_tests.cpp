@@ -1021,6 +1021,73 @@ TEST_CASE_FIXTURE(CatalogFixture, "gltf: bone weights are normalized on load")
     }
 }
 
+TEST_CASE_FIXTURE(CatalogFixture, "D624: a mesh with no skin under a joint of a skinned file rides that joint")
+{
+    // A helmet, a cape, a sword in a hand: characters are commonly exported
+    // with such pieces as plain meshes parented to a joint. They were given no
+    // weights at all, and stayed where the file rested them while the body
+    // under them walked away.
+    //
+    // The fixture's bar, and a second mesh -- the same six vertices, no joints
+    // or weights of its own -- on a node half a metre up the `Tip` joint.
+    std::string text = fixtureText("skinned_bar.gltf");
+    REQUIRE(replaceAll(text, "\"name\": \"Tip\",", "\"name\": \"Tip\", \"children\": [ 4 ],") == 1u);
+    REQUIRE(replaceAll(text, "    }\n  ],\n  \"skins\"",
+                       "    },\n    { \"name\": \"Hat\", \"mesh\": 1, \"translation\": [ 0.0, 0.5, 0.0 ] }\n  ],\n"
+                       "  \"skins\"") == 1u);
+    REQUIRE(replaceAll(text, "    }\n  ],\n  \"animations\"",
+                       "    },\n    { \"name\": \"Hat\", \"primitives\": [ { \"attributes\": { \"POSITION\": 0, "
+                       "\"NORMAL\": 1 }, \"indices\": 4 } ] }\n  ],\n  \"animations\"") == 1u);
+
+    Model model;
+    REQUIRE_FALSE(importGltf(toBytes(text), dataDirectory(), unoptimized(), model).has_value());
+    REQUIRE(model.skinned());
+    REQUIRE(model.joints.size() == 2);
+    REQUIRE(model.skin.size() == model.mesh.vertices.size());
+    REQUIRE(model.mesh.submeshes.size() == 2);
+    REQUIRE(model.submeshNames.size() == 2);
+    CHECK(model.submeshNames[1] == "Hat");
+
+    // Every vertex of the hat is wholly the tip's -- our joint 1, the file's
+    // slot 0 -- and at rest it is where the file put it: the bar's own
+    // vertices, a metre and a half up.
+    const engine::asset::Submesh& hat = model.mesh.submeshes[1];
+    REQUIRE(hat.indexCount == 12);
+    REQUIRE(model.restPalette.size() == 2);
+    f32 lowest = 100.0f;
+    f32 highest = -100.0f;
+    for (u32 index = 0; index < hat.indexCount; ++index) {
+        const u32 vertex = model.mesh.indices[hat.firstIndex + index];
+        const engine::asset::SkinVertex& weights = model.skin[vertex];
+        CHECK(static_cast<double>(weights.joints[0]) == doctest::Approx(1.0));
+        CHECK(static_cast<double>(weights.weights[0]) == doctest::Approx(1.0));
+        CHECK(static_cast<double>(weights.weights[1] + weights.weights[2] + weights.weights[3]) ==
+              doctest::Approx(0.0));
+        const engine::core::Vec3 rested =
+            engine::core::transformPoint(model.restPalette[1], model.mesh.vertices[vertex].position);
+        lowest = std::fmin(lowest, rested.y);
+        highest = std::fmax(highest, rested.y);
+    }
+    CHECK(static_cast<double>(lowest) == doctest::Approx(1.5));
+    CHECK(static_cast<double>(highest) == doctest::Approx(3.5));
+
+    // A mesh under no joint is still the model's own: at rest, weightless.
+    std::string loose = fixtureText("skinned_bar.gltf");
+    REQUIRE(replaceAll(loose, "\"name\": \"Unused\"", "\"name\": \"Unused\", \"mesh\": 1") == 1u);
+    REQUIRE(replaceAll(loose, "\"nodes\": [\n        0,\n        2\n      ]", "\"nodes\": [ 0, 1, 2 ]") == 1u);
+    REQUIRE(replaceAll(loose, "    }\n  ],\n  \"animations\"",
+                       "    },\n    { \"name\": \"Hat\", \"primitives\": [ { \"attributes\": { \"POSITION\": 0, "
+                       "\"NORMAL\": 1 }, \"indices\": 4 } ] }\n  ],\n  \"animations\"") == 1u);
+    Model apart;
+    REQUIRE_FALSE(importGltf(toBytes(loose), dataDirectory(), unoptimized(), apart).has_value());
+    REQUIRE(apart.mesh.submeshes.size() == 2);
+    const engine::asset::Submesh& still = apart.mesh.submeshes[1];
+    for (u32 index = 0; index < still.indexCount; ++index) {
+        const engine::asset::SkinVertex& weights = apart.skin[apart.mesh.indices[still.firstIndex + index]];
+        CHECK(weights.weights[0] + weights.weights[1] + weights.weights[2] + weights.weights[3] == 0.0f);
+    }
+}
+
 TEST_CASE_FIXTURE(CatalogFixture, "gltf: an unskinned mesh carries no skin stream at all")
 {
     // The other half of Decision 11: joints and weights cost a skinned mesh

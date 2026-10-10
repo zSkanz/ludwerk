@@ -14,6 +14,7 @@
 // without anyone thinking about it.
 #pragma once
 
+#include <array>
 #include <functional>
 #include <map>
 #include <optional>
@@ -93,6 +94,19 @@ struct InstanceRecord
     // script made ticks like any other, and what is asked here is who else
     // is told about it.
     bool local = false;
+
+    // **When a property of it was last written through the world**: the
+    // world's count of mutations at that write (`World::mutations`), 0 for
+    // never. What a reader that keeps a copy of an instance asks before it
+    // trusts the copy -- the replication capture, which else learnt of a
+    // write that changed no byte it compares only when it next read the
+    // instance for no reason. A stamp and not a list of the written: any
+    // number of readers each keep their own place, and nothing grows.
+    //
+    // Not in the world hash: it says when something was written, and the
+    // hash asks what is there. A quiet write straight into a component (the
+    // physics mirror's) does not stamp; a reader that cares compares bytes.
+    core::u64 written = 0;
 
     // **The STAMP this instance was made from**, or an empty atom (ADR 0049).
     //
@@ -240,6 +254,52 @@ struct DetectorMessage
     u16 held = 0;
 };
 
+class World;
+
+// **The player's own sound and subtitle settings** (ADR 0200): the four
+// volumes of `AudioService` and the three subtitle settings of
+// `DialogueService`. Saved with the player's preferences, only where the
+// player changed them.
+struct PlayerSound
+{
+    f32 playerVolume = 1.0f;
+    f32 musicVolume = 1.0f;
+    f32 effectsVolume = 1.0f;
+    f32 voiceVolume = 1.0f;
+    // `Enum.SubtitleMode`: 0 Auto, 1 On, 2 Off.
+    i32 subtitles = 0;
+    f32 subtitleScale = 1.0f;
+    f32 subtitleBackground = 0.6f;
+    // Which of the three the player has said: what goes in their file.
+    bool subtitlesSaid = false;
+    bool subtitleScaleSaid = false;
+    bool subtitleBackgroundSaid = false;
+
+    [[nodiscard]] bool operator==(const PlayerSound&) const noexcept = default;
+};
+
+// **What a machine's mixer can say of the sound it is playing** (ADR 0200
+// section 9): how loud the recording is at the play position, and how much of
+// it is low, middle and high. Answered by the audio system, which `scene`
+// cannot see; asked by `Sound.Loudness`, `Sound:GetBands` and
+// `AudioService:GetBands`. Picture, each machine's own: nothing a tick reads.
+class SoundMeter
+{
+public:
+    virtual ~SoundMeter() = default;
+    // 0 to 1; 0 for a sound that is not playing or has no recording here.
+    [[nodiscard]] virtual f32 loudness(const World& world, core::InstanceId sound) = 0;
+    // Low, middle, high, each 0 to 1.
+    [[nodiscard]] virtual std::array<f32, 3> bands(const World& world, core::InstanceId sound) = 0;
+    // The same of every audible sound of one `Enum.SoundCategory`, mixed.
+    [[nodiscard]] virtual std::array<f32, 3> categoryBands(const World& world, i32 category) = 0;
+    // The language a sound is heard in on this machine: the locale of the
+    // file it resolves to, empty for the default language's -- and nothing at
+    // all for a sound with no recording in any, which is a line that is only
+    // its caption. What "is this in the language being read?" is asked of.
+    [[nodiscard]] virtual std::optional<std::string> spokenIn(const World& world, core::InstanceId sound) = 0;
+};
+
 struct EngineState
 {
     // Guest ids occupy a separate range from transport-assigned peer ids.
@@ -366,6 +426,29 @@ struct EngineState
     // `PhysicsService.FixedTimestep` is: one of each service per world, and a
     // component around a single float would be ceremony.
     f32 masterVolume = 1.0f;
+    // `AudioService.MusicUnderVoice` (ADR 0200): what music is multiplied by
+    // while a voice is heard. The game's, as the master is.
+    f32 musicUnderVoice = 0.4f;
+
+    // **How the player hears and reads** (ADR 0200): the voice language, the
+    // four volumes, the subtitles. Each machine's own, as `locale` is -- the
+    // host sets them at the start and keeps what a script writes; none of it
+    // is hashed, saved with a scene or sent.
+    //
+    // `voiceChoice` is what the player chose, empty while the voice follows
+    // the text language; `voiceLocale` is the language in force, which the
+    // setters and the host keep narrowed to `voiceLocales`. `voiceLocales` is
+    // what this machine can play -- the project's default first -- and
+    // `systemLocales` the platform's own list, in its order.
+    std::string voiceChoice;
+    std::string voiceLocale = "en";
+    std::vector<std::string> voiceLocales;
+    std::vector<std::string> systemLocales;
+    PlayerSound playerSound;
+    // **The captions current on this machine**, in the order their sounds
+    // started: written by the frame from what is heard here, read by
+    // `DialogueService:GetCaptions`. Never by a tick.
+    std::vector<core::InstanceId> captions;
     std::string engineVersion;
     std::string luauVersion;
 
@@ -606,6 +689,7 @@ struct NameIndex
     X(SpringColliderComponent, springColliders)                                                                        \
     X(IKControlComponent, ikControls)                                                                                  \
     X(FootPlacementComponent, footPlacements)                                                                          \
+    X(LipSyncComponent, lipSyncs)                                                                                      \
     X(WorkspaceComponent, workspaces)                                                                                  \
     X(TerrainComponent, terrains)                                                                                      \
     X(VoxelComponent, voxels)                                                                                          \
@@ -615,6 +699,7 @@ struct NameIndex
     X(SoundComponent, sounds)                                                                                          \
     X(AudioGroupComponent, audioGroups)                                                                                \
     X(SoundEffectComponent, soundEffects)                                                                              \
+    X(CaptionComponent, captions)                                                                                      \
     X(ScreenGuiComponent, screenGuis)                                                                                  \
     X(BillboardGuiComponent, billboardGuis)                                                                            \
     X(SurfaceGuiComponent, surfaceGuis)                                                                                \
@@ -1054,6 +1139,15 @@ public:
     // of the engine's own text alone.
     void setLocalization(const Localization* localization) noexcept { m_localization = localization; }
     [[nodiscard]] const Localization* localization() const noexcept { return m_localization; }
+    // **The game's lines of dialogue** (ADR 0200), the host's: what
+    // `DialogueService:Say` looks a line up in. Null where nobody gave one.
+    void setDialogue(const DialogueLines* dialogue) noexcept { m_dialogue = dialogue; }
+    [[nodiscard]] const DialogueLines* dialogue() const noexcept { return m_dialogue; }
+    // **What this machine's mixer can say of a sound** (ADR 0200 section 9),
+    // the host's audio system: what `Sound.Loudness` and `GetBands` ask. Null
+    // where there is none, and then every answer is silence.
+    void setSoundMeter(SoundMeter* meter) noexcept { m_soundMeter = meter; }
+    [[nodiscard]] SoundMeter* soundMeter() const noexcept { return m_soundMeter; }
     [[nodiscard]] asset::MaterialLibrary* materialLibrary() const noexcept { return m_materialLibrary; }
 
     // The asset behind a URN, folded flat; the engine default for an invalid
@@ -1213,6 +1307,14 @@ public:
     // count; a reader that cares about those says so.
     [[nodiscard]] core::u64 mutations() const noexcept { return m_mutations; }
 
+    // What `mutations` read when a property of this instance was last changed
+    // through `setProperty`; 0 for never, and for an instance that is gone.
+    [[nodiscard]] core::u64 writtenAt(core::InstanceId id) const noexcept
+    {
+        const InstanceRecord* record = m_instances.find(id);
+        return record != nullptr ? record->written : 0;
+    }
+
     // **Every `Script` moved since the last take** (ADR 0137 §1): each one in a
     // subtree `setParent` moved -- a clone parented, a stamp placed, a model
     // moved into storage or out of the world, a destroy. What the script
@@ -1355,6 +1457,8 @@ public:
     {
         return m_footPlacements;
     }
+    [[nodiscard]] ComponentPool<LipSyncComponent>& lipSyncs() noexcept { return m_lipSyncs; }
+    [[nodiscard]] const ComponentPool<LipSyncComponent>& lipSyncs() const noexcept { return m_lipSyncs; }
     [[nodiscard]] ComponentPool<CharacterBodyComponent>& characterBodies() noexcept { return m_characterBodies; }
     [[nodiscard]] const ComponentPool<CharacterBodyComponent>& characterBodies() const noexcept
     {
@@ -1572,6 +1676,9 @@ public:
     [[nodiscard]] const ComponentPool<SoundComponent>& sounds() const noexcept { return m_sounds; }
     [[nodiscard]] ComponentPool<AudioGroupComponent>& audioGroups() noexcept { return m_audioGroups; }
     [[nodiscard]] const ComponentPool<AudioGroupComponent>& audioGroups() const noexcept { return m_audioGroups; }
+    // What a sound says (ADR 0200).
+    [[nodiscard]] ComponentPool<CaptionComponent>& captions() noexcept { return m_captions; }
+    [[nodiscard]] const ComponentPool<CaptionComponent>& captions() const noexcept { return m_captions; }
 
 private:
     // By anchor number (`setStreamAnchor`). Not in a snapshot: the instances
@@ -1654,6 +1761,8 @@ private:
 
     asset::MaterialLibrary* m_materialLibrary = nullptr;
     const Localization* m_localization = nullptr;
+    const DialogueLines* m_dialogue = nullptr;
+    SoundMeter* m_soundMeter = nullptr;
     MaterialClones m_materialClones;
     u32 m_lastMaterialClone = 0;
     u32 m_materialClonesRevision = 0;
@@ -1671,6 +1780,12 @@ private:
 // and no determinism trace and no scene moves -- the voxel fluid fields'
 // precedent, as a rule both writers share rather than two copies of it.
 //
+// **Works out the voice language in force again** (ADR 0200) -- from what the
+// player chose, the text language and what this machine can play -- and says
+// `VoiceLocaleChanged` on `service`, the world's `LocalizationService`, when
+// it moved. Called by the two setters and by a host that changed the list.
+void refreshVoiceLocale(World& world, core::InstanceId service);
+
 // The same for the properties that arrived after it, each at the value that
 // is the picture before it existed: `Lighting.ExposureMin` and `ExposureMax`,
 // `ImageLabel.ImageTransparency`. And **`UIObject.Active` until somebody

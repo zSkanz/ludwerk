@@ -98,6 +98,11 @@ pose walk, the roles and the map, the solvers and the controls, the
 conformance suite's API cases, a determinism scenario, and two two-process
 gates (`netcode_carried`, `netcode_animated`).
 
+**Animation's next steps**, named and not scheduled: root motion (a clip
+that moves the body it plays on); hiding what a worn piece covers, so a body
+does not poke through its armour; and merging a character's finished set of
+pieces into one mesh, which a crowd of dressed characters will want.
+
 *What is there*: `AnimationPlayer` and `AnimationTrack` with weights and
 fades, clips from another file by joint name, `Bone` for attachments and
 turns, ragdolls, `SpringBone` for secondary motion, shape keys. To be read
@@ -147,13 +152,91 @@ In a match, a line a server starts is heard by every player in their OWN
 voice language: `Sound` travels by name since protocol 44, and the name is
 resolved on each machine. An explicit case in the tests.
 
-Named as the next step, and included only if it is a day's work on top of
-item 3: lip sync driving the shape keys of ADR 0196 from a line's audio (a
-mouth opened by the line's loudness; authored viseme curves from a sidecar
-file).
+8. **A mouth that moves with the line** (the owner, 2026-10-11; it was the
+   named next step and is in the batch): what a machine is playing of a
+   sound read by code -- its loudness, and three frequency bands -- and a
+   viseme track beside a recording, a language its own, that the engine
+   plays through a mapping the model's author gives; loudness is the
+   fallback of the bands and the bands of the track. `LipSync` moves a mouth
+   with no code. The engine reads a track and never makes one: a tool does,
+   and `ludwerk voice --visemes` runs the common free one when the developer
+   has it installed.
 
-It leaves an example a person can open -- a short scene with two speakers in
-two languages and subtitles -- and its manual page.
+**At the head of the batch**, from the review of the animation batch: the
+lint that every property a script can write on a replicated class is sent or
+withheld by name (D617's lesson as a gate); what a send costs, which protocol
+44 had raised by a fifth (found in the periodic reading of every instance,
+not in the new fields: a write now stamps the instance it is made on);
+retargeting run over real rigs -- the owner's own heroes and two from the
+wild -- and `examples/37-character` remade on a public-domain character and
+clip library.
+
+**And inside it, the owner's decision of 2026-10-10: a mesh that wears
+another's pose** (ADR 0201, `MeshPart.PoseFrom`). A weapon with joints of its
+own moved by the body's clip, and the modular character -- armour, clothes,
+hair swapped in play -- as one thing with the body: the same joints in the
+same places on the same frame, under IK and spring chains, at the cost of a
+draw and not of a pose. `examples/37-character` gains a bow whose string the
+draw pulls and a piece of armour that is swapped.
+
+Protocol 45 for the three: `Sound.Category`, `Caption` and `LipSync`,
+`MeshPart.PoseFrom`.
+
+It leaves an example a person can open -- `examples/38-dubbing`: a short
+scene, speakers in two languages, subtitles, and three mouths side by side,
+one moved by a track, one by the bands and one by loudness -- and its manual
+page.
+
+**Built, 2026-10-10.** ADRs 0200 and 0201, protocol 45. What the batch turned
+out to hold beyond what it was asked for, each found by proving something
+before building on it:
+
+- **A line lasts as long as its longest language**, on every machine. It was
+  the one decision the pieces above did not make and could not go without: a
+  sound's length is the tick's, and two machines hearing two languages would
+  have ended a line on two ticks. The lengths of every language are in an
+  index a built game carries, so a server with no voices and a player with
+  one language agree; `ludwerk voice` lists the lines whose takes are far
+  apart, because the price is a pause after the shorter one.
+- **A property whose write is a choice** (D622): `VoiceLocale` reads as the
+  language in force and is written as the player's choice, and the property
+  layer dropped a write that read the same.
+- **Real rigs**, read and carried: the owner's heroes (one skeleton of
+  sixteen joints; not a body before -- their forearms had no role -- a body
+  of fifteen roles now), two public-domain character packs and a
+  public-domain mannequin. What that corrected: a lower arm called `Fore`,
+  bare finger names, rigs that face the other way or stand along another
+  axis, hips named on a joint the legs do not hang from, joints above the
+  hips matched by name, and a back that starts below the hips. And three
+  things that were not retargeting at all: a piece parented to a bone stayed
+  at rest (D624), a graph read speed in metres whatever the legs (D625, the
+  slide), and a worn piece left its scene for a streamed cell (D626).
+- **`examples/37-character` on free content**: one pack's rig and eleven of
+  its clips as the library, that pack's rogue as the player, another of its
+  characters stretched as the walker and another pack's mannequin standing.
+  The held thing is a crossbow and not a bow -- the library has a shot and a
+  reload for one and nothing for the other, and a string a clip draws is the
+  point -- with a `String` joint added to the library's rig and keyed in
+  those two clips. The mannequin was tried as the walker and stands instead:
+  a short body's walk on legs twice as long is a march, and the example says
+  so rather than hiding it.
+- **A label sized to its words wrapped on a scaled screen** (D623), found in
+  the first picture of a subtitle; a re-recorded sound was not heard until a
+  restart (D620); `PlayLocal` kept every sound it ever played (D621).
+
+Not built, and said: the `LipSync.Map` picker lists nothing (it is a plain
+name); a sealed language pack is not checked to hold only its own language's
+names; in the editor, which does not tick, a follower is drawn at rest; the
+Android export of voices and `ludwerk voice --visemes` against a real tool
+were not run here. `DialogueLines::load`'s diagnostics are English inside a
+catalogued sentence.
+
+Its tests: the conformance suite's dubbing, subtitles, options and `LipSync`
+cases; two determinism scenarios (`dubbed`, replayed in two voice languages
+against one trace, and `worn`); the two-process gate `netcode_dubbed` (a
+joiner hears and reads another language than the server said the line in)
+and the worn piece in `netcode_animated`; the packaging test's language
+pack; `example_dubbing_speaks_en` and `_pt-BR`.
 
 *To be read first*: `LocalizationService` (the orchestrator found only its
 text side: `Locale`, `GetLocales`, `Translate`, `LocaleChanged`), how a sound

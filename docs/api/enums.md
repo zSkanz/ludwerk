@@ -551,6 +551,16 @@ How a `UIStroke` turns a corner.
 | `Bevel` | 1 | Cut off square across the corner. |
 | `Miter` | 2 | Brought to a point. |
 
+## Enum.LipSyncMode
+
+How a `LipSync` may move a mouth (ADR 0200).
+
+| Item | Value | Description |
+|---|---|---|
+| `Auto` | 0 | By the line's viseme track when the language being heard has one; by the sound's frequency bands when it has none and the face has keys for them; by its loudness otherwise. |
+| `Bands` | 1 | By the sound's frequency bands, track or no track: an open, a wide and a round mouth told apart by what is being heard. |
+| `Loudness` | 2 | By how loud the sound is, and nothing else: one key that opens. |
+
 ## Enum.LogLevel
 
 The severity of a log line, ascending: `Value` orders the levels, so a handler filters with `level.Value >= Enum.LogLevel.Warning.Value`. `DebugService.MessageOut` carries one with every message (§2.1).
@@ -869,6 +879,16 @@ What order a `UIListLayout` lays its children out in (§2.2).
 | `Name` | 0 | By `Name`, ordinal by code point. Stable across runs, which document order also is -- the difference is that this one survives the children being rebuilt in a different order. |
 | `LayoutOrder` | 1 | By each child's `LayoutOrder`, ties broken by document order. The usual choice, and the only one that lets a list be reordered without renaming anything. |
 
+## Enum.SoundCategory
+
+What kind of sound a `Sound` is (ADR 0200): which of the player's three volumes it is turned by, and whether music lowers itself under it.
+
+| Item | Value | Description |
+|---|---|---|
+| `Effects` | 0 | Everything that is neither of the other two: a step, a door, a shot, the wind. |
+| `Music` | 1 | The score. It is turned down while a `Voice` sound is heard (`AudioService.MusicUnderVoice`). |
+| `Voice` | 2 | Somebody speaking: a line of dialogue, a narrator, a shout with words in it. |
+
 ## Enum.StartCorner
 
 Which corner a `UIGridLayout` starts filling from.
@@ -898,6 +918,16 @@ What a `UIStroke`'s `Thickness` is measured in.
 |---|---|---|
 | `FixedSize` | 0 | Pixels. |
 | `ScaledSize` | 1 | A fraction of the parent's shorter side -- or, on text, of the font size -- so the stroke grows with what it outlines. |
+
+## Enum.SubtitleMode
+
+When captions are shown (ADR 0200): what `DialogueService.Subtitles` says.
+
+| Item | Value | Description |
+|---|---|---|
+| `Auto` | 0 | Shown when what is heard is not in the language being read: the voice is in another language than the text, the line fell back to the default language's recording, or it has no recording at all. |
+| `On` | 1 | Always shown. |
+| `Off` | 2 | Never shown. |
 
 ## Enum.SwarmAgentRemoval
 

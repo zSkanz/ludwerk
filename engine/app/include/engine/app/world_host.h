@@ -22,8 +22,10 @@
 #include <unordered_set>
 #include <vector>
 
+#include "engine/app/mouths.h"
 #include "engine/app/preserved.h"
 #include "engine/asset/content.h"
+#include "engine/asset/localized.h"
 #include "engine/asset/material.h"
 #include "engine/audio/audio.h"
 #include "engine/core/error.h"
@@ -39,6 +41,7 @@
 #include "engine/render/transform_history.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/enum_registry.h"
+#include "engine/scene/localization.h"
 #include "engine/scene/physics_sync.h"
 #include "engine/scene/physics_sync_2d.h"
 #include "engine/scene/scene_file.h"
@@ -276,6 +279,16 @@ struct WorldHostOptions
     // the host's, alive as long as the world is.
     const scene::Localization* localization = nullptr;
     std::string locale = "en";
+
+    // **What the player hears** (ADR 0200), the host's as the locale is.
+    // The voice language they chose, empty for "it follows the text"; the
+    // system's own languages in its order; their volumes and how they want
+    // subtitles. And the languages whose packs the host mounted beside the
+    // game's own: with what the game shipped, what this machine can play.
+    std::string voiceChoice{};
+    std::vector<std::string> systemLocales{};
+    std::vector<std::string> mountedVoices{};
+    scene::PlayerSound playerSound{};
 };
 
 // What the conformance run reported. Read after the loop, because the run ends
@@ -594,6 +607,25 @@ public:
     // simulation's. How many it let go.
     core::u32 forgetContent(std::span<const core::NameAtom> urns);
 
+    // **What is being said on this machine, this frame** (ADR 0200): the
+    // captions of the sounds that can be heard here, in the order they
+    // started, and `CaptionStarted` and `CaptionEnded` for what changed since
+    // the frame before. Called after the audio's own frame. Picture: nothing
+    // of it reaches a tick.
+    void stepCaptions();
+    // **And every mouth that moves with what is said** (ADR 0200), after the
+    // audio's frame too: a `LipSync`'s face follows the voice this machine
+    // hears. `seconds` since the frame before. Picture, like the captions.
+    void stepMouths(core::f32 seconds)
+    {
+        if (m_world.has_value() && m_animation)
+            m_mouths.step(*m_world, m_audio, *m_animation, m_mounts, seconds);
+    }
+    [[nodiscard]] const Mouths& mouths() const noexcept { return m_mouths; }
+    // What the game holds in other languages, as this host read it.
+    [[nodiscard]] const asset::LocalizationIndex& localized() const noexcept { return m_localized; }
+    [[nodiscard]] const scene::DialogueLines& dialogueLines() const noexcept { return m_dialogue; }
+
     // The poses `render::extract` reads. Null before `boot`, which is the same
     // window in which there is no world to extract from.
     [[nodiscard]] const render::AnimationSystem* animation() const noexcept
@@ -848,6 +880,15 @@ private:
     // consequence is that a `MeshPart` naming a rig has no skeleton, which is
     // already true of one naming a file that does not exist.
     const asset::ContentMounts* m_mounts = nullptr;
+    // **A game in other languages** (ADR 0200): which it has voice for and how
+    // long each localized sound is -- the export's index, or the project's
+    // own folder read as it stands -- and its dialogue lines. Read when the
+    // world is made, and again when a development run sees them change.
+    asset::LocalizationIndex m_localized;
+    scene::DialogueLines m_dialogue;
+    std::filesystem::path m_looseContent;
+    std::vector<std::string> m_mountedVoices;
+    void openLocalized();
     asset::MaterialLibrary m_ownMaterials;
     asset::MaterialLibrary* m_materials = &m_ownMaterials;
     // Content atoms already attempted, so a file with no skeleton is parsed once
@@ -865,6 +906,7 @@ private:
     std::vector<std::pair<core::InstanceId, core::u64>> m_graphDigests;
     std::optional<render::AnimationSystem> m_animation;
     render::SpringBones m_springs;
+    Mouths m_mouths;
     render::IkControls m_limbs;
 
     // The two things `boot` was handed that a REBUILT runtime has to be handed

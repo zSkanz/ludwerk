@@ -129,6 +129,9 @@ inline constexpr scene::EnumId DecalBlendModeEnumId = 86;
 inline constexpr scene::EnumId ParticleFlipbookModeEnumId = 87;
 inline constexpr scene::EnumId SwarmAgentRemovalEnumId = 88;
 inline constexpr scene::EnumId RelayStateEnumId = 89;
+inline constexpr scene::EnumId SoundCategoryEnumId = 90;
+inline constexpr scene::EnumId SubtitleModeEnumId = 91;
+inline constexpr scene::EnumId LipSyncModeEnumId = 92;
 
 } // namespace generated
 
@@ -150,6 +153,8 @@ scene::Value getMeshPartCollisionFidelity(const scene::World& world, core::Insta
 bool setMeshPartCollisionFidelity(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getMeshPartMeshSize(const scene::World& world, core::InstanceId id);
 bool setMeshPartMeshSize(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getMeshPartPoseFrom(const scene::World& world, core::InstanceId id);
+bool setMeshPartPoseFrom(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachMeshPartComponents(scene::World& world, core::InstanceId id);
 void detachMeshPartComponents(scene::World& world, core::InstanceId id);
 
@@ -205,6 +210,22 @@ scene::Value getFootPlacementEnabled(const scene::World& world, core::InstanceId
 bool setFootPlacementEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachFootPlacementComponents(scene::World& world, core::InstanceId id);
 void detachFootPlacementComponents(scene::World& world, core::InstanceId id);
+
+// LipSync
+scene::Value getLipSyncSource(const scene::World& world, core::InstanceId id);
+bool setLipSyncSource(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getLipSyncMode(const scene::World& world, core::InstanceId id);
+bool setLipSyncMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getLipSyncMap(const scene::World& world, core::InstanceId id);
+bool setLipSyncMap(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getLipSyncSmoothing(const scene::World& world, core::InstanceId id);
+bool setLipSyncSmoothing(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getLipSyncWeight(const scene::World& world, core::InstanceId id);
+bool setLipSyncWeight(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getLipSyncEnabled(const scene::World& world, core::InstanceId id);
+bool setLipSyncEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachLipSyncComponents(scene::World& world, core::InstanceId id);
+void detachLipSyncComponents(scene::World& world, core::InstanceId id);
 
 // SpringBone
 scene::Value getSpringBoneRootJoint(const scene::World& world, core::InstanceId id);

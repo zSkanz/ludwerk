@@ -63,6 +63,13 @@ public:
     // only when there is no such joint.
     [[nodiscard]] virtual bool jointModel(core::InstanceId meshPart, u32 joint, core::CFrameD& out) const = 0;
 
+    // **The mesh this one wears the pose of** (ADR 0201, `MeshPart.PoseFrom`
+    // followed to its end), or none. A follower's joints are in its LEADER's
+    // space: what composes `jointModel` with a part's `CFrame` composes a
+    // follower's with its leader's. And a follower is picture on its leader --
+    // the physics gives it no body.
+    [[nodiscard]] virtual core::InstanceId poseLeader(core::InstanceId /*meshPart*/) const { return {}; }
+
     // --- Driving it ----------------------------------------------------------
     //
     // An override REPLACES a joint's model-space transform for one tick, and

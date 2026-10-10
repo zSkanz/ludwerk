@@ -1,0 +1,68 @@
+{
+ "rogue": {
+  "hips": "hips",
+  "feet": [
+   "foot.l",
+   "foot.r"
+  ],
+  "head": "head",
+  "hands": [
+   "wrist.l",
+   "wrist.r"
+  ],
+  "slots": [
+   "handslot.l",
+   "handslot.r"
+  ],
+  "height": 1.801,
+  "ankle": 0.1162,
+  "eyes": [
+   -0.0,
+   0.3231,
+   0.3635
+  ]
+ },
+ "skeleton": {
+  "hips": "hips",
+  "feet": [
+   "foot.l",
+   "foot.r"
+  ],
+  "head": "head",
+  "hands": [
+   "wrist.l",
+   "wrist.r"
+  ],
+  "slots": [
+   "handslot.l",
+   "handslot.r"
+  ],
+  "height": 1.9928,
+  "ankle": 0.1336,
+  "eyes": [
+   -0.0,
+   0.3403,
+   0.3828
+  ]
+ },
+ "mannequin": {
+  "hips": "DEF-hips",
+  "feet": [
+   "DEF-foot.L",
+   "DEF-foot.R"
+  ],
+  "head": "DEF-head",
+  "hands": [
+   "DEF-hand.L",
+   "DEF-hand.R"
+  ],
+  "slots": [],
+  "height": 1.8292,
+  "ankle": 0.1037,
+  "eyes": [
+   -0.0,
+   0.1079,
+   0.1138
+  ]
+ }
+}

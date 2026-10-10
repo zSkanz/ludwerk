@@ -1171,9 +1171,29 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         // written before this existed produces exactly the matrix it did then --
         // and the multiply is skipped outright when they match, which is every
         // part nobody has resized.
-        Mat4 transform = core::toRenderMatrix(posed.part(id), origin);
-        const Vec3 stretch{part->size.x / meshPart.meshSize.x, part->size.y / meshPart.meshSize.y,
-                           part->size.z / meshPart.meshSize.z};
+        //
+        // **A mesh that wears another's pose is drawn in that other's place**
+        // (ADR 0201): its joints are its leader's in the leader's own space,
+        // so it is the leader's part, and the leader's stretch, that put it
+        // in the world -- where its own part stands is not asked. A seam
+        // between a body and its armour cannot open by one being a frame
+        // behind the other.
+        core::InstanceId placed = id;
+        const scene::PartComponent* sized = part;
+        const scene::MeshPartComponent* shaped = &meshPart;
+        if (meshPart.poseFrom.valid() && animation != nullptr) {
+            const core::InstanceId leader = animation->leaderOf(id);
+            const scene::PartComponent* leaderPart = leader.valid() ? world.parts().find(leader) : nullptr;
+            const scene::MeshPartComponent* leaderMesh = leader.valid() ? world.meshParts().find(leader) : nullptr;
+            if (leaderPart != nullptr && leaderMesh != nullptr) {
+                placed = leader;
+                sized = leaderPart;
+                shaped = leaderMesh;
+            }
+        }
+        Mat4 transform = core::toRenderMatrix(posed.part(placed), origin);
+        const Vec3 stretch{sized->size.x / shaped->meshSize.x, sized->size.y / shaped->meshSize.y,
+                           sized->size.z / shaped->meshSize.z};
         if (stretch.x != 1.0f || stretch.y != 1.0f || stretch.z != 1.0f)
             transform = transform * core::scaling(stretch);
         // Transformed by the SCALED matrix, so the cull box and the shadow

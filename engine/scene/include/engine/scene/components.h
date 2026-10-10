@@ -135,6 +135,11 @@ struct MeshPartComponent
     // from the compiled bounds; until then it is one, and a part whose `Size` is
     // also one draws exactly as it did before this field existed.
     core::Vec3 meshSize{1.0f, 1.0f, 1.0f};
+
+    // **The mesh whose pose this one wears** (`PoseFrom`, ADR 0201), or none.
+    // Simulation, like the pose it decides: a `Bone` on a joint of a follower
+    // is read by the tick.
+    core::InstanceId poseFrom;
 };
 
 // `BasePart`'s physical half (M5). Separate from `PartComponent` rather than
@@ -776,6 +781,27 @@ struct IKControlComponent
     bool enabled = true;
     // Seconds.
     f32 smoothing = 0.1f;
+};
+
+// A mouth moved by what is said (ADR 0200): the shape keys of the mesh it is
+// on, driven by the voice a machine is playing under `source` -- by the line's
+// viseme track when the language heard has one, by the sound's frequency
+// bands when it has none, by its loudness alone at the least. Picture: what
+// it does to a face is each machine's own and never the tick's.
+struct LipSyncComponent
+{
+    // Whose voice it is: the instance the lines are said under. None is the
+    // mesh's own parent, which is the character for a face under one.
+    core::InstanceId source;
+    // `Enum.LipSyncMode`: 0 `Auto`, 1 `Bands`, 2 `Loudness`.
+    i32 mode = 0;
+    // The file that says what a viseme, a band and loudness do to this face.
+    // Empty is the one beside the model: `hero.glb`, `hero.face.json`.
+    core::NameAtom map;
+    // The seconds a weight takes to reach where it is going.
+    f32 smoothing = 0.06f;
+    f32 weight = 1.0f;
+    bool enabled = true;
 };
 
 // Two feet and the hips on the ground under them (ADR 0198).
@@ -2541,6 +2567,39 @@ struct SoundComponent
     // Whether `Loaded` has been raised. One shot: the event is a past-tense fact
     // and a sound is loaded once.
     bool loadedFired = false;
+    // `Enum.SoundCategory` (ADR 0200): 0 Effects, 1 Music, 2 Voice. Which of
+    // the player's volumes turns it, and whether music lowers under it.
+    i32 category = 0;
+    // **How many times it has been started from the beginning**: raised by
+    // `Play`, never by `Resume`. What the mixer reads to tell a sound started
+    // again -- and so asked for in the voice language now in force -- from one
+    // that is going on in the language it started in. Not a property, and a
+    // function of the script's own calls.
+    u32 plays = 0;
+    // **A sound nobody keeps** (`AudioService:PlayLocal`, `DialogueService:
+    // Say`): destroyed `SoundLinger` ticks after it ends, once whatever hears
+    // its `Ended` has heard it. `endedFor` counts those ticks, and is -1 while
+    // it has not ended.
+    bool ownsItself = false;
+    i32 endedFor = -1;
+};
+
+// How many ticks a sound that owns itself outlives its end: its `Ended` is
+// raised on the tick it ends and heard at that tick's drains, and a handler
+// that reads the sound a tick later still finds it.
+inline constexpr i32 SoundLinger = 2;
+
+// **What a sound says** (ADR 0200): two catalog keys, the speaker's colour,
+// and how long it shows when nothing was recorded. A child of the `Sound`.
+// The keys are atoms: they travel as names do, and a match's authority reads
+// the world without growing its names.
+struct CaptionComponent
+{
+    core::NameAtom text;
+    core::NameAtom speaker;
+    core::Color3 color{1.0f, 1.0f, 1.0f};
+    // Seconds; 0 is a reading time for the text.
+    f32 seconds = 0.0f;
 };
 
 } // namespace engine::scene

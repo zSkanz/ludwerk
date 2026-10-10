@@ -1,0 +1,9 @@
+{
+  "speakers": {
+    "guide": { "name": "speaker.guide", "color": "#E8B04A" }
+  },
+  "lines": {
+    "hello": { "speaker": "guide", "sound": "asset://voice/act1/hello.wav" },
+    "later": { "speaker": "guide" }
+  }
+}

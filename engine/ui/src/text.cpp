@@ -931,6 +931,18 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
     return static_cast<usize>(std::distance(cache.entries.begin(), inserted));
 }
 
+// **The room a line has, with a hair over** (D623). A label sized to its
+// words is measured at one size and drawn at that size times the screen's
+// scale, in the measured width times the same: one number on paper, and two
+// sums of floats a few millionths apart. Wrapping on that difference put the
+// last word of a line that fits exactly on a line of its own, outside the box
+// made for one. A ten-thousandth of the width is a tenth of a pixel in a
+// thousand, and far more than the sums can differ by.
+[[nodiscard]] f32 wrapRoomOf(f32 maxWidth) noexcept
+{
+    return maxWidth * 1.0001f;
+}
+
 // The advance of one run, in face units. Every width in this file goes through
 // the cache, so a measurement and a draw can never disagree about how wide a
 // character is.
@@ -1002,7 +1014,7 @@ void breakLines(std::string_view text, Face& face, f32 pixelSize, f32 scale, f32
 
         if (maxWidth > 0.0f) {
             const f32 width = (running + advance) * scale;
-            if (width > maxWidth && index > lineBegin) {
+            if (width > wrapRoomOf(maxWidth) && index > lineBegin) {
                 if (lastSpace != std::string_view::npos && lastSpace > lineBegin) {
                     // Break at the space and drop it: a trailing space would
                     // make a centred line sit visibly left of centre.
@@ -1441,7 +1453,7 @@ void breakRichLines(const RichText& text, Face& face, f32 maxWidth, std::vector<
             continue;
         }
         const f32 advance = advanceOf(face, text.styles[glyph.style], glyph.codepoint);
-        if (maxWidth > 0.0f && width + advance > maxWidth && index > lineBegin) {
+        if (maxWidth > 0.0f && width + advance > wrapRoomOf(maxWidth) && index > lineBegin) {
             if (lastSpace != static_cast<usize>(-1) && lastSpace > lineBegin) {
                 finish(lastSpace, widthAtSpace, lastSpace + 1);
                 index = lineBegin;

@@ -236,6 +236,11 @@ void IkControls::update(const scene::World& world, AnimationSystem& animation, c
         if (!mesh.valid() || world.meshParts().find(mesh) == nullptr || animation.jointCount(mesh) == 0 ||
             !animation.seenLately(mesh))
             return false;
+        // **A mesh that wears another's pose has no limbs of its own to
+        // solve** (ADR 0201): its joints are its leader's, and a control on
+        // the leader is what reaches for both.
+        if (animation.leaderOf(mesh).valid())
+            return false;
         return core::length(core::toVec3(poses.part(mesh).position - frame.camera)) <= frame.maxDistance;
     };
     world.ikControls().forEach([&](core::InstanceId id, const scene::IKControlComponent& control) {
@@ -493,7 +498,9 @@ void IkControls::carryHeld(const scene::World& world, const AnimationSystem& ani
         gatherRiding(world, mesh, simulated.size(), riding);
         if (riding.empty())
             continue;
-        const Carrier carrier = carrierOf(world, poses, mesh);
+        // A follower is drawn in its leader's place: what rides one of its
+        // joints is carried from there.
+        const Carrier carrier = carrierOf(world, poses, animation.drawnWith(mesh));
         for (const Riding& one : riding) {
             const Shift shift = shiftOf(carrier, drawn->model[one.joint], simulated[one.joint]);
             if (!shift.any)

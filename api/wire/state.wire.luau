@@ -48,6 +48,7 @@ local Common: { Schema.Field } = {
 local BasePartFields: { Schema.Field } = {
     {
         Name = "CFrame",
+        Carries = { "Position", "Orientation" },
         Id = 1,
         Encoding = "CFrameD",
         Source = "Component",
@@ -340,6 +341,16 @@ local MeshPartFields: { Schema.Field } = {
         Source = "Component",
         Component = "meshParts",
         Doc = "What the mesh measures at its own scale, which is what `Size` is a multiple of.",
+    },
+    {
+        Name = "PoseFrom",
+        Id = 4,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "meshParts",
+        Doc = "**The mesh whose pose it wears** (ADR 0201, protocol 45): a piece of armour a server put on a "
+            .. "hero is on the hero on every machine. The reference travels, when the piece is made and when "
+            .. "it is changed; each machine makes the follower's pose from its own copy of the leader's.",
     },
 }
 
@@ -1960,6 +1971,7 @@ local BallSocketFields: { Schema.Field } = {
     },
     {
         Name = "SwingLimit",
+        Carries = { "UpperAngle" },
         Id = 2,
         Encoding = "F32",
         Source = "Component",
@@ -1992,6 +2004,7 @@ local BallSocketFields: { Schema.Field } = {
     },
     {
         Name = "ServoMaxForce",
+        Carries = { "ServoMaxTorque" },
         Id = 6,
         Encoding = "F32",
         Source = "Component",
@@ -2000,6 +2013,7 @@ local BallSocketFields: { Schema.Field } = {
     },
     {
         Name = "Responsiveness",
+        Carries = { "AngularResponsiveness" },
         Id = 7,
         Encoding = "F32",
         Source = "Component",
@@ -2035,6 +2049,7 @@ local HingeFields: { Schema.Field } = {
     },
     {
         Name = "LimitLow",
+        Carries = { "LowerAngle" },
         Id = 2,
         Encoding = "F32",
         Source = "Component",
@@ -2043,6 +2058,7 @@ local HingeFields: { Schema.Field } = {
     },
     {
         Name = "LimitHigh",
+        Carries = { "UpperAngle" },
         Id = 3,
         Encoding = "F32",
         Source = "Component",
@@ -2059,6 +2075,7 @@ local HingeFields: { Schema.Field } = {
     },
     {
         Name = "MotorVelocity",
+        Carries = { "AngularVelocity" },
         Id = 5,
         Encoding = "F32",
         Source = "Component",
@@ -2067,6 +2084,7 @@ local HingeFields: { Schema.Field } = {
     },
     {
         Name = "MotorMaxForce",
+        Carries = { "MotorMaxTorque" },
         Id = 6,
         Encoding = "F32",
         Source = "Component",
@@ -2083,6 +2101,7 @@ local HingeFields: { Schema.Field } = {
     },
     {
         Name = "ServoTarget",
+        Carries = { "TargetAngle" },
         Id = 8,
         Encoding = "F32",
         Source = "Component",
@@ -2091,6 +2110,7 @@ local HingeFields: { Schema.Field } = {
     },
     {
         Name = "ServoSpeed",
+        Carries = { "AngularSpeed" },
         Id = 9,
         Encoding = "F32",
         Source = "Component",
@@ -2099,6 +2119,7 @@ local HingeFields: { Schema.Field } = {
     },
     {
         Name = "ServoMaxForce",
+        Carries = { "ServoMaxTorque" },
         Id = 10,
         Encoding = "F32",
         Source = "Component",
@@ -2107,6 +2128,7 @@ local HingeFields: { Schema.Field } = {
     },
     {
         Name = "Responsiveness",
+        Carries = { "AngularResponsiveness" },
         Id = 11,
         Encoding = "F32",
         Source = "Component",
@@ -2142,6 +2164,7 @@ local PrismaticFields: { Schema.Field } = {
     },
     {
         Name = "LimitLow",
+        Carries = { "LowerLimit" },
         Id = 2,
         Encoding = "F32",
         Source = "Component",
@@ -2150,6 +2173,7 @@ local PrismaticFields: { Schema.Field } = {
     },
     {
         Name = "LimitHigh",
+        Carries = { "UpperLimit" },
         Id = 3,
         Encoding = "F32",
         Source = "Component",
@@ -2166,6 +2190,7 @@ local PrismaticFields: { Schema.Field } = {
     },
     {
         Name = "MotorVelocity",
+        Carries = { "Velocity" },
         Id = 5,
         Encoding = "F32",
         Source = "Component",
@@ -2190,6 +2215,7 @@ local PrismaticFields: { Schema.Field } = {
     },
     {
         Name = "ServoTarget",
+        Carries = { "TargetPosition" },
         Id = 8,
         Encoding = "F32",
         Source = "Component",
@@ -2198,6 +2224,7 @@ local PrismaticFields: { Schema.Field } = {
     },
     {
         Name = "ServoSpeed",
+        Carries = { "Speed" },
         Id = 9,
         Encoding = "F32",
         Source = "Component",
@@ -2214,6 +2241,7 @@ local PrismaticFields: { Schema.Field } = {
     },
     {
         Name = "Responsiveness",
+        Carries = { "LinearResponsiveness" },
         Id = 11,
         Encoding = "F32",
         Source = "Component",
@@ -2329,6 +2357,7 @@ local RodFields: { Schema.Field } = {
 local SpringFields: { Schema.Field } = {
     {
         Name = "Length",
+        Carries = { "FreeLength" },
         Id = 1,
         Encoding = "F32",
         Source = "Component",
@@ -2397,6 +2426,7 @@ local SpringFields: { Schema.Field } = {
 local LinearVelocityFields: { Schema.Field } = {
     {
         Name = "Mode",
+        Carries = { "VelocityConstraintMode" },
         Id = 1,
         Encoding = "I32",
         Source = "Component",
@@ -2405,6 +2435,7 @@ local LinearVelocityFields: { Schema.Field } = {
     },
     {
         Name = "Vector",
+        Carries = { "VectorVelocity" },
         Id = 2,
         Encoding = "Vector3",
         Source = "Component",
@@ -2472,6 +2503,7 @@ local LinearVelocityFields: { Schema.Field } = {
 local AngularVelocityFields: { Schema.Field } = {
     {
         Name = "Vector",
+        Carries = { "AngularVelocity" },
         Id = 1,
         Encoding = "Vector3",
         Source = "Component",
@@ -2496,6 +2528,7 @@ local AngularVelocityFields: { Schema.Field } = {
     },
     {
         Name = "ReactionEnabled",
+        Carries = { "ReactionTorqueEnabled" },
         Id = 4,
         Encoding = "Bool",
         Source = "Component",
@@ -2539,6 +2572,7 @@ local AlignPositionFields: { Schema.Field } = {
     },
     {
         Name = "MoverResponsiveness",
+        Carries = { "Responsiveness" },
         Id = 5,
         Encoding = "F32",
         Source = "Component",
@@ -2563,6 +2597,7 @@ local AlignPositionFields: { Schema.Field } = {
     },
     {
         Name = "ReactionEnabled",
+        Carries = { "ReactionForceEnabled" },
         Id = 8,
         Encoding = "Bool",
         Source = "Component",
@@ -2571,6 +2606,7 @@ local AlignPositionFields: { Schema.Field } = {
     },
     {
         Name = "MoverStiffness",
+        Carries = { "Stiffness" },
         Id = 9,
         Encoding = "F32",
         Source = "Component",
@@ -2579,6 +2615,7 @@ local AlignPositionFields: { Schema.Field } = {
     },
     {
         Name = "MoverDamping",
+        Carries = { "Damping" },
         Id = 10,
         Encoding = "F32",
         Source = "Component",
@@ -2598,6 +2635,7 @@ local AlignOrientationFields: { Schema.Field } = {
     },
     {
         Name = "Orientation",
+        Carries = { "CFrame" },
         Id = 2,
         Encoding = "CFrameD",
         Source = "Component",
@@ -2622,6 +2660,7 @@ local AlignOrientationFields: { Schema.Field } = {
     },
     {
         Name = "MoverResponsiveness",
+        Carries = { "Responsiveness" },
         Id = 5,
         Encoding = "F32",
         Source = "Component",
@@ -2638,6 +2677,7 @@ local AlignOrientationFields: { Schema.Field } = {
     },
     {
         Name = "ReactionEnabled",
+        Carries = { "ReactionTorqueEnabled" },
         Id = 7,
         Encoding = "Bool",
         Source = "Component",
@@ -2646,6 +2686,7 @@ local AlignOrientationFields: { Schema.Field } = {
     },
     {
         Name = "MoverStiffness",
+        Carries = { "Stiffness" },
         Id = 8,
         Encoding = "F32",
         Source = "Component",
@@ -2654,6 +2695,7 @@ local AlignOrientationFields: { Schema.Field } = {
     },
     {
         Name = "MoverDamping",
+        Carries = { "Damping" },
         Id = 9,
         Encoding = "F32",
         Source = "Component",
@@ -2665,6 +2707,7 @@ local AlignOrientationFields: { Schema.Field } = {
 local VectorForceFields: { Schema.Field } = {
     {
         Name = "Vector",
+        Carries = { "Force" },
         Id = 1,
         Encoding = "Vector3",
         Source = "Component",
@@ -2692,6 +2735,7 @@ local VectorForceFields: { Schema.Field } = {
 local TorqueFields: { Schema.Field } = {
     {
         Name = "Vector",
+        Carries = { "Torque" },
         Id = 1,
         Encoding = "Vector3",
         Source = "Component",
@@ -2955,6 +2999,16 @@ local TrailFields: { Schema.Field } = {
     ),
 }
 
+local lipSync = authored("lipSyncs")
+local LipSyncFields: { Schema.Field } = {
+    lipSync("Source", 1, "InstanceRef", "Whose voice moves this mouth. A network id, written once that copy exists."),
+    lipSync("Mode", 2, "I32", "Whether it may play a line's track, or reads the sound alone."),
+    lipSync("Map", 3, "NameAtom", "The file that says what a viseme does to this face, by content URN."),
+    lipSync("Smoothing", 4, "F32", "How soon a weight gets where it is going."),
+    lipSync("Weight", 5, "F32", "How much of it there is."),
+    lipSync("Enabled", 6, "Bool", "A mouth held shut on the authority is shut for everybody."),
+}
+
 local animationPlayer = authored("animationPlayers")
 local AnimationPlayerFields: { Schema.Field } = {
     animationPlayer(
@@ -3022,6 +3076,27 @@ local SoundFields: { Schema.Field } = {
     sound("PlaybackSpeed", 5, "F32", "How fast, which is its pitch."),
     sound("RollOffMinDistance", 6, "F32", "How near it is at full volume."),
     sound("RollOffMaxDistance", 7, "F32", "How far it is heard at all."),
+    sound(
+        "Category",
+        8,
+        "I32",
+        "Whether it is an effect, music or a voice (ADR 0200): a line a server starts arrives as a voice, "
+            .. "and each machine turns it by its own player's volume for that kind."
+    ),
+}
+
+local caption = authored("captions")
+local CaptionFields: { Schema.Field } = {
+    caption("Text", 1, "NameAtom", "The catalog key of what is said: each machine reads it in its own language."),
+    caption("Speaker", 2, "NameAtom", "The catalog key of who says it, or none."),
+    caption("Color", 3, "Color3", "The speaker's colour."),
+    caption(
+        "Seconds",
+        4,
+        "F32",
+        "How long a sound with no file lasts: it decides the tick the sound ends on, so every machine "
+            .. "has to have it."
+    ),
 }
 
 local Classes: { Schema.Class } = {
@@ -3445,7 +3520,21 @@ local Classes: { Schema.Class } = {
                 Reason = "It names an `AudioGroup`, which is each machine's own and not on the wire: a "
                     .. "sound is heard through the groups of the machine that plays it.",
             },
+            {
+                Name = "TimePosition",
+                Reason = "Where a sound has got to is each machine's own clock of it: a replica starts its "
+                    .. "copy when it sees `Playing` turn true, and a position sent a tick would be late by the "
+                    .. "trip and heard as a stutter.",
+            },
         },
+    },
+    {
+        Name = "Caption",
+        Doc = "What a sound says (ADR 0200), as authored: two catalog keys, a colour and how long it shows "
+            .. "when nothing was recorded. It travels with its `Sound`, so a line a server says is read "
+            .. "on every machine in that machine's own text language. Which captions are current is each "
+            .. "machine's own, worked out from what it hears.",
+        Fields = CaptionFields,
     },
     {
         Name = "AnimationPlayer",
@@ -3474,6 +3563,14 @@ local Classes: { Schema.Class } = {
         Name = "FootPlacement",
         Doc = "Two feet on the ground under them (ADR 0198), as authored; as `IKControl`.",
         Fields = FootPlacementFields,
+    },
+    {
+        Name = "LipSync",
+        Doc = "**A mouth that moves with what is said** (ADR 0200, protocol 45), as authored: whose voice, "
+            .. "and how. A character a server spawns arrives with its mouth, like its lights and its cape. "
+            .. "What moves it is each machine's own -- the track of the language THAT machine hears, its "
+            .. "bands, its loudness -- and nothing of it travels.",
+        Fields = LipSyncFields,
     },
 }
 

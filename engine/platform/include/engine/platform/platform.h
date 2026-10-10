@@ -308,4 +308,27 @@ void pickFiles(Window& window, std::string_view startIn, bool allowMany,
 // most wanted first: `pt-BR`, `en-US`. Empty where the system does not say.
 [[nodiscard]] std::vector<std::string> preferredLocales();
 
+// **The language a platform's own client says the game is in** (ADR 0200), in
+// its order of preference, or nothing. A store's client has a language
+// setting a game, and a player who set this game to French there expects
+// French on a machine whose system is in English: so it is asked AFTER what
+// the player chose in the game and BEFORE the system's own list.
+//
+// Empty until somebody answers. No store's SDK is in the engine (ADR 0188):
+// an optional provider module, built against the developer's own
+// installation, calls `setProviderLocales` when it starts.
+[[nodiscard]] inline std::vector<std::string>& providerLocaleList()
+{
+    static std::vector<std::string> list;
+    return list;
+}
+[[nodiscard]] inline std::vector<std::string> providerLocales()
+{
+    return providerLocaleList();
+}
+inline void setProviderLocales(std::vector<std::string> locales)
+{
+    providerLocaleList() = std::move(locales);
+}
+
 } // namespace engine::platform

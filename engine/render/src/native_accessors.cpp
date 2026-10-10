@@ -112,6 +112,35 @@ using scene::Value;
 
 // --- MeshPart ---------------------------------------------------------------
 
+// MeshPart.PoseFrom (ADR 0201): a reference, kept as written. Who it leads to
+// is found by the animation system each tick, so naming a mesh that is not
+// skinned, or itself, is stored and follows nobody.
+Value getMeshPartPoseFrom(const scene::World& world, core::InstanceId id)
+{
+    const scene::MeshPartComponent* mesh = world.meshParts().find(id);
+    if (mesh == nullptr || !mesh->poseFrom.valid() || !world.alive(mesh->poseFrom))
+        return Value{};
+    return Value{mesh->poseFrom};
+}
+
+bool setMeshPartPoseFrom(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::MeshPartComponent* mesh = world.meshParts().find(id);
+    if (mesh == nullptr)
+        return false;
+    if (const auto* reference = std::get_if<core::InstanceId>(&value); reference != nullptr) {
+        // Only a mesh can be worn.
+        if (reference->valid() && world.meshParts().find(*reference) == nullptr)
+            return false;
+        mesh->poseFrom = *reference;
+        return true;
+    }
+    if (scene::valueType(value) != scene::ValueType::Nil)
+        return false;
+    mesh->poseFrom = core::InstanceId{};
+    return true;
+}
+
 Value getMeshPartMeshContent(const scene::World& world, core::InstanceId id)
 {
     const scene::MeshPartComponent* mesh = readMeshPart(world, id);
@@ -4050,6 +4079,98 @@ bool setTrailEnabled(scene::World& world, core::InstanceId id, const Value& valu
         return false;
     self->enabled = *next;
     return true;
+}
+
+// --- LipSync (ADR 0200) ---------------------------------------------------------
+
+void attachLipSyncComponents(scene::World& world, core::InstanceId id)
+{
+    world.lipSyncs().add(id, scene::LipSyncComponent{});
+}
+
+void detachLipSyncComponents(scene::World& world, core::InstanceId id)
+{
+    world.lipSyncs().remove(id);
+}
+
+Value getLipSyncSource(const scene::World& world, core::InstanceId id)
+{
+    const scene::LipSyncComponent* self = world.lipSyncs().find(id);
+    if (self == nullptr || !self->source.valid() || !world.alive(self->source) || world.destroyed(self->source))
+        return Value{};
+    return Value{self->source};
+}
+
+bool setLipSyncSource(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::LipSyncComponent* self = world.lipSyncs().find(id);
+    if (self == nullptr)
+        return false;
+    if (const auto* reference = std::get_if<core::InstanceId>(&value); reference != nullptr) {
+        self->source = *reference;
+        return true;
+    }
+    if (scene::valueType(value) != scene::ValueType::Nil)
+        return false;
+    self->source = core::InstanceId{};
+    return true;
+}
+
+Value getLipSyncMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::LipSyncComponent* self = world.lipSyncs().find(id);
+    return self == nullptr ? Value{} : Value{scene::EnumValue{generated::LipSyncModeEnumId, self->mode}};
+}
+
+bool setLipSyncMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::LipSyncComponent* self = world.lipSyncs().find(id);
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    if (self == nullptr || item == nullptr || item->enumId != generated::LipSyncModeEnumId ||
+        world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    self->mode = item->value;
+    return true;
+}
+
+Value getLipSyncMap(const scene::World& world, core::InstanceId id)
+{
+    return readJoint(world, world.lipSyncs().find(id), &scene::LipSyncComponent::map);
+}
+
+bool setLipSyncMap(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeJoint(world, world.lipSyncs().find(id), &scene::LipSyncComponent::map, value);
+}
+
+Value getLipSyncSmoothing(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.lipSyncs().find(id), &scene::LipSyncComponent::smoothing);
+}
+
+bool setLipSyncSmoothing(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.lipSyncs().find(id), &scene::LipSyncComponent::smoothing, value, 0.0, 1.0);
+}
+
+Value getLipSyncWeight(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.lipSyncs().find(id), &scene::LipSyncComponent::weight);
+}
+
+bool setLipSyncWeight(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.lipSyncs().find(id), &scene::LipSyncComponent::weight, value, 0.0, 2.0);
+}
+
+Value getLipSyncEnabled(const scene::World& world, core::InstanceId id)
+{
+    return readFlag(world.lipSyncs().find(id), &scene::LipSyncComponent::enabled);
+}
+
+bool setLipSyncEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeFlag(world.lipSyncs().find(id), &scene::LipSyncComponent::enabled, value);
 }
 
 } // namespace engine::render::native

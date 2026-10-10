@@ -469,7 +469,10 @@ to.
 | `Highlight` | Yes | Every property. Its `Adornee` arrives as that machine's copy of what it names. |
 | `Beam`, `Trail` | Yes | Every property, the sequences and the two attachments among them, and a trail's `Clear`. A trail's pieces are laid on each machine. |
 | `SpringBone`, `SpringCollider` | Yes | Every property. The swing is each machine's own, at its own frame rate. |
-| `Sound` | Yes | `Content`, `Playing`, `Looped`, `Volume`, `PlaybackSpeed` and the two roll-off distances. Never `TimePosition`, and not its `Group`. |
+| `Sound` | Yes | `Content`, `Playing`, `Looped`, `Volume`, `PlaybackSpeed`, `Category` and the two roll-off distances. Never `TimePosition`, and not its `Group`. Each machine finds `Content` in its own voice language ([Dubbing](manual:audio/dubbing)). |
+| `Caption` | Yes | Every property: a line a server says is read on every machine, in each one's own text language. |
+| `LipSync` | Yes | Every property. The mouth is moved on each machine, from what it plays. |
+| A `MeshPart` worn on another | Yes | `PoseFrom` arrives as that machine's copy of the body it names, and each machine makes the piece's pose from its own copy of the body's ([Wearing and holding](manual:animation/wearing-and-holding)). |
 | `ClickDetector`, `RemoteEvent`, `UnreliableRemoteEvent`, `RemoteFunction` | Yes | A detector's properties; a remote is the instance itself. |
 | `AnimationPlayer` | Yes | Its `Graph` and its `Retargeting`, and nothing of what it is playing: no clip, time, weight or state, and no parameter a script set. Each machine steps its own graph, from the body's motion and the character's attributes -- which do arrive -- so every machine shows the same walk without a byte of it being sent. A track a script plays is that machine's own. |
 | `IKControl`, `FootPlacement` | Yes | Every property. The bending is each machine's own, worked out from the pose it drew. |

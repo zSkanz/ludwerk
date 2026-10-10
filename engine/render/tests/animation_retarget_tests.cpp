@@ -9,8 +9,10 @@
 #include <cmath>
 #include <doctest/doctest.h>
 #include <initializer_list>
+#include <optional>
 #include <string>
 
+#include "engine/asset/animation_graph.h"
 #include "engine/render/animation.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/components.h"
@@ -142,6 +144,7 @@ struct Fixture
     scene::ClassId instanceClass = scene::InvalidClass;
     scene::ClassId meshPartClass = scene::InvalidClass;
     scene::ClassId playerClass = scene::InvalidClass;
+    scene::ClassId bodyClass = scene::InvalidClass;
 
     Fixture()
     {
@@ -169,6 +172,20 @@ struct Fixture
         };
         animator.detachComponents = [](scene::World& w, core::InstanceId id) { w.animationPlayers().remove(id); };
         playerClass = classes.registerClass(animator);
+
+        scene::ClassDescriptor character;
+        character.name = atoms.intern("CharacterBody");
+        character.super = instanceClass;
+        character.defaultName = character.name;
+        character.attachComponents = [](scene::World& w, core::InstanceId id) {
+            w.parts().add(id, scene::PartComponent{});
+            w.characterBodies().add(id, scene::CharacterBodyComponent{});
+        };
+        character.detachComponents = [](scene::World& w, core::InstanceId id) {
+            w.characterBodies().remove(id);
+            w.parts().remove(id);
+        };
+        bodyClass = classes.registerClass(character);
     }
 
     Fixture(const Fixture&) = delete;
@@ -283,4 +300,95 @@ TEST_CASE("retargeting: two files that are one skeleton are carried as they alwa
     const core::Vec3 arm = placeOf(pose->model[SourceLeftForeArm]) - placeOf(pose->model[SourceLeftArm]);
     CHECK(static_cast<double>(arm.x) == doctest::Approx(0.0).epsilon(1.0e-4));
     CHECK(static_cast<double>(arm.y) == doctest::Approx(0.9).epsilon(1.0e-4));
+}
+
+TEST_CASE("retargeting: a graph reads how fast a body goes in the strides of the body its clips were made on")
+{
+    // A walk is so many strides a second, and a stride is as long as the legs
+    // that take it. A library's walk covers 1.5 metres a second on the body it
+    // was made on; carried to a body whose legs are half as long -- the hips'
+    // travel scaled with them, ADR 0199 -- the same clip covers 0.75. A graph
+    // that places its clips by speed asked that short body's metres a second,
+    // found "0.75" halfway to the walk, and played half a walk under a body
+    // moving at the whole walk's pace: its feet slid.
+    //
+    // So a speed a graph reads of a body is the body's, over how much longer
+    // or shorter its legs are than the library's: what the library's own body
+    // would be doing to keep that step.
+    Fixture fixture;
+    render::SkeletonLibrary::Entry library = tall();
+    for (const char* name : {"Idle", "Walk"}) {
+        asset::AnimationClip clip = raise();
+        clip.name = name;
+        library.clips.push_back(clip);
+    }
+    fixture.skeletons.set(fixture.clips, std::move(library));
+    const core::NameAtom shortModel = fixture.atoms.intern("asset://models/short.glb");
+    fixture.skeletons.set(shortModel, stocky());
+    const core::NameAtom sameModel = fixture.atoms.intern("asset://models/same.glb");
+    fixture.skeletons.set(sameModel, tall());
+
+    render::GraphLibrary graphs;
+    const core::NameAtom graphContent = fixture.atoms.intern("asset://anim/hero.animgraph.json");
+    asset::GraphReadError error;
+    std::optional<asset::AnimationGraph> graph = asset::readAnimationGraph(R"({
+      "format": "animgraph", "version": 1,
+      "library": "asset://clips/library.glb",
+      "parameters": { "Speed": { "number": 0, "from": "CharacterBody.Speed" },
+                      "MoveX": { "number": 0, "from": "CharacterBody.MoveX" },
+                      "MoveZ": { "number": 0, "from": "CharacterBody.MoveZ" },
+                      "Rise": { "number": 0, "from": "CharacterBody.VerticalSpeed" } },
+      "layers": [ { "name": "Body", "start": "Move",
+        "states": { "Move": { "blend": "Speed",
+                              "clips": [ { "clip": "Idle", "at": 0 }, { "clip": "Walk", "at": 1.5 } ] } } } ]
+    })",
+                                                                           &error);
+    REQUIRE_MESSAGE(graph.has_value(), error.where << ": " << error.what);
+    graphs.set(graphContent, std::move(*graph), fixture.atoms);
+
+    struct Walker
+    {
+        core::InstanceId body;
+        core::InstanceId player;
+    };
+    const auto walker = [&](core::NameAtom model) {
+        Walker made;
+        made.body = fixture.world.create(fixture.bodyClass);
+        const core::InstanceId mesh = fixture.world.create(fixture.meshPartClass);
+        fixture.world.meshParts().find(mesh)->meshContent = model;
+        (void)fixture.world.setParent(mesh, made.body);
+        made.player = fixture.world.create(fixture.playerClass);
+        (void)fixture.world.setParent(made.player, made.body);
+        fixture.world.animationPlayers().find(made.player)->graph = graphContent;
+        return made;
+    };
+    const Walker shortLegs = walker(shortModel);
+    const Walker sameLegs = walker(sameModel);
+
+    render::AnimationSystem animation{fixture.world, fixture.skeletons};
+    animation.setGraphs(&graphs);
+    // Both at 0.75 metres a second: forwards and a little to the right, and
+    // rising at one metre a second.
+    constexpr double Tick = 1.0 / 60.0;
+    for (int tick = 0; tick < 40; ++tick) {
+        for (const Walker& one : {shortLegs, sameLegs}) {
+            core::DVec3& at = fixture.world.parts().find(one.body)->cframe.position;
+            at.z -= 0.6 * Tick;
+            at.x += 0.45 * Tick;
+            at.y += 1.0 * Tick;
+        }
+        animation.sample(Tick);
+    }
+    const auto read = [&](const Walker& one, const char* name) {
+        return static_cast<double>(animation.graphParameter(one.player, name).value);
+    };
+    // The library's own body: metres a second, as they are.
+    CHECK(read(sameLegs, "Speed") == doctest::Approx(0.75).epsilon(0.01));
+    CHECK(read(sameLegs, "MoveZ") == doctest::Approx(0.6).epsilon(0.01));
+    // Legs half as long: the whole of the library's walk.
+    CHECK(read(shortLegs, "Speed") == doctest::Approx(1.5).epsilon(0.01));
+    CHECK(read(shortLegs, "MoveZ") == doctest::Approx(1.2).epsilon(0.01));
+    CHECK(read(shortLegs, "MoveX") == doctest::Approx(0.9).epsilon(0.01));
+    // How fast it rises is a fall's and a jump's, which no leg takes.
+    CHECK(read(shortLegs, "Rise") == doctest::Approx(1.0).epsilon(0.01));
 }

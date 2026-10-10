@@ -918,6 +918,161 @@ TEST_CASE("retarget: a column numbered as one spine has its hips, its neck and i
     CHECK(retarget::assignRoles(jointsOf(rig)).body());
 }
 
+// --- Families met in real files (2026-10-10) -------------------------------------------
+//
+// The joint names below are those of rigs the mapper was run over: a game's
+// own heroes and three packs of free characters. Names only; no file.
+
+TEST_CASE("retarget: a rig of a dozen joints in one short word each -- Arm, Fore, Hand, Leg, Shin, Foot")
+{
+    std::vector<Named> rig{
+        {"Root", "", Role::None},
+        {"Hips", "Root", Role::Hips},
+        {"Chest", "Hips", Role::Spine},
+        {"Head", "Chest", Role::Head},
+    };
+    for (const bool left : {false, true}) {
+        const std::string side = left ? "L" : "R";
+        rig.push_back({"Arm" + side, "Chest", sided(left, Role::LeftUpperArm, Role::RightUpperArm)});
+        rig.push_back({"Fore" + side, "Arm" + side, sided(left, Role::LeftLowerArm, Role::RightLowerArm)});
+        rig.push_back({"Hand" + side, "Fore" + side, sided(left, Role::LeftHand, Role::RightHand)});
+        rig.push_back({"Leg" + side, "Hips", sided(left, Role::LeftUpperLeg, Role::RightUpperLeg)});
+        rig.push_back({"Shin" + side, "Leg" + side, sided(left, Role::LeftLowerLeg, Role::RightLowerLeg)});
+        rig.push_back({"Foot" + side, "Shin" + side, sided(left, Role::LeftFoot, Role::RightFoot)});
+    }
+    checkRoles(rig, false);
+    CHECK(retarget::assignRoles(jointsOf(rig)).body());
+}
+
+TEST_CASE("retarget: a rig with a wrist and a hand, and the handles it was animated with beside it")
+{
+    std::vector<Named> rig{
+        {"root", "", Role::None},        {"hips", "root", Role::Hips},  {"spine", "hips", Role::Spine},
+        {"chest", "spine", Role::Chest}, {"head", "chest", Role::Head},
+    };
+    for (const bool left : {true, false}) {
+        const std::string side = left ? ".l" : ".r";
+        rig.push_back({"upperarm" + side, "chest", sided(left, Role::LeftUpperArm, Role::RightUpperArm)});
+        rig.push_back({"lowerarm" + side, "upperarm" + side, sided(left, Role::LeftLowerArm, Role::RightLowerArm)});
+        // The wrist is the joint the forearm ends at; the hand under it is a
+        // second joint of the same part.
+        rig.push_back({"wrist" + side, "lowerarm" + side, sided(left, Role::LeftHand, Role::RightHand)});
+        rig.push_back({"hand" + side, "wrist" + side, Role::None});
+        rig.push_back({"handslot" + side, "hand" + side, Role::None});
+        rig.push_back({"upperleg" + side, "hips", sided(left, Role::LeftUpperLeg, Role::RightUpperLeg)});
+        rig.push_back({"lowerleg" + side, "upperleg" + side, sided(left, Role::LeftLowerLeg, Role::RightLowerLeg)});
+        rig.push_back({"foot" + side, "lowerleg" + side, sided(left, Role::LeftFoot, Role::RightFoot)});
+        rig.push_back({"toes" + side, "foot" + side, sided(left, Role::LeftToes, Role::RightToes)});
+        rig.push_back({"kneeIK" + side, "root", Role::None});
+        rig.push_back({"control-toe-roll" + side, "root", Role::None});
+        rig.push_back({"control-heel-roll" + side, "control-toe-roll" + side, Role::None});
+        rig.push_back({"control-foot-roll" + side, "control-heel-roll" + side, Role::None});
+        rig.push_back({"heelIK" + side, "control-foot-roll" + side, Role::None});
+        rig.push_back({"IK-foot" + side, "control-foot-roll" + side, Role::None});
+        rig.push_back({"IK-toe" + side, "control-heel-roll" + side, Role::None});
+        rig.push_back({"elbowIK" + side, "root", Role::None});
+        rig.push_back({"handIK" + side, "root", Role::None});
+    }
+    checkRoles(rig, false);
+    CHECK(retarget::assignRoles(jointsOf(rig)).body());
+}
+
+TEST_CASE("retarget: handles exported as joints -- feet under the root, a body above the hips, a finger's first joint")
+{
+    // The legs and the back hang from `Body`, which is what a clip moves as
+    // the hips; the joint CALLED hips is the first of the back. The feet lie
+    // under the root, where the legs' handles were, and are no part of a leg.
+    // A finger is `Thumb` and `Thumb2`; the palms are nothing.
+    std::vector<Named> rig{
+        {"Bone", "", Role::None},         {"Body", "Bone", Role::Hips},           {"Hips", "Body", Role::Spine},
+        {"Abdomen", "Hips", Role::Chest}, {"Torso", "Abdomen", Role::UpperChest}, {"Neck", "Torso", Role::Neck},
+        {"Head", "Neck", Role::Head},
+    };
+    for (const bool left : {true, false}) {
+        const std::string side = left ? ".L" : ".R";
+        rig.push_back({"Foot" + side, "Bone", Role::None});
+        rig.push_back({"PoleTarget" + side, "Bone", Role::None});
+        rig.push_back({"Shoulder" + side, "Torso", sided(left, Role::LeftShoulder, Role::RightShoulder)});
+        rig.push_back({"UpperArm" + side, "Shoulder" + side, sided(left, Role::LeftUpperArm, Role::RightUpperArm)});
+        rig.push_back({"LowerArm" + side, "UpperArm" + side, sided(left, Role::LeftLowerArm, Role::RightLowerArm)});
+        rig.push_back({"Palm1" + side, "LowerArm" + side, Role::None});
+        rig.push_back({"Index" + side, "Palm1" + side, finger(left, 1, 0)});
+        rig.push_back({"Index2" + side, "Index" + side, finger(left, 1, 1)});
+        rig.push_back({"Palm2" + side, "LowerArm" + side, Role::None});
+        rig.push_back({"Middle1" + side, "Palm2" + side, finger(left, 2, 0)});
+        rig.push_back({"Middle2" + side, "Middle1" + side, finger(left, 2, 1)});
+        rig.push_back({"Thumb" + side, "LowerArm" + side, finger(left, 0, 0)});
+        rig.push_back({"Thumb2" + side, "Thumb" + side, finger(left, 0, 1)});
+        rig.push_back({"UpperLeg" + side, "Body", sided(left, Role::LeftUpperLeg, Role::RightUpperLeg)});
+        rig.push_back({"LowerLeg" + side, "UpperLeg" + side, sided(left, Role::LeftLowerLeg, Role::RightLowerLeg)});
+    }
+    checkRoles(rig, false);
+    CHECK(retarget::assignRoles(jointsOf(rig)).body());
+
+    // A handle that is nearer the root than the real foot does not take the
+    // role from it.
+    std::vector<Named> both{
+        {"Root", "", Role::None},
+        {"Hips", "Root", Role::Hips},
+        {"Spine", "Hips", Role::Spine},
+        {"Foot.L", "Root", Role::None},
+        {"UpperLeg.L", "Hips", Role::LeftUpperLeg},
+        {"LowerLeg.L", "UpperLeg.L", Role::LeftLowerLeg},
+        {"Foot_L", "LowerLeg.L", Role::LeftFoot},
+        {"Hand.L", "Root", Role::None},
+        {"UpperArm.L", "Spine", Role::LeftUpperArm},
+        {"LowerArm.L", "UpperArm.L", Role::LeftLowerArm},
+    };
+    checkRoles(both, false);
+
+    // Legs that hang from the rig's ROOT leave the named hips the hips: a root
+    // stays where the character is put, and is never what a clip moves.
+    checkRoles(
+        {
+            {"Root", "", Role::None},
+            {"Hips", "Root", Role::Hips},
+            {"Spine", "Hips", Role::Spine},
+            {"UpperLeg.L", "Root", Role::LeftUpperLeg},
+            {"UpperLeg.R", "Root", Role::RightUpperLeg},
+        },
+        false);
+}
+
+TEST_CASE("retarget: the avatar format's rig, which says the middle and the sides after its prefix")
+{
+    std::vector<Named> rig{
+        {"Root", "", Role::None},
+        {"J_Bip_C_Hips", "Root", Role::Hips},
+        {"J_Bip_C_Spine", "J_Bip_C_Hips", Role::Spine},
+        {"J_Bip_C_Chest", "J_Bip_C_Spine", Role::Chest},
+        {"J_Bip_C_UpperChest", "J_Bip_C_Chest", Role::UpperChest},
+        {"J_Bip_C_Neck", "J_Bip_C_UpperChest", Role::Neck},
+        {"J_Bip_C_Head", "J_Bip_C_Neck", Role::Head},
+        {"J_Sec_Hair1_01", "J_Bip_C_Head", Role::None},
+    };
+    constexpr const char* Fingers[] = {"Thumb", "Index", "Middle", "Ring", "Little"};
+    for (const bool left : {true, false}) {
+        const std::string side = left ? "J_Bip_L_" : "J_Bip_R_";
+        rig.push_back({side + "Shoulder", "J_Bip_C_UpperChest", sided(left, Role::LeftShoulder, Role::RightShoulder)});
+        rig.push_back({side + "UpperArm", side + "Shoulder", sided(left, Role::LeftUpperArm, Role::RightUpperArm)});
+        rig.push_back({side + "LowerArm", side + "UpperArm", sided(left, Role::LeftLowerArm, Role::RightLowerArm)});
+        rig.push_back({side + "Hand", side + "LowerArm", sided(left, Role::LeftHand, Role::RightHand)});
+        for (u32 which = 0; which < 5; ++which) {
+            std::string parent = side + "Hand";
+            for (u32 joint = 0; joint < 3; ++joint) {
+                const std::string name = side + Fingers[which] + std::to_string(joint + 1);
+                rig.push_back({name, parent, finger(left, which, joint)});
+                parent = name;
+            }
+        }
+        rig.push_back({side + "UpperLeg", "J_Bip_C_Hips", sided(left, Role::LeftUpperLeg, Role::RightUpperLeg)});
+        rig.push_back({side + "LowerLeg", side + "UpperLeg", sided(left, Role::LeftLowerLeg, Role::RightLowerLeg)});
+        rig.push_back({side + "Foot", side + "LowerLeg", sided(left, Role::LeftFoot, Role::RightFoot)});
+        rig.push_back({side + "ToeBase", side + "Foot", sided(left, Role::LeftToes, Role::RightToes)});
+    }
+    checkRoles(rig, true);
+}
+
 TEST_CASE("retarget: a tail is not a body, and neither is a body with an arm missing")
 {
     CHECK_FALSE(retarget::assignRoles(tailRig()).body());
@@ -1372,4 +1527,202 @@ TEST_CASE("retarget: the same two rigs make the same map, to the bit")
     CHECK(first.map.post == second.map.post);
     CHECK(first.map.rest == second.map.rest);
     CHECK(first.map.hipsScale == second.map.hipsScale);
+}
+
+// --- Rigs that stand another way ---------------------------------------------------
+
+namespace {
+
+// The whole rig turned in its own space: every root's rest goes round, and
+// with it everything below. A body that faces the other way, or a rig whose
+// joints rest in a space with another axis up.
+std::vector<asset::Joint> turnedWhole(std::vector<asset::Joint> joints, const core::Mat3& turn)
+{
+    for (asset::Joint& joint : joints) {
+        if (joint.parent == asset::Joint::NoParent)
+            joint.localBind = core::CFrameD{core::DVec3{}, turn} * joint.localBind;
+    }
+    return joints;
+}
+
+// A walk's worth of a pose on the source: the left arm up, the right leg
+// swung forward with its knee bent back, the hips turned and moved.
+Local stride(const std::vector<asset::Joint>& source)
+{
+    Local pose = restOf(source);
+    const usize hips = at(source, "mixamorig:Hips");
+    turnInModel(source, pose, hips, core::rotationY(0.3f));
+    pose.translation[hips] = pose.translation[hips] + core::DVec3{0.05, -0.1, 0.2};
+    turnInModel(source, pose, at(source, "mixamorig:LeftArm"), core::rotationZ(0.9f));
+    turnInModel(source, pose, at(source, "mixamorig:RightUpLeg"), core::rotationX(-0.6f));
+    turnInModel(source, pose, at(source, "mixamorig:RightLeg"), core::rotationX(0.8f));
+    return pose;
+}
+
+} // namespace
+
+TEST_CASE("retarget: a body that faces the other way walks the same way round")
+{
+    // The target as it is, and the same target drawn looking along -Z: its
+    // left is at -X. A leg the clip swings FORWARD goes to the front of each,
+    // which in the second's own space is the opposite way.
+    const Pair pair = twoBodies();
+    const core::Mat3 about = core::rotationY(Pi);
+    const std::vector<asset::Joint> turned = turnedWhole(pair.target, about);
+    const retarget::RigRoles turnedRoles = retarget::assignRoles(turned);
+    const retarget::Map map = retarget::buildMap(pair.source, pair.sourceRoles, turned, turnedRoles);
+    REQUIRE(map.roles);
+
+    const Local pose = stride(pair.source);
+    const std::vector<core::CFrameD> plain = modelOf(pair.target, carried(pair.map, pose, pair.target));
+    const std::vector<core::CFrameD> faced = modelOf(turned, carried(map, pose, turned));
+    for (usize joint = 0; joint < turned.size(); ++joint) {
+        INFO("joint " << turned[joint].name);
+        CHECK(nearly(core::toVec3(faced[joint].position), about * core::toVec3(plain[joint].position), 1.0e-4f));
+        CHECK(sameRotation(faced[joint].rotation, about * plain[joint].rotation, 1.0e-4f));
+    }
+    // And it is a walk: the right foot is ahead of the hips, the way the body
+    // looks.
+    const usize foot = at(turned, "foot_r");
+    const usize hips = at(turned, "pelvis");
+    CHECK(plain[foot].position.z - plain[hips].position.z > 0.05);
+    CHECK(faced[foot].position.z - faced[hips].position.z < -0.05);
+}
+
+TEST_CASE("retarget: a rig whose joints rest in a space with another axis up is carried as the body it is")
+{
+    // What a file converted from an older format looks like from inside: a
+    // node that is no joint stands the rig up, so the joints themselves lie
+    // along +Z. The clip is the same clip, said in that space.
+    const Pair pair = twoBodies();
+    const core::Mat3 lying = core::rotationX(Pi * 0.5f);
+    const std::vector<asset::Joint> source = turnedWhole(pair.source, lying);
+    const retarget::RigRoles sourceRoles = retarget::assignRoles(source);
+    const retarget::Map map = retarget::buildMap(source, sourceRoles, pair.target, pair.targetRoles);
+    REQUIRE(map.roles);
+    CHECK(map.hipsScale == doctest::Approx(pair.map.hipsScale).epsilon(1.0e-6));
+
+    const Local pose = stride(pair.source);
+    Local said = pose;
+    for (usize joint = 0; joint < source.size(); ++joint) {
+        if (source[joint].parent != asset::Joint::NoParent)
+            continue;
+        const std::array<f32, 4>& q = pose.rotation[joint];
+        said.rotation[joint] = quaternionOf(lying * core::fromQuaternion(q[0], q[1], q[2], q[3]));
+        said.translation[joint] = core::toDVec3(lying * core::toVec3(pose.translation[joint]));
+    }
+
+    const std::vector<core::CFrameD> plain = modelOf(pair.target, carried(pair.map, pose, pair.target));
+    const std::vector<core::CFrameD> stood = modelOf(pair.target, carried(map, said, pair.target));
+    for (usize joint = 0; joint < pair.target.size(); ++joint) {
+        INFO("joint " << pair.target[joint].name);
+        CHECK(nearly(core::toVec3(stood[joint].position), core::toVec3(plain[joint].position), 1.0e-4f));
+        CHECK(sameRotation(stood[joint].rotation, plain[joint].rotation, 1.0e-4f));
+    }
+
+    // Both ways at once, and the target the one that lies: nothing but the
+    // space changes.
+    const std::vector<asset::Joint> target = turnedWhole(pair.target, lying);
+    const retarget::Map both = retarget::buildMap(source, sourceRoles, target, retarget::assignRoles(target));
+    const std::vector<core::CFrameD> lain = modelOf(target, carried(both, said, target));
+    for (usize joint = 0; joint < target.size(); ++joint) {
+        INFO("joint " << target[joint].name);
+        CHECK(nearly(core::toVec3(lain[joint].position), lying * core::toVec3(plain[joint].position), 1.0e-4f));
+    }
+}
+
+namespace {
+
+// The rig hung under one more joint, `root`, turned as said: what an exporter
+// writes above the hips to stand a rig up.
+std::vector<asset::Joint> underRoot(const std::vector<asset::Joint>& joints, const core::Mat3& turn)
+{
+    const core::CFrameD frame{core::DVec3{}, turn};
+    std::vector<asset::Joint> out;
+    asset::Joint root;
+    root.name = "root";
+    root.localBind = frame;
+    out.push_back(root);
+    for (asset::Joint joint : joints) {
+        if (joint.parent == asset::Joint::NoParent) {
+            joint.parent = 0;
+            joint.localBind = core::inverse(frame) * joint.localBind;
+        }
+        else {
+            joint.parent += 1;
+        }
+        out.push_back(joint);
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("retarget: a root above the hips is the rig's own, and is not carried by its name")
+{
+    // Both rigs have a joint called `root` above their hips. The source's
+    // rests upright and the target's lies a quarter turn over; a clip keys the
+    // source's at its rest. By its name that laid the target on its back.
+    const Pair pair = twoBodies();
+    const std::vector<asset::Joint> source = underRoot(pair.source, core::Mat3{});
+    const retarget::RigRoles sourceRoles = retarget::assignRoles(source);
+    const retarget::Map map = retarget::buildMap(source, sourceRoles, pair.target, pair.targetRoles);
+    REQUIRE(map.roles);
+    CHECK(map.slots[at(source, "root")] == -1);
+    // A joint with no role that is not above the hips still goes by its name.
+    CHECK(map.slots[at(source, "Tail")] == static_cast<i32>(at(pair.target, "Tail")));
+
+    const Local plainPose = stride(pair.source);
+    Local pose = restOf(source);
+    for (usize joint = 0; joint < pair.source.size(); ++joint) {
+        pose.rotation[joint + 1] = plainPose.rotation[joint];
+        pose.translation[joint + 1] = plainPose.translation[joint];
+    }
+    const std::vector<core::CFrameD> plain = modelOf(pair.target, carried(pair.map, plainPose, pair.target));
+    const std::vector<core::CFrameD> rooted = modelOf(pair.target, carried(map, pose, pair.target));
+    for (usize joint = 0; joint < pair.target.size(); ++joint) {
+        INFO("joint " << pair.target[joint].name);
+        CHECK(nearly(core::toVec3(rooted[joint].position), core::toVec3(plain[joint].position), 1.0e-4f));
+        CHECK(sameRotation(rooted[joint].rotation, plain[joint].rotation, 1.0e-4f));
+    }
+
+    // The other way about: the source's root lies over and the target's
+    // stands, and the target still stands.
+    const std::vector<asset::Joint> lying = underRoot(pair.source, core::rotationX(-Pi * 0.5f));
+    const std::vector<asset::Joint> standing = underRoot(turnedWhole(pair.source, core::Mat3{}), core::Mat3{});
+    const retarget::Map over =
+        retarget::buildMap(lying, retarget::assignRoles(lying), standing, retarget::assignRoles(standing));
+    REQUIRE(over.roles);
+    CHECK(over.slots[at(lying, "root")] == -1);
+    const std::vector<core::CFrameD> stood = modelOf(standing, carried(over, restOf(lying), standing));
+    const std::vector<core::CFrameD> rest = modelOf(standing, restOf(standing));
+    for (usize joint = 0; joint < standing.size(); ++joint) {
+        INFO("joint " << standing[joint].name);
+        CHECK(nearly(core::toVec3(stood[joint].position), core::toVec3(rest[joint].position), 1.0e-4f));
+    }
+}
+
+TEST_CASE("retarget: a back that starts below the hips does not turn the other rig's pelvis over")
+{
+    // The source's first joint of the back lies below and behind its hips, as
+    // a rig has it whose legs hang from a joint above the one it calls hips.
+    // From hips to that joint is no bone to stand another rig's pelvis along.
+    Pair pair = twoBodies();
+    const usize spine = at(pair.source, "mixamorig:Spine");
+    const usize next = at(pair.source, "mixamorig:Spine1");
+    const core::DVec3 moved{0.0, -0.2, -0.1};
+    pair.source[spine].localBind.position = pair.source[spine].localBind.position + moved;
+    pair.source[next].localBind.position = pair.source[next].localBind.position - moved;
+    const retarget::RigRoles roles = retarget::assignRoles(pair.source);
+    const retarget::Map map = retarget::buildMap(pair.source, roles, pair.target, pair.targetRoles);
+    REQUIRE(map.roles);
+
+    const std::vector<core::CFrameD> rest = modelOf(pair.target, restOf(pair.target));
+    const std::vector<core::CFrameD> stood = modelOf(pair.target, carried(map, restOf(pair.source), pair.target));
+    const usize pelvis = at(pair.target, "pelvis");
+    const usize first = at(pair.target, "spine_01");
+    CHECK(sameRotation(stood[pelvis].rotation, rest[pelvis].rotation, 1.0e-4f));
+    CHECK(stood[first].position.y > stood[pelvis].position.y);
+    // The legs are still stood as the source stands, from the joint down.
+    CHECK(nearly(direction(stood, at(pair.target, "thigh_l"), at(pair.target, "calf_l")), Down, 1.0e-3f));
 }

@@ -5418,17 +5418,18 @@ TEST_CASE("an authority's send costs what changed, not what there is (protocol 4
     // The one instance that carries anything, each tick, and no other.
     CHECK(after.attributeBodiesEncoded - before.attributeBodiesEncoded == static_cast<core::u64>(Ticks));
     // **Read, only what may have changed**: the sixty that moved, and each
-    // instance one tick in eight whatever its bytes say -- an eighth of the
-    // rest. The others are kept from the capture before, their field sets
-    // shared with it and not copied.
+    // instance one send in sixty-four whatever its bytes say. It was one in
+    // eight, and that eighth of a world was a third of a send. The others are
+    // kept from the capture before, their field sets shared with it and not
+    // copied.
     const core::u64 read = after.entitiesRead - before.entitiesRead;
     const core::u64 kept = after.entitiesKept - before.entitiesKept;
     CAPTURE(read);
     CAPTURE(kept);
     CHECK(read + kept >= static_cast<core::u64>(Ticks) * 2700u);
-    CHECK(kept >= static_cast<core::u64>(Ticks) * 2200u);
+    CHECK(kept >= static_cast<core::u64>(Ticks) * 2500u);
     CHECK(read >= static_cast<core::u64>(Ticks) * Moved);
-    CHECK(read <= static_cast<core::u64>(Ticks) * (2700u / 8u + Moved + 8u));
+    CHECK(read <= static_cast<core::u64>(Ticks) * (2700u / 64u + Moved + 8u));
     // And hardly a field set allocated: what is read goes into the sets the
     // history let go, give or take a tick that reads more than was let go.
     CHECK(after.fieldSetsAllocated - before.fieldSetsAllocated <= static_cast<core::u64>(Ticks));
@@ -6228,13 +6229,15 @@ TEST_CASE("a model's pivot is where the server has it on a replica: its primary 
 
     // Hung from the other part, and its hinge moved.
     match.server.world.models().find(door)->primaryPart = frame;
-    match.server.world.pvInstances().find(leaf)->pivotOffset.position = core::DVec3{0.5, 0.0, 0.0};
+    core::CFrameD hinge;
+    hinge.position = core::DVec3{0.5, 0.0, 0.0};
+    REQUIRE(match.server.world.setProperty(leaf, match.server.atoms.intern("PivotOffset"), scene::Value{hinge}) ==
+            scene::World::SetResult::Changed);
     match.run(3);
     CHECK(match.client.world.models().find(seenDoor)->primaryPart == match.copyOf(frame));
-    // **A pivot moved on its own is sent at the part's next reading**, which
-    // is within eight sends whatever its bytes say: a capture does not read
-    // every part's pivot every tick to learn that nearly none ever moves.
-    match.run(8);
+    // **A pivot moved on its own goes with the next send** (protocol 45): a
+    // capture does not read every part's pivot every tick to learn that
+    // nearly none ever moves, and the write is what says this one did.
     CHECK(match.client.world.pvInstances().find(seenLeaf)->pivotOffset.position.x == doctest::Approx(0.5));
 
     // And none: a model whose primary part was taken away says so everywhere.
@@ -6415,13 +6418,62 @@ TEST_CASE(
     CHECK(match.replica->checksumFailures() == 0);
 }
 
-TEST_CASE("a pivot moved on its own reaches a replica within eight sends, whatever its number, at two ticks a send")
+TEST_CASE("a pivot a script moved on its own is on a replica at the next send (protocol 45)")
 {
-    // **The defect**: an instance is read again one send in eight whatever its
-    // bytes say -- what a capture cannot see change is late by that much and
-    // no more. The turn was counted in ticks, and a game sends every second
-    // tick: an instance with an odd number never had a turn at all. Nothing
-    // stood on it until a pivot did, which a capture does not read each tick.
+    // A pivot is in no byte a capture compares: every part and model has one,
+    // nearly all at the middle for good, and reading each every send to learn
+    // that was a tenth of a capture. So one moved on its own waited for the
+    // instance's periodic reading -- eight sends, a quarter of a second in
+    // which `GetPivot` answered another place on a client. The world stamps
+    // an instance at a property's write, and a capture reads what was stamped
+    // since the one before.
+    PlayedMatch match;
+    std::vector<core::InstanceId> doors;
+    for (int index = 0; index < 6; ++index)
+        doors.push_back(match.part("Door", core::DVec3{static_cast<double>(index) * 3.0, 1.0, 0.0}));
+    const auto send = [&match](int sends) {
+        for (int at = 0; at < sends; ++at) {
+            match.tick += 2;
+            match.authority->receive(match.server.world, match.server.workspace);
+            match.authority->send(match.server.world, match.server.workspace, match.tick);
+            match.authority->sendMessages(match.server.world);
+            match.replica->receive(match.client.world, match.client.workspace);
+            match.replica->sendIntent(match.client.world, match.tick);
+            match.replica->sendMessages(match.client.world);
+        }
+    };
+    send(4);
+    core::CFrameD offset;
+    offset.position = core::DVec3{-0.5, 0.0, 0.0};
+    for (const core::InstanceId door : doors) {
+        REQUIRE(match.copyOf(door).valid());
+        REQUIRE(match.server.world.setProperty(door, match.server.atoms.intern("PivotOffset"), scene::Value{offset}) ==
+                scene::World::SetResult::Changed);
+    }
+    // One send carries it; a second is the acknowledgement's round, as for
+    // any field.
+    send(2);
+    for (const core::InstanceId door : doors) {
+        CAPTURE(match.authority->netIdOf(door).value);
+        CHECK(match.client.world.pvInstances().find(match.copyOf(door))->pivotOffset.position.x ==
+              doctest::Approx(-0.5));
+    }
+    // And a part nobody wrote is not read for it: six were written, once.
+    const Stats before = match.authority->stats();
+    send(8);
+    const Stats after = match.authority->stats();
+    CHECK(after.entitiesRead - before.entitiesRead <= 4u);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("D619: what no stamp and no byte shows reaches a replica within the periodic reading, whatever its number")
+{
+    // **The defect**: an instance is read again one send in so many whatever
+    // its bytes say -- what a capture cannot see change is late by that much
+    // and no more. The turn was counted in ticks, and a game sends every
+    // second tick: an instance with an odd number never had a turn at all.
+    // Shown with a pivot written straight into its component, which nothing
+    // in the engine does: it is the one field no byte and no stamp covers.
     PlayedMatch match;
     std::vector<core::InstanceId> doors;
     for (int index = 0; index < 6; ++index)
@@ -6443,7 +6495,8 @@ TEST_CASE("a pivot moved on its own reaches a replica within eight sends, whatev
         REQUIRE(match.copyOf(door).valid());
         match.server.world.pvInstances().find(door)->pivotOffset.position = core::DVec3{-0.5, 0.0, 0.0};
     }
-    send(10);
+    // The net is one send in sixty-four, and the last of them a round more.
+    send(66);
     for (const core::InstanceId door : doors) {
         CAPTURE(match.authority->netIdOf(door).value);
         CHECK(match.client.world.pvInstances().find(match.copyOf(door))->pivotOffset.position.x ==

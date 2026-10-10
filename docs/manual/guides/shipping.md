@@ -213,7 +213,8 @@ checks, and what the export does about each.
 
 - `INTERNET` and `ACCESS_NETWORK_STATE` when a script names `NetworkService`
   or requires `@std/net`, or the project has a `[network]` section or
-  `[export] multiplayer = true`. Without `INTERNET` a phone refuses every
+  `[export] multiplayer` is `"host"` or `"dedicated"`. Without `INTERNET` a
+  phone refuses every
   socket: nothing joins, hosts or fetches.
 - `VIBRATE` when a script names `HapticService`.
 
@@ -423,6 +424,39 @@ The Export window's **One sealed pack** is the same key.
 If no content pack was built, the loose `content/` and `assets/` trees are
 copied instead -- shipping both would double the size of every game, and
 shipping neither would be a game with no art.
+
+## Languages that ship apart
+
+Voices are most of a dubbed game's size, and a player wants one or two of
+them ([Dubbing](manual:audio/dubbing)). `[export] voice` names the voice
+languages that go inside the game's own pack; every other language under
+`content/l10n/` becomes a pack of its own:
+
+```toml
+[export]
+voice = ["en", "pt-BR"]
+```
+
+- `dist/languages/l10n-<locale>.lpack` is one language: sealed as the game's
+  pack is, and not in the `.zip`. A player who puts it in the game's `.engine`
+  folder, beside `content.lpack`, has that language in the list of voices the
+  next time the game starts; a store's optional download does the same.
+- **Left out, every language ships inside**, which is right for a game with
+  two of them.
+- **Every package times a line the same**, with a language or without it:
+  the lengths of every language's recordings are in a small index inside the
+  game, and a line lasts as long as its longest. A dedicated server ships no
+  voice at all and still ends each line on the right tick.
+- A player whose chosen language's pack has gone hears the language the game
+  would have started in, and is told nothing: their choice is kept for when
+  the pack is back.
+- A name in `voice` that is neither the default language nor a folder under
+  `content/l10n/` stops the build and is named.
+- **An Android package holds every language**: one file is what a phone
+  installs. `voice` is read, and the build says which languages it would have
+  set apart.
+
+`ludwerk voice` says what each language still lacks before any of it is built.
 
 ## It ships bytecode, not source
 

@@ -2474,6 +2474,9 @@ int soundPlay(lua_State* L)
             sound->timePosition = 0.0;
         sound->seeked = false;
         sound->playing = true;
+        // Counted, so what hears it knows a new start from a sound going on:
+        // a language changed since the last one is heard from this one.
+        sound->plays += 1;
     }
     return 0;
 }
@@ -2526,7 +2529,14 @@ int audioServicePlayLocal(lua_State* L)
     const core::InstanceId id = w.create(soundClass);
     if (scene::SoundComponent* sound = w.sounds().find(id); sound != nullptr) {
         sound->content = std::string(text, length);
+        // Interned as the property's setter does (protocol 44): a sound's
+        // file travels as a name, and a name is made where the text arrives.
+        (void)w.atoms().intern(std::string_view{text, length});
         sound->playing = true;
+        sound->plays += 1;
+        // **Gone when it has been played** (D621): it was left a child of
+        // the service for ever, and a click a frame was a leak of instances.
+        sound->ownsItself = true;
     }
 
     // Parented to the service, which is what makes it 2D: positional is "parented
@@ -2536,6 +2546,176 @@ int audioServicePlayLocal(lua_State* L)
     // a destroyed instance.
     (void)w.setParent(id, checkInstance(L, 1));
     pushInstance(L, id);
+    return 1;
+}
+
+// --- Dubbing (ADR 0200) ---------------------------------------------------------
+
+void pushNames(lua_State* L, std::span<const std::string> names)
+{
+    lua_createtable(L, static_cast<int>(names.size()), 0);
+    for (usize index = 0; index < names.size(); ++index) {
+        lua_pushlstring(L, names[index].data(), names[index].size());
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+}
+
+// The languages this machine can PLAY, the default first: what a voice menu
+// lists. A world no host set up for voices has one, the one it is in.
+int localizationServiceGetVoiceLocales(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::EngineState& state = world(L).engineState();
+    if (state.voiceLocales.empty()) {
+        const std::string only[] = {state.voiceLocale};
+        pushNames(L, only);
+        return 1;
+    }
+    pushNames(L, state.voiceLocales);
+    return 1;
+}
+
+// The system's own preferred languages, in its order, narrowed to nothing.
+int localizationServiceGetSystemLocales(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    pushNames(L, world(L).engineState().systemLocales);
+    return 1;
+}
+
+int pushBands(lua_State* L, const std::array<f32, 3>& bands)
+{
+    lua_pushnumber(L, static_cast<double>(bands[0]));
+    lua_pushnumber(L, static_cast<double>(bands[1]));
+    lua_pushnumber(L, static_cast<double>(bands[2]));
+    return 3;
+}
+
+int soundGetBands(lua_State* L)
+{
+    const core::InstanceId id = checkInstance(L, 1);
+    World& w = world(L);
+    scene::SoundMeter* meter = w.soundMeter();
+    return pushBands(L, meter != nullptr ? meter->bands(w, id) : std::array<f32, 3>{0.0f, 0.0f, 0.0f});
+}
+
+int audioServiceGetBands(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::EnumValue category = checkEnumItem(L, 2);
+    World& w = world(L);
+    scene::SoundMeter* meter = w.soundMeter();
+    const bool known = category.enumId == scene::generated::SoundCategoryEnumId;
+    return pushBands(L, meter != nullptr && known ? meter->categoryBands(w, category.value)
+                                                  : std::array<f32, 3>{0.0f, 0.0f, 0.0f});
+}
+
+// **One call says a line** (ADR 0200): a voice with its caption, made from the
+// line's entry, played, and gone when it has been said. On a server it is an
+// instance like any other, so it travels -- and each player hears the line in
+// their own voice language and reads it in their own text language, because
+// a name is resolved where it is played.
+int dialogueServiceSay(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    World& w = world(L);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const std::string_view id{text, length};
+    const core::InstanceId at = lua_isnoneornil(L, 3) ? core::InstanceId{} : checkInstance(L, 3);
+
+    const scene::DialogueLines* lines = w.dialogue();
+    const scene::DialogueLine* line = lines != nullptr ? lines->find(id) : nullptr;
+    if (line == nullptr) {
+        const core::I18nArg args[] = {{"line", id}};
+        raise(L, ENG_TR("script.err.dialogue_line_unknown"), args);
+    }
+
+    const scene::ClassId soundClass = w.classes().findId(w.atoms().intern("Sound"));
+    const scene::ClassId captionClass = w.classes().findId(w.atoms().intern("Caption"));
+    const core::InstanceId sound = w.create(soundClass);
+    const core::InstanceId caption = w.create(captionClass);
+    scene::SoundComponent* voice = w.sounds().find(sound);
+    scene::CaptionComponent* said = w.captions().find(caption);
+    if (voice == nullptr || said == nullptr) {
+        lua_pushnil(L);
+        return 1;
+    }
+    voice->content = line->sound;
+    (void)w.atoms().intern(line->sound);
+    voice->category = 2;
+    voice->ownsItself = true;
+    voice->plays += 1;
+    voice->playing = true;
+    said->text = w.atoms().intern(line->text);
+    said->speaker = line->speaker.empty() ? core::NameAtom{} : w.atoms().intern(line->speaker);
+    said->color = line->color;
+    said->seconds = line->seconds;
+
+    // What a client-side script makes is this machine's alone (ADR 0186).
+    if (threadMakesLocal(L)) {
+        w.setLocal(sound);
+        w.setLocal(caption);
+    }
+    (void)w.setParent(caption, sound);
+    core::InstanceId parent = at;
+    if (!parent.valid())
+        parent = findServiceOfClass(L, w.classes().findId(w.atoms().intern("Workspace")));
+    (void)w.setParent(sound, parent);
+    pushInstance(L, sound);
+    return 1;
+}
+
+int dialogueServiceGetCaptions(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const World& w = world(L);
+    const std::vector<core::InstanceId>& current = w.engineState().captions;
+    lua_createtable(L, static_cast<int>(current.size()), 0);
+    int at = 0;
+    for (const core::InstanceId caption : current) {
+        if (!w.alive(caption))
+            continue;
+        pushInstance(L, caption);
+        lua_rawseti(L, -2, ++at);
+    }
+    return 1;
+}
+
+// The bare language of a locale: `pt` of `pt-BR`.
+[[nodiscard]] std::string_view languageOf(std::string_view locale) noexcept
+{
+    const usize dash = locale.find('-');
+    return dash == std::string_view::npos ? locale : locale.substr(0, dash);
+}
+
+// Whether a caption is shown as the player's `Subtitles` says. `Auto` shows
+// one when what is heard is not in the language being read: another voice
+// language, a line that fell back to the default language, or a line with no
+// recording at all.
+int dialogueServiceShowsCaption(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::InstanceId caption = checkInstance(L, 2);
+    World& w = world(L);
+    const scene::EngineState& state = w.engineState();
+    bool shows = state.playerSound.subtitles == 1;
+    if (state.playerSound.subtitles == 0) {
+        const core::InstanceId sound = w.parentOf(caption);
+        scene::SoundMeter* meter = w.soundMeter();
+        const std::optional<std::string> spoken =
+            meter != nullptr ? meter->spokenIn(w, sound) : std::optional<std::string>{state.voiceLocale};
+        if (!spoken.has_value()) {
+            shows = true;
+        }
+        else {
+            const std::string_view fallback =
+                w.localization() != nullptr ? std::string_view{w.localization()->defaultLocale()} : state.locale;
+            const std::string_view heard = spoken->empty() ? fallback : std::string_view{*spoken};
+            shows = languageOf(heard) != languageOf(state.locale);
+        }
+    }
+    lua_pushboolean(L, shows ? 1 : 0);
     return 1;
 }
 
@@ -3006,6 +3186,11 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"HapticService", "SetMotor", hapticServiceSetMotor},
     {"HapticService", "Vibrate", hapticServiceVibrate},
     {"LocalizationService", "GetLocales", localizationServiceGetLocales},
+    {"LocalizationService", "GetVoiceLocales", localizationServiceGetVoiceLocales},
+    {"LocalizationService", "GetSystemLocales", localizationServiceGetSystemLocales},
+    {"DialogueService", "Say", dialogueServiceSay},
+    {"DialogueService", "GetCaptions", dialogueServiceGetCaptions},
+    {"DialogueService", "ShowsCaption", dialogueServiceShowsCaption},
     {"LocalizationService", "Translate", localizationServiceTranslate},
     {"GraphicsService", "ApplyPreset", graphicsServiceApplyPreset},
     {"GraphicsService", "ResetToDefaults", graphicsServiceResetToDefaults},
@@ -3039,6 +3224,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"Sound", "Pause", soundPause},
     {"Sound", "Stop", soundStop},
     {"AudioService", "PlayLocal", audioServicePlayLocal},
+    {"AudioService", "GetBands", audioServiceGetBands},
+    {"Sound", "GetBands", soundGetBands},
 
     {"Workspace", "GetWindAt", workspaceGetWindAt},
     {"Workspace", "Raycast", workspaceRaycast},

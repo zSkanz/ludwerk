@@ -323,3 +323,15 @@ conformance suite holds the API on a player whose graph has not loaded.
 `examples/37-character` is a character that idles, walks, runs, strafes,
 jumps and attacks from one graph and no code but its input; a determinism
 scenario replays it; and the two-process test above is in the gate.
+
+## Amended 2026-10-10: a speed is read in the library's strides (D625)
+
+`CharacterBody.Speed`, `MoveX` and `MoveZ` reach a graph divided by how much
+longer the body's legs are than the library's -- the hips scale of ADR 0199's
+map, found once a pair of rigs and again when one is replaced. A clip carried
+to another build covers ground in proportion to its legs, and a blend placed
+in metres a second was wrong on every body but the library's own by that
+ratio: the feet slid. The blend's numbers are the library's, once.
+`VerticalSpeed` is left in metres: a fall is nobody's stride. A body on the
+library's own skeleton has a scale of one and reads what it did. It is on
+the simulation's side of the hash and is a function of the two rigs alone.

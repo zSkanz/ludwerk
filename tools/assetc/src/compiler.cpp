@@ -127,7 +127,11 @@ using asset::AssetKind;
 //
 // 9: a skinned primitive with no normals keeps each vertex's joints and
 // weights through the de-index flat normals need (D606).
-constexpr core::u32 kCompilerRules = 9;
+//
+// 10: a mesh with no skin under a joint of a skinned file is weighted to that
+// joint (D624). A character with a helmet or a cape parented to a bone
+// compiled before this has them at rest in its cached form.
+constexpr core::u32 kCompilerRules = 10;
 
 // What one source compiled to, remembered between runs.
 //

@@ -918,6 +918,84 @@ TEST_CASE("the player's choices are written to their file and read back, and wha
     std::filesystem::remove_all(folder, ignored);
 }
 
+TEST_CASE("ADR 0200: what the player hears is kept in their file, and a file from before it reads as nothing said")
+{
+    const std::filesystem::path folder =
+        std::filesystem::temp_directory_path() / ("engine-player-hearing-" + std::to_string(platform::nowNs()));
+    const std::filesystem::path file = folder / "settings.json";
+
+    scene::GraphicsLayer choices;
+    choices.put(scene::GraphicsSetting::VSync, 0.0);
+    app::PlayerHearing hearing;
+    hearing.voiceLocale = "pt-br";
+    hearing.sound.musicVolume = 0.5f;
+    hearing.sound.voiceVolume = 0.25f;
+    hearing.sound.subtitles = 1;
+    hearing.sound.subtitlesSaid = true;
+    hearing.sound.subtitleScale = 1.5f;
+    hearing.sound.subtitleScaleSaid = true;
+    REQUIRE(app::writePlayerGraphics(file, choices, "pt-BR", &hearing));
+
+    std::string text;
+    {
+        std::ifstream in(file, std::ios::binary);
+        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    // Written as locales are, and only what is not as it comes.
+    CHECK(text.find("\"voice_locale\": \"pt-BR\"") != std::string::npos);
+    CHECK(text.find("\"music\": 0.5") != std::string::npos);
+    CHECK(text.find("\"voice\": 0.25") != std::string::npos);
+    CHECK(text.find("\"player\"") == std::string::npos);
+    CHECK(text.find("\"effects\"") == std::string::npos);
+    CHECK(text.find("\"mode\": \"on\"") != std::string::npos);
+    CHECK(text.find("\"scale\": 1.5") != std::string::npos);
+    CHECK(text.find("\"background\"") == std::string::npos);
+
+    scene::GraphicsLayer read;
+    std::string locale;
+    app::PlayerHearing back;
+    REQUIRE(app::readPlayerGraphics(file, read, nullptr, &locale, &back));
+    CHECK(locale == "pt-BR");
+    CHECK(back.voiceLocale == "pt-BR");
+    CHECK(back.sound == hearing.sound);
+    CHECK(read.says(scene::GraphicsSetting::VSync));
+
+    // A voice that follows the text language is not written at all.
+    hearing.voiceLocale.clear();
+    REQUIRE(app::writePlayerGraphics(file, choices, "pt-BR", &hearing));
+    REQUIRE(app::readPlayerGraphics(file, read, nullptr, &locale, &back));
+    CHECK(back.voiceLocale.empty());
+
+    // A file from before any of it, and one somebody edited by hand: nothing
+    // said is nothing changed, and a number out of its range is brought in.
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << "{\"version\": 1, \"locale\": \"en\", \"settings\": {}}";
+    }
+    REQUIRE(app::readPlayerGraphics(file, read, nullptr, &locale, &back));
+    CHECK(back.voiceLocale.empty());
+    CHECK(back.sound == scene::PlayerSound{});
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << "{\"version\": 1, \"audio\": {\"music\": 7, \"voice\": \"loud\"}, "
+               "\"subtitles\": {\"mode\": \"sometimes\", \"scale\": 9, \"background\": -1}, \"settings\": {}}";
+    }
+    REQUIRE(app::readPlayerGraphics(file, read, nullptr, &locale, &back));
+    CHECK(back.sound.musicVolume == doctest::Approx(1.0));
+    CHECK(back.sound.voiceVolume == doctest::Approx(1.0));
+    CHECK_FALSE(back.sound.subtitlesSaid);
+    CHECK(back.sound.subtitleScale == doctest::Approx(2.0));
+    CHECK(back.sound.subtitleBackground == doctest::Approx(0.0));
+
+    // Written without it, as every caller did before: the graphics alone.
+    REQUIRE(app::writePlayerGraphics(file, choices));
+    REQUIRE(app::readPlayerGraphics(file, read, nullptr, &locale, &back));
+    CHECK(back.sound == scene::PlayerSound{});
+
+    std::error_code ignored;
+    std::filesystem::remove_all(folder, ignored);
+}
+
 TEST_CASE("optional integration configuration is independent of installed SDKs")
 {
     ProjectDir project(R"(

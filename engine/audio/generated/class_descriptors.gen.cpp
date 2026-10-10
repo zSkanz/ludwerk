@@ -604,7 +604,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(pitchShiftSoundEffectDesc);
 
     // --- Sound ---
-    static std::array<scene::PropertyDesc, 10> soundProperties;
+    static std::array<scene::PropertyDesc, 12> soundProperties;
     soundProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Content"),
@@ -624,7 +624,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = scene::ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "Whether the timeline is advancing. Writing it is the same as calling `Play` or `Stop`, and reading it is how a script asks without keeping its own flag.",
+            .doc = "Whether the timeline is advancing. Writing it is `Resume` and `Pause`, never a rewind: `true` carries on from `TimePosition` and `false` stops there. `Play` is what starts from the beginning and `Stop` what rewinds. Reading it is how a script asks without keeping its own flag.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getSoundPlaying,
             .set = native::setSoundPlaying,
@@ -681,7 +681,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .readOnly = true,
             .inert = false,
             .transient = true,
-            .doc = "How long `Content` is, in seconds: the file's own length, read from its header, or the placeholder tone's one second when it names nothing. 0 until the length has been read: the world's first tick after `Content` is set reads it, and the editor reads it for the sound it shows.",
+            .doc = "How long `Content` is, in seconds: the file's own length, read from its header, or the placeholder tone's one second when it names nothing. 0 until the length has been read: the world's first tick after `Content` is set reads it, and the editor reads it for the sound it shows.\012\012**A sound recorded in several languages is as long as its longest** (ADR 0200): the same number on every machine whatever language each one hears, so `Ended` lands on the same tick everywhere. A shorter language is followed by silence until the sound ends. A sound with a `Caption` and no file in any language lasts its caption.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
             .get = native::getSoundTimeLength,
             .set = nullptr,
@@ -720,14 +720,45 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getSoundGroup,
             .set = native::setSoundGroup,
         },
+        scene::PropertyDesc{
+            .name = atoms.intern("Category"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("SoundCategory"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What kind of sound it is (ADR 0200): `Effects`, `Music` or `Voice`. It decides which of the player's volumes turns it (`AudioService.MusicVolume`, `EffectsVolume`, `VoiceVolume`), and music lowers itself while a voice is heard. On the sound and not on its `Group`, because a group is each machine's own and a line a server starts has to arrive as a voice.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getSoundCategory,
+            .set = native::setSoundCategory,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Loudness"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How loud what THIS machine is playing of the sound is right now, 0 to 1 (ADR 0200): the level of the recording over about the last twentieth of a second at `TimePosition`, where a tone at full scale reads 1. What opens a jaw with a line.\012\012**It is the recording's own level**: no volume is in it -- not the sound's, not a group's, not the player's -- and no distance, so a mouth opens the same whatever a slider says. It is the language this machine hears, which may be another machine's other language: picture, each machine's own, and nothing a game's rules may read. 0 while the sound is not playing, in the silence after a shorter language, and for a sound with no file.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getSoundLoudness,
+            .set = nullptr,
+        },
     }};
-    static std::array<scene::MethodDesc, 4> soundMethods;
+    static std::array<scene::MethodDesc, 5> soundMethods;
     soundMethods = {{
+        scene::MethodDesc{
+            .name = atoms.intern("GetBands"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "The moment `Loudness` measures, split in three (ADR 0200): how much of it is low (80 to 500 Hz), middle (500 to 2,500 Hz) and high (2,500 to 10,000 Hz), each 0 to 1, as three numbers. A tone at full scale inside a band reads 1 there and 0 in the others. Enough to tell an open mouth from a wide or a round one, and what a visualiser reads.\012\012**Worked out when asked and not otherwise**: a sound nobody asks about costs nothing, and two askers in one tick pay once. Each machine's own, as `Loudness` is.",
+        },
         scene::MethodDesc{
             .name = atoms.intern("Play"),
             .yields = false,
             .threadSafety = scene::ThreadSafety::Unsafe,
-            .doc = "Plays it from the start -- or from `TimePosition`, when a script set it since the sound last started. Playing one that is already playing starts it again. `Resume` is what carries on from where `Pause` left it.",
+            .doc = "Plays it from the start -- or from `TimePosition`, when a script set it since the sound last started. Playing one that is already playing starts it again. `Resume` is what carries on from where `Pause` left it.\012\012**This is where a sound's language is chosen** (ADR 0200): `Content` is looked for under `l10n/<VoiceLocale>/`, then under the language alone, then as it is named, and what is playing finishes in the language it started in.",
         },
         scene::MethodDesc{
             .name = atoms.intern("Resume"),
@@ -774,8 +805,69 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     soundDesc.detachComponents = native::detachSoundComponents;
     classes.registerClass(soundDesc);
 
+    // --- Caption ---
+    static std::array<scene::PropertyDesc, 4> captionProperties;
+    captionProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Text"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The catalog key of what is said. Shown as written when no catalog has it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getCaptionText,
+            .set = native::setCaptionText,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Speaker"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The catalog key of who says it, or empty for nobody: a sound of the world.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getCaptionSpeaker,
+            .set = native::setCaptionSpeaker,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Color"),
+            .type = scene::ValueType::Color3,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The speaker's colour: what their name is written in.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
+            .get = native::getCaptionColor,
+            .set = native::setCaptionColor,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Seconds"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How long the sound lasts when it has no file in any language. 0 is a reading time: a second and a half, and six hundredths of a second for each character of the text in the project's default language, twelve seconds at most -- the same on every machine. A sound that has a file lasts as long as the file and this is not read.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getCaptionSeconds,
+            .set = native::setCaptionSeconds,
+        },
+    }};
+    scene::ClassDescriptor captionDesc;
+    captionDesc.name = atoms.intern("Caption");
+    captionDesc.super = instanceClass;
+    captionDesc.flags = scene::ClassFlags::None;
+    captionDesc.defaultName = atoms.intern("Caption");
+    captionDesc.doc = "What a sound says, in words (ADR 0200): a line of dialogue, or \"[a door creaks]\". Parent it to the `Sound` it belongs to. While that sound plays and can be heard on a machine -- within `RollOffMaxDistance` of the listener, for a sound on a part; the player's volumes are not asked -- the caption is current there: `DialogueService:GetCaptions` lists it, and `CaptionStarted` and `CaptionEnded` say when.\012\012**Its words are keys, not text.** `Text` and `Speaker` name entries of the game's catalogs (`LocalizationService:Translate`), so one caption reads in every player's own language -- which need not be the language that player hears.\012\012**A sound with a caption and no file in any language is silent and lasts its caption**: `Seconds`, or a reading time for the text. A game is written before it is recorded, and its lines play as text from the first day. In a match a caption travels with its sound.";
+    static constexpr std::array<std::string_view, 3> captionParents{{"Sound", "ReplicatedStorage", "ServerStorage"}};
+    captionDesc.parents = captionParents;
+    captionDesc.properties = captionProperties;
+    captionDesc.attachComponents = native::attachCaptionComponents;
+    captionDesc.detachComponents = native::detachCaptionComponents;
+    classes.registerClass(captionDesc);
+
     // --- AudioService ---
-    static std::array<scene::PropertyDesc, 1> audioServiceProperties;
+    static std::array<scene::PropertyDesc, 6> audioServiceProperties;
     audioServiceProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("MasterVolume"),
@@ -783,19 +875,88 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = scene::ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "Multiplied into every sound, after its own volume and its group's. The one a settings screen writes.",
+            .doc = "Multiplied into every sound, after its own volume and its group's. **It is the GAME's**: what a fade to black or a cutscene writes, part of the world like any property, and saved nowhere. The player's own master volume is `PlayerVolume`, and that is the one a settings screen writes.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
             .get = native::getAudioServiceMasterVolume,
             .set = native::setAudioServiceMasterVolume,
         },
+        scene::PropertyDesc{
+            .name = atoms.intern("PlayerVolume"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The player's master volume, 0 to 1 (ADR 0200): multiplied into every sound on this machine. The player's, like the graphics settings: kept for the next run when a script writes it, never saved with a scene, never sent, and refused on a dedicated server.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getAudioServicePlayerVolume,
+            .set = native::setAudioServicePlayerVolume,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MusicVolume"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The player's volume for every `Sound` whose `Category` is `Music`, 0 to 1. Kept as `PlayerVolume` is.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getAudioServiceMusicVolume,
+            .set = native::setAudioServiceMusicVolume,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("EffectsVolume"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The player's volume for every `Sound` whose `Category` is `Effects`, 0 to 1. Kept as `PlayerVolume` is.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getAudioServiceEffectsVolume,
+            .set = native::setAudioServiceEffectsVolume,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("VoiceVolume"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The player's volume for every `Sound` whose `Category` is `Voice`, 0 to 1. Kept as `PlayerVolume` is.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getAudioServiceVoiceVolume,
+            .set = native::setAudioServiceVoiceVolume,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MusicUnderVoice"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What music is multiplied by while a voice is heard, 0 to 1 (ADR 0200): while any `Voice` sound is audible on a machine -- playing, in range, and not turned to nothing by the player -- every `Music` sound there is eased down to this over 0.15 s, and back over 0.6 s when the voice stops. 1 turns it off. The game's, as `MasterVolume` is; the easing is each machine's mixer's and nothing a script can read.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getAudioServiceMusicUnderVoice,
+            .set = native::setAudioServiceMusicUnderVoice,
+        },
     }};
-    static std::array<scene::MethodDesc, 1> audioServiceMethods;
+    static std::array<scene::MethodDesc, 2> audioServiceMethods;
     audioServiceMethods = {{
         scene::MethodDesc{
             .name = atoms.intern("PlayLocal"),
             .yields = false,
             .threadSafety = scene::ThreadSafety::Unsafe,
-            .doc = "Creates a 2D `Sound` parented to this service and plays it. For the fire-and-forget case -- a click, a pickup -- where naming an instance is all ceremony.\012\012**It does not clean up after itself in this release**: the `Sound` stays a child of the service once it has ended, so a caller firing one per frame accumulates them. Keep the returned handle and `Destroy` it on `Ended` where that matters. The handle is also what a caller sets the volume through, since this takes only the content.",
+            .doc = "Creates a 2D `Sound` parented to this service and plays it. For the fire-and-forget case -- a click, a pickup -- where naming an instance is all ceremony.\012\012**It cleans up after itself**: the `Sound` is destroyed a moment after it ends, once whatever listens to its `Ended` has heard it. The returned handle is what a caller sets the volume or the category through, since this takes only the content; one stopped by hand, or made to loop, is the caller's to destroy.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("GetBands"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "`Sound:GetBands` for everything of a category this machine is playing (ADR 0200): the low, middle and high of the audible sounds of that category mixed together as the game mixes them -- each sound's volume, its group's, the master and its distance, and never the player's volumes. Three numbers, each 0 to 1. What a visualiser reads of the music. Worked out when asked and not otherwise.",
         },
     }};
     scene::ClassDescriptor audioServiceDesc;
@@ -807,6 +968,96 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     audioServiceDesc.properties = audioServiceProperties;
     audioServiceDesc.methods = audioServiceMethods;
     classes.registerClass(audioServiceDesc);
+
+    // --- DialogueService ---
+    static std::array<scene::PropertyDesc, 3> dialogueServiceProperties;
+    dialogueServiceProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Subtitles"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("SubtitleMode"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "When captions are shown: `Auto`, `On` or `Off`. The player's: kept for the next run when a script writes it, and refused on a dedicated server. `ShowsCaption` applies it to one caption.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getDialogueServiceSubtitles,
+            .set = native::setDialogueServiceSubtitles,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SubtitleScale"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How large captions are written, 0.75 to 2. The player's, kept as `Subtitles` is.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getDialogueServiceSubtitleScale,
+            .set = native::setDialogueServiceSubtitleScale,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SubtitleBackground"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How solid the background behind captions is, 0 (none) to 1. The player's, kept as `Subtitles` is.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getDialogueServiceSubtitleBackground,
+            .set = native::setDialogueServiceSubtitleBackground,
+        },
+    }};
+    static std::array<scene::MethodDesc, 3> dialogueServiceMethods;
+    dialogueServiceMethods = {{
+        scene::MethodDesc{
+            .name = atoms.intern("Say"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Says a line: makes a `Voice` sound with its `Caption` from the line's entry, parents it to `at` -- heard from there, when that is a part -- or to `Workspace`, plays it, and destroys it a moment after it ends. `line` is `<name>.<id>`: the file and the entry. One no file has raises.\012\012On a server the sound is an instance like any other: it travels, and every player hears the line in their own voice language and reads it in their own text language. On a client it is that machine's own. The returned sound is what a script waits on (`Ended`) or stops.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("GetCaptions"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "The captions current on this machine, in the order their sounds started: each `Caption` whose `Sound` is playing and can be heard here. Empty on a dedicated server.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("ShowsCaption"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Whether `Subtitles` says this caption is to be shown now: always under `On`, never under `Off`, and under `Auto` when what is heard is not in the language being read -- the voice language is another language than the text language, the sound fell back to the default language's recording while the text is in another, or the sound has no recording.",
+        },
+    }};
+    static std::array<scene::EventDesc, 2> dialogueServiceEvents;
+    dialogueServiceEvents = {{
+        scene::EventDesc{
+            .name = atoms.intern("CaptionStarted"),
+            .slot = 7,
+            .doc = "A caption became current on this machine: its sound started, or came into range.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("CaptionEnded"),
+            .slot = 8,
+            .doc = "A caption stopped being current on this machine: its sound ended or was stopped, went out of range, or was destroyed.",
+        },
+    }};
+    scene::ClassDescriptor dialogueServiceDesc;
+    dialogueServiceDesc.name = atoms.intern("DialogueService");
+    dialogueServiceDesc.super = instanceClass;
+    dialogueServiceDesc.flags = scene::ClassFlags::Service | scene::ClassFlags::NotCreatable;
+    dialogueServiceDesc.lazyService = true;
+    dialogueServiceDesc.defaultName = atoms.intern("DialogueService");
+    dialogueServiceDesc.doc = "Lines of dialogue, and what is being said right now (ADR 0200).\012\012**A line is a sound with a caption**, and its entry is in a file: `content/dialogue/<name>.lines.json`, a table of speakers and a table of lines by id. A line's id in the game is `<name>.<id>`; its text is the catalog key of the same name and its sound `asset://voice/<name>/<id>.ogg`, unless the entry says otherwise. `Say` plays one.\012\012**Each player hears a line in their voice language and reads it in their text language**: a sound's file is chosen where it is played (`LocalizationService.VoiceLocale`) and a caption's words are catalog keys. A line with no recording yet is silent and lasts its caption, so a game's dialogue plays as text from the first day.\012\012**The captions and the subtitle settings are the player's machine's**: what is heard here, and how this player wants it shown. None of it is the world's -- it is not saved with a scene and does not travel -- and a dedicated server has none.";
+    dialogueServiceDesc.properties = dialogueServiceProperties;
+    dialogueServiceDesc.methods = dialogueServiceMethods;
+    dialogueServiceDesc.events = dialogueServiceEvents;
+    classes.registerClass(dialogueServiceDesc);
 }
 
 } // namespace engine::audio::generated

@@ -465,7 +465,10 @@ local function projectUses(project: projectlib.Project): Uses
         uses.network = true
     end
     local export = config.export
-    if typeof(export) == "table" and export.multiplayer == true then
+    -- `[export] multiplayer` is a mode -- `none`, `host`, `dedicated` -- and
+    -- any but the first is a game that opens a socket. This asked whether it
+    -- was `true`, which a mode never is.
+    if typeof(export) == "table" and typeof(export.multiplayer) == "string" and export.multiplayer ~= "none" then
         uses.network = true
     end
     local function read(file: string)

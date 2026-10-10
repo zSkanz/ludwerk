@@ -904,16 +904,21 @@ World::SetResult World::setProperty(core::InstanceId id, core::NameAtom property
     // path: 10k parts moving every tick enqueue nothing while nobody is
     // listening, and the subscription mask is the second half of that.
     const Value previous = descriptor->get(*this, id);
-    if (previous == value)
+    if (previous == value && !descriptor->choice)
         return SetResult::Unchanged;
 
     if (!descriptor->set(*this, id, value))
         return SetResult::InvalidValue;
+    // A choice was kept by its setter, and is a change only when what is read
+    // moved with it (D622).
+    if (descriptor->choice && descriptor->get(*this, id) == previous)
+        return SetResult::Unchanged;
     // **Counted once it is a change** (audit E8): a script writing the same
     // position every tick counted a mutation every tick, and everything that
     // asks "did the world change?" -- the navmesh's regather above all --
     // answered yes for ever.
     ++m_mutations;
+    record->written = m_mutations;
 
     // Past 64 properties the mask cannot say, so the write is loud. Correct,
     // and slower, for a class nothing in v1 has.

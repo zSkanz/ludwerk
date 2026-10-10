@@ -185,6 +185,30 @@ another project that names the same keystore does not find it. The store is
 a file only you can read, not an encrypted one; the environment variable is
 the way to sign without it.
 
+### ludwerk voice
+
+```bash
+ludwerk voice
+ludwerk voice --locale=pt-BR
+ludwerk voice --all
+ludwerk voice --visemes
+```
+
+What a dubbed game still lacks, a language at a time
+([Dubbing](manual:audio/dubbing)): lines with no words in that language's
+catalog, lines with no recording in it, recordings no line names, speakers
+with no name, lines whose takes differ in length by more than 0.35 seconds
+across languages -- with the shortest and the longest -- and recordings with
+no viseme track beside them. A list stops at twenty unless `--all`.
+
+`--visemes` makes the tracks that are missing, with a lip-sync tool **you
+have installed**: the one named in `ENG_LIPSYNC_TOOL`, else `rhubarb` on the
+`PATH`. The engine reads a track and does not make one, and no tool is
+bundled or fetched; with none found the command says how a track is written
+by hand.
+
+`ludwerk check` says the same totals in one line.
+
 ### ludwerk android install-tools
 
 ```bash
@@ -228,8 +252,17 @@ engine-host [script.luau | project-dir]
    --no-instancing]
   [--pace=HZ]
   [--[no-]vsync --max-frame-rate=N --background-frame-rate=N]
-  | --run-tests=DIR | --replay=DIR [--record-replay] | --version | --help
+  [--locale=LOCALE --voice-locale=LOCALE]
+  | --run-tests=DIR | --replay=DIR [--record-replay] | --describe-rig=FILE
+  | --version | --help
 ```
+
+`--locale` and `--voice-locale` start the run reading and hearing a language of
+your choosing, in place of the player's kept choice and the system's: what a
+test of a dubbed game is run with ([Dubbing](manual:audio/dubbing)). Neither
+is kept. `--describe-rig=FILE` prints what a model's skeleton is taken to be --
+each joint's role, what has none, its clips -- and exits
+([Retargeting](manual:animation/retargeting)).
 
 `--gpu=NAME` names the graphics API the run draws through -- `vulkan`,
 `direct3d12`, `metal` -- in place of the system's own choice. A name no

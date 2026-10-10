@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 44;
+inline constexpr u32 ProtocolVersion = 45;
 
 // How a field's bytes are laid down. Every one is little-endian and fixed-width
 // with no nesting -- a wire format whose parser can recurse has a stack-depth
@@ -157,6 +157,7 @@ inline constexpr FieldDesc MeshPartFields[] = {
     {"MeshContent", 1, Encoding::NameAtom, Source::Component, "meshParts"},
     {"CollisionFidelity", 2, Encoding::I32, Source::Component, "meshParts"},
     {"MeshSize", 3, Encoding::Vector3, Source::Component, "meshParts"},
+    {"PoseFrom", 4, Encoding::InstanceRef, Source::Component, "meshParts"},
 };
 
 inline constexpr FieldDesc CharacterBodyFields[] = {
@@ -658,6 +659,14 @@ inline constexpr FieldDesc SoundFields[] = {
     {"PlaybackSpeed", 5, Encoding::F32, Source::Component, "sounds"},
     {"RollOffMinDistance", 6, Encoding::F32, Source::Component, "sounds"},
     {"RollOffMaxDistance", 7, Encoding::F32, Source::Component, "sounds"},
+    {"Category", 8, Encoding::I32, Source::Component, "sounds"},
+};
+
+inline constexpr FieldDesc CaptionFields[] = {
+    {"Text", 1, Encoding::NameAtom, Source::Component, "captions"},
+    {"Speaker", 2, Encoding::NameAtom, Source::Component, "captions"},
+    {"Color", 3, Encoding::Color3, Source::Component, "captions"},
+    {"Seconds", 4, Encoding::F32, Source::Component, "captions"},
 };
 
 inline constexpr FieldDesc AnimationPlayerFields[] = {
@@ -688,6 +697,15 @@ inline constexpr FieldDesc FootPlacementFields[] = {
     {"AlignToSlope", 6, Encoding::Bool, Source::Component, "footPlacements"},
     {"Weight", 7, Encoding::F32, Source::Component, "footPlacements"},
     {"Enabled", 8, Encoding::Bool, Source::Component, "footPlacements"},
+};
+
+inline constexpr FieldDesc LipSyncFields[] = {
+    {"Source", 1, Encoding::InstanceRef, Source::Component, "lipSyncs"},
+    {"Mode", 2, Encoding::I32, Source::Component, "lipSyncs"},
+    {"Map", 3, Encoding::NameAtom, Source::Component, "lipSyncs"},
+    {"Smoothing", 4, Encoding::F32, Source::Component, "lipSyncs"},
+    {"Weight", 5, Encoding::F32, Source::Component, "lipSyncs"},
+    {"Enabled", 6, Encoding::Bool, Source::Component, "lipSyncs"},
 };
 
 // Every replicated class, in schema order.
@@ -747,9 +765,11 @@ inline constexpr ClassDesc Classes[] = {
     {"Beam", BeamFields, -1, false, false},
     {"Trail", TrailFields, -1, false, false},
     {"Sound", SoundFields, -1, false, false},
+    {"Caption", CaptionFields, -1, false, false},
     {"AnimationPlayer", AnimationPlayerFields, -1, false, false},
     {"IKControl", IKControlFields, -1, false, false},
     {"FootPlacement", FootPlacementFields, -1, false, false},
+    {"LipSync", LipSyncFields, -1, false, false},
 };
 
 // Every class kept off the wire by name. **An exclusion holds below a

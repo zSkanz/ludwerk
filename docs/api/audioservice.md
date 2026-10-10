@@ -16,12 +16,21 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
-| `MasterVolume` | `number` | `1` | read/write | Multiplied into every sound, after its own volume and its group's. The one a settings screen writes. |
+| `EffectsVolume` | `number` | `1` | read/write | The player's volume for every `Sound` whose `Category` is `Effects`, 0 to 1. Kept as `PlayerVolume` is. |
+| `MasterVolume` | `number` | `1` | read/write | Multiplied into every sound, after its own volume and its group's. **It is the GAME's**: what a fade to black or a cutscene writes, part of the world like any property, and saved nowhere. The player's own master volume is `PlayerVolume`, and that is the one a settings screen writes. |
+| `MusicUnderVoice` | `number` | `0.4` | read/write | What music is multiplied by while a voice is heard, 0 to 1 (ADR 0200): while any `Voice` sound is audible on a machine -- playing, in range, and not turned to nothing by the player -- every `Music` sound there is eased down to this over 0.15 s, and back over 0.6 s when the voice stops. 1 turns it off. The game's, as `MasterVolume` is; the easing is each machine's mixer's and nothing a script can read. |
+| `MusicVolume` | `number` | `1` | read/write | The player's volume for every `Sound` whose `Category` is `Music`, 0 to 1. Kept as `PlayerVolume` is. |
+| `PlayerVolume` | `number` | `1` | read/write | The player's master volume, 0 to 1 (ADR 0200): multiplied into every sound on this machine. The player's, like the graphics settings: kept for the next run when a script writes it, never saved with a scene, never sent, and refused on a dedicated server. |
+| `VoiceVolume` | `number` | `1` | read/write | The player's volume for every `Sound` whose `Category` is `Voice`, 0 to 1. Kept as `PlayerVolume` is. |
 
 ## Methods
+
+### `GetBands(category: Enum.SoundCategory): (number, number, number)`
+
+`Sound:GetBands` for everything of a category this machine is playing (ADR 0200): the low, middle and high of the audible sounds of that category mixed together as the game mixes them -- each sound's volume, its group's, the master and its distance, and never the player's volumes. Three numbers, each 0 to 1. What a visualiser reads of the music. Worked out when asked and not otherwise.
 
 ### `PlayLocal(content: Content): Sound`
 
 Creates a 2D `Sound` parented to this service and plays it. For the fire-and-forget case -- a click, a pickup -- where naming an instance is all ceremony.
 
-**It does not clean up after itself in this release**: the `Sound` stays a child of the service once it has ended, so a caller firing one per frame accumulates them. Keep the returned handle and `Destroy` it on `Ended` where that matters. The handle is also what a caller sets the volume through, since this takes only the content.
+**It cleans up after itself**: the `Sound` is destroyed a moment after it ends, once whatever listens to its `Ended` has heard it. The returned handle is what a caller sets the volume or the category through, since this takes only the content; one stopped by hand, or made to loop, is the caller's to destroy.

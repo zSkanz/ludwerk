@@ -42,6 +42,13 @@ public:
     // resolved out of `mounts`. Called once the mounts exist; a null `mounts`
     // uninstalls it, which is what a world going away means.
     void setMounts(const asset::ContentMounts* mounts);
+    // **The language pictures are found in** (ADR 0200): a logo or a sign
+    // with words in it has a file of the same name under `l10n/<locale>/`,
+    // and the interface shows that one. Empty for the project's default
+    // language, whose pictures are the names as written. A change lets go of
+    // the pictures that are another file in the new language; they are read
+    // again when next drawn, like one the budget let go.
+    void setLocale(std::string_view locale);
 
     // Uploads the atlas if a glyph has been added since the last call. Cheap on
     // every frame but the few that rasterise something: it compares one version
@@ -146,6 +153,9 @@ public:
 
 private:
     const asset::ContentMounts* mounts_ = nullptr;
+    std::string locale_;
+    bool localeChanged_ = false;
+    [[nodiscard]] std::string localizedName(std::string_view urn) const;
     // The atlas's pages as the GPU holds them: the texture, and the version
     // of the atlas its pixels are.
     struct AtlasPage
@@ -209,6 +219,9 @@ private:
     struct Image
     {
         std::string urn;
+        // The file it was read from: `urn`, or its file in the language in
+        // force when it was. Empty until it has been looked for.
+        std::string resolved;
         rhi::TextureHandle texture{};
         // A view's texture, lent and not owned: never loaded, never destroyed.
         bool borrowed = false;

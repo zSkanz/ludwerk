@@ -19,14 +19,70 @@ file it writes is checked in.
 The player is the capsule's child, so the capsule is what its graph reads
 `CharacterBody.*` from and whose attributes it reads `Attribute.*` from, and
 the model under the capsule is what it moves.
+
+**And what a hero wears and holds** (`rogue_wears` below): a mesh that names
+the body in `PoseFrom` is posed from the body's pose and from nothing else.
+The head is such a piece -- a file with the body's skeleton and one mesh --
+and so is the crossbow, which has none of the body's joints and hangs from a
+`Bone` on the body's hand.
 """
 
 import json
 import math
 from pathlib import Path
 
-from make_heroes import HEROES
-from rig import X, Y, Z, arc, conj, cross, mul, rotate, turn, unit
+HEROES = json.loads((Path(__file__).resolve().parent / "heroes.json").read_text(encoding="utf-8"))
+
+X, Y, Z = (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)
+
+
+# --- quaternions (x, y, z, w) ------------------------------------------------
+def turn(axis, degrees):
+    """A turn of `degrees` about `axis`, right-handed."""
+    half = math.radians(degrees) / 2.0
+    s = math.sin(half)
+    return (axis[0] * s, axis[1] * s, axis[2] * s, math.cos(half))
+
+
+def mul(a, b):
+    """`b`, and then `a`."""
+    return (
+        a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+        a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+        a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    )
+
+
+def conj(q):
+    return (-q[0], -q[1], -q[2], q[3])
+
+
+def rotate(q, v):
+    x, y, z = v
+    qx, qy, qz, qw = q
+    ox, oy, oz = qy * z - qz * y, qz * x - qx * z, qx * y - qy * x
+    tx, ty, tz = qy * oz - qz * oy, qz * ox - qx * oz, qx * oy - qy * ox
+    return (x + 2.0 * (qw * ox + tx), y + 2.0 * (qw * oy + ty), z + 2.0 * (qw * oz + tz))
+
+
+def cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def unit(v):
+    size = math.sqrt(sum(c * c for c in v))
+    return (v[0] / size, v[1] / size, v[2] / size)
+
+
+def arc(start, end):
+    """The shortest turn that takes the direction `start` to `end`."""
+    a, b = unit(start), unit(end)
+    axis = cross(a, b)
+    q = (axis[0], axis[1], axis[2], 1.0 + sum(a[i] * b[i] for i in range(3)))
+    size = math.sqrt(sum(c * c for c in q))
+    return tuple(c / size for c in q)
+
 
 GRAPH = "asset://anim/hero.animgraph.json"
 
@@ -124,7 +180,7 @@ def character(name, model, at, towards, wide, speed, look_at, step_height, chain
                 "class": "MeshPart",
                 "name": "Hero",
                 "properties": {
-                    "MeshContent": f"asset://models/{model}.gltf",
+                    "MeshContent": f"asset://models/{model}.glb",
                     "CFrame": frame((at[0], 0.0, at[1]), mul(turned, seat)),
                     "CanCollide": False,
                 },
@@ -158,7 +214,7 @@ def character(name, model, at, towards, wide, speed, look_at, step_height, chain
                         # of it, in the head joint's own space.
                         "class": "Bone",
                         "name": "Eyes",
-                        "properties": {"JointName": hero["head"], "CFrame": frame((0.0, (high - hero["rig"].at[hero["rig"].index(hero["head"])][1]) * 0.6, 0.0))},
+                        "properties": {"JointName": hero["head"], "CFrame": frame(hero["eyes"])},
                     },
                     *more_on_mesh,
                 ],
@@ -178,61 +234,87 @@ def character(name, model, at, towards, wide, speed, look_at, step_height, chain
     }
 
 
-# --- the staff -------------------------------------------------------------------
-# A staff in `Stocky`'s right hand, with a place on it for the left.
+# --- what the rogue wears and holds ----------------------------------------------
+# **A piece worn**: a mesh whose `PoseFrom` is the body. It is a file with the
+# body's skeleton and one mesh -- a head with its hood up -- and it is on the
+# body joint for joint, whatever moved the joint: a clip, the feet finding a
+# stair, the look turning the head. `src/server/init.luau` takes it off and
+# puts the other head on while the game runs.
 #
-# The RIGHT hand is the clip's: the staff is welded to a `Bone` on it and goes
-# wherever the arm swings. The LEFT hand is the staff's: an `IKControl` puts
-# it on the `Grip` attachment, further up, whatever the clip had that arm
-# doing. So the two numbers that matter are which way the staff lies in the
-# right hand and how the grip is turned -- the left hand takes the grip's turn
-# as its own (`AlignRotation`).
-STAFF_LONG = 1.5
-HELD_AT = -0.45  # where along the staff the right hand is, from its middle
-HANDS_APART = 0.55
-PALM = 0.07  # from a wrist joint to the middle of its hand
+# **A thing held**: the crossbow has two joints, `Crossbow` and `String`, and
+# none of the body's. Under a `Bone` of the body it hangs from that joint --
+# the pack's own hand slot, where its own crossbow hangs -- and `String` is
+# moved by the track of that name in whatever clip the body is playing: the
+# shot lets it go and the reload draws it back. Handing it to the other hand
+# is parenting it under the other hand's bone, which is turned half round
+# about the slot's own Z so that it points away from the body on that side too.
+rogue = HEROES["rogue"]
+rogue_on_mesh = [
+    {
+        "class": "Bone",
+        "name": "RightHold",
+        "properties": {"JointName": rogue["slots"][1]},
+        "children": [
+            {
+                "class": "MeshPart",
+                "name": "Crossbow",
+                "properties": {
+                    "MeshContent": "asset://models/crossbow.glb",
+                    "PoseFrom": "Workspace.Rogue.Hero",
+                    "CanCollide": False,
+                },
+            }
+        ],
+    },
+    {
+        "class": "Bone",
+        "name": "LeftHold",
+        "properties": {"JointName": rogue["slots"][0], "CFrame": frame((0.0, 0.0, 0.0), turn(Z, 180.0))},
+    },
+]
+rogue_wears = [
+    {
+        "class": "MeshPart",
+        "name": "Head",
+        "properties": {
+            "MeshContent": "asset://models/rogue_hood.glb",
+            "PoseFrom": "Workspace.Rogue.Hero",
+            "CanCollide": False,
+        },
+    },
+]
 
-# Worked out for the arm as it hangs in a walk: the hand's joint turned from
-# its rest by the arm's being lowered.
-hanging = turn(Z, 78.0)
-# Up, across the body and forwards, in the model's space...
-lie = unit((0.55, 0.70, 0.45))
-# ...which the weld wants in the hand joint's own. A part is long along its Y.
-in_hand = arc(Y, rotate(conj(hanging), lie))
-# The left hand lies across the staff -- the staff along the hand's own Z --
-# with its fingers pointing on from the forearm that brings it.
-forearm = unit((-0.75, 0.25, 0.35))
-across = sum(forearm[i] * lie[i] for i in range(3))
-fingers = unit(tuple(forearm[i] - across * lie[i] for i in range(3)))
-palm = cross(lie, fingers)
-staff_turned = mul(hanging, in_hand)
-back = conj(staff_turned)
-grip_frame = [0.0, HELD_AT + HANDS_APART, 0.0, *rotate(back, fingers), *rotate(back, palm), *rotate(back, lie)]
+# --- the staff -------------------------------------------------------------------
+# A staff in the skeleton's right hand, with a place on it for the left.
+#
+# The RIGHT hand is the clip's: the staff is welded to a `Bone` on the pack's
+# hand slot -- the joint its characters hold things by, with its Y along
+# whatever is held -- and goes wherever the arm swings. The LEFT hand is the
+# staff's: an `IKControl` puts it on the `Grip` attachment, further up,
+# whatever the clip had that arm doing. A part is long along its Y, so the
+# staff is in the hand as the pack's own staff would be, with nothing turned.
+STAFF_LONG = 1.6
+HELD_AT = -0.25  # where along the staff the right hand is, from its middle
+HANDS_APART = 0.45
 
-stocky_hands = HEROES["stocky"]["hands"]
+skeleton = HEROES["skeleton"]
 staff_on_mesh = [
     {
-        # The middle of the right hand, in the hand joint's own space: its
-        # fingers run along -X.
         "class": "Bone",
         "name": "RightGrip",
-        "properties": {"JointName": stocky_hands[1], "CFrame": frame((-PALM, 0.0, 0.0))},
+        "properties": {"JointName": skeleton["slots"][1]},
     },
     {
         "class": "IKControl",
         "name": "LeftHandOnStaff",
         "properties": {
             "Type": "TwoBone",
-            "EndJoint": stocky_hands[0],
-            "Target": "Workspace.Stocky.Staff.Grip",
+            "EndJoint": skeleton["hands"][0],
+            "Target": "Workspace.Skeleton.Staff.Grip",
             # Which way the elbow goes: out to the side. With none, a limb
             # bends the way its clip has it bent, and this arm's clip never
             # meant it to reach across the chest.
-            "Pole": "Workspace.Stocky.LeftElbow",
-            # The wrist stops short of the grip by half a hand, so the hand's
-            # middle is what lies on the staff.
-            "TargetOffset": frame((-PALM, 0.0, 0.0)),
-            "AlignRotation": True,
+            "Pole": "Workspace.Skeleton.LeftElbow",
             # A hand on something the body carries follows it at once: eased,
             # it would trail the staff by however far the body walks meanwhile.
             "Smoothing": 0.0,
@@ -249,7 +331,9 @@ staff = [
             "CanCollide": False,
             "MaterialParameters": {"Color": [0.42, 0.29, 0.16]},
         },
-        "children": [{"class": "Attachment", "name": "Grip", "properties": {"CFrame": grip_frame}}],
+        "children": [
+            {"class": "Attachment", "name": "Grip", "properties": {"CFrame": frame((0.0, HELD_AT + HANDS_APART, 0.0))}}
+        ],
     },
     {
         # Out to the body's left and a little low, in the capsule's own
@@ -262,9 +346,8 @@ staff = [
         "class": "Weld",
         "name": "StaffWeld",
         "properties": {
-            "Part0": "Workspace.Stocky.Hero.RightGrip",
-            "Part1": "Workspace.Stocky.Staff",
-            "C0": frame((0.0, 0.0, 0.0), in_hand),
+            "Part0": "Workspace.Skeleton.Hero.RightGrip",
+            "Part1": "Workspace.Skeleton.Staff",
             "C1": frame((0.0, HELD_AT, 0.0)),
         },
     },
@@ -272,7 +355,7 @@ staff = [
 
 # --- the scene -------------------------------------------------------------------
 PLAYER_AT = (0.0, 4.0)
-SMALL_AT = (-6.6, -1.4)
+MANNEQUIN_AT = (-6.6, -1.4)
 EYE, TARGET = (0.0, 3.26, 9.0), (0.0, 1.56, 4.0)
 looking = unit(tuple(EYE[i] - TARGET[i] for i in range(3)))
 right = unit(cross(Y, looking))
@@ -293,34 +376,50 @@ scene = {
                 "properties": {"CFrame": [*EYE, *right, *cross(looking, right), *looking], "FieldOfView": 60.0},
             },
             *level,
-            # The player's: walked by input. The server points its look at
-            # whichever of the others is nearer.
-            character("Tall", "tall", PLAYER_AT, (0.0, -1.0), 0.5, 3.6, "Workspace.Stocky.Hero.Eyes", 0.3, 1),
-            # Walks the stairs, the platform and the ramp for ever, a staff
-            # in its hands, watching the player.
+            # The player's: walked by input, a crossbow in its hand and a
+            # hood on its head. The server points its look at whichever of
+            # the others is nearer. As fast as the library's run.
             character(
-                "Stocky",
-                "stocky",
+                "Rogue",
+                "rogue",
+                PLAYER_AT,
+                (0.0, -1.0),
+                0.6,
+                2.38,
+                "Workspace.Skeleton.Hero.Eyes",
+                0.3,
+                1,
+                more_on_mesh=rogue_on_mesh,
+                more=rogue_wears,
+            ),
+            # Walks the stairs, the platform and the ramp for ever, a staff
+            # in its hands, watching the player. Its legs are longer than the
+            # library's, and its walk is the library's walk at that much more
+            # of a pace.
+            character(
+                "Skeleton",
+                "skeleton",
                 (-7.5, 0.5),
                 (0.0, -1.0),
-                0.7,
-                1.1,
-                "Workspace.Tall.Hero.Eyes",
+                0.55,
+                0.62,
+                "Workspace.Rogue.Hero.Eyes",
                 0.3,
                 1,
                 more_on_mesh=staff_on_mesh,
                 more=staff,
             ),
             # Stands by the foot of the stairs and watches the player, its
-            # back and its head sharing the turn.
+            # neck and its head sharing the turn: another pack's body, with
+            # other names for its joints and another rest.
             character(
-                "Small",
-                "small",
-                SMALL_AT,
-                (PLAYER_AT[0] - SMALL_AT[0], PLAYER_AT[1] - SMALL_AT[1]),
-                0.4,
+                "Mannequin",
+                "mannequin",
+                MANNEQUIN_AT,
+                (PLAYER_AT[0] - MANNEQUIN_AT[0], PLAYER_AT[1] - MANNEQUIN_AT[1]),
+                0.5,
                 1.0,
-                "Workspace.Tall.Hero.Eyes",
+                "Workspace.Rogue.Hero.Eyes",
                 0.15,
                 2,
             ),

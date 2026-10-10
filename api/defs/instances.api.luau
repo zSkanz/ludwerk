@@ -923,6 +923,28 @@ local Classes: { Schema.Class } = {
                     .. "which is a legitimate thing to want; zero and negative components are refused, since "
                     .. "they are a division rather than a size.",
             },
+            {
+                Name = "PoseFrom",
+                Type = "MeshPart?",
+                Default = "nil",
+                Doc = "The mesh whose pose this one wears (ADR 0201): its **leader**. A piece of armour "
+                    .. "skinned to a body's skeleton, hair, a glove, a bow -- set this to the body and the "
+                    .. "piece moves as part of it.\n\n"
+                    .. "**A joint both have is the leader's, exactly**, on the tick and in the frame's "
+                    .. "picture, matched by name (and by what each joint is, where the names differ and "
+                    .. "both rigs are bodies). Whatever moved the leader's joint -- a clip, a graph, an "
+                    .. "`IKControl`, feet on a stair, a `SpringBone`, a ragdoll -- the follower's is there "
+                    .. "too, so a seam between a body and what it wears does not open.\n\n"
+                    .. "**A joint only this mesh has** rides its parent, at rest unless a track playing on "
+                    .. "the leader names it: a bow's string is pulled by the draw clip the body plays, with "
+                    .. "one `AnimationPlayer` and one graph. A held thing that shares no joint with its "
+                    .. "leader is parented under a `Bone` of the leader and hangs from that joint.\n\n"
+                    .. "A follower is drawn in its leader's place and has no body of its own: it collides "
+                    .. "with nothing, nothing touches it and a ray passes through it. It keeps its own "
+                    .. "`SpringBone` chains and shape keys, and costs its skinning and its draw, not a pose. "
+                    .. "A mesh that names itself, a loop of leaders, or a leader with no skeleton follows "
+                    .. "nobody. Set and cleared while the game runs.",
+            },
         } :: { Schema.Property },
         Methods = {
             {
@@ -1174,6 +1196,72 @@ local Classes: { Schema.Class } = {
                 Type = "boolean",
                 Default = "true",
                 Doc = "Whether it is applied at all.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "LipSync",
+        Extends = "Instance",
+        Module = "render",
+        Parents = under("MeshPart"),
+        Storage = "LipSync",
+        Doc = "Moves a mouth with what is said (ADR 0200). Parent it to the `MeshPart` that has the face's "
+            .. "shape keys and say whose voice it is; while a `Voice` sound plays under that instance, the "
+            .. "face's keys follow it. No script moves anything.\n\n"
+            .. "**Three ways, each the fallback of the one before.** A line that has a viseme track beside "
+            .. "its recording -- `intro_01.visemes.json` beside `intro_01.ogg`, and a language's own beside "
+            .. "that language's recording -- plays it: mouth shapes over time, made by a tool. A line with no "
+            .. "track is read as it sounds: three frequency bands tell an open mouth from a wide or a round "
+            .. "one. And a face with one jaw key opens it by how loud the line is.\n\n"
+            .. "**What a viseme, a band and loudness do to THIS face is the model author's**, in a file "
+            .. "beside the model as its rig's roles are -- `hero.glb`, `hero.face.json`: a viseme's name to "
+            .. "shape keys and weights, which key opens, which widens, which rounds. With no such file, a "
+            .. "key named `JawOpen` or `MouthOpen` is opened by loudness.\n\n"
+            .. "**It is picture, each machine's own.** A machine plays the track of the language IT hears; "
+            .. "nothing of it reaches a tick, a save or another machine. It writes a layer of its own on the "
+            .. "shape keys, over what a clip plays and under what a script sets with `SetMorphWeight`.",
+        Properties = {
+            {
+                Name = "Source",
+                Type = "Instance?",
+                Default = "nil",
+                Doc = "Whose voice it is: a `Voice` sound playing under this instance -- or the instance "
+                    .. "itself, if it is one -- moves the mouth. A head, a character, a model. Nil is the "
+                    .. "mesh's own parent.",
+            },
+            {
+                Name = "Mode",
+                Type = "Enum.LipSyncMode",
+                Default = "Enum.LipSyncMode.Auto",
+                Doc = "Which of the three ways it may use. `Auto` plays a track where the line has one and "
+                    .. "falls back as described.",
+            },
+            {
+                Name = "Map",
+                Type = "string",
+                Default = '""',
+                Doc = "The file that says what a viseme, a band and loudness do to this face. Empty is the "
+                    .. "one beside the mesh's model, with `.face.json` where the model's extension is.",
+            },
+            {
+                Name = "Smoothing",
+                Type = "number",
+                Default = "0.06",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "The seconds a key takes to get where it is going. 0 snaps; a tenth is a slow mouth.",
+            },
+            {
+                Name = "Weight",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.lip_sync_weight",
+                Doc = "How much of it there is, 0 to 2: 0.5 for a mumble, more than 1 for a shout.",
+            },
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether it moves the mouth at all.",
             },
         } :: { Schema.Property },
     },
@@ -6931,8 +7019,10 @@ local Classes: { Schema.Class } = {
                 Name = "Playing",
                 Type = "boolean",
                 Default = "false",
-                Doc = "Whether the timeline is advancing. Writing it is the same as calling `Play` or `Stop`, "
-                    .. "and reading it is how a script asks without keeping its own flag.",
+                Doc = "Whether the timeline is advancing. Writing it is `Resume` and `Pause`, never a rewind: "
+                    .. "`true` carries on from `TimePosition` and `false` stops there. `Play` is what starts "
+                    .. "from the beginning and `Stop` what rewinds. Reading it is how a script asks without "
+                    .. "keeping its own flag.",
             },
             {
                 Name = "Looped",
@@ -6977,7 +7067,11 @@ local Classes: { Schema.Class } = {
                 Doc = "How long `Content` is, in seconds: the file's own length, read from its header, or the "
                     .. "placeholder tone's one second when it names nothing. 0 until the length has been read: "
                     .. "the world's first tick after `Content` is set reads it, and the editor reads it for the "
-                    .. "sound it shows.",
+                    .. "sound it shows.\n\n"
+                    .. "**A sound recorded in several languages is as long as its longest** (ADR 0200): the "
+                    .. "same number on every machine whatever language each one hears, so `Ended` lands on "
+                    .. "the same tick everywhere. A shorter language is followed by silence until the sound "
+                    .. "ends. A sound with a `Caption` and no file in any language lasts its caption.",
             },
             {
                 Name = "RollOffMinDistance",
@@ -7003,8 +7097,47 @@ local Classes: { Schema.Class } = {
                 Default = "nil",
                 Doc = "The bus this sound's volume is multiplied by, or nil for none.",
             },
+            {
+                Name = "Category",
+                Type = "Enum.SoundCategory",
+                Default = "Enum.SoundCategory.Effects",
+                Doc = "What kind of sound it is (ADR 0200): `Effects`, `Music` or `Voice`. It decides which of "
+                    .. "the player's volumes turns it (`AudioService.MusicVolume`, `EffectsVolume`, "
+                    .. "`VoiceVolume`), and music lowers itself while a voice is heard. On the sound and not "
+                    .. "on its `Group`, because a group is each machine's own and a line a server starts has "
+                    .. "to arrive as a voice.",
+            },
+            {
+                Name = "Loudness",
+                Type = "number",
+                ReadOnly = true,
+                Transient = true,
+                -- What one machine's copy of the recording holds at one moment.
+                HostFact = true,
+                Doc = "How loud what THIS machine is playing of the sound is right now, 0 to 1 (ADR 0200): "
+                    .. "the level of the recording over about the last twentieth of a second at "
+                    .. "`TimePosition`, where a tone at full scale reads 1. What opens a jaw with a line.\n\n"
+                    .. "**It is the recording's own level**: no volume is in it -- not the sound's, not a "
+                    .. "group's, not the player's -- and no distance, so a mouth opens the same whatever a "
+                    .. "slider says. It is the language this machine hears, which may be another machine's "
+                    .. "other language: picture, each machine's own, and nothing a game's rules may read. 0 "
+                    .. "while the sound is not playing, in the silence after a shorter language, and for a "
+                    .. "sound with no file.",
+            },
         } :: { Schema.Property },
         Methods = {
+            {
+                Name = "GetBands",
+                Parameters = {},
+                Returns = { "number", "number", "number" },
+                Doc = "The moment `Loudness` measures, split in three (ADR 0200): how much of it is low (80 "
+                    .. "to 500 Hz), middle (500 to 2,500 Hz) and high (2,500 to 10,000 Hz), each 0 to 1, as "
+                    .. "three numbers. A tone at full scale inside a band reads 1 there and 0 in the others. "
+                    .. "Enough to tell an open mouth from a wide or a round one, and what a visualiser "
+                    .. "reads.\n\n"
+                    .. "**Worked out when asked and not otherwise**: a sound nobody asks about costs nothing, "
+                    .. "and two askers in one tick pay once. Each machine's own, as `Loudness` is.",
+            },
             {
                 Name = "Play",
                 Parameters = {},
@@ -7012,7 +7145,10 @@ local Classes: { Schema.Class } = {
                 ThreadSafety = "Unsafe",
                 Doc = "Plays it from the start -- or from `TimePosition`, when a script set it since the "
                     .. "sound last started. Playing one that is already playing starts it again. `Resume` "
-                    .. "is what carries on from where `Pause` left it.",
+                    .. "is what carries on from where `Pause` left it.\n\n"
+                    .. "**This is where a sound's language is chosen** (ADR 0200): `Content` is looked for "
+                    .. "under `l10n/<VoiceLocale>/`, then under the language alone, then as it is named, and "
+                    .. "what is playing finishes in the language it started in.",
             },
             {
                 Name = "Resume",
@@ -7057,6 +7193,54 @@ local Classes: { Schema.Class } = {
                     .. "declared now so that code written today does not have to change when it does.",
             },
         } :: { Schema.Event },
+    },
+    {
+        Name = "Caption",
+        Extends = "Instance",
+        Module = "audio",
+        Parents = under("Sound"),
+        Storage = "Caption",
+        Doc = 'What a sound says, in words (ADR 0200): a line of dialogue, or "[a door creaks]". Parent it '
+            .. "to the `Sound` it belongs to. While that sound plays and can be heard on a machine -- within "
+            .. "`RollOffMaxDistance` of the listener, for a sound on a part; the player's volumes are not "
+            .. "asked -- the caption is current there: `DialogueService:GetCaptions` lists it, and "
+            .. "`CaptionStarted` and `CaptionEnded` say when.\n\n"
+            .. "**Its words are keys, not text.** `Text` and `Speaker` name entries of the game's catalogs "
+            .. "(`LocalizationService:Translate`), so one caption reads in every player's own language -- "
+            .. "which need not be the language that player hears.\n\n"
+            .. "**A sound with a caption and no file in any language is silent and lasts its caption**: "
+            .. "`Seconds`, or a reading time for the text. A game is written before it is recorded, and its "
+            .. "lines play as text from the first day. In a match a caption travels with its sound.",
+        Properties = {
+            {
+                Name = "Text",
+                Type = "string",
+                Default = '""',
+                Doc = "The catalog key of what is said. Shown as written when no catalog has it.",
+            },
+            {
+                Name = "Speaker",
+                Type = "string",
+                Default = '""',
+                Doc = "The catalog key of who says it, or empty for nobody: a sound of the world.",
+            },
+            {
+                Name = "Color",
+                Type = "Color3",
+                Default = "Color3.new(1, 1, 1)",
+                Doc = "The speaker's colour: what their name is written in.",
+            },
+            {
+                Name = "Seconds",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How long the sound lasts when it has no file in any language. 0 is a reading time: a "
+                    .. "second and a half, and six hundredths of a second for each character of the text in "
+                    .. "the project's default language, twelve seconds at most -- the same on every machine. "
+                    .. "A sound that has a file lasts as long as the file and this is not read.",
+            },
+        } :: { Schema.Property },
     },
     {
         Name = "AnimationPlayer",

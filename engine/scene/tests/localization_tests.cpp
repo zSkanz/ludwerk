@@ -2,7 +2,9 @@
 // key is read from, and which catalog a wanted locale is.
 #include <array>
 #include <doctest/doctest.h>
+#include <span>
 #include <string>
+#include <vector>
 
 #include "engine/scene/localization.h"
 
@@ -149,4 +151,108 @@ TEST_CASE("a file that is not a catalog leaves the words its locale had")
     CHECK(localization.revision() != before);
     CHECK(localization.translate("en", "menu.play") == "Start");
     CHECK_FALSE(localization.translate("en", "menu.quit").has_value());
+}
+
+// --- A voice language apart from the text language (ADR 0200) -----------------
+
+TEST_CASE("ADR 0200: a voice is narrowed to what can be played, and follows the text when nothing was chosen")
+{
+    const std::array<std::string, 3> playable{"en", "ja", "pt-BR"};
+
+    // Exactly, then the bare language, then any region of it.
+    CHECK(scene::narrowVoice("pt-br", playable) == "pt-BR");
+    CHECK(scene::narrowVoice("pt-PT", playable) == "pt-BR");
+    CHECK(scene::narrowVoice("ja-JP", playable) == "ja");
+    CHECK(scene::narrowVoice("de", playable).empty());
+    CHECK(scene::narrowVoice("", playable).empty());
+
+    const std::array<std::string, 2> system{"de-DE", "ja-JP"};
+    // What the player chose stands in front of everything.
+    CHECK(scene::voiceLocaleFor("ja", "pt-BR", playable, system) == "ja");
+    // Nothing chosen: the language being read.
+    CHECK(scene::voiceLocaleFor("", "pt-BR", playable, system) == "pt-BR");
+    // Read in a language the game has no voice for: the first of the
+    // system's own that it has one for -- which need not be the text's.
+    CHECK(scene::voiceLocaleFor("", "de", playable, system) == "ja");
+    // And with none of those, the default, which is first of the list.
+    CHECK(scene::voiceLocaleFor("", "de", playable, std::span<const std::string>{}) == "en");
+    // **A voice chosen once whose pack has since gone** is narrowed like any
+    // other, with no word said: it follows the text again.
+    const std::array<std::string, 2> fewer{"en", "pt-BR"};
+    CHECK(scene::voiceLocaleFor("ja", "pt-BR", fewer, system) == "pt-BR");
+}
+
+TEST_CASE("ADR 0200: the list of voices starts with the default language, and the rest are in order")
+{
+    const std::array<std::string, 4> others{"pt-br", "ja", "en", "ja"};
+    CHECK(scene::voiceLocaleList("en", others) == std::vector<std::string>{"en", "ja", "pt-BR"});
+    CHECK(scene::voiceLocaleList("", std::span<const std::string>{}) == std::vector<std::string>{"en"});
+}
+
+TEST_CASE("ADR 0200: a lines file names its lines, and what an entry does not say comes from the line's name")
+{
+    scene::DialogueLines lines;
+    std::string why;
+    REQUIRE(lines.load("act1", R"({
+        "speakers": { "mara": { "name": "speaker.mara", "color": "#E8B04A" }, "tom": {} },
+        "lines": {
+            "intro_01": { "speaker": "mara" },
+            "intro_02": { "speaker": "tom", "text": "some.other.key", "sound": "asset://voice/other.ogg",
+                          "seconds": 2.5 },
+            "aside": { "sound": "" }
+        } })",
+                       &why));
+    REQUIRE(lines.size() == 3);
+
+    const scene::DialogueLine* first = lines.find("act1.intro_01");
+    REQUIRE(first != nullptr);
+    // Its text key is its name, and its sound is where a recording of it goes.
+    CHECK(first->text == "act1.intro_01");
+    CHECK(first->sound == "asset://voice/act1/intro_01.ogg");
+    CHECK(first->speaker == "speaker.mara");
+    CHECK(static_cast<double>(first->color.r) == doctest::Approx(232.0 / 255.0));
+    CHECK(first->seconds == 0.0f);
+
+    const scene::DialogueLine* second = lines.find("act1.intro_02");
+    REQUIRE(second != nullptr);
+    CHECK(second->text == "some.other.key");
+    CHECK(second->sound == "asset://voice/other.ogg");
+    // A speaker with no name of its own is named after its id.
+    CHECK(second->speaker == "speaker.tom");
+    CHECK(static_cast<double>(second->seconds) == doctest::Approx(2.5));
+
+    // Never voiced, and said by nobody.
+    const scene::DialogueLine* aside = lines.find("act1.aside");
+    REQUIRE(aside != nullptr);
+    CHECK(aside->sound.empty());
+    CHECK(aside->speaker.empty());
+    CHECK(lines.find("intro_01") == nullptr);
+
+    // A second file's lines are beside the first's; a file read again
+    // replaces its own and no other's.
+    REQUIRE(lines.load("act2", R"({ "lines": { "a": {} } })"));
+    REQUIRE(lines.load("act1", R"({ "lines": { "only": {} } })"));
+    CHECK(lines.ids() == std::vector<std::string>{"act1.only", "act2.a"});
+
+    // What is not a lines file is refused whole, and what was read stays.
+    CHECK_FALSE(lines.load("act2", R"({ "lines": { "a": { "speaker": "nobody" } } })", &why));
+    CHECK_FALSE(why.empty());
+    CHECK_FALSE(lines.load("act2", "not json", &why));
+    CHECK_FALSE(lines.load("act2", R"({ "lines": { "a": { "seconds": -1 } } })", &why));
+    CHECK(lines.find("act2.a") != nullptr);
+    lines.forget("act2");
+    CHECK(lines.ids() == std::vector<std::string>{"act1.only"});
+}
+
+TEST_CASE("ADR 0200: a line with no recording lasts a reading time, counted in characters and not in bytes")
+{
+    // The author's number when there is one.
+    CHECK(scene::captionSeconds(2.5f, "anything") == doctest::Approx(2.5));
+    // A second and a half, and six hundredths a character.
+    CHECK(scene::captionSeconds(0.0f, "") == doctest::Approx(1.5));
+    CHECK(scene::captionSeconds(0.0f, "hello there") == doctest::Approx(1.5 + 11 * 0.06));
+    // Three characters of three bytes each are three characters.
+    CHECK(scene::captionSeconds(0.0f, "\xE3\x81\x93\xE3\x82\x93\xE3\x81\xAB") == doctest::Approx(1.5 + 3 * 0.06));
+    // And never longer than twelve seconds, whatever was written.
+    CHECK(scene::captionSeconds(0.0f, std::string(1000, 'a')) == doctest::Approx(12.0));
 }

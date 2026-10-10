@@ -25,9 +25,11 @@
 // and both are zero in a healthy run.
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 
 #include "engine/asset/content.h"
@@ -36,9 +38,14 @@
 #include "engine/core/math.h"
 #include "engine/core/types.h"
 
-namespace engine::scene {
-class World;
+namespace engine::asset {
+struct LocalizationIndex;
 }
+
+namespace engine::scene {
+class SoundMeter;
+class World;
+} // namespace engine::scene
 
 namespace engine::audio {
 
@@ -172,6 +179,62 @@ public:
     // A content that names nothing, or that cannot be decoded, answers with the
     // placeholder tone's length, because the tone is what such a sound plays.
     [[nodiscard]] f64 clipDuration(std::string_view content);
+
+    // --- A sound in the player's language (ADR 0200) -------------------------
+    //
+    // What the game holds in other languages, or null for a game that holds
+    // nothing localized -- which then costs nothing here. Not owned: it is
+    // the host's, and outlives every tick that reads it.
+    //
+    // **It decides a length, and so it is simulation's**: a sound that has a
+    // recording in another language lasts as long as the LONGEST of them, on
+    // every machine, whatever language that machine hears and whatever files
+    // it has. Read from the index when the game was exported, measured from
+    // the files' headers when it runs from a folder.
+    void setLocalized(const asset::LocalizationIndex* index) noexcept;
+    // The language sounds are resolved in. Each machine's own, and never the
+    // tick's: a sound that is playing finishes in the language it started
+    // in, and the next `Play` is heard in the new one.
+    void setVoiceLocale(std::string_view locale);
+    [[nodiscard]] std::string_view voiceLocale() const noexcept;
+
+    // **A file changed under a name** (hot reload): what was read of it is
+    // let go, and the next sound that names it reads it again. A re-recorded
+    // line is heard without the world being made anew.
+    void forget(std::span<const std::string> names);
+
+    // The file a playing sound resolved to on this machine -- its name in
+    // the language it is heard in -- or empty for one that is not playing.
+    // What a viseme track is found beside.
+    [[nodiscard]] std::string_view heardAs(const scene::World& world, core::InstanceId sound) const noexcept;
+    // The sounds that can be heard here this frame: playing and in range,
+    // whatever the player's volumes are -- a muted line is still being said.
+    // In the order the frame met them. What a caption is current by.
+    [[nodiscard]] std::span<const core::InstanceId> heardNow() const noexcept;
+
+    // **How loud what this machine is playing of a sound is right now**, 0 to
+    // 1, and the same moment in three bands (80-500, 500-2,500, 2,500-10,000
+    // Hz). The recording's own level at the sound's place in its timeline,
+    // with no volume in it: a mouth opens the same whatever a slider says.
+    // Worked out when asked, once a frame a sound, and never otherwise.
+    [[nodiscard]] f32 loudness(const scene::World& world, core::InstanceId sound);
+    [[nodiscard]] std::array<f32, 3> bands(const scene::World& world, core::InstanceId sound);
+    // The same of everything of a category that can be heard here, mixed as
+    // the game mixes it and before the player's volumes.
+    [[nodiscard]] std::array<f32, 3> categoryBands(const scene::World& world, core::i32 category);
+    // The language a sound is heard in here: the locale of its file, empty
+    // for the default language's, nothing for a sound with no recording.
+    [[nodiscard]] std::optional<std::string> spokenIn(const scene::World& world, core::InstanceId sound);
+    // The four above as the world asks for them (`World::setSoundMeter`).
+    [[nodiscard]] scene::SoundMeter* meter() noexcept;
+    // How many windows of samples were analysed since the start: what a test
+    // counts to see that a sound nobody asked about cost nothing.
+    [[nodiscard]] u64 meterWork() const noexcept;
+
+    // What music is multiplied by under a voice, as the mixer has it now: 1
+    // with nobody speaking, eased towards `MusicUnderVoice` while a voice is
+    // heard. The mixer's, advanced by the audio it renders.
+    [[nodiscard]] f32 musicDuck() const noexcept;
 
     // **Auditioning a file is not the game playing a sound**, and this is the
     // whole difference between the two.

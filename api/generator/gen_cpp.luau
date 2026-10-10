@@ -732,6 +732,11 @@ local function generate(target: Module)
                     -- property in the IDL wants it.
                     emit("            .observed = true,")
                 end
+                if property.Choice == true then
+                    -- A write the read does not show: made even when the
+                    -- value reads the same. Emitted only when true.
+                    emit("            .choice = true,")
+                end
                 emit(`            .threadSafety = {scope}ThreadSafety::{property.ThreadSafety or "Unsafe"},`)
                 emit(`            .readOnly = {if property.ReadOnly == true then "true" else "false"},`)
                 if property.ScriptReadOnly == true then

@@ -5,17 +5,22 @@
 # it, a staff welded to a bone on its hand, and a script that turns it each
 # tick to face the way it walks. Its body and its staff collide with nothing
 # -- and were taken for ground: a character inherits its ground's motion, and
-# its own body's motion is its own a tick ago, so a walk of 1.1 metres a
-# second fed on itself. On the build before, 376 of 600 ticks were faster than
-# 1.3 m/s and the fastest was 9.3; a stair's step-up is the only tick that is,
-# five or six times in a round.
+# its own body's motion is its own a tick ago, so a walk fed on itself. On the
+# build before, with a walk of 1.1 metres a second, 376 of 600 ticks were
+# faster than 1.3 m/s and the fastest was 9.3; a stair's step-up is the only
+# tick that is, five or six times in a round.
+#
+# **And its graph reads that walk in the library's strides** (D625). The
+# walker's legs are longer than the body's its clips were made on, so its own
+# walk -- 0.62 metres a second -- is the library's walk of 0.54, and that is
+# the number its graph has to read to play the walk and not something past it.
 #
 # A copy of the example, with a script added that measures the walker each
 # tick and says what its animation graph is doing; then:
 #
 #   - no warning and no error in the run;
-#   - at most a dozen ticks over 1.3 m/s, and none over 3;
-#   - the walker's graph is in `Move`, reading a speed near its walk, and its
+#   - at most a dozen ticks a fifth faster than its walk, and none over 3 m/s;
+#   - the walker's graph is in `Move`, reading the library's walk, and its
 #     clips' `Step` events arrive.
 #
 # No device: what is under test is the simulation.
@@ -39,7 +44,7 @@ file(WRITE "${game}/src/server/zz_measure.luau" [=[
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
-local walker = Workspace:WaitForChild("Stocky") :: CharacterBody
+local walker = Workspace:WaitForChild("Skeleton") :: CharacterBody
 local animator = walker:WaitForChild("Animation") :: AnimationPlayer
 local steps = 0
 animator.EventReached:Connect(function(name: string)
@@ -57,7 +62,7 @@ RunService.Heartbeat:Connect(function(dt: number)
     local speed = math.sqrt(dx * dx + dz * dz) / dt
     last = now
     if ticks > 30 and ticks <= 630 then
-        if speed > 1.3 then
+        if speed > walker.WalkSpeed * 1.2 then
             fast += 1
         end
         fastest = math.max(fastest, speed)
@@ -109,7 +114,7 @@ set(steps "${CMAKE_MATCH_1}")
 
 set(failures "")
 if(fast GREATER 12)
-    string(APPEND failures "  ${fast} of 600 ticks faster than 1.3 m/s, where a walk of 1.1 has a stair's step-up or six\n")
+    string(APPEND failures "  ${fast} of 600 ticks a fifth faster than its walk, where a walk has a stair's step-up or six\n")
 endif()
 if(fastest GREATER 3)
     string(APPEND failures "  the fastest tick was ${fastest} m/s\n")
@@ -117,8 +122,8 @@ endif()
 if(move LESS 590)
     string(APPEND failures "  its graph was in Move for ${move} of 600 ticks\n")
 endif()
-if(speed LESS 0.9 OR speed GREATER 1.3)
-    string(APPEND failures "  its graph read a speed of ${speed} m/s on average, of a walk of 1.1\n")
+if(speed LESS 0.46 OR speed GREATER 0.62)
+    string(APPEND failures "  its graph read a speed of ${speed} on average, where the library's walk is 0.54\n")
 endif()
 if(steps LESS 8)
     string(APPEND failures "  ${steps} steps were heard in ten seconds of walking\n")

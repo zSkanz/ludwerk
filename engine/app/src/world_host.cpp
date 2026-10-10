@@ -50,7 +50,8 @@ using core::LogLevel;
 // a directory walk, because the set is the engine's own surface (ADR 0030) and
 // discovering it from a directory would make an accidentally-shipped file part
 // of the API.
-constexpr std::string_view RuntimeModules[] = {"camera", "ragdoll", "settings", "stamppool", "testing", "views"};
+constexpr std::string_view RuntimeModules[] = {"camera",    "ragdoll", "settings", "stamppool",
+                                               "subtitles", "testing", "views"};
 
 // The conformance runner, as an ordinary entry script.
 //
@@ -305,6 +306,21 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_world->engineState().graphicsDisplay = options.graphicsDisplay;
     m_world->setLocalization(options.localization);
     m_world->engineState().locale = options.locale;
+    // **And what the player hears** (ADR 0200): the languages this machine
+    // can play, the one in force, their volumes -- before a script's first
+    // line, which may read any of them.
+    // A conformance suite is not a project and has a content folder of its
+    // own, which is what the host mounted for it.
+    m_looseContent = !options.conformanceRoot.empty() ? options.conformanceRoot / "content"
+                     : options.projectPath.empty()    ? std::filesystem::path{}
+                                                      : options.projectPath / "content";
+    m_mountedVoices = options.mountedVoices;
+    m_world->engineState().voiceChoice = options.voiceChoice;
+    m_world->engineState().systemLocales = options.systemLocales;
+    m_world->engineState().playerSound = options.playerSound;
+    openLocalized();
+    scene::refreshVoiceLocale(*m_world, core::InstanceId{});
+    m_world->setDialogue(&m_dialogue);
     // **Started to join** (`--join`, D433): the join is under way from the
     // first line any script runs. `State` reads `Connecting`, not `Offline`
     // -- "about to join" and "alone" looked the same -- and the scene's
@@ -418,6 +434,13 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // costs a second and a log line nobody reads. The TIMELINE runs either way,
     // which is what makes `Ended` land on the same tick in both.
     (void)m_audio.start(options.headless);
+    // A sound is found for the language this machine hears, and is as long
+    // as its longest language (ADR 0200): the audio needs the files and what
+    // the game holds in other languages before the first tick asks a length.
+    m_audio.setContentMounts(m_mounts);
+    m_audio.setLocalized(&m_localized);
+    m_audio.setVoiceLocale(m_world->engineState().voiceLocale);
+    m_world->setSoundMeter(m_audio.meter());
 
     // Animation is created unconditionally, unlike the physics mirror: there is
     // no backend to be missing. A world whose meshes carry no skeleton simply
@@ -1146,9 +1169,143 @@ void WorldHost::syncGraphs()
     });
 }
 
+void WorldHost::openLocalized()
+{
+    m_localized = asset::LocalizationIndex{};
+    m_dialogue.clear();
+    bool indexed = false;
+    // An export carries an index, because a sealed pack cannot be asked what
+    // it holds; a project run from its folder is read as it stands.
+    if (const std::optional<std::string> text = readContentText(asset::LocalizationIndexUrn); text.has_value()) {
+        std::string why;
+        indexed = asset::readLocalizationIndex(*text, m_localized, &why);
+        if (!indexed) {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"why", std::string_view{why}}};
+            core::log(core::LogLevel::Warn, ENG_TR("app.warn.l10n_index_unreadable"), args);
+        }
+    }
+    if (!indexed && !m_looseContent.empty())
+        asset::scanLocalizedContent(m_looseContent, m_localized);
+
+    for (const std::string& path : m_localized.lines) {
+        // `dialogue/act1.lines.json` is the lines of `act1`.
+        constexpr std::string_view Tail = ".lines.json";
+        const std::size_t slash = path.find_last_of('/');
+        std::string_view name =
+            slash == std::string::npos ? std::string_view{path} : std::string_view{path}.substr(slash + 1);
+        if (name.size() <= Tail.size())
+            continue;
+        name.remove_suffix(Tail.size());
+        const std::optional<std::string> text = readContentText("asset://" + path);
+        std::string why;
+        if (!text.has_value() || !m_dialogue.load(name, *text, &why)) {
+            const std::array<core::I18nArg, 2> args{core::I18nArg{"file", std::string_view{path}},
+                                                    core::I18nArg{"why", std::string_view{why}}};
+            core::log(core::LogLevel::Warn, ENG_TR("app.warn.dialogue_lines_unreadable"), args);
+        }
+    }
+
+    // What this machine can play: from a folder, every language in it; from
+    // an export, what shipped in the game's pack and what a language pack
+    // brought. The default language is always first, and always there.
+    std::vector<std::string> playable = m_localized.measured ? m_localized.shipped : m_localized.voice;
+    if (m_localized.measured) {
+        for (const std::string& locale : m_mountedVoices) {
+            if (std::binary_search(m_localized.voice.begin(), m_localized.voice.end(), locale))
+                playable.push_back(locale);
+        }
+        std::sort(playable.begin(), playable.end());
+        playable.erase(std::unique(playable.begin(), playable.end()), playable.end());
+    }
+    scene::EngineState& state = m_world->engineState();
+    const scene::Localization* words = m_world->localization();
+    state.voiceLocales = scene::voiceLocaleList(
+        words != nullptr ? std::string_view{words->defaultLocale()} : std::string_view{"en"}, playable);
+}
+
+void WorldHost::stepCaptions()
+{
+    if (!m_world.has_value())
+        return;
+    scene::EngineState& state = m_world->engineState();
+    // No captions anywhere is every game that is not dubbed: one size asked.
+    if (m_world->captions().size() == 0 && state.captions.empty())
+        return;
+
+    std::vector<core::InstanceId> now;
+    for (const core::InstanceId sound : m_audio.heardNow()) {
+        for (core::InstanceId child = m_world->firstChild(sound); child.valid(); child = m_world->nextSibling(child)) {
+            if (m_world->captions().find(child) != nullptr && !m_world->destroyed(child))
+                now.push_back(child);
+        }
+    }
+    // In the order they started: what was being said stays where it was, and
+    // what began this frame goes after it.
+    std::vector<core::InstanceId> ordered;
+    ordered.reserve(now.size());
+    for (const core::InstanceId caption : state.captions) {
+        if (std::find(now.begin(), now.end(), caption) != now.end())
+            ordered.push_back(caption);
+    }
+    std::vector<core::InstanceId> started;
+    for (const core::InstanceId caption : now) {
+        if (std::find(ordered.begin(), ordered.end(), caption) == ordered.end()) {
+            ordered.push_back(caption);
+            started.push_back(caption);
+        }
+    }
+    const core::InstanceId service =
+        m_world->findFirstChildOfClass(m_runtime->dataModel(), m_classes.findId(m_atoms.intern("DialogueService")));
+    if (service.valid()) {
+        const core::NameAtom ended = m_atoms.intern("CaptionEnded");
+        const core::NameAtom began = m_atoms.intern("CaptionStarted");
+        for (const core::InstanceId caption : state.captions) {
+            if (std::find(ordered.begin(), ordered.end(), caption) == ordered.end())
+                m_world->changes().push(scene::Change{scene::ChangeKind::InstanceEvent, service, caption, ended});
+        }
+        for (const core::InstanceId caption : started)
+            m_world->changes().push(scene::Change{scene::ChangeKind::InstanceEvent, service, caption, began});
+    }
+    state.captions = std::move(ordered);
+}
+
 core::u32 WorldHost::forgetContent(std::span<const core::NameAtom> urns)
 {
     core::u32 dropped = 0;
+    // **A sound recorded again is heard as it is now** (D620), and a file
+    // that came or went under `l10n/` or `dialogue/` changes what the game
+    // has in other languages: both are read again.
+    std::vector<std::string> sounds;
+    bool localized = false;
+    for (const core::NameAtom urn : urns) {
+        const std::string_view text = m_world->atoms().text(urn);
+        if (asset::isSoundPath(text))
+            sounds.emplace_back(text);
+        if (text.find("://l10n/") != std::string_view::npos || text.find("://dialogue/") != std::string_view::npos)
+            localized = true;
+    }
+    if (localized) {
+        openLocalized();
+        scene::refreshVoiceLocale(
+            *m_world, m_world->findFirstChildOfClass(m_runtime->dataModel(),
+                                                     m_classes.findId(m_atoms.intern("LocalizationService"))));
+        // The index is the same object and what it says moved: asked again.
+        m_audio.setLocalized(nullptr);
+        m_audio.setLocalized(&m_localized);
+        m_audio.setVoiceLocale(m_world->engineState().voiceLocale);
+        ++dropped;
+    }
+    if (!sounds.empty()) {
+        m_audio.forget(sounds);
+        dropped += static_cast<core::u32>(sounds.size());
+    }
+    // A viseme track or a face map written again is read again (ADR 0200).
+    {
+        std::vector<std::string> named;
+        for (const core::NameAtom urn : urns)
+            named.emplace_back(m_world->atoms().text(urn));
+        m_mouths.forget(named);
+    }
     for (const core::NameAtom urn : urns) {
         const std::string_view text = m_world->atoms().text(urn);
         if (asset::isAnimationGraphPath(text)) {

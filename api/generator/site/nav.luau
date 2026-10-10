@@ -149,10 +149,11 @@ local Sections: { Section } = {
     {
         Slug = "audio",
         Title = "Audio",
-        Summary = "Playing a sound, placing it in the world, and mixing what comes out.",
+        Summary = "Playing a sound, placing it in the world, mixing what comes out, and voices in many languages.",
         Pages = {
             { Slug = "sounds", Title = "Sounds" },
             { Slug = "mixing", Title = "Groups, mixing and the listener" },
+            { Slug = "dubbing", Title = "Dubbing: voices, languages and subtitles" },
         },
     },
     {
@@ -167,6 +168,7 @@ local Sections: { Section } = {
             { Slug = "reach-and-look", Title = "Reaching, looking and feet" },
             { Slug = "secondary-motion", Title = "Capes, tails and hair" },
             { Slug = "morph-targets", Title = "Faces and shape keys" },
+            { Slug = "wearing-and-holding", Title = "Wearing and holding" },
         },
     },
     {

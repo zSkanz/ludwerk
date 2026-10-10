@@ -541,6 +541,14 @@ void Partitioner::collectPins(std::string_view node, const std::string& path)
                 }
                 walk = walk.substr(0, dot);
             }
+            // **And a part that points stays too** (D626). A cell's record has
+            // a place, a size and a colour and nowhere to put a reference: a
+            // piece worn on a body (`MeshPart.PoseFrom`, ADR 0201) came back
+            // from its cell following nobody. Only a part can be a record, so
+            // only a part needs saying.
+            if (classId == m_partClass || classId == m_meshPartClass) {
+                m_pins.emplace(here);
+            }
         });
     }
 

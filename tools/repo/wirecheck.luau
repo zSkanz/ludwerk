@@ -10,7 +10,7 @@
 	is a replica confidently wrong about the state that decides the next tick, and
 	the symptom is a divergence somebody debugs for a week.
 
-	So this compares them, in the three directions that can go wrong:
+	So this compares them, in the four directions that can go wrong:
 
 	  1. **Every class the API declares is decided about.** Replicated or
 	     excluded, by name. Absence is not an answer -- a class nobody thought
@@ -21,6 +21,11 @@
 	  3. **Ids are permanent.** Live and retired alike, within a class, and for
 	     channels and messages globally. This is `Schema.validate`'s half and it
 	     runs from here so there is one command to run.
+
+	  4. **Every property a script can write on a replicated class is decided
+	     about** (D617, D618): it has a field, a field says it carries it, or it
+	     is withheld by name with the reason. The same rule as 1, one level
+	     down -- and it was the level where a replica was wrong for a year.
 
 	It does NOT try to prove that every hashed field is replicated. It should not:
 	`Terrain` is hashed and deliberately not replicated, and a lint that demanded
@@ -181,6 +186,147 @@ for _, name in undecided do
         `{name}: neither replicated nor excluded. Every concrete class is a decision -- `
             .. `add it to Classes with its fields, or to Excluded with the reason it is not on the wire`
     )
+end
+
+-- 4. Every property a script can write on a replicated class is sent, or is
+--    withheld with its reason (D617, D618).
+--
+-- **A property with no field was a replica confidently wrong, and nothing said
+-- so**: a part's friction, a model's primary part and a light under the open
+-- sky all had none, for as long as nobody happened to read them on a client.
+-- They were found by a person reading every class against its fields once;
+-- this is that reading, done on every run, so the property somebody adds next
+-- week is decided about on the day it is added.
+--
+-- What is not asked about is derived, not listed: a property nobody can write
+-- has nothing to send; one declared `Presentation` or `HostFact` is one
+-- machine's own by its declaration; and one not yet backed holds nothing.
+local wireClasses: { [string]: Schema.Class } = {}
+for _, class in Wire.classes() do
+    wireClasses[class.Name] = class
+end
+
+local apiClasses: { [string]: ApiSchema.Class } = {}
+for _, class in ApiClasses do
+    apiClasses[class.Name] = class
+end
+
+--- The names a wire class has decided about, its own and those of the wire
+--- classes it extends: each field, what each field carries, and what is
+--- withheld.
+local function decidedProperties(class: Schema.Class): { [string]: boolean }
+    local names: { [string]: boolean } = {}
+    for _, field in Common do
+        names[field.Name] = true
+    end
+    local at: Schema.Class? = class
+    local guard = 0
+    while at ~= nil and guard < 64 do
+        for _, field in at.Fields do
+            names[field.Name] = true
+            local carried: { string } = field.Carries or {}
+            for _, name in carried do
+                names[name] = true
+            end
+        end
+        local withheld: { Schema.Withheld } = at.Withheld or {}
+        for _, entry in withheld do
+            names[entry.Name] = true
+        end
+        at = if at.Extends ~= nil then wireClasses[at.Extends] else nil
+        guard += 1
+    end
+    return names
+end
+
+--- The wire class an API class's instances are sent as: itself, or the nearest
+--- ancestor that is one -- unless an exclusion is nearer, which decides it.
+local function sentAs(class: ApiSchema.Class): Schema.Class?
+    local at: ApiSchema.Class? = class
+    local guard = 0
+    while at ~= nil and guard < 64 do
+        if decided[at.Name] == "excluded" then
+            return nil
+        end
+        local wire = wireClasses[at.Name]
+        if wire ~= nil then
+            return wire
+        end
+        at = if at.Extends ~= nil then apiClasses[at.Extends] else nil
+        guard += 1
+    end
+    return nil
+end
+
+--- Every property an API class has, its ancestors' included, by name.
+local function propertiesOf(name: string): { [string]: boolean }
+    local names: { [string]: boolean } = {}
+    local at: ApiSchema.Class? = apiClasses[name]
+    local guard = 0
+    while at ~= nil and guard < 64 do
+        local properties: { ApiSchema.Property } = at.Properties or {}
+        for _, property in properties do
+            names[property.Name] = true
+        end
+        at = if at.Extends ~= nil then apiClasses[at.Extends] else nil
+        guard += 1
+    end
+    return names
+end
+
+for _, class in ApiClasses do
+    local wire = sentAs(class)
+    if wire == nil then
+        continue
+    end
+    local names = decidedProperties(wire)
+    local properties: { ApiSchema.Property } = class.Properties or {}
+    for _, property in properties do
+        if property.ReadOnly or property.Presentation or property.HostFact or property.Native == "" then
+            continue
+        end
+        if not names[property.Name] then
+            report(
+                `{class.Name}.{property.Name}: a script can write it and a replica is never told. `
+                    .. `Give {wire.Name} a field for it (or name it in the \`Carries\` of the field that `
+                    .. `already holds its value), or list it under \`Withheld\` with the reason it stays`
+            )
+        end
+    end
+end
+
+-- And the other way: a field that says it carries a property, or a `Withheld`
+-- entry, names a property the class has -- a renamed property would otherwise
+-- leave its decision behind under the old name, deciding nothing.
+for _, wire in Wire.classes() do
+    if apiClasses[wire.Name] == nil then
+        continue
+    end
+    -- A wire class stands for the API classes sent as it, so a name may be a
+    -- property of any of them.
+    local known = propertiesOf(wire.Name)
+    for _, class in ApiClasses do
+        local as = sentAs(class)
+        if as ~= nil and as.Name == wire.Name then
+            for name in propertiesOf(class.Name) do
+                known[name] = true
+            end
+        end
+    end
+    for _, field in wire.Fields do
+        local carried: { string } = field.Carries or {}
+        for _, name in carried do
+            if not known[name] then
+                report(`{wire.Name}.{field.Name}: carries "{name}", which is not a property of the class`)
+            end
+        end
+    end
+    local withheld: { Schema.Withheld } = wire.Withheld or {}
+    for _, entry in withheld do
+        if not known[entry.Name] then
+            report(`{wire.Name}: withholds "{entry.Name}", which is not a property of the class`)
+        end
+    end
 end
 
 if #problems > 0 then

@@ -43,6 +43,17 @@
     ]
    },
    {
+    "class": "MeshPart",
+    "name": "Piece",
+    "properties": {
+     "MeshContent": "asset://models/walker.gltf",
+     "Anchored": true,
+     "CanCollide": false,
+     "CanQuery": false,
+     "PoseFrom": "Hero.Body"
+    }
+   },
+   {
     "class": "Attachment",
     "name": "Grip",
     "properties": { "CFrame": [0.5, 0.5, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1] }

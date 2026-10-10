@@ -14,6 +14,7 @@ add_library(engine_assetc_lib STATIC
     src/compiler.cpp
     src/texture.cpp
     src/exotic.cpp
+    src/l10n.cpp
 )
 target_include_directories(engine_assetc_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(engine_assetc_lib
@@ -22,7 +23,13 @@ target_link_libraries(engine_assetc_lib
     # is what makes it usable here at all: per-job buffers, a barrier, and a
     # merge in source order, so the pack is built from the same bytes in the same
     # sequence however many workers ran.
-    PRIVATE engine::warnings engine::platform engine::jobs basis::encoder)
+    #
+    # `audio` for one function (ADR 0200 §2): `audio::detail::probeFrames`, how
+    # long a sound file says it is. The localization index holds the number the
+    # engine reads from the same file in a dev run, so it is the engine's own
+    # measure that is called and not a second one written here. A downward
+    # edge: `audio` is at 4 and this is at 5.
+    PRIVATE engine::warnings engine::platform engine::jobs engine::audio basis::encoder)
 
 # assimp, and ONLY here (ADR 0010). The engine reads `.lmesh`, a format assimp
 # has never heard of, and the layering gate reading real `#include` edges is what
@@ -70,16 +77,22 @@ if(ENG_BUILD_TESTS)
     add_executable(engine_assetc_tests
         tests/compiler_tests.cpp
         tests/texture_tests.cpp
+        tests/l10n_tests.cpp
     )
     target_link_libraries(engine_assetc_tests PRIVATE
         engine::warnings
         doctest::doctest_with_main
         engine_assetc_lib
         engine::platform
+        # The localization index is held to the engine's own measure of a
+        # sound file, so its tests ask the engine.
+        engine::audio
     )
     target_compile_definitions(engine_assetc_tests PRIVATE
         ENG_TEST_CATALOG="${CMAKE_SOURCE_DIR}/i18n/en.json"
         ENG_ASSET_TEST_DATA="${CMAKE_SOURCE_DIR}/engine/asset/tests/data"
+        # Real Ogg Vorbis, borrowed from `audio` rather than copied.
+        ENG_AUDIO_TEST_DATA="${CMAKE_SOURCE_DIR}/engine/audio/tests/data"
         ENG_ASSETC_ASSIMP=$<BOOL:${ENG_ASSETC_ASSIMP}>)
     add_test(NAME assetc COMMAND engine_assetc_tests)
 endif()

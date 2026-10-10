@@ -71,8 +71,12 @@ key(Turn, Enum.KeyCode.RightThumbstick)
 
 local Buttons: { [string]: { EnumKeyCode } } = {
     Jump = { Enum.KeyCode.Space, Enum.KeyCode.ButtonSouth },
-    Attack = { Enum.KeyCode.F, Enum.KeyCode.MouseLeft, Enum.KeyCode.ButtonWest },
+    Shoot = { Enum.KeyCode.F, Enum.KeyCode.MouseLeft, Enum.KeyCode.ButtonWest },
     Walk = { Enum.KeyCode.LeftShift, Enum.KeyCode.ButtonEast },
+    -- The crossbow to the other hand, and one head for another: what the
+    -- hero holds and wears is the server's to change.
+    Hand = { Enum.KeyCode.G, Enum.KeyCode.ButtonNorth },
+    Hood = { Enum.KeyCode.H, Enum.KeyCode.ButtonBack },
 }
 for name, codes in Buttons do
     local made = action(name, Enum.InputActionType.Bool)
@@ -89,7 +93,7 @@ screen.Parent = UIService
 
 local function line(text: string, y: number): TextLabel
     local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0, 720, 0, 28)
+    label.Size = UDim2.new(0, 960, 0, 28)
     label.Position = UDim2.new(0, 16, 0, y)
     label.Text = text
     label.TextSize = 18
@@ -100,7 +104,7 @@ local function line(text: string, y: number): TextLabel
     return label
 end
 
-line("WASD move   Q / E turn   Shift walk   Space jump   F or click slash", 12)
+line("WASD move   Q / E turn   Shift walk   Space jump   F or click shoot   G other hand   H hood", 12)
 local counter = line("steps: 0", 40)
 local steps = 0
 

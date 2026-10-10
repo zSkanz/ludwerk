@@ -144,8 +144,13 @@ constexpr std::array<RoleRow, RoleCount> Roles{{
 // What a rig puts in front of every joint, compared without case. Everything
 // up to the last `:` or `|` goes before these are tried, which is the
 // namespace an exporter writes whatever it is called.
+//
+// The avatar format's rigs say `J_Bip_` and then where the joint is -- `C_`
+// for the middle, `L_` and `R_` for the sides -- so the middle's goes with the
+// prefix and a side's is left to be read as any side is. Longest first: one
+// that begins another is tried before it.
 constexpr std::string_view Prefixes[] = {
-    "mixamorig", "bip001", "bip01", "def-", "org-", "armature_", "character1_", "rig_",
+    "mixamorig", "bip001", "bip01", "def-", "org-", "armature_", "character1_", "rig_", "j_bip_c_", "j_bip_",
 };
 
 // A joint with one of these as a word of its name is a helper beside the body
@@ -213,6 +218,9 @@ constexpr Alias Aliases[] = {
 
     {"lowerarm", Part::LowerArm, true, false},
     {"forearm", Part::LowerArm, true, false},
+    // A rig of a dozen joints named in one short word each: `ArmL`, `ForeL`,
+    // `HandL`.
+    {"fore", Part::LowerArm, true, false},
     {"elbow", Part::LowerArm, true, false},
     {"loarm", Part::LowerArm, true, false},
     {"armlower", Part::LowerArm, true, false},
@@ -264,7 +272,9 @@ constexpr Alias Aliases[] = {
 };
 
 // A finger's name, to which its joint is added: a number from 1 to 3
-// (`thumb1`, `handindex2`, `findex3`) or one of `FingerJoints`' words.
+// (`thumb1`, `handindex2`, `findex3`) or one of `FingerJoints`' words. The
+// name with nothing added is the first joint, as a rig that numbers only the
+// joints after it has it: `Thumb`, `Thumb2`.
 struct FingerName
 {
     std::string_view name;
@@ -550,6 +560,8 @@ struct ParsedName
     if (!sided)
         return Part::None;
     for (const FingerName& finger : FingerNames) {
+        if (finger.name == key)
+            return finger.first;
         if (!digits.empty() && finger.name == base) {
             u32 number = 0;
             for (const char c : digits)
@@ -642,6 +654,90 @@ void resolveWords(std::vector<Claim>& claims) noexcept
             else if (claim.part == Part::LegWord)
                 claim.part = upperLeg ? Part::LowerLeg : Part::UpperLeg;
         }
+    }
+}
+
+// **A limb's joint hangs from the joint above it in the limb.** A rig that was
+// animated with handles and exported with them has joints called `Foot.L`
+// lying under its root, where the leg's handle was, and they are no part of
+// the leg: a clip cannot turn them with the shin, and one of them nearer the
+// root would take the role from the real foot. Where a side has a joint for
+// the part above, a joint that does not hang from one says nothing.
+void resolveLimbs(std::span<const asset::Joint> joints, std::vector<Claim>& claims) noexcept
+{
+    struct Link
+    {
+        Part part;
+        Part above;
+    };
+    // Top down, so that a joint dropped here is not what the next hangs from.
+    constexpr Link Links[] = {
+        {Part::LowerArm, Part::UpperArm}, {Part::Hand, Part::LowerArm}, {Part::LowerLeg, Part::UpperLeg},
+        {Part::Foot, Part::LowerLeg},     {Part::Toes, Part::Foot},
+    };
+    for (const Link& link : Links) {
+        for (const Side side : {Side::Left, Side::Right}) {
+            bool hasAbove = false;
+            for (const Claim& claim : claims)
+                hasAbove = hasAbove || (claim.part == link.above && claim.side == side);
+            if (!hasAbove)
+                continue;
+            for (usize joint = 0; joint < claims.size(); ++joint) {
+                if (claims[joint].part != link.part || claims[joint].side != side)
+                    continue;
+                bool hangs = false;
+                for (usize up = joint; hasParent(joints, up) && !hangs;) {
+                    up = joints[up].parent;
+                    hangs = claims[up].part == link.above && claims[up].side == side;
+                }
+                if (!hangs)
+                    claims[joint] = Claim{};
+            }
+        }
+    }
+}
+
+// **The hips are the joint the legs hang from.** Some rigs put a joint for the
+// whole body under the root, hang the legs and the back from it, and call the
+// first joint of the back `Hips`. What a clip moves as the hips of such a rig
+// is the joint above: the nearest one that holds the named hips and every
+// upper leg, when it is not the rig's root (a root stays where the character
+// is put) and says nothing else. The joint that was called the hips is then
+// the first of the back.
+void resolveHips(std::span<const asset::Joint> joints, const std::vector<u32>& depth, std::vector<Claim>& claims)
+{
+    const RootFirst rootFirst{joints, depth};
+    i32 named = -1;
+    for (usize joint = 0; joint < claims.size(); ++joint) {
+        if (claims[joint].part != Part::Hips)
+            continue;
+        if (named < 0 || rootFirst(joint, static_cast<usize>(named)))
+            named = static_cast<i32>(joint);
+    }
+    if (named < 0)
+        return;
+    std::vector<usize> legs;
+    for (usize joint = 0; joint < claims.size(); ++joint) {
+        if (claims[joint].part != Part::UpperLeg)
+            continue;
+        if (descendsFrom(joints, joint, static_cast<usize>(named)))
+            return;
+        legs.push_back(joint);
+    }
+    if (legs.empty())
+        return;
+    for (usize up = static_cast<usize>(named); hasParent(joints, up);) {
+        up = joints[up].parent;
+        bool holdsAll = true;
+        for (const usize leg : legs)
+            holdsAll = holdsAll && descendsFrom(joints, leg, up);
+        if (!holdsAll)
+            continue;
+        if (hasParent(joints, up) && claims[up].part == Part::None) {
+            claims[up] = Claim{Part::Hips, Side::None};
+            claims[static_cast<usize>(named)].part = Part::Spine;
+        }
+        return;
     }
 }
 
@@ -910,6 +1006,144 @@ struct RestPose
     return joint >= 0 && rig.ofJoint[static_cast<usize>(joint)] == role ? joint : -1;
 }
 
+// --- Which way a rig stands ----------------------------------------------------------
+//
+// Nothing says which way a rig's own space is up or which way its body faces.
+// A model drawn for one tool looks along +Z and one drawn for another along
+// -Z; and a rig converted from an older format hangs under a node turned a
+// quarter turn that is no joint, so the space its joints rest in has another
+// axis for up than the file has. A turn carried between two such rigs as it
+// is swings a leg backwards, or leans a body sideways for a bow.
+//
+// So each rig's body is read from where it rests: up is from its hips to the
+// top of its back, and its left is from its right leg to its left. Both are
+// taken as whole axes -- a body that slouches or stands a little turned is
+// still a body standing up along one axis and facing along another -- so the
+// turn between two rigs is one of the twenty-four that take axes to axes, and
+// is exactly none where they agree.
+
+struct Axis
+{
+    usize lane = 0;
+    f64 sign = 0.0;
+};
+
+[[nodiscard]] f64 lane(Vec v, usize index) noexcept
+{
+    return index == 0 ? v.x : (index == 1 ? v.y : v.z);
+}
+
+[[nodiscard]] Vec unit(Axis axis) noexcept
+{
+    return {axis.lane == 0 ? axis.sign : 0.0, axis.lane == 1 ? axis.sign : 0.0, axis.lane == 2 ? axis.sign : 0.0};
+}
+
+// The axis `v` lies nearest, of those that are not `skip` (3 for none). A
+// `sign` of nought for a vector with no length along any of them.
+[[nodiscard]] Axis nearestAxis(Vec v, usize skip) noexcept
+{
+    Axis best;
+    f64 longest = 1.0e-9;
+    for (usize index = 0; index < 3; ++index) {
+        const f64 along = lane(v, index);
+        if (index == skip || !(std::fabs(along) > longest))
+            continue;
+        longest = std::fabs(along);
+        best = Axis{index, along > 0.0 ? 1.0 : -1.0};
+    }
+    return best;
+}
+
+struct BodyFrame
+{
+    Vec left;
+    Vec up;
+    Vec forward;
+    bool known = false;
+};
+
+[[nodiscard]] BodyFrame frameOf(const RestPose& rest, const RigRoles& roles) noexcept
+{
+    BodyFrame frame;
+    const i32 hips = jointWith(roles, Role::Hips);
+    i32 top = -1;
+    for (const Role role : {Role::Head, Role::Neck, Role::UpperChest, Role::Chest, Role::Spine}) {
+        if (top < 0)
+            top = jointWith(roles, role);
+    }
+    if (hips < 0 || top < 0)
+        return frame;
+    const Axis up = nearestAxis(rest.position[static_cast<usize>(top)] - rest.position[static_cast<usize>(hips)], 3);
+    if (up.sign == 0.0)
+        return frame;
+
+    Axis left;
+    constexpr Role Pairs[2][2] = {{Role::LeftUpperLeg, Role::RightUpperLeg}, {Role::LeftUpperArm, Role::RightUpperArm}};
+    for (const auto& pair : Pairs) {
+        const i32 leftJoint = jointWith(roles, pair[0]);
+        const i32 rightJoint = jointWith(roles, pair[1]);
+        if (left.sign != 0.0 || leftJoint < 0 || rightJoint < 0)
+            continue;
+        left = nearestAxis(rest.position[static_cast<usize>(leftJoint)] - rest.position[static_cast<usize>(rightJoint)],
+                           up.lane);
+    }
+    if (left.sign == 0.0)
+        return frame;
+
+    frame.left = unit(left);
+    frame.up = unit(up);
+    // +X to the left and +Y up is +Z ahead: the file format's own body.
+    frame.forward = cross(frame.left, frame.up);
+    frame.known = true;
+    return frame;
+}
+
+// The rotation whose matrix has these columns, which are whole axes here; the
+// branch on the largest of the diagonal keeps the square root away from nought.
+[[nodiscard]] Quat quatOfColumns(Vec x, Vec y, Vec z) noexcept
+{
+    const f64 trace = x.x + y.y + z.z;
+    if (trace > 0.0) {
+        const f64 s = std::sqrt(trace + 1.0) * 2.0;
+        return normalized(Quat{(y.z - z.y) / s, (z.x - x.z) / s, (x.y - y.x) / s, 0.25 * s});
+    }
+    if (x.x > y.y && x.x > z.z) {
+        const f64 s = std::sqrt(1.0 + x.x - y.y - z.z) * 2.0;
+        return normalized(Quat{0.25 * s, (y.x + x.y) / s, (z.x + x.z) / s, (y.z - z.y) / s});
+    }
+    if (y.y > z.z) {
+        const f64 s = std::sqrt(1.0 + y.y - x.x - z.z) * 2.0;
+        return normalized(Quat{(y.x + x.y) / s, 0.25 * s, (z.y + y.z) / s, (z.x - x.z) / s});
+    }
+    const f64 s = std::sqrt(1.0 + z.z - x.x - y.y) * 2.0;
+    return normalized(Quat{(z.x + x.z) / s, (z.y + y.z) / s, 0.25 * s, (x.y - y.x) / s});
+}
+
+// The turn that lays the source's body on the target's: its left on the
+// target's left, its up on the target's up. The identity -- exactly -- where
+// the two stand alike, and where either cannot be read.
+[[nodiscard]] Quat turnBetween(const BodyFrame& source, const BodyFrame& target) noexcept
+{
+    if (!source.known || !target.known)
+        return {};
+    // M = T S^-1, with S and T the two frames as columns; a column of M is
+    // where M takes one axis.
+    const auto column = [&](usize index) {
+        const f64 l = lane(source.left, index);
+        const f64 u = lane(source.up, index);
+        const f64 f = lane(source.forward, index);
+        return Vec{target.left.x * l + target.up.x * u + target.forward.x * f,
+                   target.left.y * l + target.up.y * u + target.forward.y * f,
+                   target.left.z * l + target.up.z * u + target.forward.z * f};
+    };
+    return quatOfColumns(column(0), column(1), column(2));
+}
+
+[[nodiscard]] bool isIdentity(Quat q) noexcept
+{
+    return q.x == 0.0 && q.y == 0.0 && q.z == 0.0;
+}
+
 // The joint a bone of `role` runs to in both rigs, or `None`.
 [[nodiscard]] Role boneEnd(Role role, const RigRoles& source, const RigRoles& target) noexcept
 {
@@ -1055,6 +1289,8 @@ RigRoles assignRoles(std::span<const asset::Joint> joints, std::span<const RoleO
         claims[joint] = Claim{partOf(parsed), parsed.side};
     }
     resolveWords(claims);
+    resolveLimbs(joints, claims);
+    resolveHips(joints, depth, claims);
     resolveSpine(joints, depth, claims);
 
     // Two joints saying one role: the one nearer the root has it, and the
@@ -1122,14 +1358,36 @@ Map buildMap(std::span<const asset::Joint> source, const RigRoles& sourceRoles, 
     map.roles =
         consistent(source, sourceRoles) && consistent(target, targetRoles) && sourceRoles.body() && targetRoles.body();
 
+    // **What stands above the hips is the rig's own.** A root joint says where
+    // a body is put and how its space lies -- one rig's rests upright and the
+    // next one's a quarter turn over, both called `root` -- and a clip keys it
+    // at its own rest. Carried by its name it laid a whole character on its
+    // back. Under roles neither rig's joints above its hips are matched: the
+    // target's stay as they rest, and the hips carry the body.
+    const auto aboveHips = [&map](std::span<const asset::Joint> joints, const RigRoles& roles) {
+        std::vector<u8> above(joints.size(), 0);
+        const i32 hips = map.roles ? jointWith(roles, Role::Hips) : -1;
+        if (hips < 0)
+            return above;
+        for (usize up = static_cast<usize>(hips); hasParent(joints, up);) {
+            up = joints[up].parent;
+            above[up] = 1;
+        }
+        return above;
+    };
+    const std::vector<u8> sourceAbove = aboveHips(source, sourceRoles);
+    const std::vector<u8> targetAbove = aboveHips(target, targetRoles);
+
     // By equal name: the first target joint called the same. Under roles, one
     // that has no role either -- a target joint with a role is driven by the
     // source joint of that role, and would otherwise be written twice.
     const auto byName = [&](usize joint) {
+        if (sourceAbove[joint] != 0)
+            return;
         for (usize other = 0; other < target.size(); ++other) {
             if (source[joint].name != target[other].name)
                 continue;
-            if (map.roles && targetRoles.ofJoint[other] != Role::None)
+            if (map.roles && (targetRoles.ofJoint[other] != Role::None || targetAbove[other] != 0))
                 continue;
             map.slots[joint] = static_cast<i32>(other);
             return;
@@ -1142,8 +1400,22 @@ Map buildMap(std::span<const asset::Joint> source, const RigRoles& sourceRoles, 
         return map;
     }
 
-    const RestPose sourceRest = restOf(source);
+    RestPose sourceRest = restOf(source);
     const RestPose targetRest = restOf(target);
+
+    // **The two rigs' own spaces, laid one on the other.** From here on the
+    // source rests in the TARGET's space: turned so that its up and its left
+    // are the target's. `facing` then stands for the source's missing parent
+    // wherever a root's is asked for, and everything below -- a bone's
+    // direction, a turn from rest, the hips' travel -- is compared in one
+    // space. Nothing is touched where the two already agree.
+    const Quat facing = turnBetween(frameOf(sourceRest, sourceRoles), frameOf(targetRest, targetRoles));
+    if (!isIdentity(facing)) {
+        for (usize joint = 0; joint < source.size(); ++joint) {
+            sourceRest.rotation[joint] = normalized(facing * sourceRest.rotation[joint]);
+            sourceRest.position[joint] = rotate(facing, sourceRest.position[joint]);
+        }
+    }
 
     // **The stance.** The target's rest, turned joint by joint from the root
     // down until each of its bones lies along the source's: `aligned` is the
@@ -1188,8 +1460,17 @@ Map buildMap(std::span<const asset::Joint> source, const RigRoles& sourceRoles, 
         // The end rides on this joint as it did at rest: nothing between the
         // two has been turned, since nothing between them has a bone of its own
         // to compare.
+        const Vec restBone = targetRest.position[targetEnd] - targetRest.position[joint];
+        // **Two rests more than a third of a turn apart are not two stances.**
+        // An arm held out and one hanging are a quarter turn apart; a bone that
+        // points the other way altogether is a rig that put the joint at the
+        // other end of it -- one whose first joint of the back lies BELOW its
+        // hips had the other rig's pelvis turned upside down to match. Such a
+        // joint is left as it rests under its parent.
+        if (dot(restBone, sourceBone) < -0.5 * length(restBone) * length(sourceBone))
+            continue;
         const Quat carried = aligned.rotation[joint] * conjugate(targetRest.rotation[joint]);
-        const Vec targetBone = rotate(carried, targetRest.position[targetEnd] - targetRest.position[joint]);
+        const Vec targetBone = rotate(carried, restBone);
         aligned.rotation[joint] = normalized(shortestArc(targetBone, sourceBone) * aligned.rotation[joint]);
     }
 
@@ -1222,7 +1503,7 @@ Map buildMap(std::span<const asset::Joint> source, const RigRoles& sourceRoles, 
         map.slots[joint] = other;
 
         const usize targetJoint = static_cast<usize>(other);
-        const Quat sourceParent = hasParent(source, joint) ? sourceRest.rotation[source[joint].parent] : Quat{};
+        const Quat sourceParent = hasParent(source, joint) ? sourceRest.rotation[source[joint].parent] : facing;
         const Quat targetParent =
             hasParent(target, targetJoint) ? aligned.rotation[target[targetJoint].parent] : Quat{};
         const Quat sourceLocal = toQuat(source[joint].localBind.rotation);

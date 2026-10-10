@@ -297,6 +297,15 @@ end
 declare extern type EnumRelayState extends EnumItem with
 end
 
+declare extern type EnumSoundCategory extends EnumItem with
+end
+
+declare extern type EnumSubtitleMode extends EnumItem with
+end
+
+declare extern type EnumLipSyncMode extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -1341,6 +1350,21 @@ declare extern type MeshPart extends BasePart with
     --- which is a legitimate thing to want; zero and negative components are refused, since they are a
     --- division rather than a size.
     MeshSize: vector
+    --- The mesh whose pose this one wears (ADR 0201): its **leader**. A piece of armour skinned to a
+    --- body's skeleton, hair, a glove, a bow -- set this to the body and the piece moves as part of it.
+    --- **A joint both have is the leader's, exactly**, on the tick and in the frame's picture, matched
+    --- by name (and by what each joint is, where the names differ and both rigs are bodies). Whatever
+    --- moved the leader's joint -- a clip, a graph, an `IKControl`, feet on a stair, a `SpringBone`, a
+    --- ragdoll -- the follower's is there too, so a seam between a body and what it wears does not
+    --- open. **A joint only this mesh has** rides its parent, at rest unless a track playing on the
+    --- leader names it: a bow's string is pulled by the draw clip the body plays, with one
+    --- `AnimationPlayer` and one graph. A held thing that shares no joint with its leader is parented
+    --- under a `Bone` of the leader and hangs from that joint. A follower is drawn in its leader's
+    --- place and has no body of its own: it collides with nothing, nothing touches it and a ray passes
+    --- through it. It keeps its own `SpringBone` chains and shape keys, and costs its skinning and its
+    --- draw, not a pose. A mesh that names itself, a loop of leaders, or a leader with no skeleton
+    --- follows nobody. Set and cleared while the game runs.
+    PoseFrom: MeshPart?
     --- The names of the mesh's morph targets -- an artist's shape keys -- in its file's order. Empty
     --- for a mesh that has none, **and for one whose file has not loaded yet**: a mesh arrives over
     --- frames, so ask after `ContentProvider:PreloadAsync`, or set weights by name without asking,
@@ -1448,6 +1472,24 @@ declare extern type FootPlacement extends Instance with
     --- How much of it is applied, 0 to 1.
     Weight: number
     --- Whether it is applied at all.
+    Enabled: boolean
+end
+
+declare extern type LipSync extends Instance with
+    --- Whose voice it is: a `Voice` sound playing under this instance -- or the instance itself, if it
+    --- is one -- moves the mouth. A head, a character, a model. Nil is the mesh's own parent.
+    Source: Instance?
+    --- Which of the three ways it may use. `Auto` plays a track where the line has one and falls back
+    --- as described.
+    Mode: EnumLipSyncMode
+    --- The file that says what a viseme, a band and loudness do to this face. Empty is the one beside
+    --- the mesh's model, with `.face.json` where the model's extension is.
+    Map: string
+    --- The seconds a key takes to get where it is going. 0 snaps; a tenth is a slow mouth.
+    Smoothing: number
+    --- How much of it there is, 0 to 2: 0.5 for a mumble, more than 1 for a shout.
+    Weight: number
+    --- Whether it moves the mouth at all.
     Enabled: boolean
 end
 
@@ -3500,8 +3542,9 @@ declare extern type Sound extends Instance with
     --- whole ticks and a device moves in buffers, so a cursor re-read every frame stutters between
     --- them. Nothing in the simulation reads that cursor, which is what keeps a replay exact (R10).
     Content: Content
-    --- Whether the timeline is advancing. Writing it is the same as calling `Play` or `Stop`, and
-    --- reading it is how a script asks without keeping its own flag.
+    --- Whether the timeline is advancing. Writing it is `Resume` and `Pause`, never a rewind: `true`
+    --- carries on from `TimePosition` and `false` stops there. `Play` is what starts from the beginning
+    --- and `Stop` what rewinds. Reading it is how a script asks without keeping its own flag.
     Playing: boolean
     --- Whether reaching the end wraps to the start instead of stopping. A looped sound never fires
     --- `Ended`, because it never does.
@@ -3521,7 +3564,10 @@ declare extern type Sound extends Instance with
     --- How long `Content` is, in seconds: the file's own length, read from its header, or the
     --- placeholder tone's one second when it names nothing. 0 until the length has been read: the
     --- world's first tick after `Content` is set reads it, and the editor reads it for the sound it
-    --- shows.
+    --- shows. **A sound recorded in several languages is as long as its longest** (ADR 0200): the same
+    --- number on every machine whatever language each one hears, so `Ended` lands on the same tick
+    --- everywhere. A shorter language is followed by silence until the sound ends. A sound with a
+    --- `Caption` and no file in any language lasts its caption.
     read TimeLength: number
     --- How far the listener can be before a positional sound starts getting quieter. Inside it the
     --- sound is at full `Volume`; ignored entirely for a 2D sound.
@@ -3532,6 +3578,20 @@ declare extern type Sound extends Instance with
     RollOffMaxDistance: number
     --- The bus this sound's volume is multiplied by, or nil for none.
     Group: AudioGroup?
+    --- What kind of sound it is (ADR 0200): `Effects`, `Music` or `Voice`. It decides which of the
+    --- player's volumes turns it (`AudioService.MusicVolume`, `EffectsVolume`, `VoiceVolume`), and
+    --- music lowers itself while a voice is heard. On the sound and not on its `Group`, because a group
+    --- is each machine's own and a line a server starts has to arrive as a voice.
+    Category: EnumSoundCategory
+    --- How loud what THIS machine is playing of the sound is right now, 0 to 1 (ADR 0200): the level of
+    --- the recording over about the last twentieth of a second at `TimePosition`, where a tone at full
+    --- scale reads 1. What opens a jaw with a line. **It is the recording's own level**: no volume is
+    --- in it -- not the sound's, not a group's, not the player's -- and no distance, so a mouth opens
+    --- the same whatever a slider says. It is the language this machine hears, which may be another
+    --- machine's other language: picture, each machine's own, and nothing a game's rules may read. 0
+    --- while the sound is not playing, in the silence after a shorter language, and for a sound with no
+    --- file.
+    read Loudness: number
     --- Fired on the tick the timeline reaches the end of a sound that is not `Looped`, which stops it
     --- and rewinds `TimePosition` to 0 -- so playing it again plays it again. From the SIM timeline
     --- rather than from the mixer, so it lands on the same tick in a replay, in a headless run, and on
@@ -3541,9 +3601,18 @@ declare extern type Sound extends Instance with
     --- v1**, because a sound has nothing to wait for yet -- declared now so that code written today
     --- does not have to change when it does.
     read Loaded: Signal<()>
+    --- The moment `Loudness` measures, split in three (ADR 0200): how much of it is low (80 to 500 Hz),
+    --- middle (500 to 2,500 Hz) and high (2,500 to 10,000 Hz), each 0 to 1, as three numbers. A tone at
+    --- full scale inside a band reads 1 there and 0 in the others. Enough to tell an open mouth from a
+    --- wide or a round one, and what a visualiser reads. **Worked out when asked and not otherwise**: a
+    --- sound nobody asks about costs nothing, and two askers in one tick pay once. Each machine's own,
+    --- as `Loudness` is.
+    function GetBands(self): (number, number, number)
     --- Plays it from the start -- or from `TimePosition`, when a script set it since the sound last
     --- started. Playing one that is already playing starts it again. `Resume` is what carries on from
-    --- where `Pause` left it.
+    --- where `Pause` left it. **This is where a sound's language is chosen** (ADR 0200): `Content` is
+    --- looked for under `l10n/<VoiceLocale>/`, then under the language alone, then as it is named, and
+    --- what is playing finishes in the language it started in.
     function Play(self): ()
     --- Carries on from `TimePosition`, which is where `Pause` left it. The same as `Playing = true`.
     function Resume(self): ()
@@ -3554,6 +3623,20 @@ declare extern type Sound extends Instance with
     --- the end, and code that awards something when a jingle finishes must not be fooled by one that
     --- was cut off.
     function Stop(self): ()
+end
+
+declare extern type Caption extends Instance with
+    --- The catalog key of what is said. Shown as written when no catalog has it.
+    Text: string
+    --- The catalog key of who says it, or empty for nobody: a sound of the world.
+    Speaker: string
+    --- The speaker's colour: what their name is written in.
+    Color: Color3
+    --- How long the sound lasts when it has no file in any language. 0 is a reading time: a second and
+    --- a half, and six hundredths of a second for each character of the text in the project's default
+    --- language, twelve seconds at most -- the same on every machine. A sound that has a file lasts as
+    --- long as the file and this is not read.
+    Seconds: number
 end
 
 declare extern type AnimationPlayer extends Instance with
@@ -4240,6 +4323,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "TweenService"): TweenService
     function GetService(self, name: "UIService"): UIService
     function GetService(self, name: "AudioService"): AudioService
+    function GetService(self, name: "DialogueService"): DialogueService
     function GetService(self, name: "VoxelService"): VoxelService
     function GetService(self, name: "NavigationService"): NavigationService
     --- Returns the service of this name. Services are singletons and all of them exist from boot, so
@@ -4422,16 +4506,42 @@ end
 
 declare extern type LocalizationService extends Instance with
     --- The locale text is asked for in, as `en` or `pt-BR`. It starts as the player's saved choice,
-    --- else the system's language, else `[project] default_locale`, else `en` -- each narrowed to a
-    --- catalog the project has. Writing it is the player choosing: it is kept for the next run, and
-    --- `LocaleChanged` fires. A locale the project has no catalog for is narrowed to one of its
-    --- language (`pt` reads `pt-BR`), and refused when there is none.
+    --- else the language of the store or launcher the game was started from when a platform provider
+    --- says one, else the system's language, else `[project] default_locale`, else `en` -- each
+    --- narrowed to a catalog the project has. Writing it is the player choosing: it is kept for the
+    --- next run, and `LocaleChanged` fires. A locale the project has no catalog for is narrowed to one
+    --- of its language (`pt` reads `pt-BR`), and refused when there is none.
     Locale: string
+    --- The language sounds are heard in (ADR 0200), which need not be the one text is read in: every
+    --- `Sound` looks for its `Content` under `l10n/<VoiceLocale>/` when it is played. It reads as the
+    --- language in force, always one of `GetVoiceLocales`. **Written empty, it follows the text
+    --- language** -- which is how it starts: `Locale` narrowed to a language this machine has voices
+    --- for, else the first of the system's languages it has voices for, else the project's default.
+    --- `VoiceFollowsLocale` says whether it is following. Writing a language is the player choosing: it
+    --- is kept for the next run. One this machine cannot play is narrowed to one of its language (`pt`
+    --- hears `pt-BR`) and refused when there is none. A change is heard at the next `Play`: what is
+    --- playing finishes in the language it started in.
+    VoiceLocale: string
+    --- Whether the voice language is following the text language: true until a language is written to
+    --- `VoiceLocale`, and again once it is written empty. What a menu reads to show "same as the text"
+    --- as the choice in force.
+    read VoiceFollowsLocale: boolean
     --- `Locale` changed, or -- while a game is being made -- a catalog was edited and read again: where
     --- a game sets its labels' text.
     read LocaleChanged: Signal<string>
+    --- The language sounds are heard in changed, to `locale` (ADR 0200): a script wrote `VoiceLocale`,
+    --- or the text language changed and the voice follows it.
+    read VoiceLocaleChanged: Signal<string>
     --- The locales the project has a catalog for, in order: what a language menu lists.
     function GetLocales(self): { string }
+    --- The languages this machine can PLAY voices in (ADR 0200): the project's default first, then each
+    --- language under `l10n/` that the game shipped or an installed language pack brought, sorted. A
+    --- menu made from it never offers a voice that is not installed.
+    function GetVoiceLocales(self): { string }
+    --- The system's own preferred languages, most wanted first, as the platform reports them and not
+    --- narrowed to anything the game has (ADR 0200): for "your system's language" in a menu. Empty on a
+    --- dedicated server, which has no player.
+    function GetSystemLocales(self): { string }
     --- The text for `key` in `Locale`. `{name}` in the text is replaced by `arguments.name` -- a
     --- string, a number or a boolean. A key nobody has comes back as the key, and is warned about once.
     function Translate(self, key: string, arguments: { [string]: any }?): string
@@ -5518,16 +5628,72 @@ declare extern type UIService extends Instance with
 end
 
 declare extern type AudioService extends Instance with
-    --- Multiplied into every sound, after its own volume and its group's. The one a settings screen
-    --- writes.
+    --- Multiplied into every sound, after its own volume and its group's. **It is the GAME's**: what a
+    --- fade to black or a cutscene writes, part of the world like any property, and saved nowhere. The
+    --- player's own master volume is `PlayerVolume`, and that is the one a settings screen writes.
     MasterVolume: number
+    --- The player's master volume, 0 to 1 (ADR 0200): multiplied into every sound on this machine. The
+    --- player's, like the graphics settings: kept for the next run when a script writes it, never saved
+    --- with a scene, never sent, and refused on a dedicated server.
+    PlayerVolume: number
+    --- The player's volume for every `Sound` whose `Category` is `Music`, 0 to 1. Kept as
+    --- `PlayerVolume` is.
+    MusicVolume: number
+    --- The player's volume for every `Sound` whose `Category` is `Effects`, 0 to 1. Kept as
+    --- `PlayerVolume` is.
+    EffectsVolume: number
+    --- The player's volume for every `Sound` whose `Category` is `Voice`, 0 to 1. Kept as
+    --- `PlayerVolume` is.
+    VoiceVolume: number
+    --- What music is multiplied by while a voice is heard, 0 to 1 (ADR 0200): while any `Voice` sound
+    --- is audible on a machine -- playing, in range, and not turned to nothing by the player -- every
+    --- `Music` sound there is eased down to this over 0.15 s, and back over 0.6 s when the voice stops.
+    --- 1 turns it off. The game's, as `MasterVolume` is; the easing is each machine's mixer's and
+    --- nothing a script can read.
+    MusicUnderVoice: number
     --- Creates a 2D `Sound` parented to this service and plays it. For the fire-and-forget case -- a
-    --- click, a pickup -- where naming an instance is all ceremony. **It does not clean up after itself
-    --- in this release**: the `Sound` stays a child of the service once it has ended, so a caller
-    --- firing one per frame accumulates them. Keep the returned handle and `Destroy` it on `Ended`
-    --- where that matters. The handle is also what a caller sets the volume through, since this takes
-    --- only the content.
+    --- click, a pickup -- where naming an instance is all ceremony. **It cleans up after itself**: the
+    --- `Sound` is destroyed a moment after it ends, once whatever listens to its `Ended` has heard it.
+    --- The returned handle is what a caller sets the volume or the category through, since this takes
+    --- only the content; one stopped by hand, or made to loop, is the caller's to destroy.
     function PlayLocal(self, content: Content): Sound
+    --- `Sound:GetBands` for everything of a category this machine is playing (ADR 0200): the low,
+    --- middle and high of the audible sounds of that category mixed together as the game mixes them --
+    --- each sound's volume, its group's, the master and its distance, and never the player's volumes.
+    --- Three numbers, each 0 to 1. What a visualiser reads of the music. Worked out when asked and not
+    --- otherwise.
+    function GetBands(self, category: EnumSoundCategory): (number, number, number)
+end
+
+declare extern type DialogueService extends Instance with
+    --- When captions are shown: `Auto`, `On` or `Off`. The player's: kept for the next run when a
+    --- script writes it, and refused on a dedicated server. `ShowsCaption` applies it to one caption.
+    Subtitles: EnumSubtitleMode
+    --- How large captions are written, 0.75 to 2. The player's, kept as `Subtitles` is.
+    SubtitleScale: number
+    --- How solid the background behind captions is, 0 (none) to 1. The player's, kept as `Subtitles`
+    --- is.
+    SubtitleBackground: number
+    --- A caption became current on this machine: its sound started, or came into range.
+    read CaptionStarted: Signal<Caption>
+    --- A caption stopped being current on this machine: its sound ended or was stopped, went out of
+    --- range, or was destroyed.
+    read CaptionEnded: Signal<Caption>
+    --- Says a line: makes a `Voice` sound with its `Caption` from the line's entry, parents it to `at`
+    --- -- heard from there, when that is a part -- or to `Workspace`, plays it, and destroys it a
+    --- moment after it ends. `line` is `<name>.<id>`: the file and the entry. One no file has raises.
+    --- On a server the sound is an instance like any other: it travels, and every player hears the line
+    --- in their own voice language and reads it in their own text language. On a client it is that
+    --- machine's own. The returned sound is what a script waits on (`Ended`) or stops.
+    function Say(self, line: string, at: Instance?): Sound
+    --- The captions current on this machine, in the order their sounds started: each `Caption` whose
+    --- `Sound` is playing and can be heard here. Empty on a dedicated server.
+    function GetCaptions(self): { Caption }
+    --- Whether `Subtitles` says this caption is to be shown now: always under `On`, never under `Off`,
+    --- and under `Auto` when what is heard is not in the language being read -- the voice language is
+    --- another language than the text language, the sound fell back to the default language's recording
+    --- while the text is in another, or the sound has no recording.
+    function ShowsCaption(self, caption: Caption): boolean
 end
 
 declare extern type VoxelService extends Instance with
@@ -6402,6 +6568,24 @@ declare Enum: {
         Unreachable: EnumRelayState,
         GetEnumItems: (self: any) -> { EnumRelayState },
     },
+    SoundCategory: {
+        Effects: EnumSoundCategory,
+        Music: EnumSoundCategory,
+        Voice: EnumSoundCategory,
+        GetEnumItems: (self: any) -> { EnumSoundCategory },
+    },
+    SubtitleMode: {
+        Auto: EnumSubtitleMode,
+        On: EnumSubtitleMode,
+        Off: EnumSubtitleMode,
+        GetEnumItems: (self: any) -> { EnumSubtitleMode },
+    },
+    LipSyncMode: {
+        Auto: EnumLipSyncMode,
+        Bands: EnumLipSyncMode,
+        Loudness: EnumLipSyncMode,
+        GetEnumItems: (self: any) -> { EnumLipSyncMode },
+    },
 }
 
 declare Vector3: {
@@ -6661,6 +6845,7 @@ type InstanceClasses = {
     Bone: Bone,
     IKControl: IKControl,
     FootPlacement: FootPlacement,
+    LipSync: LipSync,
     SpringBone: SpringBone,
     SpringCollider: SpringCollider,
     BallSocketConstraint: BallSocketConstraint,
@@ -6738,6 +6923,7 @@ type InstanceClasses = {
     ChorusSoundEffect: ChorusSoundEffect,
     PitchShiftSoundEffect: PitchShiftSoundEffect,
     Sound: Sound,
+    Caption: Caption,
     AnimationPlayer: AnimationPlayer,
     Part2D: Part2D,
     Tilemap2D: Tilemap2D,

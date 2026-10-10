@@ -669,3 +669,65 @@ TEST_CASE("D609: the interface's pictures keep to a budget, and one let go comes
 
     text.destroy(*fixture.device);
 }
+
+TEST_CASE("ADR 0200: a picture is the file of the language being read, and changes when the language does")
+{
+    Fixture fixture;
+    fixture.root =
+        std::filesystem::temp_directory_path() /
+        ("engine-ui-languages-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    // A logo two pixels across in the default language and four across in
+    // Portuguese, and a picture that is one file in every language.
+    const auto picture = [&](const std::filesystem::path& relative, core::u32 side) {
+        std::vector<std::byte> pixels(static_cast<core::usize>(side) * side * 4, std::byte{200});
+        std::vector<std::byte> png;
+        REQUIRE_FALSE(asset::encodePng(pixels, side, side, png).has_value());
+        const std::filesystem::path path = fixture.root / relative;
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream file(path, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+        REQUIRE(file.good());
+    };
+    picture("ui/logo.png", 2);
+    picture("l10n/pt-BR/ui/logo.png", 4);
+    picture("ui/plain.png", 2);
+    fixture.mounts.mountDirectory(fixture.root);
+
+    UiText text;
+    text.setMounts(&fixture.mounts);
+    const auto width = [&](std::string_view urn) -> core::u32 {
+        ui::ResolvedImage out{};
+        return text.requestImage(urn, out) ? out.width : 0u;
+    };
+
+    CHECK(width("asset://ui/logo.png") == 0);
+    CHECK(width("asset://ui/plain.png") == 0);
+    text.sync(*fixture.device, *fixture.cmd);
+    CHECK(width("asset://ui/logo.png") == 2);
+    CHECK(width("asset://ui/plain.png") == 2);
+
+    // The player reads Portuguese now: the logo is another file, let go and
+    // read again when it is next drawn; the plain picture is the file it was
+    // and is not touched.
+    text.setLocale("pt-BR");
+    text.sync(*fixture.device, *fixture.cmd);
+    CHECK(width("asset://ui/plain.png") == 2);
+    CHECK(width("asset://ui/logo.png") == 0);
+    text.sync(*fixture.device, *fixture.cmd);
+    CHECK(width("asset://ui/logo.png") == 4);
+
+    // A region of the language finds the language's file too, and one the
+    // game has nothing in is the default's.
+    text.setLocale("ja");
+    text.sync(*fixture.device, *fixture.cmd);
+    (void)width("asset://ui/logo.png");
+    text.sync(*fixture.device, *fixture.cmd);
+    CHECK(width("asset://ui/logo.png") == 2);
+
+    // And the default language is the names as written.
+    text.setLocale("");
+    text.sync(*fixture.device, *fixture.cmd);
+    CHECK(width("asset://ui/logo.png") == 2);
+
+    text.destroy(*fixture.device);
+}

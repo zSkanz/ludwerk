@@ -179,6 +179,13 @@ struct Pose
     // and re-running the forward pass needs every other joint's local, and
     // recovering it from `model` would be an inverse per joint per tick.
     std::vector<core::Mat4> local;
+
+    // **Which writing of a pose this is** (ADR 0201): a number no other
+    // writing of any pose has had, and nought for no pose at all. A mesh that
+    // wears another's pose keeps the number it was made from, and is made
+    // again when its leader's is another -- a pose is written where it stands
+    // while one mesh holds it, so where it is does not say whether it moved.
+    core::u64 stamp = 0;
 };
 
 // **A skinned mesh the renderer drew a frame of** (H3): the camera or a shadow
@@ -249,6 +256,44 @@ public:
     void setJointOverride(core::InstanceId meshPart, core::u32 joint, const core::CFrameD& model) override;
     void clearJointOverrides(core::InstanceId meshPart) override;
     void commitOverrides() override;
+    [[nodiscard]] core::InstanceId poseLeader(core::InstanceId meshPart) const override { return leaderOf(meshPart); }
+
+    // --- A mesh that wears another's pose (ADR 0201) ------------------------
+    //
+    // A `MeshPart` whose `PoseFrom` names another is a FOLLOWER: no track
+    // poses it. Each tick its pose is made from its leader's -- a joint both
+    // have is the leader's matrix, bit for bit; a joint only it has rides its
+    // parent, at rest or as a track playing on the leader moves it -- and each
+    // frame its picture is made the same way from the leader's picture.
+
+    // The mesh `meshPart` follows, as the world is NOW: the end of its chain
+    // of `PoseFrom`. None for a mesh that names nobody, for a loop, and where
+    // either end has no skeleton. A pure function of the world and the rigs
+    // that have loaded, so the physics, the renderer and the tick agree.
+    [[nodiscard]] core::InstanceId leaderOf(core::InstanceId meshPart) const;
+    // The mesh whose part says where `meshPart` is drawn: its leader's, or
+    // its own.
+    [[nodiscard]] core::InstanceId drawnWith(core::InstanceId meshPart) const
+    {
+        const core::InstanceId leader = leaderOf(meshPart);
+        return leader.valid() ? leader : meshPart;
+    }
+    // Whether the last tick found `meshPart` following, and whether it found
+    // anybody following at all: what a frame asks before it does anything
+    // for followers.
+    [[nodiscard]] bool follows(core::InstanceId meshPart) const noexcept;
+    [[nodiscard]] bool anyFollowers() const noexcept { return !followers_.empty(); }
+    // **The frame's picture of every follower whose leader has one**: made
+    // from the leader's presented pose as the tick's is made from the tick's.
+    // Called once a frame, after everything that presents a leader -- its
+    // limbs, its feet, its own chains -- and before the followers' own chains,
+    // which then swing from where the frame put what they hang from.
+    void presentFollowers();
+    // How many follower poses were made (not taken from another's), and how
+    // many times a track's channels were walked for any pose: what a test
+    // counts to know a piece of armour costs no walk.
+    [[nodiscard]] core::u64 followersBuilt() const noexcept { return followersBuilt_; }
+    [[nodiscard]] core::u64 tracksWalked() const noexcept { return tracksWalked_; }
 
     // --- scene::MorphHost (ADR 0196) ----------------------------------------
 
@@ -269,6 +314,15 @@ public:
     // the bodies of a crowd and skipped for one nobody looks at, and a face's
     // weights are none of those things. The span is good until the next call.
     [[nodiscard]] std::span<const f32> drawnMorphWeights(core::InstanceId meshPart) const;
+
+    // **A frame's own weights on a mesh's shape keys** (ADR 0200): what a
+    // mouth is doing with the line being said. A layer of its own, **over
+    // what a clip plays and under what a script sets**: a key named here is
+    // drawn at this weight unless `SetMorphWeight` holds it, and neither a
+    // script's read (`GetMorphWeight`) nor a tick ever sees it. Picture, set
+    // again each frame; `clearPresentedMorphWeights` first, as the joints'.
+    void presentMorphWeights(core::InstanceId meshPart, std::span<const std::pair<std::string, f32>> weights);
+    void clearPresentedMorphWeights() noexcept { morphPresented_.clear(); }
 
     // The pose of one `MeshPart`, or null for a mesh with no skeleton or nothing
     // driving it. Read by the renderer; null means "draw it in bind pose", which
@@ -493,12 +547,28 @@ private:
         std::vector<f32> coverS;
         void clear(usize joints, bool cover);
     };
+    struct FollowMap;
     // One track's clip at its time into `lanes`, joint by joint through the
     // track's mask and the map onto this rig. False when it had nothing.
-    bool accumulate(const Track& track, core::NameAtom rig, usize jointCount, bool quantise, Lanes& lanes);
+    // `only`: for a follower's own joints alone (ADR 0201) -- a track that
+    // names none of them is counted and not walked.
+    bool accumulate(const Track& track, core::NameAtom rig, usize jointCount, bool quantise, Lanes& lanes,
+                    const FollowMap* only = nullptr);
     // An additive track: how far its clip is from its own first frame, onto
     // `addT_`, `addR_` and `addS_`.
-    bool accumulateAdditive(const Track& track, core::NameAtom rig, usize jointCount, bool quantise);
+    bool accumulateAdditive(const Track& track, core::NameAtom rig, usize jointCount, bool quantise,
+                            const FollowMap* only = nullptr);
+    // **What the tracks make of a rig's joints**, left in the lanes for
+    // `blendedLocal` to read a joint at a time: the first layer's average,
+    // the layers over it, and what adds. False when no track had anything.
+    // `drivers` and `indexed` as `rebuildPose` has them.
+    bool blendTracks(core::InstanceId meshPart, core::NameAtom rig, const SkeletonLibrary::Entry& skeleton,
+                     std::span<const u32> drivers, bool indexed, bool quantise, const FollowMap* only);
+    // A joint from its parent as the last `blendTracks` left it: its rest
+    // wherever no track said otherwise.
+    [[nodiscard]] core::Mat4 blendedLocal(const SkeletonLibrary::Entry& skeleton, usize joint);
+    // Whether the last `blendTracks` found a track that adds.
+    bool blendAdds_ = false;
     // `upper` over `base`: where the layer has a joint it takes its cover of
     // it, and what is under keeps the rest.
     void mergeLayer(const SkeletonLibrary::Entry& skeleton, Lanes& base, const Lanes& upper);
@@ -651,6 +721,12 @@ private:
         bool placed = false;
         core::DVec3 lastPosition{};
         core::Vec3 velocity{0.0f, 0.0f, 0.0f};
+        // **How much longer this body's legs are than the library's** (ADR
+        // 0199's hips scale), found once the rigs are in and again when one
+        // is replaced: what its speed over the ground is divided by before a
+        // graph reads it. One for a body on the library's own skeleton.
+        f32 stride = 1.0f;
+        core::u64 strideRevision = ~core::u64{0};
         // For a trigger with a source: what the source was when last looked
         // at, so a change can be told from a first sight.
         std::vector<core::u64> seen;
@@ -679,6 +755,7 @@ private:
     void unbindGraph(GraphInstance& instance);
     void readSources(GraphInstance& instance, const GraphLibrary::Entry& entry, f64 fixedDt);
     [[nodiscard]] core::InstanceId bodyOf(core::InstanceId player) const;
+    [[nodiscard]] f32 strideOf(const GraphInstance& instance) const;
 
     // **What scripts set, by name** (ADR 0196): a mesh's few overrides, in the
     // order they were first set. By name and not by index because a script
@@ -691,6 +768,8 @@ private:
     };
     // Ordered, though nothing walks it for output: `retire` sweeps it.
     std::map<core::u64, std::vector<MorphOverride>> morphOverrides_;
+    // The frame's layer (`presentMorphWeights`): a mouth's, mostly.
+    std::map<core::u64, std::vector<MorphOverride>> morphPresented_;
     // The entry whose targets `meshPart` has, or null.
     [[nodiscard]] const SkeletonLibrary::Entry* morphsOf(core::InstanceId meshPart) const;
     // What the clips make of each target of `meshPart` into `morphScratch_`;
@@ -845,6 +924,100 @@ private:
 
     // Builds `meshPart`'s pose now, if it is behind (H3).
     void catchUp(core::InstanceId meshPart);
+    // The same for whoever asks about a joint: a mesh's own pose, or -- for a
+    // follower -- its leader's and then its own from that.
+    void settle(core::InstanceId meshPart);
+
+    // --- Followers (ADR 0201) -------------------------------------------
+    //
+    // **How a follower's joints sit on its leader's**, once a pair of rigs:
+    // by name, and where a name finds nothing and both rigs say what the
+    // joint IS, by that (ADR 0199).
+    struct FollowMap
+    {
+        core::NameAtom leader;
+        core::NameAtom follower;
+        // For each of the follower's joints: the leader's joint it is, or -1.
+        std::vector<core::i32> from;
+        // Whether the joint's parent is its leader joint's parent too: its
+        // place from its parent is then the leader's, copied.
+        std::vector<core::u8> sameParent;
+        // 1 for a joint only the follower has.
+        std::vector<core::u8> own;
+        u32 shared = 0;
+        u32 owned = 0;
+    };
+    [[nodiscard]] const FollowMap* followMapFor(core::NameAtom leader, core::NameAtom follower);
+    // Held by pointer: a map somebody is reading does not move when the next
+    // pair's is made.
+    std::vector<std::unique_ptr<FollowMap>> followMaps_;
+    // Whether a track's clip has a channel for a joint only the follower has,
+    // found once for a clip and a pair of rigs.
+    [[nodiscard]] bool namesOwn(const Track& track, const FollowMap& map);
+    struct OwnNamed
+    {
+        core::NameAtom clips;
+        u32 clip = 0;
+        core::u8 mode = 0;
+        const FollowMap* map = nullptr;
+        bool named = false;
+    };
+    std::vector<OwnNamed> ownNamed_;
+    // `SkeletonLibrary::revision` as those two were made at.
+    core::u64 followRevision_ = ~core::u64{0};
+
+    // One follower, as the tick found it.
+    struct Follow
+    {
+        core::InstanceId follower;
+        core::InstanceId leader;
+        core::NameAtom rig;
+        core::NameAtom leaderRig;
+        // **Held** (a follower that shares no joint, under a `Bone` of its
+        // leader): the leader's joint its roots are on, and the bone's own
+        // offset from that joint. -1 for one that is not.
+        core::i32 heldJoint = -1;
+        core::CFrameD offset{};
+        // What its pose was last made from: the leader's stamp, and whether a
+        // bone of its own turned a joint.
+        bool made = false;
+        bool turned = false;
+        core::u64 madeFrom = 0;
+    };
+    // In instance order: the order they are posed in, and what is searched.
+    std::vector<Follow> followers_;
+    std::vector<Follow> followNext_;
+    // (leader, index into `followers_`), sorted: a leader's followers.
+    std::vector<std::pair<core::u64, u32>> led_;
+    // The meshes that stopped following this tick: posed as any mesh again.
+    std::vector<core::InstanceId> released_;
+    std::vector<core::InstanceId> followCandidates_;
+    std::vector<u32> followDriving_;
+    std::vector<core::Mat4> followModel_;
+    std::vector<core::Mat4> followLocal_;
+    // Said once a pair: a follower with nowhere to be, and a loop.
+    std::vector<std::pair<core::u64, core::u64>> followWarned_;
+    core::u64 poseStamps_ = 0;
+    core::u64 followersBuilt_ = 0;
+    core::u64 tracksWalked_ = 0;
+
+    // The chain of `PoseFrom` from `meshPart` to its end; `loop` says the
+    // chain came back on itself.
+    [[nodiscard]] core::InstanceId resolveLeader(core::InstanceId meshPart, bool* loop) const;
+    // Finds this tick's followers, carrying over what each was last made from.
+    void resolveFollowers();
+    [[nodiscard]] Follow* followOf(core::InstanceId meshPart) noexcept;
+    [[nodiscard]] const Follow* followOf(core::InstanceId meshPart) const noexcept;
+    // The followers of `leader`, as a run of `led_`.
+    [[nodiscard]] std::span<const std::pair<core::u64, u32>> ledBy(core::InstanceId leader) const noexcept;
+    // Makes `follow`'s pose from its leader's as it is now, unless it already
+    // is that. `indexed`: inside a tick, whose index of drivers and of boned
+    // rigs is good.
+    void refreshFollower(Follow& follow, bool indexed, bool quantise);
+    // The leader's joints as the tick has them -- its pose, or its rest.
+    void leaderMatrices(const Follow& follow, const SkeletonLibrary::Entry& leaderRig, const core::Mat4*& model,
+                        const core::Mat4*& local);
+    void warnFollow(core::InstanceId follower, core::InstanceId other, bool loop);
     // The meshes a `Bone` turned this tick (G9).
     std::vector<core::InstanceId> turned_;
     std::vector<core::Mat4> model_;

@@ -104,6 +104,16 @@ model. Its speed is read from where it was a tick ago and settles over a few
 ticks, which is the one thing every machine has of a character: the one that
 walks it, and the one that is only told where it is.
 
+**A speed is read in the library's strides.** A clip carried to a body of
+other proportions covers ground in proportion to its legs
+([Retargeting](manual:animation/retargeting)): a walk that is 1.5 metres a
+second on the body it was made on is 0.75 on legs half as long. So `Speed`,
+`MoveX` and `MoveZ` reach a graph divided by how much longer the body's legs
+are than the library's -- the short body walking at 0.75 reads 1.5, the walk
+-- and the numbers a blend places its clips at are the library's own, once,
+for every body that uses the graph. A body on the library's own skeleton
+reads metres a second as they are, and `VerticalSpeed` always does.
+
 **A trigger with a source fires when the source changes** -- an attribute set
 to anything it was not. Without a source it fires when a script sets it.
 Either way it is true until a transition takes it, or the tick ends.

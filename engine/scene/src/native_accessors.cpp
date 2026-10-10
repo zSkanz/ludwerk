@@ -2168,7 +2168,42 @@ bool setLocalizationServiceLocale(World& world, core::InstanceId id, const Value
         return true;
     world.engineState().locale = locale;
     world.changes().pushText(id, world.atoms().intern("LocaleChanged"), locale);
+    // A voice that follows the text follows it now (ADR 0200).
+    refreshVoiceLocale(world, id);
     return true;
+}
+
+Value getLocalizationServiceVoiceLocale(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().voiceLocale};
+}
+
+bool setLocalizationServiceVoiceLocale(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    EngineState& state = world.engineState();
+    // The player's to choose: a machine with no player has nobody to ask.
+    if (text == nullptr || !state.graphicsDisplay)
+        return false;
+    if (text->empty()) {
+        state.voiceChoice.clear();
+    }
+    else {
+        // Narrowed to a language this machine can play; with no list at all --
+        // a test, a bare script -- to the name as locales are written.
+        std::string chosen =
+            state.voiceLocales.empty() ? canonicalLocale(*text) : narrowVoice(*text, state.voiceLocales);
+        if (chosen.empty())
+            return false;
+        state.voiceChoice = std::move(chosen);
+    }
+    refreshVoiceLocale(world, id);
+    return true;
+}
+
+Value getLocalizationServiceVoiceFollowsLocale(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().voiceChoice.empty()};
 }
 
 // --- GraphicsService (ADR 0147) -----------------------------------------------
@@ -3053,3 +3088,33 @@ bool setBasePartBuoyant(World& world, core::InstanceId id, const Value& value)
 }
 
 } // namespace engine::scene::native
+
+namespace engine::scene {
+
+// The voice language (ADR 0200): what is in force is worked out from what the
+// player chose, the text language and what this machine can play, here and
+// wherever one of the three changes.
+void refreshVoiceLocale(World& world, core::InstanceId service)
+{
+    EngineState& state = world.engineState();
+    std::string inForce;
+    if (state.voiceLocales.empty()) {
+        // A world no host gave a list -- a test, a bare script -- hears what
+        // it is told, as it reads what it is told.
+        inForce = state.voiceChoice.empty() ? state.locale : state.voiceChoice;
+    }
+    else {
+        // A dedicated server has no player and no system: it resolves in the
+        // project's default, the first of the list.
+        inForce = state.graphicsDisplay
+                      ? voiceLocaleFor(state.voiceChoice, state.locale, state.voiceLocales, state.systemLocales)
+                      : state.voiceLocales.front();
+    }
+    if (inForce == state.voiceLocale)
+        return;
+    state.voiceLocale = inForce;
+    if (service.valid() && world.alive(service))
+        world.changes().pushText(service, world.atoms().intern("VoiceLocaleChanged"), inForce);
+}
+
+} // namespace engine::scene

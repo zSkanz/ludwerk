@@ -6,6 +6,7 @@
 // cannot draw. When M7 hands over a real face, these are the cases that say the
 // key did not have to change.
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -14,6 +15,7 @@
 #include <iterator>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -693,4 +695,43 @@ TEST_CASE("D563: a stroke's outline is the bytes that trying every tap at every 
     engine::ui::dilateCoverage({}, 0, 0, 2.0f, 0, 3, none);
     CHECK(none.size() == 36);
     CHECK(std::all_of(none.begin(), none.end(), [](engine::core::u8 texel) { return texel == 0; }));
+}
+
+TEST_CASE("D623: words that were measured to fit a width fit it at every scale of the screen")
+{
+    FaceGuard guard;
+    resetGlyphCache();
+
+    // A label sized to its words is measured in its own units and drawn in
+    // pixels: the same words, at the size times the screen's scale, in the
+    // width times that scale. The two sums are the same number on paper and a
+    // few millionths apart in floats, and a line that wrapped on that put its
+    // last word on a line of its own -- outside the box that was made for one.
+    const std::array<std::string_view, 4> lines{
+        "Bruno: A minha segue o timbre da minha voz.",
+        "Clara: And mine only how loud I am.",
+        "Anna: Change the voice language and listen again.",
+        "Ana: Minha boca segue uma trilha feita para esta gravação.",
+    };
+    const std::array<engine::core::f32, 7> scales{1.0f, 1.1f, 1.25f, 1.3333334f, 1.5f, 1.7f, 2.0f};
+    for (const std::string_view line : lines) {
+        for (const engine::core::f32 size : {17.0f, 20.0f, 26.0f}) {
+            const engine::ui::TextRunMetrics plain = measureText(line, "asset://fonts/test.ttf", size, 0.0f);
+            const engine::ui::TextRunMetrics rich =
+                engine::ui::measureRichText(line, "asset://fonts/test.ttf", size, 0.0f);
+            REQUIRE(plain.lineCount == 1);
+            for (const engine::core::f32 scale : scales) {
+                CAPTURE(line);
+                CAPTURE(size);
+                CAPTURE(scale);
+                CHECK(measureText(line, "asset://fonts/test.ttf", size * scale, plain.size.x * scale).lineCount == 1);
+                CHECK(engine::ui::measureRichText(line, "asset://fonts/test.ttf", size * scale, rich.size.x * scale)
+                          .lineCount == 1);
+            }
+        }
+    }
+
+    // And a width that is really too small still wraps.
+    const engine::ui::TextRunMetrics whole = measureText(lines[0], "asset://fonts/test.ttf", 26.0f, 0.0f);
+    CHECK(measureText(lines[0], "asset://fonts/test.ttf", 26.0f, whole.size.x * 0.99f).lineCount == 2);
 }

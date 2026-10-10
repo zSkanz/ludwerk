@@ -597,8 +597,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // 298: `MeshPart`'s four for its morph targets (ADR 0196).
     // 300: `ContentProvider`'s `Keep` and `Release` (D610).
     // 304: `AnimationPlayer`'s four for its graph (ADR 0197).
-    CHECK(coverage.declared == 304);
-    CHECK(coverage.bound == 304);
+    CHECK(coverage.declared == 311);
+    CHECK(coverage.bound == 311);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

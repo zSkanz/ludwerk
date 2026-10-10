@@ -145,8 +145,24 @@ core::CFrameD DrawPoses::attachment(core::InstanceId id) const
     core::CFrameD drawn = component->worldCFrame;
     const core::InstanceId owner = world_->parentOf(id);
     if (const scene::PartComponent* on = owner.valid() ? world_->parts().find(owner) : nullptr; on != nullptr) {
+        // **A bone on a mesh that wears another's pose is on the body that
+        // leads it** (ADR 0201): the physics resolved it from the leader's
+        // part, so it is the leader's part, as drawn, that carries it. The
+        // chain is followed as it is written; a leader with no skeleton leads
+        // nobody, and a bone on such a mesh is a frame's move out at most.
+        core::InstanceId placed = owner;
+        if (component->jointName.id != 0) {
+            for (int guard = 0; guard < 8; ++guard) {
+                const scene::MeshPartComponent* mesh = world_->meshParts().find(placed);
+                if (mesh == nullptr || !mesh->poseFrom.valid() || mesh->poseFrom == placed ||
+                    world_->parts().find(mesh->poseFrom) == nullptr)
+                    break;
+                placed = mesh->poseFrom;
+            }
+            on = world_->parts().find(placed);
+        }
         drawn = component->jointName.id == 0 ? part(owner) * component->cframe
-                                             : part(owner) * (core::inverse(on->cframe) * component->worldCFrame);
+                                             : part(placed) * (core::inverse(on->cframe) * component->worldCFrame);
     }
     keep(id, Kind::Attachment, drawn);
     return drawn;

@@ -35,6 +35,7 @@ local setup = require("./commands/setup")
 local terrain = require("./commands/terrain")
 local test = require("./commands/test")
 local version = require("./commands/version")
+local voice = require("./commands/voice")
 
 local tr = catalog.tr
 
@@ -83,6 +84,7 @@ local ValueFlags: { [string]: boolean } = {
     definitions = true,
     high = true,
     junit = true,
+    locale = true,
     low = true,
     material = true,
     name = true,
@@ -407,6 +409,21 @@ local function main(): number
             seed = parsed.flags.seed,
             scale = parsed.flags.scale,
             octaves = parsed.flags.octaves,
+        })
+    end
+
+    -- **What a game's dialogue still lacks, a language** (ADR 0200 §8): the
+    -- lines with no text, the lines with no recording, the recordings no
+    -- line names, and the lines whose languages are of different lengths.
+    if parsed.command == "voice" then
+        if not rejectUnknownFlags(parsed, { "locale", "all", "visemes" }) then
+            return 2
+        end
+        return voice.run({
+            path = firstPositional(parsed, "."),
+            locale = parsed.flags.locale,
+            all = parsed.flags.all ~= nil,
+            visemes = parsed.flags.visemes ~= nil,
         })
     end
 

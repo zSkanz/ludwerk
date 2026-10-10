@@ -25,6 +25,7 @@
 #include "engine/platform/game_integration.h"
 #include "engine/render/settings.h"
 #include "engine/scene/graphics_model.h"
+#include "engine/scene/world.h"
 
 namespace engine::app {
 
@@ -347,10 +348,22 @@ void seedGraphicsModel(scene::GraphicsModel& model, const GraphicsOverrides& ove
 //
 // The same file keeps the language they chose (ADR 0154), as `"locale"`: empty
 // is "none chosen", and is not written.
+//
+// And what they hear (ADR 0200): the voice language they chose, as
+// `"voice_locale"` (not written while it follows the text language); their
+// volumes, as `"audio"`, each only where it is not full; and how they want
+// subtitles, as `"subtitles"`, each only where they said. A file from before
+// any of them reads as "nothing said".
+struct PlayerHearing
+{
+    std::string voiceLocale;
+    scene::PlayerSound sound;
+};
 [[nodiscard]] bool writePlayerGraphics(const std::filesystem::path& file, const scene::GraphicsLayer& choices,
-                                       std::string_view locale = {});
+                                       std::string_view locale = {}, const PlayerHearing* hearing = nullptr);
 [[nodiscard]] bool readPlayerGraphics(const std::filesystem::path& file, scene::GraphicsLayer& choices,
-                                      std::vector<std::string>* refused = nullptr, std::string* locale = nullptr);
+                                      std::vector<std::string>* refused = nullptr, std::string* locale = nullptr,
+                                      PlayerHearing* hearing = nullptr);
 
 // The same resolution without a file, for a bare script or a project that has
 // none.

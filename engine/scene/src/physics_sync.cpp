@@ -398,8 +398,22 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
     // frame cost 15 ms of simulation and overflowed the solver's contact cache.
     // Now moving one is a transform write. The record is emptied, so the first
     // tick any of the three is set again makes the body afresh.
-    const bool inert = body.anchored && !body.canCollide && !body.canQuery && !body.canTouch &&
-                       !std::binary_search(m_constrainedParts.begin(), m_constrainedParts.end(), id, byInstance);
+    const bool constrained = std::binary_search(m_constrainedParts.begin(), m_constrainedParts.end(), id, byInstance);
+    // **Nor has a mesh that wears another's pose** (ADR 0201), whatever its
+    // `CanCollide`, `CanTouch` and `CanQuery` say: it is picture on its
+    // leader, drawn in the leader's place, and what is hit is the leader. So
+    // a breastplate or a bow can never be what its wearer stands on -- D615
+    // was a carried part taken for ground, and a piece with no body is not in
+    // that question at all. Cleared of its leader it is a part again, and the
+    // record below makes its body afresh. A weld or a joint that holds one
+    // needs a body to hold, and keeps it.
+    bool follows = false;
+    if (!constrained && m_skeleton != nullptr) {
+        if (const MeshPartComponent* mesh = m_scene.meshParts().find(id); mesh != nullptr && mesh->poseFrom.valid())
+            follows = m_skeleton->poseLeader(id).valid();
+    }
+    const bool inert =
+        follows || (body.anchored && !body.canCollide && !body.canQuery && !body.canTouch && !constrained);
     if (inert) {
         // A purely visual part needs no mirror slot either. Growing the sparse
         // mirror to every decoration's id made its clear/retire walks scale
@@ -2467,11 +2481,22 @@ void PhysicsSync::resolveAttachment(core::InstanceId id)
             // tell this apart from asking with `static_cast<u32>(-1)`.
             if (rig == owner && attachment->jointIndex >= 0) {
                 core::CFrameD joint;
-                if (m_skeleton->jointModel(owner, static_cast<u32>(attachment->jointIndex), joint))
+                if (m_skeleton->jointModel(owner, static_cast<u32>(attachment->jointIndex), joint)) {
                     // **The joint already carries the bone's `Transform`** (G9):
                     // the pose applies it, so the joints below follow, and
                     // multiplying it again here would turn the bone twice.
-                    base = part->cframe * joint;
+                    //
+                    // **A mesh that wears another's pose is where its leader
+                    // is** (ADR 0201): its joints are in the leader's space,
+                    // and a muzzle on a slide is on the body that holds the
+                    // gun, wherever the gun's own part was left.
+                    const PartComponent* placed = part;
+                    if (const core::InstanceId leader = m_skeleton->poseLeader(owner); leader.valid()) {
+                        if (const PartComponent* leading = m_scene.parts().find(leader); leading != nullptr)
+                            placed = leading;
+                    }
+                    base = placed->cframe * joint;
+                }
             }
         }
     }

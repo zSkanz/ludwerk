@@ -5097,7 +5097,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(saveServiceDesc);
 
     // --- LocalizationService ---
-    static std::array<PropertyDesc, 1> localizationServiceProperties;
+    static std::array<PropertyDesc, 3> localizationServiceProperties;
     localizationServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Locale"),
@@ -5107,13 +5107,40 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .inert = false,
             .hostFact = true,
             .transient = true,
-            .doc = "The locale text is asked for in, as `en` or `pt-BR`. It starts as the player's saved choice, else the system's language, else `[project] default_locale`, else `en` -- each narrowed to a catalog the project has. Writing it is the player choosing: it is kept for the next run, and `LocaleChanged` fires. A locale the project has no catalog for is narrowed to one of its language (`pt` reads `pt-BR`), and refused when there is none.",
+            .doc = "The locale text is asked for in, as `en` or `pt-BR`. It starts as the player's saved choice, else the language of the store or launcher the game was started from when a platform provider says one, else the system's language, else `[project] default_locale`, else `en` -- each narrowed to a catalog the project has. Writing it is the player choosing: it is kept for the next run, and `LocaleChanged` fires. A locale the project has no catalog for is narrowed to one of its language (`pt` reads `pt-BR`), and refused when there is none.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.locale_unknown"),
             .get = native::getLocalizationServiceLocale,
             .set = native::setLocalizationServiceLocale,
         },
+        PropertyDesc{
+            .name = atoms.intern("VoiceLocale"),
+            .type = ValueType::String,
+            .choice = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The language sounds are heard in (ADR 0200), which need not be the one text is read in: every `Sound` looks for its `Content` under `l10n/<VoiceLocale>/` when it is played. It reads as the language in force, always one of `GetVoiceLocales`.\012\012**Written empty, it follows the text language** -- which is how it starts: `Locale` narrowed to a language this machine has voices for, else the first of the system's languages it has voices for, else the project's default. `VoiceFollowsLocale` says whether it is following. Writing a language is the player choosing: it is kept for the next run. One this machine cannot play is narrowed to one of its language (`pt` hears `pt-BR`) and refused when there is none. A change is heard at the next `Play`: what is playing finishes in the language it started in.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.voice_locale_unknown"),
+            .get = native::getLocalizationServiceVoiceLocale,
+            .set = native::setLocalizationServiceVoiceLocale,
+        },
+        PropertyDesc{
+            .name = atoms.intern("VoiceFollowsLocale"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether the voice language is following the text language: true until a language is written to `VoiceLocale`, and again once it is written empty. What a menu reads to show \"same as the text\" as the choice in force.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getLocalizationServiceVoiceFollowsLocale,
+            .set = nullptr,
+        },
     }};
-    static std::array<MethodDesc, 2> localizationServiceMethods;
+    static std::array<MethodDesc, 4> localizationServiceMethods;
     localizationServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetLocales"),
@@ -5122,18 +5149,35 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "The locales the project has a catalog for, in order: what a language menu lists.",
         },
         MethodDesc{
+            .name = atoms.intern("GetVoiceLocales"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The languages this machine can PLAY voices in (ADR 0200): the project's default first, then each language under `l10n/` that the game shipped or an installed language pack brought, sorted. A menu made from it never offers a voice that is not installed.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetSystemLocales"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The system's own preferred languages, most wanted first, as the platform reports them and not narrowed to anything the game has (ADR 0200): for \"your system's language\" in a menu. Empty on a dedicated server, which has no player.",
+        },
+        MethodDesc{
             .name = atoms.intern("Translate"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "The text for `key` in `Locale`. `{name}` in the text is replaced by `arguments.name` -- a string, a number or a boolean. A key nobody has comes back as the key, and is warned about once.",
         },
     }};
-    static std::array<EventDesc, 1> localizationServiceEvents;
+    static std::array<EventDesc, 2> localizationServiceEvents;
     localizationServiceEvents = {{
         EventDesc{
             .name = atoms.intern("LocaleChanged"),
             .slot = 7,
             .doc = "`Locale` changed, or -- while a game is being made -- a catalog was edited and read again: where a game sets its labels' text.",
+        },
+        EventDesc{
+            .name = atoms.intern("VoiceLocaleChanged"),
+            .slot = 8,
+            .doc = "The language sounds are heard in changed, to `locale` (ADR 0200): a script wrote `VoiceLocale`, or the text language changed and the voice follows it.",
         },
     }};
     ClassDescriptor localizationServiceDesc;
@@ -10617,6 +10661,81 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     relayStateDesc.docKey = {};
     relayStateDesc.items = relayStateItems;
     enums.registerEnum(relayStateDesc);
+
+    // --- SoundCategory ---
+    static std::array<EnumItemDesc, 3> soundCategoryItems;
+    soundCategoryItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Effects"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Music"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Voice"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor soundCategoryDesc;
+    soundCategoryDesc.name = atoms.intern("SoundCategory");
+    soundCategoryDesc.docKey = {};
+    soundCategoryDesc.items = soundCategoryItems;
+    enums.registerEnum(soundCategoryDesc);
+
+    // --- SubtitleMode ---
+    static std::array<EnumItemDesc, 3> subtitleModeItems;
+    subtitleModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Auto"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("On"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Off"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor subtitleModeDesc;
+    subtitleModeDesc.name = atoms.intern("SubtitleMode");
+    subtitleModeDesc.docKey = {};
+    subtitleModeDesc.items = subtitleModeItems;
+    enums.registerEnum(subtitleModeDesc);
+
+    // --- LipSyncMode ---
+    static std::array<EnumItemDesc, 3> lipSyncModeItems;
+    lipSyncModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Auto"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Bands"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Loudness"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor lipSyncModeDesc;
+    lipSyncModeDesc.name = atoms.intern("LipSyncMode");
+    lipSyncModeDesc.docKey = {};
+    lipSyncModeDesc.items = lipSyncModeItems;
+    enums.registerEnum(lipSyncModeDesc);
 }
 
 } // namespace engine::scene::generated

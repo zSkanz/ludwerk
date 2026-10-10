@@ -205,5 +205,6 @@ and `TimePosition` cannot be written.
 - [Tweens](manual:animation/tweens) — for animating a property rather than a rig
 - [Capes, tails and hair](manual:animation/secondary-motion) — what the body moves and no clip can
 - [Faces and shape keys](manual:animation/morph-targets) — the same mesh in another shape
+- [Wearing and holding](manual:animation/wearing-and-holding) — armour, hair and a bow on a body's pose
 - [Meshes and models](manual:world/meshes)
 - [`AnimationPlayer`](api:AnimationPlayer) · [`AnimationTrack`](api:AnimationTrack)

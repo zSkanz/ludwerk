@@ -5,6 +5,23 @@ log entries to `docs/progress-archive/YYYY-MM.md`.
 
 ## State
 
+- **Level-up batch 1b, dubbing and worn pieces (2026-10-10, engine):** a voice
+  a language (ADR 0200: recordings under `content/l10n/<locale>/`,
+  `VoiceLocale` apart from `Locale`, a line as long as its longest language,
+  `DialogueService`, `Caption`, `@engine/subtitles`, the player's volumes and
+  ducking, an Audio page in `@engine/settings`, language packs in the export,
+  `ludwerk voice`, `LipSync` by track, bands or loudness) and a mesh that
+  wears another's pose (ADR 0201: `MeshPart.PoseFrom`, a held thing under a
+  `Bone`). **Protocol 45**, with the lint that every writable property of a
+  class that travels is sent or withheld by name; a send back under its cost
+  before protocol 44. Retargeting corrected over real rigs. Defects D620 to
+  D626. Examples `examples/38-dubbing` and `examples/37-character` remade on
+  CC0 characters and clips; manual pages `audio/dubbing` and
+  `animation/wearing-and-holding`. The record is the "Built" note under 1b in
+  [the level-up roadmap](docs/briefs/level-up-roadmap.md). Next: category 2,
+  indirect light. Not verified in a window: both examples were looked at in
+  headless pictures only, and nothing was heard through speakers.
+
 - **Level-up category 1, animation (2026-10-10, engine):** animation graphs
   (ADR 0197: states, blend spaces, layers with masks, additive layers, events,
   parameters read from the body or set by a script, stepped on the tick and in

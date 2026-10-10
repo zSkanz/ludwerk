@@ -220,8 +220,8 @@ TEST_CASE("the generated schema is what the module was built against")
     // did `Swarm` and the channel its agents' positions ride (ADR 0162). And
     // what a character carries (protocol 44): `PointLight`, `SpotLight`,
     // `SpringBone`, `SpringCollider`, `Bone`, `Highlight`, `Beam`, `Trail`
-    // and `Sound`.
-    CHECK(std::size(generated::Classes) == 58);
+    // and `Sound`. And what a sound says (protocol 45, ADR 0200): `Caption`.
+    CHECK(std::size(generated::Classes) == 60);
     CHECK(std::size(generated::Channels) == 6);
 
     // Channel 3 was claimed from protocol 1 so the numbering could not shift

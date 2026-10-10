@@ -26,6 +26,8 @@
 --- Casing follows ADR 0034: `settings.open` is a module function; what it
 --- returns is an object, so `screen:Close()`.
 
+local AudioService = game:GetService("AudioService")
+local DialogueService = game:GetService("DialogueService")
 local GraphicsService = game:GetService("GraphicsService")
 local LocalizationService = game:GetService("LocalizationService")
 local RunService = game:GetService("RunService")
@@ -63,7 +65,7 @@ export type Options = {
     Title: string?,
 }
 
-export type Page = "Graphics" | "Display"
+export type Page = "Graphics" | "Display" | "Audio"
 
 export type Screen = {
     --- The screen itself. Yours to move in the draw order or to hide.
@@ -93,11 +95,15 @@ export type Screen = {
     Close: (self: Screen) -> (),
 }
 
-type Kind = "Preset" | "Toggle" | "Choice" | "Steps" | "Resolution" | "Monitor"
+type Kind = "Preset" | "Toggle" | "Choice" | "Steps" | "Resolution" | "Monitor" | "Language"
 
 type Row = {
     Setting: string,
     Page: Page,
+    -- Whose property `Setting` is, where it is not `GraphicsService`'s: what
+    -- the player hears and reads (ADR 0200). Those are theirs the moment
+    -- they are chosen -- written at once and kept at once, with no Apply.
+    Service: ("Audio" | "Dialogue" | "Localization")?,
     -- The catalog key of the row's caption.
     Caption: string,
     Kind: Kind,
@@ -154,6 +160,19 @@ local function scale(setting: string, caption: string, steps: { number }): Row
         Caption = caption,
         Kind = "Steps",
         Steps = steps,
+        Format = Percent,
+        Scale = 100,
+    }
+end
+
+local function volume(setting: string, caption: string): Row
+    return {
+        Setting = setting,
+        Service = "Audio",
+        Page = "Audio",
+        Caption = caption,
+        Kind = "Steps",
+        Steps = { 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1 },
         Format = Percent,
         Scale = 100,
     }
@@ -275,6 +294,58 @@ local ReferenceHeight = 720
 local RowHeight = 44
 local RowGap = 6
 local StepWidth = 44
+
+-- **What the player hears and reads** (ADR 0200): their volumes, the two
+-- languages -- the voice's apart from the text's -- and their subtitles.
+local AudioRows: { Row } = {
+    volume("PlayerVolume", "engine.settings.audio.player_volume"),
+    volume("MusicVolume", "engine.settings.audio.music_volume"),
+    volume("EffectsVolume", "engine.settings.audio.effects_volume"),
+    volume("VoiceVolume", "engine.settings.audio.voice_volume"),
+    {
+        Setting = "Locale",
+        Service = "Localization",
+        Page = "Audio",
+        Caption = "engine.settings.audio.text_language",
+        Kind = "Language",
+    },
+    {
+        Setting = "VoiceLocale",
+        Service = "Localization",
+        Page = "Audio",
+        Caption = "engine.settings.audio.voice_language",
+        Kind = "Language",
+    },
+    {
+        Setting = "Subtitles",
+        Service = "Dialogue",
+        Page = "Audio",
+        Caption = "engine.settings.audio.subtitles",
+        Kind = "Choice",
+        Items = { Enum.SubtitleMode.Auto, Enum.SubtitleMode.On, Enum.SubtitleMode.Off },
+        ItemKey = "engine.settings.value.subtitles.",
+    },
+    {
+        Setting = "SubtitleScale",
+        Service = "Dialogue",
+        Page = "Audio",
+        Caption = "engine.settings.audio.subtitle_scale",
+        Kind = "Steps",
+        Steps = { 0.75, 1, 1.25, 1.5, 2 },
+        Format = Percent,
+        Scale = 100,
+    },
+    {
+        Setting = "SubtitleBackground",
+        Service = "Dialogue",
+        Page = "Audio",
+        Caption = "engine.settings.audio.subtitle_background",
+        Kind = "Steps",
+        Steps = { 0, 0.2, 0.4, 0.6, 0.8, 1 },
+        Format = Percent,
+        Scale = 100,
+    },
+}
 
 local function translate(key: string, arguments: { [string]: any }?): string
     return LocalizationService:Translate(key, arguments)
@@ -460,10 +531,10 @@ function Settings.open(options: Options?): Screen
     barRow.ItemLineAlignment = Enum.ItemLineAlignment.Stretch
     barRow.Parent = bar
 
-    local pageNames: { Page } = { "Graphics", "Display" }
+    local pageNames: { Page } = { "Graphics", "Display", "Audio" }
     local pageFrames: { [Page]: ScrollFrame } = {}
     local pageButtons: { [Page]: TextButton } = {}
-    local pageCounts: { [Page]: number } = { Graphics = 0, Display = 0 }
+    local pageCounts: { [Page]: number } = { Graphics = 0, Display = 0, Audio = 0 }
     local currentPage: Page = "Graphics"
 
     for index, name in pageNames do
@@ -484,7 +555,7 @@ function Settings.open(options: Options?): Screen
         local tab = button(tabs, 20)
         tab.Name = name
         tab.LayoutOrder = index
-        -- A share of the bar and no width of its own: two pages fit a phone
+        -- A share of the bar and no width of its own: the pages fit a phone
         -- held upright as they fit a monitor.
         tab.Size = UDim2.new(0, 0, 1, 0)
         fit(tab, 20)
@@ -522,18 +593,52 @@ function Settings.open(options: Options?): Screen
         Closed = Signal.new() :: Signal<>,
     } :: Screen
 
+    -- Whose property a row's setting is.
+    local function ownerOf(row: Row): any
+        if row.Service == "Audio" then
+            return AudioService
+        elseif row.Service == "Dialogue" then
+            return DialogueService
+        elseif row.Service == "Localization" then
+            return LocalizationService
+        end
+        return GraphicsService
+    end
+
+    -- The languages a row steps through: the text's are the catalogs there
+    -- are; the voice's are what this machine can play, after "the same as
+    -- the text", which is written as no language at all.
+    local function languagesOf(row: Row): { string }
+        if row.Setting == "Locale" then
+            return LocalizationService:GetLocales()
+        end
+        local voices: { string } = { "" }
+        for _, locale in LocalizationService:GetVoiceLocales() do
+            table.insert(voices, locale)
+        end
+        return voices
+    end
+
     -- A row's value: what is held for it, or what the service has.
     local function valueOf(row: Row): any
         local waiting = held[row.Setting]
         if waiting ~= nil then
             return waiting
         end
-        return (GraphicsService :: any)[row.Setting]
+        -- A voice that follows the text is "none chosen", not the language
+        -- it happens to be following.
+        if row.Setting == "VoiceLocale" and LocalizationService.VoiceFollowsLocale then
+            return ""
+        end
+        return ownerOf(row)[row.Setting]
     end
 
     local function wordsOf(row: Row): string
         local value = valueOf(row)
-        if row.Kind == "Preset" then
+        if row.Kind == "Language" then
+            -- A language is shown as it is written everywhere: its own name.
+            return if value == "" then translate("engine.settings.value.voice_follows") else value
+        elseif row.Kind == "Preset" then
             return translate("engine.graphics.quality." .. string.lower(value.Name))
         elseif row.Kind == "Toggle" then
             return translate(if value then "engine.settings.value.on" else "engine.settings.value.off")
@@ -568,6 +673,7 @@ function Settings.open(options: Options?): Screen
         title.Text = if options and options.Title then options.Title else translate("engine.settings.title")
         pageButtons.Graphics.Text = translate("engine.settings.page.graphics")
         pageButtons.Display.Text = translate("engine.settings.page.display")
+        pageButtons.Audio.Text = translate("engine.settings.page.audio")
         apply.Text = translate("engine.settings.apply")
         revert.Text = translate("engine.settings.revert")
         defaults.Text = translate("engine.settings.defaults")
@@ -588,6 +694,12 @@ function Settings.open(options: Options?): Screen
     -- Writes a row's new value where it goes: held for Apply, or to the
     -- service now.
     local function write(row: Row, value: any)
+        if row.Service ~= nil then
+            -- The player's own, kept by the engine the moment it is written:
+            -- nothing for Apply to do, and nothing for Revert to undo.
+            ownerOf(row)[row.Setting] = value
+            return
+        end
         if row.Held then
             local standing = (GraphicsService :: any)[row.Setting]
             -- Stepped back to what the window already is: nothing to apply.
@@ -621,7 +733,16 @@ function Settings.open(options: Options?): Screen
     local function step(row: Row, direction: number): boolean
         local value = valueOf(row)
         local toward = if direction < 0 then -1 else 1
-        if row.Kind == "Toggle" then
+        if row.Kind == "Language" then
+            local languages = languagesOf(row)
+            local at = table.find(languages, value) or 1
+            local language = languages[at + toward]
+            if language == nil then
+                return false
+            end
+            write(row, language)
+            return true
+        elseif row.Kind == "Toggle" then
             write(row, not value)
             return true
         elseif row.Kind == "Preset" then
@@ -703,12 +824,20 @@ function Settings.open(options: Options?): Screen
         end
     end
 
-    for _, row in Rows do
+    local rows: { Row } = table.clone(Rows)
+    for _, row in AudioRows do
+        table.insert(rows, row)
+    end
+    for _, row in rows do
         local shown = not hidden[row.Setting]
-            and GraphicsService:IsApplied(row.Setting)
+            and (row.Service ~= nil or GraphicsService:IsApplied(row.Setting))
             and not (row.Desktop and handheld)
             -- One display is no choice of display.
             and not (row.Kind == "Monitor" and #monitors < 2)
+            -- And one language is no choice of language: a game in one, or
+            -- with no voice but its own, shows no row for it.
+            and not (row.Setting == "Locale" and #LocalizationService:GetLocales() < 2)
+            and not (row.Setting == "VoiceLocale" and #LocalizationService:GetVoiceLocales() < 2)
         if not shown then
             continue
         end
@@ -864,6 +993,17 @@ function Settings.open(options: Options?): Screen
     function screen.ResetToDefaults(self: Screen)
         table.clear(held)
         GraphicsService:ResetToDefaults()
+        -- And what they hear, as it comes: full, the voice following the
+        -- text, subtitles when what is heard is not what is read. The
+        -- language they READ is left alone -- "defaults" is not "English".
+        AudioService.PlayerVolume = 1
+        AudioService.MusicVolume = 1
+        AudioService.EffectsVolume = 1
+        AudioService.VoiceVolume = 1
+        LocalizationService.VoiceLocale = ""
+        DialogueService.Subtitles = Enum.SubtitleMode.Auto
+        DialogueService.SubtitleScale = 1
+        DialogueService.SubtitleBackground = 0.6
         self.IsDirty = true
         refresh()
     end
@@ -932,6 +1072,7 @@ function Settings.open(options: Options?): Screen
     -- Whoever else changes a setting, or the language, the rows say so.
     table.insert(connections, GraphicsService.QualityChanged:Connect(refresh))
     table.insert(connections, LocalizationService.LocaleChanged:Connect(refresh))
+    table.insert(connections, LocalizationService.VoiceLocaleChanged:Connect(refresh))
 
     refresh()
     gui.Parent = UIService

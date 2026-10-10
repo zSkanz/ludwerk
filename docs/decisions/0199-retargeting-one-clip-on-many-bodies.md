@@ -136,3 +136,32 @@ lengths are its own, and a role the clip moves that the second lacks is
 named in one warning. A rig's `.rig.json` overrides a guess. By name is as
 it was (the existing cases hold unchanged). `examples/37-character` is
 three heroes of other proportions on one library of clips.
+
+## Amended 2026-10-10: what real rigs corrected
+
+Run over the owner's heroes, two public-domain character packs and a
+public-domain mannequin, with `engine-host --describe-rig`:
+
+- **A rig is turned to the clip's first.** Each rig's up and left are read
+  off its rest and snapped to whole axes; where two differ -- a model that
+  faces the other way, one that stands along another axis -- the source's
+  rest is taken into the target's space before anything is carried.
+- **A limb is a chain.** A lower limb that does not hang from the part above
+  it gets no role, and where no upper leg hangs from the joint named as the
+  hips, the hips are the nearest joint above that both the named joint and
+  the legs hang from, and the named joint is the first of the back.
+- **Nothing above the hips is matched by name** when roles are in use: two
+  real rigs each have a `root` that rests differently, and it laid one of
+  them on its back.
+- **A rest further than a third of a turn from the source's is not aligned**
+  to it: a back that starts below the hips would turn the other rig's pelvis
+  over.
+- Names: a lower arm called `Fore`, a bare finger name as its first joint,
+  two more prefixes.
+- **The hips scale is also what a graph divides a body's speed by** (ADR
+  0197's amendment, D625).
+
+What it still does not do, found the same way and written in the manual: a
+turn of a source joint the target has no joint for is dropped rather than
+folded into the next; and a clip's character does not cross -- a short
+body's walk on long legs is a march.

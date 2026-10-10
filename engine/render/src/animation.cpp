@@ -556,6 +556,13 @@ void AnimationSystem::sample(f64 fixedDt)
         keyPeriods_.clear();
     }
 
+    // **Who wears whose pose, this tick** (ADR 0201): found before the tracks
+    // are indexed, because a follower is not posed from them. One that
+    // stopped following is a mesh like any again, from this tick.
+    resolveFollowers();
+    for (const core::InstanceId mesh : released_)
+        note(mesh);
+
     // The graphs first (ADR 0197): each steps its states and writes its
     // tracks' times and weights, which the walk below then takes like any.
     stepGraphs(fixedDt);
@@ -658,7 +665,9 @@ void AnimationSystem::sample(f64 fixedDt)
         if (!track.alive || track.clip == NoClip)
             continue;
         const bool contributes = (track.playing || track.holding) && track.weight > 0.0f;
-        if (contributes && track.meshPart.valid())
+        // A player on a follower moves no joint of it (ADR 0201): its weight
+        // tracks play, which ask `drives` and not this index.
+        if (contributes && track.meshPart.valid() && !follows(track.meshPart))
             drivers_.emplace_back(driverKeyOf(track.meshPart), static_cast<u32>(index));
         const bool noting = !quiet(track);
         if (!track.driveRoot.valid() || (!noting && !contributes))
@@ -680,7 +689,9 @@ void AnimationSystem::sample(f64 fixedDt)
                 if (mesh == nullptr)
                     continue;
                 const SkeletonLibrary::Entry* entry = skeletons_->find(mesh->meshContent);
-                if (entry != nullptr && !entry->joints.empty())
+                // A follower under the root is its leader's to pose, not the
+                // root's tracks' (ADR 0201).
+                if (entry != nullptr && !entry->joints.empty() && !(mesh->poseFrom.valid() && follows(id)))
                     driveMeshes_.push_back(id);
             }
         }
@@ -747,6 +758,16 @@ void AnimationSystem::sample(f64 fixedDt)
     const auto byId = [](core::InstanceId a, core::InstanceId b) {
         return a.index != b.index ? a.index < b.index : a.generation < b.generation;
     };
+    // **What keeps a follower posed keeps its leader posed** (ADR 0201): a
+    // `Bone` on a slide's joint is gameplay as one on a hand is, and the
+    // slide's pose is made from the body's.
+    if (!followers_.empty()) {
+        const usize held = always_.size();
+        for (usize index = 0; index < held; ++index) {
+            if (const Follow* const follow = followOf(always_[index]); follow != nullptr)
+                always_.push_back(follow->leader);
+        }
+    }
     std::sort(always_.begin(), always_.end(), byId);
     std::sort(boned_.begin(), boned_.end(), byId);
     boned_.erase(std::unique(boned_.begin(), boned_.end()), boned_.end());
@@ -792,6 +813,11 @@ void AnimationSystem::sample(f64 fixedDt)
         // its targets and its clips (ADR 0196).
         if (entry == nullptr || entry->joints.empty())
             continue;
+        // A follower is noted like any mesh -- a player on it, a bone that
+        // turned -- and posed by no track: after its leader, below.
+        if (mesh->poseFrom.valid() && follows(meshPart))
+            continue;
+        const std::span<const std::pair<core::u64, u32>> led = ledBy(meshPart);
         // **Posed as often as it is seen** (H3): not at all where neither the
         // camera nor a shadow reached it last frame, and every second, fourth
         // or eighth tick as it gets small -- staggered by id, so a crowd's
@@ -801,7 +827,18 @@ void AnimationSystem::sample(f64 fixedDt)
         bool reduced = false;
         if (seeing_ && !std::binary_search(always_.begin(), always_.end(), meshPart, byId)) {
             const auto seen = seen_.find(keyOf(meshPart));
-            const core::u32 interval = seen == seen_.end() ? 0u : updateInterval(seen->second * detail_);
+            bool reached = seen != seen_.end();
+            f32 size = reached ? seen->second : 0.0f;
+            // **A follower in view is its leader in view** (ADR 0201): a
+            // body that is not drawn under a full suit is still what the
+            // suit is posed from, at the size the largest piece is seen.
+            for (const auto& [leader, index] : led) {
+                if (const auto worn = seen_.find(keyOf(followers_[index].follower)); worn != seen_.end()) {
+                    reached = true;
+                    size = std::max(size, worn->second);
+                }
+            }
+            const core::u32 interval = reached ? updateInterval(size * detail_) : 0u;
             if (interval == 0 || (sampled_ + meshPart.index) % interval != 0) {
                 skipped_.push_back(meshPart);
                 stale_[keyOf(meshPart)] = true;
@@ -821,6 +858,19 @@ void AnimationSystem::sample(f64 fixedDt)
         }
         rebuildPose(meshPart, *entry, driving_, true, reduced);
         stale_.erase(key);
+        // **And what wears it, on the tick it is posed**: at the rate its
+        // clips were sampled at, so a crowd's pieces share as its bodies do.
+        for (const auto& [leader, index] : led)
+            refreshFollower(followers_[index], true, reduced);
+    }
+
+    // **Every other follower**, in instance order: one newly put on, one
+    // whose bone moved, one whose leader's pose was taken away -- and nothing
+    // at all for one whose leader stands as it stood.
+    if (!followers_.empty()) {
+        ENG_PROFILE_NEXT(sections, "animation.followers");
+        for (Follow& follow : followers_)
+            refreshFollower(follow, true, false);
     }
 
     ENG_PROFILE_NEXT(sections, "animation.history");
@@ -920,6 +970,73 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
     }
     ++posesBuilt_;
 
+    const bool contributed = blendTracks(meshPart, content, skeleton, drivers, indexed, quantise, nullptr);
+
+    if (!contributed && offsets.empty()) {
+        // Nothing drives this player any more. Its pose is taken away rather
+        // than left holding the last thing that did -- a null pose means "bind
+        // pose", and a stale palette would freeze the character mid-stride.
+        //
+        // **Unless something is overriding it**, and then the pose is left
+        // exactly as it is. Not merely un-erased: falling through would rebuild
+        // it from accumulators that are all zero weight, which IS the rest pose
+        // -- the first version of this did that and lost the very thing it was
+        // written to keep. What it keeps is the LOCALS. A ragdoll simulates a
+        // dozen bones; the fingers it does not simulate ride on their own local
+        // from this pose, so rebuilding from rest snaps every unsimulated joint
+        // out of the animation it was in on the exact frame the character goes
+        // limp -- a hand that springs open as the body drops.
+        if (overridesFor(meshPart) == nullptr)
+            poses_.erase(keyOf(meshPart));
+        return;
+    }
+
+    Pose& pose = ownPose(meshPart, false);
+    pose.palette.assign(jointCount, Mat4{});
+    // Kept rather than thrown away. `model` is what a socket asks for and
+    // `local` is what an override needs to re-run the forward pass -- both were
+    // already being computed into a scratch that ended at the closing brace.
+    pose.model.assign(jointCount, Mat4{});
+    pose.local.assign(jointCount, Mat4{});
+    pose.stamp = ++poseStamps_;
+
+    for (usize joint = 0; joint < jointCount; ++joint) {
+        const asset::Joint& bone = skeleton.joints[joint];
+        Mat4 local = blendedLocal(skeleton, joint);
+        for (const auto& [turned, offset] : offsets) {
+            if (turned == joint)
+                local = local * offset;
+        }
+        pose.local[joint] = local;
+        // One forward pass, parents first -- which the loader guarantees by
+        // sorting the joints (asset/model.h). A graph walk per frame would be
+        // the alternative, and this is the whole reason it is not needed.
+        pose.model[joint] = bone.parent == asset::Joint::NoParent ? local : pose.model[bone.parent] * local;
+        pose.palette[joint] = pose.model[joint] * bone.inverseBind;
+    }
+    if (shareable && signature_.size() > 1) {
+        // Bounded, and full is full: a pose there is no room for is this
+        // mesh's alone, and built again by whoever comes to its moment. It
+        // was emptied instead -- every pose of a crowd built again at once,
+        // and thousands of them freed in the same tick.
+        // Held by the crowd's index too from here: whoever writes to this
+        // mesh's pose next takes one of its own.
+        if (shared_.size() < MostSharedPoses && sharedJoints_ + jointCount <= MostSharedJoints) {
+            // Its buckets made once, for all it may hold: grown as it filled,
+            // every doubling was every entry filed again inside one tick.
+            if (shared_.empty())
+                shared_.reserve(MostSharedPoses);
+            if (shared_.insert_or_assign(signature_, SharedPose{poses_[keyOf(meshPart)], sampled_}).second)
+                sharedJoints_ += jointCount;
+        }
+    }
+}
+
+bool AnimationSystem::blendTracks(core::InstanceId meshPart, core::NameAtom content,
+                                  const SkeletonLibrary::Entry& skeleton, std::span<const u32> drivers, bool indexed,
+                                  bool quantise, const FollowMap* only)
+{
+    const usize jointCount = skeleton.joints.size();
     // Accumulators, one currency per component. A weighted average per joint
     // rather than per track, because a joint no clip drives has to keep its rest
     // transform -- a zero-weight average would collapse it to the origin, which
@@ -969,7 +1086,7 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
             topLayer = std::max(topLayer, track->layer);
             continue;
         }
-        if (!accumulate(*track, content, jointCount, quantise, base_))
+        if (!accumulate(*track, content, jointCount, quantise, base_, only))
             continue;
         contributed = true;
         if (track->graph != NoGraph) {
@@ -1009,7 +1126,7 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
         for (usize position = 0; position < considered; ++position) {
             const Track* const track = driving(position);
             if (track != nullptr && !track->additive && track->layer == layer)
-                any = accumulate(*track, content, jointCount, quantise, upper_) || any;
+                any = accumulate(*track, content, jointCount, quantise, upper_, only) || any;
         }
         if (any) {
             mergeLayer(skeleton, base_, upper_);
@@ -1029,117 +1146,68 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
         for (usize position = 0; position < considered; ++position) {
             const Track* const track = driving(position);
             if (track != nullptr && track->additive)
-                any = accumulateAdditive(*track, content, jointCount, quantise) || any;
+                any = accumulateAdditive(*track, content, jointCount, quantise, only) || any;
         }
         adds = any;
         contributed = contributed || any;
     }
 
-    if (!contributed && offsets.empty()) {
-        // Nothing drives this player any more. Its pose is taken away rather
-        // than left holding the last thing that did -- a null pose means "bind
-        // pose", and a stale palette would freeze the character mid-stride.
-        //
-        // **Unless something is overriding it**, and then the pose is left
-        // exactly as it is. Not merely un-erased: falling through would rebuild
-        // it from accumulators that are all zero weight, which IS the rest pose
-        // -- the first version of this did that and lost the very thing it was
-        // written to keep. What it keeps is the LOCALS. A ragdoll simulates a
-        // dozen bones; the fingers it does not simulate ride on their own local
-        // from this pose, so rebuilding from rest snaps every unsimulated joint
-        // out of the animation it was in on the exact frame the character goes
-        // limp -- a hand that springs open as the body drops.
-        if (overridesFor(meshPart) == nullptr)
-            poses_.erase(keyOf(meshPart));
-        return;
-    }
+    blendAdds_ = adds;
+    return contributed;
+}
 
-    Pose& pose = ownPose(meshPart, false);
-    pose.palette.assign(jointCount, Mat4{});
-    // Kept rather than thrown away. `model` is what a socket asks for and
-    // `local` is what an override needs to re-run the forward pass -- both were
-    // already being computed into a scratch that ended at the closing brace.
-    pose.model.assign(jointCount, Mat4{});
-    pose.local.assign(jointCount, Mat4{});
-
+core::Mat4 AnimationSystem::blendedLocal(const SkeletonLibrary::Entry& skeleton, usize joint)
+{
+    const bool adds = blendAdds_;
     f32 restRotation[4]{};
-    for (usize joint = 0; joint < jointCount; ++joint) {
-        const asset::Joint& bone = skeleton.joints[joint];
+    const asset::Joint& bone = skeleton.joints[joint];
 
-        DVec3 translation = bone.localBind.position;
-        if (base_.weightT[joint] > 0.0f) {
-            const f64 inverse = 1.0 / static_cast<f64>(base_.weightT[joint]);
-            translation = DVec3{base_.translation[joint].x * inverse, base_.translation[joint].y * inverse,
-                                base_.translation[joint].z * inverse};
-        }
+    DVec3 translation = bone.localBind.position;
+    if (base_.weightT[joint] > 0.0f) {
+        const f64 inverse = 1.0 / static_cast<f64>(base_.weightT[joint]);
+        translation = DVec3{base_.translation[joint].x * inverse, base_.translation[joint].y * inverse,
+                            base_.translation[joint].z * inverse};
+    }
 
-        Vec3 boneScale{1.0f, 1.0f, 1.0f};
-        if (base_.weightS[joint] > 0.0f) {
-            const f32 inverse = 1.0f / base_.weightS[joint];
-            boneScale =
-                Vec3{base_.scale[joint].x * inverse, base_.scale[joint].y * inverse, base_.scale[joint].z * inverse};
-        }
+    Vec3 boneScale{1.0f, 1.0f, 1.0f};
+    if (base_.weightS[joint] > 0.0f) {
+        const f32 inverse = 1.0f / base_.weightS[joint];
+        boneScale =
+            Vec3{base_.scale[joint].x * inverse, base_.scale[joint].y * inverse, base_.scale[joint].z * inverse};
+    }
 
-        const f32* quaternion = restRotation;
-        if (base_.weightR[joint] > 0.0f) {
-            f32* accumulator = &base_.rotation[joint * 4];
-            f32 length = 0.0f;
+    const f32* quaternion = restRotation;
+    if (base_.weightR[joint] > 0.0f) {
+        f32* accumulator = &base_.rotation[joint * 4];
+        f32 length = 0.0f;
+        for (usize lane = 0; lane < 4; ++lane)
+            length += accumulator[lane] * accumulator[lane];
+        length = std::sqrt(length);
+        if (length > 0.0f) {
             for (usize lane = 0; lane < 4; ++lane)
-                length += accumulator[lane] * accumulator[lane];
-            length = std::sqrt(length);
-            if (length > 0.0f) {
-                for (usize lane = 0; lane < 4; ++lane)
-                    accumulator[lane] /= length;
-                quaternion = accumulator;
-            }
-        }
-        if (quaternion == restRotation) {
-            // The rest rotation, back as a quaternion so the accumulator has one
-            // currency. `CFrameD` stores a basis and reading a quaternion out of
-            // it is cheaper than carrying a second representation on `Joint`.
-            core::toQuaternion(bone.localBind.rotation, restRotation[0], restRotation[1], restRotation[2],
-                               restRotation[3]);
-        }
-
-        f32 added[4]{};
-        if (adds) {
-            // What the additive tracks made of this joint, on top: a turn in
-            // the joint's own space, a move from its parent, a stretch.
-            translation = translation + addT_[joint];
-            multiplyQuaternions(quaternion, &addR_[joint * 4], added);
-            normalizeQuaternion(added);
-            quaternion = added;
-            boneScale = core::mul(boneScale, addS_[joint]);
-        }
-
-        Mat4 local = composeTrs(translation, quaternion, boneScale);
-        for (const auto& [turned, offset] : offsets) {
-            if (turned == joint)
-                local = local * offset;
-        }
-        pose.local[joint] = local;
-        // One forward pass, parents first -- which the loader guarantees by
-        // sorting the joints (asset/model.h). A graph walk per frame would be
-        // the alternative, and this is the whole reason it is not needed.
-        pose.model[joint] = bone.parent == asset::Joint::NoParent ? local : pose.model[bone.parent] * local;
-        pose.palette[joint] = pose.model[joint] * bone.inverseBind;
-    }
-    if (shareable && signature_.size() > 1) {
-        // Bounded, and full is full: a pose there is no room for is this
-        // mesh's alone, and built again by whoever comes to its moment. It
-        // was emptied instead -- every pose of a crowd built again at once,
-        // and thousands of them freed in the same tick.
-        // Held by the crowd's index too from here: whoever writes to this
-        // mesh's pose next takes one of its own.
-        if (shared_.size() < MostSharedPoses && sharedJoints_ + jointCount <= MostSharedJoints) {
-            // Its buckets made once, for all it may hold: grown as it filled,
-            // every doubling was every entry filed again inside one tick.
-            if (shared_.empty())
-                shared_.reserve(MostSharedPoses);
-            if (shared_.insert_or_assign(signature_, SharedPose{poses_[keyOf(meshPart)], sampled_}).second)
-                sharedJoints_ += jointCount;
+                accumulator[lane] /= length;
+            quaternion = accumulator;
         }
     }
+    if (quaternion == restRotation) {
+        // The rest rotation, back as a quaternion so the accumulator has one
+        // currency. `CFrameD` stores a basis and reading a quaternion out of
+        // it is cheaper than carrying a second representation on `Joint`.
+        core::toQuaternion(bone.localBind.rotation, restRotation[0], restRotation[1], restRotation[2], restRotation[3]);
+    }
+
+    f32 added[4]{};
+    if (adds) {
+        // What the additive tracks made of this joint, on top: a turn in
+        // the joint's own space, a move from its parent, a stretch.
+        translation = translation + addT_[joint];
+        multiplyQuaternions(quaternion, &addR_[joint * 4], added);
+        normalizeQuaternion(added);
+        quaternion = added;
+        boneScale = core::mul(boneScale, addS_[joint]);
+    }
+
+    return composeTrs(translation, quaternion, boneScale);
 }
 
 void AnimationSystem::Lanes::clear(usize joints, bool cover)
@@ -1162,7 +1230,8 @@ void AnimationSystem::Lanes::clear(usize joints, bool cover)
     }
 }
 
-bool AnimationSystem::accumulate(const Track& track, core::NameAtom rig, usize jointCount, bool quantise, Lanes& lanes)
+bool AnimationSystem::accumulate(const Track& track, core::NameAtom rig, usize jointCount, bool quantise, Lanes& lanes,
+                                 const FollowMap* only)
 {
     // **The clip comes from the track's OWN rig, not from this mesh's.** A
     // shirt exported without the animation has no clips of its own, and the
@@ -1171,6 +1240,11 @@ bool AnimationSystem::accumulate(const Track& track, core::NameAtom rig, usize j
     const SkeletonLibrary::Entry* source = skeletons_->find(track.content);
     if (source == nullptr || track.clip >= source->clips.size())
         return false;
+    // **For a follower's own joints, and the clip names none** (ADR 0201):
+    // it weighs what it weighs in the mix and is not walked.
+    if (only != nullptr && !namesOwn(track, *only))
+        return true;
+    ++tracksWalked_;
 
     // Null when the clip is being applied to the rig it came from, which is
     // every character made of one mesh -- and then the channel's own index
@@ -1210,6 +1284,8 @@ bool AnimationSystem::accumulate(const Track& track, core::NameAtom rig, usize j
             joint = static_cast<u32>(map->slots[joint]);
         }
         if (joint >= jointCount || channel.times.empty())
+            continue;
+        if (only != nullptr && only->own[joint] == 0)
             continue;
         f32 weight = own;
         if (mask != nullptr) {
@@ -1289,7 +1365,7 @@ bool AnimationSystem::accumulate(const Track& track, core::NameAtom rig, usize j
             if (keyed_[from] != 0 || map->carried.byRole[from] == 0 || map->carried.slots[from] < 0)
                 continue;
             const auto joint = static_cast<usize>(map->carried.slots[from]);
-            if (joint >= jointCount)
+            if (joint >= jointCount || (only != nullptr && only->own[joint] == 0))
                 continue;
             f32 weight = own;
             if (mask != nullptr) {
@@ -1313,11 +1389,15 @@ bool AnimationSystem::accumulate(const Track& track, core::NameAtom rig, usize j
     return true;
 }
 
-bool AnimationSystem::accumulateAdditive(const Track& track, core::NameAtom rig, usize jointCount, bool quantise)
+bool AnimationSystem::accumulateAdditive(const Track& track, core::NameAtom rig, usize jointCount, bool quantise,
+                                         const FollowMap* only)
 {
     const SkeletonLibrary::Entry* source = skeletons_->find(track.content);
     if (source == nullptr || track.clip >= source->clips.size())
         return false;
+    if (only != nullptr && !namesOwn(track, *only))
+        return true;
+    ++tracksWalked_;
     const JointMap* const map = jointMapFor(track.content, rig, track.retargeting);
     const std::vector<f32>* const mask = maskFor(track, rig);
     const asset::AnimationClip& clip = source->clips[track.clip];
@@ -1333,7 +1413,7 @@ bool AnimationSystem::accumulateAdditive(const Track& track, core::NameAtom rig,
                 continue;
             joint = static_cast<u32>(map->slots[joint]);
         }
-        if (joint >= jointCount || channel.times.empty())
+        if (joint >= jointCount || channel.times.empty() || (only != nullptr && only->own[joint] == 0))
             continue;
         f32 weight = track.weight * track.layerWeight;
         if (mask != nullptr)
@@ -1848,8 +1928,8 @@ bool AnimationSystem::jointModel(core::InstanceId meshPart, core::u32 joint, cor
     // **A pose that skipped its tick is built when a joint is asked for** (H3):
     // the answer is the one every tick would have given. Logically const -- the
     // pose is a cache of the tracks' state -- which is what the cast says.
-    if (!stale_.empty() && stale_.contains(keyOf(meshPart)))
-        const_cast<AnimationSystem*>(this)->catchUp(meshPart);
+    if (!stale_.empty() || !followers_.empty())
+        const_cast<AnimationSystem*>(this)->settle(meshPart);
 
     // The posed transform when there is a pose, and the REST chain when there is
     // not -- a character standing still has no pose at all, and a socket on its
@@ -1947,10 +2027,17 @@ void AnimationSystem::commitOverrides()
     overridden_.clear();
     for (const OverrideSet& set : overrides_)
         overridden_.push_back(set.meshPart);
+    bool committed = false;
     for (const OverrideSet& set : overrides_) {
         const SkeletonLibrary::Entry* entry = skeletonOf(set.meshPart);
         if (entry == nullptr || set.joints.empty())
             continue;
+        // **A follower's joints are its leader's** (ADR 0201): a ragdoll that
+        // drives every mesh of a model by name drives the body, and what
+        // wears the body is there with it.
+        if (follows(set.meshPart))
+            continue;
+        committed = true;
 
         const usize jointCount = entry->joints.size();
         // Its own, with what it held: the joints the override does not name
@@ -1986,6 +2073,12 @@ void AnimationSystem::commitOverrides()
             }
             pose.palette[joint] = pose.model[joint] * entry->joints[joint].inverseBind;
         }
+        pose.stamp = ++poseStamps_;
+    }
+    // What wears a body a ragdoll moved is made again from it, this tick.
+    if (committed) {
+        for (Follow& follow : followers_)
+            refreshFollower(follow, true, false);
     }
 
     // Cleared, always. An override that outlived the tick that set it is a
@@ -2188,6 +2281,44 @@ core::InstanceId AnimationSystem::bodyOf(core::InstanceId player) const
     return {};
 }
 
+f32 AnimationSystem::strideOf(const GraphInstance& instance) const
+{
+    // The body's rig: the mesh the player is on, or the first skinned one
+    // under what it is on that is not worn on another (ADR 0201).
+    const core::InstanceId holder = world_->parentOf(instance.player);
+    if (!holder.valid() || instance.tracks.empty())
+        return 1.0f;
+    core::NameAtom rig{};
+    const auto skinned = [&](core::InstanceId id) {
+        const scene::MeshPartComponent* mesh = world_->meshParts().find(id);
+        if (mesh == nullptr || mesh->poseFrom.valid())
+            return false;
+        const SkeletonLibrary::Entry* found = skeletons_->find(mesh->meshContent);
+        if (found == nullptr || found->joints.empty())
+            return false;
+        rig = mesh->meshContent;
+        return true;
+    };
+    if (!skinned(holder)) {
+        std::vector<core::InstanceId> below;
+        world_->collectDescendants(holder, below);
+        for (const core::InstanceId id : below) {
+            if (skinned(id))
+                break;
+        }
+    }
+    if (!rig.valid())
+        return 1.0f;
+    // Against the file its first clip is in: a graph's library.
+    const Track& track = tracks_[instance.tracks.front()];
+    if (!track.content.valid() || track.content == rig)
+        return 1.0f;
+    const JointMap* const map = jointMapFor(track.content, rig, track.retargeting);
+    if (map == nullptr || !map->carried.roles || !(map->carried.hipsScale > 0.0))
+        return 1.0f;
+    return static_cast<f32>(map->carried.hipsScale);
+}
+
 void AnimationSystem::readSources(GraphInstance& instance, const GraphLibrary::Entry& entry, f64 fixedDt)
 {
     const asset::AnimationGraph& graph = entry.graph;
@@ -2232,6 +2363,17 @@ void AnimationSystem::readSources(GraphInstance& instance, const GraphLibrary::E
         // In the body's own frame: right and forward.
         local = core::transpose(part->cframe.rotation) * instance.velocity;
     }
+    // **Over the ground, in the library's strides** (ADR 0197, ADR 0199). A
+    // clip carried to a body of other legs covers ground in proportion to
+    // them, and a graph places its clips by the speed of the body they were
+    // made on: a short body walking at its own walk's pace is at the
+    // library's walk, not somewhere short of it. Found again when a rig
+    // arrives or is replaced -- the body's, or the library's.
+    if (body != nullptr && instance.strideRevision != skeletons_->revision()) {
+        instance.stride = strideOf(instance);
+        instance.strideRevision = skeletons_->revision();
+    }
+    const f32 stride = instance.stride > 0.0f ? instance.stride : 1.0f;
 
     const core::InstanceId holder = world_->parentOf(instance.player);
     for (usize index = 0; index < graph.parameters.size(); ++index) {
@@ -2255,17 +2397,18 @@ void AnimationSystem::readSources(GraphInstance& instance, const GraphLibrary::E
             switch (source) {
             case GraphLibrary::Source::Speed:
                 value =
-                    std::sqrt(instance.velocity.x * instance.velocity.x + instance.velocity.z * instance.velocity.z);
+                    std::sqrt(instance.velocity.x * instance.velocity.x + instance.velocity.z * instance.velocity.z) /
+                    stride;
                 break;
             case GraphLibrary::Source::VerticalSpeed:
                 value = instance.velocity.y;
                 break;
             case GraphLibrary::Source::MoveX:
-                value = local.x;
+                value = local.x / stride;
                 break;
             case GraphLibrary::Source::MoveZ:
                 // Forward is -Z.
-                value = -local.z;
+                value = -local.z / stride;
                 break;
             case GraphLibrary::Source::Grounded:
                 value = body->grounded ? 1.0f : 0.0f;
@@ -2667,24 +2810,51 @@ bool AnimationSystem::clipMorphWeights(core::InstanceId meshPart, const Skeleton
     return true;
 }
 
+void AnimationSystem::presentMorphWeights(core::InstanceId meshPart,
+                                          std::span<const std::pair<std::string, f32>> weights)
+{
+    if (weights.empty())
+        return;
+    std::vector<MorphOverride>& layer = morphPresented_[keyOf(meshPart)];
+    for (const auto& [name, weight] : weights) {
+        const auto held =
+            std::find_if(layer.begin(), layer.end(), [&](const MorphOverride& one) { return one.name == name; });
+        if (held != layer.end())
+            // Two mouths on one face: the wider open wins a key they share.
+            held->weight = std::max(held->weight, weight);
+        else
+            layer.push_back(MorphOverride{name, weight});
+    }
+}
+
 std::span<const f32> AnimationSystem::drawnMorphWeights(core::InstanceId meshPart) const
 {
     const auto overrides = morphOverrides_.find(keyOf(meshPart));
     const bool scripted = overrides != morphOverrides_.end() && !overrides->second.empty();
+    // And what the frame itself put on it (ADR 0200): a mouth being moved.
+    const auto presented = morphPresented_.empty() ? morphPresented_.end() : morphPresented_.find(keyOf(meshPart));
+    const bool mouthed = presented != morphPresented_.end() && !presented->second.empty();
     // The common answer, before anything is looked up: nobody set a weight
     // on this mesh and no track anywhere plays one.
-    if (!scripted && weightTracks().empty())
+    if (!scripted && !mouthed && weightTracks().empty())
         return {};
     const SkeletonLibrary::Entry* entry = morphsOf(meshPart);
     if (entry == nullptr)
         return {};
     const bool clips = clipMorphWeights(meshPart, *entry);
-    if (!clips && !scripted)
+    if (!clips && !scripted && !mouthed)
         return {};
     if (!clips) {
         morphScratch_.assign(entry->morphNames.size(), 0.0f);
         for (usize target = 0; target < morphScratch_.size() && target < entry->morphDefaults.size(); ++target)
             morphScratch_[target] = entry->morphDefaults[target];
+    }
+    // The frame's layer over the clips', and under a script's.
+    if (mouthed) {
+        for (const MorphOverride& set : presented->second) {
+            if (const core::i32 target = targetNamed(entry->morphNames, set.name); target >= 0)
+                morphScratch_[static_cast<usize>(target)] = set.weight;
+        }
     }
     // **The script's value wins while it is set.**
     if (scripted) {
@@ -2747,8 +2917,8 @@ void AnimationSystem::present(core::InstanceId meshPart, std::span<const Present
     if (entry == nullptr || joints.empty())
         return;
     const usize jointCount = entry->joints.size();
-    if (!stale_.empty() && stale_.contains(keyOf(meshPart)))
-        catchUp(meshPart);
+    if (!stale_.empty() || !followers_.empty())
+        settle(meshPart);
 
     const auto held = presented_.find(keyOf(meshPart));
     const bool again = over && held != presented_.end() && held->second.model.size() == jointCount;
@@ -2821,8 +2991,8 @@ bool AnimationSystem::modelOf(core::InstanceId meshPart, std::vector<core::Mat4>
     const SkeletonLibrary::Entry* entry = skeletonOf(meshPart);
     if (entry == nullptr || entry->joints.empty())
         return false;
-    if (!stale_.empty() && stale_.contains(keyOf(meshPart)))
-        const_cast<AnimationSystem*>(this)->catchUp(meshPart);
+    if (!stale_.empty() || !followers_.empty())
+        const_cast<AnimationSystem*>(this)->settle(meshPart);
     const usize jointCount = entry->joints.size();
     if (const auto found = poses_.find(keyOf(meshPart));
         found != poses_.end() && found->second->model.size() == jointCount) {
@@ -2872,8 +3042,8 @@ bool AnimationSystem::jointLocal(core::InstanceId meshPart, core::u32 joint, cor
     const SkeletonLibrary::Entry* entry = skeletonOf(meshPart);
     if (entry == nullptr || joint >= entry->joints.size())
         return false;
-    if (!stale_.empty() && stale_.contains(keyOf(meshPart)))
-        const_cast<AnimationSystem*>(this)->catchUp(meshPart);
+    if (!stale_.empty() || !followers_.empty())
+        const_cast<AnimationSystem*>(this)->settle(meshPart);
     const Pose* own = pose(meshPart);
     if (own != nullptr && joint < own->local.size())
         out = core::cframeFromMatrix(own->local[joint]);
@@ -2884,13 +3054,590 @@ bool AnimationSystem::jointLocal(core::InstanceId meshPart, core::u32 joint, cor
 
 bool AnimationSystem::seenLately(core::InstanceId meshPart) const noexcept
 {
-    return !seeing_ || seen_.contains(keyOf(meshPart));
+    if (!seeing_ || seen_.contains(keyOf(meshPart)))
+        return true;
+    // A body under a suit that is seen is seen (ADR 0201): its limbs and its
+    // feet are what the suit is drawn from.
+    for (const auto& [leader, index] : ledBy(meshPart)) {
+        if (seen_.contains(keyOf(followers_[index].follower)))
+            return true;
+    }
+    return false;
 }
 
 const Pose* AnimationSystem::pose(core::InstanceId meshPart) const noexcept
 {
     const auto found = poses_.find(keyOf(meshPart));
     return found == poses_.end() ? nullptr : found->second.get();
+}
+
+// --- A mesh that wears another's pose (ADR 0201) -------------------------------
+
+namespace {
+
+[[nodiscard]] bool earlier(core::InstanceId a, core::InstanceId b) noexcept
+{
+    return a.index != b.index ? a.index < b.index : a.generation < b.generation;
+}
+
+// The first word of a follower's shared pose: no rig's atom has this bit, so
+// no mesh's own signature begins like one.
+constexpr core::u64 FollowSignature = 1ull << 63;
+
+} // namespace
+
+core::InstanceId AnimationSystem::resolveLeader(core::InstanceId meshPart, bool* loop) const
+{
+    if (loop != nullptr)
+        *loop = false;
+    if (world_ == nullptr)
+        return {};
+    const scene::MeshPartComponent* const own = world_->meshParts().find(meshPart);
+    if (own == nullptr || !own->poseFrom.valid())
+        return {};
+    // A name that answers: a mesh that is there. One that is gone, or is not
+    // a mesh, is nobody -- as the property reads.
+    const auto named = [this](core::InstanceId id) -> const scene::MeshPartComponent* {
+        return id.valid() && world_->alive(id) && !world_->destroyed(id) ? world_->meshParts().find(id) : nullptr;
+    };
+    // **Followed to its end, by two walkers**: the second goes at half the
+    // pace of the first, and a chain that comes back on itself brings them
+    // together. No list of who was passed is kept; a chain is one link long
+    // nearly always.
+    core::InstanceId at = own->poseFrom;
+    core::InstanceId slow = meshPart;
+    for (u32 step = 1;; ++step) {
+        if (at == meshPart || at == slow) {
+            if (loop != nullptr)
+                *loop = true;
+            return {};
+        }
+        const scene::MeshPartComponent* const link = named(at);
+        if (link == nullptr)
+            return {};
+        if (named(link->poseFrom) == nullptr)
+            break;
+        at = link->poseFrom;
+        if ((step & 1u) == 0)
+            slow = world_->meshParts().find(slow)->poseFrom;
+    }
+    // Both ends wear a skeleton, or there is no joint to take and none to
+    // give.
+    return skeletonOf(at) != nullptr && skeletonOf(meshPart) != nullptr ? at : core::InstanceId{};
+}
+
+core::InstanceId AnimationSystem::leaderOf(core::InstanceId meshPart) const
+{
+    return resolveLeader(meshPart, nullptr);
+}
+
+const AnimationSystem::Follow* AnimationSystem::followOf(core::InstanceId meshPart) const noexcept
+{
+    if (followers_.empty())
+        return nullptr;
+    const auto at =
+        std::lower_bound(followers_.begin(), followers_.end(), meshPart,
+                         [](const Follow& held, core::InstanceId id) { return earlier(held.follower, id); });
+    return at != followers_.end() && at->follower == meshPart ? &*at : nullptr;
+}
+
+AnimationSystem::Follow* AnimationSystem::followOf(core::InstanceId meshPart) noexcept
+{
+    return const_cast<Follow*>(static_cast<const AnimationSystem*>(this)->followOf(meshPart));
+}
+
+bool AnimationSystem::follows(core::InstanceId meshPart) const noexcept
+{
+    return followOf(meshPart) != nullptr;
+}
+
+std::span<const std::pair<core::u64, u32>> AnimationSystem::ledBy(core::InstanceId leader) const noexcept
+{
+    if (led_.empty())
+        return {};
+    const core::u64 key = driverKeyOf(leader);
+    const auto first =
+        std::lower_bound(led_.begin(), led_.end(), key,
+                         [](const std::pair<core::u64, u32>& held, core::u64 wanted) { return held.first < wanted; });
+    auto last = first;
+    while (last != led_.end() && last->first == key)
+        ++last;
+    return {first, last};
+}
+
+const AnimationSystem::FollowMap* AnimationSystem::followMapFor(core::NameAtom leader, core::NameAtom follower)
+{
+    // A rig read again is another rig: every pair's map is made again, and
+    // every follower from it.
+    if (skeletons_->revision() != followRevision_) {
+        followMaps_.clear();
+        ownNamed_.clear();
+        followRevision_ = skeletons_->revision();
+        for (Follow& follow : followers_)
+            follow.made = false;
+    }
+    for (const std::unique_ptr<FollowMap>& map : followMaps_) {
+        if (map->leader == leader && map->follower == follower)
+            return map.get();
+    }
+    const SkeletonLibrary::Entry* const source = skeletons_->find(leader);
+    const SkeletonLibrary::Entry* const target = skeletons_->find(follower);
+    if (source == nullptr || target == nullptr)
+        return nullptr;
+
+    auto made = std::make_unique<FollowMap>();
+    made->leader = leader;
+    made->follower = follower;
+    const usize count = target->joints.size();
+    made->from.assign(count, -1);
+    // A leader's joint is one follower's joint at the most: the first that
+    // asks, in the follower's own order.
+    std::vector<core::u8> taken(source->joints.size(), 0);
+    for (usize joint = 0; joint < count; ++joint) {
+        for (usize other = 0; other < source->joints.size(); ++other) {
+            if (taken[other] == 0 && source->joints[other].name == target->joints[joint].name) {
+                made->from[joint] = static_cast<core::i32>(other);
+                taken[other] = 1;
+                break;
+            }
+        }
+    }
+    // **And by what a joint IS, where its name found nothing** (ADR 0199) --
+    // between two bodies, as a clip is carried: a role guessed for a bow's
+    // grip from where it stands in the bow is not a reason to put it on a
+    // hip.
+    if (!(leader == follower)) {
+        if (skeletons_->revision() != mapsRevision_) {
+            jointMaps_.clear();
+            rigRoles_.clear();
+            mapsRevision_ = skeletons_->revision();
+        }
+        // Both made before either is held: the second being made may move
+        // the first.
+        (void)rolesFor(leader);
+        (void)rolesFor(follower);
+        const retarget::RigRoles* const sourceRoles = rolesFor(leader);
+        const retarget::RigRoles* const targetRoles = rolesFor(follower);
+        if (sourceRoles != nullptr && targetRoles != nullptr && sourceRoles->body() && targetRoles->body()) {
+            for (usize joint = 0; joint < count && joint < targetRoles->ofJoint.size(); ++joint) {
+                if (made->from[joint] >= 0 || targetRoles->ofJoint[joint] == retarget::Role::None)
+                    continue;
+                const core::i32 other = sourceRoles->joint(targetRoles->ofJoint[joint]);
+                if (other < 0 || taken[static_cast<usize>(other)] != 0)
+                    continue;
+                made->from[joint] = other;
+                taken[static_cast<usize>(other)] = 1;
+            }
+        }
+    }
+    made->sameParent.assign(count, 0);
+    made->own.assign(count, 0);
+    for (usize joint = 0; joint < count; ++joint) {
+        const core::i32 from = made->from[joint];
+        if (from < 0) {
+            made->own[joint] = 1;
+            ++made->owned;
+            continue;
+        }
+        ++made->shared;
+        const core::u32 parent = target->joints[joint].parent;
+        const core::u32 theirs = source->joints[static_cast<usize>(from)].parent;
+        made->sameParent[joint] = (parent == asset::Joint::NoParent && theirs == asset::Joint::NoParent) ||
+                                          (parent != asset::Joint::NoParent && theirs != asset::Joint::NoParent &&
+                                           made->from[parent] == static_cast<core::i32>(theirs))
+                                      ? 1
+                                      : 0;
+    }
+    followMaps_.push_back(std::move(made));
+    return followMaps_.back().get();
+}
+
+bool AnimationSystem::namesOwn(const Track& track, const FollowMap& map)
+{
+    for (const OwnNamed& known : ownNamed_) {
+        if (known.map == &map && known.clips == track.content && known.clip == track.clip &&
+            known.mode == track.retargeting)
+            return known.named;
+    }
+    OwnNamed made{track.content, track.clip, track.retargeting, &map, false};
+    const SkeletonLibrary::Entry* const source = skeletons_->find(track.content);
+    if (source != nullptr && track.clip < source->clips.size()) {
+        const JointMap* const onto = jointMapFor(track.content, map.follower, track.retargeting);
+        for (const asset::AnimationChannel& channel : source->clips[track.clip].channels) {
+            u32 joint = channel.joint;
+            if (onto != nullptr) {
+                if (joint >= onto->slots.size() || onto->slots[joint] < 0)
+                    continue;
+                joint = static_cast<u32>(onto->slots[joint]);
+            }
+            if (joint < map.own.size() && map.own[joint] != 0 && !channel.times.empty()) {
+                made.named = true;
+                break;
+            }
+        }
+    }
+    ownNamed_.push_back(made);
+    return made.named;
+}
+
+void AnimationSystem::warnFollow(core::InstanceId follower, core::InstanceId other, bool loop)
+{
+    // Once a pair; a loop once for each mesh in it.
+    const std::pair<core::u64, core::u64> pair{keyOf(follower), loop ? ~core::u64{0} : keyOf(other)};
+    if (std::find(followWarned_.begin(), followWarned_.end(), pair) != followWarned_.end())
+        return;
+    followWarned_.push_back(pair);
+    const std::array<core::I18nArg, 2> said{core::I18nArg{"follower", world_->atoms().text(world_->name(follower))},
+                                            core::I18nArg{"leader", world_->atoms().text(world_->name(other))}};
+    if (loop)
+        core::log(core::LogLevel::Warn, ENG_TR("render.warn.pose_from_loop"), said);
+    else
+        core::log(core::LogLevel::Warn, ENG_TR("render.warn.pose_from_nowhere"), said);
+}
+
+void AnimationSystem::resolveFollowers()
+{
+    released_.clear();
+    // **One pass over the meshes, asking each one field**: a world's followers
+    // are found without a walk of the tree for any of them.
+    followCandidates_.clear();
+    world_->meshParts().forEach([this](core::InstanceId id, const scene::MeshPartComponent& mesh) {
+        if (mesh.poseFrom.valid())
+            followCandidates_.push_back(id);
+    });
+    if (followCandidates_.empty() && followers_.empty())
+        return;
+    if (skeletons_->revision() != followRevision_) {
+        followMaps_.clear();
+        ownNamed_.clear();
+        followRevision_ = skeletons_->revision();
+        for (Follow& follow : followers_)
+            follow.made = false;
+    }
+    // In instance order, whatever order the pool holds them in (R10).
+    std::sort(followCandidates_.begin(), followCandidates_.end(), earlier);
+
+    // A mesh that follows no more is posed as any mesh is, from this tick:
+    // the pose it wore is taken away, and it is noted to be made its own.
+    const auto release = [this](const Follow& gone) {
+        poses_.erase(keyOf(gone.follower));
+        if (world_->alive(gone.follower))
+            released_.push_back(gone.follower);
+    };
+    followNext_.clear();
+    usize before = 0;
+    for (const core::InstanceId id : followCandidates_) {
+        bool loop = false;
+        const core::InstanceId leader = resolveLeader(id, &loop);
+        if (!leader.valid()) {
+            if (loop)
+                warnFollow(id, world_->meshParts().find(id)->poseFrom, true);
+            continue;
+        }
+        Follow follow;
+        follow.follower = id;
+        follow.leader = leader;
+        follow.rig = world_->meshParts().find(id)->meshContent;
+        follow.leaderRig = world_->meshParts().find(leader)->meshContent;
+        const FollowMap* const map = followMapFor(follow.leaderRig, follow.rig);
+        if (map == nullptr)
+            continue;
+        if (map->shared == 0) {
+            // **A held thing** (a bow: a grip, a string, none of the body's
+            // joints): under a `Bone` of its leader its roots are on that
+            // bone's joint, at the bone's own offset.
+            const core::InstanceId above = world_->parentOf(id);
+            const scene::AttachmentComponent* const bone = above.valid() ? world_->attachments().find(above) : nullptr;
+            if (bone != nullptr && bone->jointName.id != 0 && rigOf(above) == leader) {
+                core::i32 joint = bone->jointIndex;
+                if (joint < 0)
+                    joint = findJoint(leader, world_->atoms().text(bone->jointName));
+                if (joint >= 0 && static_cast<u32>(joint) < jointCount(leader)) {
+                    follow.heldJoint = joint;
+                    follow.offset = bone->cframe;
+                }
+            }
+            // Nothing says where it is: it is drawn where its leader's model
+            // has its origin, as it rests, and its author is told.
+            if (follow.heldJoint < 0)
+                warnFollow(id, leader, false);
+        }
+        // What it was last made from is kept, while it is the same follower
+        // of the same leader in the same hand.
+        while (before < followers_.size() && earlier(followers_[before].follower, id))
+            release(followers_[before++]);
+        if (before < followers_.size() && followers_[before].follower == id) {
+            const Follow& was = followers_[before++];
+            if (was.leader == leader && was.rig == follow.rig && was.leaderRig == follow.leaderRig &&
+                was.heldJoint == follow.heldJoint && was.offset == follow.offset) {
+                follow.made = was.made;
+                follow.turned = was.turned;
+                follow.madeFrom = was.madeFrom;
+            }
+        }
+        else {
+            // Newly a follower: what it skipped as a mesh of its own is not
+            // owed any more.
+            stale_.erase(keyOf(id));
+        }
+        followNext_.push_back(follow);
+    }
+    while (before < followers_.size())
+        release(followers_[before++]);
+    followers_.swap(followNext_);
+
+    led_.clear();
+    for (u32 index = 0; index < followers_.size(); ++index)
+        led_.emplace_back(driverKeyOf(followers_[index].leader), index);
+    std::sort(led_.begin(), led_.end());
+}
+
+void AnimationSystem::leaderMatrices(const Follow& follow, const SkeletonLibrary::Entry& leaderRig,
+                                     const core::Mat4*& model, const core::Mat4*& local)
+{
+    const usize count = leaderRig.joints.size();
+    if (const auto held = poses_.find(keyOf(follow.leader));
+        held != poses_.end() && held->second->model.size() == count && held->second->local.size() == count) {
+        model = held->second->model.data();
+        local = held->second->local.data();
+        return;
+    }
+    // Nothing poses the leader: it stands as it rests, and so does what it
+    // wears.
+    followModel_.resize(count);
+    followLocal_.resize(count);
+    for (usize joint = 0; joint < count; ++joint) {
+        followLocal_[joint] = toMatrix(leaderRig.joints[joint].localBind);
+        const core::u32 parent = leaderRig.joints[joint].parent;
+        followModel_[joint] =
+            parent == asset::Joint::NoParent ? followLocal_[joint] : followModel_[parent] * followLocal_[joint];
+    }
+    model = followModel_.data();
+    local = followLocal_.data();
+}
+
+void AnimationSystem::refreshFollower(Follow& follow, bool indexed, bool quantise)
+{
+    const core::u64 key = keyOf(follow.follower);
+    const auto leading = poses_.find(keyOf(follow.leader));
+    const core::u64 stamp = leading != poses_.end() ? leading->second->stamp : 0;
+    // **Made from this very pose already**: nothing to do, which is every
+    // follower of a leader that stands as it stood -- and, off the tick,
+    // every follower whose leader's pose has not been written since.
+    const bool current = follow.made && follow.madeFrom == stamp && poses_.contains(key);
+    const bool boned = indexed && std::binary_search(boned_.begin(), boned_.end(), follow.follower, earlier);
+    if (current && (!indexed || (!boned && !follow.turned)))
+        return;
+
+    const SkeletonLibrary::Entry* const rig = skeletons_->find(follow.rig);
+    const SkeletonLibrary::Entry* const leaderRig = skeletons_->find(follow.leaderRig);
+    if (rig == nullptr || leaderRig == nullptr || rig->joints.empty() || leaderRig->joints.empty())
+        return;
+    const FollowMap* const map = followMapFor(follow.leaderRig, follow.rig);
+    const usize jointCount = rig->joints.size();
+    if (map == nullptr || map->from.size() != jointCount)
+        return;
+
+    // What its own bones turn (G9): a joint only it has, as a mesh's is. A
+    // joint it shares is its leader's whatever a bone here says.
+    std::vector<std::pair<u32, Mat4>> offsets;
+    if (boned || !indexed)
+        offsets = boneOffsets(follow.follower, jointCount);
+    if (current && offsets.empty() && !follow.turned)
+        return;
+
+    // **Two bodies that share a pose share each piece's** (H10): what a
+    // follower's pose is made from is its leader's pose, its own rig and the
+    // hand it is in. Only of a pose the crowd's index holds -- one a single
+    // body has to itself is written where it stands, every tick, and a piece
+    // of it would be filed and never asked for again.
+    const bool shareable = indexed && offsets.empty() && leading != poses_.end() && leading->second.use_count() > 1;
+    if (shareable) {
+        signature_.clear();
+        signature_.push_back(FollowSignature | follow.rig.id);
+        signature_.push_back((static_cast<core::u64>(follow.leaderRig.id) << 32) |
+                             static_cast<u32>(follow.heldJoint + 1));
+        signature_.push_back(stamp);
+        if (follow.heldJoint >= 0) {
+            signature_.push_back(std::bit_cast<core::u64>(follow.offset.position.x));
+            signature_.push_back(std::bit_cast<core::u64>(follow.offset.position.y));
+            signature_.push_back(std::bit_cast<core::u64>(follow.offset.position.z));
+            for (int column = 0; column < 3; ++column) {
+                for (int row = 0; row < 3; ++row)
+                    signature_.push_back(std::bit_cast<u32>(follow.offset.rotation.m[column][row]));
+            }
+        }
+        if (const auto same = shared_.find(signature_); same != shared_.end()) {
+            same->second.used = sampled_;
+            poses_[key] = same->second.pose;
+            ++posesShared_;
+            follow.made = true;
+            follow.turned = false;
+            follow.madeFrom = stamp;
+            return;
+        }
+    }
+
+    const Mat4* leaderModel = nullptr;
+    const Mat4* leaderLocal = nullptr;
+    leaderMatrices(follow, *leaderRig, leaderModel, leaderLocal);
+
+    // **The joints only it has**: at rest from their parents, unless a track
+    // playing on the leader names one -- then those tracks are mixed for
+    // those joints, as they would be for a mesh under the same player, and
+    // no other track is walked.
+    bool blended = false;
+    if (map->owned != 0) {
+        followDriving_.clear();
+        if (indexed) {
+            const core::u64 driverKey = driverKeyOf(follow.leader);
+            for (auto driver =
+                     std::lower_bound(drivers_.begin(), drivers_.end(), std::pair<core::u64, u32>{driverKey, 0u});
+                 driver != drivers_.end() && driver->first == driverKey; ++driver)
+                followDriving_.push_back(driver->second);
+        }
+        else {
+            for (usize index = 1; index < tracks_.size(); ++index) {
+                const Track& track = tracks_[index];
+                if (track.alive && track.clip != NoClip && (track.playing || track.holding) && track.weight > 0.0f &&
+                    drives(track, follow.leader))
+                    followDriving_.push_back(static_cast<u32>(index));
+            }
+        }
+        bool named = false;
+        for (const u32 index : followDriving_) {
+            const Track& track = tracks_[index];
+            named = named || (track.alive && track.clip != NoClip && (track.playing || track.holding) &&
+                              track.weight > 0.0f && namesOwn(track, *map));
+        }
+        if (named) {
+            (void)blendTracks(follow.follower, follow.rig, *rig, followDriving_, true, quantise, map);
+            blended = true;
+        }
+    }
+
+    ++followersBuilt_;
+    Pose& pose = ownPose(follow.follower, false);
+    pose.palette.resize(jointCount);
+    pose.model.resize(jointCount);
+    pose.local.resize(jointCount);
+    // Where a held thing's roots are: the bone's place, as a part on the bone
+    // would have it -- rigid, whatever stretch the leader's file left in the
+    // joint.
+    const bool held = follow.heldJoint >= 0 && static_cast<usize>(follow.heldJoint) < leaderRig->joints.size();
+    const Mat4 base = held ? toMatrix(core::cframeFromMatrix(leaderModel[follow.heldJoint]) * follow.offset) : Mat4{};
+    for (usize joint = 0; joint < jointCount; ++joint) {
+        const asset::Joint& bone = rig->joints[joint];
+        if (const core::i32 from = map->from[joint]; from >= 0) {
+            // **The leader's matrix, itself.** Not worked out again from the
+            // follower's own parents: a glove's hand has no arm above it, and
+            // is where the body's hand is all the same.
+            pose.model[joint] = leaderModel[from];
+            pose.local[joint] = map->sameParent[joint] != 0 ? leaderLocal[from]
+                                : bone.parent == asset::Joint::NoParent
+                                    ? pose.model[joint]
+                                    : core::inverse(pose.model[bone.parent]) * pose.model[joint];
+        }
+        else {
+            Mat4 local = blended ? blendedLocal(*rig, joint) : toMatrix(bone.localBind);
+            for (const auto& [turned, offset] : offsets) {
+                if (turned == joint)
+                    local = local * offset;
+            }
+            if (bone.parent == asset::Joint::NoParent && held)
+                local = base * local;
+            pose.local[joint] = local;
+            pose.model[joint] = bone.parent == asset::Joint::NoParent ? local : pose.model[bone.parent] * local;
+        }
+        pose.palette[joint] = pose.model[joint] * bone.inverseBind;
+    }
+    pose.stamp = ++poseStamps_;
+    follow.made = true;
+    follow.turned = !offsets.empty();
+    follow.madeFrom = stamp;
+    if (shareable && shared_.size() < MostSharedPoses && sharedJoints_ + jointCount <= MostSharedJoints) {
+        if (shared_.empty())
+            shared_.reserve(MostSharedPoses);
+        if (shared_.insert_or_assign(signature_, SharedPose{poses_[key], sampled_}).second)
+            sharedJoints_ += jointCount;
+    }
+}
+
+void AnimationSystem::settle(core::InstanceId meshPart)
+{
+    if (Follow* const follow = followOf(meshPart); follow != nullptr) {
+        // Its leader's pose first, where that skipped a tick; then its own
+        // from it. Both are what the tick would have made.
+        if (!stale_.empty() && stale_.contains(keyOf(follow->leader)))
+            catchUp(follow->leader);
+        refreshFollower(*follow, false, false);
+        return;
+    }
+    if (!stale_.empty() && stale_.contains(keyOf(meshPart)))
+        catchUp(meshPart);
+}
+
+void AnimationSystem::presentFollowers()
+{
+    if (followers_.empty() || presented_.empty())
+        return;
+    // In instance order, each looked up: which leaders the frame presented is
+    // not walked (R10 asks nothing of a picture, and this costs nothing).
+    for (Follow& follow : followers_) {
+        const auto leading = presented_.find(keyOf(follow.leader));
+        if (leading == presented_.end())
+            continue;
+        const SkeletonLibrary::Entry* const rig = skeletons_->find(follow.rig);
+        const SkeletonLibrary::Entry* const leaderRig = skeletons_->find(follow.leaderRig);
+        if (rig == nullptr || leaderRig == nullptr || leading->second.model.size() != leaderRig->joints.size())
+            continue;
+        const FollowMap* const map = followMapFor(follow.leaderRig, follow.rig);
+        const usize jointCount = rig->joints.size();
+        if (map == nullptr || map->from.size() != jointCount)
+            continue;
+        settle(follow.follower);
+        const auto own = poses_.find(keyOf(follow.follower));
+        if (own == poses_.end() || own->second->model.size() != jointCount || own->second->local.size() != jointCount)
+            continue;
+        // Held by this function too: the picture is made from the tick's
+        // pose, and nothing below may let that go.
+        const std::shared_ptr<const Pose> ticked = own->second;
+        // A node of the map: it stays where it is when the follower's own
+        // picture is put in beside it.
+        const Pose& leaderDrawn = leading->second;
+
+        // **A held thing goes where the frame put the hand**: its roots are
+        // carried by how the frame moved the bone they are on.
+        const bool held = follow.heldJoint >= 0 && static_cast<usize>(follow.heldJoint) < leaderRig->joints.size();
+        Mat4 carried{};
+        if (held) {
+            const Mat4* tickModel = nullptr;
+            const Mat4* tickLocal = nullptr;
+            leaderMatrices(follow, *leaderRig, tickModel, tickLocal);
+            const Mat4 was = toMatrix(core::cframeFromMatrix(tickModel[follow.heldJoint]) * follow.offset);
+            const Mat4 now = toMatrix(core::cframeFromMatrix(leaderDrawn.model[static_cast<usize>(follow.heldJoint)]) *
+                                      follow.offset);
+            carried = now * core::inverse(was);
+        }
+
+        const auto [slot, fresh] = presented_.try_emplace(keyOf(follow.follower));
+        if (fresh)
+            presentedMeshes_.push_back(follow.follower);
+        Pose& drawn = slot->second;
+        drawn.palette.resize(jointCount);
+        drawn.model.resize(jointCount);
+        drawn.local.assign(ticked->local.begin(), ticked->local.end());
+        for (usize joint = 0; joint < jointCount; ++joint) {
+            const asset::Joint& bone = rig->joints[joint];
+            if (const core::i32 from = map->from[joint]; from >= 0)
+                drawn.model[joint] = leaderDrawn.model[static_cast<usize>(from)];
+            else if (bone.parent != asset::Joint::NoParent)
+                drawn.model[joint] = drawn.model[bone.parent] * ticked->local[joint];
+            else
+                drawn.model[joint] = held ? carried * ticked->model[joint] : ticked->model[joint];
+            drawn.palette[joint] = drawn.model[joint] * bone.inverseBind;
+        }
+    }
 }
 
 } // namespace engine::render

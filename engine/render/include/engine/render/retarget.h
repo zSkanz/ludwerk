@@ -15,6 +15,12 @@
 // out; and the hips' travel is scaled by the two rigs' legs. Every other
 // translation and every scale is the target's own.
 //
+// Before any of it, the source is turned to the target: each rig's up and
+// left are read off its rest and snapped to whole axes, so a model that faces
+// the other way or stands along another axis is carried the right way round.
+// And nothing above the hips is carried by role or matched by name -- a
+// `root` is whatever each file made of it.
+//
 // **The simulation's side of the hash (R10).** Everything here is a pure
 // function of the two rigs: additions, multiplications, divisions and square
 // roots, none of the platform's transcendentals, and no container whose order

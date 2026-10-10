@@ -2,14 +2,22 @@
 
 ## The gain chain
 
-Every voice's volume is a product, and there are exactly four terms:
+Every voice's volume is a product:
 
 ```text
 Sound.Volume  ×  Sound.Group.Volume  ×  AudioService.MasterVolume  ×  distance
+              ×  the player's volume for its category  ×  the player's own volume
 ```
 
-The last term is 1 for a 2D sound. The mix is soft-clipped at the end rather
+The distance is 1 for a 2D sound. The mix is soft-clipped at the end rather
 than allowed to wrap.
+
+The second line is the PLAYER's, not the game's: `AudioService.PlayerVolume`
+and one of `MusicVolume`, `EffectsVolume` and `VoiceVolume`, by the sound's
+`Category`. They are what an options screen writes, they are kept with the
+player's preferences, and a game's own `MasterVolume` and groups go on meaning
+what the game meant. And music lowers itself while a voice is heard
+(`AudioService.MusicUnderVoice`). [Dubbing](manual:audio/dubbing) has all of it.
 
 ## Groups
 
@@ -49,7 +57,9 @@ It is called `AudioGroup` rather than `SoundGroup` because the service is
 ## Master volume
 
 `AudioService.MasterVolume` is multiplied into every sound, after its own volume
-and its group's. It is the one a settings screen writes.
+and its group's. It is the game's: a fade to silence at the end of a level, a
+mix a designer set. What a PLAYER turns is `AudioService.PlayerVolume`, which
+the options screen writes and the engine keeps for them.
 
 ## The listener is the camera
 
@@ -61,8 +71,8 @@ whatever moves the camera moves the ear.
 
 Two consequences:
 
-- **Only the camera's position is used.** Its orientation is ignored, because
-  there is no panning to orient — see [Sounds](manual:audio/sounds).
+- **Where the camera looks is which side a sound is on.** A sound to the
+  camera's right is in the right speaker — see [Sounds](manual:audio/sounds).
 - **With `CurrentCamera` set to `nil`, the ear sits at the world origin.**
 
 ## Fire and forget
@@ -80,16 +90,9 @@ it, for the case where naming an instance is all ceremony. It takes only the
 content, which is why it hands the `Sound` back — that handle is how you set the
 volume.
 
-**It does not clean up after itself in this release.** The `Sound` stays a child
-of the service once it has ended, so a caller firing one per frame accumulates
-them. Where that matters, keep the handle and destroy it:
-
-```luau
-local shot = AudioService:PlayLocal("asset://audio/shot.ogg")
-shot.Ended:Connect(function()
-    shot:Destroy()
-end)
-```
+**It cleans up after itself.** The `Sound` is destroyed a moment after it ends,
+once whatever listens to its `Ended` has heard it. One a caller stops by hand,
+or makes loop, never ends, and is the caller's to destroy.
 
 ## The overlay numbers
 

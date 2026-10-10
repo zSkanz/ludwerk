@@ -745,6 +745,11 @@ private:
     std::vector<std::shared_ptr<FieldSet>> m_fieldPool;
     // The world the last capture read: another one is read whole.
     const scene::World* m_readWorld = nullptr;
+    // Where that world's counts of writes and of restores stood at the
+    // capture before: an instance written since is read whatever its bytes
+    // say, and a world put back to an earlier state is read whole.
+    core::u64 m_readMutations = 0;
+    core::u64 m_readRestores = 0;
     // How many captures there have been: whose turn it is to be read again
     // whatever its bytes say, one capture in eight.
     u64 m_captures = 0;

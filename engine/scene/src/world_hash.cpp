@@ -748,9 +748,23 @@ bool quietAtDefault(const World& world, core::InstanceId id, const PropertyDesc&
                 return is(fresh.responsiveness);
         }
     }
+    // **ADR 0200's additions to classes that already existed**, the same way: a
+    // sound made before a sound had a category says none, and one made after
+    // says none while it is an effect; and the game's `MusicUnderVoice` is
+    // said only once a game has moved it.
+    if (name == "Category" && world.sounds().find(id) != nullptr) {
+        const auto* item = std::get_if<EnumValue>(&value);
+        return item != nullptr && item->value == 0;
+    }
+    // And ADR 0201's: a mesh that wears nobody's pose says nothing of it, so
+    // every world made before a mesh could follow another is the world it was.
+    if (name == "PoseFrom" && world.meshParts().find(id) != nullptr)
+        return valueType(value) == ValueType::Nil;
     const auto* number = std::get_if<core::f64>(&value);
     if (number == nullptr)
         return false;
+    if (name == "MusicUnderVoice")
+        return *number == static_cast<core::f64>(0.4f);
     if (name == "ImageTransparency")
         return world.imageLabels().find(id) != nullptr && *number == 0.0;
     if (name == "LinearDamping" || name == "AngularDamping")

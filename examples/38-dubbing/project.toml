@@ -1,0 +1,23 @@
+# The dubbing example's project file: it has voices in two languages, lines
+# and a model under `content/`, and words in two languages under `i18n/`.
+
+[project]
+name = "Ludwerk Dubbing"
+id = "dev.ludwerk.dubbing"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"
+# The three speakers and their stands are a scene on disk, so the example
+# opens in the editor with them; the script only has them speak.
+scene = "scenes/booth.scene.json"
+
+[window]
+title = "Ludwerk — Dubbing"
+size = [1600, 900]
+
+# What `ludwerk build` ships (ADR 0200): English inside the game, and
+# Portuguese as a language pack of its own -- `dist/languages/l10n-pt-BR.lpack`,
+# which a player who wants it puts beside the game. Leave `voice` out and
+# every language ships inside.
+[export]
+voice = ["en"]

@@ -55,7 +55,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     const scene::ClassId pVInstanceClass = classes.findId(atoms.intern("PVInstance"));
 
     // --- MeshPart ---
-    static std::array<scene::PropertyDesc, 3> meshPartProperties;
+    static std::array<scene::PropertyDesc, 4> meshPartProperties;
     meshPartProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("MeshContent"),
@@ -91,6 +91,18 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
             .get = native::getMeshPartMeshSize,
             .set = native::setMeshPartMeshSize,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("PoseFrom"),
+            .type = scene::ValueType::Instance,
+            .instanceClass = atoms.intern("MeshPart"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The mesh whose pose this one wears (ADR 0201): its **leader**. A piece of armour skinned to a body's skeleton, hair, a glove, a bow -- set this to the body and the piece moves as part of it.\012\012**A joint both have is the leader's, exactly**, on the tick and in the frame's picture, matched by name (and by what each joint is, where the names differ and both rigs are bodies). Whatever moved the leader's joint -- a clip, a graph, an `IKControl`, feet on a stair, a `SpringBone`, a ragdoll -- the follower's is there too, so a seam between a body and what it wears does not open.\012\012**A joint only this mesh has** rides its parent, at rest unless a track playing on the leader names it: a bow's string is pulled by the draw clip the body plays, with one `AnimationPlayer` and one graph. A held thing that shares no joint with its leader is parented under a `Bone` of the leader and hangs from that joint.\012\012A follower is drawn in its leader's place and has no body of its own: it collides with nothing, nothing touches it and a ray passes through it. It keeps its own `SpringBone` chains and shape keys, and costs its skinning and its draw, not a pose. A mesh that names itself, a loop of leaders, or a leader with no skeleton follows nobody. Set and cleared while the game runs.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getMeshPartPoseFrom,
+            .set = native::setMeshPartPoseFrom,
         },
     }};
     static std::array<scene::MethodDesc, 4> meshPartMethods;
@@ -425,6 +437,90 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     footPlacementDesc.attachComponents = native::attachFootPlacementComponents;
     footPlacementDesc.detachComponents = native::detachFootPlacementComponents;
     classes.registerClass(footPlacementDesc);
+
+    // --- LipSync ---
+    static std::array<scene::PropertyDesc, 6> lipSyncProperties;
+    lipSyncProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Source"),
+            .type = scene::ValueType::Instance,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whose voice it is: a `Voice` sound playing under this instance -- or the instance itself, if it is one -- moves the mouth. A head, a character, a model. Nil is the mesh's own parent.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getLipSyncSource,
+            .set = native::setLipSyncSource,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Mode"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("LipSyncMode"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Which of the three ways it may use. `Auto` plays a track where the line has one and falls back as described.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getLipSyncMode,
+            .set = native::setLipSyncMode,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Map"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The file that says what a viseme, a band and loudness do to this face. Empty is the one beside the mesh's model, with `.face.json` where the model's extension is.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getLipSyncMap,
+            .set = native::setLipSyncMap,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Smoothing"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The seconds a key takes to get where it is going. 0 snaps; a tenth is a slow mouth.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getLipSyncSmoothing,
+            .set = native::setLipSyncSmoothing,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Weight"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of it there is, 0 to 2: 0.5 for a mumble, more than 1 for a shout.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.lip_sync_weight"),
+            .get = native::getLipSyncWeight,
+            .set = native::setLipSyncWeight,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether it moves the mouth at all.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getLipSyncEnabled,
+            .set = native::setLipSyncEnabled,
+        },
+    }};
+    scene::ClassDescriptor lipSyncDesc;
+    lipSyncDesc.name = atoms.intern("LipSync");
+    lipSyncDesc.super = instanceClass;
+    lipSyncDesc.flags = scene::ClassFlags::None;
+    lipSyncDesc.defaultName = atoms.intern("LipSync");
+    lipSyncDesc.doc = "Moves a mouth with what is said (ADR 0200). Parent it to the `MeshPart` that has the face's shape keys and say whose voice it is; while a `Voice` sound plays under that instance, the face's keys follow it. No script moves anything.\012\012**Three ways, each the fallback of the one before.** A line that has a viseme track beside its recording -- `intro_01.visemes.json` beside `intro_01.ogg`, and a language's own beside that language's recording -- plays it: mouth shapes over time, made by a tool. A line with no track is read as it sounds: three frequency bands tell an open mouth from a wide or a round one. And a face with one jaw key opens it by how loud the line is.\012\012**What a viseme, a band and loudness do to THIS face is the model author's**, in a file beside the model as its rig's roles are -- `hero.glb`, `hero.face.json`: a viseme's name to shape keys and weights, which key opens, which widens, which rounds. With no such file, a key named `JawOpen` or `MouthOpen` is opened by loudness.\012\012**It is picture, each machine's own.** A machine plays the track of the language IT hears; nothing of it reaches a tick, a save or another machine. It writes a layer of its own on the shape keys, over what a clip plays and under what a script sets with `SetMorphWeight`.";
+    static constexpr std::array<std::string_view, 3> lipSyncParents{{"MeshPart", "ReplicatedStorage", "ServerStorage"}};
+    lipSyncDesc.parents = lipSyncParents;
+    lipSyncDesc.properties = lipSyncProperties;
+    lipSyncDesc.attachComponents = native::attachLipSyncComponents;
+    lipSyncDesc.detachComponents = native::detachLipSyncComponents;
+    classes.registerClass(lipSyncDesc);
 
     // --- SpringBone ---
     static std::array<scene::PropertyDesc, 10> springBoneProperties;

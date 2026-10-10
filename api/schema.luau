@@ -159,6 +159,15 @@ export type Property = {
     --- Not a substitute for a signal. `Changed` still fires only for a
     --- subscriber; this decides whether the change reaches the queue at all.
     Observed: boolean?,
+    --- Whether a write of this property is a CHOICE that reading it back does
+    --- not show, so that it is made even when the value reads the same.
+    ---
+    --- Every other write is read, compared and dropped when nothing would
+    --- change (api-design.md §3.1). `LocalizationService.VoiceLocale` reads as
+    --- the language in force, which is the text's until the player chooses:
+    --- choosing the language that is already heard has to be kept, or the
+    --- voice goes on following the text (D622).
+    Choice: boolean?,
     --- Whether this property describes the HOST rather than the world, and is
     --- therefore not part of the world hash.
     ---

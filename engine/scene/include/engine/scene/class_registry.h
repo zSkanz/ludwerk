@@ -150,6 +150,16 @@ struct PropertyDesc
     // entry is free; a property that changed every tick must not have this.
     bool observed = false;
 
+    // Whether a write is a CHOICE that reading the property back does not show.
+    //
+    // `setProperty` reads, compares and drops a write that changes nothing.
+    // That is wrong for a property that reads as what is in force and is
+    // written as what somebody chose: `LocalizationService.VoiceLocale` reads
+    // "en" while it follows an English text, and a player choosing English is
+    // choosing that it stops following (D622). Such a write reaches its
+    // setter always, and is a change only when what is read moved.
+    bool choice = false;
+
     ThreadSafety threadSafety = ThreadSafety::Unsafe;
     bool readOnly = false;
     // Written by the editor and the engine, refused to a script (ADR 0137 §4).

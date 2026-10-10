@@ -22,13 +22,23 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
-| `Locale` | `string` | `"en"` | read/write | The locale text is asked for in, as `en` or `pt-BR`. It starts as the player's saved choice, else the system's language, else `[project] default_locale`, else `en` -- each narrowed to a catalog the project has. Writing it is the player choosing: it is kept for the next run, and `LocaleChanged` fires. A locale the project has no catalog for is narrowed to one of its language (`pt` reads `pt-BR`), and refused when there is none. |
+| `Locale` | `string` | `"en"` | read/write | The locale text is asked for in, as `en` or `pt-BR`. It starts as the player's saved choice, else the language of the store or launcher the game was started from when a platform provider says one, else the system's language, else `[project] default_locale`, else `en` -- each narrowed to a catalog the project has. Writing it is the player choosing: it is kept for the next run, and `LocaleChanged` fires. A locale the project has no catalog for is narrowed to one of its language (`pt` reads `pt-BR`), and refused when there is none. |
+| `VoiceFollowsLocale` | `boolean` | — | read-only | Whether the voice language is following the text language: true until a language is written to `VoiceLocale`, and again once it is written empty. What a menu reads to show "same as the text" as the choice in force. |
+| `VoiceLocale` | `string` | `"en"` | read/write | The language sounds are heard in (ADR 0200), which need not be the one text is read in: every `Sound` looks for its `Content` under `l10n/<VoiceLocale>/` when it is played. It reads as the language in force, always one of `GetVoiceLocales`.<br><br>**Written empty, it follows the text language** -- which is how it starts: `Locale` narrowed to a language this machine has voices for, else the first of the system's languages it has voices for, else the project's default. `VoiceFollowsLocale` says whether it is following. Writing a language is the player choosing: it is kept for the next run. One this machine cannot play is narrowed to one of its language (`pt` hears `pt-BR`) and refused when there is none. A change is heard at the next `Play`: what is playing finishes in the language it started in. |
 
 ## Methods
 
 ### `GetLocales(): { string }`
 
 The locales the project has a catalog for, in order: what a language menu lists.
+
+### `GetSystemLocales(): { string }`
+
+The system's own preferred languages, most wanted first, as the platform reports them and not narrowed to anything the game has (ADR 0200): for "your system's language" in a menu. Empty on a dedicated server, which has no player.
+
+### `GetVoiceLocales(): { string }`
+
+The languages this machine can PLAY voices in (ADR 0200): the project's default first, then each language under `l10n/` that the game shipped or an installed language pack brought, sorted. A menu made from it never offers a voice that is not installed.
 
 ### `Translate(key: string, arguments: { [string]: any }?): string`
 
@@ -42,3 +52,7 @@ drain point, never inside the call that fired it.
 ### `LocaleChanged(locale: string)`
 
 `Locale` changed, or -- while a game is being made -- a catalog was edited and read again: where a game sets its labels' text.
+
+### `VoiceLocaleChanged(locale: string)`
+
+The language sounds are heard in changed, to `locale` (ADR 0200): a script wrote `VoiceLocale`, or the text language changed and the voice follows it.

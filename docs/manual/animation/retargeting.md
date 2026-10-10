@@ -31,7 +31,13 @@ A clip is carried by **what each joint is**, not by what it is called, and as
   on the first does not hold the second's arms out by the angle between them.
 - **The hips' travel, scaled.** How far the hips move from their rest is
   multiplied by how long the body's legs are against the clip's. A short
-  hero's hips bob less, and its feet meet the ground.
+  hero's hips bob less, and its feet meet the ground. The same number is
+  what an [animation graph](manual:animation/graphs) divides the body's
+  speed by, so a blend placed by speed plays the walk at the walk's pace on
+  every build.
+- **Which way each faces.** A model that faces the other way, or stands up
+  along another axis, is turned to the clip's before anything is carried: a
+  walk goes forwards on both.
 - **Nothing else of where a joint is, and nothing of its stretch.** Every
   other bone keeps its own length -- which is what makes a tall body tall
   under a clip made on a short one.
@@ -107,6 +113,24 @@ model rests.
 In a match `Retargeting` travels with the player: every machine carries the
 clips the same way.
 
+## A character with pieces parented to its joints
+
+A helmet, a cape or a sword exported as a plain mesh under a joint -- with no
+weights of its own -- goes with that joint, as it does in the tool it was
+made in. Nothing has to be done for it.
+
+## Asking what a rig is
+
+```bash
+engine-host --describe-rig=C:/models/hero.glb
+```
+
+prints every joint with the role it was given, the roles no joint was given,
+the joints with none, the clips, and whether the rig is enough of a body to
+carry clips by role. It is the first thing to run when a clip does not move a
+model: the answer is usually a joint whose name says nothing, which a
+`*.rig.json` beside the model names.
+
 ## What it does not do
 
 - **It does not pin feet to the ground.** Scaling the hips keeps them close;
@@ -117,6 +141,10 @@ clips the same way.
   an [`IKControl`](manual:animation/reach-and-look).
 - **It does not carry between bodies that are not bodies**: a horse's walk
   does not go on a dog by roles. Equal names still work.
+- **It does not change a clip's character.** A clip is carried as angles: a
+  short, heavy body's walk on long legs is that walk with its feet lifted as
+  high in proportion -- a march. A library made on a body like yours is the
+  one that looks like yours.
 - **It writes nothing to disk**: a clip is carried as it is played.
 
 ## Where to look next

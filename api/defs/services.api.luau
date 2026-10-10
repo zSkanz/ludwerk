@@ -929,11 +929,45 @@ local Classes: { Schema.Class } = {
                 -- Which language a person reads: a fact about the player.
                 HostFact = true,
                 Doc = "The locale text is asked for in, as `en` or `pt-BR`. It starts as the player's "
-                    .. "saved choice, else the system's language, else `[project] default_locale`, else "
-                    .. "`en` -- each narrowed to a catalog the project has. Writing it is the player "
+                    .. "saved choice, else the language of the store or launcher the game was started "
+                    .. "from when a platform provider says one, else the system's language, else "
+                    .. "`[project] default_locale`, else `en` -- each narrowed to a catalog the project "
+                    .. "has. Writing it is the player "
                     .. "choosing: it is kept for the next run, and `LocaleChanged` fires. A locale the "
                     .. "project has no catalog for is narrowed to one of its language (`pt` reads "
                     .. "`pt-BR`), and refused when there is none.",
+            },
+            {
+                Name = "VoiceLocale",
+                Type = "string",
+                Default = '"en"',
+                ErrorKey = "scene.err.voice_locale_unknown",
+                Transient = true,
+                -- Which language a person hears: a fact about the player.
+                HostFact = true,
+                -- It reads as the language in force and is written as the
+                -- player's choice: choosing the one already heard is kept.
+                Choice = true,
+                Doc = "The language sounds are heard in (ADR 0200), which need not be the one text is read "
+                    .. "in: every `Sound` looks for its `Content` under `l10n/<VoiceLocale>/` when it is "
+                    .. "played. It reads as the language in force, always one of `GetVoiceLocales`.\n\n"
+                    .. "**Written empty, it follows the text language** -- which is how it starts: `Locale` "
+                    .. "narrowed to a language this machine has voices for, else the first of the system's "
+                    .. "languages it has voices for, else the project's default. `VoiceFollowsLocale` says "
+                    .. "whether it is following. Writing a language is the player choosing: it is kept for "
+                    .. "the next run. One this machine cannot play is narrowed to one of its language "
+                    .. "(`pt` hears `pt-BR`) and refused when there is none. A change is heard at the next "
+                    .. "`Play`: what is playing finishes in the language it started in.",
+            },
+            {
+                Name = "VoiceFollowsLocale",
+                Type = "boolean",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether the voice language is following the text language: true until a language is "
+                    .. "written to `VoiceLocale`, and again once it is written empty. What a menu reads to "
+                    .. 'show "same as the text" as the choice in force.',
             },
         } :: { Schema.Property },
         Methods = {
@@ -942,6 +976,23 @@ local Classes: { Schema.Class } = {
                 Parameters = {},
                 Returns = { "{ string }" },
                 Doc = "The locales the project has a catalog for, in order: what a language menu lists.",
+            },
+            {
+                Name = "GetVoiceLocales",
+                Parameters = {},
+                Returns = { "{ string }" },
+                Doc = "The languages this machine can PLAY voices in (ADR 0200): the project's default "
+                    .. "first, then each language under `l10n/` that the game shipped or an installed "
+                    .. "language pack brought, sorted. A menu made from it never offers a voice that is "
+                    .. "not installed.",
+            },
+            {
+                Name = "GetSystemLocales",
+                Parameters = {},
+                Returns = { "{ string }" },
+                Doc = "The system's own preferred languages, most wanted first, as the platform reports "
+                    .. "them and not narrowed to anything the game has (ADR 0200): for \"your system's "
+                    .. 'language" in a menu. Empty on a dedicated server, which has no player.',
             },
             {
                 Name = "Translate",
@@ -961,6 +1012,12 @@ local Classes: { Schema.Class } = {
                 Parameters = { { Name = "locale", Type = "string" } },
                 Doc = "`Locale` changed, or -- while a game is being made -- a catalog was edited and "
                     .. "read again: where a game sets its labels' text.",
+            },
+            {
+                Name = "VoiceLocaleChanged",
+                Parameters = { { Name = "locale", Type = "string" } },
+                Doc = "The language sounds are heard in changed, to `locale` (ADR 0200): a script wrote "
+                    .. "`VoiceLocale`, or the text language changed and the voice follows it.",
             },
         } :: { Schema.Event },
     },
@@ -3723,8 +3780,64 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "1",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "Multiplied into every sound, after its own volume and its group's. The one a settings "
-                    .. "screen writes.",
+                Doc = "Multiplied into every sound, after its own volume and its group's. **It is the "
+                    .. "GAME's**: what a fade to black or a cutscene writes, part of the world like any "
+                    .. "property, and saved nowhere. The player's own master volume is `PlayerVolume`, and "
+                    .. "that is the one a settings screen writes.",
+            },
+            {
+                Name = "PlayerVolume",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_out_of_range",
+                Transient = true,
+                -- How loud a person wants their game: a fact about the player.
+                HostFact = true,
+                Doc = "The player's master volume, 0 to 1 (ADR 0200): multiplied into every sound on this "
+                    .. "machine. The player's, like the graphics settings: kept for the next run when a "
+                    .. "script writes it, never saved with a scene, never sent, and refused on a dedicated "
+                    .. "server.",
+            },
+            {
+                Name = "MusicVolume",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_out_of_range",
+                Transient = true,
+                HostFact = true,
+                Doc = "The player's volume for every `Sound` whose `Category` is `Music`, 0 to 1. Kept as "
+                    .. "`PlayerVolume` is.",
+            },
+            {
+                Name = "EffectsVolume",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_out_of_range",
+                Transient = true,
+                HostFact = true,
+                Doc = "The player's volume for every `Sound` whose `Category` is `Effects`, 0 to 1. Kept as "
+                    .. "`PlayerVolume` is.",
+            },
+            {
+                Name = "VoiceVolume",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_out_of_range",
+                Transient = true,
+                HostFact = true,
+                Doc = "The player's volume for every `Sound` whose `Category` is `Voice`, 0 to 1. Kept as "
+                    .. "`PlayerVolume` is.",
+            },
+            {
+                Name = "MusicUnderVoice",
+                Type = "number",
+                Default = "0.4",
+                ErrorKey = "scene.err.number_out_of_range",
+                Doc = "What music is multiplied by while a voice is heard, 0 to 1 (ADR 0200): while any "
+                    .. "`Voice` sound is audible on a machine -- playing, in range, and not turned to nothing "
+                    .. "by the player -- every `Music` sound there is eased down to this over 0.15 s, and "
+                    .. "back over 0.6 s when the voice stops. 1 turns it off. The game's, as `MasterVolume` "
+                    .. "is; the easing is each machine's mixer's and nothing a script can read.",
             },
         } :: { Schema.Property },
         Methods = {
@@ -3734,13 +3847,125 @@ local Classes: { Schema.Class } = {
                 Returns = { "Sound" },
                 ThreadSafety = "Unsafe",
                 Doc = "Creates a 2D `Sound` parented to this service and plays it. For the fire-and-forget "
-                    .. "case -- a click, a pickup -- where naming an instance is all ceremony.\n\n**It does "
-                    .. "not clean up after itself in this release**: the `Sound` stays a child of the service "
-                    .. "once it has ended, so a caller firing one per frame accumulates them. Keep the "
-                    .. "returned handle and `Destroy` it on `Ended` where that matters. The handle is also "
-                    .. "what a caller sets the volume through, since this takes only the content.",
+                    .. "case -- a click, a pickup -- where naming an instance is all ceremony.\n\n**It "
+                    .. "cleans up after itself**: the `Sound` is destroyed a moment after it ends, once "
+                    .. "whatever listens to its `Ended` has heard it. The returned handle is what a caller "
+                    .. "sets the volume or the category through, since this takes only the content; one "
+                    .. "stopped by hand, or made to loop, is the caller's to destroy.",
+            },
+            {
+                Name = "GetBands",
+                Parameters = { { Name = "category", Type = "Enum.SoundCategory" } },
+                Returns = { "number", "number", "number" },
+                Doc = "`Sound:GetBands` for everything of a category this machine is playing (ADR 0200): "
+                    .. "the low, middle and high of the audible sounds of that category mixed together as "
+                    .. "the game mixes them -- each sound's volume, its group's, the master and its "
+                    .. "distance, and never the player's volumes. Three numbers, each 0 to 1. What a "
+                    .. "visualiser reads of the music. Worked out when asked and not otherwise.",
             },
         } :: { Schema.Method },
+    },
+    {
+        Name = "DialogueService",
+        LazyService = true,
+        Extends = "Instance",
+        Module = "audio",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "Lines of dialogue, and what is being said right now (ADR 0200).\n\n"
+            .. "**A line is a sound with a caption**, and its entry is in a file: "
+            .. "`content/dialogue/<name>.lines.json`, a table of speakers and a table of lines by id. A "
+            .. "line's id in the game is `<name>.<id>`; its text is the catalog key of the same name and "
+            .. "its sound `asset://voice/<name>/<id>.ogg`, unless the entry says otherwise. `Say` plays "
+            .. "one.\n\n"
+            .. "**Each player hears a line in their voice language and reads it in their text language**: "
+            .. "a sound's file is chosen where it is played (`LocalizationService.VoiceLocale`) and a "
+            .. "caption's words are catalog keys. A line with no recording yet is silent and lasts its "
+            .. "caption, so a game's dialogue plays as text from the first day.\n\n"
+            .. "**The captions and the subtitle settings are the player's machine's**: what is heard "
+            .. "here, and how this player wants it shown. None of it is the world's -- it is not saved "
+            .. "with a scene and does not travel -- and a dedicated server has none.",
+        Properties = {
+            {
+                Name = "Subtitles",
+                Type = "Enum.SubtitleMode",
+                Default = "Enum.SubtitleMode.Auto",
+                Transient = true,
+                -- How a person wants to read what is said: a fact about the player.
+                HostFact = true,
+                Doc = "When captions are shown: `Auto`, `On` or `Off`. The player's: kept for the next run "
+                    .. "when a script writes it, and refused on a dedicated server. `ShowsCaption` applies "
+                    .. "it to one caption.",
+            },
+            {
+                Name = "SubtitleScale",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_out_of_range",
+                Transient = true,
+                HostFact = true,
+                Doc = "How large captions are written, 0.75 to 2. The player's, kept as `Subtitles` is.",
+            },
+            {
+                Name = "SubtitleBackground",
+                Type = "number",
+                Default = "0.6",
+                ErrorKey = "scene.err.number_out_of_range",
+                Transient = true,
+                HostFact = true,
+                Doc = "How solid the background behind captions is, 0 (none) to 1. The player's, kept as "
+                    .. "`Subtitles` is.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Say",
+                Parameters = {
+                    { Name = "line", Type = "string" },
+                    { Name = "at", Type = "Instance?" },
+                },
+                Returns = { "Sound" },
+                ThreadSafety = "Unsafe",
+                Doc = "Says a line: makes a `Voice` sound with its `Caption` from the line's entry, parents "
+                    .. "it to `at` -- heard from there, when that is a part -- or to `Workspace`, plays it, "
+                    .. "and destroys it a moment after it ends. `line` is `<name>.<id>`: the file and the "
+                    .. "entry. One no file has raises.\n\n"
+                    .. "On a server the sound is an instance like any other: it travels, and every player "
+                    .. "hears the line in their own voice language and reads it in their own text "
+                    .. "language. On a client it is that machine's own. The returned sound is what a "
+                    .. "script waits on (`Ended`) or stops.",
+            },
+            {
+                Name = "GetCaptions",
+                Parameters = {},
+                Returns = { "{ Caption }" },
+                Doc = "The captions current on this machine, in the order their sounds started: each "
+                    .. "`Caption` whose `Sound` is playing and can be heard here. Empty on a dedicated "
+                    .. "server.",
+            },
+            {
+                Name = "ShowsCaption",
+                Parameters = { { Name = "caption", Type = "Caption" } },
+                Returns = { "boolean" },
+                Doc = "Whether `Subtitles` says this caption is to be shown now: always under `On`, never "
+                    .. "under `Off`, and under `Auto` when what is heard is not in the language being read "
+                    .. "-- the voice language is another language than the text language, the sound fell "
+                    .. "back to the default language's recording while the text is in another, or the "
+                    .. "sound has no recording.",
+            },
+        } :: { Schema.Method },
+        Events = {
+            {
+                Name = "CaptionStarted",
+                Parameters = { { Name = "caption", Type = "Caption" } },
+                Doc = "A caption became current on this machine: its sound started, or came into range.",
+            },
+            {
+                Name = "CaptionEnded",
+                Parameters = { { Name = "caption", Type = "Caption" } },
+                Doc = "A caption stopped being current on this machine: its sound ended or was stopped, "
+                    .. "went out of range, or was destroyed.",
+            },
+        } :: { Schema.Event },
     },
     {
         Name = "VoxelService",

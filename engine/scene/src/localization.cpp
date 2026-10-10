@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "engine/core/json.h"
+
 namespace engine::scene {
 namespace {
 
@@ -173,6 +175,208 @@ std::optional<std::string> Localization::translate(std::string_view locale, std:
     if (const core::Catalog& own = core::engineCatalog(); own.contains(hashed))
         return own.format(hashed, arguments);
     return std::nullopt;
+}
+
+// --- The voice language (ADR 0200) ---------------------------------------------
+
+std::string narrowVoice(std::string_view wanted, std::span<const std::string> playable)
+{
+    const std::string name = canonicalLocale(wanted);
+    if (name.empty())
+        return {};
+    for (const std::string& candidate : playable) {
+        if (candidate == name)
+            return candidate;
+    }
+    // The language alone, then any of that language, in the list's order --
+    // which the host made the same way on every machine.
+    const std::string_view language = languageOf(name);
+    for (const std::string& candidate : playable) {
+        if (candidate == language)
+            return candidate;
+    }
+    for (const std::string& candidate : playable) {
+        if (languageOf(candidate) == language)
+            return candidate;
+    }
+    return {};
+}
+
+std::string voiceLocaleFor(std::string_view chosen, std::string_view textLocale, std::span<const std::string> playable,
+                           std::span<const std::string> system)
+{
+    if (std::string own = narrowVoice(chosen, playable); !own.empty())
+        return own;
+    if (std::string follows = narrowVoice(textLocale, playable); !follows.empty())
+        return follows;
+    // A game read in a language it has no voice for: the first language of
+    // the machine it does have a voice for, which need not be the one it has
+    // text for.
+    for (const std::string& preferred : system) {
+        if (std::string heard = narrowVoice(preferred, playable); !heard.empty())
+            return heard;
+    }
+    return playable.empty() ? std::string{} : playable.front();
+}
+
+std::vector<std::string> voiceLocaleList(std::string_view defaultLocale, std::span<const std::string> others)
+{
+    std::vector<std::string> list;
+    for (const std::string& other : others) {
+        std::string name = canonicalLocale(other);
+        if (!name.empty())
+            list.push_back(std::move(name));
+    }
+    std::sort(list.begin(), list.end());
+    list.erase(std::unique(list.begin(), list.end()), list.end());
+    std::string first = canonicalLocale(defaultLocale);
+    if (first.empty())
+        first = "en";
+    list.erase(std::remove(list.begin(), list.end(), first), list.end());
+    list.insert(list.begin(), std::move(first));
+    return list;
+}
+
+// --- Lines of dialogue (ADR 0200 section 5) --------------------------------------
+
+namespace {
+
+// `#E8B04A` as a colour; false for anything else.
+[[nodiscard]] bool hexColor(std::string_view text, core::Color3& out) noexcept
+{
+    if (text.size() != 7 || text[0] != '#')
+        return false;
+    core::u32 channels[3] = {0, 0, 0};
+    for (core::usize index = 0; index < 6; ++index) {
+        const char c = lower(text[index + 1]);
+        core::u32 digit = 0;
+        if (c >= '0' && c <= '9')
+            digit = static_cast<core::u32>(c - '0');
+        else if (c >= 'a' && c <= 'f')
+            digit = static_cast<core::u32>(c - 'a') + 10u;
+        else
+            return false;
+        channels[index / 2] = channels[index / 2] * 16u + digit;
+    }
+    out = core::Color3{static_cast<core::f32>(channels[0]) / 255.0f, static_cast<core::f32>(channels[1]) / 255.0f,
+                       static_cast<core::f32>(channels[2]) / 255.0f};
+    return true;
+}
+
+} // namespace
+
+bool DialogueLines::load(std::string_view name, std::string_view json, std::string* diagnostic)
+{
+    const auto refuse = [diagnostic](std::string why) {
+        if (diagnostic != nullptr)
+            *diagnostic = std::move(why);
+        return false;
+    };
+    if (name.empty() || name.find('.') != std::string_view::npos)
+        return refuse("a lines file is named <name>.lines.json, and <name> has no dot in it");
+    core::JsonDocument document;
+    if (const core::JsonDocument::ParseResult parsed = document.parse(json, name); !parsed)
+        return refuse(parsed.diagnostic);
+    const core::JsonValue root = document.root();
+    const core::JsonValue lines = root["lines"];
+    if (root.type() != core::JsonType::Object || lines.type() != core::JsonType::Object)
+        return refuse("a lines file is an object with a \"lines\" object in it");
+    const core::JsonValue speakers = root["speakers"];
+    if (root.has("speakers") && speakers.type() != core::JsonType::Object)
+        return refuse("\"speakers\" is an object: a speaker's id to its name and colour");
+
+    // Into a table of its own first: a file that is refused leaves the lines
+    // its name had.
+    std::map<std::string, DialogueLine, std::less<>> read;
+    for (core::usize index = 0; index < lines.size(); ++index) {
+        const std::string_view id = lines.keyAt(index);
+        const core::JsonValue entry = lines[id];
+        if (id.empty() || entry.type() != core::JsonType::Object)
+            return refuse("line \"" + std::string(id) + "\" is not an object");
+        std::string full(name);
+        full += '.';
+        full += id;
+
+        DialogueLine line;
+        line.text = entry["text"].type() == core::JsonType::String ? std::string(entry["text"].asString()) : full;
+        if (entry["sound"].type() == core::JsonType::String) {
+            line.sound = std::string(entry["sound"].asString());
+        }
+        else {
+            line.sound = "asset://voice/";
+            line.sound += name;
+            line.sound += '/';
+            line.sound += id;
+            line.sound += ".ogg";
+        }
+        if (entry.has("seconds")) {
+            const core::f64 seconds = entry["seconds"].asNumber(-1.0);
+            if (entry["seconds"].type() != core::JsonType::Number || !(seconds >= 0.0) || seconds > 3600.0)
+                return refuse("line \"" + std::string(id) + "\": \"seconds\" is a number from 0 to 3600");
+            line.seconds = static_cast<core::f32>(seconds);
+        }
+        if (entry["speaker"].type() == core::JsonType::String && !entry["speaker"].asString().empty()) {
+            const std::string_view who = entry["speaker"].asString();
+            const core::JsonValue speaker = speakers[who];
+            if (speaker.type() != core::JsonType::Object)
+                return refuse("line \"" + std::string(id) + "\" is said by \"" + std::string(who) +
+                              "\", which \"speakers\" does not have");
+            // A speaker with no name of its own is named by its id's key.
+            line.speaker = speaker["name"].type() == core::JsonType::String ? std::string(speaker["name"].asString())
+                                                                            : "speaker." + std::string(who);
+            if (speaker.has("color") && !hexColor(speaker["color"].asString(), line.color))
+                return refuse("speaker \"" + std::string(who) + "\": \"color\" is written #RRGGBB");
+        }
+        read.emplace(std::move(full), std::move(line));
+    }
+
+    forget(name);
+    lines_.merge(read);
+    return true;
+}
+
+void DialogueLines::forget(std::string_view name)
+{
+    std::string prefix(name);
+    prefix += '.';
+    for (auto at = lines_.lower_bound(prefix); at != lines_.end() && at->first.starts_with(prefix);)
+        at = lines_.erase(at);
+}
+
+void DialogueLines::clear()
+{
+    lines_.clear();
+}
+
+const DialogueLine* DialogueLines::find(std::string_view line) const
+{
+    const auto found = lines_.find(line);
+    return found != lines_.end() ? &found->second : nullptr;
+}
+
+std::vector<std::string> DialogueLines::ids() const
+{
+    std::vector<std::string> out;
+    out.reserve(lines_.size());
+    for (const auto& [id, line] : lines_)
+        out.push_back(id);
+    return out;
+}
+
+core::f64 captionSeconds(core::f32 seconds, std::string_view text) noexcept
+{
+    if (seconds > 0.0f)
+        return static_cast<core::f64>(seconds);
+    // Code points, not bytes: a continuation byte is `10xxxxxx` and is not
+    // counted, so a line reads as long in Japanese as its characters are many.
+    core::u64 characters = 0;
+    for (const char c : text) {
+        if ((static_cast<unsigned char>(c) & 0xC0u) != 0x80u)
+            ++characters;
+    }
+    // In whole hundredths, so the sum is exact and the same on every machine.
+    const core::u64 hundredths = std::min<core::u64>(150u + 6u * characters, 1200u);
+    return static_cast<core::f64>(hundredths) / 100.0;
 }
 
 } // namespace engine::scene

@@ -1,0 +1,10 @@
+# The two-process dubbing gate's game (ADR 0200): a server that says a line
+# and a joiner that hears it in another language. `run_dubbed.cmake` copies it
+# and runs both ends.
+
+[project]
+name = "Netcode Dubbed"
+id = "dev.ludwerk.netcode-dubbed"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"

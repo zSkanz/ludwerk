@@ -2628,3 +2628,113 @@ TEST_CASE("ADR 0163: an authority's characters are met where they are")
     mirror.step();
     CHECK(mirror.backend.standIns.empty());
 }
+
+// --- A mesh that wears another's pose (ADR 0201) -----------------------------------
+
+namespace {
+
+// A skeleton host that says who leads whom, and puts the hand two metres up.
+class LeadingSkeleton final : public SkeletonHost
+{
+public:
+    [[nodiscard]] u32 jointCount(core::InstanceId) const override { return 2; }
+    [[nodiscard]] i32 findJoint(core::InstanceId, std::string_view name) const override
+    {
+        return name == "Hand" ? 1 : (name == "Root" ? 0 : -1);
+    }
+    [[nodiscard]] i32 jointParent(core::InstanceId, u32 joint) const override { return joint == 0 ? -1 : 0; }
+    [[nodiscard]] std::string_view jointName(core::InstanceId, u32 joint) const override
+    {
+        return joint == 0 ? "Root" : "Hand";
+    }
+    [[nodiscard]] bool jointModel(core::InstanceId, u32 joint, core::CFrameD& out) const override
+    {
+        if (joint >= 2)
+            return false;
+        out = core::CFrameD{};
+        if (joint == 1)
+            out.position = core::DVec3{0.0, 2.0, 0.0};
+        return true;
+    }
+    void setJointOverride(core::InstanceId, u32, const core::CFrameD&) override {}
+    void clearJointOverrides(core::InstanceId) override {}
+    void commitOverrides() override {}
+    [[nodiscard]] core::InstanceId poseLeader(core::InstanceId meshPart) const override
+    {
+        return meshPart == follower ? leader : core::InstanceId{};
+    }
+
+    core::InstanceId follower;
+    core::InstanceId leader;
+};
+
+} // namespace
+
+TEST_CASE("ADR 0201: a mesh that wears another's pose has no body, and is a part again when it is taken off")
+{
+    // It is picture on its leader, drawn in the leader's place: nothing
+    // collides with it, touches it or finds it with a ray -- so a breastplate
+    // or a bow can never be what its wearer stands on, which is what a
+    // carried part was once taken for (D615).
+    Mirror mirror;
+    LeadingSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const core::InstanceId body = mirror.part("Body", core::DVec3{0.0, 5.0, 0.0});
+    const core::InstanceId armour = mirror.part("Armour", core::DVec3{0.0, 5.0, 0.0});
+    mirror.fixture.world.meshParts().add(body, MeshPartComponent{});
+    mirror.fixture.world.meshParts().add(armour, MeshPartComponent{});
+    mirror.step();
+    REQUIRE(mirror.sync.bodyCount() == 2);
+
+    // Put on: colliding, queried and touched as it is written, and no body.
+    mirror.fixture.world.meshParts().find(armour)->poseFrom = body;
+    skeleton.follower = armour;
+    skeleton.leader = body;
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 1);
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 1);
+
+    // A name that leads to nobody -- a leader with no skeleton -- is a part.
+    skeleton.leader = core::InstanceId{};
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 2);
+    skeleton.leader = body;
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 1);
+
+    // Taken off: a part again, where its `CFrame` says.
+    mirror.fixture.world.meshParts().find(armour)->poseFrom = core::InstanceId{};
+    skeleton.follower = core::InstanceId{};
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 2);
+}
+
+TEST_CASE("ADR 0201: a bone on a follower's joint is on the body that leads it, wherever the piece's own part is")
+{
+    Mirror mirror;
+    LeadingSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const core::InstanceId body = mirror.part("Body", core::DVec3{0.0, 0.0, 50.0});
+    // The gun's own part was left somewhere else altogether.
+    const core::InstanceId gun = mirror.part("Gun", core::DVec3{100.0, 0.0, 0.0});
+    mirror.fixture.world.meshParts().add(body, MeshPartComponent{});
+    mirror.fixture.world.meshParts().add(gun, MeshPartComponent{});
+    mirror.fixture.world.meshParts().find(gun)->poseFrom = body;
+    skeleton.follower = gun;
+    skeleton.leader = body;
+
+    const core::InstanceId muzzle = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(muzzle, gun) == std::nullopt);
+    mirror.fixture.world.attachments().find(muzzle)->jointName = mirror.fixture.world.atoms().intern("Hand");
+
+    mirror.step();
+    const AttachmentComponent* resolved = mirror.fixture.world.attachments().find(muzzle);
+    REQUIRE(resolved != nullptr);
+    // The joint's two metres up, from where the BODY is.
+    CHECK(resolved->worldCFrame.position.x == doctest::Approx(0.0));
+    CHECK(resolved->worldCFrame.position.y == doctest::Approx(2.0));
+    CHECK(resolved->worldCFrame.position.z == doctest::Approx(50.0));
+}

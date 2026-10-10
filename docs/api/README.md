@@ -28,6 +28,7 @@ guided tour.
 | [`ContentProvider`](contentprovider.md) | [`Instance`](instance.md) | Loads assets before anything shows them (ADR 0131): a level's meshes and pictures read and on the GPU while a loading screen is up, so the first frame of play has nothing popping in. |
 | [`CryptoService`](cryptoservice.md) | [`Instance`](instance.md) | What a game keeps a secret with, and tells one player from another by (ADR 0151): chance that nobody can predict, two hashes, and a hash meant for passwords. |
 | [`DebugService`](debugservice.md) | [`Instance`](instance.md) | The debug overlay and the engine's own instrumentation. |
+| [`DialogueService`](dialogueservice.md) | [`Instance`](instance.md) | Lines of dialogue, and what is being said right now (ADR 0200). |
 | [`GlobalScriptService`](globalscriptservice.md) | [`Instance`](instance.md) | The game's code, for every scene (ADR 0105). |
 | [`GraphicsService`](graphicsservice.md) | [`Instance`](instance.md) | The machine's graphics and display settings (ADR 0147): how good the picture is, how the window sits on the display and how fast frames are made. |
 | [`HapticService`](hapticservice.md) | [`Instance`](instance.md) | What a player feels in their hands (ADR 0131): a gamepad's motors, and a phone's own vibration. |
@@ -78,6 +79,7 @@ guided tour.
 | [`Camera`](camera.md) | [`PVInstance`](pvinstance.md) | The viewpoint the world is rendered from. |
 | [`CameraTexture`](cameratexture.md) | [`Instance`](instance.md) | A camera drawing into a texture (ADR 0107): whatever `Camera` sees is drawn into `view://` followed by `ViewName`, and anything that takes a texture -- an `ImageLabel` on a `SurfaceGui`, a `Decal`, a material's map -- can show it. |
 | [`CanvasGroup`](canvasgroup.md) | [`Frame`](frame.md) | A `Frame` whose descendants are drawn together and then shown as one picture (ADR 0128): a window that fades as a whole, instead of its parts fading through each other. |
+| [`Caption`](caption.md) | [`Instance`](instance.md) | What a sound says, in words (ADR 0200): a line of dialogue, or "[a door creaks]". |
 | [`CharacterBody`](characterbody.md) | [`BasePart`](basepart.md) | A capsule that walks: the player, or anything that should climb a ramp and step over a kerb instead of tumbling. |
 | [`ChorusSoundEffect`](chorussoundeffect.md) | [`SoundEffect`](soundeffect.md) | A copy of the sound that drifts a little out of time and tune with it: one voice as several, a shimmer. |
 | [`ClickDetector`](clickdetector.md) | [`Instance`](instance.md) | Makes the part or model it is in something a player clicks (ADR 0126). |
@@ -109,6 +111,7 @@ guided tour.
 | [`InputContext`](inputcontext.md) | [`Instance`](instance.md) | A group of `InputAction` children that are live together (§2.4, ADR 0029). |
 | [`Instance`](instance.md) | — | The root of the class hierarchy: a node in the tree, carrying a name, a parent, attributes and tags. |
 | [`LinearVelocity`](linearvelocity.md) | [`Constraint`](constraint.md) | Holds the part its `Attachment0` is on at a velocity, with as much force as `MaxForce` allows: a conveyor's crate, a platform that glides, a thrown thing that does not slow. |
+| [`LipSync`](lipsync.md) | [`Instance`](instance.md) | Moves a mouth with what is said (ADR 0200). |
 | [`LowPassSoundEffect`](lowpasssoundeffect.md) | [`SoundEffect`](soundeffect.md) | Lets the low notes through and takes the high ones away: under water, behind a door, a paused game. |
 | [`MeshPart`](meshpart.md) | [`BasePart`](basepart.md) | A part whose geometry is an imported mesh rather than a primitive solid. |
 | [`Model`](model.md) | [`PVInstance`](pvinstance.md) | A group of parts handled as one object, with a pivot to move it by and an extents box to measure it with. |

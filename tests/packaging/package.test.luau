@@ -306,4 +306,124 @@ test.suite("packaging", function(suite)
 
         removeTree(parent)
     end)
+
+    suite:case(
+        "a voice named in [export] ships in the game, another is a pack of its own, and a line is as long without it",
+        function()
+            if not platform.win32 then
+                return
+            end
+
+            local parent, project = scaffold("voicetest")
+
+            -- One line in three languages of three lengths: half a second in the
+            -- default, six tenths in Portuguese, nine tenths in Japanese. Silence
+            -- is enough -- what is held here is which files go where and how long
+            -- the line is, and a WAV's length is in its header.
+            local function recording(relative: string, seconds: number, rate: number)
+                local path = projectlib.joined(project, "content", relative)
+                local folder = string.match(path, "^(.*)[/\\][^/\\]+$") :: string
+                fs.createDirectory(folder, { makeParents = true })
+                local frames = math.floor(seconds * rate + 0.5)
+                local header = string.pack(
+                    "<c4I4c4c4I4I2I2I4I4I2I2c4I4",
+                    "RIFF",
+                    36 + frames * 2,
+                    "WAVE",
+                    "fmt ",
+                    16,
+                    1,
+                    1,
+                    rate,
+                    rate * 2,
+                    2,
+                    16,
+                    "data",
+                    frames * 2
+                )
+                fs.writeStringToFile(path, header .. string.rep("\0\0", frames))
+            end
+            recording("voice/line.wav", 0.5, 48000)
+            recording("l10n/pt-BR/voice/line.wav", 0.6, 24000)
+            recording("l10n/ja/voice/line.wav", 0.9, 48000)
+
+            -- Portuguese ships inside the game; Japanese is left to a pack.
+            local config = projectlib.joined(project, "project.toml")
+            fs.writeStringToFile(config, fs.readFileToString(config) .. '\n[export]\nvoice = ["pt-BR"]\n')
+
+            fs.writeStringToFile(
+                projectlib.joined(project, "src", "client", "Voices.luau"),
+                table.concat({
+                    "--!strict",
+                    'local Localization = game:GetService("LocalizationService")',
+                    'local sound = Instance.new("Sound")',
+                    'sound.Content = "asset://voice/line.wav"',
+                    "sound.Parent = workspace",
+                    "task.wait(0.1)",
+                    'print(`[voices] list={table.concat(Localization:GetVoiceLocales(), ",")} `',
+                    '    .. `voice={Localization.VoiceLocale} length={string.format("%.2f", sound.TimeLength)}`)',
+                    "",
+                }, "\n")
+            )
+
+            local result =
+                build.run({ path = project, output = nil, target = "windows", force = false, devHost = true })
+            assert.eq(result, 0)
+            local output = projectlib.joined(project, "dist", "windows")
+            local engineFolder = projectlib.joined(output, "game", ".engine")
+            local languages = projectlib.joined(project, "dist", "languages")
+
+            -- Japanese is a pack beside the export; Portuguese is not, and
+            -- neither is in the archive a player downloads.
+            local japanese = projectlib.joined(languages, "l10n-ja.lpack")
+            assert.that(fs.exists(japanese), `no language pack at {japanese}`)
+            assert.that(
+                not fs.exists(projectlib.joined(languages, "l10n-pt-BR.lpack")),
+                "a language that ships in the game was made a pack as well"
+            )
+            assert.that(
+                not fs.exists(projectlib.joined(engineFolder, "l10n-ja.lpack")),
+                "the pack was installed by the build"
+            )
+            local zipped = fs.readFileToString(projectlib.joined(project, "dist", "voicetest-1.2.3-windows.zip"))
+            assert.that(string.find(zipped, "l10n-ja", 1, true) == nil, "the archive carries the language pack")
+            -- Sealed like the game's own: nothing of it can be read.
+            local packed = fs.readFileToString(japanese)
+            assert.that(
+                string.find(packed, "asset://", 1, true) == nil,
+                "a name can be read in the sealed language pack"
+            )
+
+            -- **Without the pack**: two voices, and the line is nine tenths long
+            -- all the same -- its longest language's, from the game's own list,
+            -- with none of that language's files on the machine (ADR 0200, R10).
+            local executable = projectlib.joined(output, "voicetest.exe")
+            local ran = process.run({ executable, "--headless", "--frames=40", "--exit" })
+            local said = ran.stdout .. ran.stderr
+            assert.that(ran.ok, `the packaged game exited non-zero:\n{said}`)
+            assert.that(
+                string.find(said, "[voices] list=en,pt-BR voice=en length=0.90", 1, true) ~= nil,
+                `without its language pack the game did not say two voices and a line of 0.90 s:\n{said}`
+            )
+            -- A voice that is not installed is not one the game can be put in.
+            local asked = process.run({ executable, "--headless", "--frames=40", "--exit", "--voice-locale=ja" })
+            local answered = asked.stdout .. asked.stderr
+            assert.that(
+                string.find(answered, "[voices] list=en,pt-BR voice=en length=0.90", 1, true) ~= nil,
+                `a voice with no pack installed was taken:\n{answered}`
+            )
+
+            -- **With it**: put beside the game's own pack, it is found at start.
+            fs.copy(japanese, projectlib.joined(engineFolder, "l10n-ja.lpack"))
+            local installed = process.run({ executable, "--headless", "--frames=40", "--exit", "--voice-locale=ja" })
+            local heard = installed.stdout .. installed.stderr
+            assert.that(installed.ok, `the packaged game exited non-zero with a language pack:\n{heard}`)
+            assert.that(
+                string.find(heard, "[voices] list=en,ja,pt-BR voice=ja length=0.90", 1, true) ~= nil,
+                `with its language pack the game did not say three voices, in Japanese:\n{heard}`
+            )
+
+            removeTree(parent)
+        end
+    )
 end)

@@ -109,6 +109,14 @@ struct ReplayScenario
     // has seven of, and which survive a compiler change precisely because they
     // are not bit comparisons.
     bool sameBuildOnly = false;
+
+    // **The voice languages the scenario is replayed in besides none** (ADR
+    // 0200), from `"voiceLocales"`: each must reproduce the SAME trace. What
+    // a player hears is theirs and no tick's -- a line is as long as its
+    // longest language whoever listens -- and this is where a build that let
+    // it leak into the simulation fails. `voiceLocale` is the one a run is in.
+    std::vector<std::string> voiceLocales;
+    std::string voiceLocale;
 };
 
 struct ReplayCheckpoint

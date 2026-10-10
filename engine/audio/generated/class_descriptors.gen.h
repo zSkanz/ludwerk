@@ -129,6 +129,9 @@ inline constexpr scene::EnumId DecalBlendModeEnumId = 86;
 inline constexpr scene::EnumId ParticleFlipbookModeEnumId = 87;
 inline constexpr scene::EnumId SwarmAgentRemovalEnumId = 88;
 inline constexpr scene::EnumId RelayStateEnumId = 89;
+inline constexpr scene::EnumId SoundCategoryEnumId = 90;
+inline constexpr scene::EnumId SubtitleModeEnumId = 91;
+inline constexpr scene::EnumId LipSyncModeEnumId = 92;
 
 } // namespace generated
 
@@ -267,12 +270,45 @@ scene::Value getSoundRollOffMaxDistance(const scene::World& world, core::Instanc
 bool setSoundRollOffMaxDistance(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getSoundGroup(const scene::World& world, core::InstanceId id);
 bool setSoundGroup(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSoundCategory(const scene::World& world, core::InstanceId id);
+bool setSoundCategory(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSoundLoudness(const scene::World& world, core::InstanceId id);
 void attachSoundComponents(scene::World& world, core::InstanceId id);
 void detachSoundComponents(scene::World& world, core::InstanceId id);
+
+// Caption
+scene::Value getCaptionText(const scene::World& world, core::InstanceId id);
+bool setCaptionText(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCaptionSpeaker(const scene::World& world, core::InstanceId id);
+bool setCaptionSpeaker(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCaptionColor(const scene::World& world, core::InstanceId id);
+bool setCaptionColor(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCaptionSeconds(const scene::World& world, core::InstanceId id);
+bool setCaptionSeconds(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachCaptionComponents(scene::World& world, core::InstanceId id);
+void detachCaptionComponents(scene::World& world, core::InstanceId id);
 
 // AudioService
 scene::Value getAudioServiceMasterVolume(const scene::World& world, core::InstanceId id);
 bool setAudioServiceMasterVolume(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAudioServicePlayerVolume(const scene::World& world, core::InstanceId id);
+bool setAudioServicePlayerVolume(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAudioServiceMusicVolume(const scene::World& world, core::InstanceId id);
+bool setAudioServiceMusicVolume(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAudioServiceEffectsVolume(const scene::World& world, core::InstanceId id);
+bool setAudioServiceEffectsVolume(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAudioServiceVoiceVolume(const scene::World& world, core::InstanceId id);
+bool setAudioServiceVoiceVolume(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAudioServiceMusicUnderVoice(const scene::World& world, core::InstanceId id);
+bool setAudioServiceMusicUnderVoice(scene::World& world, core::InstanceId id, const scene::Value& value);
+
+// DialogueService
+scene::Value getDialogueServiceSubtitles(const scene::World& world, core::InstanceId id);
+bool setDialogueServiceSubtitles(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getDialogueServiceSubtitleScale(const scene::World& world, core::InstanceId id);
+bool setDialogueServiceSubtitleScale(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getDialogueServiceSubtitleBackground(const scene::World& world, core::InstanceId id);
+bool setDialogueServiceSubtitleBackground(scene::World& world, core::InstanceId id, const scene::Value& value);
 
 } // namespace native
 

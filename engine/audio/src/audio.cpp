@@ -13,12 +13,14 @@
 #include <utility>
 #include <vector>
 
+#include "engine/asset/localized.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
 #include "engine/jobs/jobs.h"
 #include "engine/platform/async_io.h"
 #include "engine/platform/file.h"
+#include "engine/scene/localization.h"
 #include "engine/scene/world.h"
 #if ENG_PLATFORM_UWP
 #include "uwp_output.h"
@@ -269,6 +271,15 @@ struct Voice
     // every voice in a world with no effect in it.
     core::i32 bus = -1;
     core::i32 groupBus = -1;
+
+    // **How long the sound is, when that is longer than this clip** (ADR
+    // 0200): a line lasts as long as its longest language, and the clip is
+    // the recording in the language this machine hears. Past the clip and
+    // inside the slot there is silence; a loop turns at the slot. 0 for a
+    // sound that has no other language: the clip's own end is its end.
+    u64 slot = 0;
+    // Music is what lowers itself under a voice.
+    bool music = false;
 };
 
 // A stable pitch per content id, so two different sounds are audibly different
@@ -294,7 +305,7 @@ struct Voice
 // Returns false when a non-looped voice ran off the end, which is what retires
 // an audition.
 [[nodiscard]] bool mixClip(float* samples, ma_uint32 frameCount, const Clip& clip, f64& cursor, f64 step, f32 leftGain,
-                           f32 rightGain, bool downmix, bool looped) noexcept
+                           f32 rightGain, bool downmix, bool looped, u64 slot = 0) noexcept
 {
     for (ma_uint32 frame = 0; frame < frameCount;) {
         // Nearest sample rather than interpolated. At playback speed one --
@@ -305,6 +316,13 @@ struct Voice
         // hang it on.
         const auto index = static_cast<core::usize>(cursor);
         if (index >= clip.frames) {
+            // The recording is over and the line is not (`Voice::slot`):
+            // silence, until the longest language would have finished.
+            if (slot > clip.frames && index < slot) {
+                cursor += step;
+                ++frame;
+                continue;
+            }
             if (!looped) {
                 return false;
             }
@@ -313,7 +331,7 @@ struct Voice
             // instead of once per loop.
             // And the same output frame is filled from there: advancing past it
             // left one frame of silence at every loop point.
-            cursor = std::fmod(cursor, static_cast<f64>(clip.frames));
+            cursor = std::fmod(cursor, static_cast<f64>(slot > clip.frames ? slot : clip.frames));
             continue;
         }
         const core::usize at = index * kChannels;
@@ -344,7 +362,7 @@ struct Voice
 // `mixClip` for a streamed clip: the same cursor, the same fold and the same end,
 // with each frame read through the voice's decoder instead of out of memory.
 [[nodiscard]] bool mixStream(float* samples, ma_uint32 frameCount, const Clip& clip, Stream& stream, f64& cursor,
-                             f64 step, f32 leftGain, f32 rightGain, bool downmix, bool looped) noexcept
+                             f64 step, f32 leftGain, f32 rightGain, bool downmix, bool looped, u64 slot = 0) noexcept
 {
     for (ma_uint32 frame = 0; frame < frameCount;) {
         const auto index = static_cast<u64>(cursor);
@@ -353,9 +371,14 @@ struct Voice
             // The end: the clip's declared length, or the decoder's own end if it
             // came first. Wrapped by whichever it was, and never from the top of
             // an empty clip, which would spin here for ever.
+            if (slot > clip.frames && index < slot) {
+                cursor += step;
+                ++frame;
+                continue;
+            }
             if (!looped || index == 0)
                 return false;
-            cursor = std::fmod(cursor, static_cast<f64>(std::min<u64>(index, clip.frames)));
+            cursor = std::fmod(cursor, static_cast<f64>(slot > clip.frames ? slot : std::min<u64>(index, clip.frames)));
             continue;
         }
         if (downmix) {
@@ -696,6 +719,153 @@ struct Audition
     bool active = false;
 };
 
+// --- A sound in the player's language: what both halves below need ------------
+
+[[nodiscard]] u64 keyOf(core::InstanceId id) noexcept
+{
+    return (static_cast<u64>(id.index) << 32) | static_cast<u64>(id.generation);
+}
+
+// What a sound says, if it says anything: its first `Caption`.
+[[nodiscard]] const scene::CaptionComponent* captionOf(const scene::World& world, core::InstanceId sound)
+{
+    for (core::InstanceId child = world.firstChild(sound); child.valid(); child = world.nextSibling(child)) {
+        if (const scene::CaptionComponent* caption = world.captions().find(child); caption != nullptr)
+            return caption;
+    }
+    return nullptr;
+}
+
+// The audio system as the world asks it how loud a sound is (`SoundMeter`).
+struct MeterOf final : scene::SoundMeter
+{
+    AudioSystem* system = nullptr;
+
+    [[nodiscard]] f32 loudness(const scene::World& world, core::InstanceId sound) override
+    {
+        return system->loudness(world, sound);
+    }
+    [[nodiscard]] std::array<f32, 3> bands(const scene::World& world, core::InstanceId sound) override
+    {
+        return system->bands(world, sound);
+    }
+    [[nodiscard]] std::array<f32, 3> categoryBands(const scene::World& world, core::i32 category) override
+    {
+        return system->categoryBands(world, category);
+    }
+    [[nodiscard]] std::optional<std::string> spokenIn(const scene::World& world, core::InstanceId sound) override
+    {
+        return system->spokenIn(world, sound);
+    }
+};
+
+// --- What a machine is playing, measured (ADR 0200) ---------------------------
+
+// One window of a sound, and the transform's size: about forty milliseconds,
+// which is a syllable's worth and the streamed decoder's own window.
+constexpr core::usize kMeterFrames = 2048;
+// And the part of it the three bands are taken from: its last quarter.
+constexpr core::usize kBandFrames = 512;
+
+// In place, radix two. Two thousand points is fifty microseconds, asked for at
+// most once a frame for a sound somebody is watching.
+void transform(std::vector<f32>& real, std::vector<f32>& imaginary) noexcept
+{
+    const core::usize count = real.size();
+    for (core::usize index = 1, mirror = 0; index < count; ++index) {
+        core::usize bit = count >> 1;
+        for (; (mirror & bit) != 0; bit >>= 1)
+            mirror ^= bit;
+        mirror ^= bit;
+        if (index < mirror) {
+            std::swap(real[index], real[mirror]);
+            std::swap(imaginary[index], imaginary[mirror]);
+        }
+    }
+    for (core::usize length = 2; length <= count; length <<= 1) {
+        const f64 angle = -6.283185307179586 / static_cast<f64>(length);
+        const f32 stepReal = static_cast<f32>(std::cos(angle));
+        const f32 stepImaginary = static_cast<f32>(std::sin(angle));
+        for (core::usize start = 0; start < count; start += length) {
+            f32 turnReal = 1.0f;
+            f32 turnImaginary = 0.0f;
+            for (core::usize at = 0; at < length / 2; ++at) {
+                const core::usize low = start + at;
+                const core::usize high = low + length / 2;
+                const f32 oddReal = real[high] * turnReal - imaginary[high] * turnImaginary;
+                const f32 oddImaginary = real[high] * turnImaginary + imaginary[high] * turnReal;
+                real[high] = real[low] - oddReal;
+                imaginary[high] = imaginary[low] - oddImaginary;
+                real[low] += oddReal;
+                imaginary[low] += oddImaginary;
+                const f32 nextReal = turnReal * stepReal - turnImaginary * stepImaginary;
+                turnImaginary = turnReal * stepImaginary + turnImaginary * stepReal;
+                turnReal = nextReal;
+            }
+        }
+    }
+}
+
+// The level of a window, so that a tone at full scale reads one.
+[[nodiscard]] f32 levelOf(std::span<const f32> mono) noexcept
+{
+    if (mono.empty())
+        return 0.0f;
+    f64 sum = 0.0;
+    for (const f32 sample : mono)
+        sum += static_cast<f64>(sample) * static_cast<f64>(sample);
+    const f64 level = std::sqrt(2.0 * sum / static_cast<f64>(mono.size()));
+    return static_cast<f32>(std::min(level, 1.0));
+}
+
+// The same window in three bands -- 80 to 500 Hz, 500 to 2,500, 2,500 to
+// 10,000 -- each so that a tone at full scale inside it reads one. `scratch`
+// is the caller's, so a frame of twenty mouths allocates nothing.
+[[nodiscard]] std::array<f32, 3> bandsOf(std::span<const f32> mono, std::vector<f32>& real,
+                                         std::vector<f32>& imaginary) noexcept
+{
+    std::array<f32, 3> out{0.0f, 0.0f, 0.0f};
+    if (mono.size() < kBandFrames)
+        return out;
+    // **The last ten milliseconds, and no more** -- a quarter of the window
+    // loudness is taken over. Three bands of a mouth do not need the two
+    // thousand points a level is averaged over, and the whole window was 35
+    // microseconds a speaker a frame: twenty of them were most of a
+    // millisecond. Five hundred points are a quarter of that, and tell 80 Hz
+    // from 500 well enough for a mouth to open or round by.
+    const std::span<const f32> tail = mono.subspan(mono.size() - kBandFrames);
+    real.assign(kBandFrames, 0.0f);
+    imaginary.assign(kBandFrames, 0.0f);
+    // A raised cosine over the window: without it a tone between two bins
+    // leaks into every band. Worked out once, not once a sample a frame.
+    static const std::array<f32, kBandFrames> Window = [] {
+        std::array<f32, kBandFrames> made{};
+        for (core::usize index = 0; index < kBandFrames; ++index)
+            made[index] = static_cast<f32>(
+                0.5 - 0.5 * std::cos(6.283185307179586 * static_cast<f64>(index) / static_cast<f64>(kBandFrames - 1)));
+        return made;
+    }();
+    for (core::usize index = 0; index < kBandFrames; ++index)
+        real[index] = tail[index] * Window[index];
+    transform(real, imaginary);
+    constexpr f64 BinHz = static_cast<f64>(kSampleRate) / static_cast<f64>(kBandFrames);
+    constexpr f64 Edges[4] = {80.0, 500.0, 2500.0, 10000.0};
+    // The window's own mean square, which the sum is divided by.
+    constexpr f64 WindowPower = 0.375;
+    for (core::usize band = 0; band < 3; ++band) {
+        const auto first = static_cast<core::usize>(std::ceil(Edges[band] / BinHz));
+        const auto last = static_cast<core::usize>(std::ceil(Edges[band + 1] / BinHz));
+        f64 power = 0.0;
+        for (core::usize bin = first; bin < last && bin < kBandFrames / 2; ++bin)
+            power += static_cast<f64>(real[bin]) * static_cast<f64>(real[bin]) +
+                     static_cast<f64>(imaginary[bin]) * static_cast<f64>(imaginary[bin]);
+        const f64 meanSquare =
+            2.0 * power / (static_cast<f64>(kBandFrames) * static_cast<f64>(kBandFrames) * WindowPower);
+        out[band] = static_cast<f32>(std::min(std::sqrt(2.0 * meanSquare), 1.0));
+    }
+    return out;
+}
+
 } // namespace
 
 struct AudioSystem::Impl
@@ -738,6 +908,95 @@ struct AudioSystem::Impl
     // clip: from the file's header, which is a pure function of its bytes. Zero
     // for a content that names no sound. Sorted by URN, never evicted.
     std::vector<std::pair<std::string, u64>> lengths;
+
+    // --- A sound in the player's language (ADR 0200) -------------------------
+    //
+    // `clips` and `lengths` above are keyed by the name of a FILE. A game
+    // names a line once, in its default language, and what is found for it
+    // is the file under the voice language -- so there is a second name: the
+    // one the game wrote, which is what a length is asked of.
+    const asset::LocalizationIndex* localized = nullptr;
+    std::string voiceLanguage;
+    // Whether the voice language has files of its own. With none -- the
+    // default language, or a game with nothing localized -- a name is its
+    // own file and nothing here is looked up.
+    bool voiceHasFiles = false;
+
+    // **How long a name is: the longest of its languages** (R10). What the
+    // tick ends a sound by, the same on every machine. `localized` says the
+    // name has another language at all, which is when the mixer may have to
+    // wait in silence for the slot to end.
+    struct Slot
+    {
+        u64 frames = 0;
+        bool localized = false;
+    };
+    std::vector<std::pair<std::string, Slot>> slots;
+    // The file each name is in the voice language, found once a language.
+    std::vector<std::pair<std::string, std::string>> resolvedNames;
+
+    // **What each playing sound is being heard as**, by instance: the file it
+    // resolved to when it started. A language changed while a line plays
+    // does not change the line under it; the next `Play` takes the new one.
+    struct Heard
+    {
+        u64 key = 0;
+        u32 plays = 0;
+        std::string logical;
+        std::string physical;
+    };
+    std::vector<Heard> heard;
+    // Every sound that can be heard here this frame, as the frame met them,
+    // with what the GAME mixes it at -- before the player's own volumes.
+    struct Audible
+    {
+        core::InstanceId id;
+        f32 game = 0.0f;
+        core::i32 category = 0;
+    };
+    std::vector<Audible> audible;
+    std::vector<core::InstanceId> heardIds;
+
+    // Music under a voice: where the frame says it should be, and where the
+    // mixer has eased it to. The mixer's own, never the tick's.
+    std::atomic<f32> duckTarget{1.0f};
+    std::atomic<f32> duckNow{1.0f};
+    f32 duck = 1.0f;
+
+    // What was measured of a sound this frame, so two readers pay once.
+    struct Metered
+    {
+        u64 key = 0;
+        u64 serial = 0;
+        f64 position = 0.0;
+        f32 loudness = 0.0f;
+        std::array<f32, 3> bands{0.0f, 0.0f, 0.0f};
+        bool banded = false;
+    };
+    std::vector<Metered> metered;
+    u64 serial = 0;
+    u64 meterWork = 0;
+    std::vector<f32> meterMono;
+    std::vector<f32> meterSum;
+    std::vector<f32> meterReal;
+    std::vector<f32> meterImaginary;
+    // A decoder of the meter's own for a streamed clip: the mixer's belongs
+    // to the audio thread.
+    std::unique_ptr<Stream> meterStream;
+    const Clip* meterStreamClip = nullptr;
+    MeterOf meter;
+
+    [[nodiscard]] bool anyLocalized() const noexcept
+    {
+        return localized != nullptr && !(localized->voice.empty() && localized->lengths.empty());
+    }
+    void languageChanged();
+    [[nodiscard]] Slot slotOf(std::string_view content);
+    [[nodiscard]] std::string_view physicalNow(std::string_view content);
+    [[nodiscard]] const Heard* heardOf(core::InstanceId id) const noexcept;
+    [[nodiscard]] f64 durationOf(const scene::World& world, core::InstanceId id, const scene::SoundComponent& sound);
+    [[nodiscard]] bool window(const scene::World& world, core::InstanceId id, std::vector<f32>& mono);
+    [[nodiscard]] Metered& measured(const scene::World& world, core::InstanceId id, bool banded);
 
     // Decodes on the first ask and answers from the cache after. Null for a URN
     // that names nothing, which plays the placeholder tone.
@@ -872,9 +1131,23 @@ void AudioSystem::Impl::mixBlock(float* samples, ma_uint32 frameCount) noexcept
             std::memset(bus.buffer.data(), 0, floats * sizeof(float));
     }
 
+    // **Music under a voice** (ADR 0200), eased here because here is where
+    // time is audio's: down in about 0.15 s, back in about 0.6 s, a block at
+    // a time. A block is ten milliseconds; a step that size is not heard.
+    {
+        const f32 target = duckTarget.load(std::memory_order_relaxed);
+        const f64 seconds = static_cast<f64>(frameCount) / static_cast<f64>(kSampleRate);
+        const f64 within = target < duck ? 0.15 : 0.6;
+        duck += (target - duck) * static_cast<f32>(1.0 - std::exp(-3.0 * seconds / within));
+        if (std::fabs(target - duck) < 0.0005f)
+            duck = target;
+        duckNow.store(duck, std::memory_order_relaxed);
+    }
+
     for (Voice& voice : voices) {
         if (voice.amplitude <= 0.0f)
             continue;
+        const f32 level = voice.music ? voice.amplitude * duck : voice.amplitude;
 
         // Straight into the output, or -- a voice with effects of its own or
         // of its group's -- into a block of its own first.
@@ -895,13 +1168,12 @@ void AudioSystem::Impl::mixBlock(float* samples, ma_uint32 frameCount) noexcept
                 // its length is real and the tone would be a lie about it.
                 if (voice.stream != nullptr)
                     (void)mixStream(target, frameCount, *voice.clip, *voice.stream, voice.cursor, voice.cursorStep,
-                                    voice.amplitude * voice.panLeft, voice.amplitude * voice.panRight, voice.positional,
-                                    voice.looped);
+                                    level * voice.panLeft, level * voice.panRight, voice.positional, voice.looped,
+                                    voice.slot);
             }
             else {
-                (void)mixClip(target, frameCount, *voice.clip, voice.cursor, voice.cursorStep,
-                              voice.amplitude * voice.panLeft, voice.amplitude * voice.panRight, voice.positional,
-                              voice.looped);
+                (void)mixClip(target, frameCount, *voice.clip, voice.cursor, voice.cursorStep, level * voice.panLeft,
+                              level * voice.panRight, voice.positional, voice.looped, voice.slot);
             }
         }
         else {
@@ -910,7 +1182,7 @@ void AudioSystem::Impl::mixBlock(float* samples, ma_uint32 frameCount) noexcept
                 // amplitude f32, and `-Wdouble-promotion` is an error on
                 // `engine/` so that a narrow value entering a wide computation
                 // is a decision rather than an accident.
-                const auto value = static_cast<float>(std::sin(voice.phase) * static_cast<double>(voice.amplitude));
+                const auto value = static_cast<float>(std::sin(voice.phase) * static_cast<double>(level));
                 target[frame * kChannels] += value;
                 target[frame * kChannels + 1] += value;
                 voice.phase += voice.phaseStep;
@@ -1046,7 +1318,18 @@ void AudioSystem::tick(scene::World& world, f64 fixedDt)
     // Slot order, which is a pure function of the operation sequence, so two
     // sounds ending on one tick raise their events in the same order on every
     // run (R10).
+    std::vector<core::InstanceId> spent;
     world.sounds().forEach([&](core::InstanceId id, scene::SoundComponent& sound) {
+        // **A sound that was made to be played once goes when it has been**
+        // (`PlayLocal`, a line that was said): a couple of ticks after its
+        // `Ended`, so whoever listens for that still finds it. Counted in
+        // ticks, like everything that removes an instance.
+        if (sound.endedFor >= 0) {
+            if (sound.playing)
+                sound.endedFor = -1;
+            else if (++sound.endedFor > scene::SoundLinger)
+                spent.push_back(id);
+        }
         if (!sound.loadedFired) {
             // **Immediately, and that is now a decision rather than a
             // placeholder.** The comment here used to say "there is nothing to
@@ -1071,7 +1354,7 @@ void AudioSystem::tick(scene::World& world, f64 fixedDt)
         // `TimeLength`, once per content: a header read on the first ask and a
         // cache lookup after, so a script can read it before playing.
         if (sound.timeLength == 0.0)
-            sound.timeLength = clipDuration(sound.content);
+            sound.timeLength = m_impl != nullptr ? m_impl->durationOf(world, id, sound) : kPlaceholderDuration;
 
         if (!sound.playing)
             return;
@@ -1087,7 +1370,11 @@ void AudioSystem::tick(scene::World& world, f64 fixedDt)
         //
         // Decoded on the first ask and answered from the cache after, so this is
         // a lookup per playing sound per tick and not a decode.
-        const f64 duration = clipDuration(sound.content);
+        const f64 duration = m_impl != nullptr ? m_impl->durationOf(world, id, sound) : kPlaceholderDuration;
+        // A caption put on after the first tick changes how long a line with
+        // no recording lasts; nothing else can move this.
+        if (sound.timeLength != duration)
+            sound.timeLength = duration;
 
         sound.timePosition += fixedDt * static_cast<f64>(sound.playbackSpeed);
         if (sound.timePosition < duration)
@@ -1107,8 +1394,13 @@ void AudioSystem::tick(scene::World& world, f64 fixedDt)
         // once and then never again.
         sound.timePosition = 0.0;
         sound.playing = false;
+        if (sound.ownsItself)
+            sound.endedFor = 0;
         world.changes().push(scene::Change{scene::ChangeKind::InstanceEventNoArgs, id, {}, ended});
     });
+    // After the walk: destroying inside it would move the pool under it.
+    for (const core::InstanceId id : spent)
+        (void)world.destroy(id);
 }
 
 void AudioSystem::update(scene::World& world, core::InstanceId listener, const core::CFrameD* earOverride)
@@ -1132,6 +1424,14 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
     // pumping from the tick would put an arbitrary moment between a read and the
     // world, which is what R10 forbids.
     m_impl->pumpPrefetch();
+
+    // What the frame hears, made afresh: who can be heard, and as which file.
+    m_impl->serial += 1;
+    m_impl->audible.clear();
+    m_impl->heardIds.clear();
+    std::vector<Impl::Heard> heardNext;
+    bool voiceHeard = false;
+    const scene::PlayerSound& player = world.engineState().playerSound;
 
     std::vector<Voice> next;
     next.reserve(kMaxVoices);
@@ -1193,7 +1493,9 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
         // below -- which is the whole point. A sound authored in a scene is
         // prefetched from the first frame the scene is alive, so by the time
         // anything plays it the clip is resident and neither path decodes.
-        m_impl->beginPrefetch(sound.content);
+        // The file of the language this machine hears, read ahead like any.
+        const std::string_view wanted = m_impl->physicalNow(sound.content);
+        m_impl->beginPrefetch(wanted);
 
         // Suspended: the world is read and nothing is heard. Returning before
         // the walk instead would be the same silence, and this way the walk's
@@ -1241,7 +1543,39 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
             detail::panGains(detail::panOf(ear, part->cframe.position), panLeft, panRight);
         }
 
+        // **Heard here**, whatever the player's own volumes are: a line the
+        // player muted is still being said, and its caption is still current.
+        if (gain > 0.0001f) {
+            m_impl->audible.push_back(Impl::Audible{id, gain, sound.category});
+            m_impl->heardIds.push_back(id);
+        }
+
+        // The player's volumes (ADR 0200): theirs, never the game's and never
+        // the tick's -- the master, and the one for what kind of sound this is.
+        const f32 kind = sound.category == 1   ? player.musicVolume
+                         : sound.category == 2 ? player.voiceVolume
+                                               : player.effectsVolume;
+        gain *= player.playerVolume * kind;
         if (gain <= 0.0001f)
+            return;
+
+        // **The file it started in.** A language changed under a line that is
+        // playing leaves the line alone.
+        std::string physical;
+        if (!m_impl->voiceHasFiles) {
+            physical = sound.content;
+        }
+        else {
+            const Impl::Heard* was = m_impl->heardOf(id);
+            physical = was != nullptr && was->plays == sound.plays && was->logical == sound.content
+                           ? was->physical
+                           : std::string(wanted);
+            heardNext.push_back(Impl::Heard{keyOf(id), sound.plays, sound.content, physical});
+        }
+        const Impl::Slot slot = m_impl->slotOf(sound.content);
+        // A line with no recording in any language is its caption and no
+        // sound: not the tone a missing file plays, and not a warning.
+        if (slot.frames == 0 && captionOf(world, id) != nullptr)
             return;
 
         Voice voice;
@@ -1254,7 +1588,12 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
         voice.positional = positional;
         voice.panLeft = panLeft;
         voice.panRight = panRight;
-        voice.clip = m_impl->clipFor(sound.content);
+        voice.clip = m_impl->clipFor(physical);
+        voice.music = sound.category == 1;
+        // A voice that sounds is what music makes room for; a line that is
+        // only text, or one the player turned off, lowers nothing.
+        if (sound.category == 2 && voice.clip != nullptr)
+            voiceHeard = true;
         if (voice.clip != nullptr) {
             // The SEED. Whether it is used is decided under the lock below,
             // against the cursor the callback has been advancing -- see
@@ -1262,6 +1601,7 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
             voice.cursor = sound.timePosition * static_cast<f64>(kSampleRate);
             voice.cursorStep = static_cast<f64>(sound.playbackSpeed);
             voice.looped = sound.looped;
+            voice.slot = slot.localized && slot.frames > voice.clip->frames ? slot.frames : 0;
         }
         else {
             // The placeholder tone, unchanged. A sound whose file is missing is
@@ -1328,13 +1668,19 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
             if (fresh.clip == nullptr || fresh.clip != previous->clip)
                 continue;
 
-            if (!detail::shouldTakeTimeline(previous->cursor / rate, fresh.cursor / rate,
-                                            static_cast<f64>(fresh.clip->frames) / rate, fresh.looped,
-                                            kResyncTolerance)) {
+            if (!detail::shouldTakeTimeline(
+                    previous->cursor / rate, fresh.cursor / rate,
+                    static_cast<f64>(fresh.slot > fresh.clip->frames ? fresh.slot : fresh.clip->frames) / rate,
+                    fresh.looped, kResyncTolerance)) {
                 fresh.cursor = previous->cursor;
             }
         }
         m_impl->voices.swap(next);
+        m_impl->duckTarget.store(voiceHeard ? std::clamp(world.engineState().musicUnderVoice, 0.0f, 1.0f) : 1.0f,
+                                 std::memory_order_relaxed);
+        std::sort(heardNext.begin(), heardNext.end(),
+                  [](const Impl::Heard& a, const Impl::Heard& b) { return a.key < b.key; });
+        m_impl->heard = std::move(heardNext);
         m_impl->buses.swap(nextBuses);
     }
 }
@@ -1798,7 +2144,9 @@ f64 AudioSystem::clipDuration(std::string_view content)
     if (m_impl == nullptr) {
         return kPlaceholderDuration;
     }
-    const u64 length = m_impl->lengthOf(content);
+    // The slot, which is the file's own length for a name with no other
+    // language and the longest language's for one that has them (ADR 0200).
+    const u64 length = m_impl->slotOf(content).frames;
     if (length == 0) {
         // The tone's length, because the tone is what such a sound plays.
         return kPlaceholderDuration;
@@ -1879,6 +2227,12 @@ void AudioSystem::setContentMounts(const asset::ContentMounts* mounts) noexcept
     m_impl->audition.content.clear();
     m_impl->clips.clear();
     m_impl->lengths.clear();
+    m_impl->slots.clear();
+    m_impl->resolvedNames.clear();
+    m_impl->heard.clear();
+    m_impl->metered.clear();
+    m_impl->meterStream.reset();
+    m_impl->meterStreamClip = nullptr;
     m_impl->clipsLoaded.store(0, std::memory_order_relaxed);
     m_impl->clipsMissing.store(0, std::memory_order_relaxed);
     m_impl->clipsStreamed.store(0, std::memory_order_relaxed);
@@ -1907,6 +2261,331 @@ void AudioSystem::renderInto(std::span<f32> interleaved)
         return;
     const std::lock_guard<std::mutex> lock(m_impl->mutex);
     m_impl->mix(interleaved.data(), static_cast<ma_uint32>(interleaved.size() / kChannels));
+}
+
+// --- A sound in the player's language (ADR 0200) ------------------------------
+
+void AudioSystem::Impl::languageChanged()
+{
+    resolvedNames.clear();
+    voiceHasFiles = false;
+    if (localized == nullptr || voiceLanguage.empty())
+        return;
+    const std::string_view locale = voiceLanguage;
+    const core::usize dash = locale.find('-');
+    const std::string_view language = dash == std::string_view::npos ? locale : locale.substr(0, dash);
+    for (const std::string& has : localized->voice) {
+        if (has == locale || has == language)
+            voiceHasFiles = true;
+    }
+}
+
+AudioSystem::Impl::Slot AudioSystem::Impl::slotOf(std::string_view content)
+{
+    // A game with nothing in another language: a name is its file, and this
+    // is the lookup it always was.
+    if (!anyLocalized())
+        return Slot{lengthOf(content), false};
+
+    const auto at = std::lower_bound(slots.begin(), slots.end(), content,
+                                     [](const auto& entry, std::string_view key) { return entry.first < key; });
+    if (at != slots.end() && at->first == content)
+        return at->second;
+
+    Slot slot;
+    const std::string_view path = asset::urnPath(content);
+    if (localized->measured) {
+        // **The export's number, and no file is asked**: a machine without a
+        // language's recordings -- a pack not installed, a dedicated server --
+        // has the length all the same, and the same one.
+        if (const std::optional<u64> longest = path.empty() ? std::nullopt : localized->longest(path))
+            slot = Slot{*longest, true};
+        else
+            slot = Slot{lengthOf(content), false};
+    }
+    else {
+        // From a folder: the default's file and each language's, measured as
+        // any file is. Every machine running the project has the same files.
+        slot.frames = lengthOf(content);
+        if (!path.empty() && mounts != nullptr && asset::localeOfResolved(content).empty()) {
+            std::string name;
+            for (const std::string& locale : localized->voice) {
+                name.assign("asset://");
+                name.append(asset::LocalizedFolder).append("/").append(locale).append("/").append(path);
+                if (!mounts->contains(name))
+                    continue;
+                slot.localized = true;
+                slot.frames = std::max(slot.frames, lengthOf(name));
+            }
+        }
+    }
+    // Found again by name: `lengthOf` may have grown the list this would
+    // have been inserted into, never this one.
+    const auto where = std::lower_bound(slots.begin(), slots.end(), content,
+                                        [](const auto& entry, std::string_view key) { return entry.first < key; });
+    slots.insert(where, {std::string(content), slot});
+    return slot;
+}
+
+std::string_view AudioSystem::Impl::physicalNow(std::string_view content)
+{
+    if (!voiceHasFiles || mounts == nullptr || content.empty())
+        return content;
+    const auto at = std::lower_bound(resolvedNames.begin(), resolvedNames.end(), content,
+                                     [](const auto& entry, std::string_view key) { return entry.first < key; });
+    if (at != resolvedNames.end() && at->first == content)
+        return at->second;
+    const auto inserted =
+        resolvedNames.insert(at, {std::string(content), asset::resolveLocalized(*mounts, content, voiceLanguage)});
+    return inserted->second;
+}
+
+const AudioSystem::Impl::Heard* AudioSystem::Impl::heardOf(core::InstanceId id) const noexcept
+{
+    const u64 key = keyOf(id);
+    const auto at = std::lower_bound(heard.begin(), heard.end(), key,
+                                     [](const Heard& entry, u64 wanted) { return entry.key < wanted; });
+    return at != heard.end() && at->key == key ? &*at : nullptr;
+}
+
+f64 AudioSystem::Impl::durationOf(const scene::World& world, core::InstanceId id, const scene::SoundComponent& sound)
+{
+    const Slot slot = slotOf(sound.content);
+    if (slot.frames > 0)
+        return static_cast<f64>(slot.frames) / static_cast<f64>(kSampleRate);
+    // **A line that has not been recorded lasts its caption** (ADR 0200): a
+    // game is written before it is recorded, and its lines play as text
+    // from the first day. The reading time is of the DEFAULT language's
+    // text, which every machine has -- a dedicated server too -- so the tick
+    // the line ends on does not depend on what anybody reads.
+    if (const scene::CaptionComponent* caption = captionOf(world, id); caption != nullptr) {
+        const std::string_view key = world.atoms().text(caption->text);
+        std::string text(key);
+        if (const scene::Localization* words = world.localization(); words != nullptr) {
+            if (std::optional<std::string> said = words->translate(words->defaultLocale(), key); said.has_value())
+                text = std::move(*said);
+        }
+        return scene::captionSeconds(caption->seconds, text);
+    }
+    // The tone's length, because the tone is what such a sound plays.
+    return kPlaceholderDuration;
+}
+
+bool AudioSystem::Impl::window(const scene::World& world, core::InstanceId id, std::vector<f32>& mono)
+{
+    const scene::SoundComponent* sound = world.sounds().find(id);
+    if (sound == nullptr || !sound->playing)
+        return false;
+    const Heard* as = heardOf(id);
+    const std::string_view name = as != nullptr ? std::string_view{as->physical} : physicalNow(sound->content);
+    const Clip* clip = clipFor(name);
+    if (clip == nullptr || clip->frames == 0)
+        return false;
+
+    mono.assign(kMeterFrames, 0.0f);
+    // The window that ENDS where the sound has got to, on the tick's own
+    // timeline: the same on a machine with speakers and on one with none.
+    const auto end = static_cast<core::i64>(sound->timePosition * static_cast<f64>(kSampleRate));
+    const core::i64 start = end - static_cast<core::i64>(kMeterFrames);
+    if (start >= static_cast<core::i64>(clip->frames))
+        return true; // past the recording, inside its slot: silence
+    if (!clip->streamed) {
+        const auto frames = static_cast<core::i64>(clip->frames);
+        for (core::i64 frame = std::max<core::i64>(start, 0); frame < end && frame < frames; ++frame) {
+            const auto at = static_cast<core::usize>(frame) * kChannels;
+            mono[static_cast<core::usize>(frame - start)] = (clip->samples[at] + clip->samples[at + 1]) * 0.5f;
+        }
+    }
+    else {
+        if (meterStreamClip != clip) {
+            meterStream = std::make_unique<Stream>(*clip);
+            meterStreamClip = clip;
+        }
+        const u64 first = static_cast<u64>(std::max<core::i64>(start, 0));
+        if (const f32* at = meterStream->frameAt(first); at != nullptr) {
+            const u64 offset = first - meterStream->start;
+            for (u64 index = offset; index < meterStream->count; ++index) {
+                const core::i64 frame = static_cast<core::i64>(meterStream->start + index);
+                if (frame >= end)
+                    break;
+                const f32* sample = &meterStream->window[static_cast<core::usize>(index) * kChannels];
+                mono[static_cast<core::usize>(frame - start)] = (sample[0] + sample[1]) * 0.5f;
+            }
+        }
+    }
+    meterWork += 1;
+    return true;
+}
+
+AudioSystem::Impl::Metered& AudioSystem::Impl::measured(const scene::World& world, core::InstanceId id, bool banded)
+{
+    const u64 key = keyOf(id);
+    const scene::SoundComponent* sound = world.sounds().find(id);
+    const f64 position = sound != nullptr ? sound->timePosition : 0.0;
+    auto at = std::lower_bound(metered.begin(), metered.end(), key,
+                               [](const Metered& entry, u64 wanted) { return entry.key < wanted; });
+    if (at == metered.end() || at->key != key)
+        at = metered.insert(at, Metered{key, ~u64{0}, 0.0, 0.0f, {0.0f, 0.0f, 0.0f}, false});
+    const bool current = at->serial == serial && at->position == position;
+    if (current && (at->banded || !banded))
+        return *at;
+    at->serial = serial;
+    at->position = position;
+    at->loudness = 0.0f;
+    at->bands = {0.0f, 0.0f, 0.0f};
+    at->banded = banded;
+    if (window(world, id, meterMono)) {
+        at->loudness = levelOf(meterMono);
+        if (banded)
+            at->bands = bandsOf(meterMono, meterReal, meterImaginary);
+    }
+    return *at;
+}
+
+void AudioSystem::setLocalized(const asset::LocalizationIndex* index) noexcept
+{
+    if (m_impl == nullptr || m_impl->localized == index)
+        return;
+    m_impl->localized = index;
+    m_impl->slots.clear();
+    m_impl->languageChanged();
+}
+
+void AudioSystem::setVoiceLocale(std::string_view locale)
+{
+    if (m_impl == nullptr || m_impl->voiceLanguage == locale)
+        return;
+    m_impl->voiceLanguage = std::string(locale);
+    m_impl->languageChanged();
+}
+
+std::string_view AudioSystem::voiceLocale() const noexcept
+{
+    return m_impl != nullptr ? std::string_view{m_impl->voiceLanguage} : std::string_view{};
+}
+
+void AudioSystem::forget(std::span<const std::string> names)
+{
+    if (m_impl == nullptr || names.empty())
+        return;
+    // A read of the old bytes still on its way would be installed as the new.
+    m_impl->releasePrefetch();
+    const std::lock_guard<std::mutex> lock(m_impl->mutex);
+    bool any = false;
+    for (const std::string& name : names) {
+        const auto clip = std::lower_bound(m_impl->clips.begin(), m_impl->clips.end(), std::string_view{name},
+                                           [](const auto& entry, std::string_view key) { return entry.first < key; });
+        if (clip != m_impl->clips.end() && clip->first == name) {
+            m_impl->clips.erase(clip);
+            any = true;
+        }
+        const auto length = std::lower_bound(m_impl->lengths.begin(), m_impl->lengths.end(), std::string_view{name},
+                                             [](const auto& entry, std::string_view key) { return entry.first < key; });
+        if (length != m_impl->lengths.end() && length->first == name) {
+            m_impl->lengths.erase(length);
+            any = true;
+        }
+        if (m_impl->audition.content == name) {
+            m_impl->audition.active = false;
+            m_impl->audition.clip = nullptr;
+            m_impl->audition.stream.reset();
+            m_impl->audition.content.clear();
+        }
+    }
+    // A file that came or went may be a language's: what each name resolves
+    // to and how long it is are found again.
+    m_impl->slots.clear();
+    m_impl->resolvedNames.clear();
+    if (!any)
+        return;
+    // The voices hold the clips they were given, and the audio thread reads
+    // through them: none outlives a clip that was let go. The next frame
+    // makes them again, from what the files are now.
+    m_impl->voices.clear();
+    m_impl->meterStream.reset();
+    m_impl->meterStreamClip = nullptr;
+}
+
+std::string_view AudioSystem::heardAs(const scene::World& world, core::InstanceId sound) const noexcept
+{
+    if (m_impl == nullptr)
+        return {};
+    if (const Impl::Heard* heard = m_impl->heardOf(sound); heard != nullptr)
+        return heard->physical;
+    // A game with nothing in another language keeps no such list: a playing
+    // sound is heard as the file it names.
+    const scene::SoundComponent* found = world.sounds().find(sound);
+    return found != nullptr && found->playing ? std::string_view{found->content} : std::string_view{};
+}
+
+std::span<const core::InstanceId> AudioSystem::heardNow() const noexcept
+{
+    if (m_impl == nullptr)
+        return {};
+    return m_impl->heardIds;
+}
+
+f32 AudioSystem::loudness(const scene::World& world, core::InstanceId sound)
+{
+    return m_impl != nullptr ? m_impl->measured(world, sound, false).loudness : 0.0f;
+}
+
+std::array<f32, 3> AudioSystem::bands(const scene::World& world, core::InstanceId sound)
+{
+    if (m_impl == nullptr)
+        return {0.0f, 0.0f, 0.0f};
+    return m_impl->measured(world, sound, true).bands;
+}
+
+std::array<f32, 3> AudioSystem::categoryBands(const scene::World& world, core::i32 category)
+{
+    if (m_impl == nullptr)
+        return {0.0f, 0.0f, 0.0f};
+    // The windows summed as the game mixes them, then ONE transform: twenty
+    // sounds of a category cost twenty copies and one analysis.
+    m_impl->meterSum.assign(kMeterFrames, 0.0f);
+    bool any = false;
+    for (const Impl::Audible& sound : m_impl->audible) {
+        if (sound.category != category || !m_impl->window(world, sound.id, m_impl->meterMono))
+            continue;
+        any = true;
+        for (core::usize index = 0; index < kMeterFrames; ++index)
+            m_impl->meterSum[index] += m_impl->meterMono[index] * sound.game;
+    }
+    if (!any)
+        return {0.0f, 0.0f, 0.0f};
+    return bandsOf(m_impl->meterSum, m_impl->meterReal, m_impl->meterImaginary);
+}
+
+std::optional<std::string> AudioSystem::spokenIn(const scene::World& world, core::InstanceId sound)
+{
+    const scene::SoundComponent* found = world.sounds().find(sound);
+    if (m_impl == nullptr || found == nullptr)
+        return std::nullopt;
+    if (m_impl->slotOf(found->content).frames == 0)
+        return std::nullopt;
+    const Impl::Heard* heard = m_impl->heardOf(sound);
+    const std::string_view name =
+        heard != nullptr ? std::string_view{heard->physical} : m_impl->physicalNow(found->content);
+    return std::string(asset::localeOfResolved(name));
+}
+
+scene::SoundMeter* AudioSystem::meter() noexcept
+{
+    if (m_impl == nullptr)
+        return nullptr;
+    m_impl->meter.system = this;
+    return &m_impl->meter;
+}
+
+u64 AudioSystem::meterWork() const noexcept
+{
+    return m_impl != nullptr ? m_impl->meterWork : 0;
+}
+
+f32 AudioSystem::musicDuck() const noexcept
+{
+    return m_impl != nullptr ? m_impl->duckNow.load(std::memory_order_relaxed) : 1.0f;
 }
 
 } // namespace engine::audio

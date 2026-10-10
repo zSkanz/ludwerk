@@ -387,6 +387,11 @@ struct EngineOptions
     // `settings.json` beside the saves before the first frame, and
     // `GraphicsService:SaveAsync` writes them there.
     bool rememberPlayerSettings = true;
+    // `--locale=` and `--voice-locale=`: the text and the voice language for
+    // this run, in front of what the player saved and never written to it.
+    // For a developer checking a language, and for a test.
+    std::string localeOverride;
+    std::string voiceLocaleOverride;
     // `[project] default_locale` (ADR 0154).
     std::string defaultLocale = "en";
 

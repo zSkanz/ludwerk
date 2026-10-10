@@ -129,6 +129,9 @@ inline constexpr scene::EnumId DecalBlendModeEnumId = 86;
 inline constexpr scene::EnumId ParticleFlipbookModeEnumId = 87;
 inline constexpr scene::EnumId SwarmAgentRemovalEnumId = 88;
 inline constexpr scene::EnumId RelayStateEnumId = 89;
+inline constexpr scene::EnumId SoundCategoryEnumId = 90;
+inline constexpr scene::EnumId SubtitleModeEnumId = 91;
+inline constexpr scene::EnumId LipSyncModeEnumId = 92;
 
 } // namespace generated
 

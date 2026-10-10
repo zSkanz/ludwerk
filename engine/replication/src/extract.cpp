@@ -457,6 +457,19 @@ constexpr Carried<Sound> SoundCarried[] = {
     {"PlaybackSpeed", &Sound::playbackSpeed},
     {"RollOffMinDistance", &Sound::rollOffMinDistance},
     {"RollOffMaxDistance", &Sound::rollOffMaxDistance},
+    // Whether it is an effect, music or a voice (ADR 0200).
+    {"Category", &Sound::category},
+};
+
+// What a sound says (ADR 0200, protocol 45): two catalog keys, a colour, and
+// how long it lasts when nothing was recorded. Which captions are current is
+// each machine's own.
+using Caption = scene::CaptionComponent;
+constexpr Carried<Caption> CaptionCarried[] = {
+    {"Text", &Caption::text},
+    {"Speaker", &Caption::speaker},
+    {"Color", &Caption::color},
+    {"Seconds", &Caption::seconds},
 };
 
 // A character's animation, as authored (ADR 0197 to 0199, protocol 44): which
@@ -481,6 +494,13 @@ constexpr Carried<Limb> LimbCarried[] = {
     {"Weight", &Limb::weight},
     {"Enabled", &Limb::enabled},
     {"Smoothing", &Limb::smoothing},
+};
+
+// A mouth (ADR 0200), as authored: what moves it is each machine's own.
+using Mouth = scene::LipSyncComponent;
+constexpr Carried<Mouth> MouthCarried[] = {
+    {"Source", &Mouth::source},       {"Mode", &Mouth::mode},     {"Map", &Mouth::map},
+    {"Smoothing", &Mouth::smoothing}, {"Weight", &Mouth::weight}, {"Enabled", &Mouth::enabled},
 };
 
 using Feet = scene::FootPlacementComponent;
@@ -833,6 +853,12 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "MeshSize") {
             setVec3(out, mesh->meshSize);
+            return true;
+        }
+        // Read as this machine's instance; the session sends the peer's
+        // network id, as it does a model's primary part.
+        if (field.name == "PoseFrom") {
+            setInstance(out, mesh->poseFrom);
             return true;
         }
         return false;
@@ -1638,6 +1664,14 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         const Feet* feet = world.footPlacements().find(id);
         return feet != nullptr && readCarried(FeetCarried, *feet, field.name, out, further);
     }
+    if (field.pool == "lipSyncs") {
+        const Mouth* mouth = world.lipSyncs().find(id);
+        return mouth != nullptr && readCarried(MouthCarried, *mouth, field.name, out, further);
+    }
+    if (field.pool == "captions") {
+        const Caption* caption = world.captions().find(id);
+        return caption != nullptr && readCarried(CaptionCarried, *caption, field.name, out, further);
+    }
     if (field.pool == "sounds") {
         const Sound* sound = world.sounds().find(id);
         if (sound == nullptr)
@@ -2149,6 +2183,11 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "MeshSize") {
             mesh->meshSize = asVec3(value);
+            return true;
+        }
+        // This machine's own copy of the leader: the session resolved it.
+        if (field.name == "PoseFrom") {
+            mesh->poseFrom = asInstance(value);
             return true;
         }
         return false;
@@ -2671,6 +2710,14 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         Feet* feet = world.footPlacements().find(id);
         return feet != nullptr && writeCarried(FeetCarried, *feet, field.name, value, further);
     }
+    if (field.pool == "lipSyncs") {
+        Mouth* mouth = world.lipSyncs().find(id);
+        return mouth != nullptr && writeCarried(MouthCarried, *mouth, field.name, value, further);
+    }
+    if (field.pool == "captions") {
+        Caption* caption = world.captions().find(id);
+        return caption != nullptr && writeCarried(CaptionCarried, *caption, field.name, value, further);
+    }
     if (field.pool == "sounds") {
         Sound* sound = world.sounds().find(id);
         if (sound == nullptr)
@@ -2834,7 +2881,9 @@ constexpr NamedPool Pools[] = {
             ENG_REPLICATION_POOL_DIGEST(highlights) ENG_REPLICATION_POOL_DIGEST(beams)
                 ENG_REPLICATION_POOL_DIGEST(trails) ENG_REPLICATION_POOL_DIGEST(sounds)
                     ENG_REPLICATION_POOL_DIGEST(animationPlayers) ENG_REPLICATION_POOL_DIGEST(ikControls)
-                        ENG_REPLICATION_POOL_DIGEST(footPlacements)
+                        ENG_REPLICATION_POOL_DIGEST(footPlacements) ENG_REPLICATION_POOL_DIGEST(lipSyncs)
+    // Protocol 45: what a sound says (ADR 0200).
+    ENG_REPLICATION_POOL_DIGEST(captions)
     // **A pivot is known, and not
     // read**: every part and model
     // has one, nearly all at the

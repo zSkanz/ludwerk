@@ -120,8 +120,12 @@ std::vector<SideFinding> lintScriptSide(std::string_view source, script::ScriptS
     // `SetMorphWeight` (ADR 0196): a weight is kept by the machine that
     // draws it, and one set by the server's script is seen by nobody but a
     // host who is also playing.
-    constexpr std::array<std::string_view, 6> PlayerOnly{"CurrentCamera",   "UIService",           "InputService",
-                                                         "GraphicsService", "LocalizationService", "SetMorphWeight"};
+    // And what a machine hears and reads (ADR 0200): the player's volumes,
+    // captions and what a sound is doing right now are that machine's own.
+    constexpr std::array<std::string_view, 15> PlayerOnly{
+        "CurrentCamera",  "UIService",   "InputService",  "GraphicsService", "LocalizationService",
+        "SetMorphWeight", "GetCaptions", "ShowsCaption",  "SubtitleScale",   "SubtitleBackground",
+        "PlayerVolume",   "MusicVolume", "EffectsVolume", "VoiceVolume",     "Loudness"};
     for (const Word& word : words) {
         if (side == script::ScriptSide::Client && oneOf(word.text, ServerOnly)) {
             findings.push_back(SideFinding{word.line, word.column, static_cast<core::u32>(word.text.size()),
