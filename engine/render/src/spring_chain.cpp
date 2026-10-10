@@ -57,26 +57,104 @@ constexpr core::usize MaxChain = 96;
     return core::normalize(animated * cosine + across * (sine / size));
 }
 
-// `point` out of every capsule, `radius` thick itself.
-[[nodiscard]] DVec3 pushedOut(DVec3 point, std::span<const SpringCapsule> capsules, f32 radius) noexcept
+// Where two segments come nearest each other: how far along the first and
+// along the second, each from nought to one. (Ericson, "Real-Time Collision
+// Detection", 5.1.9, with the cases a point-like segment makes.)
+void nearest(Vec3 p1, Vec3 q1, Vec3 p2, Vec3 q2, f32& s, f32& u) noexcept
 {
+    const Vec3 d1 = q1 - p1;
+    const Vec3 d2 = q2 - p2;
+    const Vec3 r = p1 - p2;
+    const f32 a = core::dot(d1, d1);
+    const f32 e = core::dot(d2, d2);
+    const f32 f = core::dot(d2, r);
+    constexpr f32 Tiny = 1e-10f;
+    if (a <= Tiny && e <= Tiny) {
+        s = 0.0f;
+        u = 0.0f;
+        return;
+    }
+    if (a <= Tiny) {
+        s = 0.0f;
+        u = std::clamp(f / e, 0.0f, 1.0f);
+        return;
+    }
+    const f32 c = core::dot(d1, r);
+    if (e <= Tiny) {
+        u = 0.0f;
+        s = std::clamp(-c / a, 0.0f, 1.0f);
+        return;
+    }
+    const f32 b = core::dot(d1, d2);
+    const f32 denominator = a * e - b * b;
+    s = denominator > Tiny ? std::clamp((b * f - c * e) / denominator, 0.0f, 1.0f) : 0.0f;
+    u = (b * s + f) / e;
+    if (u < 0.0f) {
+        u = 0.0f;
+        s = std::clamp(-c / a, 0.0f, 1.0f);
+    }
+    else if (u > 1.0f) {
+        u = 1.0f;
+        s = std::clamp((b - c) / a, 0.0f, 1.0f);
+    }
+}
+
+// **The LINK out of every capsule, not only the joint at its end** (D607).
+//
+// What a chain draws is the cloth between its joints. Pushing the joints out,
+// one at a time, left two ways through a body: a link whose two ends were both
+// outside cut a corner of it, and a joint that crossed the whole body in one
+// step -- a stop out of a dash -- was "out" on the far side with its link
+// through the middle. The owner's cape hung inside his character.
+//
+// So the test is the link from `anchor` to `end` against the capsule's axis:
+// where they come nearest, and if that is nearer than the two thicknesses, the
+// end is moved by what puts that point of the link back outside -- further
+// than the point itself has to go, since the link turns about its anchor. A
+// link that runs through the axis has no "nearest side"; it goes back to the
+// side its end was on a step ago, which is the side it came from.
+//
+// True if anything was moved.
+bool linkOut(DVec3 anchor, DVec3& end, DVec3 before, std::span<const SpringCapsule> capsules, f32 radius) noexcept
+{
+    bool moved = false;
     for (const SpringCapsule& capsule : capsules) {
+        // Measured from the capsule's own start, so the numbers are small.
+        const Vec3 from = between(capsule.a, anchor);
+        const Vec3 to = between(capsule.a, end);
         const Vec3 axis = between(capsule.a, capsule.b);
-        const Vec3 toPoint = between(capsule.a, point);
-        const f32 lengthSquared = core::dot(axis, axis);
-        const f32 along =
-            lengthSquared > 1e-12f ? std::clamp(core::dot(toPoint, axis) / lengthSquared, 0.0f, 1.0f) : 0.0f;
-        const Vec3 away = toPoint - axis * along;
-        const f32 distance = core::length(away);
+        f32 along = 0.0f;
+        f32 onAxis = 0.0f;
+        nearest(from, to, Vec3{}, axis, along, onAxis);
+        // The anchor's end of the link is the parent's to keep clear: it is
+        // pinned, or it was the end of the link before this one.
+        if (along < 0.02f)
+            continue;
+        const Vec3 onLink = from + (to - from) * along;
+        const Vec3 core = axis * onAxis;
+        Vec3 away = onLink - core;
+        f32 distance = core::length(away);
         const f32 clear = capsule.radius + radius;
         if (distance >= clear)
             continue;
-        // On the axis itself there is no way out that is nearer than another:
-        // upward is as good as any and does not depend on the frame.
+        if (distance < clear * 0.25f) {
+            // Through the middle: back the way it came.
+            const Vec3 was = between(capsule.a, before) - core;
+            const f32 lengthSquared = core::dot(axis, axis);
+            const Vec3 across = lengthSquared > 1e-12f ? was - axis * (core::dot(was, axis) / lengthSquared) : was;
+            if (core::dot(across, across) > 1e-10f) {
+                away = core::normalize(across) * std::max(distance, 1e-4f);
+                distance = core::length(away);
+            }
+        }
         const Vec3 direction = distance > 1e-6f ? away * (1.0f / distance) : Vec3{0.0f, 1.0f, 0.0f};
-        point = offsetBy(point, direction * (clear - distance));
+        // The end moves by more than the point does, by how far along the
+        // link the point is; capped, for a point very near the anchor.
+        const f32 reachFactor = 1.0f / std::max(along, 0.1f);
+        end = offsetBy(end, direction * ((clear - distance) * reachFactor));
+        moved = true;
     }
-    return point;
+    return moved;
 }
 
 } // namespace
@@ -187,18 +265,27 @@ void stepSpringChain(std::span<SpringJoint> chain, SpringState& state, const cor
                 const DVec3 rest = offsetBy(anchor, offset);
                 next = offsetBy(next, between(next, rest) * pull);
             }
-            // At its length from its parent, inside its limit, out of the
-            // body -- and at its length again, since the push moved it.
-            for (int pass = 0; pass < 2; ++pass) {
+            // At its length from its parent and inside its limit; then out of
+            // the body, link and all, and at its length again, since the push
+            // moved it -- a few times round, because each undoes a little of
+            // the other. **The body wins the last word**: a limit that would
+            // hold the cloth inside the character is a limit the artist did
+            // not mean.
+            const auto atLength = [&](bool withLimit) {
                 Vec3 direction = between(anchor, next);
                 const f32 size = core::length(direction);
                 direction = size > 1e-6f ? direction * (1.0f / size) : animated;
-                direction = limited(direction, animated, limitCos, limitSin);
+                if (withLimit)
+                    direction = limited(direction, animated, limitCos, limitSin);
                 next = offsetBy(anchor, direction * reach);
-                if (pass == 0 && !capsules.empty())
-                    next = pushedOut(next, capsules, thickness);
-                else
-                    break;
+            };
+            atLength(true);
+            if (!capsules.empty()) {
+                for (int pass = 0; pass < 6; ++pass) {
+                    if (!linkOut(anchor, next, joint.position, capsules, thickness))
+                        break;
+                    atLength(false);
+                }
             }
             if (integrate) {
                 joint.previous = joint.position;

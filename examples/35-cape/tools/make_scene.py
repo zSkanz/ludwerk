@@ -37,17 +37,26 @@ def figure(name, at):
                     "Radius": 0.04,
                 },
             },
-            {
-                # The back and the legs: a capsule the height of the body.
-                "class": "SpringCollider",
-                "name": "Back",
-                "properties": {
-                    "JointName": "Body",
-                    "Offset": [0.0, 0.25, 0.0],
-                    "Length": 1.3,
-                    "Radius": 0.2,
-                },
-            },
+            # **What the cape rests on.** The body is a block six tenths wide
+            # and a third deep, and a capsule is round: one down the middle
+            # covers the middle column of the cape and lets the two outer ones
+            # swing straight through the block's corners -- which is what the
+            # first version of this example did. Three, side by side, as deep
+            # as the block is, cover its whole back; a rounder character needs
+            # one for the torso and one a leg.
+            *[
+                {
+                    "class": "SpringCollider",
+                    "name": name,
+                    "properties": {
+                        "JointName": "Body",
+                        "Offset": [x, 0.17, 0.0],
+                        "Length": 1.38,
+                        "Radius": 0.17,
+                    },
+                }
+                for name, x in (("BackLeft", -0.2), ("Back", 0.0), ("BackRight", 0.2))
+            ],
         ],
     }
 

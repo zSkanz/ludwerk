@@ -66,6 +66,25 @@ collider of a mesh applies to every chain of that mesh; a list on each chain
 was considered and is not worth a property a game would always fill the same
 way.
 
+**A collider keeps the LINK out, not the joint** (amended 2026-10-10, D607).
+The first solver pushed each joint out of each capsule, which is what the
+simplest spring bones do and is not enough: what is drawn is the cloth
+between the joints. A link with both ends outside cut the body's corner, and
+a joint thrown across the whole body in one step was out on the far side
+with its link through the middle. The test is now the segment from a joint's
+parent to the joint against the capsule's axis; the joint is moved by what
+puts the nearest point of that segment outside, a segment through the axis
+goes back to the side its joint was on a step before, and length and
+push-out are repeated up to six times. Where `LimitAngle` and a collider
+disagree the collider wins. It costs nothing that measures: a hundred
+figures, 0.86 ms a frame with a collider each and 0.93 ms with three.
+
+A capsule is round and a body often is not: the example's first figure had
+one capsule down the middle of a block twice as wide as it was deep, and the
+cape's outer columns never met it. Several side by side is the answer, and
+the manual says so; a box collider was considered and is left until a game
+asks, since a real character is nearer to capsules than to a block.
+
 **What an artist makes**: three or four columns of four or five joints for a
 cape, each column a chain under a top joint on the shoulders, and one
 `SpringBone` whose pattern is those tops. Naming a joint that all the columns
@@ -126,7 +145,10 @@ animation has it and keeps its length; dragged and released it settles in the
 same place at 30, 60 and 144 frames a second; it trails and never further than
 its length; half a second in one frame, and a teleport, leave it at rest and
 quiet afterwards; it never bends past its limit; it stays out of a capsule;
-its first joint turns to face its child.
+its first joint turns to face its child; and a three-column cape, its joints
+and ten points along every link, is out of three capsules after a run, a
+dead stop, a dash, a teleport and a wind into the body, and rests on them
+(D607).
 
 `engine/render/tests/spring_bones_tests.cpp`: a cape on a still body with
 nothing playing moves in the wind in the pose that is DRAWN, each joint still
@@ -134,7 +156,8 @@ its length from the one above and the top where the animation has it -- while
 the pose the simulation reads is untouched; switched off, or naming a joint
 the rig lacks, it is drawn as the animation has it; and one instance with a
 pattern is a chain for each column, whether the pattern names the tops or
-every joint of the cape.
+every joint of the cape; and chains a pattern found are drawn clear of a
+collider placed by its joint, pressed onto it by a gale.
 
 `secondary_motion_steps`: the example run for a second and a half, its six
 chains of thirty joints stepped in a real frame, with no warning.

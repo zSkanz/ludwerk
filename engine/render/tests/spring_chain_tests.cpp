@@ -1,8 +1,10 @@
 // The chain solver (ADR 0194), on numbers: what it owes at any frame rate.
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <doctest/doctest.h>
+#include <span>
 #include <vector>
 
 #include "engine/render/spring_chain.h"
@@ -208,4 +210,104 @@ TEST_CASE("a spring chain's first joint turns to face the joint that hangs from 
     const Vec3 carried = chain[0].rotation * Vec3{0.0f, -1.0f, 0.0f};
     const Vec3 actual = core::normalize(core::toVec3(chain[1].position - chain[0].position));
     CHECK(core::dot(carried, actual) > 0.9999f);
+}
+
+namespace {
+
+// How far inside a capsule a point is: positive is inside, by that much.
+[[nodiscard]] core::f64 depthIn(const render::SpringCapsule& capsule, DVec3 point, core::f32 radius)
+{
+    const Vec3 axis = core::toVec3(capsule.b - capsule.a);
+    const Vec3 to = core::toVec3(point - capsule.a);
+    const core::f32 lengthSquared = core::dot(axis, axis);
+    const core::f32 along = lengthSquared > 1e-12f ? std::clamp(core::dot(to, axis) / lengthSquared, 0.0f, 1.0f) : 0.0f;
+    return static_cast<core::f64>(capsule.radius + radius) - static_cast<core::f64>(core::length(to - axis * along));
+}
+
+// The deepest any joint, or any point along any link between two joints, is
+// inside any capsule.
+[[nodiscard]] core::f64 deepest(const std::vector<render::SpringJoint>& chain,
+                                std::span<const render::SpringCapsule> capsules, core::f32 radius)
+{
+    core::f64 worst = -1.0e9;
+    for (core::usize index = 1; index < chain.size(); ++index) {
+        const DVec3 from = chain[static_cast<core::usize>(chain[index].parent)].position;
+        const DVec3 to = chain[index].position;
+        // The joint itself and nine points along its link; the link's first
+        // tenth is the parent's, which is pinned or was tested as a joint.
+        for (int step = 1; step <= 10; ++step) {
+            const core::f64 t = static_cast<core::f64>(step) / 10.0;
+            const DVec3 point{from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, from.z + (to.z - from.z) * t};
+            for (const render::SpringCapsule& capsule : capsules)
+                worst = std::max(worst, depthIn(capsule, point, radius));
+        }
+    }
+    return worst;
+}
+
+} // namespace
+
+TEST_CASE("D607: a cape rests on the body it is on, through a stop, a dash, a teleport and a wind")
+{
+    // The body: a capsule the height of a figure, behind which the strip
+    // hangs a little clear. It moves along x and the strip trails along -x --
+    // so "into the body" is the strip swinging forward through it, which is
+    // what it does on a dead stop and what a wind from behind does standing.
+    //
+    // Held: after every frame of all of it, no joint and no point along a link
+    // is inside the capsule by more than a millimetre. The solver pushed
+    // JOINTS out, a step at a time, with nothing for the link between two of
+    // them and nothing for a joint that crossed the whole body in one step.
+    render::SpringSettings settings;
+    settings.stiffness = 0.1f;
+    settings.radius = 0.04f;
+    core::CFrameD root;
+    root.position = DVec3{-0.3, 0.0, 0.0};
+
+    const auto body = [&](const core::CFrameD& at) {
+        // Its axis a quarter of a unit in front of where the strip hangs.
+        return render::SpringCapsule{DVec3{at.position.x + 0.3, -4.2, 0.0}, DVec3{at.position.x + 0.3, 0.2, 0.0}, 0.2f};
+    };
+
+    std::vector<render::SpringJoint> chain = strip();
+    render::SpringState state;
+    core::f64 worst = -1.0e9;
+    const auto frame = [&](Vec3 push, core::f32 seconds) {
+        const std::array<render::SpringCapsule, 1> capsules{body(root)};
+        render::stepSpringChain(chain, state, root, settings, capsules, Gravity + push, 1.0f, seconds, 8.0f);
+        worst = std::max(worst, deepest(chain, capsules, settings.radius));
+    };
+
+    // A run, the strip streaming out behind.
+    for (int at = 0; at < 90; ++at) {
+        root.position.x += 0.12;
+        frame({}, 1.0f / 60.0f);
+    }
+    // A dead stop: it swings forward, into the body.
+    for (int at = 0; at < 120; ++at)
+        frame({}, 1.0f / 60.0f);
+    CHECK(worst < 0.001);
+
+    // A dash: thirty metres a second for a third of a second, then nothing.
+    for (int at = 0; at < 20; ++at) {
+        root.position.x += 0.5;
+        frame({}, 1.0f / 60.0f);
+    }
+    for (int at = 0; at < 120; ++at)
+        frame({}, 1.0f / 60.0f);
+    CHECK(worst < 0.001);
+
+    // Put somewhere else, and left.
+    root.position = DVec3{400.0, 0.0, 0.0};
+    for (int at = 0; at < 60; ++at)
+        frame({}, 1.0f / 60.0f);
+    CHECK(worst < 0.001);
+
+    // A gale from behind, pressing it onto the body, at thirty frames a
+    // second -- the fewest steps a frame.
+    for (int at = 0; at < 120; ++at)
+        frame(Vec3{60.0f, 0.0f, 0.0f}, 1.0f / 30.0f);
+    CHECK(worst < 0.001);
+    // And it is ON the body, not flung clear of it: the tip is within reach.
+    CHECK(chain.back().position.x < root.position.x + 0.3 + 0.2 + 0.04 + 0.6);
 }

@@ -9,6 +9,7 @@
 // figures are moved by a script, and the editor has no window to open in a
 // test. So a still body in the wind is the fixture: if the chain moves here it
 // moves in the editor's viewport, by the same call.
+#include <algorithm>
 #include <cmath>
 #include <doctest/doctest.h>
 #include <string>
@@ -102,7 +103,19 @@ struct Fixture
         return id;
     }
 
-    // Frames in a wind from the left, a sixtieth of a second each.
+    // A `SpringCollider` under the mesh, as the instance would be.
+    core::InstanceId collider(const scene::SpringColliderComponent& says)
+    {
+        const core::InstanceId id = world.create(instanceClass);
+        (void)world.setParent(id, mesh);
+        world.springColliders().add(id, says);
+        return id;
+    }
+
+    // The wind the frames below blow: from the left unless a case says.
+    core::Vec3 wind{9.0f, 0.0f, 0.0f};
+
+    // Frames in that wind, a sixtieth of a second each.
     void frames(render::SpringBones& springs, render::AnimationSystem& animation, int count,
                 f32 step = render::SpringStep)
     {
@@ -111,7 +124,7 @@ struct Fixture
             poses.begin(world, nullptr, 1.0f);
             render::SpringFrame frame;
             frame.seconds = 1.0f / 60.0f;
-            frame.wind.global = core::Vec3{9.0f, 0.0f, 0.0f};
+            frame.wind.global = wind;
             frame.time = static_cast<f32>(at) / 60.0f;
             frame.step = step;
             springs.update(world, animation, poses, frame);
@@ -238,4 +251,73 @@ TEST_CASE("one SpringBone with a pattern is a chain for each column of a cape")
         CHECK(springs.chainsStepped() == 3);
         CHECK(springs.jointsStepped() == 12);
     }
+}
+
+TEST_CASE("D607: a cape found by a pattern is kept out of its mesh's colliders, links and all")
+{
+    // The owner's cape hung inside his character. Part of that was the
+    // example -- one thin capsule under a wide block -- and part was the
+    // solver, held by its own test. This holds what lies between them: that a
+    // `SpringCollider` under the mesh reaches every chain of the mesh, the ones
+    // a PATTERN found as much as one a `RootJoint` named; that it is where its
+    // joint is; and that what is drawn is clear of it.
+    //
+    // Three columns a quarter apart hang a fifth behind the body's axis. The
+    // capsule stands on the middle column's line, as tall as the cape; a gale
+    // blows the cape straight at it.
+    Fixture fixture;
+    fixture.rig(capedRig({"L", "M", "R"}));
+    scene::SpringBoneComponent says;
+    says.jointPattern = fixture.atoms.intern("Cape_*0");
+    says.stiffness = 0.02f;
+    says.radius = 0.05f;
+    (void)fixture.spring(says);
+
+    scene::SpringColliderComponent body;
+    body.jointName = fixture.atoms.intern("Body");
+    body.offset = core::Vec3{0.25f, 0.3f, 0.0f};
+    body.length = 1.4f;
+    body.radius = 0.15f;
+    (void)fixture.collider(body);
+
+    render::AnimationSystem animation{fixture.world, fixture.skeletons};
+    render::SpringBones springs;
+    fixture.wind = core::Vec3{0.0f, 0.0f, -40.0f};
+
+    // How far inside the capsule a point of the rig's space is.
+    const auto depth = [&](core::Vec3 point) {
+        const core::Vec3 from = body.offset;
+        const core::Vec3 axis{0.0f, body.length, 0.0f};
+        const core::Vec3 to = point - from;
+        const f32 along = std::clamp(core::dot(to, axis) / core::dot(axis, axis), 0.0f, 1.0f);
+        return (body.radius + says.radius) - core::length(to - axis * along);
+    };
+
+    f32 worst = -1.0e9f;
+    for (int round = 0; round < 6; ++round) {
+        fixture.frames(springs, animation, 30);
+        REQUIRE(springs.chainsStepped() == 3);
+        // Every joint of every column, and nine points along the link above it.
+        for (core::usize column = 0; column < 3; ++column) {
+            for (core::usize row = 1; row < 4; ++row) {
+                const core::usize joint = 1 + column * 4 + row;
+                const core::Vec3 above = drawnAt(animation, fixture.mesh, joint - 1);
+                const core::Vec3 here = drawnAt(animation, fixture.mesh, joint);
+                for (int step = 1; step <= 10; ++step)
+                    worst = std::max(worst, depth(above + (here - above) * (static_cast<f32>(step) / 10.0f)));
+            }
+        }
+    }
+    CHECK(worst < 0.002f);
+
+    // **And it is ON the body**: the middle column, which the capsule stands
+    // behind, is held a thickness off it and no further -- pressed there by
+    // the gale, not hanging where it was hung and not flung clear.
+    const core::Vec3 pressed = drawnAt(animation, fixture.mesh, 1 + 4 + 2);
+    CHECK(pressed.z < 0.21f + 0.03f);
+    CHECK(pressed.z > 0.15f);
+    // The outer columns are a quarter to either side of the capsule's line,
+    // further than it and the cape are thick: the gale carries them past.
+    CHECK(drawnAt(animation, fixture.mesh, 1 + 0 + 3).z < 0.0f);
+    CHECK(drawnAt(animation, fixture.mesh, 1 + 8 + 3).z < 0.0f);
 }

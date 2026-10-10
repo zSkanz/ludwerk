@@ -1,9 +1,10 @@
 # 35 — Cape
 
 A cape on a figure (ADR 0194): one `SpringBone` whose pattern is the top of
-each of three columns of joints, one `SpringCollider` for the body they must
-not pass through, and a figure
-that does what a hero does to a cape -- runs a circle, stops dead, dashes, and
+each of three columns of joints, three `SpringCollider`s side by side across
+the back of the body the cape rests on -- a capsule is round and the body is a
+block, so one down the middle would let the outer columns through -- and a
+figure that does what a hero does to a cape -- runs a circle, stops dead, dashes, and
 is put somewhere else in one frame -- beside one that stands in the wind.
 
 Run it with `run.bat`, or `engine-host examples/35-cape`.

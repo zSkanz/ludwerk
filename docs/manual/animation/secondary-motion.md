@@ -81,9 +81,31 @@ your own and compare the joints.
 9. **Export as glTF with the armature**, as for any skinned model. Nothing
    else is baked.
 
-Then, in the engine, one `SpringBone` with a pattern for the cape, and a
-`SpringCollider` or two on the body's joints -- usually one for the back and
-one a leg.
+Then, in the engine, one `SpringBone` with a pattern for the cape, and
+`SpringCollider`s on the body's joints for what the cape rests on.
+
+## Covering the body
+
+A collider is a capsule: round, however wide the body is. **A cape is kept
+out of the capsules, not out of the mesh**, so a chain that hangs outside
+every capsule's reach goes through the body there -- and the usual way to
+get that is one capsule down the middle of a back that is wider than it is
+deep. The outer columns of the cape never meet it.
+
+- **A wide back takes capsules side by side**, each as deep as the body is
+  there, overlapping a little. The cape example has three across a block six
+  tenths wide.
+- **A leg takes one of its own**, on the thigh's joint, when the cape hangs
+  below the hips: a capsule follows its joint, so it swings with the stride.
+- **`Radius` on the `SpringBone` is half the cloth's thickness.** The cape
+  lies that far off the capsules, so a cape that looks sunk into the body
+  wants a larger one, and one that floats off it a smaller.
+
+What is kept out is the whole link between two joints, not only the joints:
+a cape of long links does not cut a corner of the body, and one that is
+thrown at the body -- a dead stop out of a dash -- lands on the side it came
+from. The body has the last word over `LimitAngle`: a chain that cannot be
+both inside its limit and outside the body is outside the body.
 
 ## The dials
 

@@ -1520,6 +1520,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A cape rests on its body, and no longer hangs inside it** (D607). A
+  `SpringCollider` kept a chain's joints out and not the cloth between them:
+  a link could cut a corner of the body, and a chain flung through it in one
+  step -- a stop out of a dash -- stayed through it. The link is now what is
+  kept out. And the cape example covered a wide block with one round capsule
+  down its middle, which the outer columns of the cape never met; it has
+  three, side by side.
 - **A skinned model exported without normals is weighted as its file says**
   (D606). Such a model is given flat normals, which makes a vertex of every
   corner -- and the joints and weights were not carried to the new vertices,
