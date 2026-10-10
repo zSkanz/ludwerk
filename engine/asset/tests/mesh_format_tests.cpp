@@ -612,3 +612,144 @@ TEST_CASE("an animation channel or a skin index the skeleton cannot hold is refu
     farIndex.skin[0].joints[0] = 5.0f;
     CHECK(refused(farIndex));
 }
+
+// --- Morph targets (ADR 0196) ---------------------------------------------------
+
+namespace {
+
+// A grid with two targets and a clip that drives them: `Lift` raises every
+// vertex of the first row, `Lean` pushes one vertex sideways and tips its
+// normal. Sparse, as an importer leaves them: only what moves is listed.
+[[nodiscard]] Model morphedGrid()
+{
+    Model model = gridModel(8);
+    MorphTarget lift;
+    lift.name = "Lift";
+    for (u32 vertex = 0; vertex < 9; ++vertex)
+        lift.deltas.push_back(MorphDelta{vertex, {0.0f, 0.5f, 0.0f}, {}});
+    MorphTarget lean;
+    lean.name = "Lean";
+    lean.defaultWeight = 0.25f;
+    lean.deltas.push_back(MorphDelta{40, {0.125f, 0.0f, 0.0f}, {0.0f, 0.2f, 0.0f}});
+    model.morphs = {lift, lean};
+
+    AnimationClip clip;
+    clip.name = "Speak";
+    clip.duration = 1.0f;
+    for (u32 target = 0; target < 2; ++target) {
+        AnimationChannel channel;
+        channel.joint = target;
+        channel.target = AnimationChannel::Target::Weight;
+        channel.stride = 1;
+        channel.times = {0.0f, 1.0f};
+        channel.values = target == 0 ? std::vector<f32>{0.0f, 1.0f} : std::vector<f32>{0.25f, 0.0f};
+        clip.weights.push_back(channel);
+    }
+    model.clips.push_back(clip);
+    return model;
+}
+
+[[nodiscard]] bool hasTag(const std::vector<std::byte>& bytes, const char* tag)
+{
+    const auto* text = reinterpret_cast<const char*>(bytes.data());
+    return std::search(text, text + bytes.size(), tag, tag + 4) != text + bytes.size();
+}
+
+} // namespace
+
+TEST_CASE("a mesh's morph targets and its clips' weights round-trip through the format")
+{
+    seedRealCatalog();
+
+    const Model model = morphedGrid();
+    CompiledMesh compiled;
+    MeshCompileOptions options;
+    // One level: the simplifier does not know a vertex moves with a target
+    // yet, and this is about the format.
+    options.maxLods = 1;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), options, compiled).has_value());
+    REQUIRE(compiled.morphs.size() == 2);
+
+    const std::vector<std::byte> bytes = encodeMesh(compiled);
+    CompiledMesh decoded;
+    REQUIRE_FALSE(decodeMesh(bytes, decoded).has_value());
+
+    REQUIRE(decoded.morphs.size() == 2);
+    CHECK(decoded.morphs[0].name == "Lift");
+    CHECK(decoded.morphs[1].name == "Lean");
+    CHECK(decoded.morphs[1].defaultWeight == 0.25f);
+    REQUIRE(decoded.morphs[0].deltas.size() == 9);
+    REQUIRE(decoded.morphs[1].deltas.size() == 1);
+    for (usize at = 0; at < 9; ++at) {
+        CHECK(decoded.morphs[0].deltas[at].vertex == at);
+        CHECK(decoded.morphs[0].deltas[at].position.y == 0.5f);
+    }
+    CHECK(decoded.morphs[1].deltas[0].vertex == 40);
+    CHECK(decoded.morphs[1].deltas[0].position.x == 0.125f);
+    CHECK(decoded.morphs[1].deltas[0].normal.y == 0.2f);
+
+    REQUIRE(decoded.clips.size() == 1);
+    CHECK(decoded.clips[0].channels.empty());
+    REQUIRE(decoded.clips[0].weights.size() == 2);
+    CHECK(decoded.clips[0].weights[0].joint == 0);
+    CHECK(decoded.clips[0].weights[1].joint == 1);
+    CHECK(decoded.clips[0].weights[0].target == AnimationChannel::Target::Weight);
+    CHECK(decoded.clips[0].weights[0].times == std::vector<f32>{0.0f, 1.0f});
+    CHECK(decoded.clips[0].weights[0].values == std::vector<f32>{0.0f, 1.0f});
+    CHECK(decoded.clips[0].weights[1].values == std::vector<f32>{0.25f, 0.0f});
+
+    // Twice is the same bytes, targets and all.
+    CHECK(encodeMesh(decoded) == bytes);
+}
+
+TEST_CASE("a mesh with no morph targets is the file it was")
+{
+    seedRealCatalog();
+
+    const Model plain = gridModel(8);
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(plain, slotsFor(plain), {}, compiled).has_value());
+    const std::vector<std::byte> bytes = encodeMesh(compiled);
+    // None of the four sections: nothing for a reader from before them to
+    // skip, and nothing in the bytes that was not there.
+    CHECK_FALSE(hasTag(bytes, "MRPH"));
+    CHECK_FALSE(hasTag(bytes, "MRPD"));
+    CHECK_FALSE(hasTag(bytes, "WCHN"));
+    CHECK_FALSE(hasTag(bytes, "WCLP"));
+
+    const Model morphed = morphedGrid();
+    CompiledMesh withTargets;
+    MeshCompileOptions options;
+    options.maxLods = 1;
+    REQUIRE_FALSE(compileMesh(morphed, slotsFor(morphed), options, withTargets).has_value());
+    const std::vector<std::byte> morphedBytes = encodeMesh(withTargets);
+    CHECK(hasTag(morphedBytes, "MRPH"));
+    CHECK(hasTag(morphedBytes, "WCLP"));
+}
+
+TEST_CASE("a morph target that names a vertex the mesh does not have is refused")
+{
+    seedRealCatalog();
+
+    Model model = morphedGrid();
+    CompiledMesh compiled;
+    MeshCompileOptions options;
+    options.maxLods = 1;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), options, compiled).has_value());
+
+    // Past the end.
+    CompiledMesh beyond = compiled;
+    beyond.morphs[1].deltas[0].vertex = static_cast<u32>(beyond.vertices.size());
+    CompiledMesh decoded;
+    CHECK(decodeMesh(encodeMesh(beyond), decoded).has_value());
+
+    // Out of order: a reader walks a target's vertices upward.
+    CompiledMesh shuffled = compiled;
+    std::swap(shuffled.morphs[0].deltas[2], shuffled.morphs[0].deltas[5]);
+    CHECK(decodeMesh(encodeMesh(shuffled), decoded).has_value());
+
+    // A weight channel for a target that is not there.
+    CompiledMesh stray = compiled;
+    stray.clips[0].weights[1].joint = 9;
+    CHECK(decodeMesh(encodeMesh(stray), decoded).has_value());
+}

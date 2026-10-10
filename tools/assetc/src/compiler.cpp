@@ -119,7 +119,12 @@ using asset::AssetKind;
 // compile again.
 //
 // 7: a skinned mesh's levels keep the vertices it bends on (H4).
-constexpr core::u32 kCompilerRules = 7;
+//
+// 8: a mesh carries its morph targets and its clips their weight channels
+// (ADR 0196). A model with none compiles to the bytes it did, but one with
+// targets compiled before this has none in its cached form, and the cache
+// cannot tell which is which.
+constexpr core::u32 kCompilerRules = 8;
 
 // What one source compiled to, remembered between runs.
 //

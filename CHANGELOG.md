@@ -1189,6 +1189,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **Every project recompiles its content once, on its next open.** Models
+  now keep their morph targets (shape keys) when they are compiled (ADR 0196,
+  its first stage: they are imported and stored, and not drawn yet), and a
+  model compiled before that has none in its cached form. It is one open --
+  seconds for a small project, under half a minute for one of six hundred
+  sources -- and the opens after it are as quick as they were. Nothing is
+  wrong with the project and nothing needs doing.
 - **An Android package declares the permissions its game uses, not all of
   them** (ADR 0104, amended). `INTERNET` and `ACCESS_NETWORK_STATE` when a
   script names `NetworkService` or requires `@std/net`, or the project

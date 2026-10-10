@@ -137,6 +137,10 @@ struct CompiledMesh
     std::vector<TextureSlot> images;
     std::vector<Joint> joints;
     std::vector<AnimationClip> clips;
+    // The mesh's morph targets (ADR 0196), as the importer made them. Every
+    // level of detail draws from the one vertex stream, so a target's
+    // vertices are every level's.
+    std::vector<MorphTarget> morphs;
     // For LOD 0 only.
     MeshletData meshlets;
     core::AABB bounds;

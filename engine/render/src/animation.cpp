@@ -833,6 +833,11 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
                 scale_[joint].z += sample[2] * track.weight;
                 weightS_[joint] += track.weight;
                 break;
+            case asset::AnimationChannel::Target::Weight:
+                // A morph target's weight is in a clip's `weights`, never among
+                // the channels this walks (ADR 0196); one that is here came from
+                // a file that says otherwise, and poses nothing.
+                break;
             }
         }
     }

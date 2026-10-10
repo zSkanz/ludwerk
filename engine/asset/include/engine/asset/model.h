@@ -202,6 +202,11 @@ struct AnimationChannel
         Translation,
         Rotation,
         Scale,
+        // A morph target's weight (ADR 0196): one number a key, and `joint`
+        // is then the target's place in `Model::morphs`, not a joint. Such a
+        // channel is in a clip's `weights` and never among its `channels`,
+        // so nothing that poses joints meets one.
+        Weight,
     };
 
     // glTF's three ways between keys (D515). `Step` holds a key until the
@@ -238,11 +243,49 @@ struct AnimationClip
     // Seconds. The last key's time, which is what a loop wraps at.
     f32 duration = 0.0f;
     std::vector<AnimationChannel> channels;
+    // The clip's morph weights (ADR 0196), a channel a target it drives:
+    // `Target::Weight`, `joint` the target's place in `Model::morphs`, one
+    // value a key (three for a cubic spline). Beside the joints' channels
+    // rather than among them, so a face animated in the modelling tool plays
+    // without the pose walk learning a fourth kind of channel.
+    std::vector<AnimationChannel> weights;
+};
+
+// --- Morph targets (ADR 0196) --------------------------------------------------
+//
+// A target is the mesh in another shape -- a smile, a blink, a jaw dropped --
+// said as how far each vertex is from where it is at rest. A weight of one is
+// that shape; between nought and one is part of the way; several targets add.
+//
+// **Sparse**: a face's targets each move a patch of it, so what is kept is the
+// vertices a target moves and nothing for the rest. A vertex a target does not
+// move costs it nothing here, in the compiled file, or on the card.
+
+// One vertex of one target: which, and how far its place and its normal go.
+struct MorphDelta
+{
+    u32 vertex = 0;
+    Vec3 position;
+    Vec3 normal;
+};
+
+struct MorphTarget
+{
+    // What the file calls it (`extras.targetNames`, as the exporters write
+    // them), or `Target<n>` for a file that names none.
+    std::string name;
+    // The weight the file gives it at rest; nought for nearly every target.
+    f32 defaultWeight = 0.0f;
+    // Ascending by vertex, one entry a vertex.
+    std::vector<MorphDelta> deltas;
 };
 
 struct Model
 {
     Mesh mesh;
+    // The mesh's targets, in the order the file first names them. Empty for
+    // nearly every model.
+    std::vector<MorphTarget> morphs;
     std::vector<MaterialDef> materials;
     // Parallel to `materials`: the index in the SOURCE file each one came from,
     // or `NoSourceMaterial` for the default a primitive with none was given.

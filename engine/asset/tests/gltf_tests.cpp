@@ -1274,3 +1274,157 @@ TEST_CASE_FIXTURE(CatalogFixture,
     }
     std::filesystem::remove_all(folder, error);
 }
+
+// --- Morph targets (ADR 0196) ---------------------------------------------------
+//
+// `morph_quad.gltf` (written by `data/morph_quad.py`): a unit quad under a node
+// that doubles it along x, with `Raise` -- sparse, the two top corners up by a
+// half and one corner's normal tipped -- and `Wide`, the two right-hand corners
+// out by a quarter. The mesh's own weights are 0 and 0.25.
+
+namespace {
+
+// Where a vertex of the model is when the weights are `raise` and `wide`: its
+// rest place and each target's displacement of it by its weight -- what a
+// vertex stage does with the same numbers.
+engine::core::Vec3 morphedAt(const engine::asset::Model& model, engine::core::u32 vertex, float raise, float wide)
+{
+    engine::core::Vec3 place = model.mesh.vertices[vertex].position;
+    const float weights[2] = {raise, wide};
+    for (std::size_t target = 0; target < model.morphs.size() && target < 2; ++target) {
+        for (const engine::asset::MorphDelta& delta : model.morphs[target].deltas) {
+            if (delta.vertex == vertex)
+                place = place + delta.position * weights[target];
+        }
+    }
+    return place;
+}
+
+// The model's vertex that is at `at` at rest.
+engine::core::u32 vertexAt(const engine::asset::Model& model, float x, float y)
+{
+    for (engine::core::u32 vertex = 0; vertex < model.mesh.vertices.size(); ++vertex) {
+        const engine::core::Vec3 place = model.mesh.vertices[vertex].position;
+        if (std::abs(place.x - x) < 1e-4f && std::abs(place.y - y) < 1e-4f)
+            return vertex;
+    }
+    FAIL("no vertex at the place asked for");
+    return 0;
+}
+
+} // namespace
+
+TEST_CASE_FIXTURE(CatalogFixture, "gltf: a mesh's morph targets import by name, sparse, and where the file says")
+{
+    Model model;
+    REQUIRE_FALSE(importGltf(readFixture("morph_quad.gltf"), dataDirectory(), unoptimized(), model).has_value());
+
+    REQUIRE(model.morphs.size() == 2);
+    CHECK(model.morphs[0].name == "Raise");
+    CHECK(model.morphs[1].name == "Wide");
+    CHECK(model.morphs[0].defaultWeight == doctest::Approx(0.0));
+    CHECK(model.morphs[1].defaultWeight == doctest::Approx(0.25));
+
+    // **Only what a target moves is kept**: two vertices each, of four.
+    CHECK(model.morphs[0].deltas.size() == 2);
+    CHECK(model.morphs[1].deltas.size() == 2);
+
+    // The node doubles x, so the quad is two wide and `Wide` reaches a half.
+    const auto topRight = vertexAt(model, 2.0f, 1.0f);
+    const auto topLeft = vertexAt(model, 0.0f, 1.0f);
+    const auto bottomRight = vertexAt(model, 2.0f, 0.0f);
+    const auto bottomLeft = vertexAt(model, 0.0f, 0.0f);
+
+    // At rest, at each target whole, at a half, and both together.
+    CHECK(morphedAt(model, topRight, 0.0f, 0.0f).y == doctest::Approx(1.0));
+    CHECK(morphedAt(model, topRight, 1.0f, 0.0f).y == doctest::Approx(1.5));
+    CHECK(morphedAt(model, topLeft, 1.0f, 0.0f).y == doctest::Approx(1.5));
+    CHECK(morphedAt(model, topRight, 0.5f, 0.0f).y == doctest::Approx(1.25));
+    CHECK(morphedAt(model, bottomRight, 1.0f, 0.0f).y == doctest::Approx(0.0));
+    CHECK(morphedAt(model, bottomRight, 0.0f, 1.0f).x == doctest::Approx(2.5));
+    CHECK(morphedAt(model, topRight, 0.0f, 0.5f).x == doctest::Approx(2.25));
+    CHECK(morphedAt(model, bottomLeft, 1.0f, 1.0f).x == doctest::Approx(0.0));
+    CHECK(morphedAt(model, bottomLeft, 1.0f, 1.0f).y == doctest::Approx(0.0));
+    const engine::core::Vec3 both = morphedAt(model, topRight, 1.0f, 1.0f);
+    CHECK(both.x == doctest::Approx(2.5));
+    CHECK(both.y == doctest::Approx(1.5));
+
+    // The one normal `Raise` tips, and nobody else's.
+    for (const engine::asset::MorphDelta& delta : model.morphs[0].deltas) {
+        if (delta.vertex == topRight)
+            CHECK(delta.normal.y == doctest::Approx(0.2));
+        else
+            CHECK(delta.normal.y == doctest::Approx(0.0));
+    }
+}
+
+TEST_CASE_FIXTURE(CatalogFixture, "gltf: morph targets follow their vertices through the optimizer")
+{
+    // The optimizer renumbers vertices, and a target names them by number: the
+    // same shapes must come out, whatever the numbers became.
+    Model plain;
+    REQUIRE_FALSE(importGltf(readFixture("morph_quad.gltf"), dataDirectory(), unoptimized(), plain).has_value());
+    Model optimized;
+    GltfImportOptions options;
+    REQUIRE_FALSE(importGltf(readFixture("morph_quad.gltf"), dataDirectory(), options, optimized).has_value());
+
+    REQUIRE(optimized.morphs.size() == 2);
+    for (const auto& corner : {std::array<float, 2>{2.0f, 1.0f}, std::array<float, 2>{0.0f, 1.0f},
+                               std::array<float, 2>{2.0f, 0.0f}, std::array<float, 2>{0.0f, 0.0f}}) {
+        const auto before = vertexAt(plain, corner[0], corner[1]);
+        const auto after = vertexAt(optimized, corner[0], corner[1]);
+        const engine::core::Vec3 was = morphedAt(plain, before, 1.0f, 1.0f);
+        const engine::core::Vec3 is = morphedAt(optimized, after, 1.0f, 1.0f);
+        CHECK(is.x == doctest::Approx(static_cast<double>(was.x)));
+        CHECK(is.y == doctest::Approx(static_cast<double>(was.y)));
+    }
+    // Ascending by vertex, one entry a vertex: what a reader may assume.
+    for (const engine::asset::MorphTarget& target : optimized.morphs) {
+        for (std::size_t at = 1; at < target.deltas.size(); ++at)
+            CHECK(target.deltas[at - 1].vertex < target.deltas[at].vertex);
+    }
+}
+
+TEST_CASE_FIXTURE(CatalogFixture, "gltf: the host's pass gets a model's target names and nothing of its vertices")
+{
+    GltfImportOptions options;
+    options.skeletonOnly = true;
+    Model model;
+    REQUIRE_FALSE(importGltf(readFixture("morph_quad.gltf"), dataDirectory(), options, model).has_value());
+    REQUIRE(model.morphs.size() == 2);
+    CHECK(model.morphs[0].name == "Raise");
+    CHECK(model.morphs[1].defaultWeight == doctest::Approx(0.25));
+    CHECK(model.morphs[0].deltas.empty());
+    CHECK(model.mesh.vertices.empty());
+}
+
+TEST_CASE_FIXTURE(CatalogFixture, "gltf: a model with no morph targets has none")
+{
+    Model model;
+    REQUIRE_FALSE(importGltf(readFixture("quad.gltf"), dataDirectory(), unoptimized(), model).has_value());
+    CHECK(model.morphs.empty());
+}
+
+TEST_CASE_FIXTURE(CatalogFixture, "gltf: a clip's morph weights import as a channel a target")
+{
+    // The file's one sampler carries both targets' weights at each key; it
+    // comes apart into `Raise` from 0 to 1 and `Wide` from 0.25 to 0 -- and
+    // the mesh has no skeleton, so until now it had no clips at all.
+    Model model;
+    REQUIRE_FALSE(importGltf(readFixture("morph_quad.gltf"), dataDirectory(), unoptimized(), model).has_value());
+    REQUIRE(model.clips.size() == 1);
+    const engine::asset::AnimationClip& clip = model.clips[0];
+    CHECK(clip.name == "Speak");
+    CHECK(clip.duration == doctest::Approx(1.0));
+    CHECK(clip.channels.empty());
+    REQUIRE(clip.weights.size() == 2);
+    CHECK(clip.weights[0].joint == 0);
+    CHECK(clip.weights[1].joint == 1);
+    CHECK(clip.weights[0].stride == 1);
+    REQUIRE(clip.weights[0].values.size() == 2);
+    REQUIRE(clip.weights[1].values.size() == 2);
+    CHECK(clip.weights[0].values[0] == doctest::Approx(0.0));
+    CHECK(clip.weights[0].values[1] == doctest::Approx(1.0));
+    CHECK(clip.weights[1].values[0] == doctest::Approx(0.25));
+    CHECK(clip.weights[1].values[1] == doctest::Approx(0.0));
+}

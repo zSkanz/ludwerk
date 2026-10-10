@@ -49,6 +49,9 @@ constexpr u64 JointRecordBytes = 132;
 constexpr u64 ClipRecordBytes = 16;
 constexpr u64 ChannelRecordBytes = 28;
 constexpr u64 MeshletRecordBytes = 48;
+constexpr u64 MorphRecordBytes = 16;
+constexpr u64 MorphDeltaRecordBytes = 28;
+constexpr u64 WeightClipRecordBytes = 8;
 
 // Four-byte tags, compared as bytes. Sorted in the file, so a reader may binary
 // search and a writer cannot produce two files that differ only in section
@@ -76,6 +79,14 @@ constexpr u32 TagMeshlets = tag("MSHL");
 constexpr u32 TagMeshletVertices = tag("MLTV");
 constexpr u32 TagMeshletTriangles = tag("MLTT");
 constexpr u32 TagStrings = tag("STRS");
+// **Morph targets** (ADR 0196), four sections and every one optional -- a file
+// with none is byte for byte the file it was, and a reader from before them
+// skips what it does not know: the targets, their deltas, the clips' weight
+// channels, and which of those channels each clip has.
+constexpr u32 TagMorphs = tag("MRPH");
+constexpr u32 TagMorphDeltas = tag("MRPD");
+constexpr u32 TagWeightChannels = tag("WCHN");
+constexpr u32 TagWeightClips = tag("WCLP");
 
 // --- writing ---------------------------------------------------------------
 
@@ -379,6 +390,7 @@ std::optional<core::EngineError> compileMesh(const Model& model, std::span<const
     out.images.assign(images.begin(), images.end());
     out.joints = model.joints;
     out.clips = model.clips;
+    out.morphs = model.morphs;
     out.bounds = model.mesh.bounds;
 
     MeshLod base;
@@ -653,6 +665,52 @@ std::vector<std::byte> encodeMesh(const CompiledMesh& mesh)
         channelCursor += static_cast<u32>(clip.channels.size());
     }
 
+    // The targets and what each moves; then, a clip at a time, the weight
+    // channels it has. The channels' times and values share the joints'
+    // pool of floats.
+    Writer morphs;
+    Writer morphDeltas;
+    u32 deltaCursor = 0;
+    for (const MorphTarget& target : mesh.morphs) {
+        morphs.u32v(strings.add(target.name));
+        morphs.f32v(target.defaultWeight);
+        morphs.u32v(deltaCursor);
+        morphs.u32v(static_cast<u32>(target.deltas.size()));
+        for (const MorphDelta& delta : target.deltas) {
+            morphDeltas.u32v(delta.vertex);
+            morphDeltas.vec3(delta.position);
+            morphDeltas.vec3(delta.normal);
+        }
+        deltaCursor += static_cast<u32>(target.deltas.size());
+    }
+    Writer weightChannels;
+    Writer weightClips;
+    u32 weightCursor = 0;
+    bool anyWeights = false;
+    for (const AnimationClip& clip : mesh.clips)
+        anyWeights = anyWeights || !clip.weights.empty();
+    if (anyWeights) {
+        for (const AnimationClip& clip : mesh.clips) {
+            weightClips.u32v(weightCursor);
+            weightClips.u32v(static_cast<u32>(clip.weights.size()));
+            for (const AnimationChannel& channel : clip.weights) {
+                weightChannels.u32v(channel.joint);
+                weightChannels.u32v(static_cast<u32>(AnimationChannel::Target::Weight) |
+                                    (static_cast<u32>(channel.interpolation) << 8u));
+                weightChannels.u32v(1u);
+                weightChannels.u32v(static_cast<u32>(animationFloats.size() / 4));
+                weightChannels.u32v(static_cast<u32>(channel.times.size()));
+                for (const f32 time : channel.times)
+                    animationFloats.f32v(time);
+                weightChannels.u32v(static_cast<u32>(animationFloats.size() / 4));
+                weightChannels.u32v(static_cast<u32>(channel.values.size()));
+                for (const f32 value : channel.values)
+                    animationFloats.f32v(value);
+            }
+            weightCursor += static_cast<u32>(clip.weights.size());
+        }
+    }
+
     Writer meshlets;
     for (const Meshlet& meshlet : mesh.meshlets.meshlets) {
         meshlets.u32v(meshlet.vertexOffset);
@@ -702,6 +760,10 @@ std::vector<std::byte> encodeMesh(const CompiledMesh& mesh)
         {TagMeshletVertices, &meshletVertices.bytes(), static_cast<u32>(mesh.meshlets.vertices.size())},
         {TagMeshletTriangles, &meshletTriangles.bytes(), static_cast<u32>(mesh.meshlets.triangles.size())},
         {TagStrings, &stringBytes, static_cast<u32>(stringBytes.size())},
+        {TagMorphs, &morphs.bytes(), static_cast<u32>(mesh.morphs.size())},
+        {TagMorphDeltas, &morphDeltas.bytes(), deltaCursor},
+        {TagWeightChannels, &weightChannels.bytes(), weightCursor},
+        {TagWeightClips, &weightClips.bytes(), anyWeights ? static_cast<u32>(mesh.clips.size()) : 0u},
     };
 
     // An empty section is simply absent, so a static mesh's file has no `SKIN`
@@ -1097,6 +1159,92 @@ std::optional<core::EngineError> decodeMesh(std::span<const std::byte> bytes, Co
             }
             clip.channels.assign(allChannels.begin() + firstChannel, allChannels.begin() + firstChannel + channelCount);
             out.clips.push_back(std::move(clip));
+        }
+    }
+
+    // **The morph targets** (ADR 0196). A delta names a vertex the mesh has,
+    // and a target's deltas ascend -- what a reader that walks them beside the
+    // vertices assumes; a file that says otherwise is refused whole.
+    if (const Section* const morphSection = findSection(sections, TagMorphs); morphSection != nullptr) {
+        const Section* const deltaSection = findSection(sections, TagMorphDeltas);
+        if (!countFits(*morphSection, MorphRecordBytes) ||
+            (deltaSection != nullptr && !countFits(*deltaSection, MorphDeltaRecordBytes))) {
+            return malformed();
+        }
+        const u32 deltaCount = deltaSection != nullptr ? deltaSection->count : 0u;
+        Reader reader(bytes, static_cast<usize>(morphSection->offset));
+        out.morphs.reserve(morphSection->count);
+        for (u32 i = 0; i < morphSection->count; ++i) {
+            MorphTarget target;
+            const u32 nameOffset = reader.u32v();
+            target.defaultWeight = reader.f32v();
+            const u32 firstDelta = reader.u32v();
+            const u32 count = reader.u32v();
+            if (!reader.ok() || !poolString(strings, nameOffset, target.name) || firstDelta > deltaCount ||
+                count > deltaCount - firstDelta) {
+                return malformed();
+            }
+            if (count != 0) {
+                Reader deltas(bytes, static_cast<usize>(deltaSection->offset) +
+                                         static_cast<usize>(firstDelta) * static_cast<usize>(MorphDeltaRecordBytes));
+                target.deltas.resize(count);
+                for (u32 at = 0; at < count; ++at) {
+                    MorphDelta& delta = target.deltas[at];
+                    delta.vertex = deltas.u32v();
+                    delta.position = deltas.vec3();
+                    delta.normal = deltas.vec3();
+                    if (!deltas.ok() || delta.vertex >= out.vertices.size() ||
+                        (at != 0 && delta.vertex <= target.deltas[at - 1].vertex)) {
+                        return malformed();
+                    }
+                }
+            }
+            out.morphs.push_back(std::move(target));
+        }
+    }
+
+    // And the clips' weight channels: a clip's, in the order the clips are in.
+    if (const Section* const weightClipSection = findSection(sections, TagWeightClips); weightClipSection != nullptr) {
+        const Section* const weightSection = findSection(sections, TagWeightChannels);
+        if (!countFits(*weightClipSection, WeightClipRecordBytes) || weightClipSection->count != out.clips.size() ||
+            weightSection == nullptr || !countFits(*weightSection, ChannelRecordBytes)) {
+            return malformed();
+        }
+        std::vector<AnimationChannel> allWeights;
+        allWeights.reserve(weightSection->count);
+        Reader channelsReader(bytes, static_cast<usize>(weightSection->offset));
+        for (u32 i = 0; i < weightSection->count; ++i) {
+            AnimationChannel channel;
+            channel.joint = channelsReader.u32v();
+            const u32 target = channelsReader.u32v();
+            channel.stride = channelsReader.u32v();
+            const u32 timesOffset = channelsReader.u32v();
+            const u32 timesCount = channelsReader.u32v();
+            const u32 valuesOffset = channelsReader.u32v();
+            const u32 valuesCount = channelsReader.u32v();
+            const u32 interpolation = target >> 8u;
+            if (!channelsReader.ok() || (target & 0xFFu) != static_cast<u32>(AnimationChannel::Target::Weight) ||
+                interpolation > static_cast<u32>(AnimationChannel::Interpolation::CubicSpline) || channel.stride != 1 ||
+                channel.joint >= out.morphs.size()) {
+                return malformed();
+            }
+            channel.target = AnimationChannel::Target::Weight;
+            channel.interpolation = static_cast<AnimationChannel::Interpolation>(interpolation);
+            if (!readFloats(timesOffset, timesCount, channel.times) ||
+                !readFloats(valuesOffset, valuesCount, channel.values) ||
+                channel.values.size() < channel.times.size() * channel.valuesPerKey()) {
+                return malformed();
+            }
+            allWeights.push_back(std::move(channel));
+        }
+        Reader clipsReader(bytes, static_cast<usize>(weightClipSection->offset));
+        for (AnimationClip& clip : out.clips) {
+            const u32 first = clipsReader.u32v();
+            const u32 count = clipsReader.u32v();
+            if (!clipsReader.ok() || first > allWeights.size() || count > allWeights.size() - first) {
+                return malformed();
+            }
+            clip.weights.assign(allWeights.begin() + first, allWeights.begin() + first + count);
         }
     }
 

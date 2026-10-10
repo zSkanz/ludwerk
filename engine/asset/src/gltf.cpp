@@ -13,7 +13,9 @@
 #include <limits>
 #include <meshoptimizer.h>
 #include <optional>
+#include <simdjson.h>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -69,6 +71,10 @@ struct Staging
     std::vector<std::array<f32, 2>> uvs;
     std::vector<u32> indices;
     std::vector<SkinVertex> skin;
+    // One list a target of the primitive, each as long as `positions` -- or
+    // empty, for a target that says nothing of that attribute.
+    std::vector<std::vector<Vec3>> morphPositions;
+    std::vector<std::vector<Vec3>> morphNormals;
     bool hasNormals = false;
     bool hasTangents = false;
     bool hasUvs = false;
@@ -292,8 +298,9 @@ constexpr std::uintmax_t MaxExternalImageBytes = 256ull * 1024ull * 1024ull;
 class Importer
 {
 public:
-    Importer(const fg::Asset& asset, const GltfImportOptions& options, Model& out) noexcept
-        : asset_(asset), options_(options), out_(out)
+    Importer(const fg::Asset& asset, const GltfImportOptions& options, Model& out,
+             const std::vector<std::vector<std::string>>& targetNames) noexcept
+        : asset_(asset), options_(options), out_(out), targetNames_(targetNames)
     {}
 
     [[nodiscard]] std::optional<core::EngineError> run();
@@ -302,7 +309,13 @@ private:
     [[nodiscard]] std::optional<core::EngineError> collectInstances();
     [[nodiscard]] std::optional<core::EngineError> visitNode(std::size_t nodeIndex, const core::Mat4& parent);
     [[nodiscard]] std::optional<core::EngineError> appendPrimitive(const fg::Primitive& primitive,
-                                                                   const core::Mat4& transform);
+                                                                   const core::Mat4& transform, std::size_t meshIndex);
+    // The model's target for the `target`th of a file's mesh, made the first
+    // time it is named (ADR 0196).
+    [[nodiscard]] std::size_t morphOf(std::size_t meshIndex, std::size_t target);
+    // Every mesh's targets by name and default weight, with no vertex read:
+    // what the host's pass wants of them, and what the full pass fills.
+    void readMorphNames();
     [[nodiscard]] std::optional<core::EngineError> readAttributes(const fg::Primitive& primitive, Staging& staging);
     // The skeleton and the clips. Both run BEFORE the primitives, because a
     // primitive appends to `skin` only when a skeleton exists -- see the
@@ -321,6 +334,8 @@ private:
     const fg::Asset& asset_;
     const GltfImportOptions& options_;
     Model& out_;
+    // `extras.targetNames` of each of the file's meshes, by its index.
+    const std::vector<std::vector<std::string>>& targetNames_;
 
     std::vector<MeshInstance> instances_;
     // Indexed by the file's own index; `TextureRef::Missing` until claimed. A
@@ -358,6 +373,9 @@ std::optional<core::EngineError> Importer::run()
     // whether `joints` is empty.
     if (auto error = readSkin())
         return error;
+    // The targets' names first: a clip's weight channels say which target by
+    // its place among them.
+    readMorphNames();
     if (auto error = readAnimations())
         return error;
 
@@ -371,7 +389,7 @@ std::optional<core::EngineError> Importer::run()
         const fg::Mesh& mesh = asset_.meshes[instance.meshIndex];
         for (const fg::Primitive& primitive : mesh.primitives) {
             const std::size_t before = out_.mesh.submeshes.size();
-            if (auto error = appendPrimitive(primitive, instance.transform))
+            if (auto error = appendPrimitive(primitive, instance.transform, instance.meshIndex))
                 return error;
             // One name per submesh the primitive actually produced, so the two
             // arrays cannot drift -- a primitive that appended nothing appends
@@ -503,6 +521,32 @@ std::optional<core::EngineError> Importer::bakeBindPose()
     if (out_.skin.size() != out_.mesh.vertices.size())
         return core::makeError(ENG_TR("asset.gltf.err.invalid_document"), {}, "skin and vertex counts disagree");
 
+    // A target's displacements are baked through the bones their vertices
+    // are: the same blend, directions only.
+    for (MorphTarget& target : out_.morphs) {
+        for (MorphDelta& delta : target.deltas) {
+            if (delta.vertex >= out_.skin.size())
+                continue;
+            const SkinVertex& influence = out_.skin[delta.vertex];
+            core::Vec3 place{};
+            core::Vec3 normal{};
+            f32 total = 0.0f;
+            for (std::size_t lane = 0; lane < 4; ++lane) {
+                const f32 weight = influence.weights[lane];
+                const auto joint = static_cast<std::size_t>(influence.joints[lane] + 0.5f);
+                if (weight <= 0.0f || joint >= out_.restPalette.size())
+                    continue;
+                total += weight;
+                place = place + core::transformDirection(out_.restPalette[joint], delta.position) * weight;
+                normal = normal + core::transformDirection(out_.restPalette[joint], delta.normal) * weight;
+            }
+            if (total > 0.0f) {
+                delta.position = place * (1.0f / total);
+                delta.normal = normal * (1.0f / total);
+            }
+        }
+    }
+
     for (std::size_t index = 0; index < out_.mesh.vertices.size(); ++index) {
         const SkinVertex& influence = out_.skin[index];
         Vertex& vertex = out_.mesh.vertices[index];
@@ -554,7 +598,11 @@ std::optional<core::EngineError> Importer::bakeBindPose()
     out_.skin.clear();
     out_.joints.clear();
     out_.restPalette.clear();
-    out_.clips.clear();
+    // The clips keep what they say of the targets, which are still there; what
+    // they said of the joints goes with the joints.
+    for (AnimationClip& clip : out_.clips)
+        clip.channels.clear();
+    std::erase_if(out_.clips, [](const AnimationClip& clip) { return clip.weights.empty(); });
 
     // The bounds were computed from the pre-bake positions by whoever ran first;
     // `run` expands them after this returns, from the submeshes.
@@ -771,6 +819,35 @@ std::optional<core::EngineError> Importer::readAttributes(const fg::Primitive& p
         return core::makeError(ENG_TR("asset.gltf.err.accessor_out_of_range"), {}, "POSITION");
 
     const std::size_t vertexCount = positionAccessor.count;
+
+    // **The targets** (ADR 0196): each is the same vertices again, as how far
+    // they are from here. A target's accessor is very often sparse -- most of a
+    // face does not move for a blink -- and the iteration below answers nought
+    // for what a sparse one does not name. Tangents of a target are not read:
+    // the engine's morph moves a place and a normal.
+    staging.morphPositions.resize(primitive.targets.size());
+    staging.morphNormals.resize(primitive.targets.size());
+    for (std::size_t target = 0; target < primitive.targets.size(); ++target) {
+        const auto read = [&](std::string_view name, std::vector<Vec3>& into) -> std::optional<core::EngineError> {
+            const auto* found = primitive.findTargetAttribute(target, name);
+            if (found == primitive.targets[target].cend())
+                return std::nullopt;
+            const fg::Accessor& accessor = asset_.accessors[found->accessorIndex];
+            if (accessor.count != vertexCount)
+                return core::makeError(ENG_TR("asset.gltf.err.attribute_count_mismatch"), {}, std::string(name));
+            if (!accessorFits(asset_, accessor))
+                return core::makeError(ENG_TR("asset.gltf.err.accessor_out_of_range"), {}, std::string(name));
+            into.assign(vertexCount, Vec3{});
+            fg::iterateAccessorWithIndex<fg::math::fvec3>(
+                asset_, accessor,
+                [&](fg::math::fvec3 value, std::size_t index) { into[index] = Vec3{value.x(), value.y(), value.z()}; });
+            return std::nullopt;
+        };
+        if (auto error = read("POSITION", staging.morphPositions[target]))
+            return error;
+        if (auto error = read("NORMAL", staging.morphNormals[target]))
+            return error;
+    }
     staging.positions.resize(vertexCount);
     fg::iterateAccessorWithIndex<fg::math::fvec3>(asset_, positionAccessor,
                                                   [&](fg::math::fvec3 value, std::size_t index) {
@@ -922,6 +999,19 @@ void Importer::generateFlatNormals(Staging& staging) const
         if (staging.hasUvs)
             uvs[slot] = staging.uvs[source];
     }
+    // The targets follow their vertices to the new places. Their normals do
+    // not: a face's normal is made here from its corners, and what a target
+    // said of a normal that is no longer there says nothing of this one.
+    for (std::vector<Vec3>& moved : staging.morphPositions) {
+        if (moved.empty())
+            continue;
+        std::vector<Vec3> spread(indexCount);
+        for (std::size_t slot = 0; slot < indexCount; ++slot)
+            spread[slot] = moved[staging.indices[slot]];
+        moved = std::move(spread);
+    }
+    for (std::vector<Vec3>& turned : staging.morphNormals)
+        turned.clear();
 
     std::vector<Vec3> normals(indexCount);
     for (std::size_t triangle = 0; triangle + 2 < indexCount; triangle += 3) {
@@ -1004,7 +1094,40 @@ void Importer::generateTangents(Staging& staging) const
     staging.hasTangents = true;
 }
 
-std::optional<core::EngineError> Importer::appendPrimitive(const fg::Primitive& primitive, const core::Mat4& transform)
+std::size_t Importer::morphOf(std::size_t meshIndex, std::size_t target)
+{
+    // By name where the file gives one: two meshes of one model that both
+    // have a "Blink" are one target to whoever sets its weight.
+    std::string name = "Target" + std::to_string(target);
+    if (meshIndex < targetNames_.size() && target < targetNames_[meshIndex].size() &&
+        !targetNames_[meshIndex][target].empty())
+        name = targetNames_[meshIndex][target];
+    for (std::size_t index = 0; index < out_.morphs.size(); ++index) {
+        if (out_.morphs[index].name == name)
+            return index;
+    }
+    MorphTarget made;
+    made.name = std::move(name);
+    if (meshIndex < asset_.meshes.size() && target < asset_.meshes[meshIndex].weights.size())
+        made.defaultWeight = static_cast<f32>(asset_.meshes[meshIndex].weights[target]);
+    out_.morphs.push_back(std::move(made));
+    return out_.morphs.size() - 1;
+}
+
+void Importer::readMorphNames()
+{
+    for (const MeshInstance& instance : instances_) {
+        const fg::Mesh& mesh = asset_.meshes[instance.meshIndex];
+        std::size_t targets = 0;
+        for (const fg::Primitive& primitive : mesh.primitives)
+            targets = std::max(targets, primitive.targets.size());
+        for (std::size_t target = 0; target < targets; ++target)
+            (void)morphOf(instance.meshIndex, target);
+    }
+}
+
+std::optional<core::EngineError> Importer::appendPrimitive(const fg::Primitive& primitive, const core::Mat4& transform,
+                                                           std::size_t meshIndex)
 {
     // One vertex layout, one topology. A points or lines primitive has no
     // triangle for the renderer to draw, and a strip or a fan would have to be
@@ -1028,6 +1151,34 @@ std::optional<core::EngineError> Importer::appendPrimitive(const fg::Primitive& 
     // tangents, bounds -- is derived in the space the vertices end up in.
     for (Vec3& position : staging.positions)
         position = core::transformPoint(transform, position);
+
+    // A target's vertices go where the node puts the mesh, as the mesh's do:
+    // a displacement through the transform's own turn and scale, with none of
+    // its translation, and a normal's through the transform normals take.
+    {
+        const core::Mat4 normalTransform = normalTransformOf(transform);
+        for (std::vector<Vec3>& moved : staging.morphPositions) {
+            for (Vec3& delta : moved)
+                delta = core::transformDirection(transform, delta);
+        }
+        // A normal is made a unit again after the transform, so what is added
+        // to it is brought to the same scale: divided by how long the
+        // transform left that vertex's own normal. (A normal is not moved
+        // by adding, strictly -- it is turned -- and this is the first
+        // order of it, which is what a morph's normal is everywhere.)
+        for (std::vector<Vec3>& turned : staging.morphNormals) {
+            for (std::size_t slot = 0; slot < turned.size(); ++slot) {
+                f32 scale = 1.0f;
+                if (staging.hasNormals && slot < staging.normals.size()) {
+                    const f32 stretched =
+                        core::length(core::transformDirection(normalTransform, staging.normals[slot]));
+                    if (stretched > 1e-6f)
+                        scale = 1.0f / stretched;
+                }
+                turned[slot] = core::transformDirection(normalTransform, turned[slot]) * scale;
+            }
+        }
+    }
 
     // A mirroring node reverses the winding of every triangle under it (glTF
     // 2.0 §3.7.4). Without this the mesh renders inside out wherever an
@@ -1094,6 +1245,23 @@ std::optional<core::EngineError> Importer::appendPrimitive(const fg::Primitive& 
         // cannot silently shift every joint index after it.
         if (!out_.joints.empty())
             out_.skin.push_back(staging.hasSkin ? staging.skin[slot] : SkinVertex{});
+    }
+
+    // What each target moves of these vertices, and only that. Under a
+    // hundredth of a millimetre is an exporter's rounding, not a shape.
+    for (std::size_t target = 0; target < staging.morphPositions.size(); ++target) {
+        const std::vector<Vec3>& moved = staging.morphPositions[target];
+        const std::vector<Vec3>& turned = staging.morphNormals[target];
+        if (moved.empty() && turned.empty())
+            continue;
+        MorphTarget& into = out_.morphs[morphOf(meshIndex, target)];
+        for (std::size_t slot = 0; slot < staging.positions.size(); ++slot) {
+            const Vec3 place = slot < moved.size() ? moved[slot] : Vec3{};
+            const Vec3 normal = slot < turned.size() ? turned[slot] : Vec3{};
+            if (core::dot(place, place) < 1e-10f && core::dot(normal, normal) < 1e-10f)
+                continue;
+            into.deltas.push_back(MorphDelta{static_cast<u32>(baseVertex + slot), place, normal});
+        }
     }
 
     out_.mesh.indices.reserve(out_.mesh.indices.size() + staging.indices.size());
@@ -1221,7 +1389,8 @@ std::optional<core::EngineError> Importer::readSkin()
 
 std::optional<core::EngineError> Importer::readAnimations()
 {
-    if (out_.joints.empty() || asset_.animations.empty())
+    // A model with no skeleton and no targets has nothing a clip could move.
+    if ((out_.joints.empty() && out_.morphs.empty()) || asset_.animations.empty())
         return std::nullopt;
 
     // Which sorted joint a node drives, so a channel's node target becomes a
@@ -1229,8 +1398,22 @@ std::optional<core::EngineError> Importer::readAnimations()
     // skipped rather than refused: a file may animate a camera beside its
     // character, and that is not an error in the character.
     std::vector<u32> jointOfNode(asset_.nodes.size(), Joint::NoParent);
-    for (std::size_t slot = 0; slot < asset_.skins[0].joints.size(); ++slot)
-        jointOfNode[asset_.skins[0].joints[slot]] = jointRemap_[slot];
+    if (!out_.joints.empty() && !asset_.skins.empty()) {
+        for (std::size_t slot = 0; slot < asset_.skins[0].joints.size(); ++slot)
+            jointOfNode[asset_.skins[0].joints[slot]] = jointRemap_[slot];
+    }
+
+    // How the keys of a sampler are joined (D515).
+    const auto interpolationOf = [](const fg::AnimationSampler& sampler) {
+        switch (sampler.interpolation) {
+        case fg::AnimationInterpolation::Step:
+            return AnimationChannel::Interpolation::Step;
+        case fg::AnimationInterpolation::CubicSpline:
+            return AnimationChannel::Interpolation::CubicSpline;
+        default:
+            return AnimationChannel::Interpolation::Linear;
+        }
+    };
 
     for (const fg::Animation& animation : asset_.animations) {
         AnimationClip clip;
@@ -1239,6 +1422,61 @@ std::optional<core::EngineError> Importer::readAnimations()
         for (const fg::AnimationChannel& channel : animation.channels) {
             if (!channel.nodeIndex.has_value())
                 continue;
+
+            // **A mesh's morph weights** (ADR 0196): one sampler for all of a
+            // mesh's targets, every key carrying a weight for each. Taken
+            // apart here into a channel a target, so that playing one is
+            // reading one number from one curve.
+            if (channel.path == fg::AnimationPath::Weights) {
+                const fg::Node& node = asset_.nodes[channel.nodeIndex.value()];
+                if (!node.meshIndex.has_value())
+                    continue;
+                const std::size_t meshIndex = node.meshIndex.value();
+                std::size_t targets = 0;
+                for (const fg::Primitive& primitive : asset_.meshes[meshIndex].primitives)
+                    targets = std::max(targets, primitive.targets.size());
+                if (targets == 0)
+                    continue;
+
+                const fg::AnimationSampler& sampler = animation.samplers[channel.samplerIndex];
+                const fg::Accessor& times = asset_.accessors[sampler.inputAccessor];
+                const fg::Accessor& values = asset_.accessors[sampler.outputAccessor];
+                if (!accessorFits(asset_, times) || !accessorFits(asset_, values))
+                    return core::makeError(ENG_TR("asset.gltf.err.accessor_out_of_range"), {}, "animation");
+                const AnimationChannel::Interpolation interpolation = interpolationOf(sampler);
+                const std::size_t perKey = interpolation == AnimationChannel::Interpolation::CubicSpline ? 3u : 1u;
+                if (values.count < times.count * targets * perKey)
+                    return core::makeError(ENG_TR("asset.gltf.err.attribute_count_mismatch"), {}, "animation");
+
+                std::vector<f32> keyTimes(times.count);
+                fg::iterateAccessorWithIndex<float>(asset_, times, [&](float value, std::size_t index) {
+                    keyTimes[index] = value;
+                    clip.duration = std::max(clip.duration, value);
+                });
+                std::vector<f32> all(values.count);
+                fg::iterateAccessorWithIndex<float>(asset_, values,
+                                                    [&](float value, std::size_t index) { all[index] = value; });
+
+                for (std::size_t target = 0; target < targets; ++target) {
+                    AnimationChannel out;
+                    out.joint = static_cast<u32>(morphOf(meshIndex, target));
+                    out.target = AnimationChannel::Target::Weight;
+                    out.interpolation = interpolation;
+                    out.stride = 1;
+                    out.times = keyTimes;
+                    out.values.resize(times.count * perKey);
+                    // A key's values are every target's in-tangent, then every
+                    // target's value, then every target's out-tangent; a
+                    // channel keeps its own three in that order.
+                    for (std::size_t key = 0; key < times.count; ++key) {
+                        for (std::size_t part = 0; part < perKey; ++part)
+                            out.values[key * perKey + part] = all[(key * perKey + part) * targets + target];
+                    }
+                    clip.weights.push_back(std::move(out));
+                }
+                continue;
+            }
+
             const u32 joint = jointOfNode[channel.nodeIndex.value()];
             if (joint == Joint::NoParent)
                 continue;
@@ -1259,8 +1497,7 @@ std::optional<core::EngineError> Importer::readAnimations()
                 out.stride = 3;
                 break;
             default:
-                // Morph-target weights. v1 has no morph targets, so a channel
-                // driving them is dropped rather than half-read.
+                // Morph weights were taken above; nothing else has a path.
                 continue;
             }
 
@@ -1269,17 +1506,7 @@ std::optional<core::EngineError> Importer::readAnimations()
             // blended between its keys, and a `CUBICSPLINE` one -- three
             // values a key -- was read as three keys for every one it has,
             // playing its tangents as poses.
-            switch (sampler.interpolation) {
-            case fg::AnimationInterpolation::Step:
-                out.interpolation = AnimationChannel::Interpolation::Step;
-                break;
-            case fg::AnimationInterpolation::CubicSpline:
-                out.interpolation = AnimationChannel::Interpolation::CubicSpline;
-                break;
-            default:
-                out.interpolation = AnimationChannel::Interpolation::Linear;
-                break;
-            }
+            out.interpolation = interpolationOf(sampler);
             const fg::Accessor& times = asset_.accessors[sampler.inputAccessor];
             const fg::Accessor& values = asset_.accessors[sampler.outputAccessor];
             if (!accessorFits(asset_, times) || !accessorFits(asset_, values))
@@ -1319,7 +1546,7 @@ std::optional<core::EngineError> Importer::readAnimations()
             clip.channels.push_back(std::move(out));
         }
 
-        if (!clip.channels.empty())
+        if (!clip.channels.empty() || !clip.weights.empty())
             out_.clips.push_back(std::move(clip));
     }
     return std::nullopt;
@@ -1357,7 +1584,7 @@ void Importer::optimize()
     // vertex's bones. meshoptimizer's remap variant exists for exactly this --
     // it returns the permutation rather than applying it, and both streams are
     // then permuted by the same table.
-    if (out_.skin.empty()) {
+    if (out_.skin.empty() && out_.morphs.empty()) {
         const std::size_t unique =
             meshopt_optimizeVertexFetch(out_.mesh.vertices.data(), out_.mesh.indices.data(), out_.mesh.indices.size(),
                                         out_.mesh.vertices.data(), vertexCount, sizeof(Vertex));
@@ -1372,9 +1599,26 @@ void Importer::optimize()
                              remap.data());
     meshopt_remapVertexBuffer(out_.mesh.vertices.data(), out_.mesh.vertices.data(), vertexCount, sizeof(Vertex),
                               remap.data());
-    meshopt_remapVertexBuffer(out_.skin.data(), out_.skin.data(), vertexCount, sizeof(SkinVertex), remap.data());
+    if (!out_.skin.empty()) {
+        meshopt_remapVertexBuffer(out_.skin.data(), out_.skin.data(), vertexCount, sizeof(SkinVertex), remap.data());
+        out_.skin.resize(unique);
+    }
     out_.mesh.vertices.resize(unique);
-    out_.skin.resize(unique);
+    // And a third thing that names vertices by where they were: the targets.
+    // A vertex no triangle uses has no new place, and what moved it goes.
+    for (MorphTarget& target : out_.morphs) {
+        std::vector<MorphDelta> kept;
+        kept.reserve(target.deltas.size());
+        for (MorphDelta delta : target.deltas) {
+            if (delta.vertex >= vertexCount || remap[delta.vertex] == ~0u)
+                continue;
+            delta.vertex = remap[delta.vertex];
+            kept.push_back(delta);
+        }
+        std::sort(kept.begin(), kept.end(),
+                  [](const MorphDelta& a, const MorphDelta& b) { return a.vertex < b.vertex; });
+        target.deltas = std::move(kept);
+    }
 }
 
 } // namespace
@@ -1438,6 +1682,27 @@ std::optional<core::EngineError> importGltf(std::span<const std::byte> bytes,
     // A GLB's chunks were read to the end by that pass.
     data.get().reset();
 
+    // **What each mesh calls its targets** (ADR 0196). The format has no place
+    // for a target's name; every exporter writes them in the mesh's `extras`,
+    // as `targetNames`, and the parser hands `extras` to whoever asks.
+    std::vector<std::vector<std::string>> targetNames;
+    parser.setUserPointer(&targetNames);
+    parser.setExtrasParseCallback(
+        [](simdjson::dom::object* extras, std::size_t objectIndex, fg::Category category, void* user) {
+            if (category != fg::Category::Meshes || extras == nullptr)
+                return;
+            simdjson::dom::array names;
+            if ((*extras)["targetNames"].get_array().get(names) != simdjson::SUCCESS)
+                return;
+            auto& all = *static_cast<std::vector<std::vector<std::string>>*>(user);
+            if (all.size() <= objectIndex)
+                all.resize(objectIndex + 1);
+            for (simdjson::dom::element name : names) {
+                std::string_view text;
+                all[objectIndex].emplace_back(name.get_string().get(text) == simdjson::SUCCESS ? std::string(text)
+                                                                                               : std::string());
+            }
+        });
     auto parsed = parser.loadGltf(data.get(), baseDirectory, parseOptions);
     if (!parsed)
         return core::makeError(ENG_TR("asset.gltf.err.parse_failed"), {}, describe(parsed.error()));
@@ -1449,7 +1714,7 @@ std::optional<core::EngineError> importGltf(std::span<const std::byte> bytes,
     if (const fg::Error error = fg::validate(parsed.get()); error != fg::Error::None)
         return core::makeError(ENG_TR("asset.gltf.err.invalid_document"), {}, describe(error));
 
-    Importer importer(parsed.get(), options, out);
+    Importer importer(parsed.get(), options, out, targetNames);
     if (auto error = importer.run()) {
         // "Returns an error rather than a partial model" -- whatever was built
         // before the failure is discarded, not handed back.

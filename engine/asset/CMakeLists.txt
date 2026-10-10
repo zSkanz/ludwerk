@@ -62,7 +62,11 @@ target_include_directories(engine_asset SYSTEM PRIVATE "${ENG_THIRD_PARTY_DIR}/x
 # no fastgltf type appears in `engine/asset/*.h`, so `render` and `scene` link an
 # importer without inheriting a parser's headers. R17 is about the Luau API, but
 # the same instinct applies one layer down.
-target_link_libraries(engine_asset PRIVATE fastgltf::fastgltf meshoptimizer)
+# simdjson beside it, for one thing: a mesh's `extras`, where every exporter
+# writes its morph targets' names, reaches a caller as the JSON parser's own
+# object (ADR 0196). It is the library fastgltf already brings (ADR 0036), not
+# a new one.
+target_link_libraries(engine_asset PRIVATE fastgltf::fastgltf meshoptimizer simdjson::simdjson)
 
 # The basis TRANSCODER and never the encoder (ADR 0010, third_party/CMakeLists).
 # The engine reads textures; only the offline `assetc` tool writes them, and
