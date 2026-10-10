@@ -2836,6 +2836,15 @@ local Excluded: { Schema.Excluded } = {
             .. "is the recipe rather than the result.",
     },
     {
+        Name = "SpringBone",
+        Reason = "Picture only (ADR 0194): a cape's swing is each machine's own, stepped at its own "
+            .. "frame rate from the pose it drew. Nothing of it is state another machine could use.",
+    },
+    {
+        Name = "SpringCollider",
+        Reason = "The same as `SpringBone`, whose chains it keeps out of the body.",
+    },
+    {
         Name = "Constraint2D",
         Reason = "The same as `BallSocketConstraint`, on the plane (ADR 0102): a replica's sprites are "
             .. "moved to where the authority's joints put them, and `Part2D.Position` is what arrives. "

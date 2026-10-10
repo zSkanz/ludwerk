@@ -1680,6 +1680,18 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 300)
 
+    # **A cape's chains are found and stepped in a real run** (ADR 0194): the
+    # example's two figures, three columns each, drawn for a second and a
+    # half -- six chains of thirty joints in the frame report, and no warning.
+    add_test(NAME secondary_motion_steps
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/examples/35-cape
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_secondary_motion.cmake)
+    set_tests_properties(secondary_motion_steps PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # **The report's draws by kind add up to its total**, and name the kinds
     # the scene has. See the driver.
     add_test(NAME frame_report_draws_by_kind
@@ -1741,7 +1753,8 @@ if(ENG_BUILD_TESTS)
     foreach(example 01-instances 02-meshes 03-physics-playground 06-scene 11-ocean 12-ragdoll 20-platformer
                     21-navigation 22-atmosphere 23-surfaces 24-scenes 25-gradients-and-strokes
                     26-security-cameras 27-mirrors-and-portals 28-arcade 29-meadow
-                    30-interactions 31-lake-and-river 32-menus 33-options 34-settings-list)
+                    30-interactions 31-lake-and-river 32-menus 33-options 34-settings-list
+                    35-cape)
         add_test(NAME example_boot_${example}
             COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/${example}"
                     --headless --frames=20 --exit --rhi=null)

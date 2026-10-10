@@ -231,6 +231,221 @@ bool setBoneTransform(scene::World& world, core::InstanceId id, const Value& val
     return true;
 }
 
+// --- SpringBone, SpringCollider (ADR 0194) --------------------------------------
+//
+// What the instances say. Where the chain is, frame by frame, is not here: it
+// is the renderer's, each machine's own, and no property reads it.
+
+void attachSpringBoneComponents(scene::World& world, core::InstanceId id)
+{
+    world.springBones().add(id, scene::SpringBoneComponent{});
+}
+
+void detachSpringBoneComponents(scene::World& world, core::InstanceId id)
+{
+    world.springBones().remove(id);
+}
+
+void attachSpringColliderComponents(scene::World& world, core::InstanceId id)
+{
+    world.springColliders().add(id, scene::SpringColliderComponent{});
+}
+
+void detachSpringColliderComponents(scene::World& world, core::InstanceId id)
+{
+    world.springColliders().remove(id);
+}
+
+namespace {
+
+// One number of a component, read and written within a range. `least` and
+// `most` are inclusive; a write outside them, or one that is not a number, is
+// refused and the property's own error says what it takes.
+template <class Component>
+[[nodiscard]] Value readNumber(const Component* component, f32 Component::*field)
+{
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->*field)};
+}
+
+template <class Component>
+[[nodiscard]] bool writeNumber(Component* component, f32 Component::*field, const Value& value, f64 least, f64 most)
+{
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || component == nullptr || !std::isfinite(*number) || *number < least || *number > most)
+        return false;
+    component->*field = static_cast<f32>(*number);
+    return true;
+}
+
+constexpr f64 AnyAmount = 1.0e9;
+
+} // namespace
+
+Value getSpringBoneRootJoint(const scene::World& world, core::InstanceId id)
+{
+    const scene::SpringBoneComponent* spring = world.springBones().find(id);
+    return spring == nullptr ? Value{} : Value{std::string(world.atoms().text(spring->rootJoint))};
+}
+
+bool setSpringBoneRootJoint(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    scene::SpringBoneComponent* spring = world.springBones().find(id);
+    if (text == nullptr || spring == nullptr)
+        return false;
+    spring->rootJoint = world.atoms().intern(*text);
+    return true;
+}
+
+Value getSpringBoneEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::SpringBoneComponent* spring = world.springBones().find(id);
+    return spring == nullptr ? Value{} : Value{spring->enabled};
+}
+
+bool setSpringBoneEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    scene::SpringBoneComponent* spring = world.springBones().find(id);
+    if (flag == nullptr || spring == nullptr)
+        return false;
+    spring->enabled = *flag;
+    return true;
+}
+
+Value getSpringBoneStiffness(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.springBones().find(id), &scene::SpringBoneComponent::stiffness);
+}
+
+bool setSpringBoneStiffness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.springBones().find(id), &scene::SpringBoneComponent::stiffness, value, 0.0, 1.0);
+}
+
+Value getSpringBoneDamping(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.springBones().find(id), &scene::SpringBoneComponent::damping);
+}
+
+bool setSpringBoneDamping(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.springBones().find(id), &scene::SpringBoneComponent::damping, value, 0.0, 1.0);
+}
+
+Value getSpringBoneGravityScale(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.springBones().find(id), &scene::SpringBoneComponent::gravityScale);
+}
+
+bool setSpringBoneGravityScale(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.springBones().find(id), &scene::SpringBoneComponent::gravityScale, value, -AnyAmount,
+                       AnyAmount);
+}
+
+Value getSpringBoneInertia(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.springBones().find(id), &scene::SpringBoneComponent::inertia);
+}
+
+bool setSpringBoneInertia(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.springBones().find(id), &scene::SpringBoneComponent::inertia, value, 0.0, 1.0);
+}
+
+Value getSpringBoneLimitAngle(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.springBones().find(id), &scene::SpringBoneComponent::limitAngle);
+}
+
+bool setSpringBoneLimitAngle(scene::World& world, core::InstanceId id, const Value& value)
+{
+    // Greater than nought and less than a half turn, as the error says.
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !(*number > 0.0) || !(*number < 180.0))
+        return false;
+    return writeNumber(world.springBones().find(id), &scene::SpringBoneComponent::limitAngle, value, 0.0, 180.0);
+}
+
+Value getSpringBoneRadius(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.springBones().find(id), &scene::SpringBoneComponent::radius);
+}
+
+bool setSpringBoneRadius(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.springBones().find(id), &scene::SpringBoneComponent::radius, value, 0.0, AnyAmount);
+}
+
+Value getSpringBoneWindInfluence(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.springBones().find(id), &scene::SpringBoneComponent::windInfluence);
+}
+
+bool setSpringBoneWindInfluence(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.springBones().find(id), &scene::SpringBoneComponent::windInfluence, value, 0.0, AnyAmount);
+}
+
+Value getSpringColliderJointName(const scene::World& world, core::InstanceId id)
+{
+    const scene::SpringColliderComponent* collider = world.springColliders().find(id);
+    return collider == nullptr ? Value{} : Value{std::string(world.atoms().text(collider->jointName))};
+}
+
+bool setSpringColliderJointName(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    scene::SpringColliderComponent* collider = world.springColliders().find(id);
+    if (text == nullptr || collider == nullptr)
+        return false;
+    collider->jointName = world.atoms().intern(*text);
+    return true;
+}
+
+Value getSpringColliderRadius(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.springColliders().find(id), &scene::SpringColliderComponent::radius);
+}
+
+bool setSpringColliderRadius(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !(*number > 0.0))
+        return false;
+    return writeNumber(world.springColliders().find(id), &scene::SpringColliderComponent::radius, value, 0.0,
+                       AnyAmount);
+}
+
+Value getSpringColliderLength(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.springColliders().find(id), &scene::SpringColliderComponent::length);
+}
+
+bool setSpringColliderLength(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.springColliders().find(id), &scene::SpringColliderComponent::length, value, 0.0,
+                       AnyAmount);
+}
+
+Value getSpringColliderOffset(const scene::World& world, core::InstanceId id)
+{
+    const scene::SpringColliderComponent* collider = world.springColliders().find(id);
+    return collider == nullptr ? Value{} : Value{collider->offset};
+}
+
+bool setSpringColliderOffset(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* offset = std::get_if<core::Vec3>(&value);
+    scene::SpringColliderComponent* collider = world.springColliders().find(id);
+    if (offset == nullptr || collider == nullptr || !std::isfinite(offset->x) || !std::isfinite(offset->y) ||
+        !std::isfinite(offset->z))
+        return false;
+    collider->offset = *offset;
+    return true;
+}
+
 void attachMeshPartComponents(scene::World& world, core::InstanceId id)
 {
     world.meshParts().add(id, scene::MeshPartComponent{});

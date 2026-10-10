@@ -44,6 +44,8 @@ engine_add_module(render
         src/ui_renderer.cpp
         src/ui_gradient.cpp
         src/animation.cpp
+        src/spring_chain.cpp
+        src/spring_bones.cpp
         generated/class_descriptors.gen.cpp
     DEPS
         asset
@@ -100,6 +102,7 @@ engine_add_module_tests(render
         tests/foliage_tests.cpp
         tests/particles_tests.cpp
         tests/ribbons_tests.cpp
+        tests/spring_chain_tests.cpp
         tests/voxel_loader_tests.cpp
 )
 

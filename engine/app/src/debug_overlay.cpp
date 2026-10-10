@@ -4893,8 +4893,9 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
         // class declaring one would get the picker for free. There is no
         // descriptor field to hang it off the way the audio button hangs off
         // `ContentKind`, because a joint is not a file.
-        const bool namesJoint =
-            world.atoms().text(descriptor.name) == "JointName" && g_skeleton != nullptr && targets.size() == 1;
+        const bool namesJoint = (world.atoms().text(descriptor.name) == "JointName" ||
+                                 world.atoms().text(descriptor.name) == "RootJoint") &&
+                                g_skeleton != nullptr && targets.size() == 1;
         const core::InstanceId rig = namesJoint ? rigAbove(world, targets[0]) : core::InstanceId{};
         const core::u32 jointCount = rig.valid() ? g_skeleton->jointCount(rig) : 0;
 

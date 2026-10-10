@@ -155,6 +155,40 @@ public:
     // is what an unanimated skinned mesh should look like.
     [[nodiscard]] const Pose* pose(core::InstanceId meshPart) const noexcept;
 
+    // --- The pose a frame is DRAWN with (ADR 0194) --------------------------
+    //
+    // **A copy, and the only thing a cape may write.** Secondary motion is
+    // stepped at the rate frames are drawn, differently on every machine and
+    // not at all on a server. Written into the pose above it would be read
+    // back by the simulation -- a `Bone` on a cape's joint is an attachment
+    // the physics tick places -- and the world's state would then depend on
+    // one machine's frame rate. So what a chain moves is a copy of the pose,
+    // made here and kept until the next frame clears it, and only `extract`
+    // asks for it. `jointModel`, the sockets and the ragdoll never see it.
+
+    // One joint's place in a presented pose: joint space to MODEL space.
+    struct PresentedJoint
+    {
+        core::u32 joint = 0;
+        core::Mat4 model{};
+    };
+    // The pose `meshPart` is drawn with this frame: its own with `joints`
+    // substituted and every joint below them carried along. `joints` in
+    // ascending order of joint. One call a mesh a frame; a second replaces
+    // the first.
+    void present(core::InstanceId meshPart, std::span<const PresentedJoint> joints);
+    // Nothing is presented any more: every mesh is drawn with its own pose.
+    void clearPresented() noexcept { presented_.clear(); }
+    // What `extract` draws: the presented pose where there is one, else
+    // `pose`.
+    [[nodiscard]] const Pose* drawnPose(core::InstanceId meshPart) const noexcept;
+    // A joint's animated transform from its parent this tick, or its rest one
+    // for a mesh nothing is driving. False for a joint the rig does not have.
+    [[nodiscard]] bool jointLocal(core::InstanceId meshPart, core::u32 joint, core::CFrameD& out) const;
+    // Whether the renderer reached this mesh in the frame before (`reportSeen`),
+    // or nobody is reporting at all -- a test, a tool -- and everything counts.
+    [[nodiscard]] bool seenLately(core::InstanceId meshPart) const noexcept;
+
     // How many poses have been built since this system was made: what a test
     // counts to know that a pose nobody changed was not built again.
     [[nodiscard]] core::u64 posesBuilt() const noexcept { return posesBuilt_; }
@@ -358,6 +392,8 @@ private:
     // cost a crowd. Nothing writes to a pose another may hold: what builds or
     // overrides one takes it alone first (`ownPose`).
     std::unordered_map<core::u64, std::shared_ptr<const Pose>> poses_;
+    // The poses drawn in place of those, this frame (`present`).
+    std::unordered_map<core::u64, Pose> presented_;
     // This mesh's pose to write to: the one it holds, when nothing else does;
     // a copy of it otherwise, or a new one.
     [[nodiscard]] Pose& ownPose(core::InstanceId meshPart, bool keep);

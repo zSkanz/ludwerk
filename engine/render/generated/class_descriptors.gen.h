@@ -158,6 +158,40 @@ scene::Value getBoneJointIndex(const scene::World& world, core::InstanceId id);
 scene::Value getBoneTransform(const scene::World& world, core::InstanceId id);
 bool setBoneTransform(scene::World& world, core::InstanceId id, const scene::Value& value);
 
+// SpringBone
+scene::Value getSpringBoneRootJoint(const scene::World& world, core::InstanceId id);
+bool setSpringBoneRootJoint(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSpringBoneEnabled(const scene::World& world, core::InstanceId id);
+bool setSpringBoneEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSpringBoneStiffness(const scene::World& world, core::InstanceId id);
+bool setSpringBoneStiffness(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSpringBoneDamping(const scene::World& world, core::InstanceId id);
+bool setSpringBoneDamping(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSpringBoneGravityScale(const scene::World& world, core::InstanceId id);
+bool setSpringBoneGravityScale(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSpringBoneInertia(const scene::World& world, core::InstanceId id);
+bool setSpringBoneInertia(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSpringBoneLimitAngle(const scene::World& world, core::InstanceId id);
+bool setSpringBoneLimitAngle(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSpringBoneRadius(const scene::World& world, core::InstanceId id);
+bool setSpringBoneRadius(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSpringBoneWindInfluence(const scene::World& world, core::InstanceId id);
+bool setSpringBoneWindInfluence(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachSpringBoneComponents(scene::World& world, core::InstanceId id);
+void detachSpringBoneComponents(scene::World& world, core::InstanceId id);
+
+// SpringCollider
+scene::Value getSpringColliderJointName(const scene::World& world, core::InstanceId id);
+bool setSpringColliderJointName(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSpringColliderRadius(const scene::World& world, core::InstanceId id);
+bool setSpringColliderRadius(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSpringColliderLength(const scene::World& world, core::InstanceId id);
+bool setSpringColliderLength(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSpringColliderOffset(const scene::World& world, core::InstanceId id);
+bool setSpringColliderOffset(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachSpringColliderComponents(scene::World& world, core::InstanceId id);
+void detachSpringColliderComponents(scene::World& world, core::InstanceId id);
+
 // Camera
 scene::Value getCameraCFrame(const scene::World& world, core::InstanceId id);
 bool setCameraCFrame(scene::World& world, core::InstanceId id, const scene::Value& value);

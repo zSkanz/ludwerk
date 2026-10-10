@@ -602,6 +602,8 @@ struct NameIndex
     X(MoverComponent, movers)                                                                                          \
     X(NoCollisionComponent, noCollisions)                                                                              \
     X(RagdollComponent, ragdolls)                                                                                      \
+    X(SpringBoneComponent, springBones)                                                                                \
+    X(SpringColliderComponent, springColliders)                                                                        \
     X(WorkspaceComponent, workspaces)                                                                                  \
     X(TerrainComponent, terrains)                                                                                      \
     X(VoxelComponent, voxels)                                                                                          \
@@ -1337,6 +1339,13 @@ public:
     [[nodiscard]] const ComponentPool<NoCollisionComponent>& noCollisions() const noexcept { return m_noCollisions; }
     [[nodiscard]] ComponentPool<RagdollComponent>& ragdolls() noexcept { return m_ragdolls; }
     [[nodiscard]] const ComponentPool<RagdollComponent>& ragdolls() const noexcept { return m_ragdolls; }
+    [[nodiscard]] ComponentPool<SpringBoneComponent>& springBones() noexcept { return m_springBones; }
+    [[nodiscard]] const ComponentPool<SpringBoneComponent>& springBones() const noexcept { return m_springBones; }
+    [[nodiscard]] ComponentPool<SpringColliderComponent>& springColliders() noexcept { return m_springColliders; }
+    [[nodiscard]] const ComponentPool<SpringColliderComponent>& springColliders() const noexcept
+    {
+        return m_springColliders;
+    }
     [[nodiscard]] ComponentPool<CharacterBodyComponent>& characterBodies() noexcept { return m_characterBodies; }
     [[nodiscard]] const ComponentPool<CharacterBodyComponent>& characterBodies() const noexcept
     {

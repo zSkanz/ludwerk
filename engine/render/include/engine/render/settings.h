@@ -154,6 +154,13 @@ struct GraphicsSettings
     // it, the lights nearest the extraction order's front win -- deterministic,
     // because extraction order is (R10).
     u32 lightBudget = 256;
+    // **Secondary motion** (ADR 0194) -- capes, tails, hair on `SpringBone`s:
+    // stepped every this many frames, with that many frames' time (1 every
+    // frame, 2 half the rate, 0 never: every chain is the animation's), and
+    // only for a body nearer the camera than the distance. Presentation, so
+    // turning it down changes how a cape swings and nothing a game can read.
+    u32 secondaryMotionEvery = 1;
+    f32 secondaryMotionDistance = 60.0f;
 
     bool bloom = true;
     bool ambientOcclusion = true;

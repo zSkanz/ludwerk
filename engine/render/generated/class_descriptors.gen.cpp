@@ -51,8 +51,8 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     // must already have run -- engine/app/src/world_host.cpp orders them.
     const scene::ClassId basePartClass = classes.findId(atoms.intern("BasePart"));
     const scene::ClassId attachmentClass = classes.findId(atoms.intern("Attachment"));
-    const scene::ClassId pVInstanceClass = classes.findId(atoms.intern("PVInstance"));
     const scene::ClassId instanceClass = classes.findId(atoms.intern("Instance"));
+    const scene::ClassId pVInstanceClass = classes.findId(atoms.intern("PVInstance"));
 
     // --- MeshPart ---
     static std::array<scene::PropertyDesc, 3> meshPartProperties;
@@ -153,6 +153,183 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     boneDesc.parents = boneParents;
     boneDesc.properties = boneProperties;
     classes.registerClass(boneDesc);
+
+    // --- SpringBone ---
+    static std::array<scene::PropertyDesc, 9> springBoneProperties;
+    springBoneProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("RootJoint"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The joint the chain hangs from, as the file names it. It stays where the animation puts it; every joint below it is moved. A name the rig does not have moves nothing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getSpringBoneRootJoint,
+            .set = native::setSpringBoneRootJoint,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the chain is moved. Off, its joints are where the clip puts them, from the next frame.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getSpringBoneEnabled,
+            .set = native::setSpringBoneEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Stiffness"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How strongly each joint is pulled back to its animated place, 0 to 1. 0 is a rope; 1 does not move at all.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getSpringBoneStiffness,
+            .set = native::setSpringBoneStiffness,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Damping"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of its motion a joint loses each step, 0 to 1. Low swings for a long time; high settles at once and looks heavy.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getSpringBoneDamping,
+            .set = native::setSpringBoneDamping,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("GravityScale"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of the world's gravity the chain feels. 0 floats; negative rises.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getSpringBoneGravityScale,
+            .set = native::setSpringBoneGravityScale,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Inertia"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of the body's own motion the chain is left behind by, 0 to 1. At 1 a cape streams out behind a run; at 0 it is carried along as if the air moved with the body.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getSpringBoneInertia,
+            .set = native::setSpringBoneInertia,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("LimitAngle"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most a joint may bend away from its animated direction, in degrees.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_cone_degrees"),
+            .get = native::getSpringBoneLimitAngle,
+            .set = native::setSpringBoneLimitAngle,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Radius"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How thick the chain is where it meets a `SpringCollider`, in the mesh's units.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getSpringBoneRadius,
+            .set = native::setSpringBoneRadius,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("WindInfluence"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of the world's wind pushes the chain. 0 ignores it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getSpringBoneWindInfluence,
+            .set = native::setSpringBoneWindInfluence,
+        },
+    }};
+    scene::ClassDescriptor springBoneDesc;
+    springBoneDesc.name = atoms.intern("SpringBone");
+    springBoneDesc.super = instanceClass;
+    springBoneDesc.flags = scene::ClassFlags::None;
+    springBoneDesc.defaultName = atoms.intern("SpringBone");
+    springBoneDesc.doc = "Makes a chain of joints trail behind the body that carries it: a cape, a tail, hair, a tassel (ADR 0194). Parent it to the `MeshPart` whose skeleton has the chain and name the joint the chain hangs from; that joint's descendants then swing, settle and fall as the body moves, on top of whatever clip is playing.\012\012**It is picture, not simulation.** It runs on each machine after the pose is sampled, at the rate frames are drawn; it is not replicated, not in a replay, and a server with no window does none of it. Nothing in the game's rules should read where a cape is.\012\012**What an artist makes**: three or four columns of four or five joints for a cape, skinned as any joints are. One `SpringBone` on the joint they all descend from moves every column.\012\012It keeps each joint at its length from its parent, pulls it back towards the animated pose by `Stiffness`, and never lets it bend from that pose by more than `LimitAngle` -- which is what keeps a cape from folding through itself. `SpringCollider`s under the same mesh keep it out of the body.";
+    static constexpr std::array<std::string_view, 3> springBoneParents{{"MeshPart", "ReplicatedStorage", "ServerStorage"}};
+    springBoneDesc.parents = springBoneParents;
+    springBoneDesc.properties = springBoneProperties;
+    springBoneDesc.attachComponents = native::attachSpringBoneComponents;
+    springBoneDesc.detachComponents = native::detachSpringBoneComponents;
+    classes.registerClass(springBoneDesc);
+
+    // --- SpringCollider ---
+    static std::array<scene::PropertyDesc, 4> springColliderProperties;
+    springColliderProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("JointName"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The joint it follows, as the file names it. A name the rig does not have follows the mesh part itself.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getSpringColliderJointName,
+            .set = native::setSpringColliderJointName,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Radius"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The radius of the ball, or of the capsule's ends.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getSpringColliderRadius,
+            .set = native::setSpringColliderRadius,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Length"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far the capsule reaches along the joint's own up, from `Offset`. 0 is a ball.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getSpringColliderLength,
+            .set = native::setSpringColliderLength,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Offset"),
+            .type = scene::ValueType::Vector3,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where its centre -- or the capsule's lower end -- is, in the joint's own space.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getSpringColliderOffset,
+            .set = native::setSpringColliderOffset,
+        },
+    }};
+    scene::ClassDescriptor springColliderDesc;
+    springColliderDesc.name = atoms.intern("SpringCollider");
+    springColliderDesc.super = instanceClass;
+    springColliderDesc.flags = scene::ClassFlags::None;
+    springColliderDesc.defaultName = atoms.intern("SpringCollider");
+    springColliderDesc.doc = "A ball or a capsule tied to a joint, which the `SpringBone`s of the same `MeshPart` cannot pass through: a spine, a thigh, a head (ADR 0194). A few are enough -- a cape needs one for the back and one for each leg.\012\012It collides with nothing else. It is not a physics shape, nothing in the world touches it, and like the chains it keeps out of the body it is picture only.";
+    static constexpr std::array<std::string_view, 3> springColliderParents{{"MeshPart", "ReplicatedStorage", "ServerStorage"}};
+    springColliderDesc.parents = springColliderParents;
+    springColliderDesc.properties = springColliderProperties;
+    springColliderDesc.attachComponents = native::attachSpringColliderComponents;
+    springColliderDesc.detachComponents = native::detachSpringColliderComponents;
+    classes.registerClass(springColliderDesc);
 
     // --- Camera ---
     static std::array<scene::PropertyDesc, 9> cameraProperties;

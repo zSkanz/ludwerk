@@ -162,6 +162,7 @@ local Sections: { Section } = {
         Pages = {
             { Slug = "tweens", Title = "Tweens" },
             { Slug = "skeletal", Title = "Skeletal animation" },
+            { Slug = "secondary-motion", Title = "Capes, tails and hair" },
         },
     },
     {

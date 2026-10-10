@@ -1,0 +1,12 @@
+# The cape example's project file: it loads a model, and a model is found
+# under `content/`, which a project.toml is what makes of a folder.
+
+[project]
+name = "Ludwerk Cape"
+id = "dev.ludwerk.cape"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Cape"
+size = [1600, 900]

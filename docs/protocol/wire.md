@@ -1297,6 +1297,8 @@ Every other concrete class is deliberately off the wire, and this is why.
 | DataModel | The root. Every world has exactly one and it is created at boot on both sides, so there is nothing to spawn and nothing to reference by id. |
 | Bone | The same argument as `Attachment`, plus one: a bone's world transform is derived from an animated pose, and the pose is derived from state that does replicate. |
 | Ragdoll | A ragdoll is parts and constraints, and the parts replicate. The ragdoll instance is the recipe rather than the result. |
+| SpringBone | Picture only (ADR 0194): a cape's swing is each machine's own, stepped at its own frame rate from the pose it drew. Nothing of it is state another machine could use. |
+| SpringCollider | The same as `SpringBone`, whose chains it keeps out of the body. |
 | Constraint2D | The same as `BallSocketConstraint`, on the plane (ADR 0102): a replica's sprites are moved to where the authority's joints put them, and `Part2D.Position` is what arrives. The one entry covers its three classes. |
 | SpriteAnimator | What it does is write its sprite's `ImageRectOffset`, and that property replicates (ADR 0102). Sending the animator too would play the sheet twice on a replica. |
 | Camera | A replica's view is its own. Replicating it would take the camera away from the player, which is the one thing a client must decide. |

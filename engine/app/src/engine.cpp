@@ -1904,6 +1904,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // instance from the history and the frame's alpha, and asked by all of
     // the frame -- the world, its UI, particles, views, prompts, the pointer.
     render::DrawPoses framePoses;
+    // Seconds of frames drawn, for the wind the capes feel (ADR 0194).
+    f64 springClock = 0.0;
     // A stamp's stage, drawn still: nothing on it ticks (G33).
     render::DrawPoses stagePoses;
 
@@ -3222,6 +3224,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     }
                     const std::array<I18nArg, 1> split{I18nArg{"kinds", kinds}};
                     core::log(LogLevel::Info, ENG_TR("engine.frame.info.draws_by_kind"), split);
+                }
+                // And the capes: how many chains the frame stepped, where
+                // there are any (ADR 0194).
+                if (host != nullptr && host->secondaryMotion().chainsStepped() != 0) {
+                    const std::array<I18nArg, 2> stepped{
+                        I18nArg{"chains", static_cast<core::i64>(host->secondaryMotion().chainsStepped())},
+                        I18nArg{"joints", static_cast<core::i64>(host->secondaryMotion().jointsStepped())},
+                    };
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.secondary_motion"), stepped);
                 }
                 // **And what the game holds** -- the other thing a phone has
                 // no profiler to say. A game that stutters on two gigabytes
@@ -6715,6 +6726,27 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // called wrong, and it was.
             // The terrain nodes the loader chose for this camera (ADR 0082).
             const std::vector<render::TerrainNodeDraw> terrainNodes = terrainLoader.draws(authored());
+            // **The capes move before the picture is taken** (ADR 0194): from
+            // this frame's pose and this frame's drawn places, into the pose
+            // the extraction below reads. Only for the host's own world, whose
+            // animation this is; a prefab on its stage has none playing.
+            if (renderer != nullptr && &authored() == &host->world()) {
+                springClock += frame.renderDt;
+                const auto& look = renderer->settings();
+                render::SpringFrame springs;
+                springs.seconds = static_cast<f32>(frame.renderDt);
+                springs.camera = snapshot.camera.origin;
+                springs.maxDistance = look.secondaryMotionDistance;
+                springs.every = look.secondaryMotionEvery;
+                springs.time = static_cast<f32>(springClock);
+                if (const scene::WorkspaceComponent* workspace = host->world().workspaces().find(host->workspace());
+                    workspace != nullptr) {
+                    springs.gravity = workspace->gravity;
+                    springs.wind =
+                        scene::WindSettings{workspace->globalWind, workspace->windGusts, workspace->windTurbulence};
+                }
+                host->stepSecondaryMotion(framePoses, springs);
+            }
             {
                 ENG_PROFILE_SCOPE("render.extract");
                 render::extract(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),

@@ -1303,6 +1303,77 @@ void AnimationSystem::retire(const scene::World& world)
     }
 }
 
+void AnimationSystem::present(core::InstanceId meshPart, std::span<const PresentedJoint> joints)
+{
+    const SkeletonLibrary::Entry* entry = skeletonOf(meshPart);
+    if (entry == nullptr || joints.empty())
+        return;
+    const usize jointCount = entry->joints.size();
+    if (!stale_.empty() && stale_.contains(keyOf(meshPart)))
+        catchUp(meshPart);
+
+    Pose& drawn = presented_[keyOf(meshPart)];
+    const Pose* own = pose(meshPart);
+    if (own != nullptr && own->model.size() == jointCount && own->local.size() == jointCount) {
+        drawn.palette.assign(own->palette.begin(), own->palette.end());
+        drawn.model.assign(own->model.begin(), own->model.end());
+        drawn.local.assign(own->local.begin(), own->local.end());
+    }
+    else {
+        // Nothing playing: the rest pose is what it is drawn in.
+        drawn.palette.assign(jointCount, Mat4{});
+        drawn.model.assign(jointCount, Mat4{});
+        drawn.local.assign(jointCount, Mat4{});
+        for (usize joint = 0; joint < jointCount; ++joint)
+            drawn.local[joint] = toMatrix(entry->joints[joint].localBind);
+    }
+
+    // The forward pass of `commitOverrides`, on the copy: a joint that is
+    // named takes its place as given, and one that is not rides on its parent.
+    usize next = 0;
+    for (usize joint = 0; joint < jointCount; ++joint) {
+        if (next < joints.size() && joints[next].joint == joint) {
+            drawn.model[joint] = joints[next].model;
+            ++next;
+        }
+        else {
+            const core::u32 parent = entry->joints[joint].parent;
+            drawn.model[joint] =
+                parent == asset::Joint::NoParent ? drawn.local[joint] : drawn.model[parent] * drawn.local[joint];
+        }
+        drawn.palette[joint] = drawn.model[joint] * entry->joints[joint].inverseBind;
+    }
+}
+
+const Pose* AnimationSystem::drawnPose(core::InstanceId meshPart) const noexcept
+{
+    if (!presented_.empty()) {
+        if (const auto found = presented_.find(keyOf(meshPart)); found != presented_.end())
+            return &found->second;
+    }
+    return pose(meshPart);
+}
+
+bool AnimationSystem::jointLocal(core::InstanceId meshPart, core::u32 joint, core::CFrameD& out) const
+{
+    const SkeletonLibrary::Entry* entry = skeletonOf(meshPart);
+    if (entry == nullptr || joint >= entry->joints.size())
+        return false;
+    if (!stale_.empty() && stale_.contains(keyOf(meshPart)))
+        const_cast<AnimationSystem*>(this)->catchUp(meshPart);
+    const Pose* own = pose(meshPart);
+    if (own != nullptr && joint < own->local.size())
+        out = core::cframeFromMatrix(own->local[joint]);
+    else
+        out = entry->joints[joint].localBind;
+    return true;
+}
+
+bool AnimationSystem::seenLately(core::InstanceId meshPart) const noexcept
+{
+    return !seeing_ || seen_.contains(keyOf(meshPart));
+}
+
 const Pose* AnimationSystem::pose(core::InstanceId meshPart) const noexcept
 {
     const auto found = poses_.find(keyOf(meshPart));

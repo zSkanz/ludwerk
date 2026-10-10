@@ -21,6 +21,9 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.renderScale = 0.75f;
         settings.shadowTileResolution = 512;
         settings.shadowCascades = 2;
+        // Half the rate and half as far: a cape on a phone is the hero's.
+        settings.secondaryMotionEvery = 2;
+        settings.secondaryMotionDistance = 30.0f;
         settings.shadowTaps = shadowTapsFor(QualityLevel::Low);
         settings.terrainLean = true;
         settings.shadowDistance = 70.0f;

@@ -532,6 +532,34 @@ struct RagdollComponent
     f32 blend = 1.0f;
 };
 
+// **A chain of joints that trails behind its body** (ADR 0194): what the
+// instance says, and nothing of the motion -- where each joint is this frame
+// is the renderer's, per machine, and never state.
+struct SpringBoneComponent
+{
+    bool enabled = true;
+    // The joint the chain hangs from; its descendants are what moves.
+    core::NameAtom rootJoint;
+    f32 stiffness = 0.25f;
+    f32 damping = 0.2f;
+    f32 gravityScale = 1.0f;
+    f32 inertia = 1.0f;
+    // Degrees from the animated direction.
+    f32 limitAngle = 70.0f;
+    f32 radius = 0.05f;
+    f32 windInfluence = 1.0f;
+};
+
+// A ball or capsule on a joint that the chains of the same mesh keep out of.
+struct SpringColliderComponent
+{
+    core::NameAtom jointName;
+    f32 radius = 0.25f;
+    // Along the joint's own up, from `offset`; nought is a ball.
+    f32 length = 0.0f;
+    core::Vec3 offset{0.0f, 0.0f, 0.0f};
+};
+
 struct WeldComponent
 {
     // The anchor and the driven part. Either may be invalid while a script is

@@ -147,6 +147,7 @@
   "engine.frame.warn.long_wait": "Frame waited {ms} ms in {operation}; requested sleep {requested} ms.",
   "engine.frame.warn.long_frame": "Frame took {ms} ms -- simulation and its scripts {simulation} ms, render-step scripts {scripts} ms, waiting for the GPU and the display {waiting} ms, the rest {other} ms; dropped simulated time after {ticks} catch-up ticks.",
   "engine.frame.info.draws_by_kind": "Those draws, by what each was for: {kinds}.",
+  "engine.frame.info.secondary_motion": "Secondary motion: {chains} chains of {joints} joints stepped.",
   "engine.frame.info.memory": "Memory: the process holds {process} MiB of this machine's {machine}; on the graphics card, {textures} MiB in {texture_count} textures and {buffers} MiB in {buffer_count} buffers; scripts {scripts} MiB.",
   "engine.frame.info.report": "{seconds} s: {fps} frames a second -- median {median} ms, p95 {p95} ms, worst {worst} ms; {draws} draws, {triangles} triangles; the world at {width} by {height} ({quality}).",
   "engine.frame.info.paced": "Frames are paced at {rate} a second on a display that refreshes {refresh} times, the highest rate under the game's cap; a lower one is taken only when frames keep missing it.",

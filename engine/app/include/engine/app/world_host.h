@@ -34,6 +34,7 @@
 #include "engine/platform/game_integration.h"
 #include "engine/render/animation.h"
 #include "engine/render/draw_poses.h"
+#include "engine/render/spring_bones.h"
 #include "engine/render/transform_history.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/enum_registry.h"
@@ -588,6 +589,17 @@ public:
         return m_animation ? &*m_animation : nullptr;
     }
 
+    // **A frame of the world's capes, tails and hair** (ADR 0194), before the
+    // frame is extracted: stepped from the pose and the drawn place of each
+    // body, and presented to the renderer alone. Nothing the simulation reads
+    // is written, and a host that draws nothing never calls it.
+    void stepSecondaryMotion(const render::DrawPoses& poses, const render::SpringFrame& frame)
+    {
+        if (m_animation)
+            m_springs.update(world(), *m_animation, poses, frame);
+    }
+    [[nodiscard]] const render::SpringBones& secondaryMotion() const noexcept { return m_springs; }
+
     // What a frame's extraction reached of the world's rigs (H3): `fresh` for
     // the main view, the views after it adding theirs.
     void reportSeenSkins(std::span<const render::SeenSkin> seen, bool fresh)
@@ -807,6 +819,7 @@ private:
     // it -- so R10 has nothing to say here.
     std::unordered_set<core::u32> m_skeletonsTried;
     std::optional<render::AnimationSystem> m_animation;
+    render::SpringBones m_springs;
 
     // The two things `boot` was handed that a REBUILT runtime has to be handed
     // again (`restartRuntime`). Kept rather than re-derived: the reload bag

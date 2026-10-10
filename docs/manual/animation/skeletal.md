@@ -178,5 +178,6 @@ no retargeting, and no physics on a skinned mesh.
 ## Where to look next
 
 - [Tweens](manual:animation/tweens) — for animating a property rather than a rig
+- [Capes, tails and hair](manual:animation/secondary-motion) — what the body moves and no clip can
 - [Meshes and models](manual:world/meshes)
 - [`AnimationPlayer`](api:AnimationPlayer) · [`AnimationTrack`](api:AnimationTrack)

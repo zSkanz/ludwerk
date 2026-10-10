@@ -571,6 +571,8 @@ inline constexpr std::string_view ExcludedClasses[] = {
     "DataModel",
     "Bone",
     "Ragdoll",
+    "SpringBone",
+    "SpringCollider",
     "Constraint2D",
     "SpriteAnimator",
     "Camera",

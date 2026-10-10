@@ -247,6 +247,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`SpringBone` and `SpringCollider`: capes, tails and hair** (ADR 0194).
+  A `SpringBone` under a `MeshPart` names a joint of its rig, and the joints
+  below it trail behind the body -- swinging on a turn, streaming on a run,
+  settling on a stop -- on top of whatever clip is playing, kept out of the
+  body by `SpringCollider`s on its joints and pushed by the workspace's wind.
+  The model needs only joints; nothing is re-imported. It is picture only:
+  each machine's own, not replicated, not in a replay, and a `Bone` on such a
+  joint still follows the clip. See `examples/35-cape` and the manual's
+  "Capes, tails and hair".
 - **Parts that are see-through are drawn in runs.** Blended parts of one
   mesh and one look that stand together in the blended order are one call,
   as solid ones have been -- each with its own colour and its own

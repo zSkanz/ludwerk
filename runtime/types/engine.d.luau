@@ -1365,6 +1365,43 @@ declare extern type Bone extends Attachment with
     Transform: CFrame
 end
 
+declare extern type SpringBone extends Instance with
+    --- The joint the chain hangs from, as the file names it. It stays where the animation puts it;
+    --- every joint below it is moved. A name the rig does not have moves nothing.
+    RootJoint: string
+    --- Whether the chain is moved. Off, its joints are where the clip puts them, from the next frame.
+    Enabled: boolean
+    --- How strongly each joint is pulled back to its animated place, 0 to 1. 0 is a rope; 1 does not
+    --- move at all.
+    Stiffness: number
+    --- How much of its motion a joint loses each step, 0 to 1. Low swings for a long time; high settles
+    --- at once and looks heavy.
+    Damping: number
+    --- How much of the world's gravity the chain feels. 0 floats; negative rises.
+    GravityScale: number
+    --- How much of the body's own motion the chain is left behind by, 0 to 1. At 1 a cape streams out
+    --- behind a run; at 0 it is carried along as if the air moved with the body.
+    Inertia: number
+    --- The most a joint may bend away from its animated direction, in degrees.
+    LimitAngle: number
+    --- How thick the chain is where it meets a `SpringCollider`, in the mesh's units.
+    Radius: number
+    --- How much of the world's wind pushes the chain. 0 ignores it.
+    WindInfluence: number
+end
+
+declare extern type SpringCollider extends Instance with
+    --- The joint it follows, as the file names it. A name the rig does not have follows the mesh part
+    --- itself.
+    JointName: string
+    --- The radius of the ball, or of the capsule's ends.
+    Radius: number
+    --- How far the capsule reaches along the joint's own up, from `Offset`. 0 is a ball.
+    Length: number
+    --- Where its centre -- or the capsule's lower end -- is, in the joint's own space.
+    Offset: vector
+end
+
 declare extern type Constraint extends Instance with
     --- One end of the joint. The part it is on is the body the solver holds.
     Attachment0: Attachment?
@@ -6468,6 +6505,8 @@ type InstanceClasses = {
     MeshPart: MeshPart,
     Attachment: Attachment,
     Bone: Bone,
+    SpringBone: SpringBone,
+    SpringCollider: SpringCollider,
     BallSocketConstraint: BallSocketConstraint,
     HingeConstraint: HingeConstraint,
     FixedConstraint: FixedConstraint,

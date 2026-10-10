@@ -137,6 +137,8 @@ guided tour.
 | [`Sound`](sound.md) | [`Instance`](instance.md) | One sound, playing or not (§2.2). |
 | [`SoundEffect`](soundeffect.md) | [`Instance`](instance.md) | Something done to a sound on its way to the speakers (ADR 0131). |
 | [`SpotLight`](spotlight.md) | [`Instance`](instance.md) | A light confined to a cone about its forward direction -- its holder's, turned by its own `CFrame`, or its own alone when nothing holds it (ADR 0095). |
+| [`SpringBone`](springbone.md) | [`Instance`](instance.md) | Makes a chain of joints trail behind the body that carries it: a cape, a tail, hair, a tassel (ADR 0194). |
+| [`SpringCollider`](springcollider.md) | [`Instance`](instance.md) | A ball or a capsule tied to a joint, which the `SpringBone`s of the same `MeshPart` cannot pass through: a spine, a thigh, a head (ADR 0194). |
 | [`SpringConstraint`](springconstraint.md) | [`Constraint`](constraint.md) | A spring between two attachments: it pulls them together when they are further apart than `FreeLength` and pushes them apart when they are closer, harder the further they are from it. |
 | [`SpringConstraint2D`](springconstraint2d.md) | [`Constraint2D`](constraint2d.md) | A distance between two points, held softly: a spring, a bungee, a suspension. |
 | [`SpriteAnimator`](spriteanimator.md) | [`Instance`](instance.md) | Plays frames of its parent `Part2D`'s sprite sheet on the simulation clock (ADR 0102), so a walk cycle is data instead of script. |

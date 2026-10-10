@@ -1222,7 +1222,9 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         u32 firstBone = 0;
         u32 boneCount = 0;
         if (animation != nullptr) {
-            if (const Pose* pose = animation->pose(id); pose != nullptr && !pose->palette.empty()) {
+            // The pose it is DRAWN with: its own, or the copy a cape moved
+            // (`AnimationSystem::present`).
+            if (const Pose* pose = animation->drawnPose(id); pose != nullptr && !pose->palette.empty()) {
                 boneCount = static_cast<u32>(std::min<usize>(pose->palette.size(), kMaxSkinJoints));
                 const auto [palette, inserted] = paletteOffsets.try_emplace(pose, static_cast<u32>(out.bones.size()));
                 firstBone = palette->second;

@@ -6213,6 +6213,86 @@
       "Events": []
     },
     {
+      "Name": "SpringBone",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Damping",
+          "Type": "number",
+          "Default": "0.2"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "GravityScale",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Inertia",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "LimitAngle",
+          "Type": "number",
+          "Default": "70"
+        },
+        {
+          "Name": "Radius",
+          "Type": "number",
+          "Default": "0.05"
+        },
+        {
+          "Name": "RootJoint",
+          "Type": "string"
+        },
+        {
+          "Name": "Stiffness",
+          "Type": "number",
+          "Default": "0.25"
+        },
+        {
+          "Name": "WindInfluence",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "SpringCollider",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "JointName",
+          "Type": "string"
+        },
+        {
+          "Name": "Length",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Offset",
+          "Type": "vector"
+        },
+        {
+          "Name": "Radius",
+          "Type": "number",
+          "Default": "0.25"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "SpringConstraint",
       "Extends": "Constraint",
       "Tags": [],

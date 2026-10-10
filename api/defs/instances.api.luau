@@ -968,6 +968,131 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Property },
     },
     {
+        Name = "SpringBone",
+        Extends = "Instance",
+        Module = "render",
+        Parents = under("MeshPart"),
+        Storage = "SpringBone",
+        Doc = "Makes a chain of joints trail behind the body that carries it: a cape, a tail, hair, a tassel "
+            .. "(ADR 0194). Parent it to the `MeshPart` whose skeleton has the chain and name the joint the "
+            .. "chain hangs from; that joint's descendants then swing, settle and fall as the body moves, on "
+            .. "top of whatever clip is playing.\n\n"
+            .. "**It is picture, not simulation.** It runs on each machine after the pose is sampled, at the "
+            .. "rate frames are drawn; it is not replicated, not in a replay, and a server with no window does "
+            .. "none of it. Nothing in the game's rules should read where a cape is.\n\n"
+            .. "**What an artist makes**: three or four columns of four or five joints for a cape, skinned as "
+            .. "any joints are. One `SpringBone` on the joint they all descend from moves every column.\n\n"
+            .. "It keeps each joint at its length from its parent, pulls it back towards the animated pose by "
+            .. "`Stiffness`, and never lets it bend from that pose by more than `LimitAngle` -- which is what "
+            .. "keeps a cape from folding through itself. `SpringCollider`s under the same mesh keep it out of "
+            .. "the body.",
+        Properties = {
+            {
+                Name = "RootJoint",
+                Type = "string",
+                Doc = "The joint the chain hangs from, as the file names it. It stays where the animation puts "
+                    .. "it; every joint below it is moved. A name the rig does not have moves nothing.",
+            },
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether the chain is moved. Off, its joints are where the clip puts them, from the next "
+                    .. "frame.",
+            },
+            {
+                Name = "Stiffness",
+                Type = "number",
+                Default = "0.25",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How strongly each joint is pulled back to its animated place, 0 to 1. 0 is a rope; 1 "
+                    .. "does not move at all.",
+            },
+            {
+                Name = "Damping",
+                Type = "number",
+                Default = "0.2",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How much of its motion a joint loses each step, 0 to 1. Low swings for a long time; "
+                    .. "high settles at once and looks heavy.",
+            },
+            {
+                Name = "GravityScale",
+                Type = "number",
+                Default = "1",
+                Doc = "How much of the world's gravity the chain feels. 0 floats; negative rises.",
+            },
+            {
+                Name = "Inertia",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How much of the body's own motion the chain is left behind by, 0 to 1. At 1 a cape "
+                    .. "streams out behind a run; at 0 it is carried along as if the air moved with the body.",
+            },
+            {
+                Name = "LimitAngle",
+                Type = "number",
+                Default = "70",
+                ErrorKey = "scene.err.number_cone_degrees",
+                Doc = "The most a joint may bend away from its animated direction, in degrees.",
+            },
+            {
+                Name = "Radius",
+                Type = "number",
+                Default = "0.05",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How thick the chain is where it meets a `SpringCollider`, in the mesh's units.",
+            },
+            {
+                Name = "WindInfluence",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How much of the world's wind pushes the chain. 0 ignores it.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "SpringCollider",
+        Extends = "Instance",
+        Module = "render",
+        Parents = under("MeshPart"),
+        Storage = "SpringCollider",
+        Doc = "A ball or a capsule tied to a joint, which the `SpringBone`s of the same `MeshPart` cannot pass "
+            .. "through: a spine, a thigh, a head (ADR 0194). A few are enough -- a cape needs one for the "
+            .. "back and one for each leg.\n\n"
+            .. "It collides with nothing else. It is not a physics shape, nothing in the world touches it, "
+            .. "and like the chains it keeps out of the body it is picture only.",
+        Properties = {
+            {
+                Name = "JointName",
+                Type = "string",
+                Doc = "The joint it follows, as the file names it. A name the rig does not have follows the "
+                    .. "mesh part itself.",
+            },
+            {
+                Name = "Radius",
+                Type = "number",
+                Default = "0.25",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "The radius of the ball, or of the capsule's ends.",
+            },
+            {
+                Name = "Length",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How far the capsule reaches along the joint's own up, from `Offset`. 0 is a ball.",
+            },
+            {
+                Name = "Offset",
+                Type = "vector",
+                Doc = "Where its centre -- or the capsule's lower end -- is, in the joint's own space.",
+            },
+        } :: { Schema.Property },
+    },
+    {
         Name = "Attachment",
         Extends = "Instance",
         Module = "scene",
