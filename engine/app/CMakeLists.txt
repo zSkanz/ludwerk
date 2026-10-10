@@ -1494,6 +1494,38 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 300)
 
+    # **A morphed vertex lands where the file says** (ADR 0196): pillars drawn
+    # with morph targets against the same pillars made in that shape with
+    # none -- the same picture, lit, depth and shadow. On the graphics API the
+    # host picks, and on Windows on Vulkan as well: the shader finds a vertex's
+    # deltas by the vertex's number, which the two APIs count differently for
+    # a mesh that does not start at nought in its buffer. See the driver.
+    add_test(NAME morph_landing
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DCOMPARE=$<TARGET_FILE:imgcmp>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/morphlanding
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/morph-landing
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_morph_landing.cmake)
+    set_tests_properties(morph_landing PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+    if(WIN32)
+        add_test(NAME morph_landing_vulkan
+            COMMAND ${CMAKE_COMMAND}
+                -DHOST=$<TARGET_FILE:engine_host>
+                -DCOMPARE=$<TARGET_FILE:imgcmp>
+                -DPROBE=$<TARGET_FILE:imgprobe>
+                -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/morphlanding
+                -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/morph-landing-vulkan
+                -DGPU=vulkan
+                -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_morph_landing.cmake)
+        set_tests_properties(morph_landing_vulkan PROPERTIES
+            SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+            TIMEOUT 300)
+    endif()
+
     # **A terrain layer's repeat is broken up** (ADR 0113's amendment): the
     # built-in grass photographed from above as it repeated, as it is by
     # default and on hexagonal cells, and its autocorrelation at the tile's
@@ -2086,7 +2118,10 @@ if(ENG_BUILD_TESTS)
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
         editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived
         decal_blend_gate decal_receives_gate foliage_decal_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d
-        temporal_upscale_gate frame_generation_gate motion_whole_gate)
+        temporal_upscale_gate frame_generation_gate motion_whole_gate morph_landing)
+    if(WIN32)
+        list(APPEND drawn_tests morph_landing_vulkan)
+    endif()
     option(ENG_TEST_GPU_LOCK "Serialise the tests that draw on a real GPU" ${WIN32})
     if(APPLE)
         set(ENG_TEST_GPU_LOCK ON)

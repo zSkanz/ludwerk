@@ -1234,6 +1234,19 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             }
         }
 
+        // **The morph targets it is drawn with** (ADR 0196), once for the
+        // body: the file's own weights until something sets others. Decided
+        // from this frame's weights and nothing kept, so a body whose weights
+        // have all returned to nought has no row and is back in its run in
+        // this same frame.
+        u32 morph = NoMorph;
+        if (!entry->morphDefaults.empty()) {
+            if (const MorphDraw moved = selectMorphs(entry->morphDefaults); moved.count > 0) {
+                morph = static_cast<u32>(out.morphs.size());
+                out.morphs.push_back(moved);
+            }
+        }
+
         // What the part itself says about its surface, resolved once for the
         // whole mesh rather than once per section: `Material` is a property of
         // the PART, and every section of it gets the same answer.
@@ -1352,6 +1365,10 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             out.draws.back().castShadow = part->castShadow;
             out.draws.back().receivesDecals = part->receivesDecals;
             out.draws.back().fadedOnly = own >= 1.0f && transparent;
+            // Only the sections a target reaches: a character's body stays in
+            // its run while its face is drawn alone.
+            if (morph != NoMorph && section < entry->sectionMorphed.size() && entry->sectionMorphed[section] != 0)
+                out.draws.back().morph = morph;
         }
     });
 

@@ -72,6 +72,10 @@ enum class DrawKind : core::u8
     Ribbon,
     Particle,
     WorldUi,
+    // A body with a morph target above nought, in the camera's lit passes
+    // (ADR 0196): drawn alone, out of the run its mesh would be in. Its
+    // shadow and prepass draws are counted with those passes.
+    Morph,
     Count,
 };
 
@@ -83,7 +87,7 @@ inline constexpr core::usize DrawKindCount = static_cast<core::usize>(DrawKind::
     constexpr std::array<const char*, DrawKindCount> Names{
         "sun_shadow", "local_shadow", "prepass", "decal_mask", "mesh",     "mesh_run",
         "blended",    "blended_run",  "outline", "highlight",  "velocity", "foliage",
-        "decal",      "sprite",       "ribbon",  "particle",   "world_ui",
+        "decal",      "sprite",       "ribbon",  "particle",   "world_ui", "morph",
     };
     return Names[static_cast<core::usize>(kind)];
 }
@@ -215,7 +219,7 @@ public:
 
     // **Makes now what a game first asks for in the middle of play** (ADR
     // 0176): the pipelines of particles, beams and trails, decals, the world's
-    // interface, highlights and skinned runs, each of which is otherwise made
+    // interface, highlights, skinned runs and morphing bodies, each of which is otherwise made
     // the first frame something of its kind is drawn -- a first shot's
     // sparks, a first name tag -- and on a phone that frame is tens of
     // milliseconds a pipeline. Called behind a loading curtain. What the scene

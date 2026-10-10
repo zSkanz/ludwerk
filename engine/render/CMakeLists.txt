@@ -46,6 +46,7 @@ engine_add_module(render
         src/animation.cpp
         src/spring_chain.cpp
         src/spring_bones.cpp
+        src/morph.cpp
         generated/class_descriptors.gen.cpp
     DEPS
         asset
@@ -104,6 +105,7 @@ engine_add_module_tests(render
         tests/ribbons_tests.cpp
         tests/spring_chain_tests.cpp
         tests/spring_bones_tests.cpp
+        tests/morph_tests.cpp
         tests/voxel_loader_tests.cpp
 )
 

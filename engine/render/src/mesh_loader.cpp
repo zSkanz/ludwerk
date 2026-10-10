@@ -124,6 +124,56 @@ constexpr std::string_view kAssetScheme = "asset://";
     return handle;
 }
 
+// **A mesh's morph targets, on the card and in its entry** (ADR 0196), for
+// both feeds. `submeshes` and `indices` are level zero's: a coarser level is
+// other triangles over the same vertices, so a section no target reaches at
+// level zero is reached at none.
+void giveMorphs(rhi::IDevice& device, rhi::ICmdList& cmd, MeshCache& cache, MeshLibrary::Entry& entry,
+                std::span<const asset::MorphTarget> targets, core::usize vertexCount,
+                std::span<const asset::Submesh> submeshes, std::span<const u32> indices, std::string_view urn)
+{
+    if (targets.empty())
+        return;
+    const MorphTable table = buildMorphTable(targets, static_cast<u32>(vertexCount));
+    if (table.refusedBytes != 0) {
+        const core::I18nArg args[] = {
+            {"mesh", urn.empty() ? std::string_view{"a mesh"} : urn},
+            {"megabytes", static_cast<core::i64>(table.refusedBytes / (1024u * 1024u))},
+            {"most", static_cast<core::i64>(kMaxMorphTableBytes / (1024u * 1024u))},
+        };
+        core::log(core::LogLevel::Warn, ENG_TR("render.warn.morph_table_too_large"), args);
+        return;
+    }
+    core::EngineError error;
+    if (!cache.attachMorphs(device, cmd, entry.mesh, table, &error)) {
+        // Targets that move nothing make no table and are no error.
+        if (error.key.hash != 0)
+            core::logText(core::LogLevel::Warn, error.message);
+        return;
+    }
+
+    entry.morphNames.reserve(targets.size());
+    entry.morphDefaults.reserve(targets.size());
+    for (const asset::MorphTarget& target : targets) {
+        entry.morphNames.push_back(target.name);
+        entry.morphDefaults.push_back(target.defaultWeight);
+    }
+    const u32 first = table.firstVertex;
+    const u32 end = table.firstVertex + table.vertexCount;
+    entry.sectionMorphed.assign(submeshes.size(), 0);
+    for (core::usize section = 0; section < submeshes.size(); ++section) {
+        const asset::Submesh& submesh = submeshes[section];
+        const core::usize from = std::min<core::usize>(submesh.firstIndex, indices.size());
+        const core::usize to = std::min<core::usize>(from + submesh.indexCount, indices.size());
+        for (core::usize index = from; index < to; ++index) {
+            if (indices[index] >= first && indices[index] < end) {
+                entry.sectionMorphed[section] = 1;
+                break;
+            }
+        }
+    }
+}
+
 // Everything after "the geometry is on the GPU and the images are uploaded",
 // shared by the two feeds. A compiled mesh out of a pack and a glTF parsed on
 // the way in differ in how they arrive and in nothing after that -- and one
@@ -948,6 +998,10 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
             // would report a mesh roughly twice the size of the one on screen.
             triangles = static_cast<core::u32>(compiled.lods[0].indices.size() / 3);
 
+            // Its bounds as far as its morph targets reach (ADR 0196), before
+            // the cache copies them.
+            growBoundsForMorphs(geometry, compiled.morphs);
+
             const bool skinned = !compiled.joints.empty() && !compiled.skin.empty();
             // **A skinned mesh takes its whole chain too** (H4). It took level
             // zero only, on the reasoning that a coarser level drops vertices
@@ -999,6 +1053,8 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
             // submeshes in the same order -- so the flattened list would emit a
             // draw per section PER LEVEL and render the mesh several times over.
             fillEntry(entry, geometry.bounds, compiled.lods[0].submeshes, compiled.materials, images, urn);
+            giveMorphs(device, cmd, cache, entry, compiled.morphs, geometry.vertices.size(), compiled.lods[0].submeshes,
+                       compiled.lods[0].indices, urn);
             entry.positions.reserve(geometry.vertices.size());
             for (const asset::Vertex& vertex : geometry.vertices)
                 entry.positions.push_back(vertex.position);
@@ -1102,8 +1158,17 @@ bool MeshLoader::uploadModel(rhi::IDevice& device, rhi::ICmdList& cmd, const ass
     // A file with a skin gets the second stream and one without gets exactly
     // what an ordinary load uploads -- the same branch `sync` takes, so a
     // preview and a viewport draw the same geometry.
-    const MeshHandle handle = model.skinned() ? cache.createSkinned(device, cmd, model.mesh, model.skin, &uploadError)
-                                              : cache.create(device, cmd, model.mesh, MeshUsage::Static, &uploadError);
+    //
+    // A model with morph targets is uploaded with its bounds grown to where
+    // they reach (ADR 0196): a copy of the mesh, for the few that have any.
+    asset::Mesh grown;
+    if (!model.morphs.empty()) {
+        grown = model.mesh;
+        growBoundsForMorphs(grown, model.morphs);
+    }
+    const asset::Mesh& mesh = model.morphs.empty() ? model.mesh : grown;
+    const MeshHandle handle = model.skinned() ? cache.createSkinned(device, cmd, mesh, model.skin, &uploadError)
+                                              : cache.create(device, cmd, mesh, MeshUsage::Static, &uploadError);
     if (!handle.valid()) {
         core::logText(core::LogLevel::Warn, uploadError.message);
         return false;
@@ -1120,7 +1185,9 @@ bool MeshLoader::uploadModel(rhi::IDevice& device, rhi::ICmdList& cmd, const ass
 
     MeshLibrary::Entry entry;
     entry.mesh = handle;
-    fillEntry(entry, model.mesh.bounds, model.mesh.submeshes, model.materials, images, std::string_view{});
+    fillEntry(entry, mesh.bounds, model.mesh.submeshes, model.materials, images, std::string_view{});
+    giveMorphs(device, cmd, cache, entry, model.morphs, model.mesh.vertices.size(), model.mesh.submeshes,
+               model.mesh.indices, std::string_view{});
     entry.positions.reserve(model.mesh.vertices.size());
     for (const asset::Vertex& vertex : model.mesh.vertices)
         entry.positions.push_back(vertex.position);

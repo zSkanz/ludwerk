@@ -213,6 +213,8 @@ void MeshCache::destroy(rhi::IDevice& device)
             device.destroy(entry.resolved.indices);
             if (entry.resolved.skin.valid())
                 device.destroy(entry.resolved.skin);
+            if (entry.resolved.morph.valid())
+                device.destroy(entry.resolved.morph);
         }
         entry.live = false;
     }
@@ -305,6 +307,37 @@ MeshHandle MeshCache::createSkinned(rhi::IDevice& device, rhi::ICmdList& cmd, co
 
     cmd.upload(entry.resolved.skin, std::as_bytes(skin), 0);
     return handle;
+}
+
+bool MeshCache::attachMorphs(rhi::IDevice& device, rhi::ICmdList& cmd, MeshHandle handle, const MorphTable& table,
+                             core::EngineError* outError)
+{
+    if (table.empty() || !handle.valid() || handle.index >= entries_.size())
+        return false;
+    Entry& entry = entries_[handle.index];
+    // Static only: the shader finds a vertex's row by the vertex's number,
+    // and a slice of a shared buffer numbers its vertices from the slice on
+    // one backend and from the buffer on another.
+    if (!entry.live || entry.generation != handle.generation || entry.dynamic || entry.pooled ||
+        entry.resolved.vertexOffset != 0 || entry.resolved.morph.valid())
+        return false;
+
+    entry.resolved.morph = device.createBuffer({
+        .usage = rhi::BufferUsage::GraphicsStorageRead,
+        .sizeBytes = static_cast<u32>(table.rows.size() * sizeof(GpuMorphDelta)),
+        .debugName = "mesh-morphs",
+    });
+    if (!entry.resolved.morph.valid()) {
+        // The mesh still draws, at rest: what is lost is the targets.
+        if (outError != nullptr)
+            *outError = core::makeError(ENG_TR("render.err.mesh_buffer_failed"), {}, "morph table");
+        return false;
+    }
+    cmd.upload(entry.resolved.morph, std::as_bytes(std::span<const GpuMorphDelta>{table.rows}), 0);
+    entry.resolved.morphFirstVertex = table.firstVertex;
+    entry.resolved.morphVertexCount = table.vertexCount;
+    entry.resolved.morphTargetCount = table.targetCount;
+    return true;
 }
 
 MeshHandle MeshCache::create(rhi::IDevice& device, rhi::ICmdList& cmd, const asset::Mesh& mesh, MeshUsage usage,
@@ -475,6 +508,8 @@ void MeshCache::release(rhi::IDevice& device, MeshHandle handle)
             device.destroy(entry.resolved.indices);
         if (entry.resolved.skin.valid())
             device.destroy(entry.resolved.skin);
+        if (entry.resolved.morph.valid())
+            device.destroy(entry.resolved.morph);
     }
 
     entry.live = false;

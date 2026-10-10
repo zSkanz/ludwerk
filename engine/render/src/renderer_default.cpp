@@ -893,6 +893,9 @@ private:
     // skinned draw is in the world -- so a world without one builds nothing
     // and moves no capture golden.
     [[nodiscard]] bool ensureSkinnedInstancing(rhi::IDevice& device);
+    // The morph pipelines (ADR 0196), made the first frame a body has a
+    // target above nought -- on the same terms, and for the same reason.
+    [[nodiscard]] bool ensureMorph(rhi::IDevice& device);
     // The decal pipeline, on the same lazy terms.
     [[nodiscard]] bool ensureDecals(rhi::IDevice& device);
     // The ribbon pipeline and its vertex buffer (ADR 0129), on the same terms.
@@ -1100,6 +1103,24 @@ private:
     rhi::PipelineHandle pbrSkinnedInstancedPipeline_{};
     rhi::PipelineHandle shadowSkinnedInstancedPipeline_{};
     rhi::PipelineHandle depthPrepassSkinnedInstancedPipeline_{};
+    // **A body with a morph target above nought** (ADR 0196) is drawn alone
+    // through these: the built-in passes with the vertex moved by its
+    // targets first. A set for a mesh with no skeleton and one for a skinned
+    // one; each the lit pass (writing depth, and testing what the prepass
+    // wrote), the blended pass, the shadow maps and the camera's prepass.
+    struct MorphPipelines
+    {
+        rhi::PipelineHandle forward{};
+        rhi::PipelineHandle forwardPrepassed{};
+        rhi::PipelineHandle blend{};
+        rhi::PipelineHandle shadow{};
+        rhi::PipelineHandle prepass{};
+    };
+    std::array<MorphPipelines, 2> morphPipelines_{};
+    bool morphTried_ = false;
+    // Every pipeline of both sets exists. Until then a body with weights is
+    // drawn at rest, in its run, as if it had none.
+    bool morphReady_ = false;
     std::vector<InstanceBatch> batches_;
     // Per draw: which batch covers it, or `kNoBatch`.
     std::vector<u32> batchOf_;
@@ -2303,6 +2324,8 @@ void DefaultRenderer::warm(rhi::IDevice& device)
     (void)ensureHighlightMasks(device);
     ENG_PROFILE_NEXT(sections, "warm.skinning");
     (void)ensureSkinnedInstancing(device);
+    ENG_PROFILE_NEXT(sections, "warm.morphs");
+    (void)ensureMorph(device);
 }
 
 std::optional<bool> DefaultRenderer::warmSurface(rhi::IDevice& device, std::string_view name)
@@ -2692,6 +2715,16 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
         *buffer = {};
     }
     skinnedInstancingTried_ = false;
+    for (MorphPipelines& set : morphPipelines_) {
+        for (rhi::PipelineHandle* pipeline :
+             {&set.forward, &set.forwardPrepassed, &set.blend, &set.shadow, &set.prepass}) {
+            if (pipeline->valid())
+                device.destroy(*pipeline);
+            *pipeline = {};
+        }
+    }
+    morphTried_ = false;
+    morphReady_ = false;
     if (ribbonBuffer_.valid())
         device.destroy(ribbonBuffer_);
     ribbonBuffer_ = {};
@@ -3302,6 +3335,13 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
         //
         // **A skinned draw is batched too** (H2), once the palettes can be
         // read by instance: five hundred animated enemies were 1,800 draws.
+        //
+        // **A body with a morph target above nought is drawn alone** (ADR
+        // 0196): its weights are its own. One with every weight at nought has
+        // no row and is here like any other -- which is the whole cost of
+        // targets to a horde that is not using them.
+        if (draw.morph != NoMorph && morphReady_)
+            return false;
         if (draw.transparent)
             return blendedRun(draw);
         return draw.boneCount == 0 || skinnedRuns;
@@ -3696,6 +3736,21 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             batch == nullptr && draw.boneCount > 0 && resolved->skin.valid() && skinnedPipeline.valid();
         // A run of them (H2), posed from the frame's palette buffer.
         const bool skinnedRun = batch != nullptr && batch->skinned;
+        // **A body its morph targets move this frame** (ADR 0196). The masks
+        // -- a selection's outline, a highlight -- draw it at rest: they want
+        // a silhouette, and a face's targets move it by less than the line is
+        // wide.
+        //
+        // **Only a mesh whose vertices start at nought in their buffer.** The
+        // vertex stage finds a vertex's deltas by the vertex's number, and
+        // with a base vertex Direct3D numbers from the mesh where Vulkan and
+        // Metal number from the buffer. `MeshCache::attachMorphs` gives a
+        // table to no other mesh; this is the same statement where the
+        // pipeline is chosen, so that changing the one cannot quietly break
+        // the other.
+        const bool morphDraw = !mask && batch == nullptr && morphReady_ && draw.morph < world.morphs.size() &&
+                               resolved->morph.valid() && resolved->vertexOffset == 0 && !draw.terrain &&
+                               !draw.voxelBlock;
         // A terrain mesh in the opaque pass is drawn with the terrain's look,
         // and in the shadow pass with no culling and a push from the light (see
         // the cascade loop); in the prepass it is an ordinary static mesh.
@@ -3715,8 +3770,13 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // A surface shader's own pipelines, for a plain or instanced mesh (ADR
         // 0091). Skinned, terrain and voxel geometry keep the built-in surface,
         // and so does the outline mask, which wants a position and nothing else.
+        //
+        // **And so does a mesh that has morph targets**, whatever its weights
+        // are this frame: its morphed draw has no surface pipeline, and a face
+        // that changed its look the moment it spoke would be worse than one
+        // that never had the surface.
         const u32 surfaceId = !mask && !skinnedDraw && !skinnedRun && !draw.terrain && !draw.voxelBlock &&
-                                      draw.material < materialSurface_.size()
+                                      !resolved->morph.valid() && draw.material < materialSurface_.size()
                                   ? materialSurface_[draw.material]
                                   : 0u;
         const SurfaceSet* surface = surfaceId != 0 ? &surfaces_[surfaceId - 1] : nullptr;
@@ -3741,10 +3801,18 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             : selection == Selection::Transparent ? surface->blended
             : batch != nullptr                    ? unlessPrepassed(surface->instanced, surface->instancedPrepassed)
                                                   : unlessPrepassed(surface->forward, surface->forwardPrepassed);
+        const MorphPipelines& morphSet = morphPipelines_[skinnedDraw ? 1 : 0];
+        const rhi::PipelineHandle morphPipeline = !morphDraw                        ? rhi::PipelineHandle{}
+                                                  : selection == Selection::Shadow  ? morphSet.shadow
+                                                  : selection == Selection::Prepass ? morphSet.prepass
+                                                  : selection == Selection::Transparent
+                                                      ? morphSet.blend
+                                                      : unlessPrepassed(morphSet.forward, morphSet.forwardPrepassed);
         const rhi::PipelineHandle wanted =
             surfacePipeline.valid() ? surfacePipeline
             : skinnedRun            ? unlessPrepassed(skinnedInstancedPipeline, pbrSkinnedInstancedPrepassedPipeline_)
             : batch != nullptr      ? unlessPrepassed(instancedPipeline, pbrInstancedPrepassedPipeline_)
+            : morphDraw             ? morphPipeline
             : skinnedDraw           ? unlessPrepassed(skinnedPipeline, pbrSkinnedPrepassedPipeline_)
             : terrainDraw           ? terrainForwardPipeline()
             : terrainShadow         ? terrainShadowPipeline_
@@ -4009,11 +4077,26 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             const std::array<rhi::BufferHandle, 1> vertexBuffers{resolved->vertices};
             cmd.bindVertexBuffers(0, vertexBuffers);
         }
+        if (morphDraw) {
+            // The table at the vertex stage's first storage slot, and the
+            // draw's targets in the block after the ones it already has: the
+            // object's, and a skinned draw's palette.
+            const std::array<rhi::BufferHandle, 1> table{resolved->morph};
+            cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0, table);
+            const GpuMorphUniforms block = morphUniforms(world.morphs[draw.morph], resolved->morphFirstVertex,
+                                                         resolved->morphVertexCount, resolved->morphTargetCount);
+            cmd.bindUniforms(rhi::ShaderStage::Vertex, skinnedDraw ? 2 : 1, asBytes(&block, sizeof(block)));
+            // That slot is the block world's too, bound once a run of chunks:
+            // whatever chunk is drawn next binds its own again.
+            if (boundMaterial == kVoxelBinding)
+                boundMaterial = 0xFFFFFFFFu;
+        }
         cmd.bindIndexBuffer(resolved->indices, rhi::IndexType::U32);
         if (batch == nullptr) {
             cmd.drawIndexed(section.indexCount, 1, resolved->firstIndex + section.firstIndex, resolved->vertexOffset,
                             0);
-            countDraw(meshDrawKind(selection, false));
+            const bool lit = selection == Selection::Opaque || selection == Selection::Transparent;
+            countDraw(morphDraw && lit ? DrawKind::Morph : meshDrawKind(selection, false));
         }
         else {
             for (u32 piece = 0; piece < pieceCount; ++piece) {
@@ -6017,6 +6100,166 @@ bool DefaultRenderer::ensureSkyLook(rhi::IDevice& device)
     return skyLook_.handle.valid();
 }
 
+bool DefaultRenderer::ensureMorph(rhi::IDevice& device)
+{
+    if (morphTried_)
+        return morphReady_;
+    morphTried_ = true;
+    if (shaderLibrary_ == nullptr)
+        return false;
+
+    core::EngineError error;
+    const auto load = [&](std::string_view name, rhi::ShaderStage stage) -> rhi::ShaderHandle {
+        const rhi::ShaderHandle handle = shaderLibrary_->create(device, name, stage, &error);
+        if (handle.valid() && shaderCount_ < std::size(shaders_))
+            shaders_[shaderCount_++] = handle;
+        return handle;
+    };
+
+    // The layouts of the passes these stand in for (`create`): the mesh at
+    // slot 0, and for a skinned one its joints and weights at slot 1.
+    const std::array<rhi::VertexBufferLayout, 1> plainBuffers{
+        rhi::VertexBufferLayout{.slot = 0, .strideBytes = 48},
+    };
+    const std::array<rhi::VertexBufferLayout, 2> skinnedBuffers{
+        rhi::VertexBufferLayout{.slot = 0, .strideBytes = 48},
+        rhi::VertexBufferLayout{.slot = 1, .strideBytes = 32},
+    };
+    const std::array<rhi::VertexAttribute, 4> plainForward{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 12},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 24},
+        rhi::VertexAttribute{.location = 3, .bufferSlot = 0, .format = rhi::VertexFormat::Float2, .offsetBytes = 40},
+    };
+    const std::array<rhi::VertexAttribute, 6> skinnedForward{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 12},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 24},
+        rhi::VertexAttribute{.location = 3, .bufferSlot = 0, .format = rhi::VertexFormat::Float2, .offsetBytes = 40},
+        rhi::VertexAttribute{.location = 4, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 5, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
+    };
+    // Depth only: the position, and a skinned mesh's joints and weights.
+    const std::array<rhi::VertexAttribute, 1> plainDepth{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+    };
+    const std::array<rhi::VertexAttribute, 3> skinnedDepth{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
+    };
+    const std::array<rhi::ColorTargetDesc, 1> hdrTarget{rhi::ColorTargetDesc{.format = kHdrFormat}};
+    const std::array<rhi::ColorTargetDesc, 1> hdrBlendTarget{rhi::ColorTargetDesc{
+        .format = kHdrFormat,
+        .blend = {.enabled = true},
+    }};
+
+    struct Family
+    {
+        const char* forwardShader;
+        const char* depthShader;
+        std::span<const rhi::VertexBufferLayout> buffers;
+        std::span<const rhi::VertexAttribute> forwardAttributes;
+        std::span<const rhi::VertexAttribute> depthAttributes;
+        // The five names, for a capture of the frame to tell them apart by.
+        std::array<const char*, 5> names;
+    };
+    const std::array<Family, 2> families{
+        Family{"pbr_morph",
+               "shadow_morph",
+               plainBuffers,
+               plainForward,
+               plainDepth,
+               {"pbr_morph", "pbr_morph_prepassed", "pbr_morph_blend", "shadow_morph", "depth_prepass_morph"}},
+        Family{"pbr_morph_skinned",
+               "shadow_morph_skinned",
+               skinnedBuffers,
+               skinnedForward,
+               skinnedDepth,
+               {"pbr_morph_skinned", "pbr_morph_skinned_prepassed", "pbr_morph_skinned_blend", "shadow_morph_skinned",
+                "depth_prepass_morph_skinned"}},
+    };
+
+    bool ready = true;
+    for (core::usize index = 0; index < families.size(); ++index) {
+        const Family& family = families[index];
+        const rhi::ShaderHandle forwardVertex = load(family.forwardShader, rhi::ShaderStage::Vertex);
+        const rhi::ShaderHandle forwardFragment = load(family.forwardShader, rhi::ShaderStage::Fragment);
+        const rhi::ShaderHandle depthVertex = load(family.depthShader, rhi::ShaderStage::Vertex);
+        const rhi::ShaderHandle depthFragment = load(family.depthShader, rhi::ShaderStage::Fragment);
+        if (!forwardVertex.valid() || !forwardFragment.valid() || !depthVertex.valid() || !depthFragment.valid()) {
+            // Content exported before these shaders were: its bodies are
+            // drawn at rest, and the log says why.
+            core::logText(core::LogLevel::Warn, error.message);
+            return false;
+        }
+
+        // Each the state of the pass it stands in for, word for word: the
+        // lit pass, the lit pass over a prepass, the blended pass, a shadow
+        // map (front faces culled, D051) and the camera's own depth.
+        MorphPipelines& set = morphPipelines_[index];
+        set.forward = device.createGraphicsPipeline({
+            .vertexShader = forwardVertex,
+            .fragmentShader = forwardFragment,
+            .vertexBuffers = family.buffers,
+            .vertexAttributes = family.forwardAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = family.names[0],
+        });
+        set.forwardPrepassed = device.createGraphicsPipeline({
+            .vertexShader = forwardVertex,
+            .fragmentShader = forwardFragment,
+            .vertexBuffers = family.buffers,
+            .vertexAttributes = family.forwardAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = family.names[1],
+        });
+        set.blend = device.createGraphicsPipeline({
+            .vertexShader = forwardVertex,
+            .fragmentShader = forwardFragment,
+            .vertexBuffers = family.buffers,
+            .vertexAttributes = family.forwardAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrBlendTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = family.names[2],
+        });
+        set.shadow = device.createGraphicsPipeline({
+            .vertexShader = depthVertex,
+            .fragmentShader = depthFragment,
+            .vertexBuffers = family.buffers,
+            .vertexAttributes = family.depthAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Front},
+            .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = {},
+            .depthStencilFormat = kShadowFormat,
+            .debugName = family.names[3],
+        });
+        set.prepass = device.createGraphicsPipeline({
+            .vertexShader = depthVertex,
+            .fragmentShader = depthFragment,
+            .vertexBuffers = family.buffers,
+            .vertexAttributes = family.depthAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = {},
+            .depthStencilFormat = kDepthFormat,
+            .debugName = family.names[4],
+        });
+        ready = ready && set.forward.valid() && set.forwardPrepassed.valid() && set.blend.valid() &&
+                set.shadow.valid() && set.prepass.valid();
+    }
+    morphReady_ = ready;
+    return morphReady_;
+}
+
 bool DefaultRenderer::ensureSkinnedInstancing(rhi::IDevice& device)
 {
     if (skinnedInstancingTried_)
@@ -7813,6 +8056,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             return draw.boneCount > 0 && !draw.transparent;
         }) >= static_cast<std::ptrdiff_t>(kMinInstanceBatch))
         (void)ensureSkinnedInstancing(device);
+    // And the morph pipelines, the first frame a body has a target above
+    // nought (ADR 0196): a world where none ever has builds nothing.
+    if (!morphTried_ && !world.morphs.empty())
+        (void)ensureMorph(device);
     buildInstanceBatches(world, meshes);
     if (!instanceStaging_.empty()) {
         cmd.upload(instanceBuffer_, asBytes(instanceStaging_.data(), instanceStaging_.size() * sizeof(GpuInstance)), 0);

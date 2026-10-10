@@ -357,6 +357,7 @@
   "render.info.surface_pipelines": "Surface shader {urn}: its ten shaders and every pipeline created in {milliseconds} ms.",
   "render.info.surface_compiled": "Surface shader {urn} ready in {milliseconds} ms ({compiled} of 10 stages compiled, the rest from the cache).",
   "render.warn.surface_unavailable": "The surface shader {name} could not be loaded or built, so what wears it draws with the built-in surface.",
+  "render.warn.morph_table_too_large": "{mesh} has morph targets that would take {megabytes} MB on the graphics card, past the {most} MB a mesh may: it is drawn without them. Its targets move vertices over the whole mesh; a face exported as a mesh of its own takes a fraction of that.",
   "render.warn.second_uv_set": "{mesh} has a material that samples UV set {set}; this engine's vertices carry one, so that texture is left off rather than drawn with the wrong coordinates.",
   "render.err.shader_format_unknown": "The graphics device reports no shader format, so no shaders can be loaded.",
   "render.err.shader_manifest_missing": "No shader manifest at {path}. Build the shaders, or check that content shipped beside the executable.",

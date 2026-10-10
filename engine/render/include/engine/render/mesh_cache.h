@@ -21,6 +21,7 @@
 #include "engine/asset/model.h"
 #include "engine/core/error.h"
 #include "engine/core/math.h"
+#include "engine/render/morph.h"
 #include "engine/rhi/device.h"
 
 namespace engine::render {
@@ -160,6 +161,13 @@ public:
                                            core::EngineError* outError = nullptr,
                                            std::span<const MeshLodRange> lods = {});
 
+    // Gives a static mesh its morph targets' table (ADR 0196). False, with
+    // the mesh left drawable as it was, for a table the device refused; and
+    // for a mesh that is not static, whose vertices do not start at nought in
+    // their buffer -- which is what the table is read by.
+    bool attachMorphs(rhi::IDevice& device, rhi::ICmdList& cmd, MeshHandle handle, const MorphTable& table,
+                      core::EngineError* outError = nullptr);
+
     // Releases a static mesh's buffers, or gives a pooled mesh's slices back
     // to their pages. A dynamic handle is not released here; the ring reclaims
     // it at the next `beginFrame`.
@@ -183,6 +191,14 @@ public:
         // pipelines. Invalid for a static mesh, which is most of them -- and an
         // unskinned draw is byte-identical to M4's because of it.
         rhi::BufferHandle skin{};
+        // The mesh's morph targets as a table the vertex stage reads (ADR
+        // 0196, `engine/render/morph.h`): `morphTargetCount` rows of
+        // `morphVertexCount` deltas, for the vertices from `morphFirstVertex`.
+        // Invalid for a mesh with no targets, which is nearly all of them.
+        rhi::BufferHandle morph{};
+        u32 morphFirstVertex = 0;
+        u32 morphVertexCount = 0;
+        u32 morphTargetCount = 0;
         // Added to every section's `firstIndex`, and to the vertex offset of
         // every draw. Zero for a static mesh, which owns its buffers outright;
         // non-zero for a dynamic one, which is a slice of a shared ring.

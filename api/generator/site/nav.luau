@@ -163,6 +163,7 @@ local Sections: { Section } = {
             { Slug = "tweens", Title = "Tweens" },
             { Slug = "skeletal", Title = "Skeletal animation" },
             { Slug = "secondary-motion", Title = "Capes, tails and hair" },
+            { Slug = "morph-targets", Title = "Faces and shape keys" },
         },
     },
     {

@@ -388,7 +388,9 @@ Those draws, by what each was for: sun_shadow 812, prepass 640, mesh 402, mesh_r
 `sun_shadow`, `local_shadow`, `prepass` and `decal_mask` are the same
 geometry submitted again for another reason; `mesh` is one object to a call
 and `mesh_run` a run of them in one; `blended` and `blended_run` are the
-same for anything less than opaque. The numbers are one frame's -- the one before
+same for anything less than opaque; `morph` is a body with a shape key above
+nought, drawn on its own ([Faces and shape keys](manual:animation/morph-targets)).
+The numbers are one frame's -- the one before
 the report -- and add up to the report's total. The interface on the screen is
 not counted in either.
 

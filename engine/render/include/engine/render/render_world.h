@@ -272,6 +272,8 @@ struct RenderMaterial
 
 // `DrawItem::terrainMorph` for a draw with no geomorph.
 inline constexpr core::u32 NoTerrainMorph = 0xFFFFFFFFu;
+// A draw no morph target moves (ADR 0196): nearly every draw there is.
+inline constexpr core::u32 NoMorph = 0xFFFFFFFFu;
 
 // One draw: a mesh section with a transform and a material.
 //
@@ -363,6 +365,12 @@ struct DrawItem
     // A terrain draw's geomorph: its row in `RenderWorld::terrainMorphs`, or
     // `NoTerrainMorph`.
     u32 terrainMorph = NoTerrainMorph;
+    // **The morph targets this draw is moved by** (ADR 0196): its row in
+    // `RenderWorld::morphs`, or `NoMorph` -- for a mesh with no targets, for a
+    // section none of them reaches, and for a body whose weights are all at
+    // nought this frame. A draw with a row is drawn on its own, through the
+    // morph pipelines; one without is as it always was, in its run.
+    u32 morph = NoMorph;
     // **Which thing this draw is, for its motion** (ADR 0158): the instance,
     // packed, for a part a frame can find again in the next; zero for what
     // never moves on its own -- the ground, the blocks, the water -- whose
@@ -758,6 +766,9 @@ struct RenderWorld
     // draw because it is uploaded per draw anyway and a vector of vectors would
     // be a heap allocation per character per frame.
     std::vector<Mat4> bones;
+    // Every body with a morph target above nought, once: which targets, and
+    // how far (`DrawItem::morph`).
+    std::vector<MorphDraw> morphs;
     // Every skinned mesh the camera or a shadow reached, and how big it is on
     // the picture (H3): what the animation's update rate is decided from.
     std::vector<SeenSkin> seenSkins;
@@ -864,6 +875,7 @@ struct RenderWorld
         materialFamilies.clear();
         draws.clear();
         bones.clear();
+        morphs.clear();
         seenSkins.clear();
         terrainMorphs.clear();
         terrains.clear();
@@ -1033,6 +1045,16 @@ public:
         // the first one already answered is the kind of cost nobody notices
         // until a world has a hundred of them.
         std::vector<Vec3> positions;
+
+        // The mesh's morph targets (ADR 0196), in the file's order: what each
+        // is called and the weight the file gives it at rest. Empty for
+        // nearly every mesh, and for one whose table the card does not have.
+        std::vector<std::string> morphNames;
+        std::vector<f32> morphDefaults;
+        // Parallel to the sections: whether any target moves a vertex of it.
+        // A section none reaches is drawn as it always was, in its run -- a
+        // character's body beside its face.
+        std::vector<core::u8> sectionMorphed;
     };
 
     void set(core::NameAtom content, const Entry& entry);

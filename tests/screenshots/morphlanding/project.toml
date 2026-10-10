@@ -1,0 +1,15 @@
+# A morphed vertex lands where the file says (ADR 0196): pillars drawn with
+# morph targets against the same pillars made in that shape with none. A
+# project rather than a bare script because its models are files, and the
+# driver swaps them (`run_morph_landing.cmake`).
+
+[project]
+name = "Ludwerk Morph Landing"
+id = "dev.ludwerk.morphlanding"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Morph Landing"
+width = 960
+height = 540

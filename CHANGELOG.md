@@ -247,6 +247,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A model's shape keys are drawn** (ADR 0196, its second stage). A model
+  with morph targets is drawn in the shape its file's own weights give it,
+  in the lit pass, the depth pass and its shadow; setting a weight from a
+  script, clips that animate weights and the editor's sliders are the stages
+  after. A body with every weight at nought costs what it did without
+  targets; one with a weight above nought is drawn on its own, and the frame
+  report counts it as `morph`. See *Faces and shape keys* in the manual for
+  what a face should be exported as, and what is not done yet.
 - **`SpringBone` and `SpringCollider`: capes, tails and hair** (ADR 0194).
   A `SpringBone` under a `MeshPart` names a joint of its rig, and the joints
   below it trail behind the body -- swinging on a turn, streaming on a run,
