@@ -18,7 +18,12 @@ foreach(required HOST SCRIPT)
 endforeach()
 
 execute_process(
+    # A small picture: where the renderer is software -- a runner with no
+    # graphics card -- every pixel is a processor's, and what is tested here
+    # is the chains, not the picture. At the example's own size this took
+    # more than two minutes on such a runner.
     COMMAND "${HOST}" "${SCRIPT}" --headless --frames=100 --exit --pace=60 --frame-report=1
+            --width=320 --height=180 --quality=low
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output
     ERROR_VARIABLE output)

@@ -273,8 +273,14 @@ struct DeviceState
     DeviceType lastDevice = DeviceType::KeyboardMouse;
     platform::GamepadType preferredGamepadType = platform::GamepadType::Unknown;
     u32 preferredGamepadId = 0;
-    // Sorted by id. Replays carry individual pads alongside the compatible
-    // aggregate keys, so local seats never depend on an OS query in a tick.
+    // Sorted by id: each controller's own state, beside the aggregate keys
+    // every context read before there was more than one, so a local seat
+    // never asks the system about a controller inside a tick.
+    //
+    // **A replay does not carry these yet** (ADR 0195): the recording is keys
+    // and axes, and a context that reads one controller reads nothing when a
+    // trace is played back. This comment said replays carried them; they are
+    // owed, and until they are a second player is not a determinism scenario.
     std::vector<GamepadSnapshot> gamepads;
 };
 

@@ -103,10 +103,12 @@ void seedSpringChain(std::span<SpringJoint> chain, SpringState& state, const cor
 
 void stepSpringChain(std::span<SpringJoint> chain, SpringState& state, const core::CFrameD& root,
                      const SpringSettings& settings, std::span<const SpringCapsule> capsules, core::Vec3 acceleration,
-                     f32 scale, f32 seconds, f32 jump) noexcept
+                     f32 scale, f32 seconds, f32 jump, f32 step) noexcept
 {
     if (chain.empty())
         return;
+    step = std::clamp(step, SpringStep, SpringCoarseStep);
+    const u32 maxSteps = static_cast<u32>(std::lround(SpringFrameCover / step));
     const core::usize count = std::min(chain.size(), MaxChain);
 
     // **Carried, not flung.** A chain that has never been placed, a frame that
@@ -131,23 +133,23 @@ void stepSpringChain(std::span<SpringJoint> chain, SpringState& state, const cor
 
     state.carry += std::max(seconds, 0.0f);
     u32 steps = 0;
-    while (state.carry >= SpringStep && steps < SpringMaxSteps) {
-        state.carry -= SpringStep;
+    while (state.carry >= step && steps < maxSteps) {
+        state.carry -= step;
         ++steps;
     }
-    // What four steps did not cover is dropped: a slow machine's cape moves in
-    // slow motion for that frame rather than taking a step it cannot afford.
-    if (state.carry >= SpringStep)
+    // What those steps did not cover is dropped: a slow machine's cape moves
+    // in slow motion for that frame rather than taking a step it cannot afford.
+    if (state.carry >= step)
         state.carry = 0.0f;
 
     // Per step, from what the settings say per sixtieth.
-    const f32 perSixtieth = SpringStep * 60.0f;
+    const f32 perSixtieth = step * 60.0f;
     const f32 pull = 1.0f - std::pow(1.0f - std::clamp(settings.stiffness, 0.0f, 1.0f), perSixtieth);
     const f32 keep = std::pow(1.0f - std::clamp(settings.damping, 0.0f, 1.0f), perSixtieth);
     const f32 limit = std::clamp(settings.limitAngle, 0.0f, 179.0f) * (3.14159265358979f / 180.0f);
     const f32 limitCos = std::cos(limit);
     const f32 limitSin = std::sin(limit);
-    const Vec3 fall = acceleration * (SpringStep * SpringStep);
+    const Vec3 fall = acceleration * (step * step);
     const f32 thickness = settings.radius * scale;
 
     // Each joint's frame before its own child turns it, and after.
@@ -220,7 +222,7 @@ void stepSpringChain(std::span<SpringJoint> chain, SpringState& state, const cor
         // where the carrier now is so the chain does not stretch between steps.
         solve(false);
     }
-    for (u32 step = 0; step < steps; ++step)
+    for (u32 taken = 0; taken < steps; ++taken)
         solve(true);
 
     for (core::usize index = 0; index < count; ++index)

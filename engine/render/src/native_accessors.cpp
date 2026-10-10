@@ -297,6 +297,22 @@ bool setSpringBoneRootJoint(scene::World& world, core::InstanceId id, const Valu
     return true;
 }
 
+Value getSpringBoneJointPattern(const scene::World& world, core::InstanceId id)
+{
+    const scene::SpringBoneComponent* spring = world.springBones().find(id);
+    return spring == nullptr ? Value{} : Value{std::string(world.atoms().text(spring->jointPattern))};
+}
+
+bool setSpringBoneJointPattern(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    scene::SpringBoneComponent* spring = world.springBones().find(id);
+    if (text == nullptr || spring == nullptr)
+        return false;
+    spring->jointPattern = world.atoms().intern(*text);
+    return true;
+}
+
 Value getSpringBoneEnabled(const scene::World& world, core::InstanceId id)
 {
     const scene::SpringBoneComponent* spring = world.springBones().find(id);

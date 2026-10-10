@@ -53,7 +53,10 @@ for a body that has one.
 
 `SpringBone`, parented to the `MeshPart` whose rig has the chain:
 `RootJoint` (the joint the chain hangs from: it stays where the animation
-puts it and turns; its descendants swing), `Enabled`, `Stiffness`, `Damping`,
+puts it and turns; its descendants swing), `JointPattern` (every joint whose
+name it matches, `*` for any run of characters, that is not below another it
+matches: each the top of a chain of its own, so one instance moves a whole
+cape), `Enabled`, `Stiffness`, `Damping`,
 `GravityScale`, `Inertia` (how much of the body's own motion the chain is left
 behind by), `LimitAngle`, `Radius`, `WindInfluence`.
 
@@ -65,12 +68,9 @@ way.
 
 **What an artist makes**: three or four columns of four or five joints for a
 cape, each column a chain under a top joint on the shoulders, and one
-`SpringBone` a column naming that top joint. One instance on a joint that all
-the columns descend from also works, and swings the whole cape about that one
-point, which is right for a tail and wrong for a cape.
-
-Not built: a name pattern in place of `RootJoint`. One instance a column is
-three or four instances.
+`SpringBone` whose pattern is those tops. Naming a joint that all the columns
+descend from also works, and swings the whole cape about that one point,
+which is right for a tail and wrong for a cape.
 
 ### It looks the same at any frame rate and never flies apart
 
@@ -87,7 +87,13 @@ needs. A dash is under that and trails.
 Nothing is stepped for a body the renderer did not reach the frame before, or
 one further from the camera than `secondaryMotionDistance`. A chain that
 stops being stepped is forgotten, so it starts from rest when it returns.
-Quality `low` halves the rate and the distance. A body with no `SpringBone`
+Quality `low` halves the distance and takes the solver's coarse step, a
+sixtieth of a second in place of a hundred and twentieth. (It first stepped
+on every other frame, and measured DEARER than `high`: the frame between
+still has to fit the chain to where the body went, and the stepping frame
+then takes twice the steps. The solver is three fifths of a chain's cost, so
+the step is what halves it: 0.59 to 0.33 ms for a hundred bodies in the
+development build.) A body with no `SpringBone`
 costs nothing, and a horde of four hundred pays only for the ones that have
 one.
 

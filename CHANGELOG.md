@@ -252,7 +252,8 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   below it trail behind the body -- swinging on a turn, streaming on a run,
   settling on a stop -- on top of whatever clip is playing, kept out of the
   body by `SpringCollider`s on its joints and pushed by the workspace's wind.
-  The model needs only joints; nothing is re-imported. It is picture only:
+  `JointPattern` takes a whole cape in one instance (`Cape_*0` is the top of
+  each column). The model needs only joints; nothing is re-imported. It is picture only:
   each machine's own, not replicated, not in a replay, and a `Bone` on such a
   joint still follows the clip. See `examples/35-cape` and the manual's
   "Capes, tails and hair".

@@ -153,6 +153,17 @@ struct ChunkSpan
 // something else rebuilt it: the owner's "the shadows go wrong while I edit".
 // Whole costs the eight nodes round an edit a rebuild, which `sync` does in
 // parallel and in the same frame.
+//
+// **Sixty-four bits, trusted as the content itself**, and said once, here,
+// for every place that trusts it: this number is what decides that a node on
+// the screen is stale, that a variant still fits, and that a mesh kept from
+// before (`ReuseKey`) is the mesh this node wants -- none of them compares
+// the cells again. Two different contents of one node with one number would
+// draw the older ground, silently. For that a land would have to pass
+// through about four thousand million contents of a single node before the
+// odds of one such pair reached a half; a session's edits are thousands. A
+// full compare at one of those places would guard a part of what the same
+// assumption carries at all of them.
 [[nodiscard]] u64 contentOf(const asset::TerrainField& field, TerrainNodeKey key) noexcept
 {
     const ChunkSpan xs = readSpan(field, key, key.x);

@@ -155,7 +155,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(boneDesc);
 
     // --- SpringBone ---
-    static std::array<scene::PropertyDesc, 9> springBoneProperties;
+    static std::array<scene::PropertyDesc, 10> springBoneProperties;
     springBoneProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("RootJoint"),
@@ -167,6 +167,17 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
             .get = native::getSpringBoneRootJoint,
             .set = native::setSpringBoneRootJoint,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("JointPattern"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Every joint whose name this matches is the top of a chain of its own, `*` standing for any run of characters: `Cape_*0` is the top of each column of a cape whose joints are `Cape_L0`, `Cape_L1` ... `Cape_R4`, and one `SpringBone` then moves the whole cape. A joint that is below another the pattern matches is part of that one's chain, so `Cape_*` finds the same tops. Used with `RootJoint`, or in place of it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getSpringBoneJointPattern,
+            .set = native::setSpringBoneJointPattern,
         },
         scene::PropertyDesc{
             .name = atoms.intern("Enabled"),

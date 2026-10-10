@@ -8,17 +8,15 @@ whatever carries it, on top of the clip that is playing.
 `examples/35-cape` is a figure that runs, turns, stops dead, dashes and is
 teleported, beside one that stands in the wind.
 
-## A cape in four instances
+## A cape in two instances
 
 ```luau
 local hero = workspace.Hero :: MeshPart
 
--- A chain a column: the joint named is the top of the column.
-for _, column in { "Cape_L0", "Cape_M0", "Cape_R0" } do
-    local spring = Instance.new("SpringBone")
-    spring.RootJoint = column
-    spring.Parent = hero
-end
+-- The top joint of each column, by a pattern: each is a chain of its own.
+local cape = Instance.new("SpringBone")
+cape.JointPattern = "Cape_*0"
+cape.Parent = hero
 
 -- And what the cape must not pass through.
 local back = Instance.new("SpringCollider")
@@ -28,11 +26,18 @@ back.Radius = 0.2
 back.Parent = hero
 ```
 
-**`RootJoint` stays where the animation puts it and turns; every joint below
-it swings.** So name the top joint of each column, the one on the shoulders.
-One `SpringBone` on a joint that all the columns descend from moves them all
-too, but swings the whole cape about that one point -- right for a tail,
-wrong for a cape.
+**The top joint of a chain stays where the animation puts it and turns;
+every joint below it swings.** So the tops are the joints on the shoulders,
+one a column.
+
+`JointPattern` finds them by name, `*` standing for any run of characters:
+`Cape_*0` is `Cape_L0`, `Cape_M0` and `Cape_R0`. A joint below another the
+pattern matches belongs to that one's chain, so `Cape_*` finds the same three
+tops. `RootJoint` names one top outright -- a tail, a braid -- and the two can
+be used together.
+
+Naming a joint that all the columns descend from instead swings the whole
+cape about that one point: right for a tail, wrong for a cape.
 
 ## What the model needs
 
@@ -60,8 +65,9 @@ your own and compare the joints.
    joint does not move away from the body; it only turns. Everything under it
    swings.
 5. **Name the joints so the top of each column is easy to find**: `Cape_L0`,
-   `Cape_M0`, `Cape_R0` and `Cape_L1` ... below them. The name of the top
-   joint is what `RootJoint` takes.
+   `Cape_M0`, `Cape_R0` and `Cape_L1` ... below them. Names with a part in
+   common are what lets one `JointPattern` -- `Cape_*0` -- take the whole
+   cape; the name of one top joint is what `RootJoint` takes.
 6. **Skin the cape to its joints**: each row of vertices to the joint at its
    height, blended across the columns and between rows as you would weight
    anything. The top row should also carry some weight of the body joint, so
@@ -75,8 +81,9 @@ your own and compare the joints.
 9. **Export as glTF with the armature**, as for any skinned model. Nothing
    else is baked.
 
-Then, in the engine, one `SpringBone` a column, and a `SpringCollider` or two
-on the body's joints -- usually one for the back and one a leg.
+Then, in the engine, one `SpringBone` with a pattern for the cape, and a
+`SpringCollider` or two on the body's joints -- usually one for the back and
+one a leg.
 
 ## The dials
 
@@ -106,7 +113,8 @@ character now is. A dash trails it.
 Nothing for a body with no `SpringBone`. For one that has, about three
 microseconds a chain a frame; a body the camera did not reach, or one further
 than sixty metres from it, is not stepped at all. Quality `low` steps at half
-the rate and half as far.
+the rate -- which measures at a little over half the solver's cost -- and
+half as far.
 
 ## What it does not do
 

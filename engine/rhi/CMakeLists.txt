@@ -36,7 +36,12 @@ set(engine_rhi_test_modules rhi_api)
 if(WIN32)
     engine_add_module(rhi_d3d12
         LAYER 2
+        # `device.cpp` with them: the adapter the engine selects is built
+        # wherever its parts are, so the gate can run a frame through the
+        # same interface a game would. It reaches a game only where
+        # ENG_RHI_D3D12 makes `--rhi=d3d12` a choice.
         SOURCES src/d3d12/context.cpp src/d3d12/resources.cpp src/d3d12/pipelines.cpp src/d3d12/descriptors.cpp src/d3d12/commands.cpp
+                src/d3d12/device.cpp
         DEPS core platform
         API_DEPS rhi_api
     )
@@ -45,9 +50,6 @@ if(WIN32)
     list(APPEND engine_rhi_test_modules rhi_d3d12)
 endif()
 
-if(ENG_RHI_D3D12)
-    target_sources(engine_rhi_d3d12 PRIVATE src/d3d12/device.cpp)
-endif()
 
 if(ENG_RHI_NULL)
     engine_add_module(rhi_null

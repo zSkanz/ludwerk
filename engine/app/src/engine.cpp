@@ -1904,6 +1904,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // instance from the history and the frame's alpha, and asked by all of
     // the frame -- the world, its UI, particles, views, prompts, the pointer.
     render::DrawPoses framePoses;
+    // Whether the window is behind another and held to its background rate,
+    // as last said in the log.
+    bool pacedBehind = false;
     // Seconds of frames drawn, for the wind the capes feel (ADR 0194).
     f64 springClock = 0.0;
     // A stamp's stage, drawn still: nothing on it ticks (G33).
@@ -3402,6 +3405,24 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 syncWatch.sample(now - pacedFrameNs, state.refreshRate);
             state.syncHeld = syncWatch.held();
             core::u32 cap = frameCapFor(livePacing, state);
+            // **Said when the window's standing changes the pace.** A game
+            // held to its background rate looks, in a frame report, exactly
+            // like one that cannot draw faster: a host with the chat window
+            // in front read as "it fell from 250 to 60 and came back", and
+            // nothing in the log said the window had not had the keyboard.
+            {
+                const bool behind = (!state.focused || state.minimized) && livePacing.backgroundFrameRate != 0;
+                if (behind != pacedBehind) {
+                    pacedBehind = behind;
+                    if (behind) {
+                        const std::array<I18nArg, 1> heldTo{I18nArg{"rate", static_cast<core::i64>(cap)}};
+                        core::log(LogLevel::Info, ENG_TR("engine.frame.info.background_pace"), heldTo);
+                    }
+                    else {
+                        core::log(LogLevel::Info, ENG_TR("engine.frame.info.foreground_pace"));
+                    }
+                }
+            }
             // **The cap's wait is a wait** (D561): counted with the frame's
             // others and under a scope of its own. It was neither, and a
             // phone's report said five milliseconds of sleeping were "drawing
@@ -6329,6 +6350,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         noteLongWait("begin_frame", beginFrameMs);
         phaseWaitMs += beginFrameMs;
         if (cmd == nullptr) {
+            // No frame to record into: the device is gone, which ends the run,
+            // or it has none to give yet -- a window being rebuilt, a driver
+            // catching up. **A millisecond, then asked again.** With no wait
+            // this loop asks as fast as a core can, and a game that cannot draw
+            // would take a whole core to not draw; with a longer one a frame
+            // that was ready a moment later is shown late. The events were
+            // pumped above, so a window that is closed meanwhile still closes.
             if (device->lost())
                 break;
             platform::sleepNs(1000000);
@@ -6737,7 +6765,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 springs.seconds = static_cast<f32>(frame.renderDt);
                 springs.camera = snapshot.camera.origin;
                 springs.maxDistance = look.secondaryMotionDistance;
-                springs.every = look.secondaryMotionEvery;
+                springs.step = look.secondaryMotionRate == 0 ? 0.0f : 1.0f / static_cast<f32>(look.secondaryMotionRate);
                 springs.time = static_cast<f32>(springClock);
                 if (const scene::WorkspaceComponent* workspace = host->world().workspaces().find(host->workspace());
                     workspace != nullptr) {

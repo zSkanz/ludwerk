@@ -994,6 +994,15 @@ local Classes: { Schema.Class } = {
                     .. "it; every joint below it is moved. A name the rig does not have moves nothing.",
             },
             {
+                Name = "JointPattern",
+                Type = "string",
+                Doc = "Every joint whose name this matches is the top of a chain of its own, `*` standing for "
+                    .. "any run of characters: `Cape_*0` is the top of each column of a cape whose joints are "
+                    .. "`Cape_L0`, `Cape_L1` ... `Cape_R4`, and one `SpringBone` then moves the whole cape. "
+                    .. "A joint that is below another the pattern matches is part of that one's chain, so "
+                    .. "`Cape_*` finds the same tops. Used with `RootJoint`, or in place of it.",
+            },
+            {
                 Name = "Enabled",
                 Type = "boolean",
                 Default = "true",

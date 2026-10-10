@@ -6238,6 +6238,10 @@
           "Default": "1"
         },
         {
+          "Name": "JointPattern",
+          "Type": "string"
+        },
+        {
           "Name": "LimitAngle",
           "Type": "number",
           "Default": "70"

@@ -10,6 +10,7 @@
 #include "../src/d3d12/context.h"
 #include "../src/d3d12/descriptors.h"
 #include "../src/d3d12/resources.h"
+#include "engine/rhi/backends.h"
 
 namespace {
 using engine::rhi::d3d12::Context;
@@ -782,4 +783,76 @@ TEST_CASE("native D3D12 shipping compute commands preserve uniforms and order UA
     commands.dispatch(1, 1, 1);
     CHECK(commands.status() == E_INVALIDARG);
     context.abandon();
+}
+
+// The adapter itself, declared here because its header shows it only to a
+// build that offers `--rhi=d3d12`; the gate runs it in every Windows build.
+namespace engine::rhi {
+DeviceResult createD3D12Device(const DeviceDesc& desc, std::span<const std::byte> blitVertex,
+                               std::span<const std::byte> blitFragment, core::EngineError* outError);
+}
+
+TEST_CASE("native D3D12 device runs a frame through the interface a game draws by")
+{
+    // The parts above are tested one at a time. This is the adapter that
+    // makes them an `IDevice` -- the 340 lines a game's frame actually goes
+    // through, and until now the only ones of the backend no test compiled.
+    using namespace engine::rhi;
+    const auto load = [](const char* name) {
+        std::ifstream file(std::filesystem::path(ENG_TEST_NATIVE_SHADERS) / name, std::ios::binary);
+        const std::vector<char> code{std::istreambuf_iterator<char>(file), {}};
+        const auto bytes = std::as_bytes(std::span(code));
+        return std::vector<std::byte>(bytes.begin(), bytes.end());
+    };
+    const auto vertex = load("rhi_blit.vertex.dxil"), fragment = load("rhi_blit.fragment.dxil");
+    if (vertex.empty() || fragment.empty()) {
+        MESSAGE("ENG_TEST_SKIP: build host native blit shaders before the device's frame");
+        return;
+    }
+    engine::core::EngineError error;
+    const DeviceResult device =
+        createD3D12Device({.backend = BackendId::D3D12, .debug = true}, vertex, fragment, &error);
+    if (device == nullptr) {
+        MESSAGE("ENG_TEST_SKIP: no Direct3D 12 device on this machine: " << error.detail);
+        return;
+    }
+    CHECK(device->backend() == BackendId::D3D12);
+    CHECK(device->caps().rendersPixels);
+    CHECK_FALSE(device->lost());
+
+    const TextureHandle target = device->createTexture({.format = TextureFormat::Rgba8Unorm,
+                                                        .usage = TextureUsage::Sampled | TextureUsage::ColorTarget,
+                                                        .width = 4,
+                                                        .height = 4});
+    REQUIRE(target.valid());
+
+    // Two frames with no window: each records a pass that clears the target
+    // to another colour, and what is read back is that frame's.
+    const std::array<std::array<float, 4>, 2> colours{{{1.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f, 0.5f}}};
+    const std::array<std::array<unsigned, 4>, 2> expected{{{255, 0, 0, 255}, {0, 0, 255, 128}}};
+    for (std::size_t frame = 0; frame < colours.size(); ++frame) {
+        ICmdList* commands = device->beginFrame();
+        REQUIRE(commands != nullptr);
+        const ColorAttachment attachment[] = {
+            {.texture = target,
+             .clearColor = {colours[frame][0], colours[frame][1], colours[frame][2], colours[frame][3]}}};
+        commands->beginRenderPass({.colorAttachments = attachment});
+        commands->endRenderPass();
+        device->submitAndPresent();
+        device->waitIdle();
+        REQUIRE_FALSE(device->lost());
+        std::array<std::byte, 4 * 4 * 4> pixels{};
+        REQUIRE(device->readTexture(target, pixels));
+        for (unsigned channel = 0; channel < 4; ++channel)
+            CHECK(std::abs(static_cast<int>(std::to_integer<unsigned>(pixels[channel])) -
+                           static_cast<int>(expected[frame][channel])) <= 1);
+    }
+
+    // A frame is not begun twice: the second asks while the first records.
+    ICmdList* first = device->beginFrame();
+    REQUIRE(first != nullptr);
+    CHECK(device->beginFrame() == nullptr);
+    device->submitAndPresent();
+    device->waitIdle();
+    device->destroy(target);
 }

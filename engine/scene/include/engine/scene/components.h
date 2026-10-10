@@ -540,6 +540,9 @@ struct SpringBoneComponent
     bool enabled = true;
     // The joint the chain hangs from; its descendants are what moves.
     core::NameAtom rootJoint;
+    // And, or instead, every joint whose name this matches (`*` for any run
+    // of characters): each the top of a chain of its own.
+    core::NameAtom jointPattern;
     f32 stiffness = 0.25f;
     f32 damping = 0.2f;
     f32 gravityScale = 1.0f;

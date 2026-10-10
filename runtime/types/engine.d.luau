@@ -1369,6 +1369,12 @@ declare extern type SpringBone extends Instance with
     --- The joint the chain hangs from, as the file names it. It stays where the animation puts it;
     --- every joint below it is moved. A name the rig does not have moves nothing.
     RootJoint: string
+    --- Every joint whose name this matches is the top of a chain of its own, `*` standing for any run
+    --- of characters: `Cape_*0` is the top of each column of a cape whose joints are `Cape_L0`,
+    --- `Cape_L1` ... `Cape_R4`, and one `SpringBone` then moves the whole cape. A joint that is below
+    --- another the pattern matches is part of that one's chain, so `Cape_*` finds the same tops. Used
+    --- with `RootJoint`, or in place of it.
+    JointPattern: string
     --- Whether the chain is moved. Off, its joints are where the clip puts them, from the next frame.
     Enabled: boolean
     --- How strongly each joint is pulled back to its animated place, 0 to 1. 0 is a rope; 1 does not

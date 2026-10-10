@@ -36,10 +36,10 @@ struct SpringFrame
     // stepped. Past it a body's chain is the animation's, rigid.
     core::DVec3 camera{};
     f32 maxDistance = 60.0f;
-    // Step the chains every `every`th frame, with that many frames' time: one
-    // is every frame, two is half the rate. Nought steps nothing -- every
-    // chain is the animation's.
-    core::u32 every = 1;
+    // The solver's fixed step, seconds: `SpringStep`, or `SpringCoarseStep`
+    // for half the work. Nought steps nothing -- every chain is the
+    // animation's.
+    f32 step = SpringStep;
     core::Vec3 gravity{0.0f, -9.81f, 0.0f};
     scene::WindSettings wind{};
     // Seconds, for the wind's gusts.
@@ -65,7 +65,8 @@ private:
     struct Chain
     {
         core::InstanceId meshPart{};
-        core::NameAtom root{};
+        // The rig's joint the chain hangs from.
+        core::u32 rootJoint = 0;
         core::u32 rigJoints = 0;
         // The rig's joint for each joint of the chain, ascending.
         std::vector<core::u32> joints;
@@ -75,11 +76,12 @@ private:
         f32 length = 0.0f;
         // The frame it was last stepped in: one that was not is forgotten.
         core::u64 frame = 0;
-        // Frames' time waiting for the frame that steps (`SpringFrame::every`).
-        f32 owed = 0.0f;
     };
 
     std::unordered_map<core::u64, Chain> chains_;
+    // Scratch for one instance's chain tops and its pattern's matches.
+    std::vector<core::u32> roots_;
+    std::vector<core::u8> matched_;
     core::u64 frame_ = 0;
     core::u32 chainsStepped_ = 0;
     core::u32 jointsStepped_ = 0;

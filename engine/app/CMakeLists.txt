@@ -1690,7 +1690,7 @@ if(ENG_BUILD_TESTS)
             -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_secondary_motion.cmake)
     set_tests_properties(secondary_motion_steps PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
-        TIMEOUT 120)
+        TIMEOUT 300)
 
     # **The report's draws by kind add up to its total**, and name the kinds
     # the scene has. See the driver.

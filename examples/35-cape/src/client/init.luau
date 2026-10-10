@@ -18,8 +18,6 @@
 local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
 
-local Columns = { "Cape_L0", "Cape_M0", "Cape_R0" }
-
 local function figure(at: vector): MeshPart
     local body = Instance.new("MeshPart")
     body.Name = "Figure"
@@ -28,18 +26,18 @@ local function figure(at: vector): MeshPart
     body.CFrame = CFrame.new(at.x, at.y, at.z)
     body.Parent = workspace
 
-    -- A chain a column. The defaults are a cloth's; a tail would be stiffer
-    -- and a rope would be none.
-    for _, column in Columns do
-        local spring = Instance.new("SpringBone")
-        spring.Name = column
-        spring.RootJoint = column
-        spring.Stiffness = 0.12
-        spring.Damping = 0.18
-        spring.LimitAngle = 80
-        spring.Radius = 0.04
-        spring.Parent = body
-    end
+    -- One instance for the cape: the pattern is the top joint of each column,
+    -- and each is a chain of its own. (`RootJoint` names one chain's top, for
+    -- a tail or a braid.) The dials are a cloth's; a tail would be stiffer and
+    -- a rope would have no stiffness at all.
+    local cape = Instance.new("SpringBone")
+    cape.Name = "Cape"
+    cape.JointPattern = "Cape_*0"
+    cape.Stiffness = 0.12
+    cape.Damping = 0.18
+    cape.LimitAngle = 80
+    cape.Radius = 0.04
+    cape.Parent = body
 
     -- The back and the legs: a capsule the height of the body, just in front
     -- of where the cape hangs.

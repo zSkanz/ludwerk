@@ -12,9 +12,9 @@
 // with whatever that machine's frame time was, and it is not expected to be
 // the same on two machines -- nothing reads it but the renderer. What it does
 // owe is to look the same at 30, 60 and 144 frames a second and never to fly
-// apart, and both come from the same rule: fixed steps of `SpringStep`, at
-// most `SpringMaxSteps` of them a frame, and a frame longer than those cover
-// loses its motion rather than integrating it.
+// apart, and both come from the same rule: fixed steps of `SpringStep`, no
+// more of them a frame than cover `SpringFrameCover`, and a frame longer than
+// those cover loses its motion rather than integrating it.
 #pragma once
 
 #include <span>
@@ -29,8 +29,14 @@ using core::u32;
 
 // The step the chain is advanced by, seconds: one hundred and twenty a second.
 inline constexpr f32 SpringStep = 1.0f / 120.0f;
-// The most of them one frame takes. Four cover a frame at thirty a second.
-inline constexpr u32 SpringMaxSteps = 4;
+// The coarser one a lower quality takes: sixty a second, half the work. The
+// solver is where a chain's cost is -- measured, three fifths of it -- so
+// this is what halves it; stepping on every other frame did not, since the
+// frame between still has to fit the chain to where the body went.
+inline constexpr f32 SpringCoarseStep = 1.0f / 60.0f;
+// What a frame's steps may cover at most, seconds: a frame at thirty a
+// second. Four of the fine step, two of the coarse.
+inline constexpr f32 SpringFrameCover = 1.0f / 30.0f;
 // A frame at least this long is a hitch, not motion: the chain keeps its
 // shape and starts again from rest.
 inline constexpr f32 SpringHitchSeconds = 0.25f;
@@ -98,8 +104,11 @@ void seedSpringChain(std::span<SpringJoint> chain, SpringState& state, const cor
 // or a first joint that moved further in the frame than `jump` (the chain's
 // own length is a sensible one; nought never snaps), puts the chain back as
 // `seedSpringChain` does -- carried along, not flung.
+//
+// `step` is the fixed step, `SpringStep` unless a lower quality asks for the
+// coarse one.
 void stepSpringChain(std::span<SpringJoint> chain, SpringState& state, const core::CFrameD& root,
                      const SpringSettings& settings, std::span<const SpringCapsule> capsules, core::Vec3 acceleration,
-                     f32 scale, f32 seconds, f32 jump) noexcept;
+                     f32 scale, f32 seconds, f32 jump, f32 step = SpringStep) noexcept;
 
 } // namespace engine::render

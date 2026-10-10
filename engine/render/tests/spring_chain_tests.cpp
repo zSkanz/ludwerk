@@ -87,6 +87,31 @@ TEST_CASE("a spring chain settles in the same place at 30, 60 and 144 frames a s
     CHECK(at60.y == doctest::Approx(-4.0).epsilon(0.02));
 }
 
+TEST_CASE("a spring chain on the coarse step settles where the fine one does, in half the steps")
+{
+    // What a lower quality takes: sixty steps a second. The dials are said
+    // per sixtieth and scaled to the step, so the same chain comes to the
+    // same rest; what differs is how finely the swing on the way is drawn.
+    const auto settle = [](core::f32 step) {
+        std::vector<render::SpringJoint> chain = strip();
+        render::SpringState state;
+        core::CFrameD root;
+        for (int frame = 0; frame < 120; ++frame) {
+            if (frame < 60)
+                root.position.x += 0.1;
+            render::stepSpringChain(chain, state, root, {}, {}, Gravity, 1.0f, 1.0f / 60.0f, 0.0f, step);
+        }
+        DVec3 tip = chain.back().position;
+        tip.x -= root.position.x;
+        return tip;
+    };
+    const DVec3 fine = settle(render::SpringStep);
+    const DVec3 coarse = settle(render::SpringCoarseStep);
+    CHECK(distance(fine, coarse) < 0.08);
+    CHECK(std::abs(coarse.x) < 0.1);
+    CHECK(coarse.y == doctest::Approx(-4.0).epsilon(0.02));
+}
+
 TEST_CASE("a spring chain trails behind what carries it, and never further than its length")
 {
     core::f64 furthest = 0.0;

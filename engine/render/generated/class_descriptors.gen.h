@@ -161,6 +161,8 @@ bool setBoneTransform(scene::World& world, core::InstanceId id, const scene::Val
 // SpringBone
 scene::Value getSpringBoneRootJoint(const scene::World& world, core::InstanceId id);
 bool setSpringBoneRootJoint(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSpringBoneJointPattern(const scene::World& world, core::InstanceId id);
+bool setSpringBoneJointPattern(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getSpringBoneEnabled(const scene::World& world, core::InstanceId id);
 bool setSpringBoneEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getSpringBoneStiffness(const scene::World& world, core::InstanceId id);

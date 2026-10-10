@@ -25,6 +25,7 @@ offers is on the base's page, which is what keeps one added member on
 | `Enabled` | `boolean` | `true` | read/write | Whether the chain is moved. Off, its joints are where the clip puts them, from the next frame. |
 | `GravityScale` | `number` | `1` | read/write | How much of the world's gravity the chain feels. 0 floats; negative rises. |
 | `Inertia` | `number` | `1` | read/write | How much of the body's own motion the chain is left behind by, 0 to 1. At 1 a cape streams out behind a run; at 0 it is carried along as if the air moved with the body. |
+| `JointPattern` | `string` | — | read/write | Every joint whose name this matches is the top of a chain of its own, `*` standing for any run of characters: `Cape_*0` is the top of each column of a cape whose joints are `Cape_L0`, `Cape_L1` ... `Cape_R4`, and one `SpringBone` then moves the whole cape. A joint that is below another the pattern matches is part of that one's chain, so `Cape_*` finds the same tops. Used with `RootJoint`, or in place of it. |
 | `LimitAngle` | `number` | `70` | read/write | The most a joint may bend away from its animated direction, in degrees. |
 | `Radius` | `number` | `0.05` | read/write | How thick the chain is where it meets a `SpringCollider`, in the mesh's units. |
 | `RootJoint` | `string` | — | read/write | The joint the chain hangs from, as the file names it. It stays where the animation puts it; every joint below it is moved. A name the rig does not have moves nothing. |
