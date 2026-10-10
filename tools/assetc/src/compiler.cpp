@@ -124,7 +124,10 @@ using asset::AssetKind;
 // (ADR 0196). A model with none compiles to the bytes it did, but one with
 // targets compiled before this has none in its cached form, and the cache
 // cannot tell which is which.
-constexpr core::u32 kCompilerRules = 8;
+//
+// 9: a skinned primitive with no normals keeps each vertex's joints and
+// weights through the de-index flat normals need (D606).
+constexpr core::u32 kCompilerRules = 9;
 
 // What one source compiled to, remembered between runs.
 //

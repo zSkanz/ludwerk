@@ -1012,6 +1012,20 @@ void Importer::generateFlatNormals(Staging& staging) const
     }
     for (std::vector<Vec3>& turned : staging.morphNormals)
         turned.clear();
+    // **And the joints and weights** (D606). They were left as they were -- a
+    // list as long as the old vertices, read afterwards by the new vertices'
+    // numbers: a corner took another corner's bones, and one past the old
+    // count took whatever lay after the list. A skinned model exported
+    // without normals was weighted wrongly, with nothing to say so.
+    if (staging.hasSkin) {
+        std::vector<SkinVertex> spread(indexCount);
+        for (std::size_t slot = 0; slot < indexCount; ++slot) {
+            const std::size_t source = staging.indices[slot];
+            if (source < staging.skin.size())
+                spread[slot] = staging.skin[source];
+        }
+        staging.skin = std::move(spread);
+    }
 
     std::vector<Vec3> normals(indexCount);
     for (std::size_t triangle = 0; triangle + 2 < indexCount; triangle += 3) {

@@ -1428,3 +1428,56 @@ TEST_CASE_FIXTURE(CatalogFixture, "gltf: a clip's morph weights import as a chan
     CHECK(clip.weights[1].values[0] == doctest::Approx(0.25));
     CHECK(clip.weights[1].values[1] == doctest::Approx(0.0));
 }
+
+TEST_CASE_FIXTURE(CatalogFixture,
+                  "D606: a skinned primitive with no normals keeps each vertex's joints through the de-index")
+{
+    // A primitive with no normals is given flat ones, and to carry them it is
+    // de-indexed: every corner of every triangle becomes a vertex of its own.
+    // Places and UVs went to the new vertices; the joints and weights did not
+    // -- they stayed a list as long as the OLD vertices, read by the NEW
+    // vertices' numbers. A vertex took another vertex's bones, and past the
+    // old count it took whatever was after the list.
+    //
+    // The bar with its `NORMAL` taken out of the file: every vertex it ends up
+    // with must be weighted as the vertex at that place is in the file as it
+    // was.
+    std::vector<std::byte> withNormals = readFixture("skinned_bar.gltf");
+    std::string text(reinterpret_cast<const char*>(withNormals.data()), withNormals.size());
+    const std::string attribute = "\"NORMAL\"";
+    const std::size_t at = text.find(attribute);
+    REQUIRE(at != std::string::npos);
+    // The attribute and its accessor's number, up to and with the comma.
+    const std::size_t comma = text.find(',', at);
+    REQUIRE(comma != std::string::npos);
+    text.erase(at, comma - at + 1);
+
+    Model reference;
+    REQUIRE_FALSE(importGltf(withNormals, dataDirectory(), unoptimized(), reference).has_value());
+    Model flat;
+    REQUIRE_FALSE(importGltf(toBytes(text), dataDirectory(), unoptimized(), flat).has_value());
+
+    REQUIRE_FALSE(reference.skin.empty());
+    REQUIRE(reference.skin.size() == reference.mesh.vertices.size());
+    // De-indexed: a vertex a corner, and a skin entry a vertex.
+    REQUIRE(flat.mesh.vertices.size() == flat.mesh.indices.size());
+    REQUIRE(flat.skin.size() == flat.mesh.vertices.size());
+    CHECK(flat.mesh.vertices.size() > reference.mesh.vertices.size());
+
+    for (std::size_t vertex = 0; vertex < flat.mesh.vertices.size(); ++vertex) {
+        const engine::core::Vec3 place = flat.mesh.vertices[vertex].position;
+        bool found = false;
+        for (std::size_t other = 0; other < reference.mesh.vertices.size() && !found; ++other) {
+            const engine::core::Vec3 theirs = reference.mesh.vertices[other].position;
+            if (std::abs(theirs.x - place.x) > 1e-5f || std::abs(theirs.y - place.y) > 1e-5f ||
+                std::abs(theirs.z - place.z) > 1e-5f)
+                continue;
+            found = true;
+            for (std::size_t lane = 0; lane < 4; ++lane) {
+                CHECK(flat.skin[vertex].joints[lane] == reference.skin[other].joints[lane]);
+                CHECK(flat.skin[vertex].weights[lane] == reference.skin[other].weights[lane]);
+            }
+        }
+        CHECK(found);
+    }
+}

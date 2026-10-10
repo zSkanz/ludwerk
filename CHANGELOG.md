@@ -1520,6 +1520,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A skinned model exported without normals is weighted as its file says**
+  (D606). Such a model is given flat normals, which makes a vertex of every
+  corner -- and the joints and weights were not carried to the new vertices,
+  so each took another's bones. It bent wrongly, silently.
 - **A model is compiled again when a file it reads beside itself changes**
   (D604). A glTF's external images and buffers were not part of what made it
   stale: repaint a model's texture and the editor went on drawing the old
