@@ -23,6 +23,7 @@
 #include "engine/asset/terrain_rules.h"
 #include "engine/asset/voxel.h"
 #include "engine/core/i18n.h"
+#include "engine/core/log.h"
 #include "engine/jobs/jobs.h"
 #include "engine/net/memory_transport.h"
 #include "engine/replication/extract.h"
@@ -30,6 +31,7 @@
 #include "engine/replication/replication.h"
 #include "engine/replication/session.h"
 #include "engine/scene/class_registry.h"
+#include "engine/scene/collision_groups.h"
 #include "engine/scene/components.h"
 #include "engine/scene/enum_registry.h"
 #include "engine/scene/players.h"
@@ -1343,6 +1345,10 @@ TEST_CASE("a decal placed on the authority is seen on a replica, image and all")
     mark->texture = match.server.atoms.intern("asset://textures/scorch.png");
     mark->size = core::Vec3{3.0f, 3.0f, 1.0f};
     mark->transparency = 0.25f;
+    // How it is laid on and how it glows (ADR 0160) travel since protocol 44:
+    // a rune that glowed on the authority was a stain on a replica.
+    mark->blendMode = 2;
+    mark->emissive = 1.5f;
     REQUIRE_FALSE(match.server.world.setParent(decal, crate).has_value());
     match.run(4);
 
@@ -1355,6 +1361,8 @@ TEST_CASE("a decal placed on the authority is seen on a replica, image and all")
     CHECK(match.client.atoms.text(copy->texture) == "asset://textures/scorch.png");
     CHECK(static_cast<double>(copy->size.x) == doctest::Approx(3.0));
     CHECK(static_cast<double>(copy->transparency) == doctest::Approx(0.25));
+    CHECK(copy->blendMode == 2);
+    CHECK(static_cast<double>(copy->emissive) == doctest::Approx(1.5));
     CHECK(match.client.world.parentOf(seen) == match.copyOf(crate));
 
     // A new image is a new string, and it travels the same way.
@@ -5605,4 +5613,841 @@ TEST_CASE("D576: a match whose acknowledgements are lost goes on, and costs what
     match.run(4);
     CHECK(match.client.world.parts().find(copy)->cframe.position.x ==
           doctest::Approx(match.server.world.parts().find(parts[0])->cframe.position.x));
+}
+
+// --- Protocol 44: what a character carries ---------------------------------------------
+
+namespace {
+
+// The classes protocol 44 sends are the renderer's and the mixer's, and this
+// module sits beside those rather than above them -- so each is declared by
+// hand on a side, storing what the real one does, as `Decal` is in `RealSide`.
+void declareCarried(RealSide& side)
+{
+    using Hook = void (*)(scene::World&, core::InstanceId);
+    const auto declare = [&side](std::string_view name, std::string_view super, Hook attach, Hook detach) {
+        const scene::ClassId made = side.classes.registerClass({
+            .name = side.atoms.intern(name),
+            .super = side.classes.findId(side.atoms.intern(super)),
+            .defaultName = side.atoms.intern(name),
+            .attachComponents = attach,
+            .detachComponents = detach,
+        });
+        REQUIRE(made != scene::InvalidClass);
+    };
+    declare(
+        "PointLight", "Instance",
+        [](scene::World& world, core::InstanceId id) { world.pointLights().add(id, scene::PointLightComponent{}); },
+        [](scene::World& world, core::InstanceId id) { world.pointLights().remove(id); });
+    declare(
+        "SpotLight", "Instance",
+        [](scene::World& world, core::InstanceId id) { world.spotLights().add(id, scene::SpotLightComponent{}); },
+        [](scene::World& world, core::InstanceId id) { world.spotLights().remove(id); });
+    declare(
+        "SpringBone", "Instance",
+        [](scene::World& world, core::InstanceId id) { world.springBones().add(id, scene::SpringBoneComponent{}); },
+        [](scene::World& world, core::InstanceId id) { world.springBones().remove(id); });
+    declare(
+        "SpringCollider", "Instance",
+        [](scene::World& world, core::InstanceId id) {
+            world.springColliders().add(id, scene::SpringColliderComponent{});
+        },
+        [](scene::World& world, core::InstanceId id) { world.springColliders().remove(id); });
+    // An `Attachment` with nothing more to store: the joint it names and the
+    // turn a script gave it are the attachment's own component.
+    declare("Bone", "Attachment", nullptr, nullptr);
+    declare(
+        "Highlight", "Instance",
+        [](scene::World& world, core::InstanceId id) { world.highlights().add(id, scene::HighlightComponent{}); },
+        [](scene::World& world, core::InstanceId id) { world.highlights().remove(id); });
+    declare(
+        "Beam", "Instance",
+        [](scene::World& world, core::InstanceId id) { world.beams().add(id, scene::BeamComponent{}); },
+        [](scene::World& world, core::InstanceId id) { world.beams().remove(id); });
+    declare(
+        "Trail", "Instance",
+        [](scene::World& world, core::InstanceId id) { world.trails().add(id, scene::TrailComponent{}); },
+        [](scene::World& world, core::InstanceId id) { world.trails().remove(id); });
+    declare(
+        "ParticleEmitter", "Instance",
+        [](scene::World& world, core::InstanceId id) {
+            world.particleEmitters().add(id, scene::ParticleEmitterComponent{});
+        },
+        [](scene::World& world, core::InstanceId id) { world.particleEmitters().remove(id); });
+    declare(
+        "Sound", "Instance",
+        [](scene::World& world, core::InstanceId id) { world.sounds().add(id, scene::SoundComponent{}); },
+        [](scene::World& world, core::InstanceId id) { world.sounds().remove(id); });
+    // And one the wire does not carry, for the warning about it.
+    declare("BillboardGui", "Instance", nullptr, nullptr);
+}
+
+// A match whose two sides know the classes a character carries.
+struct CarriedMatch : PlayedMatch
+{
+    CarriedMatch()
+    {
+        declareCarried(server);
+        declareCarried(client);
+    }
+
+    // An instance of `className` on the authority, under `parent`.
+    core::InstanceId carried(std::string_view className, core::InstanceId parent)
+    {
+        const core::InstanceId id = server.world.create(server.classes.findId(server.atoms.intern(className)));
+        REQUIRE(id.valid());
+        REQUIRE_FALSE(server.world.setParent(id, parent).has_value());
+        return id;
+    }
+};
+
+[[nodiscard]] core::ColorSequence fire()
+{
+    return core::ColorSequence{{core::ColorKeypoint{0.0f, core::Color3{1.0f, 0.9f, 0.5f}},
+                                core::ColorKeypoint{0.25f, core::Color3{1.0f, 0.5f, 0.125f}},
+                                core::ColorKeypoint{1.0f, core::Color3{0.25f, 0.0f, 0.0f}}}};
+}
+
+[[nodiscard]] core::NumberSequence fade()
+{
+    return core::NumberSequence{{core::NumberKeypoint{0.0f, 0.0f, 0.0f}, core::NumberKeypoint{0.75f, 0.25f, 0.125f},
+                                 core::NumberKeypoint{1.0f, 1.0f, 0.0f}}};
+}
+
+// As many keys as a sequence may hold, each its own.
+[[nodiscard]] core::ColorSequence longest()
+{
+    core::ColorSequence sequence;
+    sequence.keypoints.clear();
+    for (core::usize key = 0; key < core::MaxSequenceKeypoints; ++key) {
+        const auto along = static_cast<core::f32>(key) / static_cast<core::f32>(core::MaxSequenceKeypoints - 1);
+        sequence.keypoints.push_back(core::ColorKeypoint{along, core::Color3{along, 1.0f - along, 0.5f * along}});
+    }
+    return sequence;
+}
+
+} // namespace
+
+TEST_CASE("a light the authority spawns shines on a replica as it was authored (protocol 44)")
+{
+    // **The defect**: `PointLight` and `SpotLight` were excluded from the wire
+    // because a light that moves with its holder needs no message. The motion
+    // needs none; the light does -- a torch a server script put in a hand was
+    // dark on every other machine, and the part it hung from arrived bare.
+    CarriedMatch match;
+    const core::InstanceId torch = match.part("Torch", core::DVec3{0.0, 1.0, 0.0});
+    const core::InstanceId flame = match.carried("PointLight", torch);
+    const core::InstanceId lamp = match.carried("SpotLight", torch);
+    scene::PointLightComponent* point = match.server.world.pointLights().find(flame);
+    scene::SpotLightComponent* spot = match.server.world.spotLights().find(lamp);
+    REQUIRE(point != nullptr);
+    REQUIRE(spot != nullptr);
+    point->cframe.position = core::DVec3{0.0, 0.5, 0.0};
+    point->color = core::Color3{1.0f, 0.75f, 0.5f};
+    point->brightness = 3.0f;
+    point->range = 12.0f;
+    point->shadows = true;
+    spot->cframe.position = core::DVec3{0.0, 0.25, -0.5};
+    spot->color = core::Color3{0.5f, 0.75f, 1.0f};
+    spot->brightness = 2.0f;
+    spot->range = 24.0f;
+    spot->angle = 30.0f;
+    spot->enabled = false;
+    match.run(4);
+
+    const core::InstanceId seenFlame = match.copyOf(flame);
+    const core::InstanceId seenLamp = match.copyOf(lamp);
+    REQUIRE(seenFlame.valid());
+    REQUIRE(seenLamp.valid());
+    CHECK(match.client.world.parentOf(seenFlame) == match.copyOf(torch));
+    const scene::PointLightComponent* seenPoint = match.client.world.pointLights().find(seenFlame);
+    const scene::SpotLightComponent* seenSpot = match.client.world.spotLights().find(seenLamp);
+    REQUIRE(seenPoint != nullptr);
+    REQUIRE(seenSpot != nullptr);
+    CHECK(seenPoint->cframe.position.y == doctest::Approx(0.5));
+    CHECK(seenPoint->color == core::Color3{1.0f, 0.75f, 0.5f});
+    CHECK(static_cast<double>(seenPoint->brightness) == doctest::Approx(3.0));
+    CHECK(static_cast<double>(seenPoint->range) == doctest::Approx(12.0));
+    CHECK(seenPoint->enabled);
+    CHECK(seenPoint->shadows);
+    CHECK(seenSpot->cframe.position.z == doctest::Approx(-0.5));
+    CHECK(seenSpot->color == core::Color3{0.5f, 0.75f, 1.0f});
+    CHECK(static_cast<double>(seenSpot->brightness) == doctest::Approx(2.0));
+    CHECK(static_cast<double>(seenSpot->range) == doctest::Approx(24.0));
+    CHECK(static_cast<double>(seenSpot->angle) == doctest::Approx(30.0));
+    CHECK_FALSE(seenSpot->enabled);
+
+    // A torch that gutters, and a lamp switched on: a property that changes
+    // is sent when it does.
+    match.server.world.pointLights().find(flame)->brightness = 0.25f;
+    match.server.world.spotLights().find(lamp)->enabled = true;
+    match.run(3);
+    CHECK(static_cast<double>(match.client.world.pointLights().find(seenFlame)->brightness) == doctest::Approx(0.25));
+    CHECK(match.client.world.spotLights().find(seenLamp)->enabled);
+
+    // And nothing is sent a tick for a light that only stands there.
+    const core::u64 before = match.authority->stats().snapshotBytes;
+    match.run(20);
+    const core::u64 standing = match.authority->stats().snapshotBytes - before;
+    match.server.world.pointLights().find(flame)->range = 13.0f;
+    const core::u64 beforeChange = match.authority->stats().snapshotBytes;
+    match.run(20);
+    CHECK(match.authority->stats().snapshotBytes - beforeChange > standing);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("an emitter's sequences and its picture reach a replica, key by key (protocol 44)")
+{
+    // **The defect**: an emitter travelled with the eighteen properties it had
+    // before ADR 0160 and none since -- no picture, no frames, no turn, and no
+    // sequence, which the wire had no encoding for. Every replica drew flames
+    // as white squares that never changed colour.
+    CarriedMatch match;
+    const core::InstanceId brazier = match.part("Brazier", core::DVec3{0.0, 1.0, 0.0});
+    const core::InstanceId fireId = match.carried("ParticleEmitter", brazier);
+    scene::ParticleEmitterComponent* emitter = match.server.world.particleEmitters().find(fireId);
+    REQUIRE(emitter != nullptr);
+    emitter->texture = match.server.atoms.intern("asset://textures/flame.png");
+    emitter->flipbookColumns = 4;
+    emitter->flipbookRows = 2;
+    emitter->flipbookMode = 1;
+    emitter->rotationSpeed = 90.0f;
+    emitter->collision = 2;
+    emitter->bounce = 0.25f;
+    emitter->colorOverLife = fire();
+    emitter->transparencyOverLife = fade();
+    emitter->sizeOverLife =
+        core::NumberSequence{{core::NumberKeypoint{0.0f, 0.5f, 0.0f}, core::NumberKeypoint{0.5f, 2.0f, 0.0f},
+                              core::NumberKeypoint{1.0f, 0.25f, 0.0f}}};
+    match.run(4);
+
+    const core::InstanceId seen = match.copyOf(fireId);
+    REQUIRE(seen.valid());
+    const scene::ParticleEmitterComponent* copy = match.client.world.particleEmitters().find(seen);
+    REQUIRE(copy != nullptr);
+    CHECK(match.client.atoms.text(copy->texture) == "asset://textures/flame.png");
+    CHECK(copy->flipbookColumns == 4);
+    CHECK(copy->flipbookRows == 2);
+    CHECK(copy->flipbookMode == 1);
+    CHECK(static_cast<double>(copy->rotationSpeed) == doctest::Approx(90.0));
+    CHECK(copy->collision == 2);
+    CHECK(static_cast<double>(copy->bounce) == doctest::Approx(0.25));
+    // Key by key, to the bit: a sequence is not rounded on its way.
+    CHECK(copy->colorOverLife == fire());
+    CHECK(copy->transparencyOverLife == fade());
+    REQUIRE(copy->sizeOverLife.keypoints.size() == 3);
+    CHECK(copy->sizeOverLife.keypoints[1] == core::NumberKeypoint{0.5f, 2.0f, 0.0f});
+
+    // As long as a sequence may be: twenty keys, the last of them past the
+    // first cell and every cell after it.
+    match.server.world.particleEmitters().find(fireId)->colorOverLife = longest();
+    match.run(3);
+    copy = match.client.world.particleEmitters().find(seen);
+    CHECK(copy->colorOverLife == longest());
+    // The others did not move with it.
+    CHECK(copy->transparencyOverLife == fade());
+
+    // **Longer than a sequence may be** -- which no setter lets through, and a
+    // component written by hand can hold: cut at twenty on the wire, where it
+    // is no longer a sequence (its last key is not at 1), and so not written.
+    // The replica keeps what it had; the two ends still agree on the bytes.
+    core::ColorSequence tooLong = longest();
+    tooLong.keypoints.push_back(core::ColorKeypoint{1.0f, core::Color3{0.0f, 0.0f, 0.0f}});
+    tooLong.keypoints[core::MaxSequenceKeypoints - 1].time = 0.99f;
+    match.server.world.particleEmitters().find(fireId)->colorOverLife = tooLong;
+    match.run(3);
+    copy = match.client.world.particleEmitters().find(seen);
+    CHECK(copy->colorOverLife == longest());
+
+    // And back to one that is: written again.
+    match.server.world.particleEmitters().find(fireId)->colorOverLife = fire();
+    match.run(3);
+    CHECK(match.client.world.particleEmitters().find(seen)->colorOverLife == fire());
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("a cape, a bone, a highlight, a trail and a beam reach a replica as authored (protocol 44)")
+{
+    CarriedMatch match;
+    const core::InstanceId body = match.part("Body", core::DVec3{0.0, 1.0, 0.0});
+    const core::InstanceId a0 = match.carried("Attachment", body);
+    const core::InstanceId a1 = match.carried("Attachment", body);
+    match.server.world.attachments().find(a1)->cframe.position = core::DVec3{0.0, -1.0, 0.0};
+
+    const core::InstanceId cape = match.carried("SpringBone", body);
+    scene::SpringBoneComponent* spring = match.server.world.springBones().find(cape);
+    spring->rootJoint = match.server.atoms.intern("Cape1");
+    spring->jointPattern = match.server.atoms.intern("Cape*");
+    spring->stiffness = 0.5f;
+    spring->limitAngle = 45.0f;
+    const core::InstanceId spine = match.carried("SpringCollider", body);
+    scene::SpringColliderComponent* collider = match.server.world.springColliders().find(spine);
+    collider->jointName = match.server.atoms.intern("Spine");
+    collider->radius = 0.375f;
+    collider->offset = core::Vec3{0.0f, 0.125f, 0.0f};
+
+    const core::InstanceId head = match.carried("Bone", body);
+    scene::AttachmentComponent* bone = match.server.world.attachments().find(head);
+    REQUIRE(bone != nullptr);
+    bone->jointName = match.server.atoms.intern("Head");
+    bone->transform.position = core::DVec3{0.0, 0.25, 0.0};
+
+    const core::InstanceId mark = match.carried("Highlight", body);
+    scene::HighlightComponent* highlight = match.server.world.highlights().find(mark);
+    highlight->adornee = body;
+    highlight->fillColor = core::Color3{0.25f, 1.0f, 0.25f};
+    highlight->depthMode = 1;
+
+    const core::InstanceId ribbon = match.carried("Trail", body);
+    scene::TrailComponent* trail = match.server.world.trails().find(ribbon);
+    trail->attachment0 = a0;
+    trail->attachment1 = a1;
+    trail->lifetime = 1.5f;
+    trail->color = fire();
+    trail->widthScale = fade();
+    trail->texture = match.server.atoms.intern("asset://textures/trail.png");
+
+    const core::InstanceId band = match.carried("Beam", body);
+    scene::BeamComponent* beam = match.server.world.beams().find(band);
+    beam->attachment0 = a0;
+    beam->attachment1 = a1;
+    beam->color = fire();
+    beam->transparency = fade();
+    beam->segments = 16;
+    beam->faceCamera = false;
+    match.run(5);
+
+    const scene::SpringBoneComponent* seenSpring = match.client.world.springBones().find(match.copyOf(cape));
+    REQUIRE(seenSpring != nullptr);
+    CHECK(match.client.atoms.text(seenSpring->rootJoint) == "Cape1");
+    CHECK(match.client.atoms.text(seenSpring->jointPattern) == "Cape*");
+    CHECK(static_cast<double>(seenSpring->stiffness) == doctest::Approx(0.5));
+    CHECK(static_cast<double>(seenSpring->limitAngle) == doctest::Approx(45.0));
+    const scene::SpringColliderComponent* seenCollider = match.client.world.springColliders().find(match.copyOf(spine));
+    REQUIRE(seenCollider != nullptr);
+    CHECK(match.client.atoms.text(seenCollider->jointName) == "Spine");
+    CHECK(static_cast<double>(seenCollider->radius) == doctest::Approx(0.375));
+    CHECK(static_cast<double>(seenCollider->offset.y) == doctest::Approx(0.125));
+
+    // A bone arrives as a bone, not as the attachment it extends, with the
+    // joint it names still to be found on this machine's own rig.
+    const core::InstanceId seenHead = match.copyOf(head);
+    REQUIRE(seenHead.valid());
+    CHECK(match.client.atoms.text(match.client.classes.find(match.client.world.classOf(seenHead))->name) == "Bone");
+    const scene::AttachmentComponent* seenBone = match.client.world.attachments().find(seenHead);
+    REQUIRE(seenBone != nullptr);
+    CHECK(match.client.atoms.text(seenBone->jointName) == "Head");
+    CHECK(seenBone->jointIndex == -1);
+    CHECK(seenBone->transform.position.y == doctest::Approx(0.25));
+
+    // What a mark, a ribbon and a band name are this machine's own copies.
+    const scene::HighlightComponent* seenMark = match.client.world.highlights().find(match.copyOf(mark));
+    REQUIRE(seenMark != nullptr);
+    CHECK(seenMark->adornee == match.copyOf(body));
+    CHECK(seenMark->fillColor == core::Color3{0.25f, 1.0f, 0.25f});
+    CHECK(seenMark->depthMode == 1);
+    const scene::TrailComponent* seenTrail = match.client.world.trails().find(match.copyOf(ribbon));
+    REQUIRE(seenTrail != nullptr);
+    CHECK(seenTrail->attachment0 == match.copyOf(a0));
+    CHECK(seenTrail->attachment1 == match.copyOf(a1));
+    CHECK(static_cast<double>(seenTrail->lifetime) == doctest::Approx(1.5));
+    CHECK(seenTrail->color == fire());
+    CHECK(seenTrail->widthScale == fade());
+    CHECK(seenTrail->transparency == core::NumberSequence{});
+    CHECK(match.client.atoms.text(seenTrail->texture) == "asset://textures/trail.png");
+    const scene::BeamComponent* seenBeam = match.client.world.beams().find(match.copyOf(band));
+    REQUIRE(seenBeam != nullptr);
+    CHECK(seenBeam->attachment0 == match.copyOf(a0));
+    CHECK(seenBeam->attachment1 == match.copyOf(a1));
+    CHECK(seenBeam->color == fire());
+    CHECK(seenBeam->transparency == fade());
+    CHECK(seenBeam->segments == 16);
+    CHECK_FALSE(seenBeam->faceCamera);
+
+    // One property of each, afterwards: a script on the authority turns the
+    // head, clears the ribbon, recolours the band.
+    match.server.world.attachments().find(head)->transform.position = core::DVec3{0.0, 0.5, 0.125};
+    match.server.world.attachments().find(head)->jointName = match.server.atoms.intern("Neck");
+    match.client.world.attachments().find(seenHead)->jointIndex = 3;
+    match.server.world.springBones().find(cape)->stiffness = 0.875f;
+    match.server.world.springColliders().find(spine)->radius = 0.625f;
+    match.server.world.highlights().find(mark)->enabled = false;
+    match.server.world.trails().find(ribbon)->cleared += 1;
+    match.server.world.beams().find(band)->color = longest();
+    match.run(3);
+    seenBone = match.client.world.attachments().find(seenHead);
+    CHECK(seenBone->transform.position.z == doctest::Approx(0.125));
+    CHECK(match.client.atoms.text(seenBone->jointName) == "Neck");
+    // Another joint is found again, as the property's own setter has it.
+    CHECK(seenBone->jointIndex == -1);
+    CHECK(static_cast<double>(match.client.world.springBones().find(match.copyOf(cape))->stiffness) ==
+          doctest::Approx(0.875));
+    CHECK(static_cast<double>(match.client.world.springColliders().find(match.copyOf(spine))->radius) ==
+          doctest::Approx(0.625));
+    CHECK_FALSE(match.client.world.highlights().find(match.copyOf(mark))->enabled);
+    CHECK(match.client.world.trails().find(match.copyOf(ribbon))->cleared == 1);
+    CHECK(match.client.world.beams().find(match.copyOf(band))->color == longest());
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("a sound the authority plays starts on a replica from its beginning, and stops with it (protocol 44)")
+{
+    CarriedMatch match;
+    const core::InstanceId torch = match.part("Torch", core::DVec3{0.0, 1.0, 0.0});
+    const core::InstanceId crackle = match.carried("Sound", torch);
+    scene::SoundComponent* sound = match.server.world.sounds().find(crackle);
+    REQUIRE(sound != nullptr);
+    // As `Sound.Content`'s setter leaves it: the text, and its name made.
+    sound->content = "asset://sounds/torch.ogg";
+    (void)match.server.atoms.intern(sound->content);
+    sound->looped = true;
+    sound->volume = 0.25f;
+    sound->playbackSpeed = 1.5f;
+    sound->rollOffMaxDistance = 40.0f;
+    // Already seven seconds in, on the authority.
+    sound->playing = true;
+    sound->timePosition = 7.0;
+    match.run(4);
+
+    const core::InstanceId seen = match.copyOf(crackle);
+    REQUIRE(seen.valid());
+    scene::SoundComponent* copy = match.client.world.sounds().find(seen);
+    REQUIRE(copy != nullptr);
+    CHECK(copy->content == "asset://sounds/torch.ogg");
+    CHECK(copy->looped);
+    CHECK(static_cast<double>(copy->volume) == doctest::Approx(0.25));
+    CHECK(static_cast<double>(copy->playbackSpeed) == doctest::Approx(1.5));
+    CHECK(static_cast<double>(copy->rollOffMaxDistance) == doctest::Approx(40.0));
+    // **Its own copy, from its beginning**: where the authority's has got to
+    // is never sent.
+    CHECK(copy->playing);
+    CHECK(copy->timePosition == doctest::Approx(0.0));
+
+    // Each machine's timeline runs on its own, and nothing the authority's
+    // does to its own -- or any other property changing -- starts this one
+    // again.
+    copy->timePosition = 1.25;
+    match.server.world.sounds().find(crackle)->timePosition = 9.0;
+    match.server.world.sounds().find(crackle)->volume = 0.5f;
+    match.run(3);
+    copy = match.client.world.sounds().find(seen);
+    CHECK(static_cast<double>(copy->volume) == doctest::Approx(0.5));
+    CHECK(copy->playing);
+    CHECK(copy->timePosition == doctest::Approx(1.25));
+
+    // Stopped there, stopped here.
+    match.server.world.sounds().find(crackle)->playing = false;
+    match.run(3);
+    copy = match.client.world.sounds().find(seen);
+    CHECK_FALSE(copy->playing);
+
+    // And played again there, from the start here.
+    copy->timePosition = 0.75;
+    match.server.world.sounds().find(crackle)->playing = true;
+    match.run(3);
+    copy = match.client.world.sounds().find(seen);
+    CHECK(copy->playing);
+    CHECK(copy->timePosition == doctest::Approx(0.0));
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("an authority where somebody is developing says once what no replica will be sent (protocol 44)")
+{
+    std::vector<std::string> said;
+    const core::LogSink before = core::setLogSink([&said](core::LogLevel level, std::string_view text) {
+        if (level == core::LogLevel::Warn)
+            said.emplace_back(text);
+    });
+    const auto about = [&said](std::string_view className) {
+        return std::count_if(said.begin(), said.end(), [className](const std::string& line) {
+            return line.find(className) != std::string::npos && line.find("client script") != std::string::npos;
+        });
+    };
+
+    {
+        // As in a player's game: nothing is said.
+        CarriedMatch match;
+        const core::InstanceId body = match.part("Body", core::DVec3{0.0, 1.0, 0.0});
+        (void)match.carried("BillboardGui", body);
+        match.run(3);
+        CHECK(about("BillboardGui") == 0);
+    }
+    {
+        CarriedMatch match;
+        match.authority->setUncarriedWarnings(true);
+        // Straight under the workspace, where a replica keeps what its own
+        // scene put there: not said.
+        (void)match.carried("BillboardGui", match.server.workspace);
+        match.run(3);
+        CHECK(about("BillboardGui") == 0);
+
+        // Under a part the authority sends: on no replica, and said -- once a
+        // class, however many there are and however many ticks pass. Not a
+        // class that is each machine's own by nature, nor one the wire carries.
+        const core::InstanceId body = match.part("Body", core::DVec3{0.0, 1.0, 0.0});
+        (void)match.carried("BillboardGui", body);
+        (void)match.carried("BillboardGui", body);
+        (void)match.carried("Script", body);
+        (void)match.carried("PointLight", body);
+        match.run(6);
+        CHECK(about("BillboardGui") == 1);
+        CHECK(about("Script") == 0);
+        CHECK(about("PointLight") == 0);
+    }
+    if (before)
+        (void)core::setLogSink(before);
+    else
+        core::resetLogSink();
+}
+
+// --- Protocol 44, the audit: what an instance already sent was sent without ---------------
+
+namespace {
+
+// The body of a part on a side: what its physical properties are kept in. A
+// real part has one from the physics mirror; these worlds have no mirror.
+[[nodiscard]] scene::RigidBodyComponent& bodyOf(scene::World& world, core::InstanceId part)
+{
+    if (world.rigidBodies().find(part) == nullptr)
+        world.rigidBodies().add(part, scene::RigidBodyComponent{});
+    return *world.rigidBodies().find(part);
+}
+
+} // namespace
+
+TEST_CASE("a crate's grip, bounce, weight and drag reach a replica, which predicts it with them (protocol 44)")
+{
+    // **The defect**: a replica simulates the loose parts near its character
+    // itself (ADR 0133), from the body it holds -- and of a body it was sent
+    // `Anchored`, `CanCollide` and the group. Everything that decides where a
+    // push puts a crate was this machine's default: ice the server authored
+    // gripped like wood on every client, and each touch was a correction.
+    PlayedMatch match;
+    const core::InstanceId crate = match.part("Crate", core::DVec3{0.0, 1.0, 0.0});
+    scene::RigidBodyComponent& body = bodyOf(match.server.world, crate);
+    body.friction = 0.9f;
+    body.restitution = 0.5f;
+    body.density = 4.0f;
+    body.linearDamping = 0.4f;
+    body.angularDamping = 0.6f;
+    body.buoyant = false;
+    match.run(4);
+
+    const core::InstanceId seen = match.copyOf(crate);
+    REQUIRE(seen.valid());
+    const scene::RigidBodyComponent* copy = match.client.world.rigidBodies().find(seen);
+    REQUIRE(copy != nullptr);
+    CHECK(static_cast<double>(copy->friction) == doctest::Approx(0.9));
+    CHECK(static_cast<double>(copy->restitution) == doctest::Approx(0.5));
+    CHECK(static_cast<double>(copy->density) == doctest::Approx(4.0));
+    CHECK(static_cast<double>(copy->linearDamping) == doctest::Approx(0.4));
+    CHECK(static_cast<double>(copy->angularDamping) == doctest::Approx(0.6));
+    CHECK_FALSE(copy->buoyant);
+
+    // Oiled by a script afterwards: sent when it changes.
+    bodyOf(match.server.world, crate).friction = 0.05f;
+    bodyOf(match.server.world, crate).buoyant = true;
+    match.run(3);
+    copy = match.client.world.rigidBodies().find(seen);
+    CHECK(static_cast<double>(copy->friction) == doctest::Approx(0.05));
+    CHECK(copy->buoyant);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("what a part answers to a ray and to a touch is the server's answer on a replica (protocol 44)")
+{
+    // **The defect**: `CanQuery`, `CanTouch` and `ContactDetails` stayed on the
+    // authority. A client script's raycast hit the glass the server's passed
+    // through, its `Touched` fired on a trigger the server had switched off,
+    // and its `Collided` never fired at all.
+    PlayedMatch match;
+    const core::InstanceId glass = match.part("Glass", core::DVec3{0.0, 1.0, 0.0});
+    scene::RigidBodyComponent& body = bodyOf(match.server.world, glass);
+    body.canQuery = false;
+    body.canTouch = false;
+    body.contactDetails = true;
+    match.run(4);
+
+    const core::InstanceId seen = match.copyOf(glass);
+    REQUIRE(seen.valid());
+    const scene::RigidBodyComponent* copy = match.client.world.rigidBodies().find(seen);
+    REQUIRE(copy != nullptr);
+    CHECK_FALSE(copy->canQuery);
+    CHECK_FALSE(copy->canTouch);
+    CHECK(copy->contactDetails);
+
+    bodyOf(match.server.world, glass).canQuery = true;
+    bodyOf(match.server.world, glass).canTouch = true;
+    bodyOf(match.server.world, glass).contactDetails = false;
+    match.run(3);
+    copy = match.client.world.rigidBodies().find(seen);
+    CHECK(copy->canQuery);
+    CHECK(copy->canTouch);
+    CHECK_FALSE(copy->contactDetails);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("a model's pivot is where the server has it on a replica: its primary part and both offsets (protocol 44)")
+{
+    // **The defect**: `Model.PrimaryPart` read nil on every client, and a
+    // `PivotOffset` was the identity there -- so `GetPivot` answered another
+    // place and a client script's `PivotTo` moved a door about its middle.
+    PlayedMatch match;
+    const core::InstanceId door =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("Model")));
+    REQUIRE(door.valid());
+    REQUIRE_FALSE(match.server.world.setParent(door, match.server.workspace).has_value());
+    const core::InstanceId leaf = match.part("Leaf", core::DVec3{0.0, 1.0, 0.0});
+    const core::InstanceId frame = match.part("Frame", core::DVec3{1.0, 1.0, 0.0});
+    REQUIRE_FALSE(match.server.world.setParent(leaf, door).has_value());
+    REQUIRE_FALSE(match.server.world.setParent(frame, door).has_value());
+    scene::ModelComponent* model = match.server.world.models().find(door);
+    REQUIRE(model != nullptr);
+    model->primaryPart = leaf;
+    scene::PVComponent* modelPivot = match.server.world.pvInstances().find(door);
+    scene::PVComponent* leafPivot = match.server.world.pvInstances().find(leaf);
+    REQUIRE(modelPivot != nullptr);
+    REQUIRE(leafPivot != nullptr);
+    modelPivot->pivotOffset.position = core::DVec3{0.0, -1.0, 0.0};
+    // The hinge edge of the leaf.
+    leafPivot->pivotOffset.position = core::DVec3{-0.5, 0.0, 0.0};
+    match.run(5);
+
+    const core::InstanceId seenDoor = match.copyOf(door);
+    const core::InstanceId seenLeaf = match.copyOf(leaf);
+    REQUIRE(seenDoor.valid());
+    REQUIRE(seenLeaf.valid());
+    const scene::ModelComponent* seenModel = match.client.world.models().find(seenDoor);
+    REQUIRE(seenModel != nullptr);
+    // This machine's own copy of the part, which arrived after the model did.
+    CHECK(seenModel->primaryPart == seenLeaf);
+    REQUIRE(match.client.world.pvInstances().find(seenDoor) != nullptr);
+    REQUIRE(match.client.world.pvInstances().find(seenLeaf) != nullptr);
+    CHECK(match.client.world.pvInstances().find(seenDoor)->pivotOffset.position.y == doctest::Approx(-1.0));
+    CHECK(match.client.world.pvInstances().find(seenLeaf)->pivotOffset.position.x == doctest::Approx(-0.5));
+
+    // Hung from the other part, and its hinge moved.
+    match.server.world.models().find(door)->primaryPart = frame;
+    match.server.world.pvInstances().find(leaf)->pivotOffset.position = core::DVec3{0.5, 0.0, 0.0};
+    match.run(3);
+    CHECK(match.client.world.models().find(seenDoor)->primaryPart == match.copyOf(frame));
+    // **A pivot moved on its own is sent at the part's next reading**, which
+    // is within eight sends whatever its bytes say: a capture does not read
+    // every part's pivot every tick to learn that nearly none ever moves.
+    match.run(8);
+    CHECK(match.client.world.pvInstances().find(seenLeaf)->pivotOffset.position.x == doctest::Approx(0.5));
+
+    // And none: a model whose primary part was taken away says so everywhere.
+    match.server.world.models().find(door)->primaryPart = core::InstanceId{};
+    match.run(3);
+    CHECK_FALSE(match.client.world.models().find(seenDoor)->primaryPart.valid());
+
+    // **And a part that goes while the model still names it**: no byte of the
+    // model changed, and a model is kept from the capture before while none
+    // does -- so what it names is in what is compared, by the number the
+    // capture before gave it. The model says none a tick after the part left.
+    match.server.world.models().find(door)->primaryPart = frame;
+    match.run(3);
+    REQUIRE(match.client.world.models().find(seenDoor)->primaryPart == match.copyOf(frame));
+    (void)match.server.world.destroy(frame);
+    match.server.world.retireDestroyed();
+    match.run(3);
+    CHECK_FALSE(match.client.world.models().find(seenDoor)->primaryPart.valid());
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("a model that names its primary part is kept from the capture before, as one that names none is")
+{
+    // What the keeping is for: a world's models were all read every tick once
+    // `PrimaryPart` was a field, because an instance that names another was
+    // never kept. Forty models, each naming a part of its own, standing still.
+    PlayedMatch match;
+    const scene::ClassId model = match.server.classes.findId(match.server.atoms.intern("Model"));
+    for (int index = 0; index < 40; ++index) {
+        const core::InstanceId holder = match.server.world.create(model);
+        REQUIRE_FALSE(match.server.world.setParent(holder, match.server.workspace).has_value());
+        const core::InstanceId part = match.part("Piece", core::DVec3{static_cast<double>(index) * 3.0, 1.0, 0.0});
+        match.server.world.rigidBodies().find(part)->anchored = true;
+        REQUIRE_FALSE(match.server.world.setParent(part, holder).has_value());
+        match.server.world.models().find(holder)->primaryPart = part;
+    }
+    match.run(4);
+    constexpr int Ticks = 32;
+    const Stats before = match.authority->stats();
+    match.run(Ticks);
+    const Stats after = match.authority->stats();
+    const core::u64 read = after.entitiesRead - before.entitiesRead;
+    const core::u64 kept = after.entitiesKept - before.entitiesKept;
+    CAPTURE(read);
+    CAPTURE(kept);
+    // Eighty instances and the few a match has of its own: each read one tick
+    // in eight, and kept the other seven. Read every tick, the forty models
+    // alone were 1280.
+    CHECK(kept >= static_cast<core::u64>(Ticks) * 80u * 3u / 4u);
+    CHECK(read <= static_cast<core::u64>(Ticks) * 20u);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("the light under the open sky on the authority is the light there on a replica (protocol 44)")
+{
+    // **The defect**: `Lighting.Ambient` travelled and `OutdoorAmbient` did
+    // not, so a world that lit its caves and its fields apart was lit one way
+    // on the server's screen and another on every client's.
+    PlayedMatch match;
+    scene::LightingComponent* sky = match.server.world.lighting().find(match.server.lighting);
+    REQUIRE(sky != nullptr);
+    sky->ambient = core::Color3{0.02f, 0.02f, 0.03f};
+    sky->outdoorAmbient = core::Color3{0.4f, 0.45f, 0.5f};
+    match.run(4);
+
+    const scene::LightingComponent* seen = match.client.world.lighting().find(match.client.lighting);
+    REQUIRE(seen != nullptr);
+    CHECK(seen->ambient == core::Color3{0.02f, 0.02f, 0.03f});
+    CHECK(seen->outdoorAmbient == core::Color3{0.4f, 0.45f, 0.5f});
+
+    sky->outdoorAmbient = core::Color3{0.1f, 0.1f, 0.3f};
+    match.run(3);
+    CHECK(match.client.world.lighting().find(match.client.lighting)->outdoorAmbient == core::Color3{0.1f, 0.1f, 0.3f});
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("a river's width, depth and corners at each point reach a replica (protocol 44)")
+{
+    // **The defect**: a `WaterPoint` travelled as its place alone. Where a
+    // river widened into a pool or narrowed to a chute on the server, every
+    // client drew -- and swam, and floated things on -- one of even width.
+    PlayedMatch match;
+    const core::InstanceId river =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("Water")));
+    REQUIRE(river.valid());
+    REQUIRE_FALSE(match.server.world.setParent(river, match.server.workspace).has_value());
+    const scene::ClassId pointClass = match.server.classes.findId(match.server.atoms.intern("WaterPoint"));
+    const core::InstanceId pool = match.server.world.create(pointClass);
+    const core::InstanceId chute = match.server.world.create(pointClass);
+    REQUIRE(pool.valid());
+    REQUIRE(chute.valid());
+    REQUIRE_FALSE(match.server.world.setParent(pool, river).has_value());
+    REQUIRE_FALSE(match.server.world.setParent(chute, river).has_value());
+    scene::WaterPointComponent* wide = match.server.world.waterPoints().find(pool);
+    scene::WaterPointComponent* narrow = match.server.world.waterPoints().find(chute);
+    REQUIRE(wide != nullptr);
+    REQUIRE(narrow != nullptr);
+    wide->position = core::Vec3{0.0f, 0.0f, 0.0f};
+    wide->width = 24.0;
+    wide->depth = 6.0;
+    narrow->position = core::Vec3{0.0f, -2.0f, 40.0f};
+    narrow->width = 3.0;
+    narrow->depth = 1.5;
+    narrow->sharp = true;
+    match.run(5);
+
+    const scene::WaterPointComponent* seenWide = match.client.world.waterPoints().find(match.copyOf(pool));
+    const scene::WaterPointComponent* seenNarrow = match.client.world.waterPoints().find(match.copyOf(chute));
+    REQUIRE(seenWide != nullptr);
+    REQUIRE(seenNarrow != nullptr);
+    CHECK(seenWide->width == doctest::Approx(24.0));
+    CHECK(seenWide->depth == doctest::Approx(6.0));
+    CHECK_FALSE(seenWide->sharp);
+    CHECK(seenNarrow->width == doctest::Approx(3.0));
+    CHECK(seenNarrow->depth == doctest::Approx(1.5));
+    CHECK(seenNarrow->sharp);
+
+    match.server.world.waterPoints().find(chute)->width = 5.0;
+    match.server.world.waterPoints().find(chute)->sharp = false;
+    match.run(3);
+    seenNarrow = match.client.world.waterPoints().find(match.copyOf(chute));
+    CHECK(seenNarrow->width == doctest::Approx(5.0));
+    CHECK_FALSE(seenNarrow->sharp);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE(
+    "a sprite's weight and surface and what it collides with reach a replica, a tilemap's group too (protocol 44)")
+{
+    // **The defect**: a replica steps its own sprite ahead of the authority
+    // (ADR 0103), with the body it holds -- and of a sprite it was sent
+    // `Anchored`, `CanCollide` and `Sensor`. A heavy, floaty or bouncy hero
+    // was an ordinary one on its own player's machine, corrected every tick;
+    // and a ghost that passes through walls on the server hit them there.
+    PlayedMatch match;
+    const core::NameAtom ghosts = match.server.atoms.intern("Ghosts");
+    REQUIRE(match.server.world.collisionGroups().add(ghosts) != scene::CollisionGroups::kInvalid);
+    const core::InstanceId hero =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("Part2D")));
+    REQUIRE(hero.valid());
+    scene::Part2DComponent* sprite = match.server.world.parts2d().find(hero);
+    REQUIRE(sprite != nullptr);
+    sprite->density = 3.0f;
+    sprite->friction = 0.75f;
+    sprite->elasticity = 0.5f;
+    sprite->fixedRotation = true;
+    sprite->gravityScale = 0.25f;
+    sprite->collisionGroup = ghosts;
+    REQUIRE_FALSE(match.server.world.setParent(hero, match.server.workspace).has_value());
+    const core::InstanceId level =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("Tilemap2D")));
+    REQUIRE(level.valid());
+    match.server.world.tilemaps2d().find(level)->collisionGroup = ghosts;
+    REQUIRE_FALSE(match.server.world.setParent(level, match.server.workspace).has_value());
+    match.run(4);
+
+    const scene::Part2DComponent* copy = match.client.world.parts2d().find(match.copyOf(hero));
+    REQUIRE(copy != nullptr);
+    CHECK(static_cast<double>(copy->density) == doctest::Approx(3.0));
+    CHECK(static_cast<double>(copy->friction) == doctest::Approx(0.75));
+    CHECK(static_cast<double>(copy->elasticity) == doctest::Approx(0.5));
+    CHECK(copy->fixedRotation);
+    CHECK(static_cast<double>(copy->gravityScale) == doctest::Approx(0.25));
+    // By name, in this machine's own atoms -- and a group the replica had not
+    // heard of is one it has now, as a part's is (D545).
+    CHECK(match.client.atoms.text(copy->collisionGroup) == "Ghosts");
+    CHECK(match.client.world.collisionGroups().find(copy->collisionGroup) != scene::CollisionGroups::kInvalid);
+    const scene::Tilemap2DComponent* seenLevel = match.client.world.tilemaps2d().find(match.copyOf(level));
+    REQUIRE(seenLevel != nullptr);
+    CHECK(match.client.atoms.text(seenLevel->collisionGroup) == "Ghosts");
+
+    match.server.world.parts2d().find(hero)->gravityScale = 1.5f;
+    match.server.world.parts2d().find(hero)->fixedRotation = false;
+    match.run(3);
+    copy = match.client.world.parts2d().find(match.copyOf(hero));
+    CHECK(static_cast<double>(copy->gravityScale) == doctest::Approx(1.5));
+    CHECK_FALSE(copy->fixedRotation);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("a pivot moved on its own reaches a replica within eight sends, whatever its number, at two ticks a send")
+{
+    // **The defect**: an instance is read again one send in eight whatever its
+    // bytes say -- what a capture cannot see change is late by that much and
+    // no more. The turn was counted in ticks, and a game sends every second
+    // tick: an instance with an odd number never had a turn at all. Nothing
+    // stood on it until a pivot did, which a capture does not read each tick.
+    PlayedMatch match;
+    std::vector<core::InstanceId> doors;
+    for (int index = 0; index < 6; ++index)
+        doors.push_back(match.part("Door", core::DVec3{static_cast<double>(index) * 3.0, 1.0, 0.0}));
+    // As the engine sends: one tick in two.
+    const auto send = [&match](int sends) {
+        for (int at = 0; at < sends; ++at) {
+            match.tick += 2;
+            match.authority->receive(match.server.world, match.server.workspace);
+            match.authority->send(match.server.world, match.server.workspace, match.tick);
+            match.authority->sendMessages(match.server.world);
+            match.replica->receive(match.client.world, match.client.workspace);
+            match.replica->sendIntent(match.client.world, match.tick);
+            match.replica->sendMessages(match.client.world);
+        }
+    };
+    send(4);
+    for (const core::InstanceId door : doors) {
+        REQUIRE(match.copyOf(door).valid());
+        match.server.world.pvInstances().find(door)->pivotOffset.position = core::DVec3{-0.5, 0.0, 0.0};
+    }
+    send(10);
+    for (const core::InstanceId door : doors) {
+        CAPTURE(match.authority->netIdOf(door).value);
+        CHECK(match.client.world.pvInstances().find(match.copyOf(door))->pivotOffset.position.x ==
+              doctest::Approx(-0.5));
+    }
+    CHECK(match.replica->checksumFailures() == 0);
 }

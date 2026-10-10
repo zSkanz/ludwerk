@@ -57,6 +57,10 @@ enum class ContentKind
     // OPENED in the text editor, as a script is, and offered by the material
     // panel's shader picker -- the two things nothing else in a folder is for.
     Shader,
+    // An `.animgraph.json` (ADR 0197): how a character's clips are mixed.
+    // A kind of its own so `AnimationPlayer.Graph` offers graphs and nothing
+    // else, and so one opens as text.
+    AnimationGraph,
     Other,
 };
 

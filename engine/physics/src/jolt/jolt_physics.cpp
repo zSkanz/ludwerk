@@ -3869,6 +3869,23 @@ private:
         [[nodiscard]] bool OnContactValidate(const JPH::CharacterVirtual*,
                                              const JPH::CharacterContact& contact) override
         {
+            // **What does not collide is never ground** (D615). The sweep
+            // drops a sensor it runs into and is not stopped by it. But what
+            // decides what a character STANDS on looks again at every contact
+            // near enough that the sweep did not handle, asks this, and takes
+            // a yes for a collision -- sensor or not. Measured in a hero that
+            // a script turns each tick (which has the controller take its
+            // contacts afresh, nothing swept): its own body, welded inside
+            // the capsule, and the staff in its hand were both "ground", with
+            // their normals in the ground's normal and their velocities in
+            // the ground's velocity. A character inherits its ground's motion
+            // (D027), and its body's motion is its own a tick ago: a walk of
+            // 1.1 metres a second fed on itself and went in bursts of nine.
+            // Refused here, the contact is still in the list
+            // `collectCharacterContacts` reads, which asks a sensor only
+            // whether the shapes overlap (D524): a pad is still touched.
+            if (contact.mIsSensorB)
+                return false;
             // A terrain chunk's band only lends its edges (ADR 0143).
             if (!contact.mBodyB.IsInvalid()) {
                 const JPH::Body* touched = m_world.m_system.GetBodyLockInterfaceNoLock().TryGetBody(contact.mBodyB);

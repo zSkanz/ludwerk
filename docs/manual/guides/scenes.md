@@ -68,6 +68,60 @@ gone with the scene, is named in a warning with what to set. It reads its file, 
 - **`Player`s**, attributes included. Their characters were in the world and go
   with it; the new scene's server code makes new ones.
 
+**And what the old scene had on the graphics card goes with it.** Half a
+second after a scene opens, every mesh and texture that nothing names is
+released: a game that goes lobby, map, lobby, another map holds one scene's
+content at a time, not every scene it has been through. The log says how
+many were released each time a scene is left.
+
+### What counts as named
+
+This list is the contract: a mesh or a picture on it is held, and one that is
+on none of it is let go.
+
+- **Every instance there is, wherever it sits** -- not only what is drawn.
+  A model in `Workspace`, a template in `ReplicatedStorage` or
+  `ServerStorage` a script will clone later, a pool of bodies a `Swarm` hands
+  out, a part a script made and has not parented yet: each names its mesh,
+  the material it wears and that material's maps, a surface shader's
+  textures. So do a decal, a particle emitter, a sprite, a tilemap's tileset,
+  a block world's faces, a terrain's layers, a foliage mesh and the sky's sun
+  and moon.
+- **What `ContentProvider:PreloadAsync` asked for in the scene just left, or
+  since.** A loading screen preloads the next scene's content and then
+  changes to it: that preload is the next scene's, and is held until that
+  scene is left in its turn. **Preload: this scene and the next.**
+- **What `ContentProvider:Keep` was given, until `Release`.** Nothing kept is
+  ever released by a change of scene: the player's own character, the
+  enemies every level has. **Keep: until released.** It stays on the graphics
+  card the whole time, so keep what every scene needs and not everything.
+- Anything still on its way in.
+
+What is **not** named until it exists: a stamp no copy of which has been
+placed (a stamp is a file until then -- preload it by name, which reads it
+and everything it names), and a model a script names only in the line that
+spawns it. Interface pictures are not part of this at all: they have their
+own budget, by what is on screen (see [graphics settings](manual:rendering/settings)).
+
+```luau
+--!strict
+local ContentProvider = game:GetService("ContentProvider")
+
+-- Behind the loading screen of a level: what the level shows now and then.
+ContentProvider:PreloadAsync({ "asset://models/boss.glb", "spark" })
+
+-- Once, when the game starts: what every scene shows.
+ContentProvider:Keep({ "asset://models/hero.glb" })
+```
+
+So **something a scene shows only now and then** -- an enemy that spawns a
+minute in, from a model nothing holds until then -- is preloaded when the
+scene starts; otherwise it is read from disk the first time it appears, in
+the middle of play. In a run with developer warnings on, the log names each
+mesh and picture that was loaded that way, once, so the list of what to
+preload writes itself. (Not in a world that streams: there, content arriving
+as the player moves is the design.)
+
 ## Starting in a scene
 
 A run starts in `[project] scene`. To work on a level without clicking through

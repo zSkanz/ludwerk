@@ -303,3 +303,124 @@ loss, and all of it.
 remote calls, in order, which is the guarantee a `RemoteEvent` gives; and
 from the authority, spawns and attribute changes, which a message that names
 an instance must not arrive before.
+
+## Amendment, 2026-10-10 (protocol 44): what a character carries
+
+A character a server script spawned -- by `Instance.stamp`, by `Clone` of a
+template in `ReplicatedStorage`, or by `Instance.new` -- reached a joiner with
+its attachments, decals and emitters and nothing else. Thirteen classes it
+might carry were excluded, most for a reason that was true of something else:
+a light "that moved because its parent moved needs no message", which is true
+of the motion and says nothing of the light. A torch was dark on every
+replica, a cape did not exist, a client's `WaitForChild("Footstep")` never
+returned, and an emitter arrived without the sequences it is coloured by.
+
+**The rule, the same for every class this adds**: the instance and what was
+authored on it travel when it is made and when a property changes. Nothing is
+sent a tick. What the class simulates -- a chain's swing, a trail's pieces, the
+particles in the air, where a sound has got to -- stays each machine's own.
+
+- **`PointLight`, `SpotLight`, `SpringBone`, `SpringCollider`, `Highlight`,
+  `Beam`, `Trail`, `Sound`** join `Classes`, each with every authored
+  property. **`Bone`** joins as an `Attachment` (`Extends`) with the joint it
+  names and its `Transform`, which a script on the authority writes and is
+  therefore state. **`ParticleEmitter`** gains what ADR 0160 gave it and the
+  wire never learned -- its picture, frames, turn and collision -- and its
+  three sequences; **`Decal`** its blend mode and its glow.
+- **A sequence has an encoding**: `ColorSequence` and `NumberSequence`, a `u8`
+  count and that many keys of four or three `f32` -- what an attribute of the
+  type already is. It is the first encoding that says its own length, and the
+  rule that every encoding is fixed-width is kept everywhere it mattered: a
+  list, never a list of lists, bounded at the twenty keys a sequence may hold,
+  and a count past that rejects the message. A list that decodes and is no
+  sequence is held as sent -- both ends must hold the same bytes -- and not
+  written to the instance.
+- **A sequence is several cells.** A field's value is a sixty-four byte cell
+  compared, hashed and kept by its bytes, and twenty colour keys are 321.
+  Widening every cell for three classes would be paid by every field of every
+  instance in every state; an interned name would never be freed, and a beam
+  faded by a script each tick would grow both ends for as long as the match
+  lasted. So a sequence's bytes lie over several cells -- the first in the
+  field's own place, the rest after the instance's last field (`cellCount`,
+  `furtherCells`) -- and the diff, the checksum, the baselines and the replica's
+  record of what it wrote go on reading bytes. Three places know: a record is
+  built from the fields and a sequence compared with all its cells; the writer
+  and the reader lay it down as a count and its keys; the apply writes it whole
+  when any cell moved. The published checksum says where the further cells are
+  taken.
+- **A `Sound` is played by each machine.** `Playing` travels as the property
+  it is; a replica that sees it become true starts its own copy from the
+  beginning, and one that sees it become false stops it. `TimePosition` is not
+  on the wire. Accepted with it: a one-shot that starts and ends between two
+  snapshots is not heard on a replica, a `Play` on a sound already playing is
+  no change, and a late joiner hears a playing sound from its start. A game
+  that needs every shot heard sends a remote. `Sound.Group`, `AudioGroup` and
+  the nine `*SoundEffect` classes stay off the wire: a mixer is each
+  machine's, and eleven classes of numbers for a change of tone are a client
+  script's to make.
+- **Still excluded, and why is said again where it was stale**: `BillboardGui`
+  and `SurfaceGui` (the interface tree is each machine's own),
+  `NavigationAgent`, `Ragdoll`, `Script`.
+- **An exclusion may be `Quiet`** in the schema: the class is each machine's
+  own by nature, or what it does reaches a replica some other way. Where a
+  person is developing (`Config::developer`, from the dev run's flag), an
+  authority says once a class that an instance of any OTHER excluded class,
+  under an instance it sends, will be on no replica
+  (`net.warn.class_not_replicated`). The capture already stops at such an
+  instance and already asks each class's schema once, so the warning is one
+  byte compared where the walk gives up.
+
+Tests: `session_tests.cpp`, the five cases named "(protocol 44)";
+`field_tests.cpp` and `extract_tests.cpp` for the encoding and the cells; and
+`netcode_carried`, two processes, a thing spawned three ways and read back
+class by class.
+
+## Amendment, 2026-10-10, the second (still protocol 44): what a class already sent was sent without
+
+The same audit, turned on the classes that were on the wire: every property a
+script can write, against the fields its class has. The rule for which
+travel: **a property travels when a replica needs it to draw the thing, to
+predict it, or to answer a script's read or query as the authority would.**
+What only the authority ever reads stays out, and says so.
+
+- **A part's body** was sent `Anchored`, `CanCollide` and its group. A
+  replica predicts the loose parts near its character itself (ADR 0133) from
+  the body it holds, so `Friction`, `Restitution`, `Density`, the two
+  dampings and `Buoyant` travel; and a client script's raycast, `Touched` and
+  `Collided` are answered by that machine's bodies, so `CanQuery`, `CanTouch`
+  and `ContactDetails` do.
+- **A pivot**: `PivotOffset` on a part and on a model, and `Model.PrimaryPart`
+  as a reference. `GetPivot` and `PivotTo` are answered where they are called.
+- **`Lighting.OutdoorAmbient`**; a **`WaterPoint`**'s `Width`, `Depth` and
+  `Sharp`; a **`Part2D`**'s `Density`, `Friction`, `Elasticity`,
+  `FixedRotation`, `GravityScale` and `CollisionGroup`; a **`Tilemap2D`**'s
+  `CollisionGroup`.
+- **Withheld, by name, in the schema** (`Withheld` on a class, printed in the
+  published protocol under it): `Model.StreamingMode`, `Water.BankWidth`, a
+  `Swarm`'s nine steering properties, `Workspace.CurrentCamera`,
+  `Sound.Group`. A joint's and a mover's properties are all sent, under the
+  names of the fields they share.
+
+Three things in the capture had to change for it:
+
+- **An instance that names another is kept from the capture before**, as any
+  other is. It never was -- what it names can leave with no byte of its own
+  changing -- and that was affordable while only joints named anything. A
+  model names its primary part, and a world's models would all have been read
+  every tick. What each reference was numbered by the capture before is now
+  in the number compared (`referenceAt`), so a part that left or arrived is a
+  capture late in the model that names it, and then read.
+- **A pivot's pool is known to the capture and not read by it.** Every part
+  has a pivot and nearly none ever moves it; reading each every tick to learn
+  that was a tenth again of a capture. A pivot moved on its own goes at the
+  instance's next reading whatever its bytes say.
+- **That next reading is counted in captures.** It was counted in ticks, one
+  in eight, and a game sends every second tick: an instance whose number was
+  of the other parity never had a turn. Nothing visible stood on it until a
+  pivot did.
+
+What it costs, measured where a send was measured before (2,400 parts in 300
+models, sixty moving, one replica): a median send of 1.04 ms against 0.91.
+Ten more cells a part are ten more to read, clear and hash each time a part
+is read -- the sixty that moved and each instance's turn in eight -- and
+nothing for a part that is kept. A whole record of a part is 76 bytes longer.

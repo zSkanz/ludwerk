@@ -24,10 +24,13 @@
 #include <unordered_map>
 #include <vector>
 
+#include "engine/asset/animation_graph.h"
 #include "engine/asset/model.h"
 #include "engine/core/id.h"
 #include "engine/core/math.h"
 #include "engine/core/name_atom.h"
+#include "engine/render/graph_player.h"
+#include "engine/render/retarget.h"
 #include "engine/scene/animation_host.h"
 #include "engine/scene/morph_host.h"
 #include "engine/scene/skeleton_host.h"
@@ -59,13 +62,22 @@ public:
         // -- so `joints` may be empty, and whoever wants a rig asks that.
         std::vector<std::string> morphNames;
         std::vector<f32> morphDefaults;
+        // What a `.rig.json` beside the model says of its joints' roles (ADR
+        // 0199): none for nearly every rig, whose names say it.
+        std::vector<retarget::RoleOverride> roles;
     };
 
     void set(core::NameAtom content, Entry entry);
+    // The rig is gone, to be read again: a model exported anew (D611).
+    void forget(core::NameAtom content);
     void clear() noexcept;
     // Counted up on every change: what a pose remembered from an earlier
     // skeleton or clip is checked against (H10).
     [[nodiscard]] core::u64 revision() const noexcept { return revision_; }
+    // Counted up when a rig that was there is replaced or taken away -- not
+    // when a new one arrives: what a track found in a rig, by index, is good
+    // until this moves.
+    [[nodiscard]] core::u64 replaced() const noexcept { return replaced_; }
 
     // Null for a URN nothing has loaded, or one whose file had no skeleton --
     // which is most of them.
@@ -78,6 +90,62 @@ private:
     {
         core::NameAtom content;
         Entry entry;
+    };
+    std::vector<Slot> entries_;
+    core::u64 revision_ = 0;
+    core::u64 replaced_ = 0;
+};
+
+// The animation graphs that have loaded (ADR 0197), keyed by the content URN
+// an `AnimationPlayer.Graph` names. Filled by whoever reads content -- the
+// host, on the simulation's side, since a graph decides a pose the tick reads.
+class GraphLibrary
+{
+public:
+    // Where a parameter's value comes from when no script has set it.
+    enum class Source : core::u8
+    {
+        None,
+        Speed,
+        VerticalSpeed,
+        MoveX,
+        MoveZ,
+        Grounded,
+        State,
+        Attribute,
+    };
+    // A graph as it is played: the file, and its names resolved once -- which
+    // file and which clip each use of a clip means, and what each parameter
+    // reads.
+    struct Entry
+    {
+        asset::AnimationGraph graph;
+        // Parallel to `graph.clips`: the file the clip is in (none for the
+        // mesh's own) and its name there.
+        std::vector<core::NameAtom> clipFiles;
+        std::vector<std::string> clipNames;
+        // Parallel to `graph.parameters`.
+        std::vector<Source> sources;
+        std::vector<core::NameAtom> attributes;
+    };
+    // `atoms` interns the files and attributes the graph names.
+    void set(core::NameAtom content, asset::AnimationGraph graph, core::AtomTable& atoms);
+    // The graph is gone: a file that was deleted, or is about to be read again.
+    void forget(core::NameAtom content);
+    void clear() noexcept;
+    // Counted up on every change: what was built from a graph is checked
+    // against it.
+    [[nodiscard]] core::u64 revision() const noexcept { return revision_; }
+    [[nodiscard]] const Entry* find(core::NameAtom content) const noexcept;
+
+private:
+    // Sorted by atom, as `SkeletonLibrary` is and for its reason. Held by
+    // pointer so a graph somebody is reading does not move when another
+    // arrives.
+    struct Slot
+    {
+        core::NameAtom content;
+        std::unique_ptr<Entry> entry;
     };
     std::vector<Slot> entries_;
     core::u64 revision_ = 0;
@@ -135,6 +203,10 @@ public:
     // same lifetime `PhysicsSync` has.
     AnimationSystem(const scene::World& world, const SkeletonLibrary& skeletons);
 
+    // Where graphs are found (ADR 0197). Without one, a player's `Graph` is
+    // a name nothing answers to and it plays its tracks alone.
+    void setGraphs(const GraphLibrary* graphs) noexcept { graphs_ = graphs; }
+
     [[nodiscard]] scene::TrackId createTrack(core::InstanceId player, core::NameAtom content,
                                              std::string_view clip) override;
     void play(scene::TrackId track, f32 fadeTime, f32 weight, f32 speed) override;
@@ -147,12 +219,32 @@ public:
     [[nodiscard]] std::span<const scene::TrackId> drainEnded() override;
     void retire(const scene::World& world) override;
 
+    // --- Animation graphs (ADR 0197) ----------------------------------------
+
+    scene::GraphWrite setGraphParameter(core::InstanceId player, std::string_view name, f32 value) override;
+    scene::GraphWrite clearGraphParameter(core::InstanceId player, std::string_view name) override;
+    [[nodiscard]] scene::GraphParameterValue graphParameter(core::InstanceId player,
+                                                            std::string_view name) const override;
+    [[nodiscard]] std::string_view graphState(core::InstanceId player, std::string_view layer) const override;
+    [[nodiscard]] std::span<const scene::GraphSignal> drainGraphSignals() override;
+    void graphDigests(std::vector<std::pair<core::InstanceId, core::u64>>& into) const override;
+
+    // **The files tracks are waiting for**: a clip named from a file no mesh
+    // in the world wears -- a library of clips -- is loaded by nobody unless
+    // somebody asks. In atom order, each once; whoever reads content loads
+    // them.
+    [[nodiscard]] std::span<const core::NameAtom> wantedClipFiles() const noexcept { return wantedFiles_; }
+
+    void describeGraph(core::InstanceId player, std::vector<scene::GraphLayerView>& layers,
+                       std::vector<scene::GraphParameterView>& parameters) const override;
+
     // --- scene::SkeletonHost ------------------------------------------------
 
     [[nodiscard]] core::u32 jointCount(core::InstanceId meshPart) const override;
     [[nodiscard]] core::i32 findJoint(core::InstanceId meshPart, std::string_view name) const override;
     [[nodiscard]] core::i32 jointParent(core::InstanceId meshPart, core::u32 joint) const override;
     [[nodiscard]] std::string_view jointName(core::InstanceId meshPart, core::u32 joint) const override;
+    [[nodiscard]] std::string_view jointRole(core::InstanceId meshPart, core::u32 joint) const override;
     [[nodiscard]] bool jointModel(core::InstanceId meshPart, core::u32 joint, core::CFrameD& out) const override;
     void setJointOverride(core::InstanceId meshPart, core::u32 joint, const core::CFrameD& model) override;
     void clearJointOverrides(core::InstanceId meshPart) override;
@@ -204,9 +296,37 @@ public:
     // substituted and every joint below them carried along. `joints` in
     // ascending order of joint. One call a mesh a frame; a second replaces
     // the first.
-    void present(core::InstanceId meshPart, std::span<const PresentedJoint> joints);
+    //
+    // `over`: on top of what this frame already presented for the mesh, where
+    // it did -- the spring chains after the limbs (ADR 0198), each moving its
+    // own joints of one picture.
+    void present(core::InstanceId meshPart, std::span<const PresentedJoint> joints, bool over = false);
     // Nothing is presented any more: every mesh is drawn with its own pose.
-    void clearPresented() noexcept { presented_.clear(); }
+    void clearPresented() noexcept
+    {
+        presented_.clear();
+        presentedMeshes_.clear();
+    }
+    // The meshes presented this frame, in the order they first were.
+    [[nodiscard]] std::span<const core::InstanceId> presentedMeshes() const noexcept { return presentedMeshes_; }
+    // A joint's place in the pose `meshPart` is DRAWN with: the presented one
+    // where the frame has one, the simulated one otherwise. What hangs from a
+    // joint in the picture -- a cape from a shoulder a limb's reach moved --
+    // asks this.
+    [[nodiscard]] bool drawnJointModel(core::InstanceId meshPart, core::u32 joint, core::CFrameD& out) const;
+
+    // --- For what solves a pose after the clips (ADR 0198) ------------------
+
+    // The rig's joints, or none for a mesh with no skeleton.
+    [[nodiscard]] std::span<const asset::Joint> jointsOf(core::InstanceId meshPart) const;
+    // Every joint's place in model space as the simulation has it now -- the
+    // pose, or the rest chain for a mesh nothing drives -- into `out`. False
+    // for a mesh with no skeleton.
+    [[nodiscard]] bool modelOf(core::InstanceId meshPart, std::vector<core::Mat4>& out) const;
+    // A joint's place in the rest pose.
+    [[nodiscard]] core::Mat4 restModel(core::InstanceId meshPart, core::u32 joint) const;
+    // The roles of the rig's joints (ADR 0199), or null for no skeleton.
+    [[nodiscard]] const retarget::RigRoles* rolesOf(core::InstanceId meshPart) const;
     // What `extract` draws: the presented pose where there is one, else
     // `pose`.
     [[nodiscard]] const Pose* drawnPose(core::InstanceId meshPart) const noexcept;
@@ -220,6 +340,9 @@ public:
     // How many poses have been built since this system was made: what a test
     // counts to know that a pose nobody changed was not built again.
     [[nodiscard]] core::u64 posesBuilt() const noexcept { return posesBuilt_; }
+    // How many tracks there are places for, living or not: what a test holds
+    // to know that characters coming and going do not grow it for ever.
+    [[nodiscard]] usize trackSlots() const noexcept { return tracks_.size(); }
 
     // **What the renderer saw** (H3), once a frame: every skinned mesh the
     // camera or a shadow reached, and how big. `fresh` starts the frame's list
@@ -316,6 +439,28 @@ private:
         bool posedHolding = false;
         f32 posedWeight = 0.0f;
         f64 posedTime = 0.0;
+
+        // --- A graph's track (ADR 0197) ----------------------------------
+        //
+        // A track a graph made is stepped by the graph, not by its own clock
+        // and fade: `time`, `weight` and `playing` are written each tick.
+        // `graph` is the instance that owns it, or `NoGraph` for a track a
+        // script loaded.
+        u32 graph = NoGraph;
+        // **The layer it is mixed in.** 0 is where every track a script
+        // plays is, and a graph's first layer: one weighted average, as it
+        // always was. A layer above replaces what is under it on the joints
+        // it has, by its weight; an additive one is applied after them all.
+        core::u16 layer = 0;
+        bool additive = false;
+        // The layer's own weight this tick, and the graph its mask is read
+        // from (by `layer`).
+        f32 layerWeight = 1.0f;
+        core::NameAtom graphContent;
+        // `AnimationPlayer.Retargeting` (ADR 0199), as its player has it this
+        // tick: 0 Automatic, 1 ByName.
+        core::u8 retargeting = 0;
+        f32 posedLayerWeight = 1.0f;
     };
 
     // Whether a track has nothing to change in a pose: stopped or holding,
@@ -323,10 +468,60 @@ private:
     [[nodiscard]] static bool quiet(const Track& track) noexcept
     {
         return !track.playing && track.posed && !track.posedPlaying && track.posedHolding == track.holding &&
-               track.posedWeight == track.weight && track.posedTime == track.time;
+               track.posedWeight == track.weight && track.posedTime == track.time &&
+               track.posedLayerWeight == track.layerWeight;
     }
 
     static constexpr u32 NoClip = 0xFFFFFFFFu;
+    static constexpr u32 NoGraph = 0xFFFFFFFFu;
+
+    // --- The walk's lanes (ADR 0197) ------------------------------------
+    //
+    // What one layer's tracks add up to, a joint a component: the weighted
+    // sums, the weights, and how much of the joint the layer covers (its
+    // tracks' weights times the layer's own).
+    struct Lanes
+    {
+        std::vector<core::DVec3> translation;
+        std::vector<f32> rotation;
+        std::vector<core::Vec3> scale;
+        std::vector<f32> weightT;
+        std::vector<f32> weightR;
+        std::vector<f32> weightS;
+        std::vector<f32> coverT;
+        std::vector<f32> coverR;
+        std::vector<f32> coverS;
+        void clear(usize joints, bool cover);
+    };
+    // One track's clip at its time into `lanes`, joint by joint through the
+    // track's mask and the map onto this rig. False when it had nothing.
+    bool accumulate(const Track& track, core::NameAtom rig, usize jointCount, bool quantise, Lanes& lanes);
+    // An additive track: how far its clip is from its own first frame, onto
+    // `addT_`, `addR_` and `addS_`.
+    bool accumulateAdditive(const Track& track, core::NameAtom rig, usize jointCount, bool quantise);
+    // `upper` over `base`: where the layer has a joint it takes its cover of
+    // it, and what is under keeps the rest.
+    void mergeLayer(const SkeletonLibrary::Entry& skeleton, Lanes& base, const Lanes& upper);
+    // A track's mask on `rig`: a weight a joint, or null for the whole rig.
+    [[nodiscard]] const std::vector<f32>* maskFor(const Track& track, core::NameAtom rig);
+    // What of a track besides its clip, time and weight decides a pose: its
+    // layer, whether it adds, its mask and the layer's weight.
+    [[nodiscard]] core::u64 layerWordOf(const Track& track, core::NameAtom rig);
+    struct Mask
+    {
+        core::NameAtom graph;
+        core::NameAtom rig;
+        core::u16 layer = 0;
+        bool whole = true;
+        std::vector<f32> weights;
+    };
+    std::vector<Mask> masks_;
+    core::u64 masksRevision_ = ~core::u64{0};
+    Lanes base_;
+    Lanes upper_;
+    std::vector<core::DVec3> addT_;
+    std::vector<f32> addR_;
+    std::vector<core::Vec3> addS_;
 
     // Finds the track's mesh and clip, if they are there yet. True once bound.
     bool bindTrack(Track& track) const;
@@ -371,13 +566,36 @@ private:
     {
         core::NameAtom from;
         core::NameAtom to;
+        // Whether roles were allowed (`Retargeting` Automatic): two maps a
+        // pair of rigs, at the most.
+        bool automatic = false;
         // `slots[i]` is the joint in `to` that joint `i` of `from` is, or -1.
         std::vector<core::i32> slots;
+        // **By what each joint is** (ADR 0199), where both rigs are bodies
+        // and are not one skeleton under two names: turns carried from rest
+        // to rest, the hips' travel scaled, every other length the target's.
+        // `carried.roles` false is by equal names, as it always was.
+        retarget::Map carried;
+        // Said once a pair: the roles a clip moves that the target lacks.
+        mutable bool warned = false;
     };
 
     // The identity is returned as null: a clip applied to its own rig needs no
-    // map, which is every character that is one mesh.
-    [[nodiscard]] const JointMap* jointMapFor(core::NameAtom from, core::NameAtom to) const;
+    // map, which is every character that is one mesh. `mode` is the track's
+    // `Retargeting`.
+    [[nodiscard]] const JointMap* jointMapFor(core::NameAtom from, core::NameAtom to, core::u8 mode) const;
+    // A rig's roles, found once a rig.
+    struct RolesOf
+    {
+        core::NameAtom content;
+        retarget::RigRoles roles;
+    };
+    [[nodiscard]] const retarget::RigRoles* rolesFor(core::NameAtom content) const;
+    mutable std::vector<RolesOf> rigRoles_;
+    mutable core::u64 mapsRevision_ = ~core::u64{0};
+    // Says which roles `clip` moves that `map`'s target has no joint for.
+    void warnUnmapped(const JointMap& map, const asset::AnimationClip& clip) const;
+    std::vector<core::u8> keyed_;
 
     // A joint's model transform with no pose at all: the rest chain, walked
     // parents-first. What a character standing in bind pose answers.
@@ -403,6 +621,64 @@ private:
 
     const scene::World* world_ = nullptr;
     const SkeletonLibrary* skeletons_ = nullptr;
+    const GraphLibrary* graphs_ = nullptr;
+
+    // **One player's graph** (ADR 0197): the evaluator, the tracks it writes
+    // each tick -- one a use of a clip -- and what it last read of the world.
+    struct GraphInstance
+    {
+        core::InstanceId player;
+        core::NameAtom content;
+        // The library's revision it was bound at, and whether it is.
+        core::u64 revision = 0;
+        bool bound = false;
+        bool alive = true;
+        GraphPlayer evaluator;
+        // Parallel to the graph's clips: indices into `tracks_`.
+        std::vector<u32> tracks;
+        std::vector<f32> lengths;
+        // What a script set before the graph's file arrived, in order.
+        struct Pending
+        {
+            std::string name;
+            f32 value = 0.0f;
+            bool clear = false;
+        };
+        std::vector<Pending> pending;
+        // The `CharacterBody` its sources read, where it last was and how
+        // fast it is taken to be going.
+        core::InstanceId body;
+        bool placed = false;
+        core::DVec3 lastPosition{};
+        core::Vec3 velocity{0.0f, 0.0f, 0.0f};
+        // For a trigger with a source: what the source was when last looked
+        // at, so a change can be told from a first sight.
+        std::vector<core::u64> seen;
+        std::vector<core::u8> sighted;
+        // The stamp of the last tick that found its player with this graph.
+        core::u64 stamp = 0;
+    };
+    std::vector<GraphInstance> graphInstances_;
+    // Player to instance. Looked up, never walked (R10).
+    std::unordered_map<core::u64, u32> graphIndex_;
+    // Tracks of graphs that are gone, to be used again: no script holds one.
+    std::vector<u32> freeTracks_;
+    std::vector<GraphPlayer::Signal> graphScratch_;
+    std::vector<scene::GraphSignal> graphSignals_;
+    std::vector<scene::GraphSignal> graphSignalsDrained_;
+    std::vector<core::NameAtom> wantedFiles_;
+    std::vector<core::InstanceId> graphPlayers_;
+    // `SkeletonLibrary::replaced` as the tracks last saw it (D611).
+    core::u64 replacedSeen_ = 0;
+
+    void stepGraphs(f64 fixedDt);
+    [[nodiscard]] GraphInstance* graphOf(core::InstanceId player) noexcept;
+    [[nodiscard]] const GraphInstance* graphOf(core::InstanceId player) const noexcept;
+    GraphInstance& graphFor(core::InstanceId player);
+    void bindGraph(GraphInstance& instance, const GraphLibrary::Entry& entry);
+    void unbindGraph(GraphInstance& instance);
+    void readSources(GraphInstance& instance, const GraphLibrary::Entry& entry, f64 fixedDt);
+    [[nodiscard]] core::InstanceId bodyOf(core::InstanceId player) const;
 
     // **What scripts set, by name** (ADR 0196): a mesh's few overrides, in the
     // order they were first set. By name and not by index because a script
@@ -449,6 +725,7 @@ private:
     std::unordered_map<core::u64, std::shared_ptr<const Pose>> poses_;
     // The poses drawn in place of those, this frame (`present`).
     std::unordered_map<core::u64, Pose> presented_;
+    std::vector<core::InstanceId> presentedMeshes_;
     // This mesh's pose to write to: the one it holds, when nothing else does;
     // a copy of it otherwise, or a new one.
     [[nodiscard]] Pose& ownPose(core::InstanceId meshPart, bool keep);
@@ -570,12 +847,6 @@ private:
     void catchUp(core::InstanceId meshPart);
     // The meshes a `Bone` turned this tick (G9).
     std::vector<core::InstanceId> turned_;
-    std::vector<core::DVec3> translation_;
-    std::vector<f32> rotation_;
-    std::vector<core::Vec3> scale_;
-    std::vector<f32> weightT_;
-    std::vector<f32> weightR_;
-    std::vector<f32> weightS_;
     std::vector<core::Mat4> model_;
 
     // A vector rather than a map, and sorted by instance: a scene has a handful

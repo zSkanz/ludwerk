@@ -182,6 +182,250 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     boneDesc.properties = boneProperties;
     classes.registerClass(boneDesc);
 
+    // --- IKControl ---
+    static std::array<scene::PropertyDesc, 11> iKControlProperties;
+    iKControlProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Type"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("IKControlType"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "`TwoBone`: the end joint, the one above it and the one above that are a limb, and the end is put at the target. `LookAt`: the end joint is turned to face the target, and the joints above it share the turn.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getIKControlType,
+            .set = native::setIKControlType,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("EndJoint"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The joint at the end of what is bent, as the file names it: a hand, a foot, a head. A name the rig does not have does nothing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getIKControlEndJoint,
+            .set = native::setIKControlEndJoint,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Target"),
+            .type = scene::ValueType::Instance,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What is reached for or looked at: a part or an attachment, where it is DRAWN this frame. With none the control does nothing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getIKControlTarget,
+            .set = native::setIKControlTarget,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("TargetOffset"),
+            .type = scene::ValueType::CFrame,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where from the target the place is, in the target's own space: a grip a hand's width from a weapon's middle.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_cframe"),
+            .get = native::getIKControlTargetOffset,
+            .set = native::setIKControlTargetOffset,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Pole"),
+            .type = scene::ValueType::Instance,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "For a limb: what the elbow or the knee points at. With none the limb bends the way the clip already has it bent.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getIKControlPole,
+            .set = native::setIKControlPole,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("AlignRotation"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "For a limb: whether the end takes the target's turn as well as its place -- a palm laid flat on a grip, a sole on a pedal.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getIKControlAlignRotation,
+            .set = native::setIKControlAlignRotation,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ChainLength"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "For a look: how many joints above the end share the turn, 0 to 8 -- a head alone, a head and its neck, a head, a neck and a spine. Each takes an equal part.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.ik_chain_length"),
+            .get = native::getIKControlChainLength,
+            .set = native::setIKControlChainLength,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MaxAngle"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "For a look: the furthest from straight ahead it may turn, in degrees. Past it the look stops at the limit instead of twisting the neck round.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_cone_degrees"),
+            .get = native::getIKControlMaxAngle,
+            .set = native::setIKControlMaxAngle,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Weight"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of it is applied, 0 to 1: 0 is the clip alone. Tween it to pick a thing up and let it go without a snap.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getIKControlWeight,
+            .set = native::setIKControlWeight,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether it is applied at all. Off costs nothing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getIKControlEnabled,
+            .set = native::setIKControlEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Smoothing"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The seconds a change is eased over -- a target that jumps, a control switched on -- so a head turns to a new thing instead of snapping to it. 0 follows at once.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getIKControlSmoothing,
+            .set = native::setIKControlSmoothing,
+        },
+    }};
+    scene::ClassDescriptor iKControlDesc;
+    iKControlDesc.name = atoms.intern("IKControl");
+    iKControlDesc.super = instanceClass;
+    iKControlDesc.flags = scene::ClassFlags::None;
+    iKControlDesc.defaultName = atoms.intern("IKControl");
+    iKControlDesc.doc = "Bends a limb to reach a place, or turns a head to look at one, on top of whatever clip is playing (ADR 0198): a hand set on a weapon's grip, a foot put on a pedal, eyes that follow what walks past. Parent it to the `MeshPart` whose skeleton it bends, name the joint at the END of the limb -- the hand, the foot, the head -- and give it a `Target`.\012\012**It is picture, not simulation.** It is solved on each machine, each frame, into the pose the frame is drawn with, and never into the pose the tick reads: a `Bone` on that hand still says where the clip has the hand, and nothing in the game's rules should read a reached-for place. What a script turns for the rules to see -- a head whose turn decides what a guard notices -- it turns with `Bone.Transform`. What IS drawn follows: a part held to a bone of the limb is drawn in the hand that was moved, and a cape hangs from shoulders an arm's reach moved.\012\012It reaches as far as the limb is long and stops there, straight. In a match the control and what it is set to travel with its character; the bending is each machine's own.";
+    static constexpr std::array<std::string_view, 3> iKControlParents{{"MeshPart", "ReplicatedStorage", "ServerStorage"}};
+    iKControlDesc.parents = iKControlParents;
+    iKControlDesc.properties = iKControlProperties;
+    iKControlDesc.attachComponents = native::attachIKControlComponents;
+    iKControlDesc.detachComponents = native::detachIKControlComponents;
+    classes.registerClass(iKControlDesc);
+
+    // --- FootPlacement ---
+    static std::array<scene::PropertyDesc, 8> footPlacementProperties;
+    footPlacementProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("LeftFoot"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The left ankle's joint, as the file names it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getFootPlacementLeftFoot,
+            .set = native::setFootPlacementLeftFoot,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("RightFoot"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The right ankle's joint.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getFootPlacementRightFoot,
+            .set = native::setFootPlacementRightFoot,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Hips"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The joint both legs hang from. It is what comes down when one foot is lower than the clip's ground.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getFootPlacementHips,
+            .set = native::setFootPlacementHips,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("FootHeight"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "From the ankle joint down to the sole, in metres: how far above the ground the ankle is kept.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getFootPlacementFootHeight,
+            .set = native::setFootPlacementFootHeight,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("StepHeight"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far up or down from the ground the clip was made on a foot is taken, in metres. Ground further than that -- a ledge, a drop -- is not stepped onto: the foot is left to the clip.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getFootPlacementStepHeight,
+            .set = native::setFootPlacementStepHeight,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("AlignToSlope"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether a planted foot is turned to lie on the ground it is on.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getFootPlacementAlignToSlope,
+            .set = native::setFootPlacementAlignToSlope,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Weight"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of it is applied, 0 to 1.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getFootPlacementWeight,
+            .set = native::setFootPlacementWeight,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether it is applied at all.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getFootPlacementEnabled,
+            .set = native::setFootPlacementEnabled,
+        },
+    }};
+    scene::ClassDescriptor footPlacementDesc;
+    footPlacementDesc.name = atoms.intern("FootPlacement");
+    footPlacementDesc.super = instanceClass;
+    footPlacementDesc.flags = scene::ClassFlags::None;
+    footPlacementDesc.defaultName = atoms.intern("FootPlacement");
+    footPlacementDesc.doc = "Puts a character's two feet on whatever is under them -- a stair, a slope, a rock -- and lowers its hips so the lower leg does not hang (ADR 0198). A walk is made on flat ground; this is what makes it fit ground that is not.\012\012Parent it to the `MeshPart` whose skeleton it bends and name the two ankle joints and the hips. Each frame a ray down from each foot finds the ground; the foot is put on it, keeping however high the clip had lifted it, and the knee bends to suit.\012\012**It is picture, like `IKControl`**: each machine's own, in the pose the frame is drawn with, and never where the tick reads. It is done for characters the camera is near -- how near is the graphics settings' -- and not at all at the lowest quality or for a `Swarm`'s agents, whose feet are their clips'. It costs two rays a character a frame.";
+    static constexpr std::array<std::string_view, 3> footPlacementParents{{"MeshPart", "ReplicatedStorage", "ServerStorage"}};
+    footPlacementDesc.parents = footPlacementParents;
+    footPlacementDesc.properties = footPlacementProperties;
+    footPlacementDesc.attachComponents = native::attachFootPlacementComponents;
+    footPlacementDesc.detachComponents = native::detachFootPlacementComponents;
+    classes.registerClass(footPlacementDesc);
+
     // --- SpringBone ---
     static std::array<scene::PropertyDesc, 10> springBoneProperties;
     springBoneProperties = {{
@@ -2518,8 +2762,32 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(skyDesc);
 
     // --- AnimationPlayer ---
-    static std::array<scene::PropertyDesc, 1> animationPlayerProperties;
+    static std::array<scene::PropertyDesc, 3> animationPlayerProperties;
     animationPlayerProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Graph"),
+            .type = scene::ValueType::String,
+            .contentKind = atoms.intern("AnimationGraph"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The animation graph this player plays: an `asset://...animgraph.json`. Empty, the player plays only the tracks a script loads. Set it where the character is made; it starts in each layer's first state when its file arrives.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getAnimationPlayerGraph,
+            .set = native::setAnimationPlayerGraph,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Retargeting"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("Retargeting"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How a clip from another file is carried onto this skeleton (ADR 0199).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getAnimationPlayerRetargeting,
+            .set = native::setAnimationPlayerRetargeting,
+        },
         scene::PropertyDesc{
             .name = atoms.intern("CullingMode"),
             .type = scene::ValueType::EnumItem,
@@ -2533,7 +2801,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setAnimationPlayerCullingMode,
         },
     }};
-    static std::array<scene::MethodDesc, 1> animationPlayerMethods;
+    static std::array<scene::MethodDesc, 5> animationPlayerMethods;
     animationPlayerMethods = {{
         scene::MethodDesc{
             .name = atoms.intern("LoadAnimation"),
@@ -2541,17 +2809,55 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = scene::ThreadSafety::Unsafe,
             .doc = "A track for one clip. Everything after a `#` is the clip's NAME inside the file, and a string with no `#` is a clip name in this player's own mesh -- so the common case is `player:LoadAnimation(\"Walk\")`.\012\012**A path before the `#` names the file the CLIP is in, and it need not be the one this player's skeleton came from.** One walk cycle authored once and played by every character is the reason a clip is addressable at all, and a clip from elsewhere is retargeted onto this rig by joint NAME. A joint the target does not have is skipped rather than guessed, so a clip for a horse played on a person moves the joints they have in common and no others -- and a file nothing has loaded gives the same empty track a clip name the file lacks does.\012\012**Load a track once and keep it.** It always returns a track, even for a clip that is not there -- a mesh that has not finished loading would otherwise make an ordinary frame a nil index -- and every call is a handle the VM holds until the world goes away.",
         },
+        scene::MethodDesc{
+            .name = atoms.intern("SetParameter"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Sets one of the graph's parameters **on this machine**. A number or a boolean is kept until it is set again; a trigger is fired -- any value does it -- and is true until a transition takes it or the tick ends.\012\012**A parameter the graph reads from the world** (`from` in its file) **is overridden**: what was set wins on this machine until `ClearParameter` hands it back. Other machines do not see it -- for something every machine must show, set an attribute the graph reads, or let the body's own motion say it.\012\012Raises for a name the graph does not declare, once the graph has loaded; before that the value is kept and applied when it does.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("GetParameter"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "A parameter's value on this machine, as the graph sees it this tick: what a script set, else what it reads from the world, else its value at rest. A trigger answers whether it is fired. Nil with no graph loaded, or for a name it does not declare.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("ClearParameter"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Forgets what `SetParameter` set: the parameter is again what the graph reads from the world, or its value at rest.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("GetState"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "The state a layer is in -- the one it is fading INTO, during a fade -- by name. With no layer named, the first. Empty with no graph loaded or for a layer it does not have.",
+        },
+    }};
+    static std::array<scene::EventDesc, 2> animationPlayerEvents;
+    animationPlayerEvents = {{
+        scene::EventDesc{
+            .name = atoms.intern("StateChanged"),
+            .slot = 7,
+            .doc = "A layer of the graph left one state for another, on this machine. Fired on the simulation's clock, deferred like every signal.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("EventReached"),
+            .slot = 8,
+            .doc = "A clip passed a moment the graph names (`events` in its file): a foot down, a sword's edge live. Only for the state a layer is in -- not one fading out -- and in a blend only for the clip that weighs most, so a walk and a run do not step twice. **Once**: a tick a replica predicts again does not fire it again. Each machine fires its own; what a hit does is decided where the authority hears it.",
+        },
     }};
     scene::ClassDescriptor animationPlayerDesc;
     animationPlayerDesc.name = atoms.intern("AnimationPlayer");
     animationPlayerDesc.super = instanceClass;
     animationPlayerDesc.flags = scene::ClassFlags::None;
     animationPlayerDesc.defaultName = atoms.intern("AnimationPlayer");
-    animationPlayerDesc.doc = "Plays a skinned mesh's animation clips (\302\247" "2.2).\012\012**Parent it to the `Model` whose character it is, and it drives every skinned `MeshPart` under that model.** A character is a body, a shirt and a pair of trousers -- several meshes wearing the same skeleton -- and one clip has to move all of them. Only one of the pieces needs to carry the animation; the clip is taken from the first that does, in tree order.\012\012**The joints are matched by NAME across the pieces, never by index.** Two files exported separately wear the same skeleton in the sense that matters -- the same joints, named the same -- and in no other: an exporter is free to order them differently, and a clip applied through the wrong index twists a sleeve in a way that looks like a broken animation rather than a mismatched rig. A joint one piece does not have is skipped, so a shirt with no fingers keeps its own sleeve.\012\012Parenting it straight to a `MeshPart` still works and drives exactly that mesh, which is what a character made of one piece wants.\012\012It stores nothing: the tracks are the state, and each one is a handle a script holds rather than a child in the tree. Sampling happens at `PreAnimation` on the SimClock, so a clip's position at a given tick is the same in a replay as it was live.\012\012v1 is clip playback and linear blending -- no state machines, no IK, and no root motion.";
+    animationPlayerDesc.doc = "Plays a skinned mesh's animation clips (\302\247" "2.2).\012\012**Parent it to the `Model` whose character it is, and it drives every skinned `MeshPart` under that model.** A character is a body, a shirt and a pair of trousers -- several meshes wearing the same skeleton -- and one clip has to move all of them. Only one of the pieces needs to carry the animation; the clip is taken from the first that does, in tree order.\012\012**The joints are matched by NAME across the pieces, never by index.** Two files exported separately wear the same skeleton in the sense that matters -- the same joints, named the same -- and in no other: an exporter is free to order them differently, and a clip applied through the wrong index twists a sleeve in a way that looks like a broken animation rather than a mismatched rig. A joint one piece does not have is skipped, so a shirt with no fingers keeps its own sleeve.\012\012Parenting it straight to a `MeshPart` still works and drives exactly that mesh, which is what a character made of one piece wants.\012\012It stores nothing: the tracks are the state, and each one is a handle a script holds rather than a child in the tree. Sampling happens at `PreAnimation` on the SimClock, so a clip's position at a given tick is the same in a replay as it was live.\012\012**With a `Graph` it mixes the clips itself** (ADR 0197): an animation graph says which clips play in which state, how a walk becomes a run, when a jump begins and how long each fade is, and the game only says how fast the character is going. Tracks a script loads go on working beside it. Limbs that reach and feet on the ground are `IKControl` and `FootPlacement`. There is no root motion: a clip plays in place and the body moves the character.\012\012**In a match** the player travels with its character -- its `Graph` and `Retargeting`, nothing a tick -- and every machine steps its own copy of the graph from what already arrives: the body's speed, whether it is on the ground, its attributes.";
     static constexpr std::array<std::string_view, 3> animationPlayerParents{{"Model", "ReplicatedStorage", "ServerStorage"}};
     animationPlayerDesc.parents = animationPlayerParents;
     animationPlayerDesc.properties = animationPlayerProperties;
     animationPlayerDesc.methods = animationPlayerMethods;
+    animationPlayerDesc.events = animationPlayerEvents;
     animationPlayerDesc.attachComponents = native::attachAnimationPlayerComponents;
     animationPlayerDesc.detachComponents = native::detachAnimationPlayerComponents;
     classes.registerClass(animationPlayerDesc);

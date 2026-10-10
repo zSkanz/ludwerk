@@ -161,6 +161,7 @@ inline constexpr std::string_view ClassFixedConstraint = "class.FixedConstraint"
 inline constexpr std::string_view ClassFolder = "class.Folder";
 inline constexpr std::string_view ClassFoliageLayer = "class.FoliageLayer";
 inline constexpr std::string_view ClassFoliageMesh = "class.FoliageMesh";
+inline constexpr std::string_view ClassFootPlacement = "class.FootPlacement";
 inline constexpr std::string_view ClassFrame = "class.Frame";
 inline constexpr std::string_view ClassGlobalScriptService = "class.GlobalScriptService";
 inline constexpr std::string_view ClassGraphicsService = "class.GraphicsService";
@@ -170,6 +171,7 @@ inline constexpr std::string_view ClassHighlight = "class.Highlight";
 inline constexpr std::string_view ClassHingeConstraint = "class.HingeConstraint";
 inline constexpr std::string_view ClassHingeConstraint2D = "class.HingeConstraint2D";
 inline constexpr std::string_view ClassHotReloadService = "class.HotReloadService";
+inline constexpr std::string_view ClassIKControl = "class.IKControl";
 inline constexpr std::string_view ClassImageButton = "class.ImageButton";
 inline constexpr std::string_view ClassImageLabel = "class.ImageLabel";
 inline constexpr std::string_view ClassInputAction = "class.InputAction";
@@ -279,6 +281,7 @@ inline constexpr std::string_view ClassWeldConstraint2D = "class.WeldConstraint2
 inline constexpr std::string_view ClassWorkspace = "class.Workspace";
 
 // content.*
+inline constexpr std::string_view ContentAnimationGraph = "content.AnimationGraph";
 inline constexpr std::string_view ContentAudio = "content.Audio";
 inline constexpr std::string_view ContentChunk = "content.Chunk";
 inline constexpr std::string_view ContentFolder = "content.Folder";

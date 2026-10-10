@@ -312,7 +312,9 @@ the low quality level, and on a phone below high
 
 Both decals and particle emitters replicate: on every machine of a match, the
 same emitters run and the same marks are painted -- and `ReceivesDecals` with
-them.
+them. Every property of each is sent, an emitter's picture, its frames and its
+three sequences and a decal's blend mode and glow among them, when the instance
+is made and when one changes; the particles in the air are each machine's own.
 
 ## Where to look next
 

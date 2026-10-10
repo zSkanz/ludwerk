@@ -18,6 +18,8 @@
 #include "engine/app/script_complete.h"
 #include "engine/app/script_package.h"
 #include "engine/app/world_host.h"
+#include "engine/asset/mesh_format.h"
+#include "engine/asset/pack.h"
 #include "engine/asset/seal.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
@@ -3696,6 +3698,161 @@ TEST_CASE("PreloadAsync waits for every item, reports each, and names what an in
     CHECK(log.contains("preloaded ImageLabel=Success asset://models/crate.gltf=Success "
                        "asset://models/missing.gltf=Failure queue 0"));
     CHECK(log.contains("refused true"));
+}
+
+TEST_CASE("D610: Keep and Release hand the host every name a list holds, in the order they were asked")
+{
+    Captured log;
+    Project project;
+    project.write("content/models/hero.gltf", "{}");
+    project.write("content/ui/logo.png", "not really a picture");
+    project.write("src/client/keep.luau", R"(
+        local ContentProvider = game:GetService("ContentProvider")
+        local label = Instance.new("ImageLabel")
+        label.Image = "asset://ui/logo.png"
+        ContentProvider:Keep({ "asset://models/hero.gltf", label })
+        ContentProvider:Release({ label })
+        local refused = not pcall(function()
+            ContentProvider:Keep({ 42 } :: any)
+        end)
+        print(`refused {refused}`)
+    )");
+    std::vector<std::string> said;
+    std::vector<std::string> warmed;
+    app::WorldHostOptions options = bootOptions(project.root);
+    options.warmContent = [&warmed](scene::World&, const std::vector<std::string>& names) {
+        warmed.insert(warmed.end(), names.begin(), names.end());
+    };
+    options.holdContent = [&said](scene::World&, const std::vector<std::string>& names, bool keep) {
+        for (const std::string& name : names)
+            said.push_back((keep ? "keep " : "release ") + name);
+    };
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(options).has_value());
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("refused true"));
+    REQUIRE(said.size() == 3);
+    CHECK(said[0] == "keep asset://models/hero.gltf");
+    CHECK(said[1] == "keep asset://ui/logo.png");
+    CHECK(said[2] == "release asset://ui/logo.png");
+    // What is kept is asked for, as a preload is: holding it loads it.
+    CHECK(std::find(warmed.begin(), warmed.end(), "asset://models/hero.gltf") != warmed.end());
+}
+
+TEST_CASE("D611: a model exported again has its joints and clips read again, and so have the roles beside it")
+{
+    // The drawn half of a model was forgotten when its file changed and came
+    // back with the new mesh; the skeleton the SIMULATION had read was kept
+    // for ever, so a model exported again went on moving by the clips it
+    // used to have. One pack a version here, as a dev session's object store
+    // answers with the new bytes for the same name.
+    Captured log;
+    Project project;
+    project.write("src/client/make.luau", R"(
+        local mesh = Instance.new("MeshPart")
+        mesh.Name = "Hero"
+        mesh.Anchored = true
+        mesh.MeshContent = "asset://models/hero.glb"
+        mesh.Parent = workspace
+    )");
+    const auto packOf = [&](const char* file, std::initializer_list<const char*> clips, core::u32 joints) {
+        // One triangle, skinned to the first joint: the least a mesh is.
+        asset::Model model;
+        for (const core::Vec3 corner :
+             {core::Vec3{0.0f, 0.0f, 0.0f}, core::Vec3{1.0f, 0.0f, 0.0f}, core::Vec3{0.0f, 1.0f, 0.0f}}) {
+            asset::Vertex vertex;
+            vertex.position = corner;
+            vertex.normal = core::Vec3{0.0f, 0.0f, 1.0f};
+            model.mesh.vertices.push_back(vertex);
+            asset::SkinVertex skin;
+            skin.weights[0] = 1.0f;
+            model.skin.push_back(skin);
+        }
+        model.mesh.indices = {0, 1, 2};
+        asset::Submesh submesh;
+        submesh.indexCount = 3;
+        submesh.bounds = core::AABB::fromMinMax({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 0.0f});
+        model.mesh.submeshes.push_back(submesh);
+        model.mesh.bounds = submesh.bounds;
+        model.materials.emplace_back();
+        for (core::u32 index = 0; index < joints; ++index) {
+            asset::Joint joint;
+            joint.name = "Joint" + std::to_string(index);
+            joint.parent = index == 0 ? asset::Joint::NoParent : index - 1;
+            model.joints.push_back(joint);
+        }
+        auto& mesh = model;
+        for (const char* name : clips) {
+            asset::AnimationClip clip;
+            clip.name = name;
+            clip.duration = 1.0f;
+            asset::AnimationChannel channel;
+            channel.joint = 0;
+            channel.target = asset::AnimationChannel::Target::Translation;
+            channel.stride = 3;
+            channel.times = {0.0f, 1.0f};
+            channel.values = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+            clip.channels.push_back(channel);
+            mesh.clips.push_back(clip);
+        }
+        asset::CompiledMesh compiled;
+        const std::optional<core::EngineError> refused = asset::compileMesh(model, {}, {}, compiled);
+        REQUIRE_MESSAGE(!refused.has_value(), (refused.has_value() ? refused->message : ""));
+        asset::PackWriter writer;
+        const core::ContentHash hash = writer.addContent(asset::AssetKind::Mesh, asset::encodeMesh(compiled));
+        std::vector<asset::PackName> names;
+        names.push_back({core::hashText("asset://models/hero.glb"), hash, asset::AssetKind::Mesh});
+        (void)writer.addContent(asset::AssetKind::Names, asset::encodePackNames(std::move(names)));
+        const auto pack = writer.buildSealed();
+        const std::filesystem::path path = project.root / file;
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(pack.data()), static_cast<std::streamsize>(pack.size()));
+        out.close();
+        return path;
+    };
+    const std::filesystem::path first = packOf("first.lpack", {"Walk"}, 2);
+    const std::filesystem::path second = packOf("second.lpack", {"Run", "Walk"}, 3);
+
+    asset::ContentMounts mounts;
+    REQUIRE_FALSE(mounts.mountPack(first).has_value());
+    {
+        const asset::ResolvedContent resolved = mounts.resolve("asset://models/hero.glb");
+        REQUIRE(resolved.source == asset::ResolvedContent::Source::Pack);
+        REQUIRE(resolved.kind == asset::AssetKind::Mesh);
+        asset::CompiledMesh read;
+        const std::optional<core::EngineError> refused = asset::decodeMesh(resolved.bytes, read);
+        REQUIRE_MESSAGE(!refused.has_value(), (refused.has_value() ? refused->message : ""));
+    }
+    app::WorldHost host;
+    host.setContentMounts(&mounts);
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    const core::NameAtom model = host.world().atoms().intern("asset://models/hero.glb");
+    const render::SkeletonLibrary::Entry* rig = host.skeletons().find(model);
+    REQUIRE(rig != nullptr);
+    REQUIRE(rig->clips.size() == 1);
+    CHECK(rig->joints.size() == 2);
+
+    // Exported again: another joint, another clip in front of the first.
+    mounts.clear();
+    REQUIRE_FALSE(mounts.mountPack(second).has_value());
+    const std::array<core::NameAtom, 1> changed{model};
+    CHECK(host.forgetContent(changed) == 1);
+    CHECK(host.skeletons().find(model) == nullptr);
+    host.tick();
+    rig = host.skeletons().find(model);
+    REQUIRE(rig != nullptr);
+    CHECK(rig->joints.size() == 3);
+    REQUIRE(rig->clips.size() == 2);
+    CHECK(rig->clips[0].name == "Run");
+
+    // And a file nothing had read is nothing to forget.
+    const std::array<core::NameAtom, 1> other{host.world().atoms().intern("asset://models/other.glb")};
+    CHECK(host.forgetContent(other) == 0);
 }
 
 // --- The display's rate (ADR 0136) --------------------------------------------------

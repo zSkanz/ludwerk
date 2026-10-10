@@ -1501,6 +1501,9 @@ static int hostMain(int argc, char** argv)
         options.overlayKey = engine::platform::keyFromName(config.overlayKey);
         options.developerWarnings =
             isProject && (options.editor || !options.devControlUrl.empty() || !options.windowLabel.empty());
+        // And a match hosted here says what its replicas will not be sent
+        // (protocol 44): the command line's match and one a script hosts alike.
+        options.network.developer = options.developerWarnings;
         if (options.saveDirectoryGiven) {
             // `--saves=DIR` said where (N5).
         }

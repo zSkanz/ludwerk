@@ -1008,6 +1008,15 @@ public:
     [[nodiscard]] core::Vec2 sizeOf(core::NameAtom content) const noexcept;
     [[nodiscard]] usize size() const noexcept { return entries_.size(); }
 
+    // Every name it holds, in atom order: for whoever has to decide which of
+    // them the world still wants (`MeshLoader::sweep`).
+    template <typename Fn>
+    void forEachName(Fn&& fn) const
+    {
+        for (const auto& entry : entries_)
+            fn(entry.content);
+    }
+
 private:
     // Sorted by atom, like `MeshLibrary`, and for the same reason: R10 forbids
     // an unordered container's iteration reaching observable output.

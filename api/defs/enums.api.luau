@@ -2009,6 +2009,45 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         {
+            Name = "Retargeting",
+            Doc = "How an `AnimationPlayer` carries a clip made on one skeleton onto another (ADR 0199).",
+            Items = {
+                {
+                    Name = "Automatic",
+                    Value = 0,
+                    Doc = "By what each joint IS where both skeletons are bodies -- hips, a spine, arms and "
+                        .. "legs, found by the names rigs really arrive with -- so a clip made on one hero "
+                        .. "moves another of other proportions and other joint names: each joint turns as far "
+                        .. "from its own rest as the clip's did, the hips travel in proportion to the legs, and "
+                        .. "every bone keeps its own length. By equal names otherwise, and always for two "
+                        .. "files that are one skeleton.",
+                },
+                {
+                    Name = "ByName",
+                    Value = 1,
+                    Doc = "By equal joint names only, the clip's transforms as they are: a shirt on the body "
+                        .. "it was cut for, a creature on its own clips. A joint one side lacks is skipped, "
+                        .. "and nothing is said.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "IKControlType",
+            Doc = "What an `IKControl` does to its joints (ADR 0198).",
+            Items = {
+                {
+                    Name = "TwoBone",
+                    Value = 0,
+                    Doc = "A limb of two bones -- an arm, a leg -- bent so its end is at the target.",
+                },
+                {
+                    Name = "LookAt",
+                    Value = 1,
+                    Doc = "A joint turned to face the target, the joints above it sharing the turn.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
             Name = "ParticleCollision",
             Doc = "What a `ParticleEmitter`'s particles meet (ADR 0160).",
             Items = {

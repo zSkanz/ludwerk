@@ -100,10 +100,11 @@ emit(`inline constexpr u32 ProtocolVersion = {Wire.ProtocolVersion};`)
 emit("")
 
 -- The encodings, as an enum a decoder switches on.
-emit("// How a field's bytes are laid down. Every one is fixed-width and")
-emit("// little-endian, with no variable-length forms and no nesting -- a wire format")
-emit("// whose parser can recurse has a stack-depth question in it, and that question")
-emit("// is always answered by somebody hostile rather than by a test.")
+emit("// How a field's bytes are laid down. Every one is little-endian and fixed-width")
+emit("// with no nesting -- a wire format whose parser can recurse has a stack-depth")
+emit("// question in it, and that question is always answered by somebody hostile")
+emit("// rather than by a test -- but the two sequences (protocol 44), which say how")
+emit("// many keys they hold and never hold more than twenty.")
 emit("enum class Encoding : u8")
 emit("{")
 
@@ -113,8 +114,9 @@ end
 emit("};")
 emit("")
 emit("// Each encoding's size on the wire, as the published protocol states it (ADR")
-emit("// 0100). A test holds `wireBytes` to it, so the two cannot disagree.")
-emit("inline constexpr u8 EncodingBytes[] = {")
+emit("// 0100) -- the most it can be, for the two sequences. A test holds `wireBytes`")
+emit("// to it, so the two cannot disagree.")
+emit("inline constexpr u16 EncodingBytes[] = {")
 for _, encoding in Schema.Encodings do
     emit(`    {encoding.Bytes}, // {encoding.Name}`)
 end
@@ -228,6 +230,18 @@ emit("// walked up past its own name would describe it by its ancestor's schema.
 emit("inline constexpr std::string_view ExcludedClasses[] = {")
 for _, excluded in Wire.excluded() do
     emit(`    {quote(excluded.Name)},`)
+end
+emit("};")
+emit("")
+emit("// Of those, the ones a replica misses nothing by not being sent -- each")
+emit("// machine's own by nature, or reaching it some other way (`Quiet` in the")
+emit("// schema). A dev run warns about an instance of any other excluded class under")
+emit("// something the authority sends, and not about these.")
+emit("inline constexpr std::string_view QuietClasses[] = {")
+for _, excluded in Wire.excluded() do
+    if excluded.Quiet then
+        emit(`    {quote(excluded.Name)},`)
+    end
 end
 emit("};")
 emit("")
@@ -376,8 +390,9 @@ say("  so, trailing bytes reject it too.")
 say("")
 say("## Encodings")
 say("")
-say("A field's value is one of these, fixed-width. `Encoding` is the value a schema")
-say("gives it.")
+say("A field's value is one of these. Every one is fixed-width but the two sequences,")
+say("which say their own length: `Bytes` is then the most they can be. `Encoding` is")
+say("the value a schema gives it.")
 say("")
 say("| Encoding | Name | Bytes | Layout |")
 say("|---|---|---|---|")
@@ -462,6 +477,11 @@ say("take its encoded bytes zero-padded to 64 as eight little-endian `u64` words
 say("for each word `w`: `h = (h xor w) * 0xFF51AFD7ED558CCD`, then `h = h xor (h >> 29)`.")
 say("A result of 0 is 1. Names are the authority's numbers.")
 say("")
+say("A sequence (protocol 44) is longer than 64 bytes: its encoded bytes are zero-padded")
+say("to 384 for a `ColorSequence` and 256 for a `NumberSequence`. The first 64 are taken")
+say("in the field's own place, and the rest after the instance's last field -- sequence")
+say("by sequence, in field order.")
+say("")
 say("**The checksum.** Start from `0xCBF29CE484222325`. For every instance the replica")
 say("holds from this authority after applying, in ascending network id, with its")
 say("number `h`: `c = (c xor h) * 0x100000001B3`, then `c = c xor (c >> 31)`.")
@@ -545,6 +565,14 @@ for index, class in Classes do
     say("")
     if #class.Fields > 0 then
         fieldRows(class.Fields)
+    end
+    if class.Withheld ~= nil and #class.Withheld > 0 then
+        say("Not sent, and why:")
+        say("")
+        for _, withheld in class.Withheld do
+            say(`- \`{withheld.Name}\`: {withheld.Reason}`)
+        end
+        say("")
     end
     if class.Retired ~= nil and #class.Retired > 0 then
         say("Retired, and claimed for ever:")

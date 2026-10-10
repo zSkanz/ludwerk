@@ -1,0 +1,13 @@
+{
+ "format": "material",
+ "version": 1,
+ "parent": "",
+ "properties": {
+  "Color": [
+   1,
+   1,
+   1
+  ],
+  "ColorMap": "asset://textures/a_1.png"
+ }
+}

@@ -1,0 +1,177 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "Part",
+  "name": "Thing",
+  "properties": {
+   "Anchored": true,
+   "Size": [1, 2, 1],
+   "Friction": 0.875,
+   "Restitution": 0.5,
+   "Density": 4,
+   "LinearDamping": 0.25,
+   "AngularDamping": 0.5,
+   "Buoyant": false,
+   "CanTouch": false,
+   "CanQuery": false,
+   "ContactDetails": true,
+   "PivotOffset": [0, -1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]
+  },
+  "children": [
+   {
+    "class": "Model",
+    "name": "Rig",
+    "properties": {
+     "PrimaryPart": "Thing.Rig.Handle",
+     "PivotOffset": [0, 0.5, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]
+    },
+    "children": [
+     {
+      "class": "Part",
+      "name": "Handle",
+      "properties": {
+       "Anchored": true,
+       "CanCollide": false,
+       "CanQuery": false,
+       "Size": [0.25, 0.25, 0.25],
+       "CFrame": [0, 40, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]
+      }
+     }
+    ]
+   },
+   {
+    "class": "Attachment",
+    "name": "A0",
+    "properties": { "CFrame": [0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1] }
+   },
+   {
+    "class": "Attachment",
+    "name": "A1",
+    "properties": { "CFrame": [0, -1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1] }
+   },
+   {
+    "class": "PointLight",
+    "name": "PointLight",
+    "properties": {
+     "CFrame": [0, 0.5, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+     "Color": [1, 0.75, 0.5],
+     "Brightness": 3,
+     "Range": 12,
+     "Shadows": true
+    }
+   },
+   {
+    "class": "SpotLight",
+    "name": "SpotLight",
+    "properties": {
+     "CFrame": [0, 0.25, -0.5, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+     "Color": [0.5, 0.75, 1],
+     "Brightness": 2,
+     "Range": 24,
+     "Angle": 30,
+     "Enabled": false
+    }
+   },
+   {
+    "class": "SpringBone",
+    "name": "SpringBone",
+    "properties": {
+     "RootJoint": "Cape1",
+     "JointPattern": "Cape*",
+     "Stiffness": 0.5,
+     "Damping": 0.25,
+     "GravityScale": 0.75,
+     "LimitAngle": 45
+    }
+   },
+   {
+    "class": "SpringCollider",
+    "name": "SpringCollider",
+    "properties": {
+     "JointName": "Spine",
+     "Radius": 0.375,
+     "Length": 0.5,
+     "Offset": [0, 0.125, 0]
+    }
+   },
+   {
+    "class": "Bone",
+    "name": "Bone",
+    "properties": {
+     "JointName": "Head",
+     "CFrame": [0, 0.75, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+     "Transform": [0, 0.25, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]
+    }
+   },
+   {
+    "class": "Highlight",
+    "name": "Highlight",
+    "properties": {
+     "Adornee": "Thing",
+     "FillColor": [0.25, 1, 0.25],
+     "FillTransparency": 0.75,
+     "OutlineColor": [0, 0.5, 0],
+     "OutlineTransparency": 0.25,
+     "DepthMode": "Occluded"
+    }
+   },
+   {
+    "class": "Trail",
+    "name": "Trail",
+    "properties": {
+     "Attachment0": "Thing.A0",
+     "Attachment1": "Thing.A1",
+     "Lifetime": 1.5,
+     "Color": { "colorSequence": [[0, 1, 0.9, 0.5], [0.25, 1, 0.5, 0.125], [1, 0.25, 0, 0]] },
+     "Transparency": { "numberSequence": [[0, 0, 0], [0.75, 0.25, 0.125], [1, 1, 0]] },
+     "WidthScale": { "numberSequence": [[0, 0.5, 0], [0.5, 2, 0], [1, 0.25, 0]] },
+     "Texture": "asset://textures/trail.png"
+    }
+   },
+   {
+    "class": "Beam",
+    "name": "Beam",
+    "properties": {
+     "Attachment0": "Thing.A0",
+     "Attachment1": "Thing.A1",
+     "Color": { "colorSequence": [[0, 1, 0.9, 0.5], [0.25, 1, 0.5, 0.125], [1, 0.25, 0, 0]] },
+     "Transparency": { "numberSequence": [[0, 0, 0], [0.75, 0.25, 0.125], [1, 1, 0]] },
+     "Width0": 0.5,
+     "Width1": 0.25,
+     "Segments": 16,
+     "TextureMode": "Static"
+    }
+   },
+   {
+    "class": "ParticleEmitter",
+    "name": "ParticleEmitter",
+    "properties": {
+     "Rate": 40,
+     "Texture": "asset://textures/flame.png",
+     "FlipbookColumns": 4,
+     "FlipbookRows": 2,
+     "FlipbookMode": "OverLife",
+     "RotationSpeed": 90,
+     "ColorOverLife": { "colorSequence": [[0, 1, 0.9, 0.5], [0.25, 1, 0.5, 0.125], [1, 0.25, 0, 0]] },
+     "SizeOverLife": { "numberSequence": [[0, 0.5, 0], [0.5, 2, 0], [1, 0.25, 0]] },
+     "TransparencyOverLife": { "numberSequence": [[0, 0, 0], [0.75, 0.25, 0.125], [1, 1, 0]] },
+     "Collision": "Terrain",
+     "Bounce": 0.25
+    }
+   },
+   {
+    "class": "Sound",
+    "name": "Sound",
+    "properties": {
+     "Content": "asset://sounds/torch.ogg",
+     "Looped": true,
+     "Volume": 0.25,
+     "PlaybackSpeed": 1.5,
+     "RollOffMaxDistance": 40,
+     "Playing": true
+    }
+   }
+  ]
+ }
+}

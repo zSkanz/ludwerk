@@ -1,0 +1,69 @@
+{
+  "format": "animgraph",
+  "version": 1,
+  "library": "asset://clips/humanoid.gltf",
+  "parameters": {
+    "Speed":    { "number": 0,     "from": "CharacterBody.Speed" },
+    "MoveX":    { "number": 0,     "from": "CharacterBody.MoveX" },
+    "MoveZ":    { "number": 0,     "from": "CharacterBody.MoveZ" },
+    "Grounded": { "boolean": true, "from": "CharacterBody.Grounded" },
+    "Rise":     { "number": 0,     "from": "CharacterBody.VerticalSpeed" },
+    "Attack":   { "trigger": true, "from": "Attribute.Attack" },
+    "Aim":      { "number": 0,     "from": "Attribute.Aim" }
+  },
+  "events": {
+    "Walk":  [ { "at": 0.25, "name": "Step" }, { "at": 0.75, "name": "Step" } ],
+    "Run":   [ { "at": 0.25, "name": "Step" }, { "at": 0.75, "name": "Step" } ],
+    "Slash": [ { "at": 0.5, "name": "Hit" } ]
+  },
+  "layers": [
+    {
+      "name": "Body",
+      "start": "Move",
+      "states": {
+        "Move": {
+          "blend": [ "MoveX", "MoveZ" ],
+          "sync": true,
+          "clips": [
+            { "clip": "Idle",        "at": [ 0, 0 ] },
+            { "clip": "Walk",        "at": [ 0, 1.5 ] },
+            { "clip": "Run",         "at": [ 0, 3.6 ] },
+            { "clip": "WalkBack",    "at": [ 0, -1.2 ] },
+            { "clip": "StrafeLeft",  "at": [ -0.8, 0 ] },
+            { "clip": "StrafeRight", "at": [ 0.8, 0 ] }
+          ]
+        },
+        "Jump": { "clip": "Jump", "loop": false },
+        "Fall": { "clip": "Fall" }
+      },
+      "transitions": [
+        { "from": "Move", "to": "Jump", "when": [ [ "Grounded", "==", false ], [ "Rise", ">", 1 ] ], "fade": 0.08 },
+        { "from": "Move", "to": "Fall", "when": [ [ "Grounded", "==", false ], [ "Rise", "<", -1 ] ], "fade": 0.15 },
+        { "from": "Jump", "to": "Fall", "after": 1.0, "fade": 0.15 },
+        { "from": "*",    "to": "Move", "when": [ [ "Grounded", "==", true ] ], "fade": 0.15 }
+      ]
+    },
+    {
+      "name": "Arms",
+      "mask": [ "Chest" ],
+      "start": "None",
+      "states": {
+        "None": {},
+        "Slash": { "clip": "Slash", "loop": false }
+      },
+      "transitions": [
+        { "from": "None",  "to": "Slash", "when": [ [ "Attack" ] ], "fade": 0.06 },
+        { "from": "Slash", "to": "None",  "after": 1.0, "fade": 0.2 }
+      ]
+    },
+    {
+      "name": "Lean",
+      "additive": true,
+      "weight": "Aim",
+      "start": "Up",
+      "states": {
+        "Up": { "clip": "AimUp", "loop": false }
+      }
+    }
+  ]
+}

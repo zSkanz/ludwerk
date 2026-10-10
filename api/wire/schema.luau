@@ -29,9 +29,15 @@ export type Source = "Property" | "Component"
 --- How a field's bytes are laid down.
 ---
 --- Deliberately small. Every entry is a fixed-width little-endian encoding with
---- no variable-length forms and no nesting: a wire format whose parser can
---- recurse is a wire format with a stack-depth question in it, and the answer to
---- that question is always found by somebody hostile rather than by a test.
+--- no nesting: a wire format whose parser can recurse is a wire format with a
+--- stack-depth question in it, and the answer to that question is always found
+--- by somebody hostile rather than by a test.
+---
+--- **Two say their own length, and no more than twenty keys of it** (protocol
+--- 44): a sequence of colours and a sequence of numbers, which is what a beam, a
+--- trail and a particle are coloured and sized by. A count and that many keys,
+--- each a fixed size -- a list, never a list of lists -- and a reader refuses a
+--- count past the twenty a sequence may hold.
 ---
 --- `Vector3` and `CFrameD` are named rather than composed out of floats because
 --- the quantisation decision belongs to the field's meaning: a position is f64
@@ -57,11 +63,15 @@ export type Encoding =
     -- set, and the numbers, colours, alpha mode and sidedness. The four maps
     -- travel as names beside it.
     | "MaterialValues"
+    -- Protocol 44: a `ColorSequence` and a `NumberSequence`, key by key.
+    | "ColorSequence"
+    | "NumberSequence"
 
 --- One encoding as the published protocol describes it (ADR 0100).
 export type EncodingDesc = {
     Name: Encoding,
-    --- Its size on the wire. Checked against the engine's `wireBytes` by a test,
+    --- Its size on the wire -- the most it can be, for the two sequences, which
+    --- say their own length. Checked against the engine's `wireBytes` by a test,
     --- so the specification cannot say one size while the code writes another.
     Bytes: number,
     --- How the bytes are laid down, for somebody writing a peer.
@@ -116,6 +126,22 @@ Schema.Encodings = {
         Layout = "The 48 bytes of `MaterialOverrides`, then u8 alpha mode, u8 double-sided, and two zero "
             .. "bytes. All zero when the part wears no runtime clone.",
     },
+    {
+        Name = "ColorSequence",
+        Bytes = 321,
+        Layout = "u8: how many keys, 2 to 20. Then each key as four f32: its time, from 0 at the first to 1 at "
+            .. "the last and never falling, then r, g, b. **Its length is its own** (protocol 44): 1 + 16 for "
+            .. "each key, and the size given is the most it can be. A count above 20 rejects the message; a "
+            .. "list that is not a sequence -- fewer than two keys, a first not at 0, a last not at 1, a time "
+            .. "that falls, a number that is not finite -- is kept as sent and not written to the instance. As "
+            .. "an attribute's value of this type is laid down.",
+    },
+    {
+        Name = "NumberSequence",
+        Bytes = 241,
+        Layout = "u8: how many keys, 2 to 20. Then each key as three f32: its time, its value, and its "
+            .. "envelope. 1 + 12 for each key; otherwise as `ColorSequence`.",
+    },
 } :: { EncodingDesc }
 
 --- One part of a message, in the order it is written (ADR 0100).
@@ -151,6 +177,18 @@ export type Field = {
     Doc: string,
 }
 
+--- A property of a replicated class that is deliberately NOT sent (protocol 44).
+---
+--- **By name, for the reason a class is excluded by name**: a property the wire
+--- has no field for and a property nobody thought about look the same in a
+--- schema. One travels when a replica needs it to draw the thing, to predict
+--- it, or to answer a script's read or query as the authority would; one that
+--- only the authority ever reads stays here, with why.
+export type Withheld = {
+    Name: string,
+    Reason: string,
+}
+
 --- A field that used to exist. Its id stays claimed for ever.
 export type RetiredField = {
     Name: string,
@@ -179,6 +217,8 @@ export type Class = {
     Contents: boolean?,
     Fields: { Field },
     Retired: { RetiredField }?,
+    --- The properties of the class that are deliberately not sent, and why.
+    Withheld: { Withheld }?,
     Doc: string?,
 }
 
@@ -191,6 +231,12 @@ export type Class = {
 export type Excluded = {
     Name: string,
     Reason: string,
+    --- **Nothing is missing where it does not arrive**: the class is each
+    --- machine's own by its nature -- a script, a camera, a screen -- or what it
+    --- does reaches a replica some other way. A dev run says once, for every
+    --- other class here, that an instance of it under something the authority
+    --- sends will not be on any replica; for these it would only be noise.
+    Quiet: boolean?,
 }
 
 --- A whole tag excluded at once.
@@ -364,6 +410,21 @@ function Schema.validate(definition: Definition): { string }
             end
             if field.Doc == "" then
                 fail(`{class.Name}.{field.Name}: every field says why it is on the wire`)
+            end
+        end
+
+        local withheld: { Withheld } = class.Withheld or {}
+        local kept: { [string]: boolean } = {}
+        for _, entry in withheld do
+            if names[entry.Name] then
+                fail(`{class.Name}.{entry.Name}: withheld and sent -- it is one or the other`)
+            end
+            if kept[entry.Name] then
+                fail(`{class.Name}.{entry.Name}: withheld twice`)
+            end
+            kept[entry.Name] = true
+            if entry.Reason == "" then
+                fail(`{class.Name}.{entry.Name}: a property kept off the wire says why`)
             end
         end
     end

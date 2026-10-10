@@ -413,6 +413,8 @@ SurfaceCompiler* g_surfaceCompiler = nullptr;
 const scene::SkeletonHost* g_skeleton = nullptr;
 // And a mesh's shape keys (ADR 0196), on the same terms.
 scene::MorphHost* g_morphs = nullptr;
+// And a player's animation graph (ADR 0197).
+scene::AnimationHost* g_animation = nullptr;
 
 // What this person chose to look at the engine through (ADR 0056), and what the
 // display said when the window opened.
@@ -2941,6 +2943,8 @@ bool dragNumber(const char* label, ImGuiDataType type, void* data, int component
         return ContentKind::Audio;
     if (name == "Font")
         return ContentKind::Font;
+    if (name == "AnimationGraph")
+        return ContentKind::AnimationGraph;
     return ContentKind::Other;
 }
 
@@ -4896,9 +4900,11 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
         // class declaring one would get the picker for free. There is no
         // descriptor field to hang it off the way the audio button hangs off
         // `ContentKind`, because a joint is not a file.
-        const bool namesJoint = (world.atoms().text(descriptor.name) == "JointName" ||
-                                 world.atoms().text(descriptor.name) == "RootJoint") &&
-                                g_skeleton != nullptr && targets.size() == 1;
+        const std::string_view propertyName = world.atoms().text(descriptor.name);
+        const bool namesJoint =
+            (propertyName == "JointName" || propertyName == "RootJoint" || propertyName == "EndJoint" ||
+             propertyName == "LeftFoot" || propertyName == "RightFoot" || propertyName == "Hips") &&
+            g_skeleton != nullptr && targets.size() == 1;
         const core::InstanceId rig = namesJoint ? rigAbove(world, targets[0]) : core::InstanceId{};
         const core::u32 jointCount = rig.valid() ? g_skeleton->jointCount(rig) : 0;
 
@@ -5591,6 +5597,136 @@ void drawShapeKeys(core::InstanceId primary, std::span<const core::InstanceId> t
     endSectionGrid();
 }
 
+// **A player's animation graph, live** (ADR 0197): which state each layer is
+// in and what it is fading from, and every parameter with where it comes
+// from and a control that sets it -- so a graph is tried and found wrong
+// with nothing printed.
+//
+// **A preview, as the shape keys are.** A parameter set here is set where a
+// script's `SetParameter` sets it: on this machine, over what the graph
+// reads from the world, until the button beside it hands it back. Nothing is
+// saved and nothing is undone.
+void drawAnimationGraph(core::InstanceId primary, std::span<const core::InstanceId> targets)
+{
+    if (g_animation == nullptr || targets.size() != 1)
+        return;
+    static std::vector<scene::GraphLayerView> layers;
+    static std::vector<scene::GraphParameterView> parameters;
+    g_animation->describeGraph(primary, layers, parameters);
+    if (layers.empty())
+        return;
+    if (!propertiesSection(core::tr(ENG_TR("engine.editor.graph.title"))))
+        return;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.graph.preview_note")));
+    ImGui::PopTextWrapPos();
+    if (!beginSectionGrid("animation-graph"))
+        return;
+
+    // A layer a row: its state, how far through it is, and under it what is
+    // still fading out.
+    for (const scene::GraphLayerView& layer : layers) {
+        sectionName(layer.name);
+        ImGui::TableSetColumnIndex(1);
+        const std::string state(layer.state);
+        ImGui::ProgressBar(std::clamp(layer.progress, 0.0f, 1.0f), ImVec2(-FLT_MIN, 0.0f), state.c_str());
+        if (layer.weight < 1.0f) {
+            ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.graph.layer_weight"),
+                                                 {{"weight", static_cast<core::f64>(layer.weight)}})
+                                            .c_str());
+        }
+        for (const auto& [name, weight] : layer.fading) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(1);
+            const std::string leaving(name);
+            ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.graph.fading"),
+                                               {{"state", std::string_view(leaving)},
+                                                {"weight", static_cast<core::f64>(std::round(weight * 100.0f))}})
+                                          .c_str());
+        }
+    }
+
+    const float inner = ImGui::GetStyle().ItemInnerSpacing.x;
+    const float clearWidth = ImGui::GetFrameHeight();
+    int row = 0;
+    for (const scene::GraphParameterView& parameter : parameters) {
+        // A copy: a write may move what the name's view points into.
+        const std::string name(parameter.name);
+        ImGui::PushID(row++);
+        sectionName(name, !parameter.overridden && !parameter.from.empty());
+        if (!parameter.from.empty()) {
+            const std::string from(parameter.from);
+            ImGui::SetItemTooltip("%s", core::tr(parameter.overridden ? ENG_TR("engine.editor.graph.overridden_tip")
+                                                                      : ENG_TR("engine.editor.graph.from_tip"),
+                                                 {{"from", std::string_view(from)}})
+                                            .c_str());
+        }
+        ImGui::TableSetColumnIndex(1);
+        const bool clears = parameter.overridden;
+        ImGui::SetNextItemWidth(clears ? -(clearWidth + inner) : -FLT_MIN);
+        switch (parameter.value.kind) {
+        case scene::GraphParameterValue::Kind::Number: {
+            float value = parameter.value.value;
+            if (ImGui::DragFloat("##value", &value, 0.05f, 0.0f, 0.0f, "%.2f") && std::isfinite(value))
+                (void)g_animation->setGraphParameter(primary, name, value);
+            break;
+        }
+        case scene::GraphParameterValue::Kind::Boolean: {
+            bool value = parameter.value.value != 0.0f;
+            if (ImGui::Checkbox("##value", &value))
+                (void)g_animation->setGraphParameter(primary, name, value ? 1.0f : 0.0f);
+            break;
+        }
+        case scene::GraphParameterValue::Kind::Trigger:
+            if (ImGui::Button(core::tr(ENG_TR("engine.editor.graph.fire")), ImVec2(-FLT_MIN, 0.0f)))
+                (void)g_animation->setGraphParameter(primary, name, 1.0f);
+            break;
+        case scene::GraphParameterValue::Kind::None:
+            break;
+        }
+        if (clears) {
+            ImGui::SameLine(0.0f, inner);
+            if (ImGui::Button("x##clear", ImVec2(clearWidth, 0.0f)))
+                (void)g_animation->clearGraphParameter(primary, name);
+            ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.graph.clear_tip")));
+        }
+        ImGui::PopID();
+    }
+    endSectionGrid();
+}
+
+// **What each joint of a rig was taken to be** (ADR 0199): the role, and the
+// joint it was given to -- so a body that moves wrongly under a clip made on
+// another is read, not guessed at. Only for a rig that has roles at all.
+void drawRigRoles(core::InstanceId primary, std::span<const core::InstanceId> targets)
+{
+    if (g_skeleton == nullptr || targets.size() != 1)
+        return;
+    const core::u32 jointCount = g_skeleton->jointCount(primary);
+    bool any = false;
+    for (core::u32 joint = 0; joint < jointCount && !any; ++joint)
+        any = !g_skeleton->jointRole(primary, joint).empty();
+    if (!any)
+        return;
+    if (!propertiesSection(core::tr(ENG_TR("engine.editor.rig.title"))))
+        return;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.rig.note")));
+    ImGui::PopTextWrapPos();
+    if (!beginSectionGrid("rig-roles"))
+        return;
+    for (core::u32 joint = 0; joint < jointCount; ++joint) {
+        const std::string_view role = g_skeleton->jointRole(primary, joint);
+        if (role.empty())
+            continue;
+        sectionName(role);
+        ImGui::TableSetColumnIndex(1);
+        const std::string name(g_skeleton->jointName(primary, joint));
+        ImGui::TextUnformatted(name.c_str());
+    }
+    endSectionGrid();
+}
+
 void drawTags(scene::World& world, Inspector& inspector, core::InstanceId primary,
               std::span<const core::InstanceId> targets)
 {
@@ -6231,6 +6367,8 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 2.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
         drawShapeKeys(primary, targets);
+        drawAnimationGraph(primary, targets);
+        drawRigRoles(primary, targets);
         drawAttributes(world, inspector, primary, targets);
         drawTags(world, inspector, primary, targets);
         ImGui::PopStyleVar(2);
@@ -8535,6 +8673,8 @@ bool dialogButton(const char* label, ImVec2 requested)
         return icons::ContentMaterial;
     case ContentKind::Shader:
         return icons::ContentShader;
+    case ContentKind::AnimationGraph:
+        return icons::ContentAnimationGraph;
     case ContentKind::Other:
         break;
     }
@@ -8652,6 +8792,8 @@ bool drawContentThumbnail(const ContentTree& tree, const ContentEntry& entry, fl
         return "material";
     case ContentKind::Shader:
         return "shader";
+    case ContentKind::AnimationGraph:
+        return "graph";
     case ContentKind::Other:
         break;
     }
@@ -17338,6 +17480,11 @@ void DebugOverlay::setMorphs(scene::MorphHost* morphs) noexcept
     g_morphs = morphs;
 }
 
+void DebugOverlay::setAnimation(scene::AnimationHost* animation) noexcept
+{
+    g_animation = animation;
+}
+
 void DebugOverlay::handleEvents(std::span<const platform::Event> events)
 {
     if (!active_)
@@ -17594,6 +17741,9 @@ void DebugOverlay::setSkeleton(const scene::SkeletonHost*) noexcept
 {}
 
 void DebugOverlay::setMorphs(scene::MorphHost*) noexcept
+{}
+
+void DebugOverlay::setAnimation(scene::AnimationHost*) noexcept
 {}
 
 void DebugOverlay::render(rhi::ICmdList&, rhi::TextureHandle, const Frame&)

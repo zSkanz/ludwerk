@@ -202,6 +202,9 @@ public:
     // after `AnimationHost::sample`, so the signal lands in the same drain as
     // everything else that happened on that tick.
     void fireAnimationEnded(std::span<const scene::TrackId> ended);
+    // What the animation graphs did this tick (ADR 0197), as each player's
+    // `StateChanged` and `EventReached`.
+    void fireGraphSignals(std::span<const scene::GraphSignal> signals);
 
     void setReloadState(ReloadState* state);
 

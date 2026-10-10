@@ -153,6 +153,70 @@ TEST_CASE("a deferred texture costs the frame that asked for it nothing")
     loader.destroy(*fixture.device);
 }
 
+TEST_CASE("a load that begins during play is noted once, and one that began behind the loading screen is not")
+{
+    Fixture fixture;
+    const std::filesystem::path image(ENG_RENDER_TEST_IMAGE);
+    REQUIRE(std::filesystem::exists(image));
+    REQUIRE(platform::initIo());
+
+    const auto arrive = [&](render::MeshLoader& loader, scene::World& world, render::TextureLibrary& library) {
+        for (int frame = 0; frame < 2000 && loader.texturesInFlight() != 0; ++frame) {
+            (void)loader.syncTextures(*fixture.device, *fixture.cmd, world, library);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    };
+
+    // Behind the loading screen: asked, in flight when the screen comes
+    // down, and never said -- it began where loads belong.
+    {
+        scene::World world = fixture.worldNaming(image);
+        render::MeshLoader loader;
+        loader.setContentRoot(fixture.contentRoot);
+        loader.setDeferredTextures(true);
+        render::TextureLibrary library;
+        (void)loader.syncTextures(*fixture.device, *fixture.cmd, world, library);
+        REQUIRE(loader.texturesInFlight() == 1);
+        loader.watchLateLoads(true);
+        arrive(loader, world, library);
+        CHECK(loader.takeLateLoads().empty());
+        loader.destroy(*fixture.device);
+    }
+    // During play: the world names a picture nothing loaded. Once, however
+    // many frames it takes to arrive.
+    {
+        scene::World world = fixture.worldNaming(image);
+        render::MeshLoader loader;
+        loader.setContentRoot(fixture.contentRoot);
+        loader.setDeferredTextures(true);
+        loader.watchLateLoads(true);
+        render::TextureLibrary library;
+        (void)loader.syncTextures(*fixture.device, *fixture.cmd, world, library);
+        REQUIRE(loader.texturesInFlight() == 1);
+        const std::vector<core::NameAtom> late = loader.takeLateLoads();
+        REQUIRE(late.size() == 1);
+        CHECK(world.atoms().text(late[0]).ends_with("checker.png"));
+        arrive(loader, world, library);
+        CHECK(loader.takeLateLoads().empty());
+        loader.destroy(*fixture.device);
+    }
+    // And what a preload asked for during play is a game loading ahead.
+    {
+        scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+        render::MeshLoader loader;
+        loader.setContentRoot(fixture.contentRoot);
+        loader.setDeferredTextures(true);
+        loader.watchLateLoads(true);
+        render::TextureLibrary library;
+        const std::array<core::NameAtom, 1> wanted{world.atoms().intern("asset://checker.png")};
+        loader.warmTextures(wanted);
+        (void)loader.syncTextures(*fixture.device, *fixture.cmd, world, library);
+        CHECK(loader.takeLateLoads().empty());
+        arrive(loader, world, library);
+        loader.destroy(*fixture.device);
+    }
+}
+
 TEST_CASE("a map that is not there is refused once, in either mode")
 {
     // A material without its texture still draws, in its own numbers -- and a
@@ -642,4 +706,112 @@ TEST_CASE("the engine's own terrain textures are drawn off the frame that asks f
     CHECK(library.size() == maps);
     CHECK(loader.texturesInFlight() == 0);
     loader.destroy(*fixture.device);
+}
+
+TEST_CASE("D610: a scene that is left takes the textures it alone held, and what was preloaded for the next stays")
+{
+    // A game of six maps held the textures of all six by the time its player
+    // reached the last: nothing was ever let go but by hot reload. Three
+    // pictures here -- one the game wears in every scene, one the scene being
+    // left wears, and one a loading screen preloaded for the scene to come.
+    Fixture fixture;
+    const std::filesystem::path source(ENG_RENDER_TEST_IMAGE);
+    REQUIRE(std::filesystem::exists(source));
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        ("engine-sweep-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    REQUIRE(std::filesystem::create_directories(root));
+    for (const char* name : {"game.png", "scene.png", "next.png"})
+        std::filesystem::copy_file(source, root / name);
+    fixture.contentRoot = root;
+
+    scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+    const core::InstanceId always = world.create(fixture.partClass);
+    const core::InstanceId here = world.create(fixture.partClass);
+    fixture.wearMap(world, always, root / "game.png");
+    fixture.wearMap(world, here, root / "scene.png");
+    const core::NameAtom game = world.atoms().intern("asset://game.png");
+    const core::NameAtom scene = world.atoms().intern("asset://scene.png");
+    const core::NameAtom next = world.atoms().intern("asset://next.png");
+
+    render::MeshLoader loader;
+    loader.setContentRoot(root);
+    render::TextureLibrary library;
+    render::MeshLibrary meshes;
+    render::MeshCache cache;
+    // A frame as the engine runs one: the two walks, then the sweep's turn.
+    const auto frames = [&](core::u32 count) {
+        core::u32 released = 0;
+        for (core::u32 frame = 0; frame < count; ++frame) {
+            (void)loader.syncTextures(*fixture.device, *fixture.cmd, world, library);
+            (void)loader.sync(*fixture.device, *fixture.cmd, world, always, cache, meshes, nullptr, nullptr);
+            released += loader.sweep(*fixture.device, world, library, meshes, cache);
+        }
+        return released;
+    };
+
+    // With no scene left, nothing is ever swept, however long it runs.
+    CHECK(frames(render::MeshLoader::SweepFrames * 2) == 0);
+    REQUIRE(library.find(game).valid());
+    REQUIRE(library.find(scene).valid());
+
+    // The loading screen preloads the next scene's picture, the scene is
+    // left, and its part goes with it.
+    const std::array<core::NameAtom, 1> wanted{next};
+    loader.warmTextures(wanted);
+    (void)frames(1);
+    REQUIRE(library.find(next).valid());
+    // (Its material taken off rather than the part destroyed: a destroy is
+    // the tick's to finish, and this world runs none.)
+    world.parts().find(here)->material = core::NameAtom{};
+    loader.leaveScene();
+
+    // Not at once: the new scene has a moment to make what it makes.
+    CHECK(frames(render::MeshLoader::SweepFrames - 2) == 0);
+    CHECK(library.find(scene).valid());
+    // Then the one picture nothing names is let go, and only it.
+    CHECK(frames(4) == 1);
+    CHECK_FALSE(library.find(scene).valid());
+    CHECK(library.find(game).valid());
+    CHECK(library.find(next).valid());
+    CHECK(frames(render::MeshLoader::SweepFrames * 2) == 0);
+
+    // The scene after that never used what was preloaded for this one, and
+    // nobody asked again: it goes when this scene is left. What the game
+    // wears in every scene is still worn.
+    loader.leaveScene();
+    CHECK(frames(render::MeshLoader::SweepFrames + 4) == 1);
+    CHECK_FALSE(library.find(next).valid());
+    CHECK(library.find(game).valid());
+
+    // And what was let go comes back when something names it again.
+    const core::InstanceId again = world.create(fixture.partClass);
+    fixture.wearMap(world, again, root / "scene.png");
+    (void)frames(1);
+    CHECK(library.find(scene).valid());
+
+    // **What the game asked to keep is held whatever scenes come and go**
+    // (`ContentProvider:Keep`): nothing wears it, two scenes are left, and it
+    // is there. Released, it goes with the next scene left.
+    world.parts().find(again)->material = core::NameAtom{};
+    const std::array<core::NameAtom, 1> held{scene};
+    loader.keep(held);
+    CHECK(loader.kept(scene));
+    loader.leaveScene();
+    CHECK(frames(render::MeshLoader::SweepFrames + 4) == 0);
+    loader.leaveScene();
+    CHECK(frames(render::MeshLoader::SweepFrames + 4) == 0);
+    CHECK(library.find(scene).valid());
+    loader.release(held);
+    CHECK_FALSE(loader.kept(scene));
+    CHECK(frames(render::MeshLoader::SweepFrames + 4) == 0);
+    CHECK(library.find(scene).valid());
+    loader.leaveScene();
+    CHECK(frames(render::MeshLoader::SweepFrames + 4) == 1);
+    CHECK_FALSE(library.find(scene).valid());
+
+    loader.destroy(*fixture.device);
+    cache.destroy(*fixture.device);
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
 }

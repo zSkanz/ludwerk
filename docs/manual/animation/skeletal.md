@@ -5,22 +5,28 @@ An `AnimationPlayer` plays a skinned mesh's clips.
 ```luau
 --!strict
 local player = Instance.new("AnimationPlayer")
-player.Parent = character      -- the MeshPart whose skeleton the clips belong to
+player.Parent = character      -- the Model the character is, or its one MeshPart
 
 local walk = player:LoadAnimation("Walk")
 walk.Looped = true
 walk:Play(0.2)                 -- fade the weight in over 0.2 s
 ```
 
-The clips come from the mesh's file: a glTF's animations, or an FBX's or a
+The clips come from a mesh's file: a glTF's animations, or an FBX's or a
 Collada file's takes ([Meshes and models](manual:world/meshes)).
 
-**Parent it to the `MeshPart` whose skeleton the clips belong to.** That is
-where it looks for them, and an `AnimationPlayer` parented anywhere else finds
-nothing rather than guessing.
+**Parent it to the `Model` whose character it is, and it drives every skinned
+`MeshPart` under that model.** A character is a body, a shirt and a pair of
+trousers -- several meshes wearing one skeleton -- and one clip has to move all
+of them. Only one of the pieces needs to carry the clips: they are taken from
+the first that does, in tree order, and the pieces are matched joint to joint
+by name. Parented straight to a `MeshPart` it drives that mesh and no other,
+which is what a character made of one piece wants.
 
-It stores nothing of its own: **the tracks are the state**, and each one is a
-handle a script holds rather than a child in the tree.
+A track is a handle a script holds rather than a child in the tree, and what a
+script plays is that machine's own. **To have a character animate itself** --
+which clips, how one becomes another, on every machine in a match -- give the
+player a `Graph` ([Animation graphs](manual:animation/graphs)).
 
 ## Naming a clip
 
@@ -28,15 +34,19 @@ handle a script holds rather than a child in the tree.
 the first:
 
 ```luau
-player:LoadAnimation("Walk")                        -- a clip in this player's own mesh
-player:LoadAnimation("#Walk")                       -- the same thing
-player:LoadAnimation("asset://models/hero.glb#Walk") -- explicit, same file
+player:LoadAnimation("Walk")                           -- a clip in this player's own mesh
+player:LoadAnimation("#Walk")                          -- the same thing
+player:LoadAnimation("asset://clips/humanoid.glb#Walk") -- a clip in another file
 ```
 
-Everything after a `#` is the clip's **name inside the file**. A path before the
-`#` must be the mesh this player is under: a clip is not addressable on its own
-in this release, so it exists only inside the file its skeleton came from, and a
-URN naming a different file loads nothing rather than playing the wrong rig.
+Everything after a `#` is the clip's **name inside the file**. A path before
+the `#` names the file the clip is in, **and it need not be the one this
+player's skeleton came from**: one walk made once and played by every
+character is the reason a clip is addressable at all. The file is read because
+the track names it -- no mesh has to wear it -- and the clip is carried onto
+this character's own skeleton, by what each joint is where the two are bodies
+of different build and by joint name otherwise
+([Retargeting](manual:animation/retargeting)).
 
 **Load a track once and keep it.** `LoadAnimation` always returns a track, even
 for a clip that is not there — a mesh that has not finished loading would
@@ -169,14 +179,29 @@ A crowd of one skinned mesh is also drawn in one call a pass, each copy posed
 by its own palette, and a skinned mesh has levels of detail as a static one
 does.
 
+## When a model is exported again
+
+While `ludwerk dev` runs, a model saved again is read again: its mesh, and
+with it its joints and its clips. A track finds its clip again **by name** --
+an exporter is free to put the clips in another order -- and what was playing
+goes on from the time it was at. A track whose clip is no longer in the file
+plays nothing and still answers.
+
 ## What is not here
 
-Clip playback and linear blending, and that is the whole feature. No state
-machines, no inverse kinematics, no root motion, no additive or masked blending,
-no retargeting, and no physics on a skinned mesh.
+A track is clip playback and linear blending. States, layers that mask or
+add, and blends along a parameter are an
+[animation graph](manual:animation/graphs)'s; a limb that reaches, a head
+that looks and feet on the ground are
+[`IKControl` and `FootPlacement`](manual:animation/reach-and-look)'s. There is
+no root motion -- a clip plays in place and the body moves the character --
+and `TimePosition` cannot be written.
 
 ## Where to look next
 
+- [Animation graphs](manual:animation/graphs) — a character that mixes its own clips
+- [Retargeting](manual:animation/retargeting) — one clip on bodies of other proportions
+- [Reaching, looking and feet](manual:animation/reach-and-look) — bending a pose to meet the world
 - [Tweens](manual:animation/tweens) — for animating a property rather than a rig
 - [Capes, tails and hair](manual:animation/secondary-motion) — what the body moves and no clip can
 - [Faces and shape keys](manual:animation/morph-targets) — the same mesh in another shape

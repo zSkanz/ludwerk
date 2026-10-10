@@ -341,6 +341,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_prepareInBackground = !options.headless;
     m_warmContent = options.warmContent;
     m_warmedContent = options.warmedContent;
+    m_holdContent = options.holdContent;
     m_runtime.emplace(*m_world);
     m_runtime->setSaveStore(m_saves.get());
     m_runtime->setPlatformServices(m_platformServices);
@@ -423,6 +424,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // has an empty library, and every track it hands out plays nothing -- which
     // is the same answer a build with no render module gives.
     m_animation.emplace(*m_world, m_skeletons);
+    m_animation->setGraphs(&m_graphs);
     m_runtime->setAnimation(&*m_animation);
     // The same object through the narrower seam that names joints, which is
     // what `Ragdoll:Build` reads a rig through.
@@ -552,6 +554,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
                     I18nArg{"count", static_cast<core::i64>(m_bootSceneReport.missingStamps)}};
                 core::log(LogLevel::Warn, ENG_TR("scene.warn.missing_stamps"), missing);
             }
+            saySceneRefusals(m_bootSceneReport);
             // **A stamp that reaches itself, named** (ADR 0155 §3).
             if (m_bootSceneReport.stampCycles > 0) {
                 const std::array<I18nArg, 1> chain{I18nArg{"chain", std::string_view{m_bootSceneReport.stampCycle}}};
@@ -1030,11 +1033,174 @@ ConformanceReport WorldHost::conformanceReport() const
     return report;
 }
 
+namespace {
+
+// What a graph's reader found wrong, in the catalog's words.
+[[nodiscard]] core::TextKey graphProblem(asset::GraphReadCode code) noexcept
+{
+    switch (code) {
+    case asset::GraphReadCode::Malformed:
+        return ENG_TR("asset.animgraph.problem.malformed");
+    case asset::GraphReadCode::NotAGraph:
+        return ENG_TR("asset.animgraph.problem.not_a_graph");
+    case asset::GraphReadCode::UnsupportedVersion:
+        return ENG_TR("asset.animgraph.problem.version");
+    case asset::GraphReadCode::UnknownKey:
+        return ENG_TR("asset.animgraph.problem.unknown_key");
+    case asset::GraphReadCode::MissingKey:
+        return ENG_TR("asset.animgraph.problem.missing_key");
+    case asset::GraphReadCode::WrongType:
+        return ENG_TR("asset.animgraph.problem.wrong_type");
+    case asset::GraphReadCode::DuplicateName:
+        return ENG_TR("asset.animgraph.problem.duplicate");
+    case asset::GraphReadCode::Empty:
+        return ENG_TR("asset.animgraph.problem.empty");
+    case asset::GraphReadCode::UnknownParameter:
+        return ENG_TR("asset.animgraph.problem.unknown_parameter");
+    case asset::GraphReadCode::UnknownState:
+        return ENG_TR("asset.animgraph.problem.unknown_state");
+    case asset::GraphReadCode::UnknownClip:
+        return ENG_TR("asset.animgraph.problem.unknown_clip");
+    case asset::GraphReadCode::ParameterKind:
+        return ENG_TR("asset.animgraph.problem.parameter_kind");
+    case asset::GraphReadCode::BadSource:
+        return ENG_TR("asset.animgraph.problem.source");
+    case asset::GraphReadCode::BadShape:
+        return ENG_TR("asset.animgraph.problem.shape");
+    case asset::GraphReadCode::BadOperator:
+        return ENG_TR("asset.animgraph.problem.operator");
+    case asset::GraphReadCode::OutOfRange:
+        return ENG_TR("asset.animgraph.problem.range");
+    case asset::GraphReadCode::None:
+        break;
+    }
+    return ENG_TR("asset.animgraph.problem.malformed");
+}
+
+// `asset://models/hero.glb#Torso` is `asset://models/hero.rig.json`: one
+// file of roles a model, whatever piece of it a mesh wears.
+[[nodiscard]] std::string rigFileOf(std::string_view urn)
+{
+    std::string_view model = urn.substr(0, urn.find('#'));
+    if (const std::size_t dot = model.rfind('.'); dot != std::string_view::npos && dot > model.rfind('/'))
+        model = model.substr(0, dot);
+    return std::string(model) + ".rig.json";
+}
+
+} // namespace
+
+void WorldHost::saySceneRefusals(const scene::SceneIoReport& report) const
+{
+    // **What a scene file said that was not applied, by name** (D616): a
+    // property the class does not have, or a value it does not take. It was
+    // counted and shown to nobody -- so a property misspelt in a file written
+    // by hand, or by a tool, did nothing and said nothing.
+    if (report.refusedProperties == 0)
+        return;
+    const std::array<core::I18nArg, 2> args{core::I18nArg{"count", static_cast<core::i64>(report.refusedProperties)},
+                                            core::I18nArg{"names", std::string_view{report.refusedNames}}};
+    core::log(core::LogLevel::Warn, ENG_TR("scene.warn.refused_properties"), args);
+}
+
+std::optional<std::string> WorldHost::readContentText(std::string_view urn) const
+{
+    if (m_mounts == nullptr)
+        return std::nullopt;
+    const asset::ResolvedContent resolved = m_mounts->resolve(urn);
+    if (!resolved.found())
+        return std::nullopt;
+    if (resolved.source == asset::ResolvedContent::Source::Loose) {
+        std::vector<std::byte> bytes;
+        if (!platform::readFile(resolved.path, bytes))
+            return std::nullopt;
+        return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    }
+    return std::string(reinterpret_cast<const char*>(resolved.bytes.data()), resolved.bytes.size());
+}
+
+void WorldHost::syncGraphs()
+{
+    m_world->animationPlayers().forEach([&](core::InstanceId, const scene::AnimationPlayerComponent& player) {
+        const core::NameAtom content = player.graph;
+        // A set, for `syncSkeletons`' reason: asked of every player every
+        // tick, and answered for nearly all of them by "seen it".
+        if (content.id == 0 || !m_graphsTried.insert(content.id).second)
+            return;
+        const std::string urn(m_world->atoms().text(content));
+        const std::optional<std::string> text = readContentText(urn);
+        if (!text.has_value()) {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"path", urn}};
+            core::log(core::LogLevel::Warn, ENG_TR("asset.animgraph.err.missing"), args);
+            return;
+        }
+        asset::GraphReadError error;
+        std::optional<asset::AnimationGraph> graph = asset::readAnimationGraph(*text, &error);
+        if (!graph.has_value()) {
+            const std::string problem = core::tr(graphProblem(error.code), {core::I18nArg{"what", error.what}});
+            const std::array<core::I18nArg, 3> args{core::I18nArg{"path", urn}, core::I18nArg{"where", error.where},
+                                                    core::I18nArg{"problem", problem}};
+            core::log(core::LogLevel::Warn, ENG_TR("asset.animgraph.err.unreadable"), args);
+            return;
+        }
+        m_graphs.set(content, std::move(*graph), m_world->atoms());
+    });
+}
+
+core::u32 WorldHost::forgetContent(std::span<const core::NameAtom> urns)
+{
+    core::u32 dropped = 0;
+    for (const core::NameAtom urn : urns) {
+        const std::string_view text = m_world->atoms().text(urn);
+        if (asset::isAnimationGraphPath(text)) {
+            if (m_graphsTried.erase(urn.id) != 0)
+                ++dropped;
+            m_graphs.forget(urn);
+            continue;
+        }
+        // A model, or the roles beside one: every piece of that model that
+        // was read -- `model.glb` and `model.glb#Torso` alike -- is read
+        // again. The pieces are found among what was tried, by name; the
+        // set's order reaches nothing.
+        constexpr std::string_view Roles = ".rig.json";
+        const std::string_view stem =
+            text.ends_with(Roles) ? text.substr(0, text.size() - Roles.size()) : std::string_view{};
+        std::vector<core::u32> again;
+        for (const core::u32 tried : m_skeletonsTried) {
+            const std::string_view other = m_world->atoms().text(core::NameAtom{tried});
+            const std::string_view file = other.substr(0, other.find('#'));
+            const bool model = file == text;
+            const bool beside = !stem.empty() && file.size() > stem.size() && file.starts_with(stem) &&
+                                file[stem.size()] == '.' && file.find('.', stem.size() + 1) == std::string_view::npos;
+            if (model || beside)
+                again.push_back(tried);
+        }
+        std::sort(again.begin(), again.end());
+        for (const core::u32 tried : again) {
+            m_skeletonsTried.erase(tried);
+            m_skeletons.forget(core::NameAtom{tried});
+            ++dropped;
+        }
+    }
+    return dropped;
+}
+
 void WorldHost::syncSkeletons()
 {
-    m_world->meshParts().forEach([&](core::InstanceId id, const scene::MeshPartComponent& meshPart) {
-        (void)id;
-        const core::NameAtom content = meshPart.meshContent;
+    m_world->meshParts().forEach(
+        [&](core::InstanceId, const scene::MeshPartComponent& meshPart) { loadSkeleton(meshPart.meshContent); });
+    // **And the files tracks are waiting for** (ADR 0197): a library of
+    // clips is worn by no mesh, and is read because a track or a graph names
+    // a clip in it.
+    if (m_animation.has_value()) {
+        for (const core::NameAtom file : m_animation->wantedClipFiles())
+            loadSkeleton(file);
+    }
+    syncGraphs();
+}
+
+void WorldHost::loadSkeleton(core::NameAtom content)
+{
+    {
         if (content.id == 0 || m_skeletons.find(content) != nullptr)
             return;
         // **A set, not a scan** (D126). This runs for every `MeshPart` in the
@@ -1091,8 +1257,27 @@ void WorldHost::syncSkeletons()
             rig.morphNames.push_back(target.name);
             rig.morphDefaults.push_back(target.defaultWeight);
         }
+        // **The roles a file beside the model gives its joints** (ADR 0199):
+        // for a rig whose names say nothing the engine knows, or one guess
+        // to put right. Nearly no model has one.
+        if (!rig.joints.empty()) {
+            const std::string beside = rigFileOf(urn);
+            if (const std::optional<std::string> text = readContentText(beside); text.has_value()) {
+                std::string reason;
+                if (std::optional<std::vector<render::retarget::RoleOverride>> roles =
+                        render::retarget::readRigRoles(*text, &reason);
+                    roles.has_value()) {
+                    rig.roles = std::move(*roles);
+                }
+                else {
+                    const std::array<core::I18nArg, 2> args{core::I18nArg{"path", beside},
+                                                            core::I18nArg{"reason", reason}};
+                    core::log(core::LogLevel::Warn, ENG_TR("asset.rig.err.unreadable"), args);
+                }
+            }
+        }
         m_skeletons.set(content, std::move(rig));
-    });
+    }
 }
 
 void WorldHost::tick()
@@ -1227,6 +1412,16 @@ void WorldHost::tick()
         ENG_PROFILE_SCOPE("animation.sample");
         m_animation->sample(state.fixedTimestep);
         m_runtime->fireAnimationEnded(m_animation->drainEnded());
+        // What the graphs did (ADR 0197), where `Ended` is said; and where
+        // each one is, written where the world's hash reads it.
+        m_runtime->fireGraphSignals(m_animation->drainGraphSignals());
+        m_graphDigests.clear();
+        m_animation->graphDigests(m_graphDigests);
+        for (const auto& [player, digest] : m_graphDigests) {
+            if (scene::AnimationPlayerComponent* const component = m_world->animationPlayers().find(player);
+                component != nullptr)
+                component->graphDigest = digest;
+        }
         m_animation->retire(*m_world);
     }
     // Sprite sheets too (ADR 0102): the same clock, the same place, and the
@@ -1331,6 +1526,19 @@ void WorldHost::tick()
         if (std::vector<std::string> wanted = script::takePreloadContent(m_runtime->state()); !wanted.empty()) {
             if (m_warmContent)
                 m_warmContent(*m_world, wanted);
+        }
+        // What was asked to be held or let go (D610), in the order asked: a
+        // run of one kind at a time, so a name kept and then released is.
+        if (const std::vector<script::PreloadState::Held> held = script::takeHeldContent(m_runtime->state());
+            !held.empty() && m_holdContent) {
+            std::vector<std::string> run;
+            for (core::usize at = 0; at < held.size();) {
+                const bool keep = held[at].keep;
+                run.clear();
+                for (; at < held.size() && held[at].keep == keep; ++at)
+                    run.push_back(held[at].content);
+                m_holdContent(*m_world, run, keep);
+            }
         }
         script::resumePreloads(m_runtime->state(), [this](std::string_view content) { return contentState(content); });
     }
@@ -1719,6 +1927,7 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
     }
     m_bootSceneReport = report;
     m_bootSceneApplied = true;
+    saySceneRefusals(report);
     if (report.stampCycles > 0) {
         const std::array<I18nArg, 1> chain{I18nArg{"chain", std::string_view{report.stampCycle}}};
         core::log(LogLevel::Warn, ENG_TR("scene.warn.stamp_cycle"), chain);

@@ -15,7 +15,9 @@ Parenting it straight to a `MeshPart` still works and drives exactly that mesh, 
 
 It stores nothing: the tracks are the state, and each one is a handle a script holds rather than a child in the tree. Sampling happens at `PreAnimation` on the SimClock, so a clip's position at a given tick is the same in a replay as it was live.
 
-v1 is clip playback and linear blending -- no state machines, no IK, and no root motion.
+**With a `Graph` it mixes the clips itself** (ADR 0197): an animation graph says which clips play in which state, how a walk becomes a run, when a jump begins and how long each fade is, and the game only says how fast the character is going. Tracks a script loads go on working beside it. Limbs that reach and feet on the ground are `IKControl` and `FootPlacement`. There is no root motion: a clip plays in place and the body moves the character.
+
+**In a match** the player travels with its character -- its `Graph` and `Retargeting`, nothing a tick -- and every machine steps its own copy of the graph from what already arrives: the body's speed, whether it is on the ground, its attributes.
 
 **Members below are the ones this class DECLARES.** Everything its base
 offers is on the base's page, which is what keeps one added member on
@@ -26,8 +28,22 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `CullingMode` | `Enum.AnimationCullingMode` | `Enum.AnimationCullingMode.Automatic` | read/write | How often its meshes are posed (H3). `Automatic`: as often as they are seen -- every tick up close, every second, fourth or eighth tick as they get smaller on the screen, and not at all where neither the camera nor a shadow reaches them; the clips keep time either way, and a joint a script or a `Bone` asks about is posed when asked. A world with nobody looking -- a server, a replay -- poses every tick. `AlwaysAnimate`: every tick, seen or not. |
+| `Graph` | `Content` | — | read/write | The animation graph this player plays: an `asset://...animgraph.json`. Empty, the player plays only the tracks a script loads. Set it where the character is made; it starts in each layer's first state when its file arrives. |
+| `Retargeting` | `Enum.Retargeting` | `Enum.Retargeting.Automatic` | read/write | How a clip from another file is carried onto this skeleton (ADR 0199). |
 
 ## Methods
+
+### `ClearParameter(name: string)`
+
+Forgets what `SetParameter` set: the parameter is again what the graph reads from the world, or its value at rest.
+
+### `GetParameter(name: string): (number | boolean)?`
+
+A parameter's value on this machine, as the graph sees it this tick: what a script set, else what it reads from the world, else its value at rest. A trigger answers whether it is fired. Nil with no graph loaded, or for a name it does not declare.
+
+### `GetState(layer: string? = nil): string`
+
+The state a layer is in -- the one it is fading INTO, during a fade -- by name. With no layer named, the first. Empty with no graph loaded or for a layer it does not have.
 
 ### `LoadAnimation(content: Content): AnimationTrack`
 
@@ -36,3 +52,24 @@ A track for one clip. Everything after a `#` is the clip's NAME inside the file,
 **A path before the `#` names the file the CLIP is in, and it need not be the one this player's skeleton came from.** One walk cycle authored once and played by every character is the reason a clip is addressable at all, and a clip from elsewhere is retargeted onto this rig by joint NAME. A joint the target does not have is skipped rather than guessed, so a clip for a horse played on a person moves the joints they have in common and no others -- and a file nothing has loaded gives the same empty track a clip name the file lacks does.
 
 **Load a track once and keep it.** It always returns a track, even for a clip that is not there -- a mesh that has not finished loading would otherwise make an ordinary frame a nil index -- and every call is a handle the VM holds until the world goes away.
+
+### `SetParameter(name: string, value: number | boolean)`
+
+Sets one of the graph's parameters **on this machine**. A number or a boolean is kept until it is set again; a trigger is fired -- any value does it -- and is true until a transition takes it or the tick ends.
+
+**A parameter the graph reads from the world** (`from` in its file) **is overridden**: what was set wins on this machine until `ClearParameter` hands it back. Other machines do not see it -- for something every machine must show, set an attribute the graph reads, or let the body's own motion say it.
+
+Raises for a name the graph does not declare, once the graph has loaded; before that the value is kept and applied when it does.
+
+## Events
+
+Every signal here is **deferred** (ADR 0015): a handler runs at the next
+drain point, never inside the call that fired it.
+
+### `EventReached(name: string, layer: string)`
+
+A clip passed a moment the graph names (`events` in its file): a foot down, a sword's edge live. Only for the state a layer is in -- not one fading out -- and in a blend only for the clip that weighs most, so a walk and a run do not step twice. **Once**: a tick a replica predicts again does not fire it again. Each machine fires its own; what a hit does is decided where the authority hears it.
+
+### `StateChanged(layer: string, from: string, to: string)`
+
+A layer of the graph left one state for another, on this machine. Fired on the simulation's clock, deferred like every signal.

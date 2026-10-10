@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "engine/core/math.h"
+#include "engine/core/sequence.h"
 #include "engine/core/types.h"
 #include "engine/replication/types.h"
 
@@ -79,6 +80,52 @@ void setNetId(FieldValue& out, NetId value) noexcept;
 // reaches the wire.
 void setInstance(FieldValue& out, core::InstanceId value) noexcept;
 
+// --- Sequences (protocol 44) ------------------------------------------------------
+//
+// **The one value longer than a cell.** A sequence's bytes as they cross -- a
+// count, then that many keys -- lie zero-padded over several cells: the first
+// in the field's own place and the rest after the instance's last field
+// (`furtherCells`, in `extract.h`). Cells, so that a diff, a checksum and a
+// baseline go on reading bytes and know nothing of it; several, because
+// widening every cell for the three classes that hold one would be paid by
+// every field of every instance in every state.
+//
+// A colour key is its time and r, g, b; a number key its time, value and
+// envelope: what an attribute of either type already is on the wire.
+inline constexpr core::usize MaxSequenceKeys = core::MaxSequenceKeypoints;
+inline constexpr core::usize ColorKeyBytes = 16;
+inline constexpr core::usize NumberKeyBytes = 12;
+inline constexpr core::usize ColorSequenceBytes = 1 + MaxSequenceKeys * ColorKeyBytes;
+inline constexpr core::usize NumberSequenceBytes = 1 + MaxSequenceKeys * NumberKeyBytes;
+
+// Whether an encoding is one of the two, and how many cells it takes beyond
+// the first: none for every other.
+[[nodiscard]] bool isSequence(generated::Encoding encoding) noexcept;
+[[nodiscard]] core::usize furtherCellsOf(generated::Encoding encoding) noexcept;
+
+// A sequence into its cells, every one cleared first. **No more than twenty
+// keys are written**: a list longer than a sequence may be -- which no setter
+// lets through -- is cut there, and reads back as no sequence on the other end.
+void setColorSequence(FieldValue& first, std::span<FieldValue> further, const core::ColorSequence& value) noexcept;
+void setNumberSequence(FieldValue& first, std::span<FieldValue> further, const core::NumberSequence& value) noexcept;
+
+// And back. False, with `out` untouched, when the cells do not hold a
+// sequence (`core::validSequence`): a peer is not trusted to have sent one.
+[[nodiscard]] bool asColorSequence(const FieldValue& first, std::span<const FieldValue> further,
+                                   core::ColorSequence& out);
+[[nodiscard]] bool asNumberSequence(const FieldValue& first, std::span<const FieldValue> further,
+                                    core::NumberSequence& out);
+
+// A sequence's wire bytes: its count and that many keys, and nothing after.
+void encodeSequence(std::vector<core::u8>& out, generated::Encoding encoding, const FieldValue& first,
+                    std::span<const FieldValue> further);
+
+// Reads one back into cleared cells. False, with the cursor where it was, on
+// a count past twenty, on too few bytes, and on cells that are not the
+// encoding's -- never a write past them.
+[[nodiscard]] bool decodeSequence(std::span<const core::u8> bytes, core::usize& at, generated::Encoding encoding,
+                                  FieldValue& first, std::span<FieldValue> further) noexcept;
+
 [[nodiscard]] bool asBool(const FieldValue& value) noexcept;
 [[nodiscard]] core::u32 asU32(const FieldValue& value) noexcept;
 [[nodiscard]] core::i32 asI32(const FieldValue& value) noexcept;
@@ -93,16 +140,19 @@ void setInstance(FieldValue& out, core::InstanceId value) noexcept;
 //
 // **Not `sizeof(FieldValue)`.** The cell is padded so it can be compared as
 // bytes; the wire carries exactly what the encoding needs, because the whole
-// point of a per-tick diff is that it is small.
+// point of a per-tick diff is that it is small. For a sequence, the most it
+// can be: it says its own length.
 [[nodiscard]] core::usize wireBytes(generated::Encoding encoding) noexcept;
 
 // Appends one field's wire bytes. Little-endian, fixed width, no framing of its
-// own -- the message around it says which field this is.
+// own -- the message around it says which field this is. **Not a sequence**,
+// which is more than one cell: `encodeSequence` writes it, and this writes
+// nothing for one.
 void encodeField(std::vector<core::u8>& out, generated::Encoding encoding, const FieldValue& value);
 
 // Reads one back. Returns false when there are not enough bytes left, which is
 // the only way a decoder may fail here: everything else about the layout is
-// fixed by the encoding.
+// fixed by the encoding. False for a sequence too (`decodeSequence`).
 [[nodiscard]] bool decodeField(std::span<const core::u8> bytes, core::usize& at, generated::Encoding encoding,
                                FieldValue& out) noexcept;
 

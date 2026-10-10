@@ -604,6 +604,8 @@ struct NameIndex
     X(RagdollComponent, ragdolls)                                                                                      \
     X(SpringBoneComponent, springBones)                                                                                \
     X(SpringColliderComponent, springColliders)                                                                        \
+    X(IKControlComponent, ikControls)                                                                                  \
+    X(FootPlacementComponent, footPlacements)                                                                          \
     X(WorkspaceComponent, workspaces)                                                                                  \
     X(TerrainComponent, terrains)                                                                                      \
     X(VoxelComponent, voxels)                                                                                          \
@@ -1345,6 +1347,13 @@ public:
     [[nodiscard]] const ComponentPool<SpringColliderComponent>& springColliders() const noexcept
     {
         return m_springColliders;
+    }
+    [[nodiscard]] ComponentPool<IKControlComponent>& ikControls() noexcept { return m_ikControls; }
+    [[nodiscard]] const ComponentPool<IKControlComponent>& ikControls() const noexcept { return m_ikControls; }
+    [[nodiscard]] ComponentPool<FootPlacementComponent>& footPlacements() noexcept { return m_footPlacements; }
+    [[nodiscard]] const ComponentPool<FootPlacementComponent>& footPlacements() const noexcept
+    {
+        return m_footPlacements;
     }
     [[nodiscard]] ComponentPool<CharacterBodyComponent>& characterBodies() noexcept { return m_characterBodies; }
     [[nodiscard]] const ComponentPool<CharacterBodyComponent>& characterBodies() const noexcept

@@ -258,3 +258,149 @@ TEST_CASE("every pool the wire reads is one a capture can tell has not changed")
         CHECK(digestKnowsPoolsOf(desc));
     }
 }
+
+// --- Sequences (protocol 44) -------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] const generated::ClassDesc* classNamed(std::string_view name)
+{
+    for (const generated::ClassDesc& desc : generated::Classes) {
+        if (desc.name == name)
+            return &desc;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] core::usize indexNamed(const generated::ClassDesc& desc, std::string_view name)
+{
+    for (core::usize at = 0; at < fieldCount(desc); ++at) {
+        if (fieldAt(desc, at)->name == name)
+            return at;
+    }
+    return fieldCount(desc);
+}
+
+// An emitter in a rig's world: the renderer's class, declared by hand as the
+// session's tests declare it, storing what the real one does.
+[[nodiscard]] core::InstanceId emitterIn(Rig& rig)
+{
+    scene::ClassRegistry& classes = rig.fixture.schema.classes;
+    scene::ClassId made = classes.findId(rig.fixture.atom("ParticleEmitter"));
+    if (made == scene::InvalidClass) {
+        made = classes.registerClass({
+            .name = rig.fixture.atom("ParticleEmitter"),
+            .super = classes.findId(rig.fixture.atom("Instance")),
+            .defaultName = rig.fixture.atom("ParticleEmitter"),
+            .attachComponents =
+                [](scene::World& world, core::InstanceId id) {
+                    world.particleEmitters().add(id, scene::ParticleEmitterComponent{});
+                },
+            .detachComponents = [](scene::World& world, core::InstanceId id) { world.particleEmitters().remove(id); },
+        });
+    }
+    REQUIRE(made != scene::InvalidClass);
+    const core::InstanceId id = rig.world().create(made);
+    REQUIRE(id.valid());
+    return id;
+}
+
+} // namespace
+
+TEST_CASE("a class with a sequence keeps its further cells after its fields (protocol 44)")
+{
+    // Every class: the further cells of its sequences lie past its fields,
+    // one range a sequence and none shared, and a class with none is exactly
+    // its fields -- which is every class there was before protocol 44.
+    for (const generated::ClassDesc& desc : generated::Classes) {
+        CAPTURE(desc.name);
+        core::usize next = fieldCount(desc);
+        for (core::usize at = 0; at < fieldCount(desc); ++at) {
+            const CellRange range = furtherCells(desc, at);
+            CHECK(range.count == furtherCellsOf(fieldAt(desc, at)->encoding));
+            if (range.count == 0)
+                continue;
+            CHECK(range.first == next);
+            next += range.count;
+        }
+        CHECK(cellCount(desc) == next);
+        // Past the fields a cell has no field and no id of its own.
+        if (cellCount(desc) > fieldCount(desc)) {
+            CHECK(fieldAt(desc, fieldCount(desc)) == nullptr);
+            CHECK(wireIdAt(desc, fieldCount(desc)) == 0);
+        }
+    }
+
+    const generated::ClassDesc* emitter = classNamed("ParticleEmitter");
+    REQUIRE(emitter != nullptr);
+    // A colour sequence's five and two number sequences' three each.
+    CHECK(cellCount(*emitter) == fieldCount(*emitter) + 5 + 3 + 3);
+    const generated::ClassDesc* part = classNamed("Part");
+    REQUIRE(part != nullptr);
+    CHECK(cellCount(*part) == fieldCount(*part));
+}
+
+TEST_CASE("a sequence is read, compared and written as one value, whichever of its cells moved (protocol 44)")
+{
+    Rig rig;
+    const generated::ClassDesc* desc = classNamed("ParticleEmitter");
+    REQUIRE(desc != nullptr);
+    const core::InstanceId id = emitterIn(rig);
+    REQUIRE(schemaFor(rig.world(), id) == desc);
+
+    core::ColorSequence twenty;
+    twenty.keypoints.clear();
+    for (core::usize key = 0; key < core::MaxSequenceKeypoints; ++key) {
+        const auto along = static_cast<core::f32>(key) / static_cast<core::f32>(core::MaxSequenceKeypoints - 1);
+        twenty.keypoints.push_back(core::ColorKeypoint{along, core::Color3{along, along, along}});
+    }
+    rig.world().particleEmitters().find(id)->colorOverLife = twenty;
+
+    FieldSet baseline;
+    REQUIRE(extractFields(rig.world(), id, *desc, baseline));
+    CHECK(baseline.size() == cellCount(*desc));
+
+    // **One key far along it**, which is in a further cell and in no byte of
+    // the field's own: the diff still names the sequence, once, and nothing
+    // else.
+    const core::usize colours = indexNamed(*desc, "ColorOverLife");
+    REQUIRE(colours < fieldCount(*desc));
+    rig.world().particleEmitters().find(id)->colorOverLife.keypoints[17].value.g = 0.125f;
+    FieldSet current;
+    REQUIRE(extractFields(rig.world(), id, *desc, current));
+    CHECK(baseline[colours] == current[colours]);
+    CHECK_FALSE(sameField(*desc, colours, baseline, current));
+    CHECK(sameField(*desc, indexNamed(*desc, "SizeOverLife"), baseline, current));
+    std::vector<FieldDelta> deltas;
+    diffFields(*desc, baseline, current, deltas);
+    REQUIRE(deltas.size() == 1);
+    CHECK(deltas[0].id == wireIdAt(*desc, colours));
+
+    // Onto a message and back into another set, and from there to another
+    // emitter: the same sequence, to the bit.
+    std::vector<core::u8> bytes;
+    encodeSequenceField(bytes, *desc, colours, current);
+    CHECK(bytes.size() == 1 + core::MaxSequenceKeypoints * 16);
+    FieldSet received(cellCount(*desc));
+    core::usize at = 0;
+    REQUIRE(decodeSequenceField(bytes, at, *desc, colours, received));
+    CHECK(at == bytes.size());
+    CHECK(sameField(*desc, colours, received, current));
+    const core::InstanceId other = emitterIn(rig);
+    REQUIRE(applySequence(rig.world(), other, *desc, colours, received));
+    CHECK(rig.world().particleEmitters().find(other)->colorOverLife ==
+          rig.world().particleEmitters().find(id)->colorOverLife);
+
+    // A field that is no sequence is not one to these, and one cell is not a
+    // sequence to `applyField`.
+    const core::usize rate = indexNamed(*desc, "Rate");
+    CHECK_FALSE(decodeSequenceField(bytes, at, *desc, rate, received));
+    CHECK_FALSE(applySequence(rig.world(), other, *desc, rate, received));
+    CHECK_FALSE(applyField(rig.world(), other, *desc, FieldDelta{wireIdAt(*desc, colours), received[colours]}));
+
+    // Cells that hold no sequence leave the emitter's as it was.
+    FieldSet empty(cellCount(*desc));
+    CHECK_FALSE(applySequence(rig.world(), other, *desc, colours, empty));
+    CHECK(rig.world().particleEmitters().find(other)->colorOverLife ==
+          rig.world().particleEmitters().find(id)->colorOverLife);
+}

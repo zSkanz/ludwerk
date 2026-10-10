@@ -65,6 +65,7 @@ public:
             return error;
         m_authority.emplace(*m_transport);
         m_authority->setMaxPlayers(m_config.maxPeers);
+        m_authority->setUncarriedWarnings(m_config.developer);
         // **A host is a host with or without its relay** (ADR 0178): one that
         // cannot be found -- no internet, a name mistyped -- is said in the
         // log and as `RelayState`, and the match is joined by address as ever.

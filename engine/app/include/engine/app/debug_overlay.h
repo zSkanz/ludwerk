@@ -279,6 +279,9 @@ public:
     // And a mesh's shape keys, for the sliders Properties shows for one (ADR
     // 0196). Set with it, every frame, for the same reason.
     void setMorphs(scene::MorphHost* morphs) noexcept;
+    // And a player's animation graph, for the readout Properties shows for
+    // one (ADR 0197).
+    void setAnimation(scene::AnimationHost* animation) noexcept;
 
     // **Play starts on an empty console** (the owner: "the console should clear
     // when I press play"): what the last session printed is not what this one

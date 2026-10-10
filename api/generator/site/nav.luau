@@ -162,6 +162,9 @@ local Sections: { Section } = {
         Pages = {
             { Slug = "tweens", Title = "Tweens" },
             { Slug = "skeletal", Title = "Skeletal animation" },
+            { Slug = "graphs", Title = "Animation graphs" },
+            { Slug = "retargeting", Title = "Retargeting: one clip on many bodies" },
+            { Slug = "reach-and-look", Title = "Reaching, looking and feet" },
             { Slug = "secondary-motion", Title = "Capes, tails and hair" },
             { Slug = "morph-targets", Title = "Faces and shape keys" },
         },

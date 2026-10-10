@@ -77,7 +77,81 @@ void collectContent(scene::World& w, core::InstanceId root, std::vector<std::str
     return failed ? ContentState::Failed : ContentState::Loaded;
 }
 
+// The item on top of the stack -- a content name, a stamp's name or an
+// instance -- as the content it names. Raises for anything else.
+void readItem(lua_State* L, scene::World& w, PreloadItem& item)
+{
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        size_t length = 0;
+        const char* text = lua_tolstring(L, -1, &length);
+        if (length == 0)
+            raise(L, ENG_TR("script.err.preload_item"));
+        const std::string_view named(text, length);
+        if (named.find("://") != std::string_view::npos) {
+            item.contents.emplace_back(named);
+            return;
+        }
+        // **A stamp, named as `Instance.stamp` names it** (ADR 0155 §10):
+        // read now and kept, and every asset it names asked for with it, so
+        // its first copy neither reads a file nor waits.
+        VmContext& ctx = context(L);
+        const std::string path = scene::normalizeStampPath(named);
+        const std::optional<std::string> source = ctx.stamps ? ctx.stamps(path) : std::optional<std::string>{};
+        if (source.has_value()) {
+            for (core::usize at = source->find("asset://"); at != std::string::npos;
+                 at = source->find("asset://", at + 1)) {
+                const core::usize end = source->find('"', at);
+                if (end != std::string::npos)
+                    addUnique(item.contents, std::string_view(*source).substr(at, end - at));
+            }
+            ctx.preloadedStamps[path] = *source;
+        }
+        else {
+            item.failed = true;
+        }
+        return;
+    }
+    if (const core::InstanceId* instance = toInstance(L, -1); instance != nullptr && w.alive(*instance)) {
+        collectContent(w, *instance, item.contents);
+        return;
+    }
+    raise(L, ENG_TR("script.err.preload_item"));
+}
+
+// `Keep` and `Release`: every name the list at index 2 holds, noted for the
+// host. A kept name is asked for as a preload is, so holding it loads it.
+int holdItems(lua_State* L, bool keep)
+{
+    (void)checkInstance(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    scene::World& w = world(L);
+    PreloadState& state = preloads(L);
+    const int count = lua_objlen(L, 2);
+    for (int index = 1; index <= count; ++index) {
+        lua_rawgeti(L, 2, index);
+        PreloadItem item;
+        readItem(L, w, item);
+        lua_pop(L, 1);
+        for (const std::string& content : item.contents) {
+            state.held.push_back(PreloadState::Held{content, keep});
+            if (keep)
+                addUnique(state.wanted, content);
+        }
+    }
+    return 0;
+}
+
 } // namespace
+
+int contentProviderKeep(lua_State* L)
+{
+    return holdItems(L, true);
+}
+
+int contentProviderRelease(lua_State* L)
+{
+    return holdItems(L, false);
+}
 
 int contentProviderPreloadAsync(lua_State* L)
 {
@@ -93,42 +167,7 @@ int contentProviderPreloadAsync(lua_State* L)
     for (int index = 1; index <= count; ++index) {
         lua_rawgeti(L, 2, index);
         PreloadItem item;
-        if (lua_type(L, -1) == LUA_TSTRING) {
-            size_t length = 0;
-            const char* text = lua_tolstring(L, -1, &length);
-            if (length == 0)
-                raise(L, ENG_TR("script.err.preload_item"));
-            const std::string_view named(text, length);
-            if (named.find("://") != std::string_view::npos) {
-                item.contents.emplace_back(named);
-            }
-            else {
-                // **A stamp, named as `Instance.stamp` names it** (ADR 0155
-                // §10): read now and kept, and every asset it names asked for
-                // with it, so its first copy neither reads a file nor waits.
-                VmContext& ctx = context(L);
-                const std::string path = scene::normalizeStampPath(named);
-                const std::optional<std::string> source = ctx.stamps ? ctx.stamps(path) : std::optional<std::string>{};
-                if (source.has_value()) {
-                    for (core::usize at = source->find("asset://"); at != std::string::npos;
-                         at = source->find("asset://", at + 1)) {
-                        const core::usize end = source->find('"', at);
-                        if (end != std::string::npos)
-                            addUnique(item.contents, std::string_view(*source).substr(at, end - at));
-                    }
-                    ctx.preloadedStamps[path] = *source;
-                }
-                else {
-                    item.failed = true;
-                }
-            }
-        }
-        else if (const core::InstanceId* instance = toInstance(L, -1); instance != nullptr && w.alive(*instance)) {
-            collectContent(w, *instance, item.contents);
-        }
-        else {
-            raise(L, ENG_TR("script.err.preload_item"));
-        }
+        readItem(L, w, item);
         item.itemRef = lua_ref(L, -1);
         lua_pop(L, 1);
         request.items.push_back(std::move(item));
@@ -175,6 +214,13 @@ std::vector<std::string> takePreloadContent(lua_State* L)
 {
     std::vector<std::string> taken;
     taken.swap(preloads(L).wanted);
+    return taken;
+}
+
+std::vector<PreloadState::Held> takeHeldContent(lua_State* L)
+{
+    std::vector<PreloadState::Held> taken;
+    taken.swap(preloads(L).held);
     return taken;
 }
 

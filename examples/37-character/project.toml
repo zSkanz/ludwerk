@@ -1,0 +1,17 @@
+# The character example's project file: it loads models, clips and an
+# animation graph, and those are found under `content/`, which a project.toml
+# is what makes of a folder.
+
+[project]
+name = "Ludwerk Character"
+id = "dev.ludwerk.character"
+version = "1.0.0"
+engine = "0.1"
+# The level and the three heroes -- bodies, models, graph, feet, looks and the
+# staff -- are a scene on disk, so the example opens in the editor with them.
+# The scripts only walk them.
+scene = "scenes/character.scene.json"
+
+[window]
+title = "Ludwerk — Character"
+size = [1600, 900]

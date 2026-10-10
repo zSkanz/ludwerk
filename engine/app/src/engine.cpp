@@ -1835,6 +1835,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     constexpr core::u64 LongWaitSettleNs = 5'000'000'000ull;
     bool waitSettleSeen = false;
     core::u32 waitSettleLoads = 0;
+    // The scene the loader last saw open, by the count of scenes loaded: what
+    // tells it one was left (D610).
+    // The parts a foot's ray must not find, as the physics names them.
+    std::vector<core::u64> footOwn;
+    bool sweepSeen = false;
+    core::u32 sweepLoads = 0;
     core::u64 waitSettleUntilNs = 0;
     // The scene load the world last settled from, and until when (H11).
     bool settleSeen = false;
@@ -2676,6 +2682,20 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                                                   : std::optional<bool>{false};
                                    return meshLoader.warmed(world.atoms().intern(name), meshLibrary, textureLibrary);
                                },
+        // What a game holds across scenes (D610): by name, whatever kind it
+        // is -- the sweep asks by name too.
+        .holdContent = options.headless
+                           ? std::function<void(scene::World&, const std::vector<std::string>&, bool)>{}
+                           : [&meshLoader](scene::World& world, const std::vector<std::string>& names, bool keep) {
+                                 std::vector<core::NameAtom> urns;
+                                 urns.reserve(names.size());
+                                 for (const std::string& name : names)
+                                     urns.push_back(world.atoms().intern(name));
+                                 if (keep)
+                                     meshLoader.keep(urns);
+                                 else
+                                     meshLoader.release(urns);
+                             },
     };
     worldOptions.graphics = graphicsHost;
     worldOptions.graphicsDisplay = graphicsDisplay;
@@ -5529,6 +5549,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
                     core::u32 dropped =
                         urns.empty() ? 0u : meshLoader.forget(*device, urns, textureLibrary, meshLibrary, meshCache);
+                    // And what the SIMULATION read of them (D611): a model's
+                    // joints and clips, the roles beside it, an animation
+                    // graph. The drawn half was forgotten above and came back
+                    // with the new mesh; this half kept the old skeleton, and
+                    // a model exported again moved by the clips it used to have.
+                    dropped += host->forgetContent(urns);
                     // A changed material file is forgotten too, and every
                     // variant with it -- the library re-reads what anything
                     // asks for next (ADR 0062, ADR 0090).
@@ -6705,6 +6731,42 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             if (Editor::Stage* const openStage = stageOf(); openStage != nullptr)
                 loadFor(openStage->world(), openStage->workspace());
 
+            // **A scene that is left takes what it alone held with it** (D610):
+            // the meshes and textures nothing in the scene now open names, a
+            // moment after it opened. Not in the editor, whose previews and
+            // open stage name content no world of the game does -- and whose
+            // session is not the one short of memory.
+            if (!options.editor && renderer != nullptr && renderer->valid()) {
+                const core::u32 loads = host->world().engineState().sceneLoads;
+                if (!sweepSeen) {
+                    sweepSeen = true;
+                    sweepLoads = loads;
+                }
+                else if (loads != sweepLoads) {
+                    sweepLoads = loads;
+                    meshLoader.leaveScene();
+                }
+                if (const core::u32 released =
+                        meshLoader.sweep(*device, host->world(), textureLibrary, meshLibrary, meshCache);
+                    released != 0) {
+                    const std::array<I18nArg, 1> gone{I18nArg{"count", static_cast<core::i64>(released)}};
+                    core::log(LogLevel::Info, ENG_TR("engine.scene.info.released"), gone);
+                }
+                // **And what the game then loads in the middle of play is
+                // said, once a name, where a developer is looking**: the
+                // hitch a preload would have put behind the loading screen.
+                // Not where a world streams -- there content arriving as the
+                // player moves is the design.
+                meshLoader.watchLateLoads(options.developerWarnings && !waitsAreExpected && !streaming.active());
+                for (const core::NameAtom late : meshLoader.takeLateLoads()) {
+                    const std::string_view name = host->world().atoms().text(late);
+                    if (!name.starts_with("asset://"))
+                        continue;
+                    const std::array<I18nArg, 1> said{I18nArg{"name", name}};
+                    core::log(LogLevel::Warn, ENG_TR("engine.content.warn.loaded_late"), said);
+                }
+            }
+
             // **And the rest of the frame's drawing, a stretch at a time**: what
             // is chosen to be drawn, the effects, the sky, the interface, what
             // goes up to the device, the views, and the render itself. A frame
@@ -6807,7 +6869,38 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     springs.wind =
                         scene::WindSettings{workspace->globalWind, workspace->windGusts, workspace->windTurbulence};
                 }
-                host->stepSecondaryMotion(framePoses, springs);
+                // And its limbs, looks and feet (ADR 0198), on the same
+                // budget: as far as the chains are stepped, and no feet at
+                // the lowest quality. The ground under a foot is the physics
+                // world as the last tick left it.
+                render::IkFrame limbs;
+                limbs.seconds = static_cast<f32>(frame.renderDt);
+                limbs.camera = snapshot.camera.origin;
+                limbs.maxDistance = look.secondaryMotionDistance;
+                limbs.feet = look.quality != render::QualityLevel::Low;
+                if (scene::PhysicsSync* const physics = host->physics();
+                    physics != nullptr && host->world().footPlacements().size() != 0) {
+                    physics->syncForQuery();
+                    limbs.ground = [physics, &footOwn](core::DVec3 from, core::Vec3 direction,
+                                                       std::span<const core::InstanceId> own, core::DVec3& point,
+                                                       core::Vec3& normal) {
+                        footOwn.clear();
+                        for (const core::InstanceId id : own) {
+                            if (const core::u64 data = physics->userDataOf(id); data != 0)
+                                footOwn.push_back(data);
+                        }
+                        physics::QueryFilter filter;
+                        filter.userData = footOwn;
+                        physics::RayHit hit;
+                        if (!physics->backend().raycast(physics->worldHandle(), physics::RayD{from, direction}, filter,
+                                                        hit))
+                            return false;
+                        point = hit.position;
+                        normal = hit.normal;
+                        return true;
+                    };
+                }
+                host->stepSecondaryMotion(framePoses, springs, limbs);
             }
             {
                 ENG_PROFILE_SCOPE("render.extract");
@@ -7744,6 +7837,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // pointer set at boot would name the previous one.
                     overlay->setSkeleton(host->animation());
                     overlay->setMorphs(host->morphs());
+                    overlay->setAnimation(host->graphHost());
                 }
                 // **What the frame cost, handed over before it is drawn**
                 // (S5.12). The Stats readout showed frame time, backend and

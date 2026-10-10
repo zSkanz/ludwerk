@@ -64,6 +64,9 @@ TEST_CASE("a scene is not a plain json file")
     CHECK(app::contentKindOf("MAIN.SCENE.JSON") == ContentKind::Scene);
     CHECK(app::contentKindOf("cell_0_0.chunk.json") == ContentKind::Chunk);
     CHECK(app::contentKindOf("manifest.json") == ContentKind::Other);
+    // An animation graph (ADR 0197): a kind of its own, so `AnimationPlayer.Graph`
+    // offers graphs and nothing else.
+    CHECK(app::contentKindOf("hero.animgraph.json") == ContentKind::AnimationGraph);
 
     CHECK(app::contentKindOf("tower.glb") == ContentKind::Mesh);
     CHECK(app::contentKindOf("bark.png") == ContentKind::Texture);

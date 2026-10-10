@@ -42,6 +42,9 @@ struct SpringFrame
     f32 step = SpringStep;
     core::Vec3 gravity{0.0f, -9.81f, 0.0f};
     scene::WindSettings wind{};
+    // Whether this frame's presented poses are somebody else's to clear: the
+    // limbs were solved first (ADR 0198), and the chains hang from them.
+    bool afterLimbs = false;
     // Seconds, for the wind's gusts.
     f32 time = 0.0f;
 };

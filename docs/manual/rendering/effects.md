@@ -153,9 +153,14 @@ alive.
 
 ## In a match
 
-They are not sent yet: a highlight, a beam or a trail made on the server is
-drawn nowhere, and one made by a client's own script is drawn on that client.
-Make them where they are seen.
+A highlight, a beam or a trail a server-side script makes is on every machine,
+with every property authored on it: a beam's and a trail's sequences, the two
+attachments they run between, what a highlight marks. A change to one is sent
+when it is made, and so is a trail's `Clear`. **What each draws is that
+machine's own**: a trail's ribbon is laid from where that machine drew its
+ends, so two players do not see the same pieces, only the same trail. One made
+by a client's own script is drawn on that client alone
+([What a spawned thing carries](manual:guides/multiplayer)).
 
 ## Where to look next
 

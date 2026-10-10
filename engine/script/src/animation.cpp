@@ -7,11 +7,14 @@
 #include <string>
 #include <string_view>
 
+#include "engine/core/i18n.h"
+#include "engine/core/text_key.h"
 #include "engine/scene/world.h"
 #include "engine/script/binding.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/services.h"
+#include "engine/script/signals.h"
 
 namespace engine::script {
 namespace {
@@ -217,6 +220,120 @@ int animationPlayerLoadAnimation(lua_State* L)
         lua_newuserdatataggedwithmetatable(L, sizeof(TrackUserdata), static_cast<int>(UserdataTag::AnimationTrack));
     static_cast<TrackUserdata*>(memory)->record = static_cast<u32>(state.animationTracks.size() - 1);
     return 1;
+}
+
+namespace {
+
+[[nodiscard]] std::string_view parameterName(lua_State* L, int index)
+{
+    usize length = 0;
+    const char* text = luaL_checklstring(L, index, &length);
+    return std::string_view{text, length};
+}
+
+// A name the graph does not declare: said with the name, so a typo reads as
+// one.
+[[noreturn]] void raiseUnknownParameter(lua_State* L, std::string_view name)
+{
+    const core::I18nArg args[] = {{"name", name}};
+    raise(L, ENG_TR("script.err.graph_parameter_unknown"), args);
+}
+
+} // namespace
+
+int animationPlayerSetParameter(lua_State* L)
+{
+    const core::InstanceId player = checkInstance(L, 1);
+    const std::string_view name = parameterName(L, 2);
+    f32 value = 0.0f;
+    if (lua_isboolean(L, 3)) {
+        value = lua_toboolean(L, 3) != 0 ? 1.0f : 0.0f;
+    }
+    else {
+        const double number = luaL_checknumber(L, 3);
+        // Not a number, or one too many: a blend along it would be nowhere.
+        if (!(number == number) || number > 3.0e38 || number < -3.0e38)
+            raise(L, ENG_TR("script.err.graph_parameter_not_finite"));
+        value = static_cast<f32>(number);
+    }
+    if (scene::AnimationHost* animation = host(L);
+        animation != nullptr && animation->setGraphParameter(player, name, value) == scene::GraphWrite::Unknown)
+        raiseUnknownParameter(L, name);
+    return 0;
+}
+
+int animationPlayerClearParameter(lua_State* L)
+{
+    const core::InstanceId player = checkInstance(L, 1);
+    const std::string_view name = parameterName(L, 2);
+    if (scene::AnimationHost* animation = host(L);
+        animation != nullptr && animation->clearGraphParameter(player, name) == scene::GraphWrite::Unknown)
+        raiseUnknownParameter(L, name);
+    return 0;
+}
+
+int animationPlayerGetParameter(lua_State* L)
+{
+    const core::InstanceId player = checkInstance(L, 1);
+    const std::string_view name = parameterName(L, 2);
+    const scene::AnimationHost* animation = host(L);
+    const scene::GraphParameterValue held =
+        animation != nullptr ? animation->graphParameter(player, name) : scene::GraphParameterValue{};
+    switch (held.kind) {
+    case scene::GraphParameterValue::Kind::Number:
+        lua_pushnumber(L, static_cast<double>(held.value));
+        break;
+    case scene::GraphParameterValue::Kind::Boolean:
+    case scene::GraphParameterValue::Kind::Trigger:
+        lua_pushboolean(L, held.value != 0.0f ? 1 : 0);
+        break;
+    case scene::GraphParameterValue::Kind::None:
+        lua_pushnil(L);
+        break;
+    }
+    return 1;
+}
+
+int animationPlayerGetState(lua_State* L)
+{
+    const core::InstanceId player = checkInstance(L, 1);
+    std::string_view layer;
+    if (lua_gettop(L) >= 2 && !lua_isnil(L, 2))
+        layer = parameterName(L, 2);
+    const scene::AnimationHost* animation = host(L);
+    const std::string_view state = animation != nullptr ? animation->graphState(player, layer) : std::string_view{};
+    lua_pushlstring(L, state.data(), state.size());
+    return 1;
+}
+
+void fireGraphSignals(lua_State* L, std::span<const scene::GraphSignal> signals)
+{
+    if (signals.empty())
+        return;
+    scene::World& world = *context(L).world;
+    const core::NameAtom stateChanged = world.atoms().lookup("StateChanged");
+    const core::NameAtom eventReached = world.atoms().lookup("EventReached");
+    for (const scene::GraphSignal& signal : signals) {
+        if (!world.alive(signal.player) || world.destroyed(signal.player))
+            continue;
+        const scene::EventDesc* const descriptor =
+            world.classes().findEvent(world.classOf(signal.player), signal.event ? eventReached : stateChanged);
+        if (descriptor == nullptr || !instanceEventHeard(L, signal.player, descriptor->slot))
+            continue;
+        const int first = lua_gettop(L) + 1;
+        if (signal.event) {
+            lua_pushlstring(L, signal.to.data(), signal.to.size());
+            lua_pushlstring(L, signal.layer.data(), signal.layer.size());
+        }
+        else {
+            lua_pushlstring(L, signal.layer.data(), signal.layer.size());
+            lua_pushlstring(L, signal.from.data(), signal.from.size());
+            lua_pushlstring(L, signal.to.data(), signal.to.size());
+        }
+        const int count = lua_gettop(L) - first + 1;
+        fireInstanceEvent(L, signal.player, descriptor->slot, first, count);
+        lua_pop(L, count);
+    }
 }
 
 void registerAnimationTypes(lua_State* L)

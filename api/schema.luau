@@ -114,7 +114,8 @@ export type Property = {
     --- who has seen one has seen them all.
     ErrorKey: string?,
     --- **Which files a `Content` property may name**, as one of the kinds the
-    --- editor's content browser recognises: `Mesh`, `Texture`, `Audio`, `Font`.
+    --- editor's content browser recognises: `Mesh`, `Texture`, `Audio`, `Font`,
+    --- `AnimationGraph`.
     ---
     --- A `Content` is a string as far as the engine is concerned -- it is a URI,
     --- and resolving it is the mount's job -- so nothing downstream can tell a

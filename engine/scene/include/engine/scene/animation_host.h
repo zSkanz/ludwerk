@@ -18,6 +18,8 @@
 
 #include <span>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "engine/core/id.h"
 #include "engine/core/name_atom.h"
@@ -52,10 +54,114 @@ struct TrackState
     bool playing = false;
 };
 
+// --- Animation graphs (ADR 0197) --------------------------------------------
+//
+// A player with a `Graph` mixes its clips itself; what a script does is set
+// the graph's parameters and hear what it did. Names cross the seam, never an
+// index: a script may set a parameter before the graph's file has arrived.
+
+// What a parameter holds, for a script's read. `None` for no graph loaded or
+// a name it does not declare.
+struct GraphParameterValue
+{
+    enum class Kind : core::u8
+    {
+        None,
+        Number,
+        Boolean,
+        Trigger,
+    };
+    Kind kind = Kind::None;
+    f32 value = 0.0f;
+};
+
+// How a write to a parameter went.
+enum class GraphWrite : core::u8
+{
+    // Set, or kept for a graph that has not loaded yet.
+    Done,
+    // The graph has loaded and declares no such parameter.
+    Unknown,
+    // No animation at all behind this player.
+    Nothing,
+};
+
+// One thing a graph did in the tick just sampled. The views are the graph's
+// own names and are good until the next `sample`.
+struct GraphSignal
+{
+    core::InstanceId player;
+    // An event a clip reached (`to` is its name, `from` is empty), or a
+    // layer leaving one state for another.
+    bool event = false;
+    std::string_view layer;
+    std::string_view from;
+    std::string_view to;
+};
+
+// What a graph is doing, for a readout (an editor's panel): a layer's state
+// and what it is fading out of, and a parameter's value and where it comes
+// from. The views are the graph's own names, good until the next `sample`.
+struct GraphLayerView
+{
+    std::string_view name;
+    std::string_view state;
+    f32 progress = 0.0f;
+    f32 weight = 1.0f;
+    // What it is still fading out of, oldest first, each with its weight.
+    std::vector<std::pair<std::string_view, f32>> fading;
+};
+
+struct GraphParameterView
+{
+    std::string_view name;
+    std::string_view from;
+    GraphParameterValue value;
+    bool overridden = false;
+};
+
 class AnimationHost
 {
 public:
     virtual ~AnimationHost() = default;
+
+    // Empty lists for a player with no graph bound.
+    virtual void describeGraph(core::InstanceId /*player*/, std::vector<GraphLayerView>& layers,
+                               std::vector<GraphParameterView>& parameters) const
+    {
+        layers.clear();
+        parameters.clear();
+    }
+
+    // Sets a parameter of `player`'s graph on this machine, over whatever the
+    // graph reads from the world; a trigger is fired. `clearGraphParameter`
+    // hands it back.
+    virtual GraphWrite setGraphParameter(core::InstanceId /*player*/, std::string_view /*name*/, f32 /*value*/)
+    {
+        return GraphWrite::Nothing;
+    }
+    virtual GraphWrite clearGraphParameter(core::InstanceId /*player*/, std::string_view /*name*/)
+    {
+        return GraphWrite::Nothing;
+    }
+    [[nodiscard]] virtual GraphParameterValue graphParameter(core::InstanceId /*player*/,
+                                                             std::string_view /*name*/) const
+    {
+        return {};
+    }
+    // The state a layer is in, by name; the first layer for an empty name.
+    [[nodiscard]] virtual std::string_view graphState(core::InstanceId /*player*/, std::string_view /*layer*/) const
+    {
+        return {};
+    }
+    // What the graphs did in the last `sample`, in the order they did it;
+    // handed over once.
+    [[nodiscard]] virtual std::span<const GraphSignal> drainGraphSignals() { return {}; }
+    // **A digest of each graph's state**, a player each, in the order the
+    // graphs are stepped: what the host writes where the world's hash reads
+    // it (R10). A graph that diverges between two runs shows at the tick it
+    // diverges.
+    virtual void graphDigests(std::vector<std::pair<core::InstanceId, core::u64>>& /*into*/) const {}
 
     // A track for one clip, by name. An empty name means the file's first clip.
     // Returns 0 when the player has no skeleton or the clip is not there; the

@@ -19,6 +19,43 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **The wire protocol is 44: what a character carries reaches the other
+  machines** (D612, D613). Every machine in a match must run a build that
+  speaks it. A thing a server-side script spawns -- from a stamp, as a
+  `Clone`, with `Instance.new` -- arrived with its attachments, decals and
+  emitters and nothing else. Now `PointLight`, `SpotLight`, `SpringBone`,
+  `SpringCollider`, `Bone`, `Highlight`, `Beam`, `Trail`, `Sound`,
+  `AnimationPlayer`, `IKControl` and `FootPlacement` arrive too, each with
+  the properties authored on it, sent when the instance is made and when one
+  changes; a `ParticleEmitter` arrives with its picture, its frames and its
+  three sequences, and a `Decal` with its blend mode and glow. Nothing is
+  sent a tick, and what a class simulates stays each machine's own: a cape's
+  swing, a trail's ribbon, the particles in the air, a limb's reach, which
+  clip an animation graph is in. **A `Sound` is played by each machine from
+  its own copy**, started when `Playing` is seen to become true and stopped
+  when it becomes false; `TimePosition` is never sent, so a one-shot that
+  starts and ends between two sends may not be heard elsewhere -- fire a
+  `RemoteEvent` for a sound that must be. **If a client script made its own
+  copy of a server's light, sound or effect to work round this, there are
+  now two: remove one.** `BillboardGui`, `SurfaceGui`, sound effects and
+  `AudioGroup` still do not travel; where a match is hosted from
+  `ludwerk dev` or the editor, the log says once for each such class found
+  under something that does. The manual's multiplayer guide has the table
+  ("What a spawned thing carries").
+  The same protocol also carries what an instance already sent was sent
+  without (D617, D618): a part's `Friction`, `Restitution`, `Density`,
+  `LinearDamping`, `AngularDamping` and `Buoyant`, which a client predicts
+  loose parts with; its `CanQuery`, `CanTouch` and `ContactDetails`, which
+  decide what a client script's raycast, `Touched` and `Collided` are told;
+  `PivotOffset` on a part and a model and `Model.PrimaryPart`, so `GetPivot`
+  and `PivotTo` answer on a client as on the server; `Lighting.OutdoorAmbient`;
+  a `WaterPoint`'s `Width`, `Depth` and `Sharp`; and a `Part2D`'s `Density`,
+  `Friction`, `Elasticity`, `FixedRotation`, `GravityScale` and
+  `CollisionGroup`, with a `Tilemap2D`'s `CollisionGroup`. **A client script
+  that set any of these itself to match the server can stop.** A `PivotOffset`
+  changed on its own may take a quarter of a second to arrive. What is
+  deliberately not sent is listed with its reason under each class in
+  `docs/protocol/wire.md`.
 - **What a client-side script makes is its machine's alone, on a host too**
   (ADR 0186). An instance made with `Instance.new`, `Instance.stamp` or
   `Clone` by a script that does not run on the server side -- the client
@@ -247,6 +284,43 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Animation graphs: a character that mixes its own clips** (ADR 0197). An
+  `.animgraph.json` says which clips play in which state, how a walk becomes
+  a run along a parameter (or across two, for strafing), when a jump begins
+  and how long each fade is; layers replace or add over a mask of joints,
+  and a clip may name moments. `AnimationPlayer.Graph` plays one;
+  `SetParameter`, `GetParameter`, `ClearParameter` and `GetState` drive and
+  read it; `StateChanged` and `EventReached` say what it did. **A parameter
+  may be read from the world** -- the body's speed, whether it is on the
+  ground, an attribute -- and a trigger read from an attribute fires when
+  the attribute changes, so a server-side attack is one `SetAttribute` and
+  every machine in a match animates it with no script saying so. A track a
+  script plays goes on working beside a graph. A crowd on one graph still
+  shares its poses. No root motion. In the editor a graph has its kind and
+  its icon, and Properties shows a running one live, with a control for each
+  parameter.
+- **Retargeting: one clip on bodies of other proportions** (ADR 0199). A clip
+  named from another file is carried onto a character's own skeleton by what
+  each joint IS -- found from the names rigs really arrive with, or from a
+  `.rig.json` beside the model -- as turns from rest: other joint names, other
+  bone lengths, another rest stance, the hips' travel scaled to the legs.
+  `AnimationPlayer.Retargeting` is `Automatic` or `ByName`; two files that
+  are one skeleton are carried as they always were. A file of clips is read
+  because a track or a graph names it, though no mesh wears it. Properties
+  lists the roles a rig's joints were given.
+- **`IKControl` and `FootPlacement`: a limb that reaches, a head that looks,
+  feet on the ground** (ADR 0198). A two-bone limb is bent to put its end on
+  a part or an attachment (with a pole, an eased weight, and the end's turn
+  if asked); a head is turned to look, the joints above it sharing the turn
+  up to a limit; two feet are put on whatever a ray finds under each, the
+  hips coming down to suit. **It is picture, not simulation**: solved each
+  frame into the pose the frame is drawn with, never the one the tick reads;
+  what is welded to a bone is drawn in the hand that was moved, and a cape
+  hangs from it. On secondary motion's budget; no feet at the lowest
+  quality, and none for a `Swarm`.
+- **`ContentProvider:Keep` and `:Release`** (D610): a list held whatever
+  scenes come and go, where a preload is held for the scene it was asked in
+  and the next.
 - **Shape keys: faces that blink, smile and talk** (ADR 0196). A model's
   morph targets come in with it and are drawn -- lit, in the depth pass and
   in its shadow. A clip that keys their weights plays them, where it is played;
@@ -1538,6 +1612,37 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **What a character carries is not ground under it** (D615). A part that
+  does not collide -- a hero's own body welded inside its capsule, a staff or
+  a sword welded to its hand -- could be taken for what the character stood
+  on, and a character moves with its ground: one that a script turned every
+  tick was carried along by what it carried, in bursts of several times its
+  walk. A non-colliding part is still touched, and is never ground.
+- **A scene file's property that was not applied is said, by name** (D616):
+  one the class does not have, or a value it does not take, was dropped with
+  no message. The log names them when a scene opens.
+- **An instance that only its pivot changed on is sent** (D619): the
+  authority's periodic re-read of each instance missed half of them at the
+  default send rate.
+- **A model exported again while the game runs is read again whole** (D611):
+  its joints and clips as well as its mesh. It went on moving by the clips
+  it used to have. A track finds its clip again by name and goes on from
+  where it was.
+- **A scene that is left takes what it alone held with it** (D610). Every
+  mesh and texture a game had ever shown stayed on the graphics card until
+  the game closed: lobby, a map, lobby, another map -- and by the last map a
+  game held them all. Half a second after a scene opens, what nothing in it
+  names is released. What `ContentProvider:PreloadAsync` asked for in the
+  scene before -- a loading screen's preload -- is kept for the scene it was
+  for. **A game that shows something only now and then** (an enemy spawned
+  mid-run from a model nothing in the scene holds) preloads it when the
+  scene starts, or it is loaded again the first time it appears. And two
+  things so that is never a surprise: **`ContentProvider:Keep`** holds a
+  list until **`:Release`**, whatever scenes come and go -- preload is this
+  scene and the next, keep is until released -- and, with developer
+  warnings on, the log names each mesh and picture read from disk in the
+  middle of play, once, saying to preload it. The scenes guide lists what
+  counts as named.
 - **A small phone holds less, instead of being closed by the system** (D609).
   The interface's pictures now keep to a budget set by the machine's memory:
   past it, the ones not shown for longest leave the graphics card and are

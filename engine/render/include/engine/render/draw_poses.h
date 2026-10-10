@@ -68,6 +68,17 @@ public:
     // A 2D part.
     [[nodiscard]] Pose2D part2d(core::InstanceId id) const;
 
+    // **A place given for this frame, over the one worked out**: what is held
+    // to a bone is drawn where the frame has the bone (ADR 0198), which is
+    // not where the simulation has it. Asked after this, the part or the
+    // attachment answers with `cframe`, and so does whatever is worked out
+    // from it; what was asked before is as it was.
+    void carryPart(core::InstanceId id, const core::CFrameD& cframe);
+    void carryAttachment(core::InstanceId id, const core::CFrameD& cframe);
+    // What was worked out for `id` this frame is worked out again when next
+    // asked: what it hangs from was carried since.
+    void forget(core::InstanceId id) noexcept;
+
     [[nodiscard]] const scene::World* world() const noexcept { return world_; }
     [[nodiscard]] core::f32 alpha() const noexcept { return alpha_; }
     [[nodiscard]] const TransformHistory* history() const noexcept { return history_; }

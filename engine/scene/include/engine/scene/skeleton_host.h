@@ -48,6 +48,10 @@ public:
     [[nodiscard]] virtual i32 jointParent(core::InstanceId meshPart, u32 joint) const = 0;
 
     [[nodiscard]] virtual std::string_view jointName(core::InstanceId meshPart, u32 joint) const = 0;
+    // **What the joint IS** (ADR 0199) -- `LeftUpperArm`, `Hips` -- as the
+    // rig's names, or the file beside it, say; empty for a joint with no
+    // role. What a clip made on another body is carried across by.
+    [[nodiscard]] virtual std::string_view jointRole(core::InstanceId /*meshPart*/, u32 /*joint*/) const { return {}; }
 
     // Where the joint is, in the MESH's own space -- so a caller composes it
     // with the `MeshPart`'s own `CFrame` to get a world transform, exactly as it

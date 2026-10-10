@@ -5906,13 +5906,25 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(cryptoServiceDesc);
 
     // --- ContentProvider ---
-    static std::array<MethodDesc, 1> contentProviderMethods;
+    static std::array<MethodDesc, 3> contentProviderMethods;
     contentProviderMethods = {{
         MethodDesc{
             .name = atoms.intern("PreloadAsync"),
             .yields = true,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Loads every item and yields until each has arrived or failed. An item is a content name, such as `asset://models/tree.gltf`, or an instance -- every asset it and its descendants name. `callback` runs once per item as it finishes, with `Enum.AssetFetchStatus.Success` or `Failure`. Meshes and pictures are loaded onto the GPU; a `.surface.hlsl` URN prepares its native rendering pipelines, so its first appearance does not create them during play. Preload surfaces behind a loading screen. A sound is opened and its length read; anything else is found or not. A name with no `://` is a STAMP, named as `Instance.stamp` names it: its file is read and kept, so its first copy reads nothing, and every asset it names is loaded with it (ADR 0155).",
+            .doc = "Loads every item and yields until each has arrived or failed. An item is a content name, such as `asset://models/tree.gltf`, or an instance -- every asset it and its descendants name. `callback` runs once per item as it finishes, with `Enum.AssetFetchStatus.Success` or `Failure`. Meshes and pictures are loaded onto the GPU; a `.surface.hlsl` URN prepares its native rendering pipelines, so its first appearance does not create them during play. Preload surfaces behind a loading screen. A sound is opened and its length read; anything else is found or not. A name with no `://` is a STAMP, named as `Instance.stamp` names it: its file is read and kept, so its first copy reads nothing, and every asset it names is loaded with it (ADR 0155). **What is preloaded is held for the scene it was asked in and the next one**, which is what a loading screen needs; after that it is let go like anything a scene left behind holds, unless a scene still shows it. To hold something for the whole game, `Keep` it.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Keep"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Holds every item, as `PreloadAsync` names them, **until `Release`**: a scene that is left takes with it the meshes and pictures only it showed, and nothing kept is among them. For what a game shows again and again across scenes and must never wait for -- the player's own character, the enemies of every level. It asks for the items to be loaded and does not wait; `PreloadAsync` the same list to wait for them. What is kept stays on the graphics card, so keep what is needed and not everything.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Release"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Stops holding every item `Keep` was given. Nothing is unloaded at once: what no scene shows is let go the next time a scene is left.",
         },
     }};
     ClassDescriptor contentProviderDesc;
@@ -10390,6 +10402,46 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     animationCullingModeDesc.docKey = {};
     animationCullingModeDesc.items = animationCullingModeItems;
     enums.registerEnum(animationCullingModeDesc);
+
+    // --- Retargeting ---
+    static std::array<EnumItemDesc, 2> retargetingItems;
+    retargetingItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Automatic"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("ByName"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor retargetingDesc;
+    retargetingDesc.name = atoms.intern("Retargeting");
+    retargetingDesc.docKey = {};
+    retargetingDesc.items = retargetingItems;
+    enums.registerEnum(retargetingDesc);
+
+    // --- IKControlType ---
+    static std::array<EnumItemDesc, 2> iKControlTypeItems;
+    iKControlTypeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("TwoBone"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("LookAt"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor iKControlTypeDesc;
+    iKControlTypeDesc.name = atoms.intern("IKControlType");
+    iKControlTypeDesc.docKey = {};
+    iKControlTypeDesc.items = iKControlTypeItems;
+    enums.registerEnum(iKControlTypeDesc);
 
     // --- ParticleCollision ---
     static std::array<EnumItemDesc, 4> particleCollisionItems;

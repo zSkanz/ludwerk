@@ -1,0 +1,72 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "CharacterBody",
+  "name": "Hero",
+  "properties": {
+   "Size": [1, 2, 1],
+   "WalkSpeed": 3,
+   "JumpSpeed": 9
+  },
+  "children": [
+   {
+    "class": "AnimationPlayer",
+    "name": "Animator",
+    "properties": { "Graph": "asset://anim/walker.animgraph.json" }
+   },
+   {
+    "class": "MeshPart",
+    "name": "Body",
+    "properties": {
+     "MeshContent": "asset://models/walker.gltf",
+     "Anchored": true,
+     "CanCollide": false,
+     "CanQuery": false
+    },
+    "children": [
+     {
+      "class": "SpringBone",
+      "name": "Cape",
+      "properties": { "RootJoint": "Cape_M0", "Stiffness": 0.5 }
+     },
+     {
+      "class": "IKControl",
+      "name": "Reach",
+      "properties": { "EndJoint": "Arm", "Target": "Hero.Grip", "Weight": 0.75, "Smoothing": 0.25 }
+     },
+     {
+      "class": "FootPlacement",
+      "name": "Feet",
+      "properties": { "LeftFoot": "Cape_M1", "RightFoot": "Cape_M2", "Hips": "Body", "StepHeight": 0.375 }
+     }
+    ]
+   },
+   {
+    "class": "Attachment",
+    "name": "Grip",
+    "properties": { "CFrame": [0.5, 0.5, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1] }
+   },
+   {
+    "class": "Attachment",
+    "name": "Tip",
+    "properties": { "CFrame": [0.5, -0.5, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1] }
+   },
+   {
+    "class": "PointLight",
+    "name": "Lamp",
+    "properties": { "Range": 12, "Brightness": 3 }
+   },
+   {
+    "class": "Sound",
+    "name": "Hum",
+    "properties": { "Looped": true, "Volume": 0.25 }
+   },
+   {
+    "class": "Trail",
+    "name": "Streak",
+    "properties": { "Attachment0": "Hero.Grip", "Attachment1": "Hero.Tip", "Lifetime": 1.5 }
+   }
+  ]
+ }
+}

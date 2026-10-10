@@ -219,9 +219,52 @@
           "Name": "CullingMode",
           "Type": "Enum.AnimationCullingMode",
           "Default": "Enum.AnimationCullingMode.Automatic"
+        },
+        {
+          "Name": "Graph",
+          "Type": "Content"
+        },
+        {
+          "Name": "Retargeting",
+          "Type": "Enum.Retargeting",
+          "Default": "Enum.Retargeting.Automatic"
         }
       ],
       "Methods": [
+        {
+          "Name": "ClearParameter",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetParameter",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["(number | boolean)?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetState",
+          "Parameters": [
+            {
+              "Name": "layer",
+              "Type": "string?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["string"],
+          "ThreadSafety": "Unsafe"
+        },
         {
           "Name": "LoadAnimation",
           "Parameters": [
@@ -232,9 +275,55 @@
           ],
           "Returns": ["AnimationTrack"],
           "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetParameter",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "value",
+              "Type": "number | boolean"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
         }
       ],
-      "Events": []
+      "Events": [
+        {
+          "Name": "EventReached",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "layer",
+              "Type": "string"
+            }
+          ]
+        },
+        {
+          "Name": "StateChanged",
+          "Parameters": [
+            {
+              "Name": "layer",
+              "Type": "string"
+            },
+            {
+              "Name": "from",
+              "Type": "string"
+            },
+            {
+              "Name": "to",
+              "Type": "string"
+            }
+          ]
+        }
+      ]
     },
     {
       "Name": "Atmosphere",
@@ -1477,6 +1566,17 @@
       ],
       "Methods": [
         {
+          "Name": "Keep",
+          "Parameters": [
+            {
+              "Name": "items",
+              "Type": "{ string | Instance }"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "PreloadAsync",
           "Parameters": [
             {
@@ -1491,6 +1591,17 @@
           ],
           "Returns": [],
           "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Release",
+          "Parameters": [
+            {
+              "Name": "items",
+              "Type": "{ string | Instance }"
+            }
+          ],
+          "Returns": [],
           "ThreadSafety": "Unsafe"
         }
       ],
@@ -2178,6 +2289,52 @@
       "Events": []
     },
     {
+      "Name": "FootPlacement",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "AlignToSlope",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "FootHeight",
+          "Type": "number",
+          "Default": "0.1"
+        },
+        {
+          "Name": "Hips",
+          "Type": "string"
+        },
+        {
+          "Name": "LeftFoot",
+          "Type": "string"
+        },
+        {
+          "Name": "RightFoot",
+          "Type": "string"
+        },
+        {
+          "Name": "StepHeight",
+          "Type": "number",
+          "Default": "0.4"
+        },
+        {
+          "Name": "Weight",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "Frame",
       "Extends": "UIObject",
       "Tags": [],
@@ -2845,6 +3002,65 @@
           "Parameters": []
         }
       ]
+    },
+    {
+      "Name": "IKControl",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "AlignRotation",
+          "Type": "boolean"
+        },
+        {
+          "Name": "ChainLength",
+          "Type": "number",
+          "Default": "2"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "EndJoint",
+          "Type": "string"
+        },
+        {
+          "Name": "MaxAngle",
+          "Type": "number",
+          "Default": "70"
+        },
+        {
+          "Name": "Pole",
+          "Type": "(BasePart | Attachment)?"
+        },
+        {
+          "Name": "Smoothing",
+          "Type": "number",
+          "Default": "0.1"
+        },
+        {
+          "Name": "Target",
+          "Type": "(BasePart | Attachment)?"
+        },
+        {
+          "Name": "TargetOffset",
+          "Type": "CFrame"
+        },
+        {
+          "Name": "Type",
+          "Type": "Enum.IKControlType",
+          "Default": "Enum.IKControlType.TwoBone"
+        },
+        {
+          "Name": "Weight",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
     },
     {
       "Name": "IdentityService",
@@ -13285,6 +13501,19 @@
       ]
     },
     {
+      "Name": "IKControlType",
+      "Items": [
+        {
+          "Name": "LookAt",
+          "Value": 1
+        },
+        {
+          "Name": "TwoBone",
+          "Value": 0
+        }
+      ]
+    },
+    {
       "Name": "InputActionType",
       "Items": [
         {
@@ -14336,6 +14565,19 @@
         {
           "Name": "Last",
           "Value": 2000
+        }
+      ]
+    },
+    {
+      "Name": "Retargeting",
+      "Items": [
+        {
+          "Name": "Automatic",
+          "Value": 0
+        },
+        {
+          "Name": "ByName",
+          "Value": 1
         }
       ]
     },

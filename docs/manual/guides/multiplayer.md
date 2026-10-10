@@ -440,6 +440,99 @@ the client side, or said with a property that is never sent, like
 `--net-log-client-writes` to be told, once a script and property, each such
 write on a machine that is hosting.
 
+## What a spawned thing carries
+
+A character, a torch, a chest: something a server-side script makes -- with
+`Instance.stamp`, as a `Clone` of a template in `ReplicatedStorage`, or with
+`Instance.new` -- reaches every other machine **with what is under it that
+travels, and without what does not**. The way it was made does not matter, and
+neither does when a player joined: a late joiner is sent each thing as it
+stands.
+
+For everything that travels the rule is one: **the instance and the properties
+authored on it are sent when it is made and when one of them changes. Nothing
+is sent a tick, and whatever the class simulates is each machine's own** -- a
+cape's swing, a trail's ribbon, the particles in the air, where a sound has got
+to.
+
+| Under the thing | On other machines | What of it travels |
+|---|---|---|
+| `Part`, `MeshPart` | Yes | Where it is, its size, shape, mesh and material; how it collides and with what; how it grips, bounces and weighs, and how soon it stops (`Friction`, `Restitution`, `Density`, the two dampings, `Buoyant`); what a ray and a touch are told (`CanQuery`, `CanTouch`, `ContactDetails`); and its `PivotOffset`. |
+| `Model` | Yes | Its `Scale`, its `PrimaryPart` -- that machine's copy of the part -- and its `PivotOffset`. Not `StreamingMode`, which nothing reads while a game runs. |
+| `Folder` | Yes | The instance. |
+| `Attachment` | Yes | Its place on its part. |
+| `Bone` | Yes | Its place, the joint it names and its `Transform`. Where it lands in the world is worked out on each machine, from the pose drawn there. |
+| A joint, a weld, a mover | Yes | What was authored ([network ownership](#handing-a-part-over-network-ownership)). |
+| `PointLight`, `SpotLight` | Yes | Every property. |
+| `ParticleEmitter` | Yes | Every property -- its picture and its three sequences among them -- and each `Emit`. The particles are each machine's own. |
+| `Decal` | Yes | Every property. |
+| `Highlight` | Yes | Every property. Its `Adornee` arrives as that machine's copy of what it names. |
+| `Beam`, `Trail` | Yes | Every property, the sequences and the two attachments among them, and a trail's `Clear`. A trail's pieces are laid on each machine. |
+| `SpringBone`, `SpringCollider` | Yes | Every property. The swing is each machine's own, at its own frame rate. |
+| `Sound` | Yes | `Content`, `Playing`, `Looped`, `Volume`, `PlaybackSpeed` and the two roll-off distances. Never `TimePosition`, and not its `Group`. |
+| `ClickDetector`, `RemoteEvent`, `UnreliableRemoteEvent`, `RemoteFunction` | Yes | A detector's properties; a remote is the instance itself. |
+| `AnimationPlayer` | Yes | Its `Graph` and its `Retargeting`, and nothing of what it is playing: no clip, time, weight or state, and no parameter a script set. Each machine steps its own graph, from the body's motion and the character's attributes -- which do arrive -- so every machine shows the same walk without a byte of it being sent. A track a script plays is that machine's own. |
+| `IKControl`, `FootPlacement` | Yes | Every property. The bending is each machine's own, worked out from the pose it drew. |
+| `Script`, `ModuleScript` | Its own copy | Code is never sent. Each machine puts its own copy of a client or shared script under a thing that came from the scene or from a stamp; a script a server script made any other way is the server's alone. |
+| `BillboardGui`, `SurfaceGui`, and the interface under them | **No** | Make it in a client script: see below. |
+| `ReverbSoundEffect` and the other sound effects, `AudioGroup` | **No** | A sound arrives without them, and plays through that machine's own groups. A client script adds an effect where one is wanted. |
+| `CameraTexture`, `SubWorld` | **No** | Each machine sets up what it draws ([Views](manual:rendering/views)). |
+| `NavigationAgent`, `Ragdoll` | No, and nothing is missing | An agent walks its part on the server, and the part is what arrives; a ragdoll's limbs are parts and joints, which arrive. |
+| `Camera`, `ScreenGui`, input actions | No, by nature | A view, a screen and a player's keys are that machine's. |
+
+- **A sound is played by each machine, from its own copy.** A machine that
+  sees `Playing` become true starts the sound at its beginning; one that sees
+  it become false stops it. So a torch's crackle or a boss's music, set
+  `Playing` on the server, is heard everywhere -- by a late joiner from its
+  start, not from where the others have got to. Two things follow from
+  "when a property changes":
+  - **A one-shot may be missed.** A footstep that starts and ends between two
+    of the server's sends was never seen to play, and a `Play` on a sound
+    that is already playing changes nothing another machine can see. For a
+    sound that must be heard every time -- a shot, a hit, a step -- tell the
+    clients with a `RemoteEvent` (or an `UnreliableRemoteEvent`, when one lost
+    does not matter) and play it in a client script.
+  - **`Ended` fires on each machine** when its own copy ends.
+- **What does not arrive is made where it is seen.** A name over another
+  player's head is a client script's, built from what does arrive -- the
+  character and the player's name:
+
+  ```luau
+  --!strict
+  -- src/client/: a tag over a character, on this machine alone.
+  local function tag(character: Instance, name: string)
+      local board = Instance.new("BillboardGui")
+      board.Size = UDim2.new(0, 180, 0, 54)
+      board.WorldOffset = vector.create(0, 2.2, 0)
+      local label = Instance.new("TextLabel")
+      label.Size = UDim2.new(1, 0, 1, 0)
+      label.Text = name
+      label.Parent = board
+      board.Parent = character
+  end
+  ```
+
+  Call it for each player's `Character` as it arrives
+  ([UI in the world](manual:ui/world-space) has the rest of a tag). The same
+  goes for anything else in the table's **No** rows.
+
+- **A dev run says what will be missing.** Where a match is hosted from
+  `ludwerk dev` or the editor, the server's log says once for each class:
+  *"A BillboardGui under an instance the server sends is on no other machine:
+  the class does not replicate. Make it in a client script, on each machine
+  that should have it."* -- the first time such an instance is found under
+  something that travels. It is not said of what is each machine's own by
+  nature (a script, a camera, a screen, an input action) or of what a replica
+  loses nothing by (`NavigationAgent`, `Ragdoll`), and never in a player's
+  game.
+- **Under a thing that does not travel, nothing travels**: a light under a
+  `BillboardGui` goes nowhere, because there is nothing on the other machine to
+  put it under.
+- **A `PivotOffset` changed on its own may take a quarter of a second to
+  arrive.** Every part has one and almost none ever moves, so the server does
+  not look at each every tick; one that moves with anything else of its part
+  goes at once.
+
 ## Players
 
 `NetworkService:GetPlayers()` lists everyone taking part, and `PlayerAdded` and
@@ -964,7 +1057,6 @@ trust, or send it to your own backend over `https://` with `net.request`
 
 ## What is not here
 
-- unreliable messages;
 - lag compensation for hits.
 
 `examples/15-multiplayer` is the whole of it in one file: racers driven by

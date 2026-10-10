@@ -20,12 +20,13 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 43;
+inline constexpr u32 ProtocolVersion = 44;
 
-// How a field's bytes are laid down. Every one is fixed-width and
-// little-endian, with no variable-length forms and no nesting -- a wire format
-// whose parser can recurse has a stack-depth question in it, and that question
-// is always answered by somebody hostile rather than by a test.
+// How a field's bytes are laid down. Every one is little-endian and fixed-width
+// with no nesting -- a wire format whose parser can recurse has a stack-depth
+// question in it, and that question is always answered by somebody hostile
+// rather than by a test -- but the two sequences (protocol 44), which say how
+// many keys they hold and never hold more than twenty.
 enum class Encoding : u8
 {
     Bool = 0,
@@ -43,11 +44,14 @@ enum class Encoding : u8
     InstanceRef = 12,
     MaterialOverrides = 13,
     MaterialValues = 14,
+    ColorSequence = 15,
+    NumberSequence = 16,
 };
 
 // Each encoding's size on the wire, as the published protocol states it (ADR
-// 0100). A test holds `wireBytes` to it, so the two cannot disagree.
-inline constexpr u8 EncodingBytes[] = {
+// 0100) -- the most it can be, for the two sequences. A test holds `wireBytes`
+// to it, so the two cannot disagree.
+inline constexpr u16 EncodingBytes[] = {
     1, // Bool
     1, // U8
     2, // U16
@@ -63,6 +67,8 @@ inline constexpr u8 EncodingBytes[] = {
     4, // InstanceRef
     48, // MaterialOverrides
     52, // MaterialValues
+    321, // ColorSequence
+    241, // NumberSequence
 };
 
 // **`Component` is the case that matters.** The most-replicated fact in any
@@ -131,6 +137,16 @@ inline constexpr FieldDesc BasePartFields[] = {
     {"CastShadow", 17, Encoding::Bool, Source::Component, "parts"},
     {"ReceivesDecals", 19, Encoding::Bool, Source::Component, "parts"},
     {"CollisionGroup", 18, Encoding::NameAtom, Source::Component, "rigidBodies"},
+    {"CanTouch", 20, Encoding::Bool, Source::Component, "rigidBodies"},
+    {"CanQuery", 21, Encoding::Bool, Source::Component, "rigidBodies"},
+    {"Friction", 22, Encoding::F32, Source::Component, "rigidBodies"},
+    {"Restitution", 23, Encoding::F32, Source::Component, "rigidBodies"},
+    {"Density", 24, Encoding::F32, Source::Component, "rigidBodies"},
+    {"LinearDamping", 25, Encoding::F32, Source::Component, "rigidBodies"},
+    {"AngularDamping", 26, Encoding::F32, Source::Component, "rigidBodies"},
+    {"Buoyant", 27, Encoding::Bool, Source::Component, "rigidBodies"},
+    {"ContactDetails", 28, Encoding::Bool, Source::Component, "rigidBodies"},
+    {"PivotOffset", 29, Encoding::CFrameD, Source::Component, "pvInstances"},
 };
 
 inline constexpr FieldDesc PartFields[] = {
@@ -160,6 +176,8 @@ inline constexpr FieldDesc CharacterBodyFields[] = {
 
 inline constexpr FieldDesc ModelFields[] = {
     {"Scale", 1, Encoding::F32, Source::Component, "models"},
+    {"PrimaryPart", 2, Encoding::InstanceRef, Source::Component, "models"},
+    {"PivotOffset", 3, Encoding::CFrameD, Source::Component, "pvInstances"},
 };
 
 inline constexpr FieldDesc LightingFields[] = {
@@ -178,6 +196,7 @@ inline constexpr FieldDesc LightingFields[] = {
     {"AutoExposure", 13, Encoding::Bool, Source::Component, "lighting"},
     {"ExposureMin", 14, Encoding::F32, Source::Component, "lighting"},
     {"ExposureMax", 15, Encoding::F32, Source::Component, "lighting"},
+    {"OutdoorAmbient", 16, Encoding::Color3, Source::Component, "lighting"},
 };
 
 inline constexpr FieldDesc DecalFields[] = {
@@ -186,6 +205,8 @@ inline constexpr FieldDesc DecalFields[] = {
     {"Texture", 3, Encoding::NameAtom, Source::Component, "decals"},
     {"Color", 4, Encoding::Color3, Source::Component, "decals"},
     {"Transparency", 5, Encoding::F32, Source::Component, "decals"},
+    {"BlendMode", 6, Encoding::I32, Source::Component, "decals"},
+    {"Emissive", 7, Encoding::F32, Source::Component, "decals"},
 };
 
 inline constexpr FieldDesc ParticleEmitterFields[] = {
@@ -207,6 +228,24 @@ inline constexpr FieldDesc ParticleEmitterFields[] = {
     {"Shape", 16, Encoding::I32, Source::Component, "particleEmitters"},
     {"Emitted", 17, Encoding::U32, Source::Component, "particleEmitters"},
     {"WindAffectsDrift", 18, Encoding::Bool, Source::Component, "particleEmitters"},
+    {"Texture", 19, Encoding::NameAtom, Source::Component, "particleEmitters"},
+    {"FlipbookColumns", 20, Encoding::I32, Source::Component, "particleEmitters"},
+    {"FlipbookRows", 21, Encoding::I32, Source::Component, "particleEmitters"},
+    {"FlipbookFramerate", 22, Encoding::F32, Source::Component, "particleEmitters"},
+    {"FlipbookMode", 23, Encoding::I32, Source::Component, "particleEmitters"},
+    {"Rotation", 24, Encoding::F32, Source::Component, "particleEmitters"},
+    {"RotationSpread", 25, Encoding::F32, Source::Component, "particleEmitters"},
+    {"RotationSpeed", 26, Encoding::F32, Source::Component, "particleEmitters"},
+    {"RotationSpeedSpread", 27, Encoding::F32, Source::Component, "particleEmitters"},
+    {"ColorOverLife", 28, Encoding::ColorSequence, Source::Component, "particleEmitters"},
+    {"SizeOverLife", 29, Encoding::NumberSequence, Source::Component, "particleEmitters"},
+    {"TransparencyOverLife", 30, Encoding::NumberSequence, Source::Component, "particleEmitters"},
+    {"Collision", 31, Encoding::I32, Source::Component, "particleEmitters"},
+    {"CollisionResponse", 32, Encoding::I32, Source::Component, "particleEmitters"},
+    {"Bounce", 33, Encoding::F32, Source::Component, "particleEmitters"},
+    {"Friction", 34, Encoding::F32, Source::Component, "particleEmitters"},
+    {"CollisionRadius", 35, Encoding::F32, Source::Component, "particleEmitters"},
+    {"Simulation", 36, Encoding::I32, Source::Component, "particleEmitters"},
 };
 
 inline constexpr FieldDesc Part2DFields[] = {
@@ -229,6 +268,12 @@ inline constexpr FieldDesc Part2DFields[] = {
     {"ImageRectSize", 17, Encoding::Vector3, Source::Component, "parts2d"},
     {"Filter", 18, Encoding::I32, Source::Component, "parts2d"},
     {"ExactColor", 19, Encoding::Bool, Source::Component, "parts2d"},
+    {"Density", 20, Encoding::F32, Source::Component, "parts2d"},
+    {"Friction", 21, Encoding::F32, Source::Component, "parts2d"},
+    {"Elasticity", 22, Encoding::F32, Source::Component, "parts2d"},
+    {"FixedRotation", 23, Encoding::Bool, Source::Component, "parts2d"},
+    {"GravityScale", 24, Encoding::F32, Source::Component, "parts2d"},
+    {"CollisionGroup", 25, Encoding::NameAtom, Source::Component, "parts2d"},
 };
 
 inline constexpr FieldDesc Tilemap2DFields[] = {
@@ -242,6 +287,7 @@ inline constexpr FieldDesc Tilemap2DFields[] = {
     {"Collides", 8, Encoding::Bool, Source::Component, "tilemaps2d"},
     {"Friction", 9, Encoding::F32, Source::Component, "tilemaps2d"},
     {"ExactColor", 10, Encoding::Bool, Source::Component, "tilemaps2d"},
+    {"CollisionGroup", 11, Encoding::NameAtom, Source::Component, "tilemaps2d"},
 };
 
 inline constexpr FieldDesc ClickDetectorFields[] = {
@@ -270,6 +316,9 @@ inline constexpr FieldDesc WaterWaveFields[] = {
 
 inline constexpr FieldDesc WaterPointFields[] = {
     {"Position", 1, Encoding::Vector3, Source::Component, "waterPoints"},
+    {"Width", 2, Encoding::F32, Source::Component, "waterPoints"},
+    {"Depth", 3, Encoding::F32, Source::Component, "waterPoints"},
+    {"Sharp", 4, Encoding::Bool, Source::Component, "waterPoints"},
 };
 
 inline constexpr FieldDesc BloomEffectFields[] = {
@@ -507,6 +556,140 @@ inline constexpr FieldDesc NoCollisionConstraintFields[] = {
     {"Enabled", 3, Encoding::Bool, Source::Component, "noCollisions"},
 };
 
+inline constexpr FieldDesc PointLightFields[] = {
+    {"CFrame", 1, Encoding::CFrameD, Source::Component, "pointLights"},
+    {"Color", 2, Encoding::Color3, Source::Component, "pointLights"},
+    {"Brightness", 3, Encoding::F32, Source::Component, "pointLights"},
+    {"Range", 4, Encoding::F32, Source::Component, "pointLights"},
+    {"Enabled", 5, Encoding::Bool, Source::Component, "pointLights"},
+    {"Shadows", 6, Encoding::Bool, Source::Component, "pointLights"},
+};
+
+inline constexpr FieldDesc SpotLightFields[] = {
+    {"CFrame", 1, Encoding::CFrameD, Source::Component, "spotLights"},
+    {"Color", 2, Encoding::Color3, Source::Component, "spotLights"},
+    {"Brightness", 3, Encoding::F32, Source::Component, "spotLights"},
+    {"Range", 4, Encoding::F32, Source::Component, "spotLights"},
+    {"Angle", 5, Encoding::F32, Source::Component, "spotLights"},
+    {"Enabled", 6, Encoding::Bool, Source::Component, "spotLights"},
+    {"Shadows", 7, Encoding::Bool, Source::Component, "spotLights"},
+};
+
+inline constexpr FieldDesc SpringBoneFields[] = {
+    {"Enabled", 1, Encoding::Bool, Source::Component, "springBones"},
+    {"RootJoint", 2, Encoding::NameAtom, Source::Component, "springBones"},
+    {"JointPattern", 3, Encoding::NameAtom, Source::Component, "springBones"},
+    {"Stiffness", 4, Encoding::F32, Source::Component, "springBones"},
+    {"Damping", 5, Encoding::F32, Source::Component, "springBones"},
+    {"GravityScale", 6, Encoding::F32, Source::Component, "springBones"},
+    {"Inertia", 7, Encoding::F32, Source::Component, "springBones"},
+    {"LimitAngle", 8, Encoding::F32, Source::Component, "springBones"},
+    {"Radius", 9, Encoding::F32, Source::Component, "springBones"},
+    {"WindInfluence", 10, Encoding::F32, Source::Component, "springBones"},
+};
+
+inline constexpr FieldDesc SpringColliderFields[] = {
+    {"JointName", 1, Encoding::NameAtom, Source::Component, "springColliders"},
+    {"Radius", 2, Encoding::F32, Source::Component, "springColliders"},
+    {"Length", 3, Encoding::F32, Source::Component, "springColliders"},
+    {"Offset", 4, Encoding::Vector3, Source::Component, "springColliders"},
+};
+
+inline constexpr FieldDesc BoneFields[] = {
+    {"JointName", 1, Encoding::NameAtom, Source::Component, "attachments"},
+    {"Transform", 2, Encoding::CFrameD, Source::Component, "attachments"},
+};
+
+inline constexpr FieldDesc HighlightFields[] = {
+    {"Adornee", 1, Encoding::InstanceRef, Source::Component, "highlights"},
+    {"FillColor", 2, Encoding::Color3, Source::Component, "highlights"},
+    {"FillTransparency", 3, Encoding::F32, Source::Component, "highlights"},
+    {"OutlineColor", 4, Encoding::Color3, Source::Component, "highlights"},
+    {"OutlineTransparency", 5, Encoding::F32, Source::Component, "highlights"},
+    {"DepthMode", 6, Encoding::I32, Source::Component, "highlights"},
+    {"Enabled", 7, Encoding::Bool, Source::Component, "highlights"},
+};
+
+inline constexpr FieldDesc BeamFields[] = {
+    {"Attachment0", 1, Encoding::InstanceRef, Source::Component, "beams"},
+    {"Attachment1", 2, Encoding::InstanceRef, Source::Component, "beams"},
+    {"Color", 3, Encoding::ColorSequence, Source::Component, "beams"},
+    {"Transparency", 4, Encoding::NumberSequence, Source::Component, "beams"},
+    {"Width0", 5, Encoding::F32, Source::Component, "beams"},
+    {"Width1", 6, Encoding::F32, Source::Component, "beams"},
+    {"CurveSize0", 7, Encoding::F32, Source::Component, "beams"},
+    {"CurveSize1", 8, Encoding::F32, Source::Component, "beams"},
+    {"Segments", 9, Encoding::I32, Source::Component, "beams"},
+    {"Texture", 10, Encoding::NameAtom, Source::Component, "beams"},
+    {"TextureLength", 11, Encoding::F32, Source::Component, "beams"},
+    {"TextureMode", 12, Encoding::I32, Source::Component, "beams"},
+    {"TextureSpeed", 13, Encoding::F32, Source::Component, "beams"},
+    {"FaceCamera", 14, Encoding::Bool, Source::Component, "beams"},
+    {"LightEmission", 15, Encoding::F32, Source::Component, "beams"},
+    {"LightInfluence", 16, Encoding::F32, Source::Component, "beams"},
+    {"ZOffset", 17, Encoding::F32, Source::Component, "beams"},
+    {"Enabled", 18, Encoding::Bool, Source::Component, "beams"},
+};
+
+inline constexpr FieldDesc TrailFields[] = {
+    {"Attachment0", 1, Encoding::InstanceRef, Source::Component, "trails"},
+    {"Attachment1", 2, Encoding::InstanceRef, Source::Component, "trails"},
+    {"Lifetime", 3, Encoding::F32, Source::Component, "trails"},
+    {"MinLength", 4, Encoding::F32, Source::Component, "trails"},
+    {"MaxLength", 5, Encoding::F32, Source::Component, "trails"},
+    {"Color", 6, Encoding::ColorSequence, Source::Component, "trails"},
+    {"Transparency", 7, Encoding::NumberSequence, Source::Component, "trails"},
+    {"WidthScale", 8, Encoding::NumberSequence, Source::Component, "trails"},
+    {"Texture", 9, Encoding::NameAtom, Source::Component, "trails"},
+    {"TextureLength", 10, Encoding::F32, Source::Component, "trails"},
+    {"TextureMode", 11, Encoding::I32, Source::Component, "trails"},
+    {"FaceCamera", 12, Encoding::Bool, Source::Component, "trails"},
+    {"LightEmission", 13, Encoding::F32, Source::Component, "trails"},
+    {"LightInfluence", 14, Encoding::F32, Source::Component, "trails"},
+    {"Enabled", 15, Encoding::Bool, Source::Component, "trails"},
+    {"Cleared", 16, Encoding::U32, Source::Component, "trails"},
+};
+
+inline constexpr FieldDesc SoundFields[] = {
+    {"Content", 1, Encoding::NameAtom, Source::Component, "sounds"},
+    {"Playing", 2, Encoding::Bool, Source::Component, "sounds"},
+    {"Looped", 3, Encoding::Bool, Source::Component, "sounds"},
+    {"Volume", 4, Encoding::F32, Source::Component, "sounds"},
+    {"PlaybackSpeed", 5, Encoding::F32, Source::Component, "sounds"},
+    {"RollOffMinDistance", 6, Encoding::F32, Source::Component, "sounds"},
+    {"RollOffMaxDistance", 7, Encoding::F32, Source::Component, "sounds"},
+};
+
+inline constexpr FieldDesc AnimationPlayerFields[] = {
+    {"Graph", 1, Encoding::NameAtom, Source::Component, "animationPlayers"},
+    {"Retargeting", 2, Encoding::I32, Source::Component, "animationPlayers"},
+};
+
+inline constexpr FieldDesc IKControlFields[] = {
+    {"Type", 1, Encoding::I32, Source::Component, "ikControls"},
+    {"EndJoint", 2, Encoding::NameAtom, Source::Component, "ikControls"},
+    {"Target", 3, Encoding::InstanceRef, Source::Component, "ikControls"},
+    {"TargetOffset", 4, Encoding::CFrameD, Source::Component, "ikControls"},
+    {"Pole", 5, Encoding::InstanceRef, Source::Component, "ikControls"},
+    {"AlignRotation", 6, Encoding::Bool, Source::Component, "ikControls"},
+    {"ChainLength", 7, Encoding::I32, Source::Component, "ikControls"},
+    {"MaxAngle", 8, Encoding::F32, Source::Component, "ikControls"},
+    {"Weight", 9, Encoding::F32, Source::Component, "ikControls"},
+    {"Enabled", 10, Encoding::Bool, Source::Component, "ikControls"},
+    {"Smoothing", 11, Encoding::F32, Source::Component, "ikControls"},
+};
+
+inline constexpr FieldDesc FootPlacementFields[] = {
+    {"LeftFoot", 1, Encoding::NameAtom, Source::Component, "footPlacements"},
+    {"RightFoot", 2, Encoding::NameAtom, Source::Component, "footPlacements"},
+    {"Hips", 3, Encoding::NameAtom, Source::Component, "footPlacements"},
+    {"FootHeight", 4, Encoding::F32, Source::Component, "footPlacements"},
+    {"StepHeight", 5, Encoding::F32, Source::Component, "footPlacements"},
+    {"AlignToSlope", 6, Encoding::Bool, Source::Component, "footPlacements"},
+    {"Weight", 7, Encoding::F32, Source::Component, "footPlacements"},
+    {"Enabled", 8, Encoding::Bool, Source::Component, "footPlacements"},
+};
+
 // Every replicated class, in schema order.
 inline constexpr ClassDesc Classes[] = {
     {"BasePart", BasePartFields, -1, false, false},
@@ -555,6 +738,18 @@ inline constexpr ClassDesc Classes[] = {
     {"Weld", WeldFields, -1, false, false},
     {"WeldConstraint", WeldConstraintFields, -1, false, false},
     {"NoCollisionConstraint", NoCollisionConstraintFields, -1, false, false},
+    {"PointLight", PointLightFields, -1, false, false},
+    {"SpotLight", SpotLightFields, -1, false, false},
+    {"SpringBone", SpringBoneFields, -1, false, false},
+    {"SpringCollider", SpringColliderFields, -1, false, false},
+    {"Bone", BoneFields, 28, false, false},
+    {"Highlight", HighlightFields, -1, false, false},
+    {"Beam", BeamFields, -1, false, false},
+    {"Trail", TrailFields, -1, false, false},
+    {"Sound", SoundFields, -1, false, false},
+    {"AnimationPlayer", AnimationPlayerFields, -1, false, false},
+    {"IKControl", IKControlFields, -1, false, false},
+    {"FootPlacement", FootPlacementFields, -1, false, false},
 };
 
 // Every class kept off the wire by name. **An exclusion holds below a
@@ -563,22 +758,15 @@ inline constexpr ClassDesc Classes[] = {
 inline constexpr std::string_view ExcludedClasses[] = {
     "FoliageLayer",
     "FoliageMesh",
-    "Highlight",
-    "Beam",
-    "Trail",
     "Terrain",
     "Player",
     "DataModel",
-    "Bone",
     "Ragdoll",
-    "SpringBone",
-    "SpringCollider",
     "Constraint2D",
     "SpriteAnimator",
     "Camera",
     "Script",
     "ModuleScript",
-    "Sound",
     "AudioGroup",
     "ReverbSoundEffect",
     "EchoSoundEffect",
@@ -589,8 +777,6 @@ inline constexpr std::string_view ExcludedClasses[] = {
     "CompressorSoundEffect",
     "ChorusSoundEffect",
     "PitchShiftSoundEffect",
-    "PointLight",
-    "SpotLight",
     "PostEffect",
     "Material",
     "InputAction",
@@ -626,7 +812,55 @@ inline constexpr std::string_view ExcludedClasses[] = {
     "UITextSizeConstraint",
     "UIDragDetector",
     "CanvasGroup",
-    "AnimationPlayer",
+};
+
+// Of those, the ones a replica misses nothing by not being sent -- each
+// machine's own by nature, or reaching it some other way (`Quiet` in the
+// schema). A dev run warns about an instance of any other excluded class under
+// something the authority sends, and not about these.
+inline constexpr std::string_view QuietClasses[] = {
+    "FoliageLayer",
+    "FoliageMesh",
+    "Terrain",
+    "Player",
+    "DataModel",
+    "Ragdoll",
+    "Constraint2D",
+    "SpriteAnimator",
+    "Camera",
+    "Script",
+    "ModuleScript",
+    "PostEffect",
+    "Material",
+    "InputAction",
+    "InputBinding",
+    "InputContext",
+    "ScreenGui",
+    "NavigationArea",
+    "NavigationLink",
+    "NavigationAgent",
+    "Frame",
+    "TextLabel",
+    "TextButton",
+    "TextInput",
+    "ImageLabel",
+    "ImageButton",
+    "ScrollFrame",
+    "UICorner",
+    "UIGradient",
+    "ViewportFrame",
+    "UIStroke",
+    "UIListLayout",
+    "UIPadding",
+    "UIGridLayout",
+    "UIPageLayout",
+    "UIFlexItem",
+    "UIScale",
+    "UIAspectRatioConstraint",
+    "UISizeConstraint",
+    "UITextSizeConstraint",
+    "UIDragDetector",
+    "CanvasGroup",
 };
 
 // ENet's delivery mode per channel, as `net::Delivery` spells it.

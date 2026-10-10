@@ -101,7 +101,8 @@ void SpringBones::update(const scene::World& world, AnimationSystem& animation, 
     ++frame_;
     chainsStepped_ = 0;
     jointsStepped_ = 0;
-    animation.clearPresented();
+    if (!frame.afterLimbs)
+        animation.clearPresented();
     if (!(frame.step > 0.0f) || world.springBones().size() == 0) {
         chains_.clear();
         return;
@@ -205,8 +206,10 @@ void SpringBones::update(const scene::World& world, AnimationSystem& animation, 
             if (!animation.jointLocal(meshPart, static_cast<core::u32>(root), rootModel))
                 return;
             if (const core::i32 above = animation.jointParent(meshPart, static_cast<core::u32>(root)); above >= 0) {
+                // Where the frame has the joint the chain hangs from: a
+                // limb's reach may have moved it (ADR 0198).
                 CFrameD parentModel;
-                if (animation.jointModel(meshPart, static_cast<core::u32>(above), parentModel))
+                if (animation.drawnJointModel(meshPart, static_cast<core::u32>(above), parentModel))
                     rootModel = parentModel * rootModel;
             }
             const CFrameD rootWorld = inWorld(carrier, rootModel);
@@ -221,7 +224,7 @@ void SpringBones::update(const scene::World& world, AnimationSystem& animation, 
                     CFrameD model;
                     const core::i32 joint = animation.findJoint(meshPart, world.atoms().text(collider->jointName));
                     if (joint >= 0)
-                        (void)animation.jointModel(meshPart, static_cast<core::u32>(joint), model);
+                        (void)animation.drawnJointModel(meshPart, static_cast<core::u32>(joint), model);
                     CFrameD lower;
                     lower.position = core::toDVec3(collider->offset);
                     CFrameD upper;
@@ -280,7 +283,7 @@ void SpringBones::update(const scene::World& world, AnimationSystem& animation, 
                                       [](const AnimationSystem::PresentedJoint& a,
                                          const AnimationSystem::PresentedJoint& b) { return a.joint == b.joint; }),
                           mesh.second.end());
-        animation.present(mesh.first, mesh.second);
+        animation.present(mesh.first, mesh.second, true);
     }
 
     // What was not reached this frame is forgotten, so it comes back at rest.

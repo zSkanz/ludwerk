@@ -51,4 +51,17 @@ void registerAnimationTypes(lua_State* L);
 // same drain as everything else that happened on that tick.
 void fireAnimationEnded(lua_State* L, std::span<const scene::TrackId> ended);
 
+// --- Animation graphs (ADR 0197) ------------------------------------------------
+//
+// `AnimationPlayer:SetParameter`, `:GetParameter`, `:ClearParameter` and
+// `:GetState`, bound through the service method table like `LoadAnimation`.
+int animationPlayerSetParameter(lua_State* L);
+int animationPlayerGetParameter(lua_State* L);
+int animationPlayerClearParameter(lua_State* L);
+int animationPlayerGetState(lua_State* L);
+
+// What the graphs did in the tick just sampled, as `StateChanged` and
+// `EventReached` on each player: deferred, in the order the host hands them.
+void fireGraphSignals(lua_State* L, std::span<const scene::GraphSignal> signals);
+
 } // namespace engine::script

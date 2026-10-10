@@ -122,8 +122,11 @@ both inside its limit and outside the body is outside the body.
 ## It is picture, not simulation
 
 Each machine steps its own chains, at its own frame rate, after the pose is
-sampled. They are not replicated and not in a replay, and a server with no
-window does none of it. **Nothing in a game's rules should read where a cape
+sampled. The swing is not replicated and not in a replay, and a server with no
+window does none of it. **In a match the instances are sent, and the swing is
+not**: a `SpringBone` and a `SpringCollider` a server-side script makes are on
+every machine with what was authored on them, so a cape the server gives a
+character swings for every player -- each machine its own swing. **Nothing in a game's rules should read where a cape
 is**: a `Bone` on a cape's joint follows the clip, not the swing.
 
 It looks the same at 30, 60 and 144 frames a second, and it does not fly

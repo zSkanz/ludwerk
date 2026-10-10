@@ -795,6 +795,42 @@ if(ENG_BUILD_TESTS)
     # of the suite beside them on a CI runner's cores is what they would measure.
     set_tests_properties(netcode_acceptance PROPERTIES TIMEOUT 600 LABELS "netcode" RUN_SERIAL TRUE)
 
+    # **What a character carries reaches the other machines** (protocol 44):
+    # a real server and a real joiner. The server spawns a thing from a stamp,
+    # as a `Clone` and with `Instance.new`, each carrying a light of either
+    # kind, a cape's chain and collider, a bone, a highlight, a trail, a beam,
+    # an emitter with sequences of its own and a playing sound; the joiner says
+    # what it was sent of each against what the server holds, then again after
+    # the server has changed one property of each. Every one of the sixty lines
+    # but the emitter's was missing before, and the emitter's differed. The
+    # joiner draws nothing, so this runs where there is no GPU.
+    add_test(NAME netcode_carried
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/carried
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-carried
+            -DPORT=47970
+            -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_carried.cmake)
+    # Alone, as the acceptance gate is: two processes that wait on each other
+    # in real time.
+    set_tests_properties(netcode_carried PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
+
+    # **A character the server animates is animated on a joiner** (ADR 0197,
+    # protocol 44): a real server spawns one from a stamp and walks it, runs
+    # it, makes it jump and sets the one attribute that is its attack; a real
+    # joiner, which makes nothing and plays nothing, says what the animation
+    # graph on ITS machine did. The speeds it read, the jump, the fall, the
+    # landing, the slash and the clips' events are held, and that its graph
+    # did in order what the server's did. Seventeen seconds of real time.
+    add_test(NAME netcode_animated
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/animated
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-animated
+            -DPORT=47980
+            -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_animated.cmake)
+    set_tests_properties(netcode_animated PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
+
     add_test(NAME openworld_soak
         COMMAND ${CMAKE_COMMAND}
             -DHOST=$<TARGET_FILE:engine_host>
@@ -1762,6 +1798,19 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 300)
 
+    # **A scene that is left takes what it alone held with it** (D610): a game
+    # that goes lobby, map, lobby, another map, lobby holds in every lobby the
+    # textures and buffers the first lobby held. See the driver.
+    add_test(NAME scene_release_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/sceneleak
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/scene-release
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_scene_release.cmake)
+    set_tests_properties(scene_release_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
     # **The report's draws by kind add up to its total**, and name the kinds
     # the scene has. See the driver.
     add_test(NAME frame_report_draws_by_kind
@@ -1769,9 +1818,14 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/instancestride
             -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_draw_kinds.cmake)
+    # Two seconds on a GPU, and 66 to 74 on a hosted runner that rasterises
+    # in software -- where the same test beside other neighbours has been
+    # seen to take three times its own time (a boot of 41 s and of 125 s, on
+    # code that had not changed). 120 was a ceiling at 1.6 times the usual,
+    # and it was met on 2026-10-10 by a run with nothing slower in it.
     set_tests_properties(frame_report_draws_by_kind PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
-        TIMEOUT 120)
+        TIMEOUT 300)
 
     # **A part in an instanced run is lit as the same part alone** (D577): the
     # instanced shaders built their normal matrix transposed, and a turned
@@ -1824,7 +1878,7 @@ if(ENG_BUILD_TESTS)
                     21-navigation 22-atmosphere 23-surfaces 24-scenes 25-gradients-and-strokes
                     26-security-cameras 27-mirrors-and-portals 28-arcade 29-meadow
                     30-interactions 31-lake-and-river 32-menus 33-options 34-settings-list
-                    35-cape)
+                    35-cape 37-character)
         add_test(NAME example_boot_${example}
             COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/${example}"
                     --headless --frames=20 --exit --rhi=null)
@@ -1864,6 +1918,19 @@ if(ENG_BUILD_TESTS)
     set_tests_properties(example_navigation_arrives PROPERTIES
         PASS_REGULAR_EXPRESSION "reached goal 1"
         TIMEOUT 120)
+
+    # `examples/37-character`'s walker walks at the speed it is asked for
+    # (D615): a hero's own body and the staff in its hand, which collide with
+    # nothing, were ground under it, and it was carried along by what it
+    # carried. Measured over ten seconds on a copy of the example, with what
+    # its animation graph reads and says. See the driver.
+    add_test(NAME example_character_walks
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/examples/37-character
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/character-walks
+            -P ${CMAKE_SOURCE_DIR}/tests/examples/run_character_walks.cmake)
+    set_tests_properties(example_character_walks PROPERTIES TIMEOUT 300)
 
     add_test(NAME chunk_grid_differential
         COMMAND ${CMAKE_COMMAND}
@@ -2156,7 +2223,7 @@ if(ENG_BUILD_TESTS)
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
         editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived
         decal_blend_gate decal_receives_gate foliage_decal_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d
-        temporal_upscale_gate frame_generation_gate motion_whole_gate morph_landing shape_keys_example texture_quality_gate)
+        temporal_upscale_gate frame_generation_gate motion_whole_gate morph_landing shape_keys_example texture_quality_gate scene_release_gate)
     if(WIN32)
         list(APPEND drawn_tests morph_landing_vulkan)
     endif()

@@ -3299,6 +3299,39 @@ void AuthoritySession::applyIntents(scene::World& world)
     }
 }
 
+namespace {
+
+// Says, once, that instances of `classId` under what the authority sends are on
+// no replica (protocol 44). **Decided as `schemaFor` decides the class is off
+// the wire**: by the first of its own name and its ancestors' the schema
+// excludes -- and said only when that exclusion is not a quiet one. A class the
+// schema excludes by no name at all is a service, and is under nothing sent.
+void warnUncarried(const scene::World& world, scene::ClassId classId)
+{
+    const scene::ClassDescriptor* own = world.classes().find(classId);
+    if (own == nullptr)
+        return;
+    scene::ClassId at = classId;
+    for (int guard = 0; guard < 64 && at != scene::InvalidClass; ++guard) {
+        const scene::ClassDescriptor* descriptor = world.classes().find(at);
+        if (descriptor == nullptr)
+            return;
+        const std::string_view name = world.atoms().text(descriptor->name);
+        if (std::find(std::begin(generated::ExcludedClasses), std::end(generated::ExcludedClasses), name) !=
+            std::end(generated::ExcludedClasses)) {
+            if (std::find(std::begin(generated::QuietClasses), std::end(generated::QuietClasses), name) !=
+                std::end(generated::QuietClasses))
+                return;
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"class", world.atoms().text(own->name)}};
+            core::log(core::LogLevel::Warn, ENG_TR("net.warn.class_not_replicated"), args);
+            return;
+        }
+        at = descriptor->super;
+    }
+}
+
+} // namespace
+
 void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 tick)
 {
     auto state = std::make_shared<WorldState>();
@@ -3327,9 +3360,14 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
         m_schemaOfClass.clear();
     }
     const usize nameField = commonIndex("Name");
-    // How often an instance is read whatever its stamps say, in ticks, each on
-    // a tick of its own.
+    // How often an instance is read whatever its stamps say, in captures, each
+    // on a capture of its own.
     constexpr u64 RereadEvery = 8;
+    // **Counted in captures, not ticks**: a game sends one tick in two, and
+    // by the tick's own number an instance whose id was of the other parity
+    // never had its turn -- what a capture cannot see change was not late by
+    // eight, it never arrived.
+    const u64 turn = m_captures++;
     // A set to read an instance into: one a state the history let go was
     // holding alone, or a new one.
     const auto fieldSet = [this] {
@@ -3380,8 +3418,17 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
             const generated::ClassDesc* desc = m_schemaOfClass[classId];
             // **An instance the schema does not describe takes its subtree with
             // it.** A replica could not parent the children to anything.
-            if (desc == nullptr)
+            if (desc == nullptr) {
+                // **And where a person is developing, it is said** (protocol
+                // 44), once a class: under an instance the authority sends,
+                // this one will be on no replica. Not under a container
+                // itself, where a replica keeps what its own scene put there.
+                if (m_warnUncarried && m_schemaAsked[classId] == 1 && next.parentNet != containerNetId) {
+                    m_schemaAsked[classId] = 2;
+                    warnUncarried(world, classId);
+                }
                 continue;
+            }
             const u64 key = packed(id);
             u32 netId = 0;
             bool known = false;
@@ -3396,16 +3443,39 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
             // from are the same bytes** -- most of a world, every tick: its
             // props, its walls, whatever stands still. Read again when they
             // are not (`sourceDigestOf`), when it was renamed or moved in the
-            // tree, when it names another instance (whose leaving changes it
-            // and no byte of its own), and one tick in `RereadEvery` whatever
-            // the bytes say: what a field is read from that is neither is late
-            // by that much, and no more.
+            // tree, and one capture in `RereadEvery` whatever the bytes say: what
+            // a field is read from that is neither is late by that much, and
+            // no more.
             // Kept, it is the very set the state before holds: nothing is
             // copied, and nothing is read.
+            //
+            // **One that names another instance is kept too** (protocol 44) --
+            // a model names its primary part, and a world's models were read
+            // every tick for it. What it names can come or go with no byte of
+            // its own changing, so the number each name was given by the
+            // capture before is in what is compared: a part that left, or one
+            // that arrived, is a tick late in the model that names it, and
+            // then read.
             SharedFields fields;
             u64 keptHash = 0;
-            const u64 source = referencesOf(schema).empty() ? sourceDigestOf(world, id, *desc) : 0;
-            if (known && before != nullptr && source != 0 && (tick + netId) % RereadEvery != 0) {
+            u64 source = sourceDigestOf(world, id, *desc);
+            if (source != 0) {
+                for (const usize at : referencesOf(schema)) {
+                    const InstanceId target = referenceAt(world, id, *desc, at);
+                    u64 named = 0;
+                    if (target.valid()) {
+                        const u64 targetKey = packed(target);
+                        if (const auto found = std::lower_bound(m_netIds.begin(), m_netIds.end(), targetKey, byKey);
+                            found != m_netIds.end() && found->first == targetKey)
+                            named = found->second;
+                    }
+                    source = (source ^ (named + 0x9E3779B97F4A7C15ull)) * 0xFF51AFD7ED558CCDull;
+                    source ^= source >> 29;
+                }
+                if (source == 0)
+                    source = 1;
+            }
+            if (known && before != nullptr && source != 0 && (turn + netId) % RereadEvery != 0) {
                 const EntityState* held = findEntity(*before, netId);
                 if (held != nullptr && held->schema == schema && held->hash != 0 && held->source == source &&
                     asU32(held->fields[nameField]) == world.name(id).id &&
@@ -3477,6 +3547,11 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
     // captured -- out of the world, or of a class off the wire -- is none at
     // all to a replica.
     for (EntityState& entity : state->entities) {
+        // One kept from the capture before holds the numbers it was given
+        // then, in a set other states share: only what was read this tick
+        // holds instances still to be numbered.
+        if (entity.hash != 0)
+            continue;
         for (const usize at : referencesOf(entity.schema)) {
             const InstanceId target = asInstance(entity.fields[at]);
             u32 named = 0;
@@ -3486,14 +3561,12 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
                     found != seen.end() && found->first == key)
                     named = found->second;
             }
-            // Read this tick, never kept: an instance that names another is.
             setNetId(entity.fields.write()[at], NetId{named});
         }
         // What it comes to, once and for every peer: after the references,
         // which are fields like any other. One kept from the capture before
         // comes to what it came to then.
-        if (entity.hash == 0)
-            entity.hash = hashOf(entity);
+        entity.hash = hashOf(entity);
     }
     m_readWorld = &world;
 
@@ -3918,15 +3991,17 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         if (before != nullptr)
             m_stats.entitiesCompared += 1;
         Record record{&entity, before == nullptr || before->schema != entity.schema, {}, before};
-        for (usize at = 0; at < entity.fields.size(); ++at) {
-            if (record.full || !(before->fields[at] == entity.fields[at]))
+        const generated::ClassDesc& described = generated::Classes[entity.schema];
+        // **The fields, and not the cells past them** (protocol 44): those
+        // are their sequences', compared with them and sent as one value.
+        for (usize at = 0, count = std::min(fieldCount(described), entity.fields.size()); at < count; ++at) {
+            if (record.full || !sameField(described, at, before->fields.view(), entity.fields.view()))
                 record.fields.push_back(at);
         }
         if (record.fields.empty())
             continue;
         // **Every name-shaped field, not `Name` alone**: a decal's image is a
         // content URN, and an atom number means nothing on another machine.
-        const generated::ClassDesc& described = generated::Classes[entity.schema];
         for (const usize at : record.fields) {
             const generated::FieldDesc* field = fieldAt(described, at);
             if (at == nameField || (field != nullptr && field->encoding == generated::Encoding::NameAtom))
@@ -4006,6 +4081,10 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
                 continue;
             }
             snapshot.u16v(wireIdAt(desc, at));
+            if (isSequence(encoding)) {
+                encodeSequenceField(snapshot.bytes, desc, at, record.entity->fields.view());
+                continue;
+            }
             encodeField(snapshot.bytes, encoding, record.entity->fields[at]);
         }
     }
@@ -6113,7 +6192,7 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
         if (const auto held = findEntity(state->entities, id); held != state->entities.end() && held->id.value == id) {
             at = &*held;
             if ((flags & FullRecord) != 0)
-                *at = EntityState{NetId{id}, schema, SharedFields(FieldSet(fieldCount(desc)))};
+                *at = EntityState{NetId{id}, schema, SharedFields(FieldSet(cellCount(desc)))};
             // Changed by this record: what it comes to is taken again below.
             at->hash = 0;
         }
@@ -6125,18 +6204,29 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
                 reader.fail();
                 break;
             }
-            added.push_back(EntityState{NetId{id}, schema, SharedFields(FieldSet(fieldCount(desc)))});
+            added.push_back(EntityState{NetId{id}, schema, SharedFields(FieldSet(cellCount(desc)))});
             at = &added.back();
         }
         for (u16 field = 0; field < fields && reader.ok(); ++field) {
             const u16 named = reader.u16v();
             const bool positionAlone = (named & PositionAlone) != 0;
             const usize index = indexOfWireId(desc, static_cast<u16>(named & ~PositionAlone));
-            if (!reader.ok() || index >= at->fields.size()) {
+            if (!reader.ok() || index >= fieldCount(desc) || at->fields.size() != cellCount(desc)) {
                 reader.fail();
                 break;
             }
             const generated::Encoding encoding = fieldAt(desc, index)->encoding;
+            // **A sequence says its own length** (protocol 44), and is read
+            // into its cells or not at all: a count past what one may hold
+            // refuses the message.
+            if (isSequence(encoding)) {
+                if (positionAlone ||
+                    !decodeSequenceField(reader.bytes(), reader.at(), desc, index, at->fields.write())) {
+                    reader.fail();
+                    break;
+                }
+                continue;
+            }
             if (positionAlone) {
                 // Over the cell the baseline left there, whose rotation
                 // stands: only a diff of a frame can say so.
@@ -6654,8 +6744,18 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
         const bool answered = entity.id.value == m_owned && m_owned != 0 && m_ackedIntent != m_reconciledAck;
         bool sampled2d = false;
 
-        for (usize at = 0; at < entity.fields.size(); ++at) {
+        // The fields; the cells past them are their sequences', written with them.
+        for (usize at = 0, count = std::min(fieldCount(desc), entity.fields.size()); at < count; ++at) {
             const FieldValue& value = entity.fields[at];
+            // **A sequence is all its cells** (protocol 44): written whole
+            // when any of them is other than what was last written. One that
+            // is no sequence -- a peer is not trusted to send one -- is not
+            // written, and what the instance had stands.
+            if (const generated::FieldDesc* keys = fieldAt(desc, at); keys != nullptr && isSequence(keys->encoding)) {
+                if (written == m_written.end() || !sameField(desc, at, written->second, entity.fields.view()))
+                    (void)applySequence(world, local->second, desc, at, entity.fields.view());
+                continue;
+            }
             if (written != m_written.end() && at < written->second.size() && written->second[at] == value) {
                 const generated::FieldDesc* same = answered ? fieldAt(desc, at) : nullptr;
                 if (same == nullptr || same->name != "CFrame" || same->pool != "parts")

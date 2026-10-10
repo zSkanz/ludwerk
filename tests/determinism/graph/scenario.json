@@ -1,0 +1,7 @@
+{
+  "name": "graph",
+  "script": ".",
+  "seed": 20261010,
+  "ticks": 900,
+  "checkpointEvery": 60
+}

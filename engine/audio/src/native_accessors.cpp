@@ -85,6 +85,11 @@ bool setSoundContent(scene::World& world, core::InstanceId id, const Value& valu
     if (text == nullptr || self == nullptr)
         return false;
     self->content = *text;
+    // **Interned, though the component keeps the text** (protocol 44): a
+    // sound's file travels as a name does, and a match's authority reads the
+    // world without growing its names -- so the name is made here, where the
+    // text arrives, as a picture's is by the property that takes it.
+    (void)world.atoms().intern(*text);
     // A new sound is a new thing to load, so `Loaded` fires again. It costs
     // nothing today -- there is no file -- and it is the behaviour a caller will
     // expect the moment there is one.

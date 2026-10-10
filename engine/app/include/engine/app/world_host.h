@@ -34,6 +34,7 @@
 #include "engine/platform/game_integration.h"
 #include "engine/render/animation.h"
 #include "engine/render/draw_poses.h"
+#include "engine/render/ik_controls.h"
 #include "engine/render/spring_bones.h"
 #include "engine/render/transform_history.h"
 #include "engine/scene/class_registry.h"
@@ -258,6 +259,10 @@ struct WorldHostOptions
     // Where one warmed name stands: nothing while it is on its way, then
     // whether it arrived (ADR 0131 §3 asks this of each name).
     std::function<std::optional<bool>(scene::World&, std::string_view)> warmedContent = nullptr;
+    // `ContentProvider:Keep` and `:Release` (D610): names to hold whatever
+    // scenes come and go (`keep` true), or to stop holding. Absent, nothing
+    // is ever let go and there is nothing to hold.
+    std::function<void(scene::World&, const std::vector<std::string>&, bool keep)> holdContent = nullptr;
 
     // **The graphics settings' layers** (ADR 0147): what the command line, the
     // project, the player's file and each preset say, given to the world when
@@ -581,6 +586,13 @@ public:
     // `TimePosition` off it, and it has to run in a headless replay where there
     // is no renderer at all.
     [[nodiscard]] const render::SkeletonLibrary& skeletons() const noexcept { return m_skeletons; }
+    [[nodiscard]] const render::GraphLibrary& graphs() const noexcept { return m_graphs; }
+
+    // **What changed on disk is forgotten, and read again when next asked
+    // for** (D611): a model's joints and clips, the roles beside it, an
+    // animation graph. The loaders that draw forget their own; these are the
+    // simulation's. How many it let go.
+    core::u32 forgetContent(std::span<const core::NameAtom> urns);
 
     // The poses `render::extract` reads. Null before `boot`, which is the same
     // window in which there is no world to extract from.
@@ -593,17 +605,31 @@ public:
     // sliders: the same system, through the seam a script's
     // `MeshPart:SetMorphWeight` goes through. Null before `boot`.
     [[nodiscard]] scene::MorphHost* morphs() noexcept { return m_animation ? &*m_animation : nullptr; }
+    // And its animation graphs (ADR 0197), for the editor's readout: where a
+    // script's `SetParameter` goes.
+    [[nodiscard]] scene::AnimationHost* graphHost() noexcept { return m_animation ? &*m_animation : nullptr; }
 
     // **A frame of the world's capes, tails and hair** (ADR 0194), before the
     // frame is extracted: stepped from the pose and the drawn place of each
     // body, and presented to the renderer alone. Nothing the simulation reads
     // is written, and a host that draws nothing never calls it.
-    void stepSecondaryMotion(const render::DrawPoses& poses, const render::SpringFrame& frame)
+    //
+    // **And, before them, its limbs, its looks and its feet** (ADR 0198): the
+    // pose a frame is drawn with is made in one order -- what reaches and
+    // looks, then the feet, then the chains that hang from all of it -- and
+    // then what is held to a bone is drawn where the frame has the bone.
+    void stepSecondaryMotion(render::DrawPoses& poses, render::SpringFrame frame, const render::IkFrame& limbs)
     {
-        if (m_animation)
-            m_springs.update(world(), *m_animation, poses, frame);
+        if (!m_animation)
+            return;
+        m_animation->clearPresented();
+        m_limbs.update(world(), *m_animation, poses, limbs);
+        frame.afterLimbs = true;
+        m_springs.update(world(), *m_animation, poses, frame);
+        render::IkControls::carryHeld(world(), *m_animation, poses);
     }
     [[nodiscard]] const render::SpringBones& secondaryMotion() const noexcept { return m_springs; }
+    [[nodiscard]] const render::IkControls& limbs() const noexcept { return m_limbs; }
 
     // What a frame's extraction reached of the world's rigs (H3): `fresh` for
     // the main view, the views after it adding theirs.
@@ -712,6 +738,14 @@ private:
     // and something to stream, and a background loader with one caller and no
     // eviction policy is the speculative half of the design.
     void syncSkeletons();
+    // One model's joints, clips and morph targets, if nothing has them yet.
+    void loadSkeleton(core::NameAtom content);
+    // The graphs `AnimationPlayer`s name (ADR 0197), each read once.
+    void syncGraphs();
+    // Says which properties a scene file named that were not applied.
+    void saySceneRefusals(const scene::SceneIoReport& report) const;
+    // A content file as text -- from the pack, or loose -- or nothing.
+    [[nodiscard]] std::optional<std::string> readContentText(std::string_view urn) const;
 
     [[nodiscard]] std::optional<core::EngineError> mountProject(const std::filesystem::path& path);
 
@@ -766,6 +800,7 @@ private:
     bool m_prepareInBackground = false;
     std::function<void(scene::World&, const std::vector<std::string>&)> m_warmContent;
     std::function<std::optional<bool>(scene::World&, std::string_view)> m_warmedContent;
+    std::function<void(scene::World&, const std::vector<std::string>&, bool keep)> m_holdContent;
     // What a prepared scene is warming, to measure its `Progress` by.
     std::vector<std::string> m_preparedContent;
     // `ContentProvider:PreloadAsync` (ADR 0131 §3): where one name stands.
@@ -823,8 +858,14 @@ private:
     // reaches anything observable -- membership is the only question asked of
     // it -- so R10 has nothing to say here.
     std::unordered_set<core::u32> m_skeletonsTried;
+    // The animation graphs players name (ADR 0197), and the ones tried: a
+    // graph that cannot be read is said once, not once a tick.
+    render::GraphLibrary m_graphs;
+    std::unordered_set<core::u32> m_graphsTried;
+    std::vector<std::pair<core::InstanceId, core::u64>> m_graphDigests;
     std::optional<render::AnimationSystem> m_animation;
     render::SpringBones m_springs;
+    render::IkControls m_limbs;
 
     // The two things `boot` was handed that a REBUILT runtime has to be handed
     // again (`restartRuntime`). Kept rather than re-derived: the reload bag

@@ -625,9 +625,8 @@ struct PointLightComponent
     // Skipped before the renderer counts it against the light budget, which is
     // what makes this different from a brightness of zero.
     bool enabled = true;
-    // Stored and reported faithfully; this release casts shadows from the sun
-    // alone (M4 brief, Decision 10). A property that round-trips is honest; one
-    // that silently reads back false would not be.
+    // Whether it asks for shadows: six tiles of the local shadow atlas, given
+    // to the lights nearest and largest on screen when more ask than fit.
     bool shadows = false;
 };
 
@@ -747,6 +746,49 @@ struct AnimationPlayerComponent
 {
     // `Enum.AnimationCullingMode`: 0 Automatic, 1 AlwaysAnimate.
     i32 cullingMode = 0;
+    // The animation graph it plays (ADR 0197), or none.
+    core::NameAtom graph;
+    // `Enum.Retargeting` (ADR 0199): 0 Automatic, 1 ByName.
+    i32 retargeting = 0;
+    // **What its graph is doing, as one number** (ADR 0197): each layer's
+    // states with their times and weights, and the parameters. No property
+    // reads it; the animation system's state is its own, and this is what of
+    // it the world's hash sees. Written by the host after each sample.
+    core::u64 graphDigest = 0;
+};
+
+// **A limb that reaches, a head that looks** (ADR 0198): what the instance
+// says. Where the joints end up is the renderer's, each frame, each machine's
+// own, and never state.
+struct IKControlComponent
+{
+    // `Enum.IKControlType`: 0 TwoBone, 1 LookAt.
+    i32 type = 0;
+    core::NameAtom endJoint;
+    core::InstanceId target;
+    core::CFrameD targetOffset;
+    core::InstanceId pole;
+    bool alignRotation = false;
+    i32 chainLength = 2;
+    // Degrees from straight ahead.
+    f32 maxAngle = 70.0f;
+    f32 weight = 1.0f;
+    bool enabled = true;
+    // Seconds.
+    f32 smoothing = 0.1f;
+};
+
+// Two feet and the hips on the ground under them (ADR 0198).
+struct FootPlacementComponent
+{
+    core::NameAtom leftFoot;
+    core::NameAtom rightFoot;
+    core::NameAtom hips;
+    f32 footHeight = 0.1f;
+    f32 stepHeight = 0.4f;
+    bool alignToSlope = true;
+    f32 weight = 1.0f;
+    bool enabled = true;
 };
 
 struct HighlightComponent

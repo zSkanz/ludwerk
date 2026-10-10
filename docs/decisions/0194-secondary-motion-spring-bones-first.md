@@ -38,6 +38,12 @@ drawn. It is not replicated, not in the world's hash, not in a replay, and a
 host with no window does none of it. R10 is untouched because nothing the
 simulation reads is written.
 
+**The instances travel since protocol 44; the swing still does not** (ADR
+0069's amendment of 2026-10-10). A `SpringBone` and a `SpringCollider` the
+authority spawns reach a replica with what was authored on them -- before, a
+cape a server script gave a character existed on the server alone, which draws
+nothing. No joint of a chain is ever sent.
+
 That last sentence is a constraint the code imposed on the design. The
 animation system has a stage that substitutes joints after sampling -- the
 ragdoll's -- and the first plan was to be its second writer. But a `Bone` is an

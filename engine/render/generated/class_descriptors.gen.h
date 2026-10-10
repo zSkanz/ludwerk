@@ -120,13 +120,15 @@ inline constexpr scene::EnumId SettingSourceEnumId = 77;
 inline constexpr scene::EnumId ScrollingDirectionEnumId = 78;
 inline constexpr scene::EnumId ElasticBehaviorEnumId = 79;
 inline constexpr scene::EnumId AnimationCullingModeEnumId = 80;
-inline constexpr scene::EnumId ParticleCollisionEnumId = 81;
-inline constexpr scene::EnumId ParticleCollisionResponseEnumId = 82;
-inline constexpr scene::EnumId ParticleSimulationEnumId = 83;
-inline constexpr scene::EnumId DecalBlendModeEnumId = 84;
-inline constexpr scene::EnumId ParticleFlipbookModeEnumId = 85;
-inline constexpr scene::EnumId SwarmAgentRemovalEnumId = 86;
-inline constexpr scene::EnumId RelayStateEnumId = 87;
+inline constexpr scene::EnumId RetargetingEnumId = 81;
+inline constexpr scene::EnumId IKControlTypeEnumId = 82;
+inline constexpr scene::EnumId ParticleCollisionEnumId = 83;
+inline constexpr scene::EnumId ParticleCollisionResponseEnumId = 84;
+inline constexpr scene::EnumId ParticleSimulationEnumId = 85;
+inline constexpr scene::EnumId DecalBlendModeEnumId = 86;
+inline constexpr scene::EnumId ParticleFlipbookModeEnumId = 87;
+inline constexpr scene::EnumId SwarmAgentRemovalEnumId = 88;
+inline constexpr scene::EnumId RelayStateEnumId = 89;
 
 } // namespace generated
 
@@ -157,6 +159,52 @@ bool setBoneJointName(scene::World& world, core::InstanceId id, const scene::Val
 scene::Value getBoneJointIndex(const scene::World& world, core::InstanceId id);
 scene::Value getBoneTransform(const scene::World& world, core::InstanceId id);
 bool setBoneTransform(scene::World& world, core::InstanceId id, const scene::Value& value);
+
+// IKControl
+scene::Value getIKControlType(const scene::World& world, core::InstanceId id);
+bool setIKControlType(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getIKControlEndJoint(const scene::World& world, core::InstanceId id);
+bool setIKControlEndJoint(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getIKControlTarget(const scene::World& world, core::InstanceId id);
+bool setIKControlTarget(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getIKControlTargetOffset(const scene::World& world, core::InstanceId id);
+bool setIKControlTargetOffset(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getIKControlPole(const scene::World& world, core::InstanceId id);
+bool setIKControlPole(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getIKControlAlignRotation(const scene::World& world, core::InstanceId id);
+bool setIKControlAlignRotation(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getIKControlChainLength(const scene::World& world, core::InstanceId id);
+bool setIKControlChainLength(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getIKControlMaxAngle(const scene::World& world, core::InstanceId id);
+bool setIKControlMaxAngle(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getIKControlWeight(const scene::World& world, core::InstanceId id);
+bool setIKControlWeight(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getIKControlEnabled(const scene::World& world, core::InstanceId id);
+bool setIKControlEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getIKControlSmoothing(const scene::World& world, core::InstanceId id);
+bool setIKControlSmoothing(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachIKControlComponents(scene::World& world, core::InstanceId id);
+void detachIKControlComponents(scene::World& world, core::InstanceId id);
+
+// FootPlacement
+scene::Value getFootPlacementLeftFoot(const scene::World& world, core::InstanceId id);
+bool setFootPlacementLeftFoot(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFootPlacementRightFoot(const scene::World& world, core::InstanceId id);
+bool setFootPlacementRightFoot(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFootPlacementHips(const scene::World& world, core::InstanceId id);
+bool setFootPlacementHips(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFootPlacementFootHeight(const scene::World& world, core::InstanceId id);
+bool setFootPlacementFootHeight(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFootPlacementStepHeight(const scene::World& world, core::InstanceId id);
+bool setFootPlacementStepHeight(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFootPlacementAlignToSlope(const scene::World& world, core::InstanceId id);
+bool setFootPlacementAlignToSlope(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFootPlacementWeight(const scene::World& world, core::InstanceId id);
+bool setFootPlacementWeight(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFootPlacementEnabled(const scene::World& world, core::InstanceId id);
+bool setFootPlacementEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachFootPlacementComponents(scene::World& world, core::InstanceId id);
+void detachFootPlacementComponents(scene::World& world, core::InstanceId id);
 
 // SpringBone
 scene::Value getSpringBoneRootJoint(const scene::World& world, core::InstanceId id);
@@ -572,6 +620,10 @@ void attachSkyComponents(scene::World& world, core::InstanceId id);
 void detachSkyComponents(scene::World& world, core::InstanceId id);
 
 // AnimationPlayer
+scene::Value getAnimationPlayerGraph(const scene::World& world, core::InstanceId id);
+bool setAnimationPlayerGraph(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAnimationPlayerRetargeting(const scene::World& world, core::InstanceId id);
+bool setAnimationPlayerRetargeting(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getAnimationPlayerCullingMode(const scene::World& world, core::InstanceId id);
 bool setAnimationPlayerCullingMode(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachAnimationPlayerComponents(scene::World& world, core::InstanceId id);

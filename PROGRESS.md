@@ -5,6 +5,22 @@ log entries to `docs/progress-archive/YYYY-MM.md`.
 
 ## State
 
+- **Level-up category 1, animation (2026-10-10, engine):** animation graphs
+  (ADR 0197: states, blend spaces, layers with masks, additive layers, events,
+  parameters read from the body or set by a script, stepped on the tick and in
+  the world's hash), inverse kinematics as picture (ADR 0198: `IKControl`,
+  `FootPlacement`), and retargeting (ADR 0199: one library of clips on bodies
+  of different builds and joint names, by role). **Protocol 44**: what a
+  spawned thing carries reaches a joiner -- its graph, limbs, lights, cape,
+  highlight, sound, trail, beam and particle sequences -- and the authored
+  properties of classes already on the wire that had no field (D617, D618).
+  `ContentProvider:Keep`/`:Release` beside the scene-release fix (D610).
+  Defects D610 to D619. Example `examples/37-character`; manual pages
+  `animation/graphs`, `animation/retargeting`, `animation/reach-and-look`.
+  The record is the "Built" notes under category 1 in
+  [the level-up roadmap](docs/briefs/level-up-roadmap.md). Next: 1b, dubbing.
+  Not verified in a window: the editor's graph panel and rig-role dialog.
+
 - **Eighth optimization batch (2026-10-09, PC only, validated):** native D3D12
   reuses immutable sampled descriptor tables within each fenced recording;
   cache hits preserve resource transitions, mip/layer identity and fresh UAVs.

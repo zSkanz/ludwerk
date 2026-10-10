@@ -6,6 +6,7 @@
 #include <doctest/doctest.h>
 #include <iterator>
 #include <ostream>
+#include <vector>
 
 #include "engine/replication/field.h"
 #include "wire_schema.gen.h"
@@ -216,11 +217,189 @@ TEST_CASE("the generated schema is what the module was built against")
     // and `NoCollisionConstraint` (protocol 34, NA34). Teams, prompts and the
     // world's drags left with protocol 35. `UnreliableRemoteEvent`, and the
     // channel its messages ride, came with protocol 38 (ADR 0161) -- and so
-    // did `Swarm` and the channel its agents' positions ride (ADR 0162).
-    CHECK(std::size(generated::Classes) == 46);
+    // did `Swarm` and the channel its agents' positions ride (ADR 0162). And
+    // what a character carries (protocol 44): `PointLight`, `SpotLight`,
+    // `SpringBone`, `SpringCollider`, `Bone`, `Highlight`, `Beam`, `Trail`
+    // and `Sound`.
+    CHECK(std::size(generated::Classes) == 58);
     CHECK(std::size(generated::Channels) == 6);
 
     // Channel 3 was claimed from protocol 1 so the numbering could not shift
     // when ownership arrived (ADR 0099).
     CHECK(generated::Channels[3].name == "Ownership");
+}
+
+// --- Sequences (protocol 44) -------------------------------------------------------------
+
+namespace {
+
+// A sequence's cells, as a set would hold them: the first, and its further ones.
+struct SequenceCells
+{
+    FieldValue first;
+    std::vector<FieldValue> further;
+
+    explicit SequenceCells(generated::Encoding encoding) : further(furtherCellsOf(encoding)) {}
+
+    [[nodiscard]] bool operator==(const SequenceCells& other) const noexcept
+    {
+        return first == other.first && further == other.further;
+    }
+};
+
+[[nodiscard]] core::ColorSequence rainbow(core::usize keys)
+{
+    core::ColorSequence sequence;
+    sequence.keypoints.clear();
+    for (core::usize key = 0; key < keys; ++key) {
+        const auto along = static_cast<core::f32>(key) / static_cast<core::f32>(keys - 1);
+        sequence.keypoints.push_back(core::ColorKeypoint{along, core::Color3{along, 1.0f - along, 0.25f}});
+    }
+    return sequence;
+}
+
+} // namespace
+
+TEST_CASE("a sequence crosses as a count and its keys, and comes back the bytes it was (protocol 44)")
+{
+    // The one value longer than a cell: three cells past the first for
+    // numbers, five for colours, which is twenty keys of either.
+    CHECK(isSequence(generated::Encoding::ColorSequence));
+    CHECK(isSequence(generated::Encoding::NumberSequence));
+    CHECK_FALSE(isSequence(generated::Encoding::Color3));
+    CHECK(furtherCellsOf(generated::Encoding::ColorSequence) == 5);
+    CHECK(furtherCellsOf(generated::Encoding::NumberSequence) == 3);
+    CHECK(furtherCellsOf(generated::Encoding::CFrameD) == 0);
+
+    for (const core::usize keys : {core::usize{2}, core::usize{3}, core::usize{4}, core::MaxSequenceKeypoints}) {
+        CAPTURE(keys);
+        const core::ColorSequence colours = rainbow(keys);
+        SequenceCells cells(generated::Encoding::ColorSequence);
+        setColorSequence(cells.first, cells.further, colours);
+
+        std::vector<core::u8> bytes;
+        encodeSequence(bytes, generated::Encoding::ColorSequence, cells.first, cells.further);
+        // A count and that many keys, and nothing for the keys it has not.
+        CHECK(bytes.size() == 1 + keys * ColorKeyBytes);
+        CHECK(bytes.size() <= wireBytes(generated::Encoding::ColorSequence));
+        CHECK(bytes[0] == keys);
+
+        // Into cells that held something else: every cell is cleared first,
+        // so two ends that hold one sequence hold the same bytes.
+        SequenceCells back(generated::Encoding::ColorSequence);
+        back.first.raw.fill(0xAB);
+        for (FieldValue& cell : back.further)
+            cell.raw.fill(0xCD);
+        core::usize at = 0;
+        REQUIRE(decodeSequence(bytes, at, generated::Encoding::ColorSequence, back.first, back.further));
+        CHECK(at == bytes.size());
+        CHECK(back == cells);
+
+        core::ColorSequence read;
+        REQUIRE(asColorSequence(back.first, back.further, read));
+        CHECK(read == colours);
+    }
+
+    const core::NumberSequence numbers{{core::NumberKeypoint{0.0f, 0.5f, 0.0f},
+                                        core::NumberKeypoint{0.75f, 2.0f, 0.125f},
+                                        core::NumberKeypoint{1.0f, 0.25f, 0.0f}}};
+    SequenceCells cells(generated::Encoding::NumberSequence);
+    setNumberSequence(cells.first, cells.further, numbers);
+    std::vector<core::u8> bytes;
+    encodeSequence(bytes, generated::Encoding::NumberSequence, cells.first, cells.further);
+    CHECK(bytes.size() == 1 + 3 * NumberKeyBytes);
+    SequenceCells back(generated::Encoding::NumberSequence);
+    core::usize at = 0;
+    REQUIRE(decodeSequence(bytes, at, generated::Encoding::NumberSequence, back.first, back.further));
+    CHECK(back == cells);
+    core::NumberSequence read;
+    REQUIRE(asNumberSequence(back.first, back.further, read));
+    CHECK(read == numbers);
+
+    // A value written over a longer one leaves none of it behind.
+    setColorSequence(cells.first, cells.further, rainbow(2));
+    SequenceCells fresh(generated::Encoding::NumberSequence);
+    setColorSequence(fresh.first, fresh.further, rainbow(2));
+    CHECK(cells == fresh);
+}
+
+TEST_CASE("a sequence longer than one may be is refused, and a list that is no sequence is not written")
+{
+    SequenceCells cells(generated::Encoding::ColorSequence);
+    setColorSequence(cells.first, cells.further, rainbow(core::MaxSequenceKeypoints));
+    std::vector<core::u8> bytes;
+    encodeSequence(bytes, generated::Encoding::ColorSequence, cells.first, cells.further);
+    REQUIRE(bytes.size() == wireBytes(generated::Encoding::ColorSequence));
+
+    // **The count is the peer's.** One past what a sequence may hold, with
+    // every byte it promises behind it: refused before a key is read, the
+    // cursor where it was and the cells as they were.
+    std::vector<core::u8> tooMany = bytes;
+    tooMany[0] = static_cast<core::u8>(core::MaxSequenceKeypoints + 1);
+    tooMany.resize(1 + (core::MaxSequenceKeypoints + 1) * ColorKeyBytes, 0);
+    SequenceCells back(generated::Encoding::ColorSequence);
+    const SequenceCells untouched = back;
+    core::usize at = 0;
+    CHECK_FALSE(decodeSequence(tooMany, at, generated::Encoding::ColorSequence, back.first, back.further));
+    CHECK(at == 0);
+    CHECK(back == untouched);
+    tooMany[0] = 255;
+    tooMany.resize(1 + 255 * ColorKeyBytes, 0);
+    CHECK_FALSE(decodeSequence(tooMany, at, generated::Encoding::ColorSequence, back.first, back.further));
+    CHECK(at == 0);
+
+    // Fewer bytes than the count says, at every length.
+    for (core::usize length = 0; length < bytes.size(); ++length) {
+        const std::vector<core::u8> cut(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(length));
+        CAPTURE(length);
+        CHECK_FALSE(decodeSequence(cut, at, generated::Encoding::ColorSequence, back.first, back.further));
+        CHECK(at == 0);
+    }
+
+    // Cells that are not the encoding's -- too few to hold twenty keys -- are
+    // never written past.
+    std::vector<FieldValue> few(2);
+    CHECK_FALSE(decodeSequence(bytes, at, generated::Encoding::ColorSequence, back.first, few));
+    CHECK_FALSE(decodeSequence(bytes, at, generated::Encoding::Color3, back.first, back.further));
+    CHECK(at == 0);
+
+    // **Bytes that decode and are no sequence**: one key, a first key not at
+    // 0, a time that falls, a number that is not one. Kept as sent -- the two
+    // ends must hold the same bytes -- and never handed on as a sequence.
+    core::ColorSequence held = rainbow(3);
+    const core::ColorSequence before = held;
+    const auto refused = [&](const std::vector<core::ColorKeypoint>& keys) {
+        std::vector<core::u8> wire;
+        wire.push_back(static_cast<core::u8>(keys.size()));
+        for (const core::ColorKeypoint& key : keys) {
+            const auto* raw = reinterpret_cast<const core::u8*>(&key);
+            wire.insert(wire.end(), raw, raw + sizeof(key));
+        }
+        core::usize from = 0;
+        SequenceCells into(generated::Encoding::ColorSequence);
+        REQUIRE(decodeSequence(wire, from, generated::Encoding::ColorSequence, into.first, into.further));
+        return !asColorSequence(into.first, into.further, held) && held == before;
+    };
+    const core::Color3 white{1.0f, 1.0f, 1.0f};
+    CHECK(refused({}));
+    CHECK(refused({core::ColorKeypoint{0.0f, white}}));
+    CHECK(refused({core::ColorKeypoint{0.25f, white}, core::ColorKeypoint{1.0f, white}}));
+    CHECK(refused({core::ColorKeypoint{0.0f, white}, core::ColorKeypoint{0.75f, white}}));
+    CHECK(refused({core::ColorKeypoint{0.0f, white}, core::ColorKeypoint{0.75f, white},
+                   core::ColorKeypoint{0.5f, white}, core::ColorKeypoint{1.0f, white}}));
+    CHECK(refused(
+        {core::ColorKeypoint{0.0f, white}, core::ColorKeypoint{1.0f, core::Color3{std::nanf(""), 1.0f, 1.0f}}}));
+
+    // **And one a setter would never have let through**: twenty-one keys in a
+    // component written by hand are cut to twenty in its cells.
+    core::ColorSequence tooLong = rainbow(core::MaxSequenceKeypoints + 1);
+    setColorSequence(cells.first, cells.further, tooLong);
+    CHECK(cells.first.raw[0] == core::MaxSequenceKeypoints);
+
+    // A field's own encoder and decoder do not take one: it is not one cell.
+    std::vector<core::u8> none;
+    encodeField(none, generated::Encoding::ColorSequence, cells.first);
+    CHECK(none.empty());
+    FieldValue single;
+    CHECK_FALSE(decodeField(bytes, at, generated::Encoding::ColorSequence, single));
 }

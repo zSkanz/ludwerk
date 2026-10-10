@@ -125,6 +125,10 @@ struct Config
     // A replica says each correction of its predicted character in the log,
     // with what the authority disagreed about (`--net-log-corrections`).
     bool logCorrections = false;
+    // **A person is developing here** (`EngineOptions::developerWarnings`): an
+    // authority says, once a class, what it holds that no replica will be
+    // sent (`AuthoritySession::setUncarriedWarnings`). Never in a player's game.
+    bool developer = false;
     // How long the other end may go silent before it is gone, in
     // milliseconds: `[network] timeout` (D208). See `TransportConfig`.
     u32 timeoutMs = 10000;

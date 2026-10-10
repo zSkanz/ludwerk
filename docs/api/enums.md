@@ -328,6 +328,15 @@ Alignment along the X axis. One set of values for two jobs: a `TextLabel`'s `Tex
 | `Center` | 1 |  |
 | `Right` | 2 |  |
 
+## Enum.IKControlType
+
+What an `IKControl` does to its joints (ADR 0198).
+
+| Item | Value | Description |
+|---|---|---|
+| `TwoBone` | 0 | A limb of two bones -- an arm, a leg -- bent so its end is at the target. |
+| `LookAt` | 1 | A joint turned to face the target, the joints above it sharing the turn. |
+
 ## Enum.InputActionType
 
 What an `InputAction` produces, and therefore what `GetState` returns (§2.4, ADR 0029). The type is the action's, not the binding's: one action of one type may be driven by a key, a stick and an on-screen button at once, and every one of them has to answer in the same currency.
@@ -725,6 +734,15 @@ Where a render step runs in the frame (ADR 0136): `RunService:BindToRenderStep` 
 | `Camera` | 200 | Where the camera is placed: the default rig runs here. |
 | `Character` | 300 | After the camera: what follows where it looks. |
 | `Last` | 2000 | After everything else, before `PreRender` fires. |
+
+## Enum.Retargeting
+
+How an `AnimationPlayer` carries a clip made on one skeleton onto another (ADR 0199).
+
+| Item | Value | Description |
+|---|---|---|
+| `Automatic` | 0 | By what each joint IS where both skeletons are bodies -- hips, a spine, arms and legs, found by the names rigs really arrive with -- so a clip made on one hero moves another of other proportions and other joint names: each joint turns as far from its own rest as the clip's did, the hips travel in proportion to the legs, and every bone keeps its own length. By equal names otherwise, and always for two files that are one skeleton. |
+| `ByName` | 1 | By equal joint names only, the clip's transforms as they are: a shirt on the body it was cut for, a creature on its own clips. A joint one side lacks is skipped, and nothing is said. |
 
 ## Enum.RotationOrder
 

@@ -118,13 +118,15 @@ inline constexpr EnumId SettingSourceEnumId = 77;
 inline constexpr EnumId ScrollingDirectionEnumId = 78;
 inline constexpr EnumId ElasticBehaviorEnumId = 79;
 inline constexpr EnumId AnimationCullingModeEnumId = 80;
-inline constexpr EnumId ParticleCollisionEnumId = 81;
-inline constexpr EnumId ParticleCollisionResponseEnumId = 82;
-inline constexpr EnumId ParticleSimulationEnumId = 83;
-inline constexpr EnumId DecalBlendModeEnumId = 84;
-inline constexpr EnumId ParticleFlipbookModeEnumId = 85;
-inline constexpr EnumId SwarmAgentRemovalEnumId = 86;
-inline constexpr EnumId RelayStateEnumId = 87;
+inline constexpr EnumId RetargetingEnumId = 81;
+inline constexpr EnumId IKControlTypeEnumId = 82;
+inline constexpr EnumId ParticleCollisionEnumId = 83;
+inline constexpr EnumId ParticleCollisionResponseEnumId = 84;
+inline constexpr EnumId ParticleSimulationEnumId = 85;
+inline constexpr EnumId DecalBlendModeEnumId = 86;
+inline constexpr EnumId ParticleFlipbookModeEnumId = 87;
+inline constexpr EnumId SwarmAgentRemovalEnumId = 88;
+inline constexpr EnumId RelayStateEnumId = 89;
 
 } // namespace generated
 

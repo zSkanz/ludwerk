@@ -49,7 +49,44 @@ using FieldSet = std::vector<FieldValue>;
 // How many fields an instance of this class carries, common set included.
 [[nodiscard]] core::usize fieldCount(const generated::ClassDesc& desc);
 
-// Reads every field of `id` into `out`, sized to `fieldCount`.
+// **How many cells its set is** (protocol 44): a cell a field, and after the
+// last of them the further cells of each sequence the class holds, in field
+// order. The same as `fieldCount` for every class with no sequence. Everything
+// that walks a set by index meets the further cells past the fields, where
+// `fieldAt` is null and `wireIdAt` is 0: they are their sequence's, and are
+// read, sent and written with it.
+[[nodiscard]] core::usize cellCount(const generated::ClassDesc& desc);
+
+// Where the further cells of the field at `index` lie in a set, and how many:
+// none for a field that is not a sequence.
+struct CellRange
+{
+    core::usize first = 0;
+    core::usize count = 0;
+};
+[[nodiscard]] CellRange furtherCells(const generated::ClassDesc& desc, core::usize index);
+
+// Whether the field at `index` is the same in two sets of this class: its
+// cell, and for a sequence its further cells too.
+[[nodiscard]] bool sameField(const generated::ClassDesc& desc, core::usize index, std::span<const FieldValue> a,
+                             std::span<const FieldValue> b) noexcept;
+
+// A sequence field of a set, onto a message and back into a set. `decode`
+// refuses what `decodeSequence` refuses, and a field that is no sequence.
+void encodeSequenceField(std::vector<core::u8>& out, const generated::ClassDesc& desc, core::usize index,
+                         std::span<const FieldValue> cells);
+[[nodiscard]] bool decodeSequenceField(std::span<const core::u8> bytes, core::usize& at,
+                                       const generated::ClassDesc& desc, core::usize index,
+                                       std::span<FieldValue> cells) noexcept;
+
+// **Writes the sequence field at `index` to an instance**, from a whole set.
+// False when the field is no sequence, the instance has no such component, or
+// the cells do not hold a sequence -- and then nothing is written: what the
+// instance had stands.
+[[nodiscard]] bool applySequence(scene::World& world, core::InstanceId id, const generated::ClassDesc& desc,
+                                 core::usize index, std::span<const FieldValue> cells);
+
+// Reads every field of `id` into `out`, sized to `cellCount`.
 //
 // Returns false when the instance is not replicable -- no schema, or gone.
 // **Never partially fills**: a half-read field set diffed against a baseline
@@ -73,7 +110,8 @@ struct FieldDelta
     FieldValue value;
 };
 
-// Every field of `current` that differs from `baseline`.
+// Every field of `current` that differs from `baseline`. A sequence is
+// reported by its first cell when any of its cells differ.
 //
 // **A size mismatch means every field changed**, which is the honest answer: it
 // happens when a peer's baseline was taken under a different class -- an
@@ -98,6 +136,13 @@ void diffFields(const generated::ClassDesc& desc, std::span<const FieldValue> ba
 // has the world's count of changes to those in its number.
 [[nodiscard]] core::u64 sourceDigestOf(const scene::World& world, core::InstanceId id,
                                        const generated::ClassDesc& desc) noexcept;
+
+// **The instance the reference field at `index` names**, as this machine holds
+// it -- none for a field that is no reference, or names nothing. What a
+// capture asks to tell whether an instance it would keep still names what it
+// did: a component's bytes do not say that the thing it names has gone.
+[[nodiscard]] core::InstanceId referenceAt(const scene::World& world, core::InstanceId id,
+                                           const generated::ClassDesc& desc, core::usize index);
 
 // Whether every pool this class's fields are read from is one the digest
 // knows. False is not wrong -- the class is read every tick -- but it is a
@@ -144,7 +189,8 @@ core::usize clearForReplica(scene::World& world, core::InstanceId workspace, Scr
 
 // Applies one field to an instance. Returns false when the id is not one this
 // class has -- which is what a peer speaking a newer protocol looks like, and is
-// a refusal rather than a guess.
+// a refusal rather than a guess. False for a sequence too, which one cell does
+// not hold (`applySequence`).
 [[nodiscard]] bool applyField(scene::World& world, core::InstanceId id, const generated::ClassDesc& desc,
                               const FieldDelta& delta);
 

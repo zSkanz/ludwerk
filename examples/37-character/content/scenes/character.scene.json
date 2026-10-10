@@ -1,0 +1,846 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "Workspace",
+  "name": "Workspace",
+  "properties": {
+   "CurrentCamera": "Workspace.MainCamera"
+  },
+  "children": [
+   {
+    "class": "Camera",
+    "name": "MainCamera",
+    "properties": {
+     "CFrame": [
+      0.0,
+      3.26,
+      9.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.9467727448197126,
+      -0.3219027332387022,
+      0.0,
+      0.3219027332387022,
+      0.9467727448197126
+     ],
+     "FieldOfView": 60.0
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Floor",
+    "properties": {
+     "CFrame": [
+      0.0,
+      -0.5,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      60.0,
+      1.0,
+      60.0
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.36,
+       0.42,
+       0.36
+      ]
+     }
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Step1",
+    "properties": {
+     "CFrame": [
+      -5.775,
+      0.075,
+      -4.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.4500000000000002,
+      0.15,
+      3.0
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.55,
+       0.56,
+       0.6
+      ]
+     }
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Step2",
+    "properties": {
+     "CFrame": [
+      -5.324999999999999,
+      0.15,
+      -4.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.4500000000000002,
+      0.3,
+      3.0
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.55,
+       0.56,
+       0.6
+      ]
+     }
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Step3",
+    "properties": {
+     "CFrame": [
+      -4.875,
+      0.22499999999999998,
+      -4.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.4500000000000002,
+      0.44999999999999996,
+      3.0
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.55,
+       0.56,
+       0.6
+      ]
+     }
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Step4",
+    "properties": {
+     "CFrame": [
+      -4.425000000000001,
+      0.3,
+      -4.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.4500000000000002,
+      0.6,
+      3.0
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.55,
+       0.56,
+       0.6
+      ]
+     }
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Step5",
+    "properties": {
+     "CFrame": [
+      -3.975,
+      0.375,
+      -4.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.4500000000000002,
+      0.75,
+      3.0
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.55,
+       0.56,
+       0.6
+      ]
+     }
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Platform",
+    "properties": {
+     "CFrame": [
+      -1.5,
+      0.44999999999999996,
+      -4.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      4.5,
+      0.8999999999999999,
+      3.0
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.55,
+       0.56,
+       0.6
+      ]
+     }
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Ramp",
+    "properties": {
+     "CFrame": [
+      3.1278853757939777,
+      0.3320553375678813,
+      -4.0,
+      0.9828721869343219,
+      -0.18428853505018536,
+      0.0,
+      0.18428853505018536,
+      0.9828721869343219,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      4.8836461788299115,
+      0.24,
+      3.0
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.6,
+       0.47,
+       0.33
+      ]
+     }
+    }
+   },
+   {
+    "class": "CharacterBody",
+    "name": "Tall",
+    "properties": {
+     "CFrame": [
+      0.0,
+      1.06,
+      4.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.5,
+      2.12,
+      0.5
+     ],
+     "WalkSpeed": 3.6,
+     "JumpSpeed": 4.6,
+     "AutoStepHeight": 0.3,
+     "MaterialParameters": {
+      "Transparency": 1.0
+     }
+    },
+    "children": [
+     {
+      "class": "MeshPart",
+      "name": "Hero",
+      "properties": {
+       "MeshContent": "asset://models/tall.gltf",
+       "CFrame": [
+        0.0,
+        0.0,
+        4.0,
+        -1.0,
+        0.0,
+        -1.2246467991473532e-16,
+        0.0,
+        1.0,
+        0.0,
+        1.2246467991473532e-16,
+        0.0,
+        -1.0
+       ],
+       "CanCollide": false
+      },
+      "children": [
+       {
+        "class": "FootPlacement",
+        "name": "Feet",
+        "properties": {
+         "LeftFoot": "LeftFoot",
+         "RightFoot": "RightFoot",
+         "Hips": "Hips",
+         "FootHeight": 0.09,
+         "StepHeight": 0.3
+        }
+       },
+       {
+        "class": "IKControl",
+        "name": "Look",
+        "properties": {
+         "Type": "LookAt",
+         "EndJoint": "Head",
+         "Target": "Workspace.Stocky.Hero.Eyes",
+         "ChainLength": 1,
+         "MaxAngle": 75.0,
+         "Smoothing": 0.25
+        }
+       },
+       {
+        "class": "Bone",
+        "name": "Eyes",
+        "properties": {
+         "JointName": "Head",
+         "CFrame": [
+          0.0,
+          0.13800000000000012,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+         ]
+        }
+       }
+      ]
+     },
+     {
+      "class": "Weld",
+      "name": "HeroWeld",
+      "properties": {
+       "Part0": "Workspace.Tall",
+       "Part1": "Workspace.Tall.Hero",
+       "C0": [
+        0.0,
+        -1.06,
+        0.0,
+        -1.0,
+        0.0,
+        -1.2246467991473532e-16,
+        0.0,
+        1.0,
+        0.0,
+        1.2246467991473532e-16,
+        0.0,
+        -1.0
+       ]
+      }
+     },
+     {
+      "class": "AnimationPlayer",
+      "name": "Animation",
+      "properties": {
+       "Graph": "asset://anim/hero.animgraph.json"
+      }
+     }
+    ]
+   },
+   {
+    "class": "CharacterBody",
+    "name": "Stocky",
+    "properties": {
+     "CFrame": [
+      -7.5,
+      0.75,
+      0.5,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.7,
+      1.5,
+      0.7
+     ],
+     "WalkSpeed": 1.1,
+     "JumpSpeed": 4.6,
+     "AutoStepHeight": 0.3,
+     "MaterialParameters": {
+      "Transparency": 1.0
+     }
+    },
+    "children": [
+     {
+      "class": "MeshPart",
+      "name": "Hero",
+      "properties": {
+       "MeshContent": "asset://models/stocky.gltf",
+       "CFrame": [
+        -7.5,
+        0.0,
+        0.5,
+        -1.0,
+        0.0,
+        -1.2246467991473532e-16,
+        0.0,
+        1.0,
+        0.0,
+        1.2246467991473532e-16,
+        0.0,
+        -1.0
+       ],
+       "CanCollide": false
+      },
+      "children": [
+       {
+        "class": "FootPlacement",
+        "name": "Feet",
+        "properties": {
+         "LeftFoot": "foot_l",
+         "RightFoot": "foot_r",
+         "Hips": "pelvis",
+         "FootHeight": 0.08,
+         "StepHeight": 0.3
+        }
+       },
+       {
+        "class": "IKControl",
+        "name": "Look",
+        "properties": {
+         "Type": "LookAt",
+         "EndJoint": "head",
+         "Target": "Workspace.Tall.Hero.Eyes",
+         "ChainLength": 1,
+         "MaxAngle": 75.0,
+         "Smoothing": 0.25
+        }
+       },
+       {
+        "class": "Bone",
+        "name": "Eyes",
+        "properties": {
+         "JointName": "head",
+         "CFrame": [
+          0.0,
+          0.13799999999999998,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+         ]
+        }
+       },
+       {
+        "class": "Bone",
+        "name": "RightGrip",
+        "properties": {
+         "JointName": "hand_r",
+         "CFrame": [
+          -0.07,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+         ]
+        }
+       },
+       {
+        "class": "IKControl",
+        "name": "LeftHandOnStaff",
+        "properties": {
+         "Type": "TwoBone",
+         "EndJoint": "hand_l",
+         "Target": "Workspace.Stocky.Staff.Grip",
+         "Pole": "Workspace.Stocky.LeftElbow",
+         "TargetOffset": [
+          -0.07,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+         ],
+         "AlignRotation": true,
+         "Smoothing": 0.0
+        }
+       }
+      ]
+     },
+     {
+      "class": "Weld",
+      "name": "HeroWeld",
+      "properties": {
+       "Part0": "Workspace.Stocky",
+       "Part1": "Workspace.Stocky.Hero",
+       "C0": [
+        0.0,
+        -0.75,
+        0.0,
+        -1.0,
+        0.0,
+        -1.2246467991473532e-16,
+        0.0,
+        1.0,
+        0.0,
+        1.2246467991473532e-16,
+        0.0,
+        -1.0
+       ]
+      }
+     },
+     {
+      "class": "AnimationPlayer",
+      "name": "Animation",
+      "properties": {
+       "Graph": "asset://anim/hero.animgraph.json"
+      }
+     },
+     {
+      "class": "Part",
+      "name": "Staff",
+      "properties": {
+       "CFrame": [
+        -7.5,
+        1.0,
+        0.5,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+       ],
+       "Size": [
+        0.05,
+        1.5,
+        0.05
+       ],
+       "CanCollide": false,
+       "MaterialParameters": {
+        "Color": [
+         0.42,
+         0.29,
+         0.16
+        ]
+       }
+      },
+      "children": [
+       {
+        "class": "Attachment",
+        "name": "Grip",
+        "properties": {
+         "CFrame": [
+          0.0,
+          0.10000000000000003,
+          0.0,
+          -0.9792103223346492,
+          -5.551115123125783e-17,
+          -0.20284758966591726,
+          -0.20284758966591726,
+          0.0,
+          0.9792103223346493,
+          0.0,
+          1.0,
+          -5.551115123125783e-17
+         ]
+        }
+       }
+      ]
+     },
+     {
+      "class": "Attachment",
+      "name": "LeftElbow",
+      "properties": {
+       "CFrame": [
+        -1.2,
+        -0.3,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+       ]
+      }
+     },
+     {
+      "class": "Weld",
+      "name": "StaffWeld",
+      "properties": {
+       "Part0": "Workspace.Stocky.Hero.RightGrip",
+       "Part1": "Workspace.Stocky.Staff",
+       "C0": [
+        0.0,
+        0.0,
+        0.0,
+        -0.057907002566429666,
+        -0.8010599098281265,
+        -0.5957766359298805,
+        0.8010599098281265,
+        -0.3934277988735104,
+        0.451129236405377,
+        -0.5957766359298805,
+        -0.451129236405377,
+        0.6644792036929192
+       ],
+       "C1": [
+        0.0,
+        -0.45,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "class": "CharacterBody",
+    "name": "Small",
+    "properties": {
+     "CFrame": [
+      -6.6,
+      0.59,
+      -1.4,
+      -0.6332377902572628,
+      0.0,
+      0.7739572992033209,
+      0.0,
+      1.0,
+      0.0,
+      -0.7739572992033209,
+      0.0,
+      -0.6332377902572628
+     ],
+     "Size": [
+      0.4,
+      1.18,
+      0.4
+     ],
+     "WalkSpeed": 1.0,
+     "JumpSpeed": 4.6,
+     "AutoStepHeight": 0.3,
+     "MaterialParameters": {
+      "Transparency": 1.0
+     }
+    },
+    "children": [
+     {
+      "class": "MeshPart",
+      "name": "Hero",
+      "properties": {
+       "MeshContent": "asset://models/small.gltf",
+       "CFrame": [
+        -6.6,
+        0.0,
+        -1.4,
+        0.6332377902572628,
+        0.0,
+        -0.7739572992033209,
+        0.0,
+        1.0,
+        0.0,
+        0.7739572992033209,
+        0.0,
+        0.6332377902572628
+       ],
+       "CanCollide": false
+      },
+      "children": [
+       {
+        "class": "FootPlacement",
+        "name": "Feet",
+        "properties": {
+         "LeftFoot": "foot.L",
+         "RightFoot": "foot.R",
+         "Hips": "hips",
+         "FootHeight": 0.06,
+         "StepHeight": 0.15
+        }
+       },
+       {
+        "class": "IKControl",
+        "name": "Look",
+        "properties": {
+         "Type": "LookAt",
+         "EndJoint": "head",
+         "Target": "Workspace.Tall.Hero.Eyes",
+         "ChainLength": 2,
+         "MaxAngle": 75.0,
+         "Smoothing": 0.25
+        }
+       },
+       {
+        "class": "Bone",
+        "name": "Eyes",
+        "properties": {
+         "JointName": "head",
+         "CFrame": [
+          0.0,
+          0.17999999999999997,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+         ]
+        }
+       }
+      ]
+     },
+     {
+      "class": "Weld",
+      "name": "HeroWeld",
+      "properties": {
+       "Part0": "Workspace.Small",
+       "Part1": "Workspace.Small.Hero",
+       "C0": [
+        0.0,
+        -0.59,
+        0.0,
+        -1.0,
+        0.0,
+        -1.2246467991473532e-16,
+        0.0,
+        1.0,
+        0.0,
+        1.2246467991473532e-16,
+        0.0,
+        -1.0
+       ]
+      }
+     },
+     {
+      "class": "AnimationPlayer",
+      "name": "Animation",
+      "properties": {
+       "Graph": "asset://anim/hero.animgraph.json"
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

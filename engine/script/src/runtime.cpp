@@ -518,6 +518,11 @@ void ScriptRuntime::fireAnimationEnded(std::span<const scene::TrackId> ended)
     engine::script::fireAnimationEnded(m_impl->state, ended);
 }
 
+void ScriptRuntime::fireGraphSignals(std::span<const scene::GraphSignal> signals)
+{
+    engine::script::fireGraphSignals(m_impl->state, signals);
+}
+
 void ScriptRuntime::setReloadState(ReloadState* state)
 {
     if (state != nullptr)

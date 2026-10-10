@@ -90,6 +90,13 @@ struct SceneIoReport
     // the value. Counted rather than fatal: a scene written by a newer build
     // should still open in an older one, minus what it cannot express.
     core::u32 refusedProperties = 0;
+    // **Which**, as `Class.Property`, the first few of them (D616): a count
+    // nobody is shown is a property that was dropped in silence, and a
+    // misspelt one in a file somebody wrote by hand looks exactly like a
+    // property that does nothing.
+    std::string refusedNames;
+    static constexpr core::u32 MostRefusedNames = 6;
+    core::u32 refusedNamed = 0;
     // Stamped instances placed, and stamps the file names that could not be
     // read (ADR 0049). The second is counted rather than fatal for the same
     // reason as an unknown class: a scene that names a stamp somebody deleted

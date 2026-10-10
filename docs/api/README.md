@@ -95,11 +95,13 @@ guided tour.
 | [`Folder`](folder.md) | [`Instance`](instance.md) | A node with no behaviour of its own, for grouping instances; mounting a script folder under `src/` also builds one per subdirectory. |
 | [`FoliageLayer`](foliagelayer.md) | [`Instance`](instance.md) | Where foliage grows over a terrain (ADR 0116): grass, flowers, stones, bushes -- drawn and never simulated. |
 | [`FoliageMesh`](foliagemesh.md) | [`Instance`](instance.md) | One mesh a `FoliageLayer` grows (ADR 0116), with its share of the layer, its size, how it sits on the ground and how the wind moves it. |
+| [`FootPlacement`](footplacement.md) | [`Instance`](instance.md) | Puts a character's two feet on whatever is under them -- a stair, a slope, a rock -- and lowers its hips so the lower leg does not hang (ADR 0198). |
 | [`Frame`](frame.md) | [`UIObject`](uiobject.md) | A rectangle and nothing else: a background, a border of children, and the layout it imposes on them. |
 | [`HighPassSoundEffect`](highpasssoundeffect.md) | [`SoundEffect`](soundeffect.md) | Lets the high notes through and takes the low ones away: a telephone, a tinny speaker. |
 | [`Highlight`](highlight.md) | [`Instance`](instance.md) | An outline and a tint over a part or a model: what is selected, what can be picked up, an ally seen through a wall. |
 | [`HingeConstraint`](hingeconstraint.md) | [`Constraint`](constraint.md) | A joint free to rotate about one axis: a door, a lid, an elbow. |
 | [`HingeConstraint2D`](hingeconstraint2d.md) | [`Constraint2D`](constraint2d.md) | A point both parts turn about: a door, a wheel, a pendulum, a lever. |
+| [`IKControl`](ikcontrol.md) | [`Instance`](instance.md) | Bends a limb to reach a place, or turns a head to look at one, on top of whatever clip is playing (ADR 0198): a hand set on a weapon's grip, a foot put on a pedal, eyes that follow what walks past. |
 | [`ImageButton`](imagebutton.md) | [`ImageLabel`](imagelabel.md) | An `ImageLabel` that is meant to be pressed, and the same argument `TextButton` carries: it adds nothing, and it is the class a reader recognizes. |
 | [`ImageLabel`](imagelabel.md) | [`UIObject`](uiobject.md) | A picture in a box (§2.2). |
 | [`InputAction`](inputaction.md) | [`Instance`](instance.md) | A named thing the player can do, decoupled from the input that does it (§2.4, ADR 0029). |

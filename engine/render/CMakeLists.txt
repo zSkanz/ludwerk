@@ -44,6 +44,10 @@ engine_add_module(render
         src/ui_renderer.cpp
         src/ui_gradient.cpp
         src/animation.cpp
+        src/graph_player.cpp
+        src/ik.cpp
+        src/ik_controls.cpp
+        src/retarget.cpp
         src/spring_chain.cpp
         src/spring_bones.cpp
         src/morph.cpp
@@ -96,6 +100,12 @@ engine_add_module_tests(render
         tests/settings_tests.cpp
         tests/shadow_tests.cpp
         tests/animation_tests.cpp
+        tests/graph_player_tests.cpp
+        tests/animation_graph_tests.cpp
+        tests/animation_retarget_tests.cpp
+        tests/ik_controls_tests.cpp
+        tests/ik_tests.cpp
+        tests/retarget_tests.cpp
         tests/mesh_loader_tests.cpp
         tests/terrain_loader_tests.cpp
         tests/terrain_pyramid_tests.cpp

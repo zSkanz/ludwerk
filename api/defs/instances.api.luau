@@ -1017,6 +1017,167 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Property },
     },
     {
+        Name = "IKControl",
+        Extends = "Instance",
+        Module = "render",
+        Parents = under("MeshPart"),
+        Storage = "IKControl",
+        Doc = "Bends a limb to reach a place, or turns a head to look at one, on top of whatever clip is "
+            .. "playing (ADR 0198): a hand set on a weapon's grip, a foot put on a pedal, eyes that follow "
+            .. "what walks past. Parent it to the `MeshPart` whose skeleton it bends, name the joint at the "
+            .. "END of the limb -- the hand, the foot, the head -- and give it a `Target`.\n\n"
+            .. "**It is picture, not simulation.** It is solved on each machine, each frame, into the pose "
+            .. "the frame is drawn with, and never into the pose the tick reads: a `Bone` on that hand still "
+            .. "says where the clip has the hand, and nothing in the game's rules should read a reached-for "
+            .. "place. What a script turns for the rules to see -- a head whose turn decides what a guard "
+            .. "notices -- it turns with `Bone.Transform`. What IS drawn follows: a part held to a bone of "
+            .. "the limb is drawn in the hand that was moved, and a cape hangs from shoulders an arm's reach "
+            .. "moved.\n\n"
+            .. "It reaches as far as the limb is long and stops there, straight. In a match the control and "
+            .. "what it is set to travel with its character; the bending is each machine's own.",
+        Properties = {
+            {
+                Name = "Type",
+                Type = "Enum.IKControlType",
+                Default = "Enum.IKControlType.TwoBone",
+                Doc = "`TwoBone`: the end joint, the one above it and the one above that are a limb, and the "
+                    .. "end is put at the target. `LookAt`: the end joint is turned to face the target, and the "
+                    .. "joints above it share the turn.",
+            },
+            {
+                Name = "EndJoint",
+                Type = "string",
+                Doc = "The joint at the end of what is bent, as the file names it: a hand, a foot, a head. A "
+                    .. "name the rig does not have does nothing.",
+            },
+            {
+                Name = "Target",
+                Type = "(BasePart | Attachment)?",
+                Doc = "What is reached for or looked at: a part or an attachment, where it is DRAWN this frame. "
+                    .. "With none the control does nothing.",
+            },
+            {
+                Name = "TargetOffset",
+                Type = "CFrame",
+                Doc = "Where from the target the place is, in the target's own space: a grip a hand's width "
+                    .. "from a weapon's middle.",
+            },
+            {
+                Name = "Pole",
+                Type = "(BasePart | Attachment)?",
+                Doc = "For a limb: what the elbow or the knee points at. With none the limb bends the way the "
+                    .. "clip already has it bent.",
+            },
+            {
+                Name = "AlignRotation",
+                Type = "boolean",
+                Doc = "For a limb: whether the end takes the target's turn as well as its place -- a palm laid "
+                    .. "flat on a grip, a sole on a pedal.",
+            },
+            {
+                Name = "ChainLength",
+                Type = "number",
+                Default = "2",
+                ErrorKey = "scene.err.ik_chain_length",
+                Doc = "For a look: how many joints above the end share the turn, 0 to 8 -- a head alone, a head "
+                    .. "and its neck, a head, a neck and a spine. Each takes an equal part.",
+            },
+            {
+                Name = "MaxAngle",
+                Type = "number",
+                Default = "70",
+                ErrorKey = "scene.err.number_cone_degrees",
+                Doc = "For a look: the furthest from straight ahead it may turn, in degrees. Past it the look "
+                    .. "stops at the limit instead of twisting the neck round.",
+            },
+            {
+                Name = "Weight",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How much of it is applied, 0 to 1: 0 is the clip alone. Tween it to pick a thing up and "
+                    .. "let it go without a snap.",
+            },
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether it is applied at all. Off costs nothing.",
+            },
+            {
+                Name = "Smoothing",
+                Type = "number",
+                Default = "0.1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The seconds a change is eased over -- a target that jumps, a control switched on -- so a "
+                    .. "head turns to a new thing instead of snapping to it. 0 follows at once.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "FootPlacement",
+        Extends = "Instance",
+        Module = "render",
+        Parents = under("MeshPart"),
+        Storage = "FootPlacement",
+        Doc = "Puts a character's two feet on whatever is under them -- a stair, a slope, a rock -- and "
+            .. "lowers its hips so the lower leg does not hang (ADR 0198). A walk is made on flat ground; "
+            .. "this is what makes it fit ground that is not.\n\n"
+            .. "Parent it to the `MeshPart` whose skeleton it bends and name the two ankle joints and the "
+            .. "hips. Each frame a ray down from each foot finds the ground; the foot is put on it, keeping "
+            .. "however high the clip had lifted it, and the knee bends to suit.\n\n"
+            .. "**It is picture, like `IKControl`**: each machine's own, in the pose the frame is drawn with, "
+            .. "and never where the tick reads. It is done for characters the camera is near -- how near is "
+            .. "the graphics settings' -- and not at all at the lowest quality or for a `Swarm`'s agents, "
+            .. "whose feet are their clips'. It costs two rays a character a frame.",
+        Properties = {
+            { Name = "LeftFoot", Type = "string", Doc = "The left ankle's joint, as the file names it." },
+            { Name = "RightFoot", Type = "string", Doc = "The right ankle's joint." },
+            {
+                Name = "Hips",
+                Type = "string",
+                Doc = "The joint both legs hang from. It is what comes down when one foot is lower than the "
+                    .. "clip's ground.",
+            },
+            {
+                Name = "FootHeight",
+                Type = "number",
+                Default = "0.1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "From the ankle joint down to the sole, in metres: how far above the ground the ankle is "
+                    .. "kept.",
+            },
+            {
+                Name = "StepHeight",
+                Type = "number",
+                Default = "0.4",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How far up or down from the ground the clip was made on a foot is taken, in metres. "
+                    .. "Ground further than that -- a ledge, a drop -- is not stepped onto: the foot is left to "
+                    .. "the clip.",
+            },
+            {
+                Name = "AlignToSlope",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether a planted foot is turned to lie on the ground it is on.",
+            },
+            {
+                Name = "Weight",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How much of it is applied, 0 to 1.",
+            },
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether it is applied at all.",
+            },
+        } :: { Schema.Property },
+    },
+    {
         Name = "SpringBone",
         Extends = "Instance",
         Module = "render",
@@ -6918,9 +7079,31 @@ local Classes: { Schema.Class } = {
             .. "one piece wants.\n\nIt stores nothing: the tracks are the "
             .. "state, and each one is a handle a script holds rather than a child in the tree. Sampling "
             .. "happens at `PreAnimation` on the SimClock, so a clip's position at a given tick is the same "
-            .. "in a replay as it was live.\n\nv1 is clip playback and linear blending -- no state machines, "
-            .. "no IK, and no root motion.",
+            .. "in a replay as it was live.\n\n"
+            .. "**With a `Graph` it mixes the clips itself** (ADR 0197): an animation graph says which clips "
+            .. "play in which state, how a walk becomes a run, when a jump begins and how long each fade "
+            .. "is, and the game only says how fast the character is going. Tracks a script loads go on "
+            .. "working beside it. Limbs that reach and feet on the ground are `IKControl` and "
+            .. "`FootPlacement`. There is no root motion: a clip plays in place and the body moves the "
+            .. "character.\n\n"
+            .. "**In a match** the player travels with its character -- its `Graph` and `Retargeting`, "
+            .. "nothing a tick -- and every machine steps its own copy of the graph from what already "
+            .. "arrives: the body's speed, whether it is on the ground, its attributes.",
         Properties = {
+            {
+                Name = "Graph",
+                Type = "Content",
+                ContentKind = "AnimationGraph",
+                Doc = "The animation graph this player plays: an `asset://...animgraph.json`. Empty, the "
+                    .. "player plays only the tracks a script loads. Set it where the character is made; it "
+                    .. "starts in each layer's first state when its file arrives.",
+            },
+            {
+                Name = "Retargeting",
+                Type = "Enum.Retargeting",
+                Default = "Enum.Retargeting.Automatic",
+                Doc = "How a clip from another file is carried onto this skeleton (ADR 0199).",
+            },
             {
                 Name = "CullingMode",
                 Type = "Enum.AnimationCullingMode",
@@ -6953,7 +7136,74 @@ local Classes: { Schema.Class } = {
                     .. "mesh that has not finished loading would otherwise make an ordinary frame a nil index "
                     .. "-- and every call is a handle the VM holds until the world goes away.",
             },
+            {
+                Name = "SetParameter",
+                Parameters = {
+                    { Name = "name", Type = "string" },
+                    { Name = "value", Type = "number | boolean" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Sets one of the graph's parameters **on this machine**. A number or a boolean is kept "
+                    .. "until it is set again; a trigger is fired -- any value does it -- and is true until a "
+                    .. "transition takes it or the tick ends.\n\n"
+                    .. "**A parameter the graph reads from the world** (`from` in its file) **is overridden**: "
+                    .. "what was set wins on this machine until `ClearParameter` hands it back. Other machines "
+                    .. "do not see it -- for something every machine must show, set an attribute the graph "
+                    .. "reads, or let the body's own motion say it.\n\n"
+                    .. "Raises for a name the graph does not declare, once the graph has loaded; before that "
+                    .. "the value is kept and applied when it does.",
+            },
+            {
+                Name = "GetParameter",
+                Parameters = { { Name = "name", Type = "string" } },
+                Returns = { "(number | boolean)?" },
+                ThreadSafety = "Unsafe",
+                Doc = "A parameter's value on this machine, as the graph sees it this tick: what a script set, "
+                    .. "else what it reads from the world, else its value at rest. A trigger answers whether it "
+                    .. "is fired. Nil with no graph loaded, or for a name it does not declare.",
+            },
+            {
+                Name = "ClearParameter",
+                Parameters = { { Name = "name", Type = "string" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Forgets what `SetParameter` set: the parameter is again what the graph reads from the "
+                    .. "world, or its value at rest.",
+            },
+            {
+                Name = "GetState",
+                Parameters = { { Name = "layer", Type = "string?", Default = "nil" } },
+                Returns = { "string" },
+                ThreadSafety = "Unsafe",
+                Doc = "The state a layer is in -- the one it is fading INTO, during a fade -- by name. With no "
+                    .. "layer named, the first. Empty with no graph loaded or for a layer it does not have.",
+            },
         } :: { Schema.Method },
+        Events = {
+            {
+                Name = "StateChanged",
+                Parameters = {
+                    { Name = "layer", Type = "string" },
+                    { Name = "from", Type = "string" },
+                    { Name = "to", Type = "string" },
+                },
+                Doc = "A layer of the graph left one state for another, on this machine. Fired on the "
+                    .. "simulation's clock, deferred like every signal.",
+            },
+            {
+                Name = "EventReached",
+                Parameters = {
+                    { Name = "name", Type = "string" },
+                    { Name = "layer", Type = "string" },
+                },
+                Doc = "A clip passed a moment the graph names (`events` in its file): a foot down, a sword's "
+                    .. "edge live. Only for the state a layer is in -- not one fading out -- and in a blend "
+                    .. "only for the clip that weighs most, so a walk and a run do not step twice. **Once**: a "
+                    .. "tick a replica predicts again does not fire it again. Each machine fires its own; what "
+                    .. "a hit does is decided where the authority hears it.",
+            },
+        } :: { Schema.Event },
     },
     {
         Name = "Part2D",

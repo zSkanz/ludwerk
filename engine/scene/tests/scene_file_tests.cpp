@@ -259,6 +259,43 @@ TEST_CASE("a reference to something outside the scene is dropped and counted, no
     CHECK(text.find("Elsewhere") == std::string::npos);
 }
 
+TEST_CASE("D616: a property a class does not have is counted and NAMED, each once, the first few")
+{
+    // A property a class does not have -- `"Transparency": 1` on a body, in
+    // the report this came from -- loaded with nothing said: counted, and the
+    // count shown to nobody. A file written by hand or by a tool had a
+    // misspelt property that did nothing, in silence.
+    Fixture fixture;
+    (void)makeWorkspace(fixture);
+    const std::string text = R"json({
+  "format": "scene",
+  "version": 2,
+  "root": {"class": "Workspace", "name": "Workspace", "children": [
+    {"class": "Part", "name": "A", "properties": {"Sparkle": 1, "Glow": true}},
+    {"class": "Part", "name": "B", "properties": {"Sparkle": 0.5}}
+  ]}
+})json";
+    SceneIoReport report;
+    REQUIRE_FALSE(scene::readScene(fixture.world, text, &report).has_value());
+    // Three were refused; two names, each said once.
+    CHECK(report.refusedProperties == 3);
+    CHECK(report.refusedNames == "Part.Sparkle, Part.Glow");
+    // The rest of the scene is there.
+    CHECK(report.instances >= 2);
+
+    // A scene with nothing wrong names nothing.
+    Fixture clean;
+    (void)makeWorkspace(clean);
+    SceneIoReport fine;
+    REQUIRE_FALSE(scene::readScene(clean.world,
+                                   R"({"format":"scene","version":2,"root":{"class":"Workspace","name":"Workspace",)"
+                                   R"("children":[{"class":"Part","name":"A"}]}})",
+                                   &fine)
+                      .has_value());
+    CHECK(fine.refusedProperties == 0);
+    CHECK(fine.refusedNames.empty());
+}
+
 TEST_CASE("a class this build does not have takes its subtree with it, and says so")
 {
     Fixture fixture;

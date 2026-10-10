@@ -465,6 +465,11 @@ u64 World::worldHash() const
             hasher.number(animator->phase);
             hasher.flag(animator->finished);
         }
+        // Where an animation graph is (ADR 0197): which state each layer is
+        // in and how far through, which decides the pose every joint a
+        // script or a hitbox reads -- and is in no property.
+        if (const AnimationPlayerComponent* player = m_animationPlayers.find(id); player != nullptr)
+            hasher.pod(player->graphDigest);
 
         // **The terrain field, which no property can carry** (ADR 0082). It is
         // megabytes of samples, so it is not in the walk below and has to be

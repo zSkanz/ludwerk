@@ -205,6 +205,94 @@ local BasePartFields: { Schema.Field } = {
             .. "against the parts it holds: one whose group it was never told stopped a character the "
             .. "authority's walked through. The table of groups travels in `CollisionGroups`.",
     },
+    {
+        Name = "CanTouch",
+        Id = 20,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "**What a part answers, where it is asked** (protocol 44). A replica raises `Touched` for its own "
+            .. "character and the parts it predicts, and asks this of each: left on the authority, a trigger the "
+            .. "server had switched off still fired in every client script.",
+    },
+    {
+        Name = "CanQuery",
+        Id = 21,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "Whether a ray finds it. A client script's raycast is answered by that machine's own bodies: the "
+            .. "glass the server's ray passed through stopped every client's.",
+    },
+    {
+        Name = "Friction",
+        Id = 22,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "**What a replica predicts a loose part with** (ADR 0133, protocol 44), this and the four after it. "
+            .. "A replica steps the parts near its character itself, from the body it holds; with its own default "
+            .. "where the authority had ice, every touch was a correction.",
+    },
+    {
+        Name = "Restitution",
+        Id = 23,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "How much of a bounce comes back.",
+    },
+    {
+        Name = "Density",
+        Id = 24,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "What it weighs for its size, which is how far a push sends it.",
+    },
+    {
+        Name = "LinearDamping",
+        Id = 25,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "How soon it stops sliding of its own accord.",
+    },
+    {
+        Name = "AngularDamping",
+        Id = 26,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "How soon it stops turning.",
+    },
+    {
+        Name = "Buoyant",
+        Id = 27,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "Whether water holds it up (ADR 0118): a replica that predicts a crate in a river floats it or "
+            .. "does not as the authority does.",
+    },
+    {
+        Name = "ContactDetails",
+        Id = 28,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "Whether `Collided` fires for it. Asked where the contact is found, so a client script that "
+            .. "listens is told on the machine it runs on.",
+    },
+    {
+        Name = "PivotOffset",
+        Id = 29,
+        Encoding = "CFrameD",
+        Source = "Component",
+        Component = "pvInstances",
+        Doc = "Where its pivot sits. `GetPivot` and `PivotTo` are answered on the machine that calls them: a "
+            .. "door a client script swings must hinge where the server's does.",
+    },
 }
 
 --- What a `Part` is beyond a base part (protocol 30, D424): its shape. On
@@ -403,6 +491,23 @@ local ModelFields: { Schema.Field } = {
         Source = "Component",
         Component = "models",
         Doc = "One number that moves every descendant, so sending it beats sending the descendants it " .. "moved.",
+    },
+    {
+        Name = "PrimaryPart",
+        Id = 2,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "models",
+        Doc = "The part a model is placed by (protocol 44). A network id, written once that copy exists: it read "
+            .. "nil in every client script, and a model's pivot was somewhere else there.",
+    },
+    {
+        Name = "PivotOffset",
+        Id = 3,
+        Encoding = "CFrameD",
+        Source = "Component",
+        Component = "pvInstances",
+        Doc = "Where its pivot sits, as a part's does.",
     },
 }
 
@@ -878,6 +983,15 @@ local LightingFields: { Schema.Field } = {
         Component = "lighting",
         Doc = "The most the automatic exposure brightens, in EV stops (protocol 31).",
     },
+    {
+        Name = "OutdoorAmbient",
+        Id = 16,
+        Encoding = "Color3",
+        Source = "Component",
+        Component = "lighting",
+        Doc = "The flat light under the open sky (protocol 44). `Ambient` travelled and this did not, so a "
+            .. "world that lit its caves and its fields apart was lit one way on the server and another on a client.",
+    },
 }
 
 local DecalFields: { Schema.Field } = {
@@ -920,6 +1034,23 @@ local DecalFields: { Schema.Field } = {
         Source = "Component",
         Component = "decals",
         Doc = "A mark fading out is a game saying something.",
+    },
+    {
+        Name = "BlendMode",
+        Id = 6,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "decals",
+        Doc = "Whether the image darkens the surface, lies over it or adds its light (ADR 0160, protocol 44): "
+            .. "left off the wire, a glowing rune arrived as a stain.",
+    },
+    {
+        Name = "Emissive",
+        Id = 7,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "decals",
+        Doc = "How brightly it glows, over and above.",
     },
 }
 
@@ -1067,6 +1198,152 @@ local ParticleEmitterFields: { Schema.Field } = {
         Source = "Component",
         Component = "particleEmitters",
         Doc = "Whether the smoke leans with the wind (ADR 0115, protocol 19).",
+    },
+    {
+        Name = "Texture",
+        Id = 19,
+        Encoding = "NameAtom",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "The picture a particle is drawn with (ADR 0160, protocol 44), by content URN. Without it a "
+            .. "replica drew the plain shape where the authority drew flames.",
+    },
+    {
+        Name = "FlipbookColumns",
+        Id = 20,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "How many frames across the picture holds.",
+    },
+    {
+        Name = "FlipbookRows",
+        Id = 21,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "How many frames down.",
+    },
+    {
+        Name = "FlipbookFramerate",
+        Id = 22,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "How fast the frames turn when they loop.",
+    },
+    {
+        Name = "FlipbookMode",
+        Id = 23,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "Whether the frames loop, run once over a life, or are one still each.",
+    },
+    {
+        Name = "Rotation",
+        Id = 24,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "How a particle is turned at birth.",
+    },
+    {
+        Name = "RotationSpread",
+        Id = 25,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "Give or take this much.",
+    },
+    {
+        Name = "RotationSpeed",
+        Id = 26,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "How fast it turns after.",
+    },
+    {
+        Name = "RotationSpeedSpread",
+        Id = 27,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "Give or take this much.",
+    },
+    {
+        Name = "ColorOverLife",
+        Id = 28,
+        Encoding = "ColorSequence",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "**Its colour along its life** (protocol 44). Left off the wire, every replica drew an emitter "
+            .. "white from birth to death whatever the authority's was.",
+    },
+    {
+        Name = "SizeOverLife",
+        Id = 29,
+        Encoding = "NumberSequence",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "Its size along its life.",
+    },
+    {
+        Name = "TransparencyOverLife",
+        Id = 30,
+        Encoding = "NumberSequence",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "How solid it is along its life.",
+    },
+    {
+        Name = "Collision",
+        Id = 31,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "What a particle meets: sparks that land on a floor here land on it everywhere.",
+    },
+    {
+        Name = "CollisionResponse",
+        Id = 32,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "Whether it bounces, sticks or dies there.",
+    },
+    {
+        Name = "Bounce",
+        Id = 33,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "How much of its speed into a surface comes back.",
+    },
+    {
+        Name = "Friction",
+        Id = 34,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "How much of its speed along one a touch takes.",
+    },
+    {
+        Name = "CollisionRadius",
+        Id = 35,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "How far from its middle it touches.",
+    },
+    {
+        Name = "Simulation",
+        Id = 36,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "Where it was asked to be simulated, as authored: each machine does what its renderer can.",
     },
 }
 
@@ -1270,6 +1547,56 @@ local Part2DFields: { Schema.Field } = {
         Doc = "Whether it is drawn past the tone curve (ADR 0153, protocol 32): a sprite the server made "
             .. "lit is lit on every screen.",
     },
+    {
+        Name = "Density",
+        Id = 20,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "parts2d",
+        Doc = "**What a replica steps its own sprite with** (ADR 0103, protocol 44), this and the four after "
+            .. "it: a heavy, floaty or bouncy hero was an ordinary one on its own player's machine.",
+    },
+    {
+        Name = "Friction",
+        Id = 21,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "parts2d",
+        Doc = "How it grips what it slides on.",
+    },
+    {
+        Name = "Elasticity",
+        Id = 22,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "parts2d",
+        Doc = "How much of a bounce comes back.",
+    },
+    {
+        Name = "FixedRotation",
+        Id = 23,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "parts2d",
+        Doc = "Whether a knock may turn it.",
+    },
+    {
+        Name = "GravityScale",
+        Id = 24,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "parts2d",
+        Doc = "How much of gravity it feels.",
+    },
+    {
+        Name = "CollisionGroup",
+        Id = 25,
+        Encoding = "NameAtom",
+        Source = "Component",
+        Component = "parts2d",
+        Doc = "Which group it collides as, by name, as a part's (D545): a ghost that passes through walls on the "
+            .. "authority must pass through them where its player predicts it.",
+    },
 }
 
 --- A tilemap on the 2D plane (ADR 0103, protocol 15). Its properties are fields
@@ -1355,6 +1682,15 @@ local Tilemap2DFields: { Schema.Field } = {
         Source = "Component",
         Component = "tilemaps2d",
         Doc = "As a `Part2D`'s (ADR 0153, protocol 32).",
+    },
+    {
+        Name = "CollisionGroup",
+        Id = 11,
+        Encoding = "NameAtom",
+        Source = "Component",
+        Component = "tilemaps2d",
+        Doc = "Which group its tiles collide as (protocol 44), as a `Part2D`'s: `Collides` and `Friction` "
+            .. "travelled and this did not.",
     },
 }
 
@@ -1497,6 +1833,32 @@ local WaterPointFields: { Schema.Field } = {
         Source = "Component",
         Component = "waterPoints",
         Doc = "Where the river passes.",
+    },
+    {
+        Name = "Width",
+        Id = 2,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "waterPoints",
+        Doc = "How wide the river is here (protocol 44); none is the water's own. A replica draws the river, "
+            .. "swims its character in it and floats what it predicts on it: all three from an even width, where "
+            .. "the authority's widened into a pool.",
+    },
+    {
+        Name = "Depth",
+        Id = 3,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "waterPoints",
+        Doc = "How deep it is here; none is the water's own.",
+    },
+    {
+        Name = "Sharp",
+        Id = 4,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "waterPoints",
+        Doc = "Whether the course turns a corner here or bends through.",
     },
 }
 
@@ -2452,6 +2814,216 @@ local NoCollisionFields: { Schema.Field } = {
     },
 }
 
+--- **What a character carries** (protocol 44): the lights, the cape, the bones,
+--- the marks and ribbons and sounds a thing the authority spawns has under it.
+--- One rule for every class here: the instance and what was authored on it
+--- travel when it is made and when a property changes; nothing is sent a tick,
+--- and whatever the class simulates -- a chain's swing, a trail's pieces, where
+--- a sound has got to -- stays each machine's own.
+---
+--- A row is a property read from a component as it stands, so each list is
+--- written through `authored`: the pool once, then a name, an id, an encoding
+--- and why it travels.
+local function authored(pool: string): (string, number, Schema.Encoding, string) -> Schema.Field
+    return function(name: string, id: number, encoding: Schema.Encoding, doc: string): Schema.Field
+        return { Name = name, Id = id, Encoding = encoding, Source = "Component", Component = pool, Doc = doc }
+    end
+end
+
+local pointLight = authored("pointLights")
+local PointLightFields: { Schema.Field } = {
+    pointLight(
+        "CFrame",
+        1,
+        "CFrameD",
+        "Where the light is, relative to what holds it (ADR 0095). That its holder moved needs no message; "
+            .. "that the light is there, and where on its holder, does."
+    ),
+    pointLight("Color", 2, "Color3", "What colour it shines."),
+    pointLight("Brightness", 3, "F32", "How hard it shines, which a game turns to say a torch is dying."),
+    pointLight("Range", 4, "F32", "How far it reaches."),
+    pointLight("Enabled", 5, "Bool", "A torch put out on the authority is out for everybody."),
+    pointLight(
+        "Shadows",
+        6,
+        "Bool",
+        "Whether it casts, as authored: each machine's renderer decides what it can afford."
+    ),
+}
+
+local spotLight = authored("spotLights")
+local SpotLightFields: { Schema.Field } = {
+    spotLight("CFrame", 1, "CFrameD", "Where the light is and which way it points, relative to what holds it."),
+    spotLight("Color", 2, "Color3", "What colour it shines."),
+    spotLight("Brightness", 3, "F32", "How hard it shines."),
+    spotLight("Range", 4, "F32", "How far it reaches."),
+    spotLight("Angle", 5, "F32", "How wide the cone is."),
+    spotLight("Enabled", 6, "Bool", "A lamp switched off on the authority is off for everybody."),
+    spotLight("Shadows", 7, "Bool", "Whether it casts, as authored."),
+}
+
+local springBone = authored("springBones")
+local SpringBoneFields: { Schema.Field } = {
+    springBone("Enabled", 1, "Bool", "Whether the chain swings at all."),
+    springBone("RootJoint", 2, "NameAtom", "The joint the chain hangs from, by name: a rig is content both ends have."),
+    springBone("JointPattern", 3, "NameAtom", "Every joint whose name this matches is the top of a chain too."),
+    springBone("Stiffness", 4, "F32", "How hard a chain is pulled back to its pose."),
+    springBone("Damping", 5, "F32", "How soon a swing dies."),
+    springBone("GravityScale", 6, "F32", "How much of gravity a chain feels."),
+    springBone("Inertia", 7, "F32", "How much of its body's motion a chain is left behind by."),
+    springBone("LimitAngle", 8, "F32", "How far from its pose a joint may swing."),
+    springBone("Radius", 9, "F32", "How thick a chain is to a collider."),
+    springBone("WindInfluence", 10, "F32", "How much of the wind a chain takes."),
+}
+
+local springCollider = authored("springColliders")
+local SpringColliderFields: { Schema.Field } = {
+    springCollider("JointName", 1, "NameAtom", "The joint it rides, by name."),
+    springCollider("Radius", 2, "F32", "How big it is."),
+    springCollider("Length", 3, "F32", "How long, along the joint: none is a ball."),
+    springCollider("Offset", 4, "Vector3", "Where on its joint it sits."),
+}
+
+local bone = authored("attachments")
+local BoneFields: { Schema.Field } = {
+    bone("JointName", 1, "NameAtom", "The joint it follows, by name: what a sword in a hand is held by."),
+    bone(
+        "Transform",
+        2,
+        "CFrameD",
+        "What a script turned the joint by, on top of the pose -- a head that looks, a recoil. A script on the "
+            .. "authority writes it, so it is state as a part's place is, and travels when it changes."
+    ),
+}
+
+local highlight = authored("highlights")
+local HighlightFields: { Schema.Field } = {
+    highlight("Adornee", 1, "InstanceRef", "What it marks, when that is not what it sits in. A network id."),
+    highlight("FillColor", 2, "Color3", "The colour laid over the shape."),
+    highlight("FillTransparency", 3, "F32", "How much of the shape shows through it."),
+    highlight("OutlineColor", 4, "Color3", "The colour of the line round it."),
+    highlight("OutlineTransparency", 5, "F32", "How solid that line is."),
+    highlight("DepthMode", 6, "I32", "Whether it shows through what is in front."),
+    highlight("Enabled", 7, "Bool", "A mark the authority took off is off for everybody."),
+}
+
+local beam = authored("beams")
+local BeamFields: { Schema.Field } = {
+    beam("Attachment0", 1, "InstanceRef", "Where it starts. A network id, written once that copy exists."),
+    beam("Attachment1", 2, "InstanceRef", "Where it ends."),
+    beam("Color", 3, "ColorSequence", "Its colour along its length."),
+    beam("Transparency", 4, "NumberSequence", "How solid it is along its length."),
+    beam("Width0", 5, "F32", "How wide it starts."),
+    beam("Width1", 6, "F32", "How wide it ends."),
+    beam("CurveSize0", 7, "F32", "How far it leaves its start before it turns."),
+    beam("CurveSize1", 8, "F32", "How far out it comes in to its end from."),
+    beam("Segments", 9, "I32", "How many pieces a curve is drawn in."),
+    beam("Texture", 10, "NameAtom", "The image along it, by content URN."),
+    beam("TextureLength", 11, "F32", "How much of it one copy of the image covers."),
+    beam("TextureMode", 12, "I32", "Whether the image repeats by length or is stretched."),
+    beam("TextureSpeed", 13, "F32", "How fast the image runs along it."),
+    beam("FaceCamera", 14, "Bool", "Whether it turns to whoever looks."),
+    beam("LightEmission", 15, "F32", "Whether it glows or blends."),
+    beam("LightInfluence", 16, "F32", "How much of the world's light it takes."),
+    beam("ZOffset", 17, "F32", "How far towards the camera it is drawn."),
+    beam("Enabled", 18, "Bool", "A beam the authority switched off is off for everybody."),
+}
+
+local trail = authored("trails")
+local TrailFields: { Schema.Field } = {
+    trail("Attachment0", 1, "InstanceRef", "One edge of the ribbon. A network id, written once that copy exists."),
+    trail("Attachment1", 2, "InstanceRef", "The other edge."),
+    trail("Lifetime", 3, "F32", "How long a piece lasts."),
+    trail("MinLength", 4, "F32", "How far its ends move before a new piece is laid."),
+    trail("MaxLength", 5, "F32", "How long it may get: none is as long as its pieces last."),
+    trail("Color", 6, "ColorSequence", "Its colour along a piece's life."),
+    trail("Transparency", 7, "NumberSequence", "How solid it is along a piece's life."),
+    trail("WidthScale", 8, "NumberSequence", "How wide it is along a piece's life."),
+    trail("Texture", 9, "NameAtom", "The image along it, by content URN."),
+    trail("TextureLength", 10, "F32", "How much of it one copy of the image covers."),
+    trail("TextureMode", 11, "I32", "Whether the image repeats by length or is stretched."),
+    trail("FaceCamera", 12, "Bool", "Whether it turns to whoever looks."),
+    trail("LightEmission", 13, "F32", "Whether it glows or blends."),
+    trail("LightInfluence", 14, "F32", "How much of the world's light it takes."),
+    trail("Enabled", 15, "Bool", "Whether new pieces are laid."),
+    trail(
+        "Cleared",
+        16,
+        "U32",
+        "**How `Clear` reaches a replica**: a running total of the times it was called, as an emitter's "
+            .. "`Emitted` is. The pieces themselves are each machine's own, laid from where it drew the ends."
+    ),
+}
+
+local animationPlayer = authored("animationPlayers")
+local AnimationPlayerFields: { Schema.Field } = {
+    animationPlayer(
+        "Graph",
+        1,
+        "NameAtom",
+        "The animation graph it plays, by content URN: the file is in the build both ends have. Set where "
+            .. "the character is made, so a character a server spawns is animated on every machine with no "
+            .. "script on any of them saying so."
+    ),
+    animationPlayer(
+        "Retargeting",
+        2,
+        "I32",
+        "How a clip from another file is carried onto this skeleton: it decides the pose, so every machine "
+            .. "has to carry it the same way."
+    ),
+}
+
+local ikControl = authored("ikControls")
+local IKControlFields: { Schema.Field } = {
+    ikControl("Type", 1, "I32", "A limb to a place, or a look."),
+    ikControl("EndJoint", 2, "NameAtom", "The joint at the end of what is bent, by name."),
+    ikControl("Target", 3, "InstanceRef", "What is reached for or looked at: a part or an attachment."),
+    ikControl("TargetOffset", 4, "CFrameD", "Where from the target the place is."),
+    ikControl("Pole", 5, "InstanceRef", "What the elbow or the knee points at."),
+    ikControl("AlignRotation", 6, "Bool", "Whether the end takes the target's turn too."),
+    ikControl("ChainLength", 7, "I32", "How many joints above the end share a look."),
+    ikControl("MaxAngle", 8, "F32", "How far from ahead a look may turn."),
+    ikControl(
+        "Weight",
+        9,
+        "F32",
+        "How much of it is applied: what a server tweens to have a hand take hold of a thing on every machine."
+    ),
+    ikControl("Enabled", 10, "Bool", "Whether it is applied at all."),
+    ikControl("Smoothing", 11, "F32", "The seconds a change is eased over."),
+}
+
+local footPlacement = authored("footPlacements")
+local FootPlacementFields: { Schema.Field } = {
+    footPlacement("LeftFoot", 1, "NameAtom", "The left ankle's joint, by name."),
+    footPlacement("RightFoot", 2, "NameAtom", "The right ankle's."),
+    footPlacement("Hips", 3, "NameAtom", "The joint both legs hang from."),
+    footPlacement("FootHeight", 4, "F32", "From the ankle down to the sole."),
+    footPlacement("StepHeight", 5, "F32", "How far from the clip's ground a foot is taken."),
+    footPlacement("AlignToSlope", 6, "Bool", "Whether a planted foot is turned to its ground."),
+    footPlacement("Weight", 7, "F32", "How much of it is applied."),
+    footPlacement("Enabled", 8, "Bool", "Whether it is applied at all."),
+}
+
+local sound = authored("sounds")
+local SoundFields: { Schema.Field } = {
+    sound("Content", 1, "NameAtom", "Which file, by content URN: the bytes are in the build both ends have."),
+    sound(
+        "Playing",
+        2,
+        "Bool",
+        "**How a sound starts on a replica**: seen to become true, the replica plays its own copy from the "
+            .. "start; seen to become false, it stops it. `TimePosition` never travels -- two machines' "
+            .. "clocks do not agree to the sample, and a sound a tenth of a second out is still that sound."
+    ),
+    sound("Looped", 3, "Bool", "Whether it starts again at its end."),
+    sound("Volume", 4, "F32", "How loud, before each machine's own groups and settings."),
+    sound("PlaybackSpeed", 5, "F32", "How fast, which is its pitch."),
+    sound("RollOffMinDistance", 6, "F32", "How near it is at full volume."),
+    sound("RollOffMaxDistance", 7, "F32", "How far it is heard at all."),
+}
+
 local Classes: { Schema.Class } = {
     {
         Name = "BasePart",
@@ -2484,9 +3056,16 @@ local Classes: { Schema.Class } = {
     },
     {
         Name = "Model",
-        Doc = "Replicated for its scale alone: everything else about a model is its children, and "
-            .. "they replicate as themselves.",
+        Doc = "Its scale, the part it is placed by and where its pivot sits: everything else about a "
+            .. "model is its children, and they replicate as themselves.",
         Fields = ModelFields,
+        Withheld = {
+            {
+                Name = "StreamingMode",
+                Reason = "Read by the partitioner when a world is written down into cells, and by nothing "
+                    .. "while a game runs, on any machine.",
+            },
+        },
     },
     {
         Name = "Lighting",
@@ -2574,6 +3153,13 @@ local Classes: { Schema.Class } = {
         Name = "Water",
         Doc = "Water (ADR 0118, protocol 28): its surface and what it does to what floats in it.",
         Fields = WaterFields,
+        Withheld = {
+            {
+                Name = "BankWidth",
+                Reason = "Read by `Carve` alone, which cuts the bed into the ground. The ground is the "
+                    .. "authority's to cut, and what it cut travels as the ground does.",
+            },
+        },
     },
     {
         Name = "WaterWave",
@@ -2605,6 +3191,22 @@ local Classes: { Schema.Class } = {
         Doc = "A crowd the engine steers (ADR 0156), replicated so a replica has something to ask "
             .. "(ADR 0162, protocol 38). Its agents are rows, not instances: with `Replicates` they "
             .. "travel in `SwarmAgents` and `SwarmState`, and without it a replica's copy is empty.",
+        Withheld = {
+            {
+                Name = "Target",
+                Reason = "Where the crowd is sent is read by the authority's step alone. A replica steps "
+                    .. "nothing: it carries each agent along the walk it was told (`stepMirror`), which "
+                    .. "reads none of the steering.",
+            },
+            { Name = "CellSize", Reason = "Steering, as `Target`: the authority's step alone reads it." },
+            { Name = "MaxNeighbours", Reason = "Steering, as `Target`." },
+            { Name = "Gravity", Reason = "Steering, as `Target`: where an agent falls to arrives as where it is." },
+            { Name = "ClimbSpeed", Reason = "Steering, as `Target`." },
+            { Name = "PileHeight", Reason = "Steering, as `Target`." },
+            { Name = "StopDistance", Reason = "Steering, as `Target`." },
+            { Name = "NearDistance", Reason = "How often the authority's agents think, as `Target`." },
+            { Name = "FarDistance", Reason = "How often the authority's agents think, as `Target`." },
+        },
         Fields = {
             {
                 Name = "Replicates",
@@ -2663,6 +3265,12 @@ local Classes: { Schema.Class } = {
             .. "`ReplicatedStorage` does. After every other service in this list, so each of them keeps its "
             .. "id; what follows it is instances.",
         Fields = WorkspaceFields,
+        Withheld = {
+            {
+                Name = "CurrentCamera",
+                Reason = "A camera is each machine's own, and is not on the wire to be named.",
+            },
+        },
     },
     {
         Name = "Attachment",
@@ -2773,6 +3381,100 @@ local Classes: { Schema.Class } = {
             .. "machine that drives it as on the authority.",
         Fields = NoCollisionFields,
     },
+    -- --- Protocol 44: what a character carries ---------------------------------
+    {
+        Name = "PointLight",
+        Doc = "A light (protocol 44). It was off the wire because a light that moved with its holder needs "
+            .. "no message -- true of the motion and not of the light: a torch the authority spawned was dark "
+            .. "on every replica. The instance and what was authored on it travel; nothing is sent a tick.",
+        Fields = PointLightFields,
+    },
+    {
+        Name = "SpotLight",
+        Doc = "A cone of light; as `PointLight`.",
+        Fields = SpotLightFields,
+    },
+    {
+        Name = "SpringBone",
+        Doc = "A chain that trails behind its body (ADR 0194): what was authored, so a cape the authority "
+            .. "spawned exists on a replica. **The swing is each machine's own**, stepped at its own frame "
+            .. "rate from the pose it drew, and no joint of it is ever sent.",
+        Fields = SpringBoneFields,
+    },
+    {
+        Name = "SpringCollider",
+        Doc = "What a `SpringBone`'s chains are kept out of; as `SpringBone`.",
+        Fields = SpringColliderFields,
+    },
+    {
+        Name = "Bone",
+        Extends = "Attachment",
+        Doc = "An `Attachment` on a joint: which joint, and what a script turned it by. Where it lands in the "
+            .. "world is derived on each machine from the pose that machine drew.",
+        Fields = BoneFields,
+    },
+    {
+        Name = "Highlight",
+        Doc = "A mark over a shape (ADR 0129), which that ADR always had travel as an instance: each machine "
+            .. "draws its own.",
+        Fields = HighlightFields,
+    },
+    {
+        Name = "Beam",
+        Doc = "A band drawn between two attachments (ADR 0129), with the sequences it is coloured by.",
+        Fields = BeamFields,
+    },
+    {
+        Name = "Trail",
+        Doc = "The ribbon two attachments leave (ADR 0129). **Its pieces are each machine's own**: what "
+            .. "travels is how it is drawn and that it was cleared.",
+        Fields = TrailFields,
+    },
+    {
+        Name = "Sound",
+        Doc = "A sound in the world, as authored, with `Playing` and `Looped` as the properties they are. "
+            .. "**Each machine plays its own copy**: from the start when it sees `Playing` become true, "
+            .. "stopped when it sees it become false. Where the sound has got to is never sent, so a "
+            .. "one-shot that starts and ends between two snapshots may not be heard on a replica, and a "
+            .. "machine that joins while one plays hears it from its start. Its `Group` is not sent: a "
+            .. "mixer bus is each machine's own.",
+        Fields = SoundFields,
+        Withheld = {
+            {
+                Name = "Group",
+                Reason = "It names an `AudioGroup`, which is each machine's own and not on the wire: a "
+                    .. "sound is heard through the groups of the machine that plays it.",
+            },
+        },
+    },
+    {
+        Name = "AnimationPlayer",
+        Doc = "**Which graph a character plays, and how its clips are carried onto it** (ADR 0197, ADR "
+            .. "0199) -- and nothing of the animation itself. No clip, no time, no weight, no state and no "
+            .. "parameter a script set travels: each machine steps its own copy of the graph from what "
+            .. "already arrives of the character, its body's motion and its attributes. A track a script "
+            .. "plays with `LoadAnimation` is that machine's own, as it always was.",
+        Fields = AnimationPlayerFields,
+        Withheld = {
+            {
+                Name = "CullingMode",
+                Reason = "How often a machine poses what it cannot see is that machine's cost to choose: a "
+                    .. "server poses every tick, and a client as often as it sees the body.",
+            },
+        },
+    },
+    {
+        Name = "IKControl",
+        Doc = "A limb that reaches or a head that looks (ADR 0198), as authored: what it bends, what it "
+            .. "reaches for, how much. The bending is picture, each machine's own, solved each frame from "
+            .. "where that machine draws things.",
+        Fields = IKControlFields,
+    },
+    {
+        Name = "FootPlacement",
+        Doc = "Two feet on the ground under them (ADR 0198), as authored; as `IKControl`.",
+        Fields = FootPlacementFields,
+    },
 }
 
 --- Recorded by name, because a class nobody decided about and a class
@@ -2780,32 +3482,19 @@ local Classes: { Schema.Class } = {
 local Excluded: { Schema.Excluded } = {
     {
         Name = "FoliageLayer",
+        Quiet = true,
         Reason = "Foliage is drawn and never simulated (ADR 0116): placement is a pure function of the "
             .. "terrain, the layer and its seed, so every machine grows the same field from the scene it "
             .. "already has, and the wire carries none of it.",
     },
     {
         Name = "FoliageMesh",
+        Quiet = true,
         Reason = "Part of a `FoliageLayer`, and excluded for its reason.",
     },
     {
-        Name = "Highlight",
-        Reason = "A mark on the picture (ADR 0129). ADR 0129 has it travel as an instance and each machine "
-            .. "draw its own; it does not yet. What it marks is named by reference, which the wire carries "
-            .. "since protocol 34 (NA34); a box in the network's ledger.",
-    },
-    {
-        Name = "Beam",
-        Reason = "Drawn between two attachments (ADR 0129). `Attachment` is on the wire since protocol 34, "
-            .. "but a sequence of colours or of widths is not an encoding it has. Excluded until it is; a box "
-            .. "in the network's ledger.",
-    },
-    {
-        Name = "Trail",
-        Reason = "Excluded for `Beam`'s reasons.",
-    },
-    {
         Name = "Terrain",
+        Quiet = true,
         Reason = "Its bulk is not a property and a field is megabytes. A world's ground arrives with "
             .. "the world -- from the scene, or later from a streamed cell -- and a sculpt is rare, "
             .. "authored, and not a per-tick fact. ADR 0069 decides this by name so the next person "
@@ -2813,6 +3502,7 @@ local Excluded: { Schema.Excluded } = {
     },
     {
         Name = "Player",
+        Quiet = true,
         Reason = "Lives under `NetworkService`, which is not replicated, and each end makes its own: an "
             .. "authority one per peer, a replica one for itself and one for each player the `Players` "
             .. "roster names. What a replica knows of a player -- their number and their character -- "
@@ -2821,67 +3511,61 @@ local Excluded: { Schema.Excluded } = {
     },
     {
         Name = "DataModel",
+        Quiet = true,
         Reason = "The root. Every world has exactly one and it is created at boot on both sides, so "
             .. "there is nothing to spawn and nothing to reference by id.",
     },
 
     {
-        Name = "Bone",
-        Reason = "The same argument as `Attachment`, plus one: a bone's world transform is derived "
-            .. "from an animated pose, and the pose is derived from state that does replicate.",
-    },
-    {
         Name = "Ragdoll",
-        Reason = "A ragdoll is parts and constraints, and the parts replicate. The ragdoll instance "
-            .. "is the recipe rather than the result.",
-    },
-    {
-        Name = "SpringBone",
-        Reason = "Picture only (ADR 0194): a cape's swing is each machine's own, stepped at its own "
-            .. "frame rate from the pose it drew. Nothing of it is state another machine could use.",
-    },
-    {
-        Name = "SpringCollider",
-        Reason = "The same as `SpringBone`, whose chains it keeps out of the body.",
+        Quiet = true,
+        Reason = "The recipe rather than the result: the limbs it builds are parts and joints, and those "
+            .. "replicate (NA34). A replica that built from it too would hold every limb twice.",
     },
     {
         Name = "Constraint2D",
+        Quiet = true,
         Reason = "The same as `BallSocketConstraint`, on the plane (ADR 0102): a replica's sprites are "
             .. "moved to where the authority's joints put them, and `Part2D.Position` is what arrives. "
             .. "The one entry covers its three classes.",
     },
     {
         Name = "SpriteAnimator",
+        Quiet = true,
         Reason = "What it does is write its sprite's `ImageRectOffset`, and that property replicates "
             .. "(ADR 0102). Sending the animator too would play the sheet twice on a replica.",
     },
 
     {
         Name = "Camera",
+        Quiet = true,
         Reason = "A replica's view is its own. Replicating it would take the camera away from the "
             .. "player, which is the one thing a client must decide.",
     },
     {
         Name = "Script",
+        Quiet = true,
         Reason = "Source code is not world state. A replica runs the game it was shipped, and a "
-            .. "server that could push source to a client would be a server that can run code on it.",
+            .. "server that could push source to a client would be a server that can run code on it. What a "
+            .. "replica does is put its OWN copy of a script back under an instance the authority sends, when "
+            .. "that instance came from the scene or from a stamp both ends hold (ADR 0138 section 6); a "
+            .. "script the authority made any other way is the authority's alone.",
     },
     {
         Name = "ModuleScript",
+        Quiet = true,
         Reason = "The same as `Script`.",
     },
     {
-        Name = "Sound",
-        Reason = "Playback position is local and drifts by design. What replicates is the world event "
-            .. "that starts a sound, not the sound.",
-    },
-    {
         Name = "AudioGroup",
-        Reason = "A mixer bus. What a player hears at what volume is theirs.",
+        Reason = "A mixer bus. What a player hears at what volume is theirs: a `Sound` travels (protocol "
+            .. "44) and is heard through each machine's own groups, so the group it names does not.",
     },
     {
         Name = "ReverbSoundEffect",
-        Reason = "What the speakers do with a sound is each machine's, as the `Sound` and the `AudioGroup` it sits under are.",
+        Reason = "What the speakers do with a sound is each machine's, as the `AudioGroup` it may sit under "
+            .. "is. A `Sound` travels since protocol 44 and its effects do not: nine classes of numbers for a "
+            .. "change of tone, which a client script that wants it makes for itself.",
     },
     {
         Name = "EchoSoundEffect",
@@ -2915,77 +3599,80 @@ local Excluded: { Schema.Excluded } = {
         Name = "PitchShiftSoundEffect",
         Reason = "Excluded for `ReverbSoundEffect`'s reason.",
     },
-    {
-        Name = "PointLight",
-        Reason = "Lighting is drawn from world state a replica already has. A light that moved "
-            .. "because its parent moved needs no message of its own.",
-    },
-    {
-        Name = "SpotLight",
-        Reason = "The same as `PointLight`.",
-    },
 
     -- ADR 0096: the abstract base of the five effects, which travel by name.
     {
         Name = "PostEffect",
+        Quiet = true,
         Reason = "Abstract. Its five classes are replicated by name.",
     },
     {
         Name = "Material",
+        Quiet = true,
         Reason = "A material is an asset reference, and assets arrive with the build rather than over " .. "the wire.",
     },
 
     {
         Name = "InputAction",
+        Quiet = true,
         Reason = "Input is the client's to send as intent and never the authority's to push back. "
             .. "ADR 0041 already routes it through one dispatch; replicating it would give a server a "
             .. "second way to press a player's keys.",
     },
     {
         Name = "InputBinding",
+        Quiet = true,
         Reason = "A rebinding is a preference on one machine. The same as `InputAction`.",
     },
     {
         Name = "InputContext",
+        Quiet = true,
         Reason = "Which bindings are live is local UI state. The same as `InputAction`.",
     },
 
     {
         Name = "ScreenGui",
+        Quiet = true,
         Reason = "Screen-space UI is drawn from local state by local scripts. What a player sees on "
             .. "their own HUD is not a fact the authority owns.",
     },
     {
         Name = "BillboardGui",
-        Reason = "World-space UI is built by each peer's own scripts, as the screen's is: everything under "
+        Reason = "The interface tree is each machine's own, in the world as on the screen: everything under "
             .. "it is a UI class the wire does not carry, so sending the root alone would send an empty "
-            .. "board. A name tag over another player's character is made on each client from what IS "
+            .. "board. A name tag over another player's character is made by a client script from what IS "
             .. "replicated -- the character and its name.",
     },
     { Name = "SurfaceGui", Reason = "World-space UI. The same as `BillboardGui`." },
     {
         Name = "NavigationArea",
+        Quiet = true,
         Reason = "What it says is a question only the authority's navigation asks (ADR 0098): a path is "
             .. "searched where the game's scripts run, and a replica that wants one asks with a remote. "
             .. "The part it labels is replicated; the label is not something a replica draws.",
     },
-    { Name = "NavigationLink", Reason = "A way across for the authority's paths. The same as `NavigationArea`." },
+    {
+        Name = "NavigationLink",
+        Quiet = true,
+        Reason = "A way across for the authority's paths. The same as `NavigationArea`.",
+    },
     {
         Name = "NavigationAgent",
+        Quiet = true,
         Reason = "It walks its part on the authority's tick, and the part's `CFrame` is what arrives -- "
             .. "interpolated like any other part's. Sending the agent too would send a second account of "
-            .. "one motion.",
+            .. "one motion, to a machine that searches no paths (ADR 0098).",
     },
-    { Name = "Frame", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "TextLabel", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "TextButton", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "TextInput", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "ImageLabel", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "ImageButton", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "ScrollFrame", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "UICorner", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "UIGradient", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "ViewportFrame", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "Frame", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "TextLabel", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "TextButton", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "TextInput", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "ImageLabel", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "ImageButton", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "ScrollFrame", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UICorner", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIGradient", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "ViewportFrame", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
     {
         Name = "CameraTexture",
         Reason = "Its camera does not replicate -- a replica's view is its own -- so a feed sent without "
@@ -2997,27 +3684,18 @@ local Excluded: { Schema.Excluded } = {
         Reason = "A world of its own, run by the machine that loads it (ADR 0107 §3): what it holds is "
             .. "not this world's state, and a sub-world shared by players is a later decision.",
     },
-    { Name = "UIStroke", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "UIListLayout", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "UIPadding", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "UIGridLayout", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "UIPageLayout", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "UIFlexItem", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "UIScale", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "UIAspectRatioConstraint", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "UISizeConstraint", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "UITextSizeConstraint", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "UIDragDetector", Reason = "Screen-space UI. The same as `ScreenGui`." },
-    { Name = "CanvasGroup", Reason = "Screen-space UI. The same as `ScreenGui`." },
-
-    {
-        Name = "AnimationPlayer",
-        Reason = "**The first candidate for protocol 2, and out of N1 on purpose.** What an animation "
-            .. "needs is which clip, at what time, at what weight -- three fields whose meaning is a "
-            .. "blend tree the wire would have to describe. N1 replicates where bodies are, which is "
-            .. "what a player sees; making the limbs move the same way needs a design of its own and "
-            .. "would double this milestone.",
-    },
+    { Name = "UIStroke", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIListLayout", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIPadding", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIGridLayout", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIPageLayout", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIFlexItem", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIScale", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIAspectRatioConstraint", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UISizeConstraint", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UITextSizeConstraint", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIDragDetector", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "CanvasGroup", Quiet = true, Reason = "Screen-space UI. The same as `ScreenGui`." },
 }
 
 --- **One reason, written once.** Thirteen copies of a sentence is a schema

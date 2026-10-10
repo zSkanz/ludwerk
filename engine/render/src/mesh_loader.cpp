@@ -468,6 +468,9 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
     const auto load = [&](core::NameAtom urn, bool srgb, bool whole = false) {
         if (urn.id == 0)
             return;
+        // Named by the world on the frame a sweep takes its list (D610).
+        if (sweepRecording_)
+            named_.push_back(urn);
         if (library.find(urn).valid()) {
             // **Loaded smaller for a material, and now a sprite's** (D609):
             // what is drawn at its own size has it whole. Let go and loaded
@@ -767,6 +770,8 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
     // is what a picture a script names is -- a material's maps come with it.
     for (const core::NameAtom image : warmTextures_)
         load(image, true);
+    sweepWalkedTextures_ = sweepRecording_;
+    noteLateLoads();
     std::erase_if(warmTextures_, [&](core::NameAtom image) {
         return library.find(image).valid() ||
                std::binary_search(failed_.begin(), failed_.end(), image,
@@ -825,6 +830,8 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
     meshesWaiting_ = 0;
     // One mesh content, loaded once whatever names it.
     const auto load = [&](const core::NameAtom content) {
+        if (content.id != 0 && sweepRecording_)
+            named_.push_back(content);
         if (content.id == 0 || library.find(content) != nullptr)
             return;
         if (std::binary_search(failed_.begin(), failed_.end(), content,
@@ -1161,6 +1168,8 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
     // on screen; each name leaves the list once it has arrived.
     for (const core::NameAtom content : warmMeshes_)
         load(content);
+    sweepWalkedMeshes_ = sweepRecording_;
+    noteLateLoads();
     std::erase_if(warmMeshes_, [&](core::NameAtom content) {
         return library.find(content) != nullptr ||
                std::binary_search(failed_.begin(), failed_.end(), content,
@@ -1176,6 +1185,7 @@ void MeshLoader::warmMeshes(std::span<const core::NameAtom> meshes)
         if (std::find(warmMeshes_.begin(), warmMeshes_.end(), content) == warmMeshes_.end())
             warmMeshes_.push_back(content);
     }
+    notePreloaded(meshes);
 }
 
 void MeshLoader::warmTextures(std::span<const core::NameAtom> images)
@@ -1184,6 +1194,7 @@ void MeshLoader::warmTextures(std::span<const core::NameAtom> images)
         if (std::find(warmTextures_.begin(), warmTextures_.end(), content) == warmTextures_.end())
             warmTextures_.push_back(content);
     }
+    notePreloaded(images);
 }
 
 std::optional<bool> MeshLoader::warmed(core::NameAtom content, const MeshLibrary& meshes,
@@ -1244,6 +1255,155 @@ bool MeshLoader::uploadModel(rhi::IDevice& device, rhi::ICmdList& cmd, const ass
     return true;
 }
 
+void MeshLoader::notePreloaded(std::span<const core::NameAtom> urns)
+{
+    for (const core::NameAtom urn : urns) {
+        const auto held = std::find_if(preloaded_.begin(), preloaded_.end(),
+                                       [urn](const Preloaded& other) { return other.urn.id == urn.id; });
+        if (held != preloaded_.end())
+            held->scene = scene_;
+        else
+            preloaded_.push_back(Preloaded{urn, scene_});
+    }
+}
+
+void MeshLoader::keep(std::span<const core::NameAtom> urns)
+{
+    const auto byId = [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; };
+    for (const core::NameAtom urn : urns) {
+        const auto at = std::lower_bound(kept_.begin(), kept_.end(), urn, byId);
+        if (at == kept_.end() || at->id != urn.id)
+            kept_.insert(at, urn);
+    }
+}
+
+void MeshLoader::release(std::span<const core::NameAtom> urns)
+{
+    for (const core::NameAtom urn : urns)
+        std::erase_if(kept_, [urn](core::NameAtom held) { return held.id == urn.id; });
+}
+
+bool MeshLoader::kept(core::NameAtom urn) const noexcept
+{
+    return std::binary_search(kept_.begin(), kept_.end(), urn,
+                              [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; });
+}
+
+void MeshLoader::noteLateLoads()
+{
+    const auto holds = [](const std::vector<core::NameAtom>& list, core::NameAtom urn) {
+        return std::find_if(list.begin(), list.end(), [urn](core::NameAtom other) { return other.id == urn.id; }) !=
+               list.end();
+    };
+    const auto each = [this](const auto& fn) {
+        for (const PendingTexture& pending : pendingTextures_)
+            fn(pending.urn);
+        for (const PendingMesh& pending : pendingMeshes_)
+            fn(pending.content);
+    };
+    if (!lateWatching_) {
+        // Everything in flight now began behind the loading screen.
+        lateExempt_.clear();
+        each([this](core::NameAtom urn) { lateExempt_.push_back(urn); });
+        return;
+    }
+    // What was exempt and has arrived is exempt no longer: let go later and
+    // named again during play, it is a late load like any other.
+    std::erase_if(lateExempt_, [&](core::NameAtom urn) {
+        bool flying = false;
+        each([&](core::NameAtom pending) { flying = flying || pending.id == urn.id; });
+        return !flying;
+    });
+    each([&](core::NameAtom urn) {
+        if (holds(lateExempt_, urn) || holds(lateSaid_, urn) || kept(urn))
+            return;
+        // Asked for in this scene: a game loading ahead on purpose.
+        if (std::find_if(preloaded_.begin(), preloaded_.end(), [this, urn](const Preloaded& held) {
+                return held.urn.id == urn.id && held.scene == scene_;
+            }) != preloaded_.end())
+            return;
+        lateSaid_.push_back(urn);
+        late_.push_back(urn);
+    });
+}
+
+std::vector<core::NameAtom> MeshLoader::takeLateLoads()
+{
+    std::vector<core::NameAtom> taken;
+    taken.swap(late_);
+    return taken;
+}
+
+void MeshLoader::leaveScene() noexcept
+{
+    ++scene_;
+    sweepIn_ = SweepFrames;
+    sweepRecording_ = false;
+    sweepWalkedTextures_ = false;
+    sweepWalkedMeshes_ = false;
+    named_.clear();
+}
+
+core::u32 MeshLoader::sweep(rhi::IDevice& device, const scene::World& world, TextureLibrary& textures,
+                            MeshLibrary& meshes, MeshCache& cache)
+{
+    if (sweepIn_ == 0)
+        return 0;
+    if (sweepIn_ > 1) {
+        // The frame before the last: the walks of the next one are the list.
+        if (--sweepIn_ == 1) {
+            sweepRecording_ = true;
+            named_.clear();
+        }
+        return 0;
+    }
+    // A frame whose walks did not both run -- no workspace yet -- is not a
+    // list of anything: the next one.
+    if (!sweepRecording_ || !sweepWalkedTextures_ || !sweepWalkedMeshes_) {
+        sweepRecording_ = true;
+        sweepWalkedTextures_ = false;
+        sweepWalkedMeshes_ = false;
+        named_.clear();
+        return 0;
+    }
+    sweepIn_ = 0;
+    sweepRecording_ = false;
+
+    const auto byId = [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; };
+    // And what was preloaded in the scene just left, or since: the scene now
+    // open's. Older than that is nobody's any more.
+    std::erase_if(preloaded_, [this](const Preloaded& held) { return held.scene + 1 < scene_; });
+    for (const Preloaded& held : preloaded_)
+        named_.push_back(held.urn);
+    named_.insert(named_.end(), kept_.begin(), kept_.end());
+    for (const PendingTexture& pending : pendingTextures_)
+        named_.push_back(pending.urn);
+    for (const PendingMesh& pending : pendingMeshes_)
+        named_.push_back(pending.content);
+    std::sort(named_.begin(), named_.end(), byId);
+    named_.erase(
+        std::unique(named_.begin(), named_.end(), [](core::NameAtom a, core::NameAtom b) { return a.id == b.id; }),
+        named_.end());
+
+    // In atom order, both libraries: the same list on every run.
+    std::vector<core::NameAtom> gone;
+    const auto consider = [&](core::NameAtom urn) {
+        if (!std::binary_search(named_.begin(), named_.end(), urn, byId))
+            gone.push_back(urn);
+    };
+    textures.forEachName(consider);
+    meshes.forEach([&](core::NameAtom urn, const MeshLibrary::Entry&) { consider(urn); });
+    named_.clear();
+    named_.shrink_to_fit();
+    if (gone.empty())
+        return 0;
+    // **Only the project's content.** The five solids, a terrain's and a
+    // water's meshes, a view's picture: each has its own name and its own
+    // keeper, and none is a file a scene named.
+    std::erase_if(gone, [&world](core::NameAtom urn) { return !world.atoms().text(urn).starts_with("asset://"); });
+    return gone.empty() ? 0u : forget(device, gone, textures, meshes, cache);
+}
+
 core::u32 MeshLoader::forget(rhi::IDevice& device, std::span<const core::NameAtom> urns, TextureLibrary& textures,
                              MeshLibrary& meshes, MeshCache& cache)
 {
@@ -1277,6 +1437,7 @@ core::u32 MeshLoader::forget(rhi::IDevice& device, std::span<const core::NameAto
         // the library. Destroyed here rather than left: a dev session that
         // reloads one 4K map fifty times would otherwise hold fifty of them.
         if (const rhi::TextureHandle held = textures.take(urn); held.valid() && held != viewBlack_) {
+            std::erase(textures_, held);
             device.destroy(held);
             ++dropped;
         }
@@ -1296,6 +1457,20 @@ core::u32 MeshLoader::forget(rhi::IDevice& device, std::span<const core::NameAto
         // remove without this leaks the expensive half.
         if (const MeshLibrary::Entry* entry = meshes.find(urn); entry != nullptr) {
             const MeshHandle handle = entry->mesh;
+            // **And the images the model carried** (D610): they are in no
+            // library, only in the entry's materials, and went with nothing
+            // -- a model forgotten left every one of its textures on the card.
+            for (const RenderMaterial& material : entry->materials) {
+                for (const rhi::TextureHandle image :
+                     {material.baseColor, material.normal, material.metallicRoughness, material.emissive}) {
+                    if (!image.valid())
+                        continue;
+                    // Only what this loader made: a material may wear a
+                    // library's texture, which is the library's to let go.
+                    if (std::erase(textures_, image) != 0)
+                        device.destroy(image);
+                }
+            }
             meshes.remove(urn);
             if (handle.valid())
                 cache.release(device, handle);

@@ -14,6 +14,7 @@
 // renderer's, and their properties are what the hash walks.
 #include <cstring>
 #include <doctest/doctest.h>
+#include <span>
 #include <string>
 
 #include "../../audio/generated/class_descriptors.gen.h"
@@ -181,7 +182,8 @@ TEST_CASE("every replicated field that is not a property is state the world hash
 
         replication::FieldSet fields;
         REQUIRE(replication::extractFields(world, id, desc, fields));
-        for (core::usize index = 0; index < fields.size(); ++index) {
+        // The fields: the cells past them are their sequences' (protocol 44).
+        for (core::usize index = 0; index < replication::fieldCount(desc); ++index) {
             const wire::FieldDesc* field = replication::fieldAt(desc, index);
             REQUIRE(field != nullptr);
             if (field->source != wire::Source::Component)
@@ -191,19 +193,68 @@ TEST_CASE("every replicated field that is not a property is state the world hash
             // that never sets it hashes as it always did. The IDL says which --
             // a property marked `Presentation` is generated as `hostFact`.
             bool presentation = false;
+            bool property = false;
             for (scene::ClassId at = classId; at != scene::InvalidClass && !presentation;) {
                 const scene::ClassDescriptor* descriptor = classes.find(at);
                 if (descriptor == nullptr)
                     break;
-                for (const scene::PropertyDesc& property : descriptor->properties) {
-                    if (atoms.text(property.name) == field->name && property.hostFact)
+                for (const scene::PropertyDesc& each : descriptor->properties) {
+                    if (atoms.text(each.name) != field->name)
+                        continue;
+                    property = true;
+                    if (each.hostFact)
                         presentation = true;
                 }
                 at = descriptor->super;
             }
+            // **And so is what a picture counts** (ADR 0129, protocol 44): a
+            // field that is no property, on a class whose every property is
+            // presentation -- a `Trail`'s `Cleared`, which says when to drop a
+            // ribbon that was never in the hash. An emitter's `Emitted` is
+            // not this: an emitter's properties are state, and so is its count.
+            if (!property) {
+                const scene::ClassDescriptor* own = classes.find(classId);
+                const std::span<const scene::PropertyDesc> owned =
+                    own != nullptr ? own->properties : std::span<const scene::PropertyDesc>{};
+                presentation = !owned.empty();
+                for (const scene::PropertyDesc& each : owned)
+                    presentation = presentation && each.hostFact;
+            }
             if (presentation)
                 continue;
             CAPTURE(std::string(field->name));
+            // **A sequence is more than a cell** (protocol 44): one of two,
+            // whichever the instance does not hold, written whole as a
+            // replica writes it.
+            if (replication::isSequence(field->encoding)) {
+                const replication::CellRange range = replication::furtherCells(desc, index);
+                replication::FieldSet other = fields;
+                const auto write = [&](float value) {
+                    const std::span<replication::FieldValue> further =
+                        std::span<replication::FieldValue>(other).subspan(range.first, range.count);
+                    if (field->encoding == wire::Encoding::ColorSequence) {
+                        replication::setColorSequence(
+                            other[index], further,
+                            core::ColorSequence{{core::ColorKeypoint{0.0f, core::Color3{value, 0.5f, 0.25f}},
+                                                 core::ColorKeypoint{1.0f, core::Color3{0.25f, value, 0.5f}}}});
+                    }
+                    else {
+                        replication::setNumberSequence(
+                            other[index], further,
+                            core::NumberSequence{{core::NumberKeypoint{0.0f, value, 0.0f},
+                                                  core::NumberKeypoint{1.0f, 1.0f - value, 0.0f}}});
+                    }
+                };
+                write(0.375f);
+                if (replication::sameField(desc, index, other, fields))
+                    write(0.625f);
+                const core::u64 before = world.worldHash();
+                REQUIRE(replication::applySequence(world, id, desc, index, other));
+                CHECK_MESSAGE(world.worldHash() != before,
+                              "a replica is sent this, and the world hash does not see it change");
+                ++checked;
+                continue;
+            }
             replication::FieldValue a;
             replication::FieldValue b;
             // **A reference is this machine's instance** by the time it is

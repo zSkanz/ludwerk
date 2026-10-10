@@ -31,6 +31,7 @@ engine_add_module(asset
         src/icon_set.cpp
         src/archive.cpp
         src/material.cpp
+        src/animation_graph.cpp
         src/gltf.cpp
         src/mesh_format.cpp
         src/model_split.cpp
@@ -103,6 +104,7 @@ engine_add_module_tests(asset
         tests/streaming_tests.cpp
         tests/surface_shader_tests.cpp
         tests/texture_tests.cpp
+        tests/animation_graph_tests.cpp
 )
 
 if(ENG_BUILD_TESTS)

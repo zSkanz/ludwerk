@@ -3045,6 +3045,343 @@ bool setAnimationPlayerCullingMode(scene::World& world, core::InstanceId id, con
     return true;
 }
 
+Value getAnimationPlayerGraph(const scene::World& world, core::InstanceId id)
+{
+    const scene::AnimationPlayerComponent* self = world.animationPlayers().find(id);
+    return self == nullptr ? Value{} : Value{std::string(world.atoms().text(self->graph))};
+}
+
+bool setAnimationPlayerGraph(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AnimationPlayerComponent* self = world.animationPlayers().find(id);
+    const auto* text = std::get_if<std::string>(&value);
+    if (self == nullptr || text == nullptr)
+        return false;
+    self->graph = text->empty() ? core::NameAtom{} : world.atoms().intern(*text);
+    return true;
+}
+
+Value getAnimationPlayerRetargeting(const scene::World& world, core::InstanceId id)
+{
+    const scene::AnimationPlayerComponent* self = world.animationPlayers().find(id);
+    return self == nullptr ? Value{} : Value{scene::EnumValue{generated::RetargetingEnumId, self->retargeting}};
+}
+
+bool setAnimationPlayerRetargeting(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AnimationPlayerComponent* self = world.animationPlayers().find(id);
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    if (self == nullptr || item == nullptr || item->enumId != generated::RetargetingEnumId ||
+        world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    self->retargeting = item->value;
+    return true;
+}
+
+// --- IKControl, FootPlacement (ADR 0198) ----------------------------------------
+//
+// What the instances say. Where a limb ends up is the renderer's, each frame,
+// each machine's own, and no property reads it.
+
+void attachIKControlComponents(scene::World& world, core::InstanceId id)
+{
+    world.ikControls().add(id, scene::IKControlComponent{});
+}
+
+void detachIKControlComponents(scene::World& world, core::InstanceId id)
+{
+    world.ikControls().remove(id);
+}
+
+void attachFootPlacementComponents(scene::World& world, core::InstanceId id)
+{
+    world.footPlacements().add(id, scene::FootPlacementComponent{});
+}
+
+void detachFootPlacementComponents(scene::World& world, core::InstanceId id)
+{
+    world.footPlacements().remove(id);
+}
+
+namespace {
+
+// A part or an attachment, or nothing: what a limb reaches for.
+[[nodiscard]] bool takePlace(const scene::World& world, const Value& value, core::InstanceId& out)
+{
+    if (const auto* reference = std::get_if<core::InstanceId>(&value); reference != nullptr) {
+        if (!world.alive(*reference) || world.destroyed(*reference))
+            return false;
+        if (world.parts().find(*reference) == nullptr && world.attachments().find(*reference) == nullptr)
+            return false;
+        out = *reference;
+        return true;
+    }
+    if (scene::valueType(value) != scene::ValueType::Nil)
+        return false;
+    out = core::InstanceId{};
+    return true;
+}
+
+[[nodiscard]] Value readPlace(const scene::World& world, core::InstanceId place)
+{
+    return !place.valid() || !world.alive(place) || world.destroyed(place) ? Value{} : Value{place};
+}
+
+template <class Component>
+[[nodiscard]] Value readJoint(const scene::World& world, const Component* component, core::NameAtom Component::*field)
+{
+    return component == nullptr ? Value{} : Value{std::string(world.atoms().text(component->*field))};
+}
+
+template <class Component>
+[[nodiscard]] bool writeJoint(scene::World& world, Component* component, core::NameAtom Component::*field,
+                              const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    if (text == nullptr || component == nullptr)
+        return false;
+    component->*field = world.atoms().intern(*text);
+    return true;
+}
+
+template <class Component>
+[[nodiscard]] Value readFlag(const Component* component, bool Component::*field)
+{
+    return component == nullptr ? Value{} : Value{component->*field};
+}
+
+template <class Component>
+[[nodiscard]] bool writeFlag(Component* component, bool Component::*field, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr || component == nullptr)
+        return false;
+    component->*field = *flag;
+    return true;
+}
+
+} // namespace
+
+Value getIKControlType(const scene::World& world, core::InstanceId id)
+{
+    const scene::IKControlComponent* self = world.ikControls().find(id);
+    return self == nullptr ? Value{} : Value{scene::EnumValue{generated::IKControlTypeEnumId, self->type}};
+}
+
+bool setIKControlType(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::IKControlComponent* self = world.ikControls().find(id);
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    if (self == nullptr || item == nullptr || item->enumId != generated::IKControlTypeEnumId ||
+        world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    self->type = item->value;
+    return true;
+}
+
+Value getIKControlEndJoint(const scene::World& world, core::InstanceId id)
+{
+    return readJoint(world, world.ikControls().find(id), &scene::IKControlComponent::endJoint);
+}
+
+bool setIKControlEndJoint(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeJoint(world, world.ikControls().find(id), &scene::IKControlComponent::endJoint, value);
+}
+
+Value getIKControlTarget(const scene::World& world, core::InstanceId id)
+{
+    const scene::IKControlComponent* self = world.ikControls().find(id);
+    return self == nullptr ? Value{} : readPlace(world, self->target);
+}
+
+bool setIKControlTarget(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::IKControlComponent* self = world.ikControls().find(id);
+    return self != nullptr && takePlace(world, value, self->target);
+}
+
+Value getIKControlTargetOffset(const scene::World& world, core::InstanceId id)
+{
+    const scene::IKControlComponent* self = world.ikControls().find(id);
+    return self == nullptr ? Value{} : Value{self->targetOffset};
+}
+
+bool setIKControlTargetOffset(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::IKControlComponent* self = world.ikControls().find(id);
+    const auto* frame = std::get_if<core::CFrameD>(&value);
+    if (self == nullptr || frame == nullptr)
+        return false;
+    self->targetOffset = *frame;
+    return true;
+}
+
+Value getIKControlPole(const scene::World& world, core::InstanceId id)
+{
+    const scene::IKControlComponent* self = world.ikControls().find(id);
+    return self == nullptr ? Value{} : readPlace(world, self->pole);
+}
+
+bool setIKControlPole(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::IKControlComponent* self = world.ikControls().find(id);
+    return self != nullptr && takePlace(world, value, self->pole);
+}
+
+Value getIKControlAlignRotation(const scene::World& world, core::InstanceId id)
+{
+    return readFlag(world.ikControls().find(id), &scene::IKControlComponent::alignRotation);
+}
+
+bool setIKControlAlignRotation(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeFlag(world.ikControls().find(id), &scene::IKControlComponent::alignRotation, value);
+}
+
+Value getIKControlChainLength(const scene::World& world, core::InstanceId id)
+{
+    const scene::IKControlComponent* self = world.ikControls().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->chainLength)};
+}
+
+bool setIKControlChainLength(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::IKControlComponent* self = world.ikControls().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (self == nullptr || number == nullptr || !(*number >= 0.0 && *number <= 8.0) || *number != std::floor(*number))
+        return false;
+    self->chainLength = static_cast<core::i32>(*number);
+    return true;
+}
+
+Value getIKControlMaxAngle(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.ikControls().find(id), &scene::IKControlComponent::maxAngle);
+}
+
+bool setIKControlMaxAngle(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* number = std::get_if<f64>(&value);
+    // Open at both ends: no turn at all is `Weight` 0, and half a circle has
+    // no shortest way round.
+    if (number == nullptr || !(*number > 0.0 && *number < 180.0))
+        return false;
+    return writeNumber(world.ikControls().find(id), &scene::IKControlComponent::maxAngle, value, 0.0, 180.0);
+}
+
+Value getIKControlWeight(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.ikControls().find(id), &scene::IKControlComponent::weight);
+}
+
+bool setIKControlWeight(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.ikControls().find(id), &scene::IKControlComponent::weight, value, 0.0, 1.0);
+}
+
+Value getIKControlEnabled(const scene::World& world, core::InstanceId id)
+{
+    return readFlag(world.ikControls().find(id), &scene::IKControlComponent::enabled);
+}
+
+bool setIKControlEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeFlag(world.ikControls().find(id), &scene::IKControlComponent::enabled, value);
+}
+
+Value getIKControlSmoothing(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.ikControls().find(id), &scene::IKControlComponent::smoothing);
+}
+
+bool setIKControlSmoothing(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.ikControls().find(id), &scene::IKControlComponent::smoothing, value, 0.0, AnyAmount);
+}
+
+Value getFootPlacementLeftFoot(const scene::World& world, core::InstanceId id)
+{
+    return readJoint(world, world.footPlacements().find(id), &scene::FootPlacementComponent::leftFoot);
+}
+
+bool setFootPlacementLeftFoot(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeJoint(world, world.footPlacements().find(id), &scene::FootPlacementComponent::leftFoot, value);
+}
+
+Value getFootPlacementRightFoot(const scene::World& world, core::InstanceId id)
+{
+    return readJoint(world, world.footPlacements().find(id), &scene::FootPlacementComponent::rightFoot);
+}
+
+bool setFootPlacementRightFoot(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeJoint(world, world.footPlacements().find(id), &scene::FootPlacementComponent::rightFoot, value);
+}
+
+Value getFootPlacementHips(const scene::World& world, core::InstanceId id)
+{
+    return readJoint(world, world.footPlacements().find(id), &scene::FootPlacementComponent::hips);
+}
+
+bool setFootPlacementHips(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeJoint(world, world.footPlacements().find(id), &scene::FootPlacementComponent::hips, value);
+}
+
+Value getFootPlacementFootHeight(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.footPlacements().find(id), &scene::FootPlacementComponent::footHeight);
+}
+
+bool setFootPlacementFootHeight(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.footPlacements().find(id), &scene::FootPlacementComponent::footHeight, value, 0.0,
+                       AnyAmount);
+}
+
+Value getFootPlacementStepHeight(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.footPlacements().find(id), &scene::FootPlacementComponent::stepHeight);
+}
+
+bool setFootPlacementStepHeight(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.footPlacements().find(id), &scene::FootPlacementComponent::stepHeight, value, 0.0,
+                       AnyAmount);
+}
+
+Value getFootPlacementAlignToSlope(const scene::World& world, core::InstanceId id)
+{
+    return readFlag(world.footPlacements().find(id), &scene::FootPlacementComponent::alignToSlope);
+}
+
+bool setFootPlacementAlignToSlope(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeFlag(world.footPlacements().find(id), &scene::FootPlacementComponent::alignToSlope, value);
+}
+
+Value getFootPlacementWeight(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.footPlacements().find(id), &scene::FootPlacementComponent::weight);
+}
+
+bool setFootPlacementWeight(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.footPlacements().find(id), &scene::FootPlacementComponent::weight, value, 0.0, 1.0);
+}
+
+Value getFootPlacementEnabled(const scene::World& world, core::InstanceId id)
+{
+    return readFlag(world.footPlacements().find(id), &scene::FootPlacementComponent::enabled);
+}
+
+bool setFootPlacementEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeFlag(world.footPlacements().find(id), &scene::FootPlacementComponent::enabled, value);
+}
+
 void attachHighlightComponents(scene::World& world, core::InstanceId id)
 {
     world.highlights().add(id, scene::HighlightComponent{});

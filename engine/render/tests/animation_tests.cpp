@@ -123,6 +123,57 @@ struct Fixture
 
 } // namespace
 
+TEST_CASE("D611: a rig read again is found again by name, and what was playing goes on from where it was")
+{
+    // A model exported again while the game runs: its clips may be in
+    // another order and another length. A track holds its clip by INDEX, and
+    // held it for ever -- so after the reload a walk played whatever clip
+    // had taken the walk's place in the file.
+    Fixture fixture;
+    render::SkeletonLibrary::Entry entry = twoJointSkeleton();
+    entry.clips.push_back(slideClip("Slide"));
+    const core::InstanceId player = fixture.rig(std::move(entry));
+
+    render::AnimationSystem animation{fixture.world, fixture.skeletons};
+    const scene::TrackId track = animation.createTrack(player, {}, "Slide");
+    animation.setLooped(track, true);
+    animation.play(track, 0.0f, 1.0f, 1.0f);
+    for (int tick = 0; tick < 30; ++tick)
+        animation.sample(1.0 / 60.0);
+    REQUIRE(animation.pose(fixture.mesh) != nullptr);
+    // Half a second in: halfway from one to three.
+    CHECK(close(animation.pose(fixture.mesh)->local[1].m[3][1], 2.0f));
+
+    // The same rig again, with another clip in front of the slide and the
+    // slide twice as long and reaching five.
+    render::SkeletonLibrary::Entry again = twoJointSkeleton();
+    asset::AnimationClip other = slideClip("Other");
+    other.channels[0].values = {0.0f, 40.0f, 0.0f, 0.0f, 40.0f, 0.0f};
+    again.clips.push_back(other);
+    asset::AnimationClip longer = slideClip("Slide");
+    longer.duration = 2.0f;
+    longer.channels[0].times = {0.0f, 2.0f};
+    longer.channels[0].values = {0.0f, 1.0f, 0.0f, 0.0f, 5.0f, 0.0f};
+    again.clips.push_back(longer);
+    fixture.skeletons.set(fixture.content, std::move(again));
+
+    animation.sample(1.0 / 60.0);
+    REQUIRE(animation.pose(fixture.mesh) != nullptr);
+    // Still the slide, by its name -- not the clip that took its place --
+    // from the time it was at, in the clip as it is now.
+    CHECK(close(animation.state(track).length, 2.0f));
+    const f32 at = animation.pose(fixture.mesh)->local[1].m[3][1];
+    CHECK(at > 1.9f);
+    CHECK(at < 2.2f);
+
+    // A rig that comes back without the clip: the track plays nothing, and
+    // still answers.
+    fixture.skeletons.set(fixture.content, twoJointSkeleton());
+    animation.sample(1.0 / 60.0);
+    CHECK(animation.pose(fixture.mesh) == nullptr);
+    CHECK(animation.state(track).playing);
+}
+
 TEST_CASE("a track that names a clip the file does not have still answers reads")
 {
     Fixture fixture;
@@ -393,7 +444,9 @@ TEST_CASE("H3: a rig nobody sees is not posed, a small one is posed every few ti
     }
     SUBCASE("AlwaysAnimate: every tick, seen or not")
     {
-        fixture.world.animationPlayers().add(player, scene::AnimationPlayerComponent{.cullingMode = 1});
+        scene::AnimationPlayerComponent always;
+        always.cullingMode = 1;
+        fixture.world.animationPlayers().add(player, always);
         animation.reportSeen({}, true);
         const core::u64 before = animation.posesBuilt();
         for (int tick = 0; tick < 8; ++tick)

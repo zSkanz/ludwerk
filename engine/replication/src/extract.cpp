@@ -193,6 +193,352 @@ template <class C, class T, usize N>
     return nullptr;
 }
 
+// --- What a character carries (protocol 44) -----------------------------------------
+//
+// **One table a component, a row a property**: its name on the wire and the
+// member it is. Every class of protocol 44 is authored properties read as they
+// stand and written as they arrive, so the reading and the writing are written
+// once (`readCarried`, `writeCarried`) and a class is its table. What is more
+// than a member -- a bone's joint resolved again, a sound started -- is a
+// branch of its own in `writeComponent`, beside the table and before it.
+//
+// **Adding a class**: its rows in `api/wire/state.wire.luau`, a table here, a
+// branch each in `readComponent` and `writeComponent` that finds the component
+// and calls these, and its pool in `Pools` below.
+template <class C>
+struct Carried
+{
+    enum class Kind : core::u8
+    {
+        Number,
+        Switch,
+        Integer,
+        Count,
+        Vector,
+        Colour,
+        Name,
+        Instance,
+        Frame,
+        ColourKeys,
+        NumberKeys,
+    };
+
+    std::string_view name;
+    Kind kind;
+    union {
+        float C::*number;
+        bool C::*flag;
+        core::i32 C::*integer;
+        core::u32 C::*count;
+        core::Vec3 C::*vector;
+        core::Color3 C::*colour;
+        core::NameAtom C::*atom;
+        InstanceId C::*instance;
+        core::CFrameD C::*frame;
+        core::ColorSequence C::*colourKeys;
+        core::NumberSequence C::*numberKeys;
+    };
+
+    constexpr Carried(std::string_view as, float C::*at) noexcept : name(as), kind(Kind::Number), number(at) {}
+    constexpr Carried(std::string_view as, bool C::*at) noexcept : name(as), kind(Kind::Switch), flag(at) {}
+    constexpr Carried(std::string_view as, core::i32 C::*at) noexcept : name(as), kind(Kind::Integer), integer(at) {}
+    constexpr Carried(std::string_view as, core::u32 C::*at) noexcept : name(as), kind(Kind::Count), count(at) {}
+    constexpr Carried(std::string_view as, core::Vec3 C::*at) noexcept : name(as), kind(Kind::Vector), vector(at) {}
+    constexpr Carried(std::string_view as, core::Color3 C::*at) noexcept : name(as), kind(Kind::Colour), colour(at) {}
+    constexpr Carried(std::string_view as, core::NameAtom C::*at) noexcept : name(as), kind(Kind::Name), atom(at) {}
+    constexpr Carried(std::string_view as, InstanceId C::*at) noexcept : name(as), kind(Kind::Instance), instance(at) {}
+    constexpr Carried(std::string_view as, core::CFrameD C::*at) noexcept : name(as), kind(Kind::Frame), frame(at) {}
+    constexpr Carried(std::string_view as, core::ColorSequence C::*at) noexcept
+        : name(as), kind(Kind::ColourKeys), colourKeys(at)
+    {}
+    constexpr Carried(std::string_view as, core::NumberSequence C::*at) noexcept
+        : name(as), kind(Kind::NumberKeys), numberKeys(at)
+    {}
+};
+
+// One property of `from` into its cell -- and, a sequence, into its further
+// cells. False when the table has no such row.
+template <class C, usize N>
+[[nodiscard]] bool readCarried(const Carried<C> (&table)[N], const C& from, std::string_view name, FieldValue& out,
+                               std::span<FieldValue> further) noexcept
+{
+    using Kind = typename Carried<C>::Kind;
+    for (const Carried<C>& row : table) {
+        if (row.name != name)
+            continue;
+        switch (row.kind) {
+        case Kind::Number:
+            setF32(out, from.*row.number);
+            return true;
+        case Kind::Switch:
+            setBool(out, from.*row.flag);
+            return true;
+        case Kind::Integer:
+            setI32(out, from.*row.integer);
+            return true;
+        case Kind::Count:
+            setU32(out, from.*row.count);
+            return true;
+        case Kind::Vector:
+            setVec3(out, from.*row.vector);
+            return true;
+        case Kind::Colour:
+            setVec3(out, core::Vec3{(from.*row.colour).r, (from.*row.colour).g, (from.*row.colour).b});
+            return true;
+        case Kind::Name:
+            setU32(out, (from.*row.atom).id);
+            return true;
+        // Read as this machine's instance; the session sends the peer's
+        // network id (NA34).
+        case Kind::Instance:
+            setInstance(out, from.*row.instance);
+            return true;
+        case Kind::Frame:
+            setCFrame(out, from.*row.frame);
+            return true;
+        case Kind::ColourKeys:
+            setColorSequence(out, further, from.*row.colourKeys);
+            return true;
+        case Kind::NumberKeys:
+            setNumberSequence(out, further, from.*row.numberKeys);
+            return true;
+        }
+    }
+    return false;
+}
+
+// And back. A name arrives as this machine's own atom and a reference as its
+// own instance: the session resolved both before it called here. **A sequence
+// that is not one is not written**: what the instance had stands, and the
+// answer is false as it is for a row the table does not have.
+template <class C, usize N>
+[[nodiscard]] bool writeCarried(const Carried<C> (&table)[N], C& to, std::string_view name, const FieldValue& value,
+                                std::span<const FieldValue> further)
+{
+    using Kind = typename Carried<C>::Kind;
+    for (const Carried<C>& row : table) {
+        if (row.name != name)
+            continue;
+        switch (row.kind) {
+        case Kind::Number:
+            to.*row.number = asF32(value);
+            return true;
+        case Kind::Switch:
+            to.*row.flag = asBool(value);
+            return true;
+        case Kind::Integer:
+            to.*row.integer = asI32(value);
+            return true;
+        case Kind::Count:
+            to.*row.count = asU32(value);
+            return true;
+        case Kind::Vector:
+            to.*row.vector = asVec3(value);
+            return true;
+        case Kind::Colour: {
+            const core::Vec3 colour = asVec3(value);
+            to.*row.colour = core::Color3{colour.x, colour.y, colour.z};
+            return true;
+        }
+        case Kind::Name:
+            to.*row.atom = core::NameAtom{asU32(value)};
+            return true;
+        case Kind::Instance:
+            to.*row.instance = asInstance(value);
+            return true;
+        case Kind::Frame:
+            to.*row.frame = asCFrame(value);
+            return true;
+        case Kind::ColourKeys:
+            return asColorSequence(value, further, to.*row.colourKeys);
+        case Kind::NumberKeys:
+            return asNumberSequence(value, further, to.*row.numberKeys);
+        }
+    }
+    return false;
+}
+
+using PointLight = scene::PointLightComponent;
+constexpr Carried<PointLight> PointLightCarried[] = {
+    {"CFrame", &PointLight::cframe}, {"Color", &PointLight::color},     {"Brightness", &PointLight::brightness},
+    {"Range", &PointLight::range},   {"Enabled", &PointLight::enabled}, {"Shadows", &PointLight::shadows},
+};
+
+using SpotLight = scene::SpotLightComponent;
+constexpr Carried<SpotLight> SpotLightCarried[] = {
+    {"CFrame", &SpotLight::cframe},   {"Color", &SpotLight::color}, {"Brightness", &SpotLight::brightness},
+    {"Range", &SpotLight::range},     {"Angle", &SpotLight::angle}, {"Enabled", &SpotLight::enabled},
+    {"Shadows", &SpotLight::shadows},
+};
+
+using SpringBone = scene::SpringBoneComponent;
+constexpr Carried<SpringBone> SpringBoneCarried[] = {
+    {"Enabled", &SpringBone::enabled},
+    {"RootJoint", &SpringBone::rootJoint},
+    {"JointPattern", &SpringBone::jointPattern},
+    {"Stiffness", &SpringBone::stiffness},
+    {"Damping", &SpringBone::damping},
+    {"GravityScale", &SpringBone::gravityScale},
+    {"Inertia", &SpringBone::inertia},
+    {"LimitAngle", &SpringBone::limitAngle},
+    {"Radius", &SpringBone::radius},
+    {"WindInfluence", &SpringBone::windInfluence},
+};
+
+using SpringCollider = scene::SpringColliderComponent;
+constexpr Carried<SpringCollider> SpringColliderCarried[] = {
+    {"JointName", &SpringCollider::jointName},
+    {"Radius", &SpringCollider::radius},
+    {"Length", &SpringCollider::length},
+    {"Offset", &SpringCollider::offset},
+};
+
+using Highlight = scene::HighlightComponent;
+constexpr Carried<Highlight> HighlightCarried[] = {
+    {"Adornee", &Highlight::adornee},
+    {"FillColor", &Highlight::fillColor},
+    {"FillTransparency", &Highlight::fillTransparency},
+    {"OutlineColor", &Highlight::outlineColor},
+    {"OutlineTransparency", &Highlight::outlineTransparency},
+    {"DepthMode", &Highlight::depthMode},
+    {"Enabled", &Highlight::enabled},
+};
+
+using Beam = scene::BeamComponent;
+constexpr Carried<Beam> BeamCarried[] = {
+    {"Attachment0", &Beam::attachment0},
+    {"Attachment1", &Beam::attachment1},
+    {"Color", &Beam::color},
+    {"Transparency", &Beam::transparency},
+    {"Width0", &Beam::width0},
+    {"Width1", &Beam::width1},
+    {"CurveSize0", &Beam::curveSize0},
+    {"CurveSize1", &Beam::curveSize1},
+    {"Segments", &Beam::segments},
+    {"Texture", &Beam::texture},
+    {"TextureLength", &Beam::textureLength},
+    {"TextureMode", &Beam::textureMode},
+    {"TextureSpeed", &Beam::textureSpeed},
+    {"FaceCamera", &Beam::faceCamera},
+    {"LightEmission", &Beam::lightEmission},
+    {"LightInfluence", &Beam::lightInfluence},
+    {"ZOffset", &Beam::zOffset},
+    {"Enabled", &Beam::enabled},
+};
+
+using Trail = scene::TrailComponent;
+constexpr Carried<Trail> TrailCarried[] = {
+    {"Attachment0", &Trail::attachment0},
+    {"Attachment1", &Trail::attachment1},
+    {"Lifetime", &Trail::lifetime},
+    {"MinLength", &Trail::minLength},
+    {"MaxLength", &Trail::maxLength},
+    {"Color", &Trail::color},
+    {"Transparency", &Trail::transparency},
+    {"WidthScale", &Trail::widthScale},
+    {"Texture", &Trail::texture},
+    {"TextureLength", &Trail::textureLength},
+    {"TextureMode", &Trail::textureMode},
+    {"FaceCamera", &Trail::faceCamera},
+    {"LightEmission", &Trail::lightEmission},
+    {"LightInfluence", &Trail::lightInfluence},
+    {"Enabled", &Trail::enabled},
+    // A running total of `Clear`, as an emitter's `Emitted` is: the renderer
+    // drops the ribbon when it sees the number move.
+    {"Cleared", &Trail::cleared},
+};
+
+// A `Sound`'s plain members. Its content is text and its `Playing` is a start
+// or a stop: both are `writeComponent`'s own.
+using Sound = scene::SoundComponent;
+constexpr Carried<Sound> SoundCarried[] = {
+    {"Looped", &Sound::looped},
+    {"Volume", &Sound::volume},
+    {"PlaybackSpeed", &Sound::playbackSpeed},
+    {"RollOffMinDistance", &Sound::rollOffMinDistance},
+    {"RollOffMaxDistance", &Sound::rollOffMaxDistance},
+};
+
+// A character's animation, as authored (ADR 0197 to 0199, protocol 44): which
+// graph, how clips are carried onto the rig, and the limbs and feet set on
+// it. What they DO is each machine's own.
+using Animator = scene::AnimationPlayerComponent;
+constexpr Carried<Animator> AnimatorCarried[] = {
+    {"Graph", &Animator::graph},
+    {"Retargeting", &Animator::retargeting},
+};
+
+using Limb = scene::IKControlComponent;
+constexpr Carried<Limb> LimbCarried[] = {
+    {"Type", &Limb::type},
+    {"EndJoint", &Limb::endJoint},
+    {"Target", &Limb::target},
+    {"TargetOffset", &Limb::targetOffset},
+    {"Pole", &Limb::pole},
+    {"AlignRotation", &Limb::alignRotation},
+    {"ChainLength", &Limb::chainLength},
+    {"MaxAngle", &Limb::maxAngle},
+    {"Weight", &Limb::weight},
+    {"Enabled", &Limb::enabled},
+    {"Smoothing", &Limb::smoothing},
+};
+
+using Feet = scene::FootPlacementComponent;
+constexpr Carried<Feet> FeetCarried[] = {
+    {"LeftFoot", &Feet::leftFoot},     {"RightFoot", &Feet::rightFoot},   {"Hips", &Feet::hips},
+    {"FootHeight", &Feet::footHeight}, {"StepHeight", &Feet::stepHeight}, {"AlignToSlope", &Feet::alignToSlope},
+    {"Weight", &Feet::weight},         {"Enabled", &Feet::enabled},
+};
+
+// What ADR 0160 gave an emitter, and its sequences (protocol 44); the fields it
+// had before are read by name in the branch above this table's use.
+using Emitter = scene::ParticleEmitterComponent;
+constexpr Carried<Emitter> EmitterCarried[] = {
+    {"Texture", &Emitter::texture},
+    {"FlipbookColumns", &Emitter::flipbookColumns},
+    {"FlipbookRows", &Emitter::flipbookRows},
+    {"FlipbookFramerate", &Emitter::flipbookFramerate},
+    {"FlipbookMode", &Emitter::flipbookMode},
+    {"Rotation", &Emitter::rotation},
+    {"RotationSpread", &Emitter::rotationSpread},
+    {"RotationSpeed", &Emitter::rotationSpeed},
+    {"RotationSpeedSpread", &Emitter::rotationSpeedSpread},
+    {"ColorOverLife", &Emitter::colorOverLife},
+    {"SizeOverLife", &Emitter::sizeOverLife},
+    {"TransparencyOverLife", &Emitter::transparencyOverLife},
+    {"Collision", &Emitter::collision},
+    {"CollisionResponse", &Emitter::collisionResponse},
+    {"Bounce", &Emitter::bounce},
+    {"Friction", &Emitter::friction},
+    {"CollisionRadius", &Emitter::collisionRadius},
+    {"Simulation", &Emitter::simulation},
+};
+
+// What a body is beyond where it is and whether it stands still (protocol 44):
+// how it grips and bounces, what it weighs, what a ray and a touch are told.
+// The four it always had are read by name where this table is used.
+using Body = scene::RigidBodyComponent;
+constexpr Carried<Body> BodyCarried[] = {
+    {"CanTouch", &Body::canTouch},
+    {"CanQuery", &Body::canQuery},
+    {"Friction", &Body::friction},
+    {"Restitution", &Body::restitution},
+    {"Density", &Body::density},
+    {"LinearDamping", &Body::linearDamping},
+    {"AngularDamping", &Body::angularDamping},
+    {"Buoyant", &Body::buoyant},
+    {"ContactDetails", &Body::contactDetails},
+};
+
+// A sprite's body, the same (ADR 0103): its group is a name, and is
+// `writeComponent`'s own.
+using Sprite = scene::Part2DComponent;
+constexpr Carried<Sprite> SpriteCarried[] = {
+    {"Density", &Sprite::density},           {"Friction", &Sprite::friction},
+    {"Elasticity", &Sprite::elasticity},     {"FixedRotation", &Sprite::fixedRotation},
+    {"GravityScale", &Sprite::gravityScale},
+};
+
 using Joint = scene::ConstraintComponent;
 using Mover = scene::MoverComponent;
 
@@ -262,6 +608,24 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
     setCFrame(out, frame);
 }
 
+// **This machine's own atom for a collision group's name** (D545), as a part,
+// a sprite or a tilemap is told it. One this machine has not registered is
+// registered here, colliding with everything: the table of groups travels in a
+// message of its own, and an instance may be told of before it. No name, or
+// no room for another group, is `Default`.
+[[nodiscard]] core::NameAtom groupNamed(scene::World& world, core::NameAtom atom)
+{
+    scene::CollisionGroups& groups = world.collisionGroups();
+    if (world.atoms().text(atom).empty())
+        return groups.nameAt(scene::CollisionGroups::kDefault);
+    if (groups.find(atom) == scene::CollisionGroups::kInvalid) {
+        if (groups.add(atom) == scene::CollisionGroups::kInvalid)
+            return groups.nameAt(scene::CollisionGroups::kDefault);
+        groups.bumpRevision();
+    }
+    return atom;
+}
+
 // Reads one component-sourced field.
 //
 // **A switch on the POOL and then on the FIELD NAME, and that is deliberate.**
@@ -269,17 +633,35 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
 // rule `native_accessors.cpp` follows), so this is where the engine's own types
 // are named. The alternative -- teaching the generator what a component is --
 // would make every storage change a generator change.
-[[nodiscard]] bool readComponent(const scene::World& world, InstanceId id, const FieldDesc& field, FieldValue& out)
+//
+// `further` is the field's further cells, which only a sequence has
+// (protocol 44).
+[[nodiscard]] bool readComponent(const scene::World& world, InstanceId id, const FieldDesc& field, FieldValue& out,
+                                 std::span<FieldValue> further)
 {
     // **The joints** (NA34). A field that names another instance is read as
     // this machine's instance; the session sends it as the peer's network id.
     if (field.pool == "attachments") {
         const scene::AttachmentComponent* attachment = world.attachments().find(id);
-        if (attachment == nullptr || field.name != "CFrame")
+        if (attachment == nullptr)
             return false;
-        setCFrame(out, attachment->cframe);
-        return true;
+        if (field.name == "CFrame") {
+            setCFrame(out, attachment->cframe);
+            return true;
+        }
+        // A `Bone`'s two (protocol 44): the joint it names, and what a script
+        // turned it by.
+        if (field.name == "JointName") {
+            setU32(out, attachment->jointName.id);
+            return true;
+        }
+        if (field.name == "Transform") {
+            setCFrame(out, attachment->transform);
+            return true;
+        }
+        return false;
     }
+
     if (field.pool == "constraints") {
         const Joint* joint = world.constraints().find(id);
         if (joint == nullptr)
@@ -486,7 +868,18 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setU32(out, body->collisionGroup.id);
             return true;
         }
-        return false;
+        return readCarried(BodyCarried, *body, field.name, out, further);
+    }
+
+    // **Where a pivot sits** (protocol 44), on a part and on a model. An
+    // instance with no such component -- a world put together by hand, in a
+    // test -- has its pivot at its middle, which is what none says.
+    if (field.pool == "pvInstances") {
+        if (field.name != "PivotOffset")
+            return false;
+        const scene::PVComponent* pivot = world.pvInstances().find(id);
+        setCFrame(out, pivot != nullptr ? pivot->pivotOffset : core::CFrameD{});
+        return true;
     }
 
     if (field.pool == "characterBodies") {
@@ -577,6 +970,12 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "Ambient") {
             setVec3(out, core::Vec3{lighting->ambient.r, lighting->ambient.g, lighting->ambient.b});
+            return true;
+        }
+        // The light under the open sky (protocol 44): `Ambient`'s other half.
+        if (field.name == "OutdoorAmbient") {
+            setVec3(out,
+                    core::Vec3{lighting->outdoorAmbient.r, lighting->outdoorAmbient.g, lighting->outdoorAmbient.b});
             return true;
         }
         if (field.name == "Brightness") {
@@ -718,6 +1117,19 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "Position") {
             setVec3(out, component->position);
+            return true;
+        }
+        // The river's shape at the point (protocol 44).
+        if (field.name == "Width") {
+            setF32(out, static_cast<float>(component->width));
+            return true;
+        }
+        if (field.name == "Depth") {
+            setF32(out, static_cast<float>(component->depth));
+            return true;
+        }
+        if (field.name == "Sharp") {
+            setBool(out, component->sharp);
             return true;
         }
         return false;
@@ -984,6 +1396,15 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setF32(out, decal->transparency);
             return true;
         }
+        // ADR 0160's two (protocol 44).
+        if (field.name == "BlendMode") {
+            setI32(out, decal->blendMode);
+            return true;
+        }
+        if (field.name == "Emissive") {
+            setF32(out, decal->emissive);
+            return true;
+        }
         return false;
     }
 
@@ -1064,7 +1485,7 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setBool(out, emitter->windAffectsDrift);
             return true;
         }
-        return false;
+        return readCarried(EmitterCarried, *emitter, field.name, out, further);
     }
 
     if (field.pool == "models") {
@@ -1074,6 +1495,12 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "Scale") {
             setF32(out, model->scale);
+            return true;
+        }
+        // Read as this machine's instance; the session sends the peer's
+        // network id (NA34).
+        if (field.name == "PrimaryPart") {
+            setInstance(out, model->primaryPart);
             return true;
         }
         return false;
@@ -1125,8 +1552,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setI32(out, sprite->filter);
         else if (field.name == "ExactColor")
             setBool(out, sprite->exactColor);
+        else if (field.name == "CollisionGroup")
+            setU32(out, sprite->collisionGroup.id);
         else
-            return false;
+            return readCarried(SpriteCarried, *sprite, field.name, out, further);
         return true;
     }
 
@@ -1158,15 +1587,80 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setF32(out, tilemap->friction);
         else if (field.name == "ExactColor")
             setBool(out, tilemap->exactColor);
+        else if (field.name == "CollisionGroup")
+            setU32(out, tilemap->collisionGroup.id);
         else
             return false;
         return true;
     }
 
+    // What a character carries (protocol 44): each its table. **After every
+    // pool above**, which are a world's parts and what holds them: this is
+    // asked of each field of each instance read, and a part's fields should
+    // not walk past a dozen names of things most parts never have.
+    if (field.pool == "pointLights") {
+        const PointLight* light = world.pointLights().find(id);
+        return light != nullptr && readCarried(PointLightCarried, *light, field.name, out, further);
+    }
+    if (field.pool == "spotLights") {
+        const SpotLight* light = world.spotLights().find(id);
+        return light != nullptr && readCarried(SpotLightCarried, *light, field.name, out, further);
+    }
+    if (field.pool == "springBones") {
+        const SpringBone* spring = world.springBones().find(id);
+        return spring != nullptr && readCarried(SpringBoneCarried, *spring, field.name, out, further);
+    }
+    if (field.pool == "springColliders") {
+        const SpringCollider* collider = world.springColliders().find(id);
+        return collider != nullptr && readCarried(SpringColliderCarried, *collider, field.name, out, further);
+    }
+    if (field.pool == "highlights") {
+        const Highlight* highlight = world.highlights().find(id);
+        return highlight != nullptr && readCarried(HighlightCarried, *highlight, field.name, out, further);
+    }
+    if (field.pool == "beams") {
+        const Beam* beam = world.beams().find(id);
+        return beam != nullptr && readCarried(BeamCarried, *beam, field.name, out, further);
+    }
+    if (field.pool == "trails") {
+        const Trail* trail = world.trails().find(id);
+        return trail != nullptr && readCarried(TrailCarried, *trail, field.name, out, further);
+    }
+    if (field.pool == "animationPlayers") {
+        const Animator* animator = world.animationPlayers().find(id);
+        return animator != nullptr && readCarried(AnimatorCarried, *animator, field.name, out, further);
+    }
+    if (field.pool == "ikControls") {
+        const Limb* limb = world.ikControls().find(id);
+        return limb != nullptr && readCarried(LimbCarried, *limb, field.name, out, further);
+    }
+    if (field.pool == "footPlacements") {
+        const Feet* feet = world.footPlacements().find(id);
+        return feet != nullptr && readCarried(FeetCarried, *feet, field.name, out, further);
+    }
+    if (field.pool == "sounds") {
+        const Sound* sound = world.sounds().find(id);
+        if (sound == nullptr)
+            return false;
+        if (field.name == "Content") {
+            // **Looked up, never interned**: reading a world does not grow
+            // its names. `Sound.Content`'s setter interns what it is given,
+            // so a name a script or a file wrote is found; one that is not
+            // reads as none, and a replica plays nothing rather than a guess.
+            setU32(out, world.atoms().lookup(sound->content).id);
+            return true;
+        }
+        if (field.name == "Playing") {
+            setBool(out, sound->playing);
+            return true;
+        }
+        return readCarried(SoundCarried, *sound, field.name, out, further);
+    }
     return false;
 }
 
-[[nodiscard]] bool writeComponent(scene::World& world, InstanceId id, const FieldDesc& field, const FieldValue& value)
+[[nodiscard]] bool writeComponent(scene::World& world, InstanceId id, const FieldDesc& field, const FieldValue& value,
+                                  std::span<const FieldValue> further)
 {
     // ADR 0096's look: the effects, the air and the sky.
     const auto toColour = [](core::Vec3 v) { return core::Color3{v.x, v.y, v.z}; };
@@ -1175,11 +1669,29 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
     // the session resolved the network id before it called here.
     if (field.pool == "attachments") {
         scene::AttachmentComponent* attachment = world.attachments().find(id);
-        if (attachment == nullptr || field.name != "CFrame")
+        if (attachment == nullptr)
             return false;
-        attachment->cframe = asCFrame(value);
-        return true;
+        if (field.name == "CFrame") {
+            attachment->cframe = asCFrame(value);
+            return true;
+        }
+        if (field.name == "JointName") {
+            // As the property's setter does: another name is another joint,
+            // found again the next time the bone is resolved.
+            const core::NameAtom joint{asU32(value)};
+            if (!(attachment->jointName == joint)) {
+                attachment->jointName = joint;
+                attachment->jointIndex = -1;
+            }
+            return true;
+        }
+        if (field.name == "Transform") {
+            attachment->transform = asCFrame(value);
+            return true;
+        }
+        return false;
     }
+
     if (field.pool == "constraints") {
         Joint* joint = world.constraints().find(id);
         if (joint == nullptr)
@@ -1364,6 +1876,18 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "Position") {
             component->position = asVec3(value);
+            return true;
+        }
+        if (field.name == "Width") {
+            component->width = static_cast<double>(asF32(value));
+            return true;
+        }
+        if (field.name == "Depth") {
+            component->depth = static_cast<double>(asF32(value));
+            return true;
+        }
+        if (field.name == "Sharp") {
+            component->sharp = asBool(value);
             return true;
         }
         return false;
@@ -1734,28 +2258,21 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             body->angularVelocity = asVec3(value);
             return true;
         }
-        // **This machine's own atom for the group's name** (D545). One it has
-        // not registered is registered here, colliding with everything: the
-        // table of groups travels in a message of its own, and a part may be
-        // told of before it. No name is `Default`.
         if (field.name == "CollisionGroup") {
-            const core::NameAtom atom{asU32(value)};
-            scene::CollisionGroups& groups = world.collisionGroups();
-            if (world.atoms().text(atom).empty()) {
-                body->collisionGroup = groups.nameAt(scene::CollisionGroups::kDefault);
-                return true;
-            }
-            if (groups.find(atom) == scene::CollisionGroups::kInvalid) {
-                if (groups.add(atom) == scene::CollisionGroups::kInvalid) {
-                    body->collisionGroup = groups.nameAt(scene::CollisionGroups::kDefault);
-                    return true;
-                }
-                groups.bumpRevision();
-            }
-            body->collisionGroup = atom;
+            body->collisionGroup = groupNamed(world, core::NameAtom{asU32(value)});
             return true;
         }
-        return false;
+        // The physics mirror reads a body's numbers each tick and tells the
+        // backend what moved: written here, they are the body's by the next.
+        return writeCarried(BodyCarried, *body, field.name, value, further);
+    }
+
+    if (field.pool == "pvInstances") {
+        if (field.name != "PivotOffset")
+            return false;
+        if (scene::PVComponent* pivot = world.pvInstances().find(id); pivot != nullptr)
+            pivot->pivotOffset = asCFrame(value);
+        return true;
     }
 
     if (field.pool == "characterBodies") {
@@ -1846,6 +2363,8 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             lighting->geographicLatitude = asF32(value);
         else if (field.name == "Ambient")
             lighting->ambient = colour();
+        else if (field.name == "OutdoorAmbient")
+            lighting->outdoorAmbient = colour();
         else if (field.name == "Brightness")
             lighting->brightness = asF32(value);
         else if (field.name == "FogColor")
@@ -1899,6 +2418,14 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "Transparency") {
             decal->transparency = asF32(value);
+            return true;
+        }
+        if (field.name == "BlendMode") {
+            decal->blendMode = asI32(value);
+            return true;
+        }
+        if (field.name == "Emissive") {
+            decal->emissive = asF32(value);
             return true;
         }
         return false;
@@ -1986,7 +2513,7 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             emitter->windAffectsDrift = asBool(value);
             return true;
         }
-        return false;
+        return writeCarried(EmitterCarried, *emitter, field.name, value, further);
     }
 
     if (field.pool == "models") {
@@ -1996,6 +2523,11 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "Scale") {
             model->scale = asF32(value);
+            return true;
+        }
+        // This machine's own copy of the part: the session resolved it.
+        if (field.name == "PrimaryPart") {
+            model->primaryPart = asInstance(value);
             return true;
         }
         return false;
@@ -2050,8 +2582,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             sprite->filter = asI32(value);
         else if (field.name == "ExactColor")
             sprite->exactColor = asBool(value);
+        else if (field.name == "CollisionGroup")
+            sprite->collisionGroup = groupNamed(world, core::NameAtom{asU32(value)});
         else
-            return false;
+            return writeCarried(SpriteCarried, *sprite, field.name, value, further);
         return true;
     }
 
@@ -2086,11 +2620,86 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             tilemap->friction = asF32(value);
         else if (field.name == "ExactColor")
             tilemap->exactColor = asBool(value);
+        else if (field.name == "CollisionGroup")
+            tilemap->collisionGroup = groupNamed(world, core::NameAtom{asU32(value)});
         else
             return false;
         return true;
     }
 
+    // What a character carries (protocol 44): each its table. **After every
+    // pool above**, which are a world's parts and what holds them: this is
+    // asked of each field of each instance read, and a part's fields should
+    // not walk past a dozen names of things most parts never have.
+    if (field.pool == "pointLights") {
+        PointLight* light = world.pointLights().find(id);
+        return light != nullptr && writeCarried(PointLightCarried, *light, field.name, value, further);
+    }
+    if (field.pool == "spotLights") {
+        SpotLight* light = world.spotLights().find(id);
+        return light != nullptr && writeCarried(SpotLightCarried, *light, field.name, value, further);
+    }
+    if (field.pool == "springBones") {
+        SpringBone* spring = world.springBones().find(id);
+        return spring != nullptr && writeCarried(SpringBoneCarried, *spring, field.name, value, further);
+    }
+    if (field.pool == "springColliders") {
+        SpringCollider* collider = world.springColliders().find(id);
+        return collider != nullptr && writeCarried(SpringColliderCarried, *collider, field.name, value, further);
+    }
+    if (field.pool == "highlights") {
+        Highlight* highlight = world.highlights().find(id);
+        return highlight != nullptr && writeCarried(HighlightCarried, *highlight, field.name, value, further);
+    }
+    if (field.pool == "beams") {
+        Beam* beam = world.beams().find(id);
+        return beam != nullptr && writeCarried(BeamCarried, *beam, field.name, value, further);
+    }
+    if (field.pool == "trails") {
+        Trail* trail = world.trails().find(id);
+        return trail != nullptr && writeCarried(TrailCarried, *trail, field.name, value, further);
+    }
+    if (field.pool == "animationPlayers") {
+        Animator* animator = world.animationPlayers().find(id);
+        return animator != nullptr && writeCarried(AnimatorCarried, *animator, field.name, value, further);
+    }
+    if (field.pool == "ikControls") {
+        Limb* limb = world.ikControls().find(id);
+        return limb != nullptr && writeCarried(LimbCarried, *limb, field.name, value, further);
+    }
+    if (field.pool == "footPlacements") {
+        Feet* feet = world.footPlacements().find(id);
+        return feet != nullptr && writeCarried(FeetCarried, *feet, field.name, value, further);
+    }
+    if (field.pool == "sounds") {
+        Sound* sound = world.sounds().find(id);
+        if (sound == nullptr)
+            return false;
+        if (field.name == "Content") {
+            // As the property's setter does: another file is another thing to
+            // load, and another length.
+            const std::string_view content = world.atoms().text(core::NameAtom{asU32(value)});
+            if (sound->content != content) {
+                sound->content = content;
+                sound->loadedFired = false;
+                sound->timeLength = 0.0;
+            }
+            return true;
+        }
+        if (field.name == "Playing") {
+            // **Each machine plays its own copy** (protocol 44). This is
+            // called when the authority's value changed, so true is a sound
+            // that started there: it starts here, from its beginning --
+            // where the authority's has got to is not sent, and could not be
+            // matched to the sample if it were. False is a sound stopped or
+            // ended there: stopped here, and rewound as `Stop` rewinds.
+            sound->playing = asBool(value);
+            sound->timePosition = 0.0;
+            sound->seeked = false;
+            return true;
+        }
+        return writeCarried(SoundCarried, *sound, field.name, value, further);
+    }
     return false;
 }
 
@@ -2218,7 +2827,26 @@ constexpr NamedPool Pools[] = {
                             ENG_REPLICATION_POOL_DIGEST(sunRaysEffects) ENG_REPLICATION_POOL_DIGEST(atmospheres)
                                 ENG_REPLICATION_POOL_DIGEST(skies) ENG_REPLICATION_POOL_DIGEST(decals)
                                     ENG_REPLICATION_POOL_DIGEST(particleEmitters) ENG_REPLICATION_POOL_DIGEST(models)
-                                        ENG_REPLICATION_POOL_DIGEST(parts2d) ENG_REPLICATION_POOL_DIGEST(tilemaps2d)};
+                                        ENG_REPLICATION_POOL_DIGEST(parts2d) ENG_REPLICATION_POOL_DIGEST(tilemaps2d)
+    // Protocol 44: what a character carries.
+    ENG_REPLICATION_POOL_DIGEST(pointLights) ENG_REPLICATION_POOL_DIGEST(spotLights)
+        ENG_REPLICATION_POOL_DIGEST(springBones) ENG_REPLICATION_POOL_DIGEST(springColliders)
+            ENG_REPLICATION_POOL_DIGEST(highlights) ENG_REPLICATION_POOL_DIGEST(beams)
+                ENG_REPLICATION_POOL_DIGEST(trails) ENG_REPLICATION_POOL_DIGEST(sounds)
+                    ENG_REPLICATION_POOL_DIGEST(animationPlayers) ENG_REPLICATION_POOL_DIGEST(ikControls)
+                        ENG_REPLICATION_POOL_DIGEST(footPlacements)
+    // **A pivot is known, and not
+    // read**: every part and model
+    // has one, nearly all at the
+    // middle for good, and reading
+    // each every tick to learn that
+    // was a tenth of a capture. One
+    // a script moves is sent with
+    // whatever else of the instance
+    // changed, and else at its next
+    // reading whatever the bytes
+    // say: eight sends at most.
+    NamedPool{"pvInstances", [](const scene::World&, InstanceId, core::u64&) noexcept -> bool { return true; }}};
 #undef ENG_REPLICATION_POOL_DIGEST
 
 // What each class reads from, found once: the distinct pools its fields name,
@@ -2287,6 +2915,15 @@ core::u64 sourceDigestOf(const scene::World& world, InstanceId id, const ClassDe
     return hash != 0 ? hash : 1;
 }
 
+InstanceId referenceAt(const scene::World& world, InstanceId id, const ClassDesc& desc, usize index)
+{
+    const FieldDesc* field = fieldAt(desc, index);
+    if (field == nullptr || field->encoding != Encoding::InstanceRef || field->source != Source::Component)
+        return InstanceId{};
+    FieldValue cell;
+    return readComponent(world, id, *field, cell, {}) ? asInstance(cell) : InstanceId{};
+}
+
 bool carriesField(const scene::World& world, InstanceId id, std::string_view name)
 {
     const ClassDesc* desc = schemaFor(world, id);
@@ -2303,6 +2940,89 @@ usize fieldCount(const ClassDesc& desc)
 {
     const ClassDesc* base = baseOf(desc);
     return std::size(generated::CommonFields) + (base != nullptr ? base->fields.size() : 0) + desc.fields.size();
+}
+
+namespace {
+
+// Where each class's sequences keep their further cells, found once: a range a
+// field, empty for all but a sequence, and the whole set's size.
+struct ClassCells
+{
+    usize total = 0;
+    std::vector<CellRange> further;
+};
+
+[[nodiscard]] const ClassCells* cellsOf(const ClassDesc& desc)
+{
+    static const std::vector<ClassCells> all = [] {
+        std::vector<ClassCells> out(std::size(generated::Classes));
+        for (usize index = 0; index < out.size(); ++index) {
+            const ClassDesc& each = generated::Classes[index];
+            ClassCells& mine = out[index];
+            mine.total = fieldCount(each);
+            mine.further.resize(mine.total);
+            for (usize at = 0, count = mine.total; at < count; ++at) {
+                const FieldDesc* field = fieldAt(each, at);
+                const usize cells = field != nullptr ? furtherCellsOf(field->encoding) : 0;
+                if (cells == 0)
+                    continue;
+                mine.further[at] = CellRange{mine.total, cells};
+                mine.total += cells;
+            }
+        }
+        return out;
+    }();
+    const auto at = static_cast<usize>(&desc - generated::Classes);
+    return at < all.size() ? &all[at] : nullptr;
+}
+
+} // namespace
+
+usize cellCount(const ClassDesc& desc)
+{
+    const ClassCells* cells = cellsOf(desc);
+    return cells != nullptr ? cells->total : fieldCount(desc);
+}
+
+CellRange furtherCells(const ClassDesc& desc, usize index)
+{
+    const ClassCells* cells = cellsOf(desc);
+    return cells != nullptr && index < cells->further.size() ? cells->further[index] : CellRange{};
+}
+
+bool sameField(const ClassDesc& desc, usize index, std::span<const FieldValue> a,
+               std::span<const FieldValue> b) noexcept
+{
+    if (index >= a.size() || index >= b.size() || !(a[index] == b[index]))
+        return false;
+    const CellRange range = furtherCells(desc, index);
+    if (range.count == 0)
+        return true;
+    if (range.first + range.count > a.size() || range.first + range.count > b.size())
+        return false;
+    return std::equal(a.begin() + static_cast<std::ptrdiff_t>(range.first),
+                      a.begin() + static_cast<std::ptrdiff_t>(range.first + range.count),
+                      b.begin() + static_cast<std::ptrdiff_t>(range.first));
+}
+
+void encodeSequenceField(std::vector<core::u8>& out, const ClassDesc& desc, usize index,
+                         std::span<const FieldValue> cells)
+{
+    const FieldDesc* field = fieldAt(desc, index);
+    const CellRange range = furtherCells(desc, index);
+    if (field == nullptr || range.count == 0 || range.first + range.count > cells.size())
+        return;
+    encodeSequence(out, field->encoding, cells[index], cells.subspan(range.first, range.count));
+}
+
+bool decodeSequenceField(std::span<const core::u8> bytes, usize& at, const ClassDesc& desc, usize index,
+                         std::span<FieldValue> cells) noexcept
+{
+    const FieldDesc* field = fieldAt(desc, index);
+    const CellRange range = furtherCells(desc, index);
+    if (field == nullptr || range.count == 0 || range.first + range.count > cells.size())
+        return false;
+    return decodeSequence(bytes, at, field->encoding, cells[index], cells.subspan(range.first, range.count));
 }
 
 core::u16 wireIdAt(const ClassDesc& desc, usize index)
@@ -2359,8 +3079,9 @@ bool extractFieldsInto(const scene::World& world, InstanceId id, const ClassDesc
 {
     const usize count = fieldCount(desc);
     // Every field starts as zeros, as a fresh set's do: a reader writes what
-    // its value takes and leaves the rest.
-    out.assign(count, FieldValue{});
+    // its value takes and leaves the rest. A cell a field, and a sequence's
+    // further cells after the last of them.
+    out.assign(cellCount(desc), FieldValue{});
 
     for (usize at = 0; at < count; ++at) {
         const FieldDesc* field = fieldAt(desc, at);
@@ -2369,7 +3090,9 @@ bool extractFieldsInto(const scene::World& world, InstanceId id, const ClassDesc
         }
 
         if (field->source == Source::Component) {
-            if (!readComponent(world, id, *field, out[at])) {
+            const CellRange range = furtherCells(desc, at);
+            const std::span<FieldValue> further = std::span<FieldValue>(out).subspan(range.first, range.count);
+            if (!readComponent(world, id, *field, out[at], further)) {
                 return false;
             }
             continue;
@@ -2410,19 +3133,22 @@ void diffFields(const ClassDesc& desc, std::span<const FieldValue> baseline, std
                 std::vector<FieldDelta>& out)
 {
     out.clear();
+    // The fields, and not the cells past them: those are their sequences',
+    // and a sequence is reported once.
+    const usize count = std::min(fieldCount(desc), current.size());
 
     if (baseline.size() != current.size()) {
         // Everything changed. See the header: this is a baseline taken under a
         // different class, and sending all of it is what makes the replica
         // correct rather than subtly wrong.
-        for (usize at = 0; at < current.size(); ++at) {
+        for (usize at = 0; at < count; ++at) {
             out.push_back(FieldDelta{wireIdAt(desc, at), current[at]});
         }
         return;
     }
 
-    for (usize at = 0; at < current.size(); ++at) {
-        if (baseline[at] == current[at]) {
+    for (usize at = 0; at < count; ++at) {
+        if (sameField(desc, at, baseline, current)) {
             continue;
         }
         out.push_back(FieldDelta{wireIdAt(desc, at), current[at]});
@@ -2530,9 +3256,13 @@ bool applyField(scene::World& world, InstanceId id, const ClassDesc& desc, const
         if (field == nullptr || wireIdAt(desc, at) != delta.id) {
             continue;
         }
+        // More than a cell: `applySequence` has the rest of it.
+        if (isSequence(field->encoding)) {
+            return false;
+        }
 
         if (field->source == Source::Component) {
-            return writeComponent(world, id, *field, delta.value);
+            return writeComponent(world, id, *field, delta.value, {});
         }
 
         if (field->name == "Name") {
@@ -2547,6 +3277,17 @@ bool applyField(scene::World& world, InstanceId id, const ClassDesc& desc, const
         return false;
     }
     return false;
+}
+
+bool applySequence(scene::World& world, InstanceId id, const ClassDesc& desc, usize index,
+                   std::span<const FieldValue> cells)
+{
+    const FieldDesc* field = fieldAt(desc, index);
+    const CellRange range = furtherCells(desc, index);
+    if (field == nullptr || range.count == 0 || field->source != Source::Component ||
+        range.first + range.count > cells.size())
+        return false;
+    return writeComponent(world, id, *field, cells[index], cells.subspan(range.first, range.count));
 }
 
 } // namespace engine::replication

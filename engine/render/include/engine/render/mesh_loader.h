@@ -254,6 +254,49 @@ public:
     // world's, after it; each name leaves the list once it has arrived.
     void warmMeshes(std::span<const core::NameAtom> meshes);
     void warmTextures(std::span<const core::NameAtom> images);
+
+    // **A scene was left: what it alone held is let go** (D610). Every mesh
+    // and texture a game had ever shown stayed on the graphics card until the
+    // engine closed -- a game of six maps held all six by the time its player
+    // reached the last, and a phone with two gigabytes ended it for the
+    // memory.
+    //
+    // `leaveScene` says a scene was left. `sweep`, called each frame after
+    // the walks of `syncTextures` and `sync`, waits `SweepFrames` for the new
+    // scene to make what it makes, takes that frame's walk as the list of
+    // what the world names, and forgets every mesh and texture of the
+    // project's content (`asset://`) that is not on it. Kept besides:
+    //
+    //   - what `ContentProvider:PreloadAsync` or a scene being prepared asked
+    //     for in the scene that was just left or since -- a loading screen
+    //     preloads the next scene's content before it changes to it, and that
+    //     is the next scene's, not the last one's;
+    //   - what `ContentProvider:Keep` named, until `Release` names it: the
+    //     game's own word that something is held whatever scenes come and go
+    //     (`keep`, `release`);
+    //   - anything on its way in.
+    //
+    // What a game shows again later is loaded again, as it was the first
+    // time: a preload is how a game says it wants something held.
+    // How many it let go, once, on the frame it does; nought otherwise.
+    void leaveScene() noexcept;
+    void keep(std::span<const core::NameAtom> urns);
+    void release(std::span<const core::NameAtom> urns);
+    [[nodiscard]] bool kept(core::NameAtom urn) const noexcept;
+
+    // **What began to load while the game was being played** (D610's aid to
+    // an author): with `watching` on -- the loading screen is down and the
+    // scene has settled -- a mesh or a picture the WORLD named that was not
+    // loaded is noted, once a name. Not what a preload or `Keep` asked for,
+    // which is a game loading ahead on purpose, and not what was already on
+    // its way when the watching began. `takeLateLoads` hands the notes over
+    // and forgets them; the caller words the warning. Costs a pass over the
+    // loads in flight, which are a handful.
+    void watchLateLoads(bool watching) noexcept { lateWatching_ = watching; }
+    [[nodiscard]] std::vector<core::NameAtom> takeLateLoads();
+    core::u32 sweep(rhi::IDevice& device, const scene::World& world, TextureLibrary& textures, MeshLibrary& meshes,
+                    MeshCache& cache);
+    static constexpr core::u32 SweepFrames = 30;
     // Where one name stands: nothing while it is on its way, true once it is
     // in its library, false once it was given up on.
     [[nodiscard]] std::optional<bool> warmed(core::NameAtom content, const MeshLibrary& meshes,
@@ -366,6 +409,33 @@ private:
     core::usize meshesWaiting_ = 0;
     std::vector<core::NameAtom> warmMeshes_;
     std::vector<core::NameAtom> warmTextures_;
+
+    // The sweep (D610). `scene_` counts the scenes left; a preload is kept
+    // through the scene after the one it was asked in.
+    struct Preloaded
+    {
+        core::NameAtom urn;
+        core::u32 scene = 0;
+    };
+    std::vector<Preloaded> preloaded_;
+    // What a game asked to be held (`keep`), sorted by atom.
+    std::vector<core::NameAtom> kept_;
+    // The late loads: what is exempt because it was in flight before the
+    // watching began, what has been said already, and what is to be said.
+    bool lateWatching_ = false;
+    std::vector<core::NameAtom> lateExempt_;
+    std::vector<core::NameAtom> lateSaid_;
+    std::vector<core::NameAtom> late_;
+    void noteLateLoads();
+    void notePreloaded(std::span<const core::NameAtom> urns);
+    core::u32 scene_ = 0;
+    // Frames left before the walk that is taken as the list, and that list:
+    // filled by the walks of the one frame the countdown reaches nought on.
+    core::u32 sweepIn_ = 0;
+    bool sweepRecording_ = false;
+    bool sweepWalkedTextures_ = false;
+    bool sweepWalkedMeshes_ = false;
+    std::vector<core::NameAtom> named_;
     std::vector<rhi::TextureHandle> textures_;
     // **What a `view://` name shows until something draws into it** (ADR
     // 0107): one black pixel, shared by every such name and never destroyed

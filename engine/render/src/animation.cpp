@@ -5,7 +5,10 @@
 #include <cmath>
 #include <iterator>
 
+#include "engine/core/i18n.h"
+#include "engine/core/log.h"
 #include "engine/core/profile.h"
+#include "engine/core/text_key.h"
 #include "engine/scene/world.h"
 
 namespace engine::render {
@@ -160,6 +163,38 @@ using core::Vec3;
     return result;
 }
 
+// a * b, the rotation that does `b` and then `a` -- the order two rotation
+// matrices multiply in.
+void multiplyQuaternions(const f32* a, const f32* b, f32* out) noexcept
+{
+    const f32 x = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
+    const f32 y = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
+    const f32 z = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
+    const f32 w = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+    out[0] = x;
+    out[1] = y;
+    out[2] = z;
+    out[3] = w;
+}
+
+void normalizeQuaternion(f32* q) noexcept
+{
+    const f32 length = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    if (length <= 0.0f) {
+        q[0] = q[1] = q[2] = 0.0f;
+        q[3] = 1.0f;
+        return;
+    }
+    for (usize lane = 0; lane < 4; ++lane)
+        q[lane] /= length;
+}
+
+// Whether a mask's entry names this joint: by the joint's own name.
+[[nodiscard]] bool maskNames(const SkeletonLibrary::Entry& skeleton, u32 joint, std::string_view name) noexcept
+{
+    return skeleton.joints[joint].name == name;
+}
+
 [[nodiscard]] core::u64 keyOf(core::InstanceId id) noexcept
 {
     return static_cast<core::u64>(id.index) | (static_cast<core::u64>(id.generation) << 32);
@@ -188,15 +223,28 @@ void SkeletonLibrary::set(core::NameAtom content, Entry entry)
     if (slot != entries_.end() && slot->content == content) {
         slot->entry = std::move(entry);
         ++revision_;
+        ++replaced_;
         return;
     }
     entries_.insert(slot, Slot{content, std::move(entry)});
     ++revision_;
 }
 
+void SkeletonLibrary::forget(core::NameAtom content)
+{
+    const auto slot = std::lower_bound(entries_.begin(), entries_.end(), content,
+                                       [](const Slot& lhs, core::NameAtom rhs) { return lhs.content.id < rhs.id; });
+    if (slot == entries_.end() || !(slot->content == content))
+        return;
+    entries_.erase(slot);
+    ++revision_;
+    ++replaced_;
+}
+
 void SkeletonLibrary::clear() noexcept
 {
     ++revision_;
+    ++replaced_;
     entries_.clear();
 }
 
@@ -207,6 +255,84 @@ const SkeletonLibrary::Entry* SkeletonLibrary::find(core::NameAtom content) cons
     if (slot == entries_.end() || !(slot->content == content))
         return nullptr;
     return &slot->entry;
+}
+
+void GraphLibrary::set(core::NameAtom content, asset::AnimationGraph graph, core::AtomTable& atoms)
+{
+    auto entry = std::make_unique<Entry>();
+    // Which file and which clip each use means: a name with a `#` says its
+    // own file, and a plain one is in the graph's library -- or, with none,
+    // in the mesh the player drives.
+    const core::NameAtom library = graph.library.empty() ? core::NameAtom{} : atoms.intern(graph.library);
+    for (const asset::GraphClip& clip : graph.clips) {
+        const std::string_view name = clip.clip;
+        if (const usize hash = name.rfind('#'); hash != std::string_view::npos) {
+            entry->clipFiles.push_back(hash == 0 ? library : atoms.intern(name.substr(0, hash)));
+            entry->clipNames.emplace_back(name.substr(hash + 1));
+        }
+        else {
+            entry->clipFiles.push_back(library);
+            entry->clipNames.emplace_back(name);
+        }
+    }
+    for (const asset::GraphParameter& parameter : graph.parameters) {
+        const std::string_view from = parameter.from;
+        Source source = Source::None;
+        core::NameAtom attribute;
+        if (from.starts_with("Attribute.")) {
+            source = Source::Attribute;
+            attribute = atoms.intern(from.substr(std::string_view("Attribute.").size()));
+        }
+        else if (from == "CharacterBody.Speed")
+            source = Source::Speed;
+        else if (from == "CharacterBody.VerticalSpeed")
+            source = Source::VerticalSpeed;
+        else if (from == "CharacterBody.MoveX")
+            source = Source::MoveX;
+        else if (from == "CharacterBody.MoveZ")
+            source = Source::MoveZ;
+        else if (from == "CharacterBody.Grounded")
+            source = Source::Grounded;
+        else if (from == "CharacterBody.State")
+            source = Source::State;
+        entry->sources.push_back(source);
+        entry->attributes.push_back(attribute);
+    }
+    entry->graph = std::move(graph);
+
+    const auto slot = std::lower_bound(entries_.begin(), entries_.end(), content,
+                                       [](const Slot& lhs, core::NameAtom rhs) { return lhs.content.id < rhs.id; });
+    ++revision_;
+    if (slot != entries_.end() && slot->content == content) {
+        slot->entry = std::move(entry);
+        return;
+    }
+    entries_.insert(slot, Slot{content, std::move(entry)});
+}
+
+void GraphLibrary::forget(core::NameAtom content)
+{
+    const auto slot = std::lower_bound(entries_.begin(), entries_.end(), content,
+                                       [](const Slot& lhs, core::NameAtom rhs) { return lhs.content.id < rhs.id; });
+    if (slot == entries_.end() || !(slot->content == content))
+        return;
+    entries_.erase(slot);
+    ++revision_;
+}
+
+void GraphLibrary::clear() noexcept
+{
+    ++revision_;
+    entries_.clear();
+}
+
+const GraphLibrary::Entry* GraphLibrary::find(core::NameAtom content) const noexcept
+{
+    const auto slot = std::lower_bound(entries_.begin(), entries_.end(), content,
+                                       [](const Slot& lhs, core::NameAtom rhs) { return lhs.content.id < rhs.id; });
+    if (slot == entries_.end() || !(slot->content == content))
+        return nullptr;
+    return slot->entry.get();
 }
 
 AnimationSystem::AnimationSystem(const scene::World& world, const SkeletonLibrary& skeletons)
@@ -407,6 +533,34 @@ void AnimationSystem::sample(f64 fixedDt)
     for (const core::InstanceId mesh : overridden_)
         always_.push_back(mesh);
 
+    // **A rig that was read again is another rig** (D611): a model exported
+    // anew may have its clips in another order, another length, its joints
+    // another count. What every track found in its rig, by index, is found
+    // again by name; what it had playing goes on from the time it was at;
+    // and every pose is built again, from the joints there are now.
+    if (skeletons_->replaced() != replacedSeen_) {
+        replacedSeen_ = skeletons_->replaced();
+        for (usize index = 1; index < tracks_.size(); ++index) {
+            Track& track = tracks_[index];
+            if (!track.alive)
+                continue;
+            track.clip = NoClip;
+            track.posed = false;
+            if (bindTrack(track) && track.time > static_cast<f64>(track.length))
+                track.time = static_cast<f64>(track.length);
+        }
+        poses_.clear();
+        presented_.clear();
+        shared_.clear();
+        sharedJoints_ = 0;
+        keyPeriods_.clear();
+    }
+
+    // The graphs first (ADR 0197): each steps its states and writes its
+    // tracks' times and weights, which the walk below then takes like any.
+    stepGraphs(fixedDt);
+
+    wantedFiles_.clear();
     for (usize index = 1; index < tracks_.size(); ++index) {
         Track& track = tracks_[index];
         // **A track made before its file arrived binds when it does** (D509):
@@ -414,13 +568,32 @@ void AnimationSystem::sample(f64 fixedDt)
         // a weight -- takes effect from the clip's beginning. Until then it
         // drives nothing and is not a reason to build a pose; a script reading
         // it sees a track rather than a hole.
-        if (!track.alive || !bindTrack(track))
+        if (!track.alive)
             continue;
-        if (alwaysFor(track))
-            always_.push_back(track.meshPart);
+        if (!bindTrack(track)) {
+            // Its clip is in a file nothing has loaded: asked for, so a file
+            // that only holds clips is read though no mesh wears it.
+            if (track.clipFrom.valid() && skeletons_->find(track.clipFrom) == nullptr)
+                wantedFiles_.push_back(track.clipFrom);
+            continue;
+        }
+        // Its player, looked up once: whether its meshes are posed every
+        // tick, and how its clips are carried onto them.
+        if (const scene::AnimationPlayerComponent* const player = world_->animationPlayers().find(track.player);
+            player != nullptr) {
+            if (player->cullingMode == 1)
+                always_.push_back(track.meshPart);
+            track.retargeting = static_cast<core::u8>(player->retargeting);
+        }
         if (!track.playing) {
             if (!quiet(track))
                 note(track.meshPart);
+            continue;
+        }
+        // A graph's track was stepped by its graph: its time and weight are
+        // this tick's already, and it never ends of its own accord.
+        if (track.graph != NoGraph) {
+            note(track.meshPart);
             continue;
         }
 
@@ -465,6 +638,9 @@ void AnimationSystem::sample(f64 fixedDt)
 
         note(track.meshPart);
     }
+
+    std::sort(wantedFiles_.begin(), wantedFiles_.end(), [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; });
+    wantedFiles_.erase(std::unique(wantedFiles_.begin(), wantedFiles_.end()), wantedFiles_.end());
 
     // **Every mesh a drive root covers, not just the one the clip came from.**
     // `note(track.meshPart)` above collects the mesh the track was MADE against,
@@ -656,6 +832,7 @@ void AnimationSystem::sample(f64 fixedDt)
         track.posedHolding = track.holding;
         track.posedWeight = track.weight;
         track.posedTime = track.time;
+        track.posedLayerWeight = track.layerWeight;
     }
 }
 
@@ -726,6 +903,10 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
             signature_.push_back((static_cast<core::u64>(track.content.id) << 32) | track.clip);
             signature_.push_back((static_cast<core::u64>(std::bit_cast<u32>(sampleTime(track, quantise))) << 32) |
                                  std::bit_cast<u32>(track.weight));
+            // And its layer, whether it adds, its mask and its layer's
+            // weight (ADR 0197): two bodies in one state of one graph at one
+            // moment have these alike, and still share.
+            signature_.push_back(layerWordOf(track, content));
         }
         if (signature_.size() > 1) {
             if (const auto same = shared_.find(signature_); same != shared_.end()) {
@@ -743,14 +924,8 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
     // rather than per track, because a joint no clip drives has to keep its rest
     // transform -- a zero-weight average would collapse it to the origin, which
     // is what makes a clip that animates one arm eat the other.
-    translation_.assign(jointCount, DVec3{});
-    rotation_.assign(jointCount * 4, 0.0f);
-    scale_.assign(jointCount, Vec3{});
-    weightT_.assign(jointCount, 0.0f);
-    weightR_.assign(jointCount, 0.0f);
-    weightS_.assign(jointCount, 0.0f);
+    base_.clear(jointCount, false);
 
-    f32 sample[4]{};
     bool contributed = false;
 
     // **Track index order, which is load order.** R10 forbids the order coming
@@ -758,91 +933,106 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
     // 0.5 have to blend the same way on every run. The tick's index of them
     // is in that order; asked outside a tick, every track is.
     const usize considered = indexed ? drivers.size() : tracks_.size() - 1;
-    for (usize position = 0; position < considered; ++position) {
+    const auto driving = [&](usize position) -> const Track* {
         const usize index = indexed ? drivers[position] : position + 1;
         const Track& track = tracks_[index];
         if (!track.alive || !(track.playing || track.holding) || track.clip == NoClip)
-            continue;
+            return nullptr;
         // Every track made against THIS mesh, and every track whose drive root
         // this mesh is under. Two players under one mesh are two sources
         // blending into one pose, which is what they look like on screen; one
         // player over a body and a shirt is one source moving both.
         if (!indexed && !drives(track, meshPart))
-            continue;
-        if (track.weight <= 0.0f)
-            continue;
+            return nullptr;
+        return track.weight > 0.0f ? &track : nullptr;
+    };
 
-        // **The clip comes from the track's OWN rig, not from this mesh's.** A
-        // shirt exported without the animation has no clips of its own, and the
-        // whole point of one player over several meshes is that only one of them
-        // needs to carry it.
-        const SkeletonLibrary::Entry* source = skeletons_->find(track.content);
-        if (source == nullptr || track.clip >= source->clips.size())
+    // **The first layer: one weighted average** -- every track a script plays
+    // and a graph's first layer, mixed as two tracks always were. What is
+    // above it and what adds are counted on the way and walked after.
+    core::u16 topLayer = 0;
+    bool adds = false;
+    // How much of a graph's first layer is clips: the rest of it is a state
+    // with none, which is the rest pose and has to weigh what it weighs --
+    // or a fade in from nothing would arrive whole on its first tick.
+    bool graphBase = false;
+    f32 graphShare = 0.0f;
+    for (usize position = 0; position < considered; ++position) {
+        const Track* const track = driving(position);
+        if (track == nullptr)
+            continue;
+        if (track->additive) {
+            adds = true;
+            continue;
+        }
+        if (track->layer > 0) {
+            topLayer = std::max(topLayer, track->layer);
+            continue;
+        }
+        if (!accumulate(*track, content, jointCount, quantise, base_))
             continue;
         contributed = true;
-
-        // Null when the clip is being applied to the rig it came from, which is
-        // every character made of one mesh -- and then the channel's own index
-        // is used, exactly as before.
-        const JointMap* const map = jointMapFor(track.content, content);
-
-        const asset::AnimationClip& clip = source->clips[track.clip];
-        const f32 time = sampleTime(track, quantise);
-
-        for (const asset::AnimationChannel& channel : clip.channels) {
-            // The joint on THIS rig: the channel's own, or remapped by name.
-            // Remapped as a number -- the channel was copied, keys and all,
-            // for every pose that remapped it (H10).
-            u32 joint = channel.joint;
-            if (map != nullptr) {
-                if (joint >= map->slots.size() || map->slots[joint] < 0) {
-                    // A joint this rig does not have. Skipped rather than
-                    // guessed: a shirt with no fingers should keep its own
-                    // sleeve, not inherit a finger's rotation.
-                    continue;
-                }
-                joint = static_cast<u32>(map->slots[joint]);
-            }
-            if (joint >= jointCount || channel.times.empty())
-                continue;
-            if (!sampleChannel(channel, time, sample))
-                continue;
-
-            switch (channel.target) {
-            case asset::AnimationChannel::Target::Translation:
-                translation_[joint].x += static_cast<f64>(sample[0] * track.weight);
-                translation_[joint].y += static_cast<f64>(sample[1] * track.weight);
-                translation_[joint].z += static_cast<f64>(sample[2] * track.weight);
-                weightT_[joint] += track.weight;
-                break;
-            case asset::AnimationChannel::Target::Rotation: {
-                f32* accumulator = &rotation_[joint * 4];
-                // Sign-aligned against whatever is already there, for the same
-                // reason `sampleChannel` aligns two keys: blending q against -q
-                // is the long way round, and here it would show as a joint
-                // snapping when a second track faded in.
-                f32 dot = 0.0f;
-                for (usize lane = 0; lane < 4; ++lane)
-                    dot += accumulator[lane] * sample[lane];
-                const f32 sign = (weightR_[joint] > 0.0f && dot < 0.0f) ? -1.0f : 1.0f;
-                for (usize lane = 0; lane < 4; ++lane)
-                    accumulator[lane] += sample[lane] * sign * track.weight;
-                weightR_[joint] += track.weight;
-                break;
-            }
-            case asset::AnimationChannel::Target::Scale:
-                scale_[joint].x += sample[0] * track.weight;
-                scale_[joint].y += sample[1] * track.weight;
-                scale_[joint].z += sample[2] * track.weight;
-                weightS_[joint] += track.weight;
-                break;
-            case asset::AnimationChannel::Target::Weight:
-                // A morph target's weight is in a clip's `weights`, never among
-                // the channels this walks (ADR 0196); one that is here came from
-                // a file that says otherwise, and poses nothing.
-                break;
-            }
+        if (track->graph != NoGraph) {
+            graphBase = true;
+            graphShare += track->weight * track->layerWeight;
         }
+    }
+    if (graphBase && graphShare < 1.0f - 1.0e-4f) {
+        const f32 rest = 1.0f - graphShare;
+        f32 quaternion[4]{};
+        for (usize joint = 0; joint < jointCount; ++joint) {
+            const asset::Joint& bone = skeleton.joints[joint];
+            base_.translation[joint].x += bone.localBind.position.x * static_cast<f64>(rest);
+            base_.translation[joint].y += bone.localBind.position.y * static_cast<f64>(rest);
+            base_.translation[joint].z += bone.localBind.position.z * static_cast<f64>(rest);
+            base_.weightT[joint] += rest;
+            core::toQuaternion(bone.localBind.rotation, quaternion[0], quaternion[1], quaternion[2], quaternion[3]);
+            f32* accumulator = &base_.rotation[joint * 4];
+            f32 dot = 0.0f;
+            for (usize lane = 0; lane < 4; ++lane)
+                dot += accumulator[lane] * quaternion[lane];
+            const f32 sign = (base_.weightR[joint] > 0.0f && dot < 0.0f) ? -1.0f : 1.0f;
+            for (usize lane = 0; lane < 4; ++lane)
+                accumulator[lane] += quaternion[lane] * sign * rest;
+            base_.weightR[joint] += rest;
+            base_.scale[joint] = base_.scale[joint] + Vec3{rest, rest, rest};
+            base_.weightS[joint] += rest;
+        }
+    }
+
+    // **Each layer above replaces** (ADR 0197): where it has a joint it takes
+    // its cover of it, and what is under keeps the rest -- a cross-fade
+    // written as weights, a layer at a time, bottom first.
+    for (core::u16 layer = 1; layer <= topLayer; ++layer) {
+        upper_.clear(jointCount, true);
+        bool any = false;
+        for (usize position = 0; position < considered; ++position) {
+            const Track* const track = driving(position);
+            if (track != nullptr && !track->additive && track->layer == layer)
+                any = accumulate(*track, content, jointCount, quantise, upper_) || any;
+        }
+        if (any) {
+            mergeLayer(skeleton, base_, upper_);
+            contributed = true;
+        }
+    }
+
+    // **And what adds, after the average**: each clip as how far it is from
+    // its own first frame.
+    if (adds) {
+        addT_.assign(jointCount, DVec3{});
+        addR_.assign(jointCount * 4, 0.0f);
+        for (usize joint = 0; joint < jointCount; ++joint)
+            addR_[joint * 4 + 3] = 1.0f;
+        addS_.assign(jointCount, Vec3{1.0f, 1.0f, 1.0f});
+        bool any = false;
+        for (usize position = 0; position < considered; ++position) {
+            const Track* const track = driving(position);
+            if (track != nullptr && track->additive)
+                any = accumulateAdditive(*track, content, jointCount, quantise) || any;
+        }
+        adds = any;
+        contributed = contributed || any;
     }
 
     if (!contributed && offsets.empty()) {
@@ -877,21 +1067,22 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
         const asset::Joint& bone = skeleton.joints[joint];
 
         DVec3 translation = bone.localBind.position;
-        if (weightT_[joint] > 0.0f) {
-            const f64 inverse = 1.0 / static_cast<f64>(weightT_[joint]);
-            translation = DVec3{translation_[joint].x * inverse, translation_[joint].y * inverse,
-                                translation_[joint].z * inverse};
+        if (base_.weightT[joint] > 0.0f) {
+            const f64 inverse = 1.0 / static_cast<f64>(base_.weightT[joint]);
+            translation = DVec3{base_.translation[joint].x * inverse, base_.translation[joint].y * inverse,
+                                base_.translation[joint].z * inverse};
         }
 
         Vec3 boneScale{1.0f, 1.0f, 1.0f};
-        if (weightS_[joint] > 0.0f) {
-            const f32 inverse = 1.0f / weightS_[joint];
-            boneScale = Vec3{scale_[joint].x * inverse, scale_[joint].y * inverse, scale_[joint].z * inverse};
+        if (base_.weightS[joint] > 0.0f) {
+            const f32 inverse = 1.0f / base_.weightS[joint];
+            boneScale =
+                Vec3{base_.scale[joint].x * inverse, base_.scale[joint].y * inverse, base_.scale[joint].z * inverse};
         }
 
         const f32* quaternion = restRotation;
-        if (weightR_[joint] > 0.0f) {
-            f32* accumulator = &rotation_[joint * 4];
+        if (base_.weightR[joint] > 0.0f) {
+            f32* accumulator = &base_.rotation[joint * 4];
             f32 length = 0.0f;
             for (usize lane = 0; lane < 4; ++lane)
                 length += accumulator[lane] * accumulator[lane];
@@ -908,6 +1099,17 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
             // it is cheaper than carrying a second representation on `Joint`.
             core::toQuaternion(bone.localBind.rotation, restRotation[0], restRotation[1], restRotation[2],
                                restRotation[3]);
+        }
+
+        f32 added[4]{};
+        if (adds) {
+            // What the additive tracks made of this joint, on top: a turn in
+            // the joint's own space, a move from its parent, a stretch.
+            translation = translation + addT_[joint];
+            multiplyQuaternions(quaternion, &addR_[joint * 4], added);
+            normalizeQuaternion(added);
+            quaternion = added;
+            boneScale = core::mul(boneScale, addS_[joint]);
         }
 
         Mat4 local = composeTrs(translation, quaternion, boneScale);
@@ -938,6 +1140,394 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
                 sharedJoints_ += jointCount;
         }
     }
+}
+
+void AnimationSystem::Lanes::clear(usize joints, bool cover)
+{
+    translation.assign(joints, DVec3{});
+    rotation.assign(joints * 4, 0.0f);
+    scale.assign(joints, Vec3{});
+    weightT.assign(joints, 0.0f);
+    weightR.assign(joints, 0.0f);
+    weightS.assign(joints, 0.0f);
+    if (cover) {
+        coverT.assign(joints, 0.0f);
+        coverR.assign(joints, 0.0f);
+        coverS.assign(joints, 0.0f);
+    }
+    else {
+        coverT.clear();
+        coverR.clear();
+        coverS.clear();
+    }
+}
+
+bool AnimationSystem::accumulate(const Track& track, core::NameAtom rig, usize jointCount, bool quantise, Lanes& lanes)
+{
+    // **The clip comes from the track's OWN rig, not from this mesh's.** A
+    // shirt exported without the animation has no clips of its own, and the
+    // whole point of one player over several meshes is that only one of them
+    // needs to carry it.
+    const SkeletonLibrary::Entry* source = skeletons_->find(track.content);
+    if (source == nullptr || track.clip >= source->clips.size())
+        return false;
+
+    // Null when the clip is being applied to the rig it came from, which is
+    // every character made of one mesh -- and then the channel's own index
+    // is used, exactly as before.
+    const JointMap* const map = jointMapFor(track.content, rig, track.retargeting);
+    const std::vector<f32>* const mask = maskFor(track, rig);
+    // In the first layer a layer's weight is the track's; above it, it is
+    // how much of the joint the layer covers.
+    const bool covering = !lanes.coverT.empty();
+    const f32 own = covering ? track.weight : track.weight * track.layerWeight;
+
+    const asset::AnimationClip& clip = source->clips[track.clip];
+    const f32 time = sampleTime(track, quantise);
+    f32 sample[4]{};
+    // **Carried by role** (ADR 0199): a turn goes from the clip's rest to
+    // this rig's, the hips' travel is scaled, and nothing else of where a
+    // joint is from its parent is the clip's to say.
+    const bool carried = map != nullptr && map->carried.roles;
+    if (carried) {
+        keyed_.assign(map->carried.slots.size(), 0);
+        if (track.retargeting == 0)
+            warnUnmapped(*map, clip);
+    }
+
+    for (const asset::AnimationChannel& channel : clip.channels) {
+        // The joint on THIS rig: the channel's own, or remapped by name.
+        // Remapped as a number -- the channel was copied, keys and all, for
+        // every pose that remapped it (H10).
+        u32 joint = channel.joint;
+        if (map != nullptr) {
+            if (joint >= map->slots.size() || map->slots[joint] < 0) {
+                // A joint this rig does not have. Skipped rather than
+                // guessed: a shirt with no fingers should keep its own
+                // sleeve, not inherit a finger's rotation.
+                continue;
+            }
+            joint = static_cast<u32>(map->slots[joint]);
+        }
+        if (joint >= jointCount || channel.times.empty())
+            continue;
+        f32 weight = own;
+        if (mask != nullptr) {
+            if ((*mask)[joint] <= 0.0f)
+                continue;
+            weight = own * (*mask)[joint];
+        }
+        if (!sampleChannel(channel, time, sample))
+            continue;
+        if (carried && channel.joint < map->carried.byRole.size() && map->carried.byRole[channel.joint] != 0) {
+            if (channel.target == asset::AnimationChannel::Target::Rotation) {
+                retarget::rotation(map->carried, channel.joint, sample, sample);
+                keyed_[channel.joint] = 1;
+            }
+            else if (channel.target == asset::AnimationChannel::Target::Translation &&
+                     static_cast<core::i32>(channel.joint) == map->carried.hips) {
+                const DVec3 moved = retarget::hipsTranslation(
+                    map->carried,
+                    DVec3{static_cast<f64>(sample[0]), static_cast<f64>(sample[1]), static_cast<f64>(sample[2])});
+                sample[0] = static_cast<f32>(moved.x);
+                sample[1] = static_cast<f32>(moved.y);
+                sample[2] = static_cast<f32>(moved.z);
+            }
+            else {
+                // A bone's length and its stretch are this body's own.
+                continue;
+            }
+        }
+
+        switch (channel.target) {
+        case asset::AnimationChannel::Target::Translation:
+            lanes.translation[joint].x += static_cast<f64>(sample[0] * weight);
+            lanes.translation[joint].y += static_cast<f64>(sample[1] * weight);
+            lanes.translation[joint].z += static_cast<f64>(sample[2] * weight);
+            lanes.weightT[joint] += weight;
+            if (covering)
+                lanes.coverT[joint] += weight * track.layerWeight;
+            break;
+        case asset::AnimationChannel::Target::Rotation: {
+            f32* accumulator = &lanes.rotation[joint * 4];
+            // Sign-aligned against whatever is already there, for the same
+            // reason `sampleChannel` aligns two keys: blending q against -q
+            // is the long way round, and here it would show as a joint
+            // snapping when a second track faded in.
+            f32 dot = 0.0f;
+            for (usize lane = 0; lane < 4; ++lane)
+                dot += accumulator[lane] * sample[lane];
+            const f32 sign = (lanes.weightR[joint] > 0.0f && dot < 0.0f) ? -1.0f : 1.0f;
+            for (usize lane = 0; lane < 4; ++lane)
+                accumulator[lane] += sample[lane] * sign * weight;
+            lanes.weightR[joint] += weight;
+            if (covering)
+                lanes.coverR[joint] += weight * track.layerWeight;
+            break;
+        }
+        case asset::AnimationChannel::Target::Scale:
+            lanes.scale[joint].x += sample[0] * weight;
+            lanes.scale[joint].y += sample[1] * weight;
+            lanes.scale[joint].z += sample[2] * weight;
+            lanes.weightS[joint] += weight;
+            if (covering)
+                lanes.coverS[joint] += weight * track.layerWeight;
+            break;
+        case asset::AnimationChannel::Target::Weight:
+            // A morph target's weight is in a clip's `weights`, never among
+            // the channels this walks (ADR 0196); one that is here came from
+            // a file that says otherwise, and poses nothing.
+            break;
+        }
+    }
+    if (carried) {
+        // **A role the clip does not turn stands as the clip's rig rests**,
+        // not as this one does: its parent was carried into the clip's
+        // stance, and a joint left in its own would stand at the angle
+        // between the two.
+        for (usize from = 0; from < keyed_.size(); ++from) {
+            if (keyed_[from] != 0 || map->carried.byRole[from] == 0 || map->carried.slots[from] < 0)
+                continue;
+            const auto joint = static_cast<usize>(map->carried.slots[from]);
+            if (joint >= jointCount)
+                continue;
+            f32 weight = own;
+            if (mask != nullptr) {
+                if ((*mask)[joint] <= 0.0f)
+                    continue;
+                weight = own * (*mask)[joint];
+            }
+            const f32* const rest = &map->carried.rest[from * 4];
+            f32* accumulator = &lanes.rotation[joint * 4];
+            f32 dot = 0.0f;
+            for (usize lane = 0; lane < 4; ++lane)
+                dot += accumulator[lane] * rest[lane];
+            const f32 sign = (lanes.weightR[joint] > 0.0f && dot < 0.0f) ? -1.0f : 1.0f;
+            for (usize lane = 0; lane < 4; ++lane)
+                accumulator[lane] += rest[lane] * sign * weight;
+            lanes.weightR[joint] += weight;
+            if (covering)
+                lanes.coverR[joint] += weight * track.layerWeight;
+        }
+    }
+    return true;
+}
+
+bool AnimationSystem::accumulateAdditive(const Track& track, core::NameAtom rig, usize jointCount, bool quantise)
+{
+    const SkeletonLibrary::Entry* source = skeletons_->find(track.content);
+    if (source == nullptr || track.clip >= source->clips.size())
+        return false;
+    const JointMap* const map = jointMapFor(track.content, rig, track.retargeting);
+    const std::vector<f32>* const mask = maskFor(track, rig);
+    const asset::AnimationClip& clip = source->clips[track.clip];
+    const f32 time = sampleTime(track, quantise);
+    f32 now[4]{};
+    f32 first[4]{};
+    const bool carried = map != nullptr && map->carried.roles;
+
+    for (const asset::AnimationChannel& channel : clip.channels) {
+        u32 joint = channel.joint;
+        if (map != nullptr) {
+            if (joint >= map->slots.size() || map->slots[joint] < 0)
+                continue;
+            joint = static_cast<u32>(map->slots[joint]);
+        }
+        if (joint >= jointCount || channel.times.empty())
+            continue;
+        f32 weight = track.weight * track.layerWeight;
+        if (mask != nullptr)
+            weight *= (*mask)[joint];
+        if (weight <= 0.0f)
+            continue;
+        // **From the clip's own first frame**: what it adds is how far it has
+        // moved from there, so at its start it adds nothing.
+        if (!sampleChannel(channel, time, now) || !sampleChannel(channel, channel.times.front(), first))
+            continue;
+        if (carried && channel.joint < map->carried.byRole.size() && map->carried.byRole[channel.joint] != 0) {
+            // A turn is carried as a turn; what a carried joint adds to its
+            // place is the hips' alone, scaled as their travel is.
+            if (channel.target == asset::AnimationChannel::Target::Rotation) {
+                retarget::rotation(map->carried, channel.joint, now, now);
+                retarget::rotation(map->carried, channel.joint, first, first);
+            }
+            else if (channel.target == asset::AnimationChannel::Target::Translation &&
+                     static_cast<core::i32>(channel.joint) == map->carried.hips) {
+                const auto carry = [&](f32* sample) {
+                    const DVec3 moved = retarget::hipsTranslation(
+                        map->carried,
+                        DVec3{static_cast<f64>(sample[0]), static_cast<f64>(sample[1]), static_cast<f64>(sample[2])});
+                    sample[0] = static_cast<f32>(moved.x);
+                    sample[1] = static_cast<f32>(moved.y);
+                    sample[2] = static_cast<f32>(moved.z);
+                };
+                carry(now);
+                carry(first);
+            }
+            else {
+                continue;
+            }
+        }
+
+        switch (channel.target) {
+        case asset::AnimationChannel::Target::Translation:
+            addT_[joint].x += static_cast<f64>((now[0] - first[0]) * weight);
+            addT_[joint].y += static_cast<f64>((now[1] - first[1]) * weight);
+            addT_[joint].z += static_cast<f64>((now[2] - first[2]) * weight);
+            break;
+        case asset::AnimationChannel::Target::Rotation: {
+            // The turn from the first frame to now, in the joint's own space,
+            // and `weight` of it: towards the identity the short way.
+            const f32 back[4]{-first[0], -first[1], -first[2], first[3]};
+            f32 turn[4]{};
+            multiplyQuaternions(back, now, turn);
+            const f32 sign = turn[3] < 0.0f ? -1.0f : 1.0f;
+            f32 part[4]{turn[0] * sign * weight, turn[1] * sign * weight, turn[2] * sign * weight,
+                        1.0f + (turn[3] * sign - 1.0f) * weight};
+            normalizeQuaternion(part);
+            f32 sum[4]{};
+            multiplyQuaternions(&addR_[joint * 4], part, sum);
+            for (usize lane = 0; lane < 4; ++lane)
+                addR_[joint * 4 + lane] = sum[lane];
+            break;
+        }
+        case asset::AnimationChannel::Target::Scale: {
+            const auto ratio = [weight](f32 current, f32 start) {
+                return start != 0.0f ? 1.0f + (current / start - 1.0f) * weight : 1.0f;
+            };
+            addS_[joint] = core::mul(addS_[joint],
+                                     Vec3{ratio(now[0], first[0]), ratio(now[1], first[1]), ratio(now[2], first[2])});
+            break;
+        }
+        case asset::AnimationChannel::Target::Weight:
+            break;
+        }
+    }
+    return true;
+}
+
+void AnimationSystem::mergeLayer(const SkeletonLibrary::Entry& skeleton, Lanes& base, const Lanes& upper)
+{
+    const usize jointCount = skeleton.joints.size();
+    f32 under[4]{};
+    f32 over[4]{};
+    for (usize joint = 0; joint < jointCount; ++joint) {
+        const asset::Joint& bone = skeleton.joints[joint];
+        if (upper.weightT[joint] > 0.0f) {
+            const f64 inverse = 1.0 / static_cast<f64>(upper.weightT[joint]);
+            const f64 cover = static_cast<f64>(std::min(1.0f, upper.coverT[joint]));
+            DVec3 from = bone.localBind.position;
+            if (base.weightT[joint] > 0.0f) {
+                const f64 baseInverse = 1.0 / static_cast<f64>(base.weightT[joint]);
+                from = DVec3{base.translation[joint].x * baseInverse, base.translation[joint].y * baseInverse,
+                             base.translation[joint].z * baseInverse};
+            }
+            base.translation[joint] = DVec3{from.x + (upper.translation[joint].x * inverse - from.x) * cover,
+                                            from.y + (upper.translation[joint].y * inverse - from.y) * cover,
+                                            from.z + (upper.translation[joint].z * inverse - from.z) * cover};
+            base.weightT[joint] = 1.0f;
+        }
+        if (upper.weightS[joint] > 0.0f) {
+            const f32 inverse = 1.0f / upper.weightS[joint];
+            const f32 cover = std::min(1.0f, upper.coverS[joint]);
+            Vec3 from{1.0f, 1.0f, 1.0f};
+            if (base.weightS[joint] > 0.0f)
+                from = base.scale[joint] * (1.0f / base.weightS[joint]);
+            base.scale[joint] = from + (upper.scale[joint] * inverse - from) * cover;
+            base.weightS[joint] = 1.0f;
+        }
+        if (upper.weightR[joint] > 0.0f) {
+            for (usize lane = 0; lane < 4; ++lane)
+                over[lane] = upper.rotation[joint * 4 + lane];
+            normalizeQuaternion(over);
+            if (base.weightR[joint] > 0.0f) {
+                for (usize lane = 0; lane < 4; ++lane)
+                    under[lane] = base.rotation[joint * 4 + lane];
+                normalizeQuaternion(under);
+            }
+            else {
+                core::toQuaternion(bone.localBind.rotation, under[0], under[1], under[2], under[3]);
+            }
+            const f32 cover = std::min(1.0f, upper.coverR[joint]);
+            f32 dot = 0.0f;
+            for (usize lane = 0; lane < 4; ++lane)
+                dot += under[lane] * over[lane];
+            const f32 sign = dot < 0.0f ? -1.0f : 1.0f;
+            f32 mixed[4]{};
+            for (usize lane = 0; lane < 4; ++lane)
+                mixed[lane] = under[lane] + (over[lane] * sign - under[lane]) * cover;
+            normalizeQuaternion(mixed);
+            for (usize lane = 0; lane < 4; ++lane)
+                base.rotation[joint * 4 + lane] = mixed[lane];
+            base.weightR[joint] = 1.0f;
+        }
+    }
+}
+
+const std::vector<f32>* AnimationSystem::maskFor(const Track& track, core::NameAtom rig)
+{
+    if (track.graph == NoGraph || graphs_ == nullptr)
+        return nullptr;
+    // A rig or a graph loaded again: every mask is made again.
+    const core::u64 revision = skeletons_->revision() * 0x9E3779B97F4A7C15ull + graphs_->revision();
+    if (revision != masksRevision_) {
+        masks_.clear();
+        masksRevision_ = revision;
+    }
+    for (const Mask& mask : masks_) {
+        if (mask.graph == track.graphContent && mask.rig == rig && mask.layer == track.layer)
+            return mask.whole ? nullptr : &mask.weights;
+    }
+    Mask made;
+    made.graph = track.graphContent;
+    made.rig = rig;
+    made.layer = track.layer;
+    const GraphLibrary::Entry* const entry = graphs_->find(track.graphContent);
+    const asset::AnimationGraph* graph = entry != nullptr ? &entry->graph : nullptr;
+    const SkeletonLibrary::Entry* skeleton = skeletons_->find(rig);
+    if (graph != nullptr && skeleton != nullptr && track.layer < graph->layers.size() &&
+        !graph->layers[track.layer].mask.empty()) {
+        made.whole = false;
+        made.weights.assign(skeleton->joints.size(), 0.0f);
+        // A joint the mask names, and everything below it: parents come
+        // first, so one pass carries a joint's place in the mask down.
+        for (usize joint = 0; joint < skeleton->joints.size(); ++joint) {
+            const asset::Joint& bone = skeleton->joints[joint];
+            bool in = bone.parent != asset::Joint::NoParent && made.weights[bone.parent] > 0.0f;
+            for (const std::string& name : graph->layers[track.layer].mask) {
+                in = in || maskNames(*skeleton, static_cast<u32>(joint), name);
+                // **Or by what the joint is** (ADR 0199): one graph on bodies
+                // whose files call their spines different things.
+                if (const retarget::Role role = retarget::roleFromName(name); !in && role != retarget::Role::None) {
+                    const retarget::RigRoles* const roles = rolesFor(rig);
+                    in = roles != nullptr && roles->joint(role) == static_cast<core::i32>(joint);
+                }
+            }
+            made.weights[joint] = in ? 1.0f : 0.0f;
+        }
+    }
+    masks_.push_back(std::move(made));
+    return masks_.back().whole ? nullptr : &masks_.back().weights;
+}
+
+core::u64 AnimationSystem::layerWordOf(const Track& track, core::NameAtom rig)
+{
+    // How its clip is carried onto the rig is part of the pose too: two
+    // bodies whose players retarget differently do not share one.
+    const core::u64 mode = static_cast<core::u64>(track.retargeting & 0x3u) << 30;
+    if (track.graph == NoGraph)
+        return mode;
+    core::u64 mask = 0;
+    if (maskFor(track, rig) != nullptr) {
+        for (usize index = 0; index < masks_.size(); ++index) {
+            if (masks_[index].graph == track.graphContent && masks_[index].rig == rig &&
+                masks_[index].layer == track.layer)
+                mask = index + 1;
+        }
+    }
+    return (static_cast<core::u64>(std::bit_cast<u32>(track.layerWeight)) << 32) |
+           (static_cast<core::u64>(track.layer & 0xFFFu) << 17) |
+           (static_cast<core::u64>(track.additive ? 1u : 0u) << 16) | mode | (mask & 0xFFFFu);
 }
 
 Pose& AnimationSystem::ownPose(core::InstanceId meshPart, bool keep)
@@ -1040,15 +1630,73 @@ bool AnimationSystem::drives(const Track& track, core::InstanceId meshPart) cons
     return false;
 }
 
-const AnimationSystem::JointMap* AnimationSystem::jointMapFor(core::NameAtom from, core::NameAtom to) const
+const retarget::RigRoles* AnimationSystem::rolesFor(core::NameAtom content) const
+{
+    for (const RolesOf& held : rigRoles_) {
+        if (held.content == content)
+            return &held.roles;
+    }
+    const SkeletonLibrary::Entry* entry = skeletons_->find(content);
+    if (entry == nullptr)
+        return nullptr;
+    rigRoles_.push_back(RolesOf{content, retarget::assignRoles(entry->joints, entry->roles)});
+    return &rigRoles_.back().roles;
+}
+
+namespace {
+
+// Whether two rigs are one skeleton under two files' names: every joint of
+// the source that has a role is, on the target, the joint of the same name
+// with the same rest from its parent. A body and the shirt cut for it; and a
+// clip between them is carried as it always was, bit for bit.
+[[nodiscard]] bool oneSkeleton(const SkeletonLibrary::Entry& source, const retarget::RigRoles& sourceRoles,
+                               const SkeletonLibrary::Entry& target, const retarget::RigRoles& targetRoles) noexcept
+{
+    constexpr f64 Near = 1.0e-4;
+    for (usize joint = 0; joint < source.joints.size() && joint < sourceRoles.ofJoint.size(); ++joint) {
+        const retarget::Role role = sourceRoles.ofJoint[joint];
+        if (role == retarget::Role::None)
+            continue;
+        const core::i32 other = targetRoles.joint(role);
+        if (other < 0)
+            continue;
+        const asset::Joint& a = source.joints[joint];
+        const asset::Joint& b = target.joints[static_cast<usize>(other)];
+        if (a.name != b.name)
+            return false;
+        if (std::fabs(a.localBind.position.x - b.localBind.position.x) > Near ||
+            std::fabs(a.localBind.position.y - b.localBind.position.y) > Near ||
+            std::fabs(a.localBind.position.z - b.localBind.position.z) > Near)
+            return false;
+        for (int column = 0; column < 3; ++column) {
+            for (int row = 0; row < 3; ++row) {
+                if (std::fabs(a.localBind.rotation.m[column][row] - b.localBind.rotation.m[column][row]) > 1.0e-4f)
+                    return false;
+            }
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+const AnimationSystem::JointMap* AnimationSystem::jointMapFor(core::NameAtom from, core::NameAtom to,
+                                                              core::u8 mode) const
 {
     // A clip applied to its own rig needs no map, which is every character made
     // of one mesh.
     if (from == to || skeletons_ == nullptr)
         return nullptr;
+    // A rig read again is another rig: its maps and its roles are made again.
+    if (skeletons_->revision() != mapsRevision_) {
+        jointMaps_.clear();
+        rigRoles_.clear();
+        mapsRevision_ = skeletons_->revision();
+    }
 
+    const bool automatic = mode == 0;
     for (const JointMap& map : jointMaps_) {
-        if (map.from == from && map.to == to)
+        if (map.from == from && map.to == to && map.automatic == automatic)
             return &map;
     }
 
@@ -1060,17 +1708,65 @@ const AnimationSystem::JointMap* AnimationSystem::jointMapFor(core::NameAtom fro
     JointMap made;
     made.from = from;
     made.to = to;
-    made.slots.assign(source->joints.size(), -1);
-    for (usize index = 0; index < source->joints.size(); ++index) {
-        for (usize other = 0; other < target->joints.size(); ++other) {
-            if (source->joints[index].name == target->joints[other].name) {
-                made.slots[index] = static_cast<core::i32>(other);
-                break;
+    made.automatic = automatic;
+    // **By roles where both are bodies of different build** (ADR 0199).
+    if (automatic) {
+        // Both made before either is held: the second being made may move
+        // the first.
+        (void)rolesFor(from);
+        (void)rolesFor(to);
+        const retarget::RigRoles* const sourceRoles = rolesFor(from);
+        const retarget::RigRoles* const targetRoles = rolesFor(to);
+        if (sourceRoles != nullptr && targetRoles != nullptr && sourceRoles->body() && targetRoles->body() &&
+            !oneSkeleton(*source, *sourceRoles, *target, *targetRoles)) {
+            made.carried = retarget::buildMap(source->joints, *sourceRoles, target->joints, *targetRoles);
+            if (made.carried.roles)
+                made.slots = made.carried.slots;
+        }
+    }
+    if (!made.carried.roles) {
+        made.slots.assign(source->joints.size(), -1);
+        for (usize index = 0; index < source->joints.size(); ++index) {
+            for (usize other = 0; other < target->joints.size(); ++other) {
+                if (source->joints[index].name == target->joints[other].name) {
+                    made.slots[index] = static_cast<core::i32>(other);
+                    break;
+                }
             }
         }
     }
     jointMaps_.push_back(std::move(made));
     return &jointMaps_.back();
+}
+
+void AnimationSystem::warnUnmapped(const JointMap& map, const asset::AnimationClip& clip) const
+{
+    if (map.warned || !map.carried.roles)
+        return;
+    // Said once a pair, whatever the clip: the first that moves a role the
+    // target lacks names them all.
+    const retarget::RigRoles* const sourceRoles = rolesFor(map.from);
+    if (sourceRoles == nullptr)
+        return;
+    std::string missing;
+    for (const retarget::Role role : map.carried.unmapped) {
+        const core::i32 joint = sourceRoles->joint(role);
+        bool moved = false;
+        for (const asset::AnimationChannel& channel : clip.channels)
+            moved = moved || (joint >= 0 && channel.joint == static_cast<u32>(joint));
+        if (!moved)
+            continue;
+        if (!missing.empty())
+            missing += ", ";
+        missing += retarget::roleName(role);
+    }
+    if (missing.empty())
+        return;
+    map.warned = true;
+    const std::array<core::I18nArg, 3> said{core::I18nArg{"clips", world_->atoms().text(map.from)},
+                                            core::I18nArg{"rig", world_->atoms().text(map.to)},
+                                            core::I18nArg{"roles", std::string_view(missing)}};
+    core::log(core::LogLevel::Warn, ENG_TR("render.warn.retarget_unmapped"), said);
 }
 
 // --- scene::SkeletonHost -----------------------------------------------------
@@ -1134,6 +1830,14 @@ std::string_view AnimationSystem::jointName(core::InstanceId meshPart, core::u32
     if (entry == nullptr || joint >= entry->joints.size())
         return {};
     return entry->joints[joint].name;
+}
+
+std::string_view AnimationSystem::jointRole(core::InstanceId meshPart, core::u32 joint) const
+{
+    const retarget::RigRoles* const roles = rolesOf(meshPart);
+    if (roles == nullptr || joint >= roles->ofJoint.size() || roles->ofJoint[joint] == retarget::Role::None)
+        return {};
+    return retarget::roleName(roles->ofJoint[joint]);
 }
 
 bool AnimationSystem::jointModel(core::InstanceId meshPart, core::u32 joint, core::CFrameD& out) const
@@ -1311,11 +2015,506 @@ void AnimationSystem::retire(const scene::World& world)
             poses_.erase(keyOf(track.meshPart));
         }
     }
+    // A graph whose player is gone gives its tracks back.
+    for (GraphInstance& instance : graphInstances_) {
+        if (instance.alive && !world.alive(instance.player)) {
+            unbindGraph(instance);
+            instance.alive = false;
+            graphIndex_.erase(keyOf(instance.player));
+        }
+    }
     // And what scripts set on meshes that are gone.
     for (auto entry = morphOverrides_.begin(); entry != morphOverrides_.end();) {
         const core::InstanceId id{static_cast<core::u32>(entry->first & 0xFFFFFFFFu),
                                   static_cast<core::u32>(entry->first >> 32)};
         entry = world.alive(id) ? std::next(entry) : morphOverrides_.erase(entry);
+    }
+}
+
+// --- Animation graphs (ADR 0197) -----------------------------------------------
+
+namespace {
+
+// How quickly a body's speed, read from where it was a tick ago, settles:
+// three ticks. A replica moves another player's character in steps as
+// snapshots arrive, and a speed taken from one tick alone would make a walk
+// flicker between a run and a stand.
+constexpr f64 SpeedSettleSeconds = 0.05;
+
+// A value as one number, for telling whether it changed.
+[[nodiscard]] core::u64 digestOf(const scene::Value& value) noexcept
+{
+    if (const auto* number = std::get_if<f64>(&value))
+        return std::bit_cast<core::u64>(*number) ^ 0x1ull;
+    if (const auto* flag = std::get_if<bool>(&value))
+        return *flag ? 0x3ull : 0x2ull;
+    if (const auto* text = std::get_if<std::string>(&value)) {
+        core::u64 hash = 0xCBF29CE484222325ull;
+        for (const char letter : *text)
+            hash = (hash ^ static_cast<core::u8>(letter)) * 0x100000001B3ull;
+        return hash;
+    }
+    return 0x9E3779B97F4A7C15ull * (static_cast<core::u64>(value.index()) + 1);
+}
+
+// And as a parameter's number: a number is itself, true is one.
+[[nodiscard]] f32 numberOf(const scene::Value& value) noexcept
+{
+    if (const auto* number = std::get_if<f64>(&value))
+        return static_cast<f32>(*number);
+    if (const auto* flag = std::get_if<bool>(&value))
+        return *flag ? 1.0f : 0.0f;
+    return 0.0f;
+}
+
+} // namespace
+
+AnimationSystem::GraphInstance* AnimationSystem::graphOf(core::InstanceId player) noexcept
+{
+    const auto found = graphIndex_.find(keyOf(player));
+    return found == graphIndex_.end() ? nullptr : &graphInstances_[found->second];
+}
+
+const AnimationSystem::GraphInstance* AnimationSystem::graphOf(core::InstanceId player) const noexcept
+{
+    const auto found = graphIndex_.find(keyOf(player));
+    return found == graphIndex_.end() ? nullptr : &graphInstances_[found->second];
+}
+
+AnimationSystem::GraphInstance& AnimationSystem::graphFor(core::InstanceId player)
+{
+    if (GraphInstance* const held = graphOf(player); held != nullptr)
+        return *held;
+    // A place a graph that went left behind, before a new one.
+    u32 slot = static_cast<u32>(graphInstances_.size());
+    for (u32 index = 0; index < graphInstances_.size(); ++index) {
+        if (!graphInstances_[index].alive) {
+            slot = index;
+            break;
+        }
+    }
+    if (slot == graphInstances_.size())
+        graphInstances_.emplace_back();
+    graphInstances_[slot] = GraphInstance{};
+    graphInstances_[slot].player = player;
+    graphIndex_[keyOf(player)] = slot;
+    return graphInstances_[slot];
+}
+
+void AnimationSystem::unbindGraph(GraphInstance& instance)
+{
+    for (const u32 index : instance.tracks) {
+        Track& track = tracks_[index];
+        if (track.meshPart.valid())
+            poses_.erase(keyOf(track.meshPart));
+        track = Track{};
+        track.alive = false;
+        freeTracks_.push_back(index);
+    }
+    instance.tracks.clear();
+    instance.lengths.clear();
+    instance.bound = false;
+}
+
+void AnimationSystem::bindGraph(GraphInstance& instance, const GraphLibrary::Entry& entry)
+{
+    unbindGraph(instance);
+    const asset::AnimationGraph& graph = entry.graph;
+    instance.evaluator.reset(graph);
+    instance.seen.assign(graph.parameters.size(), 0);
+    instance.sighted.assign(graph.parameters.size(), 0);
+    instance.tracks.reserve(graph.clips.size());
+    for (usize clip = 0; clip < graph.clips.size(); ++clip) {
+        // A track as a script would load it, in a slot no script holds.
+        scene::TrackId made = 0;
+        if (!freeTracks_.empty()) {
+            // The lowest first: the same slots on every run.
+            const auto lowest = std::min_element(freeTracks_.begin(), freeTracks_.end());
+            const u32 slot = *lowest;
+            freeTracks_.erase(lowest);
+            const scene::TrackId fresh = createTrack(instance.player, entry.clipFiles[clip], entry.clipNames[clip]);
+            tracks_[slot] = tracks_[fresh];
+            tracks_.pop_back();
+            made = slot;
+        }
+        else {
+            made = createTrack(instance.player, entry.clipFiles[clip], entry.clipNames[clip]);
+        }
+        Track& track = tracks_[made];
+        track.graph = static_cast<u32>(&instance - graphInstances_.data());
+        track.graphContent = instance.content;
+        track.layer = static_cast<core::u16>(graph.clips[clip].layer);
+        track.additive = graph.layers[graph.clips[clip].layer].additive;
+        track.weight = 0.0f;
+        track.ownWeight = 0.0f;
+        track.targetWeight = 0.0f;
+        instance.tracks.push_back(made);
+    }
+    instance.lengths.assign(graph.clips.size(), 0.0f);
+    instance.bound = true;
+    instance.revision = graphs_->revision();
+
+    // What a script set while the file was on its way, in the order it did.
+    for (const GraphInstance::Pending& pending : instance.pending) {
+        const core::i32 parameter = graph.parameterNamed(pending.name);
+        if (parameter < 0)
+            continue;
+        if (pending.clear)
+            instance.evaluator.clearOverride(static_cast<u32>(parameter));
+        else if (graph.parameters[static_cast<usize>(parameter)].kind == asset::GraphParameterKind::Trigger)
+            instance.evaluator.fire(static_cast<u32>(parameter));
+        else
+            instance.evaluator.setOverride(static_cast<u32>(parameter), pending.value);
+    }
+    instance.pending.clear();
+}
+
+core::InstanceId AnimationSystem::bodyOf(core::InstanceId player) const
+{
+    // The body the character is: the player's parent or one above it, or --
+    // for a player parented to a `Model` -- the first one in the model.
+    const core::InstanceId parent = world_->parentOf(player);
+    for (core::InstanceId at = parent; at.valid(); at = world_->parentOf(at)) {
+        if (world_->characterBodies().find(at) != nullptr)
+            return at;
+    }
+    std::vector<core::InstanceId> below;
+    if (parent.valid())
+        world_->collectDescendants(parent, below);
+    for (const core::InstanceId id : below) {
+        if (world_->characterBodies().find(id) != nullptr)
+            return id;
+    }
+    return {};
+}
+
+void AnimationSystem::readSources(GraphInstance& instance, const GraphLibrary::Entry& entry, f64 fixedDt)
+{
+    const asset::AnimationGraph& graph = entry.graph;
+    bool wantsBody = false;
+    for (const GraphLibrary::Source source : entry.sources)
+        wantsBody = wantsBody || (source != GraphLibrary::Source::None && source != GraphLibrary::Source::Attribute);
+
+    const scene::CharacterBodyComponent* body = nullptr;
+    const scene::PartComponent* part = nullptr;
+    if (wantsBody) {
+        if (!instance.body.valid() || !world_->alive(instance.body) ||
+            world_->characterBodies().find(instance.body) == nullptr) {
+            instance.body = bodyOf(instance.player);
+            instance.placed = false;
+        }
+        body = world_->characterBodies().find(instance.body);
+        part = world_->parts().find(instance.body);
+    }
+    // **How fast it is going, from where it was**: the one thing every
+    // machine has of a character -- the authority that walks it, the replica
+    // that predicts it and the replica that is only told where it is.
+    Vec3 local{0.0f, 0.0f, 0.0f};
+    // **The tick a body is first seen says nothing of it.** A body says
+    // whether it is on the ground after the physics has stepped it, and the
+    // graph is stepped before the physics: a character just made says "not
+    // on the ground" of a floor it is standing on, and the plainest rule a
+    // graph has -- in the air is a jump -- played a tick of the jump for
+    // every character that appeared. Its parameters keep their rest that
+    // one tick.
+    const bool met = instance.placed;
+    if (body != nullptr && part != nullptr) {
+        const DVec3 position = part->cframe.position;
+        if (instance.placed && fixedDt > 0.0) {
+            const Vec3 moved{static_cast<f32>((position.x - instance.lastPosition.x) / fixedDt),
+                             static_cast<f32>((position.y - instance.lastPosition.y) / fixedDt),
+                             static_cast<f32>((position.z - instance.lastPosition.z) / fixedDt)};
+            const auto settle = static_cast<f32>(std::min(1.0, fixedDt / SpeedSettleSeconds));
+            instance.velocity = instance.velocity + (moved - instance.velocity) * settle;
+        }
+        instance.lastPosition = position;
+        instance.placed = true;
+        // In the body's own frame: right and forward.
+        local = core::transpose(part->cframe.rotation) * instance.velocity;
+    }
+
+    const core::InstanceId holder = world_->parentOf(instance.player);
+    for (usize index = 0; index < graph.parameters.size(); ++index) {
+        const GraphLibrary::Source source = entry.sources[index];
+        if (source == GraphLibrary::Source::None)
+            continue;
+        const bool trigger = graph.parameters[index].kind == asset::GraphParameterKind::Trigger;
+        f32 value = 0.0f;
+        core::u64 digest = 0;
+        if (source == GraphLibrary::Source::Attribute) {
+            const scene::Value held =
+                holder.valid() ? world_->getAttribute(holder, entry.attributes[index]) : scene::Value{};
+            // An attribute nobody has set says nothing: the parameter is at
+            // its rest.
+            value = std::holds_alternative<std::monostate>(held) ? graph.parameters[index].rest : numberOf(held);
+            digest = digestOf(held);
+        }
+        else {
+            if (body == nullptr || !met)
+                continue;
+            switch (source) {
+            case GraphLibrary::Source::Speed:
+                value =
+                    std::sqrt(instance.velocity.x * instance.velocity.x + instance.velocity.z * instance.velocity.z);
+                break;
+            case GraphLibrary::Source::VerticalSpeed:
+                value = instance.velocity.y;
+                break;
+            case GraphLibrary::Source::MoveX:
+                value = local.x;
+                break;
+            case GraphLibrary::Source::MoveZ:
+                // Forward is -Z.
+                value = -local.z;
+                break;
+            case GraphLibrary::Source::Grounded:
+                value = body->grounded ? 1.0f : 0.0f;
+                break;
+            case GraphLibrary::Source::State:
+                value = static_cast<f32>(body->state);
+                break;
+            case GraphLibrary::Source::None:
+            case GraphLibrary::Source::Attribute:
+                break;
+            }
+            digest = static_cast<core::u64>(std::bit_cast<u32>(value)) + 1;
+        }
+        if (trigger) {
+            // **A trigger fires on a change, and a first sight is not one**:
+            // somebody who joins after an attack does not see it again.
+            if (instance.sighted[index] != 0 && instance.seen[index] != digest)
+                instance.evaluator.fire(static_cast<u32>(index));
+        }
+        else {
+            instance.evaluator.setSource(static_cast<u32>(index), value);
+        }
+        instance.seen[index] = digest;
+        instance.sighted[index] = 1;
+    }
+}
+
+void AnimationSystem::stepGraphs(f64 fixedDt)
+{
+    graphSignals_.clear();
+    if (graphs_ == nullptr)
+        return;
+    // Every player that names a graph, in id order: the same order on every
+    // run, whatever order the pool holds them in.
+    graphPlayers_.clear();
+    world_->animationPlayers().forEach([&](core::InstanceId id, const scene::AnimationPlayerComponent& player) {
+        if (player.graph.valid())
+            graphPlayers_.push_back(id);
+    });
+    if (graphPlayers_.empty() && graphInstances_.empty())
+        return;
+    std::sort(graphPlayers_.begin(), graphPlayers_.end(), [](core::InstanceId a, core::InstanceId b) {
+        return a.index != b.index ? a.index < b.index : a.generation < b.generation;
+    });
+    const core::u64 stamp = sampled_ + 1;
+    for (const core::InstanceId id : graphPlayers_) {
+        GraphInstance& instance = graphFor(id);
+        instance.stamp = stamp;
+        const core::NameAtom content = world_->animationPlayers().find(id)->graph;
+        if (!(instance.content == content)) {
+            unbindGraph(instance);
+            instance.content = content;
+        }
+    }
+
+    for (usize index = 0; index < graphInstances_.size(); ++index) {
+        GraphInstance& instance = graphInstances_[index];
+        if (!instance.alive)
+            continue;
+        // Its player took the graph off, or is gone.
+        if (instance.stamp != stamp) {
+            unbindGraph(instance);
+            instance.alive = false;
+            graphIndex_.erase(keyOf(instance.player));
+            continue;
+        }
+        const GraphLibrary::Entry* const entry = graphs_->find(instance.content);
+        if (entry == nullptr) {
+            // Not loaded, or taken away to be read again.
+            if (instance.bound)
+                unbindGraph(instance);
+            continue;
+        }
+        if (!instance.bound || instance.revision != graphs_->revision())
+            bindGraph(instance, *entry);
+        const asset::AnimationGraph& graph = entry->graph;
+
+        readSources(instance, *entry, fixedDt);
+        for (usize clip = 0; clip < instance.tracks.size(); ++clip) {
+            Track& track = tracks_[instance.tracks[clip]];
+            instance.lengths[clip] = bindTrack(track) ? track.length : 0.0f;
+        }
+        graphScratch_.clear();
+        instance.evaluator.step(graph, fixedDt, instance.lengths, graphScratch_);
+
+        const std::span<const GraphPlayer::ClipState> clips = instance.evaluator.clips();
+        for (usize clip = 0; clip < instance.tracks.size() && clip < clips.size(); ++clip) {
+            Track& track = tracks_[instance.tracks[clip]];
+            track.time = clips[clip].time;
+            track.weight = clips[clip].weight;
+            track.playing = clips[clip].active && clips[clip].weight > 0.0f;
+            track.holding = false;
+            track.layerWeight = instance.evaluator.layerWeight(graph, graph.clips[clip].layer);
+        }
+        for (const GraphPlayer::Signal& signal : graphScratch_) {
+            scene::GraphSignal said;
+            said.player = instance.player;
+            if (signal.layer >= graph.layers.size())
+                continue;
+            const asset::GraphLayer& layer = graph.layers[signal.layer];
+            said.layer = layer.name;
+            if (signal.kind == GraphPlayer::Signal::Kind::Event) {
+                if (signal.clip >= graph.clips.size() || signal.event >= graph.clips[signal.clip].events.size())
+                    continue;
+                said.event = true;
+                said.to = graph.clips[signal.clip].events[signal.event].name;
+            }
+            else {
+                if (signal.from >= layer.states.size() || signal.to >= layer.states.size())
+                    continue;
+                said.from = layer.states[signal.from].name;
+                said.to = layer.states[signal.to].name;
+            }
+            graphSignals_.push_back(said);
+        }
+    }
+}
+
+scene::GraphWrite AnimationSystem::setGraphParameter(core::InstanceId player, std::string_view name, f32 value)
+{
+    GraphInstance& instance = graphFor(player);
+    const GraphLibrary::Entry* const entry =
+        instance.bound && graphs_ != nullptr ? graphs_->find(instance.content) : nullptr;
+    if (entry == nullptr) {
+        instance.pending.push_back(GraphInstance::Pending{std::string(name), value, false});
+        return scene::GraphWrite::Done;
+    }
+    const core::i32 parameter = entry->graph.parameterNamed(name);
+    if (parameter < 0)
+        return scene::GraphWrite::Unknown;
+    if (entry->graph.parameters[static_cast<usize>(parameter)].kind == asset::GraphParameterKind::Trigger)
+        instance.evaluator.fire(static_cast<u32>(parameter));
+    else
+        instance.evaluator.setOverride(static_cast<u32>(parameter), value);
+    return scene::GraphWrite::Done;
+}
+
+scene::GraphWrite AnimationSystem::clearGraphParameter(core::InstanceId player, std::string_view name)
+{
+    GraphInstance& instance = graphFor(player);
+    const GraphLibrary::Entry* const entry =
+        instance.bound && graphs_ != nullptr ? graphs_->find(instance.content) : nullptr;
+    if (entry == nullptr) {
+        instance.pending.push_back(GraphInstance::Pending{std::string(name), 0.0f, true});
+        return scene::GraphWrite::Done;
+    }
+    const core::i32 parameter = entry->graph.parameterNamed(name);
+    if (parameter < 0)
+        return scene::GraphWrite::Unknown;
+    instance.evaluator.clearOverride(static_cast<u32>(parameter));
+    return scene::GraphWrite::Done;
+}
+
+scene::GraphParameterValue AnimationSystem::graphParameter(core::InstanceId player, std::string_view name) const
+{
+    const GraphInstance* const instance = graphOf(player);
+    if (instance == nullptr || !instance->bound || graphs_ == nullptr)
+        return {};
+    const GraphLibrary::Entry* const entry = graphs_->find(instance->content);
+    if (entry == nullptr)
+        return {};
+    const core::i32 parameter = entry->graph.parameterNamed(name);
+    if (parameter < 0)
+        return {};
+    scene::GraphParameterValue answer;
+    switch (entry->graph.parameters[static_cast<usize>(parameter)].kind) {
+    case asset::GraphParameterKind::Number:
+        answer.kind = scene::GraphParameterValue::Kind::Number;
+        break;
+    case asset::GraphParameterKind::Boolean:
+        answer.kind = scene::GraphParameterValue::Kind::Boolean;
+        break;
+    case asset::GraphParameterKind::Trigger:
+        answer.kind = scene::GraphParameterValue::Kind::Trigger;
+        break;
+    }
+    answer.value = instance->evaluator.value(static_cast<u32>(parameter));
+    return answer;
+}
+
+std::string_view AnimationSystem::graphState(core::InstanceId player, std::string_view layer) const
+{
+    const GraphInstance* const instance = graphOf(player);
+    if (instance == nullptr || !instance->bound || graphs_ == nullptr)
+        return {};
+    const GraphLibrary::Entry* const entry = graphs_->find(instance->content);
+    if (entry == nullptr || entry->graph.layers.empty())
+        return {};
+    const core::i32 at = layer.empty() ? 0 : entry->graph.layerNamed(layer);
+    if (at < 0)
+        return {};
+    const asset::GraphLayer& in = entry->graph.layers[static_cast<usize>(at)];
+    const u32 state = instance->evaluator.state(static_cast<u32>(at));
+    return state < in.states.size() ? std::string_view(in.states[state].name) : std::string_view{};
+}
+
+std::span<const scene::GraphSignal> AnimationSystem::drainGraphSignals()
+{
+    graphSignalsDrained_.swap(graphSignals_);
+    graphSignals_.clear();
+    return graphSignalsDrained_;
+}
+
+void AnimationSystem::graphDigests(std::vector<std::pair<core::InstanceId, core::u64>>& into) const
+{
+    std::vector<core::u64> words;
+    for (const GraphInstance& instance : graphInstances_) {
+        if (!instance.alive || !instance.bound)
+            continue;
+        words.clear();
+        instance.evaluator.hashInto(words);
+        into.emplace_back(instance.player, SignatureHash{}(words) | 1ull);
+    }
+}
+
+void AnimationSystem::describeGraph(core::InstanceId player, std::vector<scene::GraphLayerView>& layers,
+                                    std::vector<scene::GraphParameterView>& parameters) const
+{
+    layers.clear();
+    parameters.clear();
+    const GraphInstance* const instance = graphOf(player);
+    if (instance == nullptr || !instance->bound || graphs_ == nullptr)
+        return;
+    const GraphLibrary::Entry* const entry = graphs_->find(instance->content);
+    if (entry == nullptr)
+        return;
+    const asset::AnimationGraph& graph = entry->graph;
+    for (u32 index = 0; index < graph.layers.size(); ++index) {
+        const asset::GraphLayer& layer = graph.layers[index];
+        scene::GraphLayerView view;
+        view.name = layer.name;
+        const u32 state = instance->evaluator.state(index);
+        if (state < layer.states.size())
+            view.state = layer.states[state].name;
+        view.progress = instance->evaluator.stateProgress(index);
+        view.weight = instance->evaluator.layerWeight(graph, index);
+        for (const GraphPlayer::Fading& fading : instance->evaluator.fading(index)) {
+            if (fading.state < layer.states.size())
+                view.fading.emplace_back(layer.states[fading.state].name, fading.weight);
+        }
+        layers.push_back(std::move(view));
+    }
+    for (u32 index = 0; index < graph.parameters.size(); ++index) {
+        scene::GraphParameterView view;
+        view.name = graph.parameters[index].name;
+        view.from = graph.parameters[index].from;
+        view.value = graphParameter(player, view.name);
+        view.overridden = instance->evaluator.overridden(index);
+        parameters.push_back(view);
     }
 }
 
@@ -1542,7 +2741,7 @@ void AnimationSystem::clearMorphWeight(core::InstanceId meshPart, std::string_vi
         morphOverrides_.erase(overrides);
 }
 
-void AnimationSystem::present(core::InstanceId meshPart, std::span<const PresentedJoint> joints)
+void AnimationSystem::present(core::InstanceId meshPart, std::span<const PresentedJoint> joints, bool over)
 {
     const SkeletonLibrary::Entry* entry = skeletonOf(meshPart);
     if (entry == nullptr || joints.empty())
@@ -1551,9 +2750,24 @@ void AnimationSystem::present(core::InstanceId meshPart, std::span<const Present
     if (!stale_.empty() && stale_.contains(keyOf(meshPart)))
         catchUp(meshPart);
 
-    Pose& drawn = presented_[keyOf(meshPart)];
+    const auto held = presented_.find(keyOf(meshPart));
+    const bool again = over && held != presented_.end() && held->second.model.size() == jointCount;
+    if (held == presented_.end())
+        presentedMeshes_.push_back(meshPart);
+    Pose& drawn = again ? held->second : presented_[keyOf(meshPart)];
     const Pose* own = pose(meshPart);
-    if (own != nullptr && own->model.size() == jointCount && own->local.size() == jointCount) {
+    if (again) {
+        // **On top of what the frame already has**: each joint from its
+        // parent as that picture has it, so what is not named now stays
+        // where the first presenting put it.
+        for (usize joint = 0; joint < jointCount; ++joint) {
+            const core::u32 parent = entry->joints[joint].parent;
+            drawn.local[joint] = parent == asset::Joint::NoParent
+                                     ? drawn.model[joint]
+                                     : core::inverse(drawn.model[parent]) * drawn.model[joint];
+        }
+    }
+    else if (own != nullptr && own->model.size() == jointCount && own->local.size() == jointCount) {
         drawn.palette.assign(own->palette.begin(), own->palette.end());
         drawn.model.assign(own->model.begin(), own->model.end());
         drawn.local.assign(own->local.begin(), own->local.end());
@@ -1582,6 +2796,66 @@ void AnimationSystem::present(core::InstanceId meshPart, std::span<const Present
         }
         drawn.palette[joint] = drawn.model[joint] * entry->joints[joint].inverseBind;
     }
+}
+
+bool AnimationSystem::drawnJointModel(core::InstanceId meshPart, core::u32 joint, core::CFrameD& out) const
+{
+    if (!presented_.empty()) {
+        if (const auto found = presented_.find(keyOf(meshPart));
+            found != presented_.end() && joint < found->second.model.size()) {
+            out = core::cframeFromMatrix(found->second.model[joint]);
+            return true;
+        }
+    }
+    return jointModel(meshPart, joint, out);
+}
+
+std::span<const asset::Joint> AnimationSystem::jointsOf(core::InstanceId meshPart) const
+{
+    const SkeletonLibrary::Entry* entry = skeletonOf(meshPart);
+    return entry == nullptr ? std::span<const asset::Joint>{} : std::span<const asset::Joint>{entry->joints};
+}
+
+bool AnimationSystem::modelOf(core::InstanceId meshPart, std::vector<core::Mat4>& out) const
+{
+    const SkeletonLibrary::Entry* entry = skeletonOf(meshPart);
+    if (entry == nullptr || entry->joints.empty())
+        return false;
+    if (!stale_.empty() && stale_.contains(keyOf(meshPart)))
+        const_cast<AnimationSystem*>(this)->catchUp(meshPart);
+    const usize jointCount = entry->joints.size();
+    if (const auto found = poses_.find(keyOf(meshPart));
+        found != poses_.end() && found->second->model.size() == jointCount) {
+        out.assign(found->second->model.begin(), found->second->model.end());
+        return true;
+    }
+    // Nothing drives it: the rest chain, parents first.
+    out.resize(jointCount);
+    for (usize joint = 0; joint < jointCount; ++joint) {
+        const Mat4 local = toMatrix(entry->joints[joint].localBind);
+        const core::u32 parent = entry->joints[joint].parent;
+        out[joint] = parent == asset::Joint::NoParent ? local : out[parent] * local;
+    }
+    return true;
+}
+
+core::Mat4 AnimationSystem::restModel(core::InstanceId meshPart, core::u32 joint) const
+{
+    const SkeletonLibrary::Entry* entry = skeletonOf(meshPart);
+    return entry == nullptr || joint >= entry->joints.size() ? Mat4{} : restModelOf(*entry, joint);
+}
+
+const retarget::RigRoles* AnimationSystem::rolesOf(core::InstanceId meshPart) const
+{
+    const scene::MeshPartComponent* mesh = world_->meshParts().find(meshPart);
+    if (mesh == nullptr || skeletons_ == nullptr || skeletons_->find(mesh->meshContent) == nullptr)
+        return nullptr;
+    if (skeletons_->revision() != mapsRevision_) {
+        jointMaps_.clear();
+        rigRoles_.clear();
+        mapsRevision_ = skeletons_->revision();
+    }
+    return rolesFor(mesh->meshContent);
 }
 
 const Pose* AnimationSystem::drawnPose(core::InstanceId meshPart) const noexcept

@@ -2949,6 +2949,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"SceneService", "LoadScene", sceneServiceLoadScene},
     {"SceneService", "LoadSceneAsync", sceneServiceLoadSceneAsync},
     {"ContentProvider", "PreloadAsync", contentProviderPreloadAsync},
+    {"ContentProvider", "Keep", contentProviderKeep},
+    {"ContentProvider", "Release", contentProviderRelease},
     {"SceneService", "GetLoadData", sceneServiceGetLoadData},
     {"SceneService", "SendToHost", sceneServiceSendToHost},
     {"SceneService", "IsSubWorld", sceneServiceIsSubWorld},
@@ -3024,6 +3026,10 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"InputService", "SetClipboard", inputServiceSetClipboard},
 
     {"AnimationPlayer", "LoadAnimation", animationPlayerLoadAnimation},
+    {"AnimationPlayer", "SetParameter", animationPlayerSetParameter},
+    {"AnimationPlayer", "GetParameter", animationPlayerGetParameter},
+    {"AnimationPlayer", "ClearParameter", animationPlayerClearParameter},
+    {"AnimationPlayer", "GetState", animationPlayerGetState},
 
     {"TweenService", "Create", tweenServiceCreate},
     {"TweenService", "GetValue", tweenServiceGetValue},

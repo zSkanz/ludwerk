@@ -83,6 +83,7 @@ When more lights ask than there are tiles, the lights nearest and largest on
 screen are served and the rest do not cast. A light that loses is not dimmed and
 does not flicker: the order is by apparent size, with ties broken by creation
 order, so the answer is the same on every frame and on every machine.
+[Shadows](manual:rendering/shadows) has the sun's, and what both cost.
 
 ## Falloff
 
@@ -108,10 +109,12 @@ Two numbers, and they are different numbers:
 Past the frame budget, the lights nearest the front of the extraction order win.
 That is deterministic rather than arbitrary, because extraction order is.
 
-## Shadows
+## In a match
 
-Neither class casts one in this release. `Shadows` on both is stored and read
-back faithfully and changes nothing — see [Shadows](manual:rendering/shadows).
+A light a server-side script makes is on every machine, with every property
+authored on it, and a change to one -- a torch dimmed, a lamp switched off --
+is sent when it is made. A light moves with what holds it, which costs nothing
+more: the part is what is sent.
 
 ## Where to look next
 

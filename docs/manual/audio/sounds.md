@@ -126,6 +126,24 @@ means "this sound exists and names its content", not "the bytes have arrived":
 waiting for the bytes would make the tick it fires on depend on the disk, and a
 replay has to reproduce it exactly.
 
+## In a match
+
+A `Sound` a server-side script makes is on every machine, with its `Content`,
+`Playing`, `Looped`, `Volume`, `PlaybackSpeed` and roll-off distances -- sent
+when it is made and when one changes. **Each machine plays its own copy**: it
+starts the sound at its beginning when it sees `Playing` become true and stops
+it when it sees it become false. `TimePosition` is never sent, so two machines
+are not at the same sample, and a player who joins while music plays hears it
+from its start.
+
+- A sound that starts and ends between two of the server's sends may not be
+  heard elsewhere, and a `Play` on one that is already playing is not a change
+  another machine sees. For a shot, a hit or a step, fire a `RemoteEvent` and
+  play the sound in a client script.
+- A sound's `Group` and the effects under it are not sent: it plays through
+  each machine's own groups ([Mixing](manual:audio/mixing)).
+- [What a spawned thing carries](manual:guides/multiplayer) has the rest.
+
 ## Where to look next
 
 - [Groups, mixing and the listener](manual:audio/mixing)

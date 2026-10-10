@@ -270,6 +270,12 @@ end
 declare extern type EnumAnimationCullingMode extends EnumItem with
 end
 
+declare extern type EnumRetargeting extends EnumItem with
+end
+
+declare extern type EnumIKControlType extends EnumItem with
+end
+
 declare extern type EnumParticleCollision extends EnumItem with
 end
 
@@ -1386,6 +1392,63 @@ declare extern type Bone extends Attachment with
     --- kick a gun up on a shot. It composes with whatever the clip is doing rather than replacing it,
     --- and the identity is a bone nobody drives.
     Transform: CFrame
+end
+
+declare extern type IKControl extends Instance with
+    --- `TwoBone`: the end joint, the one above it and the one above that are a limb, and the end is put
+    --- at the target. `LookAt`: the end joint is turned to face the target, and the joints above it
+    --- share the turn.
+    Type: EnumIKControlType
+    --- The joint at the end of what is bent, as the file names it: a hand, a foot, a head. A name the
+    --- rig does not have does nothing.
+    EndJoint: string
+    --- What is reached for or looked at: a part or an attachment, where it is DRAWN this frame. With
+    --- none the control does nothing.
+    Target: (BasePart | Attachment)?
+    --- Where from the target the place is, in the target's own space: a grip a hand's width from a
+    --- weapon's middle.
+    TargetOffset: CFrame
+    --- For a limb: what the elbow or the knee points at. With none the limb bends the way the clip
+    --- already has it bent.
+    Pole: (BasePart | Attachment)?
+    --- For a limb: whether the end takes the target's turn as well as its place -- a palm laid flat on
+    --- a grip, a sole on a pedal.
+    AlignRotation: boolean
+    --- For a look: how many joints above the end share the turn, 0 to 8 -- a head alone, a head and its
+    --- neck, a head, a neck and a spine. Each takes an equal part.
+    ChainLength: number
+    --- For a look: the furthest from straight ahead it may turn, in degrees. Past it the look stops at
+    --- the limit instead of twisting the neck round.
+    MaxAngle: number
+    --- How much of it is applied, 0 to 1: 0 is the clip alone. Tween it to pick a thing up and let it
+    --- go without a snap.
+    Weight: number
+    --- Whether it is applied at all. Off costs nothing.
+    Enabled: boolean
+    --- The seconds a change is eased over -- a target that jumps, a control switched on -- so a head
+    --- turns to a new thing instead of snapping to it. 0 follows at once.
+    Smoothing: number
+end
+
+declare extern type FootPlacement extends Instance with
+    --- The left ankle's joint, as the file names it.
+    LeftFoot: string
+    --- The right ankle's joint.
+    RightFoot: string
+    --- The joint both legs hang from. It is what comes down when one foot is lower than the clip's
+    --- ground.
+    Hips: string
+    --- From the ankle joint down to the sole, in metres: how far above the ground the ankle is kept.
+    FootHeight: number
+    --- How far up or down from the ground the clip was made on a foot is taken, in metres. Ground
+    --- further than that -- a ledge, a drop -- is not stepped onto: the foot is left to the clip.
+    StepHeight: number
+    --- Whether a planted foot is turned to lie on the ground it is on.
+    AlignToSlope: boolean
+    --- How much of it is applied, 0 to 1.
+    Weight: number
+    --- Whether it is applied at all.
+    Enabled: boolean
 end
 
 declare extern type SpringBone extends Instance with
@@ -3494,12 +3557,27 @@ declare extern type Sound extends Instance with
 end
 
 declare extern type AnimationPlayer extends Instance with
+    --- The animation graph this player plays: an `asset://...animgraph.json`. Empty, the player plays
+    --- only the tracks a script loads. Set it where the character is made; it starts in each layer's
+    --- first state when its file arrives.
+    Graph: Content
+    --- How a clip from another file is carried onto this skeleton (ADR 0199).
+    Retargeting: EnumRetargeting
     --- How often its meshes are posed (H3). `Automatic`: as often as they are seen -- every tick up
     --- close, every second, fourth or eighth tick as they get smaller on the screen, and not at all
     --- where neither the camera nor a shadow reaches them; the clips keep time either way, and a joint
     --- a script or a `Bone` asks about is posed when asked. A world with nobody looking -- a server, a
     --- replay -- poses every tick. `AlwaysAnimate`: every tick, seen or not.
     CullingMode: EnumAnimationCullingMode
+    --- A layer of the graph left one state for another, on this machine. Fired on the simulation's
+    --- clock, deferred like every signal.
+    read StateChanged: Signal<string, string, string>
+    --- A clip passed a moment the graph names (`events` in its file): a foot down, a sword's edge live.
+    --- Only for the state a layer is in -- not one fading out -- and in a blend only for the clip that
+    --- weighs most, so a walk and a run do not step twice. **Once**: a tick a replica predicts again
+    --- does not fire it again. Each machine fires its own; what a hit does is decided where the
+    --- authority hears it.
+    read EventReached: Signal<string, string>
     --- A track for one clip. Everything after a `#` is the clip's NAME inside the file, and a string
     --- with no `#` is a clip name in this player's own mesh -- so the common case is
     --- `player:LoadAnimation("Walk")`. **A path before the `#` names the file the CLIP is in, and it
@@ -3512,6 +3590,24 @@ declare extern type AnimationPlayer extends Instance with
     --- there -- a mesh that has not finished loading would otherwise make an ordinary frame a nil index
     --- -- and every call is a handle the VM holds until the world goes away.
     function LoadAnimation(self, content: Content): AnimationTrack
+    --- Sets one of the graph's parameters **on this machine**. A number or a boolean is kept until it
+    --- is set again; a trigger is fired -- any value does it -- and is true until a transition takes it
+    --- or the tick ends. **A parameter the graph reads from the world** (`from` in its file) **is
+    --- overridden**: what was set wins on this machine until `ClearParameter` hands it back. Other
+    --- machines do not see it -- for something every machine must show, set an attribute the graph
+    --- reads, or let the body's own motion say it. Raises for a name the graph does not declare, once
+    --- the graph has loaded; before that the value is kept and applied when it does.
+    function SetParameter(self, name: string, value: number | boolean): ()
+    --- A parameter's value on this machine, as the graph sees it this tick: what a script set, else
+    --- what it reads from the world, else its value at rest. A trigger answers whether it is fired. Nil
+    --- with no graph loaded, or for a name it does not declare.
+    function GetParameter(self, name: string): (number | boolean)?
+    --- Forgets what `SetParameter` set: the parameter is again what the graph reads from the world, or
+    --- its value at rest.
+    function ClearParameter(self, name: string): ()
+    --- The state a layer is in -- the one it is fading INTO, during a fade -- by name. With no layer
+    --- named, the first. Empty with no graph loaded or for a layer it does not have.
+    function GetState(self, layer: string?): string
 end
 
 declare extern type Part2D extends Instance with
@@ -4579,8 +4675,21 @@ declare extern type ContentProvider extends Instance with
     --- pipelines, so its first appearance does not create them during play. Preload surfaces behind a
     --- loading screen. A sound is opened and its length read; anything else is found or not. A name
     --- with no `://` is a STAMP, named as `Instance.stamp` names it: its file is read and kept, so its
-    --- first copy reads nothing, and every asset it names is loaded with it (ADR 0155).
+    --- first copy reads nothing, and every asset it names is loaded with it (ADR 0155). **What is
+    --- preloaded is held for the scene it was asked in and the next one**, which is what a loading
+    --- screen needs; after that it is let go like anything a scene left behind holds, unless a scene
+    --- still shows it. To hold something for the whole game, `Keep` it.
     function PreloadAsync(self, items: { string | Instance }, callback: ((item: string | Instance, status: EnumAssetFetchStatus) -> ())?): ()
+    --- Holds every item, as `PreloadAsync` names them, **until `Release`**: a scene that is left takes
+    --- with it the meshes and pictures only it showed, and nothing kept is among them. For what a game
+    --- shows again and again across scenes and must never wait for -- the player's own character, the
+    --- enemies of every level. It asks for the items to be loaded and does not wait; `PreloadAsync` the
+    --- same list to wait for them. What is kept stays on the graphics card, so keep what is needed and
+    --- not everything.
+    function Keep(self, items: { string | Instance }): ()
+    --- Stops holding every item `Keep` was given. Nothing is unloaded at once: what no scene shows is
+    --- let go the next time a scene is left.
+    function Release(self, items: { string | Instance }): ()
 end
 
 declare extern type SceneService extends Instance with
@@ -6241,6 +6350,16 @@ declare Enum: {
         AlwaysAnimate: EnumAnimationCullingMode,
         GetEnumItems: (self: any) -> { EnumAnimationCullingMode },
     },
+    Retargeting: {
+        Automatic: EnumRetargeting,
+        ByName: EnumRetargeting,
+        GetEnumItems: (self: any) -> { EnumRetargeting },
+    },
+    IKControlType: {
+        TwoBone: EnumIKControlType,
+        LookAt: EnumIKControlType,
+        GetEnumItems: (self: any) -> { EnumIKControlType },
+    },
     ParticleCollision: {
         None: EnumParticleCollision,
         SceneDepth: EnumParticleCollision,
@@ -6540,6 +6659,8 @@ type InstanceClasses = {
     MeshPart: MeshPart,
     Attachment: Attachment,
     Bone: Bone,
+    IKControl: IKControl,
+    FootPlacement: FootPlacement,
     SpringBone: SpringBone,
     SpringCollider: SpringCollider,
     BallSocketConstraint: BallSocketConstraint,

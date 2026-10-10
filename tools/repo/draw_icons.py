@@ -785,6 +785,14 @@ def draw_icon(group, name):
         # The capsule a chain is kept out of, and the chain's joint against it.
         i.arc(10,8,5,180,360).arc(10,16,5,0,180).line((5,8),(5,16)).line((15,8),(15,16))
         i.circle(20,12,2)
+    elif name == "IKControl":
+        # A limb of two bones bent to put its end on a target (ADR 0198): the
+        # shoulder, the elbow, and the hand on the filled mark it reaches for.
+        i.circle(4,19,2).line((5.2,17.4),(10.8,7.6)).circle(12,6,2).line((13.6,7.2),(18.2,12.4)).circle(20,14,2.4,True)
+    elif name == "FootPlacement":
+        # A leg whose foot is on a step of a stair (ADR 0198).
+        i.line((10,2),(12,9),(9,16)).line((9,16),(14.5,16))
+        i.line((2,22),(7,22),(7,18.5),(15,18.5),(15,14),(22,14))
     elif name == "AnimationPlayer": i.rect(2,4,20,16).line((9,8),(16,12),(9,16),closed=True,fill=True).line((6,4),(6,20))
     elif name == "TweenService": i.line((3,18),(7,18),(10,16),(14,7),(17,5),(21,5)).circle(3,18,2,True).circle(21,5,2,True)
     elif name == "RunService": i.circle(12,13,8).line((9,2),(15,2)).line((12,2),(12,5)).line((10,9),(16,13),(10,17),closed=True,fill=True)

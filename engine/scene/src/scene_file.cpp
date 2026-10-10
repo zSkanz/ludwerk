@@ -1838,6 +1838,21 @@ void writeUnread(JsonWriter& out, const World& world, core::InstanceId parent)
 
 // A reference cannot be resolved while the tree is being built, because it may
 // name something that does not exist yet. Collected and applied at the end.
+// **A property a file named that was not applied, said by name** (D616): the
+// first few, as `Class.Property`, each once. Counted besides.
+void noteRefused(SceneIoReport& report, const World& world, core::InstanceId id, std::string_view property)
+{
+    ++report.refusedProperties;
+    const ClassDescriptor* descriptor = world.classes().find(world.classOf(id));
+    if (descriptor == nullptr)
+        return;
+    const std::string named = std::string(world.atoms().text(descriptor->name)) + "." + std::string(property);
+    if (report.refusedNamed >= SceneIoReport::MostRefusedNames || report.refusedNames.find(named) != std::string::npos)
+        return;
+    report.refusedNames += report.refusedNames.empty() ? named : ", " + named;
+    ++report.refusedNamed;
+}
+
 struct PendingReference
 {
     core::InstanceId owner;
@@ -2127,10 +2142,12 @@ void applyProperties(World& world, core::InstanceId id, const JsonValue& propert
                     property = world.classes().findProperty(classId, atom);
                 }
             }
+            // Said by name (D616), the first few: `Class.Property`, each once.
+            const auto refuse = [&] { noteRefused(report, world, id, name); };
             if (property == nullptr || property->set == nullptr) {
                 // A scene written by a newer build should still open here, minus
-                // what this one cannot express. Counted, never fatal.
-                ++report.refusedProperties;
+                // what this one cannot express. Counted and named, never fatal.
+                refuse();
                 continue;
             }
 
@@ -2153,7 +2170,16 @@ void applyProperties(World& world, core::InstanceId id, const JsonValue& propert
             }
 
             if (!value.has_value()) {
-                ++report.refusedProperties;
+                refuse();
+                continue;
+            }
+            // **A reference is set once what it names has been read**, by the
+            // pass that resolves them: set here it was "nothing", which a
+            // setter that takes only what is there refused -- a refusal
+            // counted for every `CurrentCamera` in every scene, and then made
+            // good a moment later (D616).
+            if (property->type == ValueType::Instance && !json2.isNull()) {
+                ++report.properties;
                 continue;
             }
             // **A script compiled for a package** (S0.3): its bytecode, back
@@ -2164,14 +2190,14 @@ void applyProperties(World& world, core::InstanceId id, const JsonValue& propert
                     const std::optional<std::vector<core::u8>> bytes =
                         core::base64Decode(std::string_view(*text).substr(CompiledSourcePrefix.size()));
                     if (!bytes.has_value()) {
-                        ++report.refusedProperties;
+                        refuse();
                         continue;
                     }
                     value = Value{std::string(reinterpret_cast<const char*>(bytes->data()), bytes->size())};
                 }
             }
             if (world.setProperty(id, atom, *value) == World::SetResult::InvalidValue)
-                ++report.refusedProperties;
+                refuse();
             else
                 ++report.properties;
         }
@@ -2920,8 +2946,9 @@ core::InstanceId placeStamp(World& world, core::InstanceId parent, std::string_v
         }
         if (reference.isAttribute)
             (void)world.setAttribute(reference.owner, reference.property, Value{target});
-        else
-            (void)world.setProperty(reference.owner, reference.property, Value{target});
+        else if (world.setProperty(reference.owner, reference.property, Value{target}) ==
+                 World::SetResult::InvalidValue)
+            noteRefused(report, world, reference.owner, world.atoms().text(reference.property));
     }
 
     world.setStamp(placed, world.atoms().intern(name));
@@ -3371,8 +3398,9 @@ std::optional<core::EngineError> readGlobal(World& world, std::string_view json,
         }
         if (reference.isAttribute)
             (void)world.setAttribute(reference.owner, reference.property, Value{target});
-        else
-            (void)world.setProperty(reference.owner, reference.property, Value{target});
+        else if (world.setProperty(reference.owner, reference.property, Value{target}) ==
+                 World::SetResult::InvalidValue)
+            noteRefused(out, world, reference.owner, world.atoms().text(reference.property));
     }
     return std::nullopt;
 }
@@ -3548,8 +3576,9 @@ std::optional<core::EngineError> applyScene(World& world, const JsonValue root, 
         }
         if (reference.isAttribute)
             (void)world.setAttribute(reference.owner, reference.property, Value{target});
-        else
-            (void)world.setProperty(reference.owner, reference.property, Value{target});
+        else if (world.setProperty(reference.owner, reference.property, Value{target}) ==
+                 World::SetResult::InvalidValue)
+            noteRefused(out, world, reference.owner, world.atoms().text(reference.property));
     }
 
     return std::nullopt;

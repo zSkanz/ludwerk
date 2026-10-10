@@ -49,9 +49,22 @@ struct PreloadState
     std::vector<std::string> wanted;
     // `RequestQueueSize`: names still on their way, as of the last pass.
     core::u32 queued = 0;
+    // `Keep` and `Release` (D610), since the host last asked: names to hold
+    // whatever scenes come and go, and names to stop holding. In the order
+    // they were called, so a name kept and then released is released.
+    struct Held
+    {
+        std::string content;
+        bool keep = true;
+    };
+    std::vector<Held> held;
 };
 
 int contentProviderPreloadAsync(lua_State* L);
+// `ContentProvider:Keep` and `:Release` (D610): a list as `PreloadAsync`
+// takes, held for the game's life or let go. Neither waits.
+int contentProviderKeep(lua_State* L);
+int contentProviderRelease(lua_State* L);
 
 // `ContentProvider.RequestQueueSize`, answered by name. False when `key` is
 // not it.
@@ -59,6 +72,8 @@ bool contentProviderMemberGet(lua_State* L, core::InstanceId id, std::string_vie
 
 // What scripts asked for since the last call, for the host to start loading.
 [[nodiscard]] std::vector<std::string> takePreloadContent(lua_State* L);
+// And what they asked to be held or let go, in the order they asked.
+[[nodiscard]] std::vector<PreloadState::Held> takeHeldContent(lua_State* L);
 
 // Once a tick: every item whose content has all arrived -- or failed -- has
 // its callback run, and every call whose items all have is resumed.

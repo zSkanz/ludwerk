@@ -37,6 +37,33 @@ void DrawPoses::keep(core::InstanceId id, Kind kind, const core::CFrameD& cframe
     entries_[id.index] = Entry{.generation = id.generation, .stamp = stamp_, .kind = kind, .cframe = cframe};
 }
 
+void DrawPoses::carryPart(core::InstanceId id, const core::CFrameD& cframe)
+{
+    if (!id.valid())
+        return;
+    // Kept whatever `keep` would do: this is not a memo of an answer that
+    // could be worked out again, it IS the answer.
+    if (entries_.size() <= id.index)
+        entries_.resize(static_cast<std::size_t>(id.index) + 1);
+    entries_[id.index] = Entry{.generation = id.generation, .stamp = stamp_, .kind = Kind::Part, .cframe = cframe};
+}
+
+void DrawPoses::carryAttachment(core::InstanceId id, const core::CFrameD& cframe)
+{
+    if (!id.valid())
+        return;
+    if (entries_.size() <= id.index)
+        entries_.resize(static_cast<std::size_t>(id.index) + 1);
+    entries_[id.index] =
+        Entry{.generation = id.generation, .stamp = stamp_, .kind = Kind::Attachment, .cframe = cframe};
+}
+
+void DrawPoses::forget(core::InstanceId id) noexcept
+{
+    if (id.valid() && id.index < entries_.size() && entries_[id.index].generation == id.generation)
+        entries_[id.index].stamp = 0;
+}
+
 core::DVec3 DrawPoses::slideOf(core::InstanceId id) const noexcept
 {
     // **The corrected part and everything under it**: a character slid back

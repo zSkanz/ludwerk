@@ -1,0 +1,43 @@
+{
+  "format": "animgraph",
+  "version": 1,
+  "parameters": {
+    "Speed": { "number": 0, "from": "CharacterBody.Speed" },
+    "Grounded": { "boolean": true, "from": "CharacterBody.Grounded" },
+    "Attack": { "trigger": true, "from": "Attribute.Attack" }
+  },
+  "events": {
+    "Walk": [ { "at": 0.5, "name": "Step" } ],
+    "Run": [ { "at": 0.5, "name": "Step" } ],
+    "Slash": [ { "at": 0.5, "name": "Hit" } ]
+  },
+  "layers": [
+    {
+      "name": "Body",
+      "start": "Move",
+      "states": {
+        "Move": {
+          "blend": "Speed",
+          "sync": true,
+          "clips": [ { "clip": "Idle", "at": 0 }, { "clip": "Walk", "at": 3 }, { "clip": "Run", "at": 8 } ]
+        },
+        "Jump": { "clip": "Jump", "loop": false },
+        "Fall": { "clip": "Fall" }
+      },
+      "transitions": [
+        { "from": "Move", "to": "Jump", "when": [ ["Grounded", "==", false] ], "fade": 0.05 },
+        { "from": "Jump", "to": "Fall", "after": 1.0, "fade": 0.05 },
+        { "from": "*", "to": "Move", "when": [ ["Grounded", "==", true] ], "fade": 0.1 }
+      ]
+    },
+    {
+      "name": "Arms",
+      "start": "None",
+      "states": { "None": {}, "Slash": { "clip": "Slash", "loop": false } },
+      "transitions": [
+        { "from": "None", "to": "Slash", "when": [ ["Attack"] ], "fade": 0 },
+        { "from": "Slash", "to": "None", "after": 1.0, "fade": 0.1 }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+# A scene that is left takes what it alone held with it (D610): a lobby and
+# two maps, each map with pictures and a model of its own, visited
+# lobby > a > lobby > b > lobby. A project because scenes, their own code and
+# their content are files; the driver is `run_scene_release.cmake`.
+
+[project]
+name = "Ludwerk Scene Release"
+id = "dev.ludwerk.scenerelease"
+version = "1.0.0"
+engine = "0.1"
+scene = "scenes/lobby.scene.json"
+
+[window]
+title = "Ludwerk — Scene Release"
+width = 640
+height = 360

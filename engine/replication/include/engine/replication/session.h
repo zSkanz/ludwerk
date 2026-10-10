@@ -300,6 +300,11 @@ public:
 
     [[nodiscard]] const FieldValue& operator[](usize at) const noexcept { return (*m_set)[at]; }
     [[nodiscard]] usize size() const noexcept { return m_set != nullptr ? m_set->size() : 0; }
+    // Every cell, to read: a sequence's are not next to each other (protocol 44).
+    [[nodiscard]] std::span<const FieldValue> view() const noexcept
+    {
+        return m_set != nullptr ? std::span<const FieldValue>(*m_set) : std::span<const FieldValue>{};
+    }
     // The whole set, to copy: what a caller that changes a copy starts from.
     [[nodiscard]] FieldSet copy() const { return m_set != nullptr ? *m_set : FieldSet{}; }
     // Whether the two hold the very same set -- not sets that are equal: one a
@@ -386,6 +391,12 @@ public:
     // transport holds. Past it a replica is told `Refused` and let go -- the
     // transport keeps one slot over so that there is a connection to say it on.
     void setMaxPlayers(u32 players) noexcept { m_maxPlayers = players; }
+    // **Says what will be missing on every replica** (protocol 44), where a
+    // person is developing: an instance of a class the wire does not carry,
+    // under one it does -- the name tag a server script hung on a character.
+    // Once a class, in the log. Not the classes that are each machine's own by
+    // nature (`QuietClasses`), and never in a player's game.
+    void setUncarriedWarnings(bool on) noexcept { m_warnUncarried = on; }
     // **Removes the peer that is player `userId`** (`Player:Kick`, ADR 0167):
     // told why, let go, and its player taken out of the world as one who
     // left is. False when no peer is that player -- the host's own is not.
@@ -734,11 +745,17 @@ private:
     std::vector<std::shared_ptr<FieldSet>> m_fieldPool;
     // The world the last capture read: another one is read whole.
     const scene::World* m_readWorld = nullptr;
+    // How many captures there have been: whose turn it is to be read again
+    // whatever its bytes say, one capture in eight.
+    u64 m_captures = 0;
     // **Each class's schema, found once a world** (`schemaFor` walks up the
     // class's ancestors comparing names, and a capture asked it of every
     // instance every tick): by class id, with whether it has been asked.
     std::vector<const generated::ClassDesc*> m_schemaOfClass;
+    // 1 once asked; 2 once a class with no schema has been said to be missing
+    // on every replica (`setUncarriedWarnings`), or is one not to say it of.
     std::vector<u8> m_schemaAsked;
+    bool m_warnUncarried = false;
     u32 m_nextNetId = RootNetId.value + 1;
     // Player numbers. 1 is whoever sits at a solo or hosting machine, so peers
     // start at 2 -- on a dedicated server too, so a number means the same kind

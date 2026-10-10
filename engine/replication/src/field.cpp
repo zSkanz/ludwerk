@@ -232,6 +232,156 @@ void setInstance(FieldValue& out, core::InstanceId value) noexcept
     store(out, value);
 }
 
+// --- Sequences (protocol 44) ------------------------------------------------------
+
+namespace {
+
+static_assert(sizeof(core::ColorKeypoint) == ColorKeyBytes, "a colour key must be four tightly packed f32");
+static_assert(sizeof(core::NumberKeypoint) == NumberKeyBytes, "a number key must be three tightly packed f32");
+static_assert(offsetof(core::ColorKeypoint, time) == 0 && offsetof(core::ColorKeypoint, value) == 4,
+              "a colour key is its time, then its colour");
+static_assert(offsetof(core::NumberKeypoint, time) == 0 && offsetof(core::NumberKeypoint, value) == 4 &&
+                  offsetof(core::NumberKeypoint, envelope) == 8,
+              "a number key is its time, its value, then its envelope");
+
+[[nodiscard]] usize keyBytesOf(generated::Encoding encoding) noexcept
+{
+    switch (encoding) {
+    case generated::Encoding::ColorSequence:
+        return ColorKeyBytes;
+    case generated::Encoding::NumberSequence:
+        return NumberKeyBytes;
+    default:
+        return 0;
+    }
+}
+
+// A sequence's cells as the one run of bytes they are: the first cell, then
+// each further one.
+[[nodiscard]] u8* byteAt(FieldValue& first, std::span<FieldValue> further, usize at) noexcept
+{
+    const usize cell = at / FieldValue::Bytes;
+    return (cell == 0 ? first : further[cell - 1]).raw.data() + at % FieldValue::Bytes;
+}
+
+[[nodiscard]] const u8* byteAt(const FieldValue& first, std::span<const FieldValue> further, usize at) noexcept
+{
+    const usize cell = at / FieldValue::Bytes;
+    return (cell == 0 ? first : further[cell - 1]).raw.data() + at % FieldValue::Bytes;
+}
+
+void clearCells(FieldValue& first, std::span<FieldValue> further) noexcept
+{
+    first.raw.fill(0);
+    for (FieldValue& cell : further)
+        cell.raw.fill(0);
+}
+
+// A count and its keys into cleared cells, a byte at a time: a key lies
+// across two cells as often as not.
+template <class Key>
+void storeKeys(FieldValue& first, std::span<FieldValue> further, const std::vector<Key>& keys) noexcept
+{
+    clearCells(first, further);
+    const usize room = ((further.size() + 1) * FieldValue::Bytes - 1) / sizeof(Key);
+    const usize count = std::min({keys.size(), MaxSequenceKeys, room});
+    first.raw[0] = static_cast<u8>(count);
+    for (usize key = 0; key < count; ++key) {
+        const auto* source = reinterpret_cast<const u8*>(&keys[key]);
+        for (usize byte = 0; byte < sizeof(Key); ++byte)
+            *byteAt(first, further, 1 + key * sizeof(Key) + byte) = source[byte];
+    }
+}
+
+template <class Key>
+[[nodiscard]] bool loadKeys(const FieldValue& first, std::span<const FieldValue> further, std::vector<Key>& out)
+{
+    const usize count = first.raw[0];
+    if (count > MaxSequenceKeys || 1 + count * sizeof(Key) > (further.size() + 1) * FieldValue::Bytes)
+        return false;
+    std::vector<Key> keys(count);
+    for (usize key = 0; key < count; ++key) {
+        auto* target = reinterpret_cast<u8*>(&keys[key]);
+        for (usize byte = 0; byte < sizeof(Key); ++byte)
+            target[byte] = *byteAt(first, further, 1 + key * sizeof(Key) + byte);
+    }
+    if (!core::validSequence(keys))
+        return false;
+    out = std::move(keys);
+    return true;
+}
+
+} // namespace
+
+bool isSequence(generated::Encoding encoding) noexcept
+{
+    return keyBytesOf(encoding) != 0;
+}
+
+usize furtherCellsOf(generated::Encoding encoding) noexcept
+{
+    const usize keyBytes = keyBytesOf(encoding);
+    if (keyBytes == 0)
+        return 0;
+    return (1 + MaxSequenceKeys * keyBytes + FieldValue::Bytes - 1) / FieldValue::Bytes - 1;
+}
+
+void setColorSequence(FieldValue& first, std::span<FieldValue> further, const core::ColorSequence& value) noexcept
+{
+    storeKeys(first, further, value.keypoints);
+}
+
+void setNumberSequence(FieldValue& first, std::span<FieldValue> further, const core::NumberSequence& value) noexcept
+{
+    storeKeys(first, further, value.keypoints);
+}
+
+bool asColorSequence(const FieldValue& first, std::span<const FieldValue> further, core::ColorSequence& out)
+{
+    return loadKeys(first, further, out.keypoints);
+}
+
+bool asNumberSequence(const FieldValue& first, std::span<const FieldValue> further, core::NumberSequence& out)
+{
+    return loadKeys(first, further, out.keypoints);
+}
+
+void encodeSequence(std::vector<u8>& out, generated::Encoding encoding, const FieldValue& first,
+                    std::span<const FieldValue> further)
+{
+    const usize keyBytes = keyBytesOf(encoding);
+    if (keyBytes == 0 || further.size() != furtherCellsOf(encoding))
+        return;
+    // The count the cells say, held to what a sequence may be: what is written
+    // is then never more than the cells hold.
+    const usize count = std::min<usize>(first.raw[0], MaxSequenceKeys);
+    const usize total = 1 + count * keyBytes;
+    out.push_back(static_cast<u8>(count));
+    for (usize at = 1; at < total; ++at)
+        out.push_back(*byteAt(first, further, at));
+}
+
+bool decodeSequence(std::span<const u8> bytes, usize& at, generated::Encoding encoding, FieldValue& first,
+                    std::span<FieldValue> further) noexcept
+{
+    const usize keyBytes = keyBytesOf(encoding);
+    if (keyBytes == 0 || further.size() != furtherCellsOf(encoding) || at >= bytes.size())
+        return false;
+    // **The count is the peer's, and is bounded before anything is read by
+    // it**: twenty keys is all the cells hold.
+    const usize count = bytes[at];
+    if (count > MaxSequenceKeys)
+        return false;
+    const usize total = 1 + count * keyBytes;
+    if (at + total > bytes.size())
+        return false;
+    clearCells(first, further);
+    for (usize byte = 0; byte < total; ++byte)
+        *byteAt(first, further, byte) = bytes[at + byte];
+    at += total;
+    return true;
+}
+
 bool asBool(const FieldValue& value) noexcept
 {
     return load<u8>(value) != 0;
@@ -311,6 +461,11 @@ usize wireBytes(generated::Encoding encoding) noexcept
         return MaterialOverridesBytes;
     case generated::Encoding::MaterialValues:
         return MaterialValuesBytes;
+    // Protocol 44. The most each can be: a sequence says its own length.
+    case generated::Encoding::ColorSequence:
+        return ColorSequenceBytes;
+    case generated::Encoding::NumberSequence:
+        return NumberSequenceBytes;
     case generated::Encoding::CFrameD:
         // Three f64 of position, and the rotation packed in a u64.
         //

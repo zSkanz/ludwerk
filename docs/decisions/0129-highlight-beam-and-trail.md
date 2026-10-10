@@ -83,5 +83,9 @@ a trail behind a sword or a car.
   attachments, and the wire has neither a reference field but `Parent`, nor
   `Attachment`, nor a sequence. Excluded with those reasons; a box in the
   network's leftovers.
+  **They travel since protocol 44** (ADR 0069's amendment of 2026-10-10):
+  references came with protocol 34, and a sequence has an encoding now. Each
+  is its instance and every authored property, a trail's `Clear` as a
+  running total; what is drawn of them is each machine's own.
 - Every property is presentation: none is in the world hash, and a trail's
   pieces are the renderer's.

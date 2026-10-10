@@ -120,13 +120,15 @@ inline constexpr scene::EnumId SettingSourceEnumId = 77;
 inline constexpr scene::EnumId ScrollingDirectionEnumId = 78;
 inline constexpr scene::EnumId ElasticBehaviorEnumId = 79;
 inline constexpr scene::EnumId AnimationCullingModeEnumId = 80;
-inline constexpr scene::EnumId ParticleCollisionEnumId = 81;
-inline constexpr scene::EnumId ParticleCollisionResponseEnumId = 82;
-inline constexpr scene::EnumId ParticleSimulationEnumId = 83;
-inline constexpr scene::EnumId DecalBlendModeEnumId = 84;
-inline constexpr scene::EnumId ParticleFlipbookModeEnumId = 85;
-inline constexpr scene::EnumId SwarmAgentRemovalEnumId = 86;
-inline constexpr scene::EnumId RelayStateEnumId = 87;
+inline constexpr scene::EnumId RetargetingEnumId = 81;
+inline constexpr scene::EnumId IKControlTypeEnumId = 82;
+inline constexpr scene::EnumId ParticleCollisionEnumId = 83;
+inline constexpr scene::EnumId ParticleCollisionResponseEnumId = 84;
+inline constexpr scene::EnumId ParticleSimulationEnumId = 85;
+inline constexpr scene::EnumId DecalBlendModeEnumId = 86;
+inline constexpr scene::EnumId ParticleFlipbookModeEnumId = 87;
+inline constexpr scene::EnumId SwarmAgentRemovalEnumId = 88;
+inline constexpr scene::EnumId RelayStateEnumId = 89;
 
 } // namespace generated
 
