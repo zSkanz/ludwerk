@@ -103,6 +103,7 @@ engine_add_module_tests(render
         tests/particles_tests.cpp
         tests/ribbons_tests.cpp
         tests/spring_chain_tests.cpp
+        tests/spring_bones_tests.cpp
         tests/voxel_loader_tests.cpp
 )
 

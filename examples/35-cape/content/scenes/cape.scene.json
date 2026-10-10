@@ -1,0 +1,164 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "Workspace",
+  "name": "Workspace",
+  "properties": {
+   "CurrentCamera": "Workspace.MainCamera",
+   "GlobalWind": [
+    5.0,
+    0.0,
+    1.0
+   ],
+   "WindGusts": 0.6
+  },
+  "children": [
+   {
+    "class": "Camera",
+    "name": "MainCamera",
+    "properties": {
+     "CFrame": [
+      1.5,
+      2.6,
+      8.5,
+      0.9987523388778446,
+      0.0,
+      -0.04993761694389223,
+      -0.007880070750326207,
+      0.9874713659002529,
+      -0.15760141500652416,
+      0.049311966813388876,
+      0.1577982938028444,
+      0.9862393362677775
+     ],
+     "FieldOfView": 55.0
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Floor",
+    "properties": {
+     "CFrame": [
+      0.0,
+      -0.5,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      80.0,
+      1.0,
+      80.0
+     ],
+     "Anchored": true
+    }
+   },
+   {
+    "class": "MeshPart",
+    "name": "Figure",
+    "properties": {
+     "MeshContent": "asset://models/figure.gltf",
+     "CFrame": [
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Anchored": true
+    },
+    "children": [
+     {
+      "class": "SpringBone",
+      "name": "Cape",
+      "properties": {
+       "JointPattern": "Cape_*0",
+       "Stiffness": 0.12,
+       "Damping": 0.18,
+       "LimitAngle": 80.0,
+       "Radius": 0.04
+      }
+     },
+     {
+      "class": "SpringCollider",
+      "name": "Back",
+      "properties": {
+       "JointName": "Body",
+       "Offset": [
+        0.0,
+        0.25,
+        0.0
+       ],
+       "Length": 1.3,
+       "Radius": 0.2
+      }
+     }
+    ]
+   },
+   {
+    "class": "MeshPart",
+    "name": "InTheWind",
+    "properties": {
+     "MeshContent": "asset://models/figure.gltf",
+     "CFrame": [
+      -3.0,
+      0.0,
+      -2.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Anchored": true
+    },
+    "children": [
+     {
+      "class": "SpringBone",
+      "name": "Cape",
+      "properties": {
+       "JointPattern": "Cape_*0",
+       "Stiffness": 0.12,
+       "Damping": 0.18,
+       "LimitAngle": 80.0,
+       "Radius": 0.04
+      }
+     },
+     {
+      "class": "SpringCollider",
+      "name": "Back",
+      "properties": {
+       "JointName": "Body",
+       "Offset": [
+        0.0,
+        0.25,
+        0.0
+       ],
+       "Length": 1.3,
+       "Radius": 0.2
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

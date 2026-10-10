@@ -12,65 +12,19 @@
 -- does nothing, which is the other half of what a cape is for.
 --
 -- The model is drawn by `tools/make_figure.py`: each column of the cape is a
--- chain of its own under a top joint on the shoulders, and the top joint is
--- the one a `SpringBone` names.
+-- chain of its own under a top joint on the shoulders, and those top joints
+-- are what a `SpringBone` finds.
 
 local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
 
-local function figure(at: vector): MeshPart
-    local body = Instance.new("MeshPart")
-    body.Name = "Figure"
-    body.MeshContent = "asset://models/figure.gltf" :: Content
-    body.Anchored = true
-    body.CFrame = CFrame.new(at.x, at.y, at.z)
-    body.Parent = workspace
-
-    -- One instance for the cape: the pattern is the top joint of each column,
-    -- and each is a chain of its own. (`RootJoint` names one chain's top, for
-    -- a tail or a braid.) The dials are a cloth's; a tail would be stiffer and
-    -- a rope would have no stiffness at all.
-    local cape = Instance.new("SpringBone")
-    cape.Name = "Cape"
-    cape.JointPattern = "Cape_*0"
-    cape.Stiffness = 0.12
-    cape.Damping = 0.18
-    cape.LimitAngle = 80
-    cape.Radius = 0.04
-    cape.Parent = body
-
-    -- The back and the legs: a capsule the height of the body, just in front
-    -- of where the cape hangs.
-    local back = Instance.new("SpringCollider")
-    back.Name = "Back"
-    back.JointName = "Body"
-    back.Offset = vector.create(0, 0.25, 0)
-    back.Length = 1.3
-    back.Radius = 0.2
-    back.Parent = body
-    return body
-end
-
-local floor = Instance.new("Part")
-floor.Name = "Floor"
-floor.Anchored = true
-floor.Size = vector.create(80, 1, 80)
-floor.CFrame = CFrame.new(0, -0.5, 0)
-floor.Parent = workspace
-
-local runner = figure(vector.create(0, 0, 0))
-local stander = figure(vector.create(-3, 0, -2))
-stander.Name = "InTheWind"
-
--- A wind from the figures' left, with gusts in it.
-workspace.GlobalWind = vector.create(5, 0, 1)
-workspace.WindGusts = 0.6
-
-local camera = Instance.new("Camera")
-camera.FieldOfView = 55
-camera.CFrame = CFrame.lookAt(vector.create(1.5, 2.6, 8.5), vector.create(1, 1.0, -1.5))
-camera.Parent = workspace
-workspace.CurrentCamera = camera
+-- The floor, the camera, the wind and both figures are the scene
+-- (`content/scenes/cape.scene.json`, written by `tools/make_scene.py`): a
+-- `SpringBone` with `JointPattern = "Cape_*0"` -- the top joint of each column,
+-- each a chain of its own -- and a `SpringCollider` on the body, under each
+-- figure. Open the project in the editor and they are there, capes already in
+-- the wind; nothing in this script makes them. What the script does is move one.
+local runner = workspace:WaitForChild("Figure") :: MeshPart
 
 Lighting.ClockTime = 15
 Lighting.FogStart = 100000

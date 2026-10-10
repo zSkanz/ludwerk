@@ -6,6 +6,9 @@ name = "Ludwerk Cape"
 id = "dev.ludwerk.cape"
 version = "1.0.0"
 engine = "0.1"
+# The figures, their capes and the wind are a scene on disk, so the example
+# opens in the editor with them; the script only moves one of them.
+scene = "scenes/cape.scene.json"
 
 [window]
 title = "Ludwerk — Cape"

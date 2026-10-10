@@ -107,9 +107,15 @@ joints) about 0.9 ms a stepped frame, three microseconds a chain.
   through a wall. Tier 2.
 - A mesh stretched unevenly (`Size` against `MeshSize`) has its chains sized
   by the mean of the three.
-- The editor shows both classes in Properties, with the rig's joints offered
-  for `RootJoint` and `JointName`. They have no icon of their own yet, and no
-  preview while editing: the chains move in play.
+- The editor shows both classes in Properties, with their own icons and the
+  rig's joints offered for `RootJoint` and `JointName`. **The chains move
+  while editing too**: the world the editor draws is the host's own, and a
+  frame steps its chains whatever the run state -- a cape hangs, feels the
+  workspace's wind, and swings when its body is moved. That is held by a test
+  of exactly that case (a still body, nothing playing, no script:
+  `spring_bones_tests.cpp`), since the editor needs a window and no test
+  opens one; it has not been looked at in the editor's own viewport by the
+  one who wrote it.
 - No `[graphics]` key of its own yet: the rate and the distance follow the
   quality level.
 
@@ -122,10 +128,20 @@ its length; half a second in one frame, and a teleport, leave it at rest and
 quiet afterwards; it never bends past its limit; it stays out of a capsule;
 its first joint turns to face its child.
 
+`engine/render/tests/spring_bones_tests.cpp`: a cape on a still body with
+nothing playing moves in the wind in the pose that is DRAWN, each joint still
+its length from the one above and the top where the animation has it -- while
+the pose the simulation reads is untouched; switched off, or naming a joint
+the rig lacks, it is drawn as the animation has it; and one instance with a
+pattern is a chain for each column, whether the pattern names the tops or
+every joint of the cape.
+
 `secondary_motion_steps`: the example run for a second and a half, its six
 chains of thirty joints stepped in a real frame, with no warning.
 
 The determinism replays reproduce unmoved.
 
 `examples/35-cape`: a figure that runs a circle, stops dead, dashes, and is
-put somewhere else in one frame, beside one that stands in the wind.
+put somewhere else in one frame, beside one that stands in the wind. Its
+figures, their capes and the wind are a scene on disk, so it opens in the
+editor with the capes already on.

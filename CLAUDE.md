@@ -100,6 +100,17 @@ lint) · `ludwerk new <template>` · `ludwerk fmt`.
 
 ### Things that will waste an hour if you do not know them
 
+- **Run the engine from a package folder, by its sha. Never from the build
+  tree, and never from a path another step rewrites.** A tool that launches
+  the engine -- a capture, a check, a game being tried -- reads
+  `%LOCALAPPDATA%\<brand>\build\packages\current.txt` for the newest sha and
+  runs `packages\<sha>\<brand>-<version>-win64\engine-host.exe`.
+  `scripts/package-step.ps1` writes each package to a folder of its own and
+  never rewrites one, so a host running from an older package keeps running.
+  A host run out of the build tree holds the file the linker is about to
+  write: the gate fails with `LNK1168`, and an object file left half written
+  fails the next build with `LNK1236`. That cost a day before its cause was
+  found (another session's captures).
 - **Windows: the presets need a Developer Shell.** They use the Ninja generator
   with `strategy: external`, so `cl`, `cmake` and `ninja` must already be on
   PATH. Visual Studio bundles CMake and Ninja — the fix is almost never "install

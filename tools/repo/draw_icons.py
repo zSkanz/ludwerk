@@ -7,6 +7,7 @@ Only the existing art-tool dependency (Pillow) is required.
 import html
 import json
 import math
+import sys
 import tomllib
 from pathlib import Path
 
@@ -775,6 +776,15 @@ def draw_icon(group, name):
         i.line((8,4),(9,7),(17,15),(20,15),(22,17),(22,19),
                (20,20),(19,22),(17,22),(15,20),(15,17),(7,9),
                (4,8),(2,6),(2,4),(4,3),(5,2),(7,2),(8,4),closed=True)
+    elif name == "SpringBone":
+        # A chain of three joints hung from the first and swung to one side,
+        # with the arc it swings through under it (ADR 0194).
+        i.circle(6,4,2).line((7.2,5.6),(9.8,9.4)).circle(11,11,2).line((12.4,12.4),(16.6,16.6)).circle(18,18,2)
+        i.line((3,12),(4,16),(7,19),(11,21))
+    elif name == "SpringCollider":
+        # The capsule a chain is kept out of, and the chain's joint against it.
+        i.arc(10,8,5,180,360).arc(10,16,5,0,180).line((5,8),(5,16)).line((15,8),(15,16))
+        i.circle(20,12,2)
     elif name == "AnimationPlayer": i.rect(2,4,20,16).line((9,8),(16,12),(9,16),closed=True,fill=True).line((6,4),(6,20))
     elif name == "TweenService": i.line((3,18),(7,18),(10,16),(14,7),(17,5),(21,5)).circle(3,18,2,True).circle(21,5,2,True)
     elif name == "RunService": i.circle(12,13,8).line((9,2),(15,2)).line((12,2),(12,5)).line((10,9),(16,13),(10,17),closed=True,fill=True)
@@ -803,6 +813,21 @@ def mirror(i):
 def main():
     theme = json.loads((THEME / "theme.json").read_text())
     paths = sorted(set(theme["icons"].values()))
+    # **`--only Name,Name` draws those classes' icons and nothing else**: their
+    # SVG and PNG are written and no other file of the family is touched --
+    # not the other drawings, not the review sheets. For adding an icon while
+    # somebody else's changes to the family are still theirs to settle.
+    if "--only" in sys.argv:
+        wanted = {name.strip() for name in sys.argv[sys.argv.index("--only") + 1].split(",")}
+        drawn = [path for path in paths if path.split("/")[1][:-4] in wanted]
+        for path in drawn:
+            group, filename = path.split("/")
+            draw_icon(group, filename[:-4]).export(path)
+        missing = wanted - {path.split("/")[1][:-4] for path in drawn}
+        if missing:
+            raise SystemExit(f"Orbit: no icon id in theme.json for {sorted(missing)}")
+        print(f"Orbit: {len(drawn)} drawing(s) exported, the rest of the family untouched.")
+        return
     images = {}
     for path in paths:
         group, filename = path.split("/")
