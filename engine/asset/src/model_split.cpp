@@ -1,5 +1,6 @@
 #include "engine/asset/model_split.h"
 
+#include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -120,6 +121,32 @@ std::vector<ModelPiece> splitByPrimitive(const Model& model)
         for (const Vertex& vertex : piece.model.mesh.vertices)
             core::expand(piece.model.mesh.bounds, vertex.position);
         piece.model.mesh.submeshes[0].bounds = piece.model.mesh.bounds;
+
+        // **Its morph targets** (ADR 0196): each target as far as it moves this
+        // piece's vertices, by the piece's own numbers. Every piece keeps every
+        // target's NAME, in the model's order, so a weight set by name -- or by
+        // a clip's channel, which says a target by its place -- means the same
+        // thing to the face and to the eyelashes that are another piece; a
+        // piece a target does not move carries it with nothing in it.
+        piece.model.morphs.reserve(model.morphs.size());
+        for (const MorphTarget& target : model.morphs) {
+            MorphTarget kept;
+            kept.name = target.name;
+            kept.defaultWeight = target.defaultWeight;
+            for (const MorphDelta& delta : target.deltas) {
+                const auto found = remap.find(delta.vertex);
+                if (found == remap.end())
+                    continue;
+                kept.deltas.push_back(MorphDelta{found->second, delta.position, delta.normal});
+            }
+            // Ascending by the piece's numbers, which first use did not keep.
+            std::sort(kept.deltas.begin(), kept.deltas.end(),
+                      [](const MorphDelta& a, const MorphDelta& b) { return a.vertex < b.vertex; });
+            piece.model.morphs.push_back(std::move(kept));
+        }
+        // And the clips, for what they say of the targets: a model that is
+        // split has no skeleton, so that is all its clips say.
+        piece.model.clips = model.clips;
 
         pieces.push_back(std::move(piece));
     }

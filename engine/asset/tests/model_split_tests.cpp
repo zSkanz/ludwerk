@@ -1,4 +1,5 @@
 // Cutting one imported file into the pieces a person selects.
+#include <algorithm>
 #include <doctest/doctest.h>
 #include <string>
 #include <vector>
@@ -211,4 +212,52 @@ TEST_CASE("a model with nothing in it splits into nothing")
 {
     const std::vector<ModelPiece> pieces = splitByPrimitive(Model{});
     CHECK(pieces.empty());
+}
+
+TEST_CASE("a split model's pieces each keep their morph targets, by their own vertices")
+{
+    // Three triangles, three pieces. `Lift` moves a vertex of the first piece
+    // and one of the third; `Lean` moves one of the second. Every piece keeps
+    // both targets by name and place -- a weight set by name must mean the
+    // same thing to all of them -- with only what moves its own vertices.
+    Model model = triangles(3);
+    MorphTarget lift;
+    lift.name = "Lift";
+    lift.deltas.push_back(MorphDelta{model.mesh.indices[1], {0.0f, 1.0f, 0.0f}, {}});
+    lift.deltas.push_back(MorphDelta{model.mesh.indices[8], {0.0f, 2.0f, 0.0f}, {}});
+    std::sort(lift.deltas.begin(), lift.deltas.end(),
+              [](const MorphDelta& a, const MorphDelta& b) { return a.vertex < b.vertex; });
+    MorphTarget lean;
+    lean.name = "Lean";
+    lean.defaultWeight = 0.5f;
+    lean.deltas.push_back(MorphDelta{model.mesh.indices[4], {3.0f, 0.0f, 0.0f}, {}});
+    model.morphs = {lift, lean};
+
+    const std::vector<ModelPiece> pieces = splitByPrimitive(model);
+    REQUIRE(pieces.size() == 3);
+    for (const ModelPiece& piece : pieces) {
+        REQUIRE(piece.model.morphs.size() == 2);
+        CHECK(piece.model.morphs[0].name == "Lift");
+        CHECK(piece.model.morphs[1].name == "Lean");
+        CHECK(piece.model.morphs[1].defaultWeight == 0.5f);
+        for (const MorphTarget& target : piece.model.morphs) {
+            for (const MorphDelta& delta : target.deltas)
+                CHECK(delta.vertex < piece.model.mesh.vertices.size());
+        }
+    }
+    // What moves where, found by the place the moved vertex is at rest.
+    const auto moved = [&](const ModelPiece& piece, std::size_t target, u32 sourceVertex) {
+        const engine::core::Vec3 at = model.mesh.vertices[sourceVertex].position;
+        for (const MorphDelta& delta : piece.model.morphs[target].deltas) {
+            const engine::core::Vec3 here = piece.model.mesh.vertices[delta.vertex].position;
+            if (here.x == at.x && here.y == at.y && here.z == at.z)
+                return delta.position;
+        }
+        return engine::core::Vec3{};
+    };
+    CHECK(moved(pieces[0], 0, model.mesh.indices[1]).y == 1.0f);
+    CHECK(moved(pieces[2], 0, model.mesh.indices[8]).y == 2.0f);
+    CHECK(moved(pieces[1], 1, model.mesh.indices[4]).x == 3.0f);
+    CHECK(pieces[1].model.morphs[0].deltas.empty());
+    CHECK(pieces[0].model.morphs[1].deltas.empty());
 }
