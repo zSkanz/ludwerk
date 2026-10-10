@@ -82,8 +82,9 @@ bool resolveFace(void* user, std::string_view name, std::vector<core::u8>& out)
 // levels are (`ui_renderer.cpp`, the sampler). A third more memory a picture.
 // Returns the handle and adds the levels sent to `levels`.
 [[nodiscard]] rhi::TextureHandle uploadTexture(rhi::IDevice& device, rhi::ICmdList& cmd,
-                                               const asset::TextureAsset& texture, core::u64& levels)
+                                               const asset::TextureAsset& texture, core::u64& levels, core::u64& bytes)
 {
+    bytes = 0;
     if (texture.mips.empty()) {
         return {};
     }
@@ -103,6 +104,9 @@ bool resolveFace(void* user, std::string_view name, std::vector<core::u8>& out)
         cmd.uploadTexture(handle, std::span<const std::byte>(texture.pixels).subspan(mip.offset, mip.size), level);
     }
     levels += texture.mips.size();
+    // Every level, as it went up: what the budget counts it as.
+    for (const asset::TextureMip& mip : texture.mips)
+        bytes += mip.size;
     return handle;
 }
 
@@ -196,9 +200,16 @@ bool UiText::requestImage(std::string_view urn, ui::ResolvedImage& out)
     }
 
     for (core::usize index = 0; index < imageEntries_.size(); ++index) {
-        const Image& image = imageEntries_[index];
+        Image& image = imageEntries_[index];
         if (image.urn != urn) {
             continue;
+        }
+        // Asked for in this pass: the last thing the budget would let go.
+        image.lastAsked = imagePass_;
+        // And one it did let go is wanted again (D609): loaded as it was the
+        // first time, and the flat tint until it is.
+        if (image.state == ImageState::Released) {
+            image.state = ImageState::Requested;
         }
         if (image.state != ImageState::Ready || !image.texture.valid()) {
             return false;
@@ -222,12 +233,75 @@ bool UiText::requestImage(std::string_view urn, ui::ResolvedImage& out)
 
     Image image;
     image.urn = std::string(urn);
+    image.lastAsked = imagePass_;
     imageEntries_.push_back(std::move(image));
     return false;
 }
 
+core::u32 UiText::imagesHeld() const noexcept
+{
+    core::u32 held = 0;
+    for (const Image& image : imageEntries_) {
+        if (!image.borrowed && image.texture.valid())
+            ++held;
+    }
+    return held;
+}
+
+core::u64 UiText::imageBudgetFor(core::u64 systemMemoryBytes) noexcept
+{
+    constexpr core::u64 MiB = 1024ull * 1024ull;
+    if (systemMemoryBytes == 0)
+        return 256 * MiB;
+    return std::clamp<core::u64>(systemMemoryBytes / 32, 48 * MiB, 512 * MiB);
+}
+
+void UiText::trimImages(rhi::IDevice& device)
+{
+    // What is held, counted again: a few hundred entries, and a number kept
+    // by hand in three places that upload would be the one that drifts.
+    imageBytes_ = 0;
+    for (const Image& image : imageEntries_) {
+        if (!image.borrowed && image.texture.valid())
+            imageBytes_ += image.bytes;
+    }
+    if (imageBudget_ == 0 || imageBytes_ <= imageBudget_)
+        return;
+
+    // **The ones nothing has asked for longest, first** -- and never one
+    // asked for in this pass or the one before it: what is on the screen is
+    // asked for every frame, and the frame being drawn may hold last pass's
+    // list. Ties in the order they were first named, so the same run lets go
+    // of the same pictures.
+    std::vector<core::usize> idle;
+    for (core::usize index = 0; index < imageEntries_.size(); ++index) {
+        const Image& image = imageEntries_[index];
+        if (!image.borrowed && image.state == ImageState::Ready && image.texture.valid() &&
+            image.lastAsked + 1 < imagePass_)
+            idle.push_back(index);
+    }
+    std::stable_sort(idle.begin(), idle.end(), [this](core::usize a, core::usize b) {
+        return imageEntries_[a].lastAsked < imageEntries_[b].lastAsked;
+    });
+    for (const core::usize index : idle) {
+        if (imageBytes_ <= imageBudget_)
+            break;
+        Image& image = imageEntries_[index];
+        device.destroy(image.texture);
+        image.texture = {};
+        imageBytes_ -= std::min(imageBytes_, image.bytes);
+        image.bytes = 0;
+        image.state = ImageState::Released;
+        imagesChanged_ = true;
+        ++imagesReleased_;
+    }
+}
+
 void UiText::loadPendingImages(rhi::IDevice& device, rhi::ICmdList& cmd)
 {
+    // A pass: what was asked for since the last one is this one's.
+    ++imagePass_;
+    trimImages(device);
     if (mounts_ == nullptr) {
         return;
     }
@@ -304,7 +378,7 @@ void UiText::loadPendingImages(rhi::IDevice& device, rhi::ICmdList& cmd)
         // is the mode people spend their time in.
         asset::TextureAsset compiled;
         if (!asset::transcodeTexture(bytes, asset::TranscodeOptions{}, compiled).has_value() && compiled.valid()) {
-            image.texture = uploadTexture(device, cmd, compiled, imageLevels_);
+            image.texture = uploadTexture(device, cmd, compiled, imageLevels_, image.bytes);
             image.width = compiled.width;
             image.height = compiled.height;
         }
@@ -317,7 +391,7 @@ void UiText::loadPendingImages(rhi::IDevice& device, rhi::ICmdList& cmd)
             }
             // A picture the compiler has not seen has no levels of its own:
             // made here, as the compiler would have.
-            image.texture = uploadTexture(device, cmd, asset::mipChainOf(decoded, true), imageLevels_);
+            image.texture = uploadTexture(device, cmd, asset::mipChainOf(decoded, true), imageLevels_, image.bytes);
             image.width = decoded.width;
             image.height = decoded.height;
         }
@@ -461,7 +535,7 @@ void UiText::pumpImages(rhi::IDevice& device, rhi::ICmdList& cmd)
         // **No logging from inside the job.** The flag comes back and the
         // sentence is said here, on the frame thread.
         if (image.work != nullptr && image.work->ok) {
-            image.texture = uploadTexture(device, cmd, image.work->compiled, imageLevels_);
+            image.texture = uploadTexture(device, cmd, image.work->compiled, imageLevels_, image.bytes);
             image.width = image.work->compiled.width;
             image.height = image.work->compiled.height;
         }

@@ -322,6 +322,19 @@ inline constexpr bool Handheld = false;
 // And to the frame's pacing. A handheld's sync is always on.
 [[nodiscard]] FramePacing pacingOf(const scene::GraphicsModel& model, bool handheld = Handheld) noexcept;
 
+// **The texture quality a machine with this much memory starts at** (D609):
+// `Enum.TextureQuality`'s number -- 0 low, a quarter of each texture's size;
+// 1 medium, a half; 2 high, all of it. Under three gigabytes is low, under
+// five is medium. Every quality level starts there: how much of a texture a
+// machine can hold is its memory's to say, not its graphics card's speed --
+// a phone with twelve gigabytes at `Medium` keeps its textures whole, and
+// one with two does not load at `High` what it cannot hold. Nought, for a
+// machine that does not say, is high. A game or a player sets another.
+[[nodiscard]] core::i32 textureQualityForMemory(core::u64 systemMemoryBytes) noexcept;
+// How many of a texture's largest levels the model's texture quality leaves
+// out: what `render::MeshLoader::setTextureSkip` is given.
+[[nodiscard]] core::u32 textureSkipOf(const scene::GraphicsModel& model) noexcept;
+
 // The host's layers of a model with no project file: the presets and the
 // command line's.
 void seedGraphicsModel(scene::GraphicsModel& model, const GraphicsOverrides& overrides, bool handheld = Handheld);

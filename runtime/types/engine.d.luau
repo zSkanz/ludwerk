@@ -1344,8 +1344,8 @@ declare extern type MeshPart extends BasePart with
     --- that shape. Any number is allowed -- a file's own weights go past 1 and below 0 -- and several
     --- targets add. **It stays on the machine the script ran on.** A weight is picture and not
     --- simulation: it is not replicated, not in a replay, and a server with no window draws nothing
-    --- with it. Set it in a client script, where the part is drawn. A clip's own weight channels are
-    --- the way a face is seen by everybody: the animation that plays them is replicated already. **The
+    --- with it. Set it in a client script, where the part is drawn. An animation is not replicated
+    --- either: a clip that keys weights plays them on the machine whose script played it. **The
     --- script's value wins** over what a playing clip says of that target, every frame, until
     --- `ClearMorphWeight` gives it back. Raises for a name the mesh does not have, once the mesh has
     --- loaded; set before that, the name is kept and takes effect when the mesh arrives.
@@ -4402,8 +4402,14 @@ declare extern type GraphicsService extends Instance with
     --- A scale on how far things are drawn, 0.25 to 4. **Kept, saved and reported, and not drawn by
     --- yet**: it applies when that part of the renderer lands.
     ViewDistance: number
-    --- How much of each texture is kept. **Kept, saved and reported, and not drawn by yet**: it applies
-    --- when that part of the renderer lands.
+    --- How much of each texture of the world is loaded: `High` is all of it, `Medium` half its size and
+    --- a quarter of its memory, `Low` a quarter and a sixteenth. **It starts at what the machine's
+    --- memory can hold** -- `Low` under three gigabytes, `Medium` under five, `High` above -- whatever
+    --- the quality level, and a game or a player sets another. It is a material's maps, a model's own
+    --- images, decals and particles, as compiled content; a sprite, a tileset, a block's faces and the
+    --- interface's pictures are drawn at their own size and are never reduced, and no texture goes
+    --- under 64 pixels. **What is already loaded keeps the size it came in at** until it is loaded
+    --- again: set it before the scene that should use it.
     TextureQuality: EnumTextureQuality
     --- How sharp a texture stays at a grazing angle, 1 to 16. **Kept, saved and reported, and not drawn
     --- by yet**: it applies when that part of the renderer lands.

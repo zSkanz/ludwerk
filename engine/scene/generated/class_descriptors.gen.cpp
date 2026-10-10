@@ -5436,7 +5436,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .inert = false,
             .hostFact = true,
             .transient = true,
-            .doc = "How much of each texture is kept. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .doc = "How much of each texture of the world is loaded: `High` is all of it, `Medium` half its size and a quarter of its memory, `Low` a quarter and a sixteenth. **It starts at what the machine's memory can hold** -- `Low` under three gigabytes, `Medium` under five, `High` above -- whatever the quality level, and a game or a player sets another. It is a material's maps, a model's own images, decals and particles, as compiled content; a sprite, a tileset, a block's faces and the interface's pictures are drawn at their own size and are never reduced, and no texture goes under 64 pixels. **What is already loaded keeps the size it came in at** until it is loaded again: set it before the scene that should use it.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
             .get = native::getGraphicsServiceTextureQuality,
             .set = native::setGraphicsServiceTextureQuality,

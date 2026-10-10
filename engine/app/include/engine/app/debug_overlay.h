@@ -35,6 +35,7 @@ class Window;
 
 namespace engine::scene {
 class World;
+class MorphHost;
 class SkeletonHost;
 } // namespace engine::scene
 
@@ -275,6 +276,9 @@ public:
     // system is built by `WorldHost::boot`, which happens after the overlay
     // exists, and it is replaced whenever the world is.
     void setSkeleton(const scene::SkeletonHost* skeleton) noexcept;
+    // And a mesh's shape keys, for the sliders Properties shows for one (ADR
+    // 0196). Set with it, every frame, for the same reason.
+    void setMorphs(scene::MorphHost* morphs) noexcept;
 
     // **Play starts on an empty console** (the owner: "the console should clear
     // when I press play"): what the last session printed is not what this one

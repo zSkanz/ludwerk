@@ -72,6 +72,13 @@ void resetLogSink();
 // Flushes and closes it. Idempotent, and safe without a preceding open.
 void closeLogFile() noexcept;
 
+// **What was said before the file could be opened**, written into it as it
+// stands -- lines already formatted, each with its own end. A start-up says
+// things before it knows where its log goes (its options, its project file),
+// and a log that began at the line after the one that mattered is the log of
+// another run. Nothing where no file is open.
+void appendToLogFile(std::string_view text) noexcept;
+
 void log(LogLevel level, TextKey key, std::span<const I18nArg> args = {});
 
 // Verbatim passthrough for text that did NOT originate in the engine: script

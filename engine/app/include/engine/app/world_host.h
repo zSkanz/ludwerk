@@ -589,6 +589,11 @@ public:
         return m_animation ? &*m_animation : nullptr;
     }
 
+    // A mesh's morph targets and their weights (ADR 0196), for the editor's
+    // sliders: the same system, through the seam a script's
+    // `MeshPart:SetMorphWeight` goes through. Null before `boot`.
+    [[nodiscard]] scene::MorphHost* morphs() noexcept { return m_animation ? &*m_animation : nullptr; }
+
     // **A frame of the world's capes, tails and hair** (ADR 0194), before the
     // frame is extracted: stepped from the pose and the drawn place of each
     // body, and presented to the renderer alone. Nothing the simulation reads

@@ -1,0 +1,15 @@
+# The face example's project file: it loads a model, and a model is found
+# under `content/`, which a project.toml is what makes of a folder.
+
+[project]
+name = "Ludwerk Face"
+id = "dev.ludwerk.face"
+version = "1.0.0"
+engine = "0.1"
+# The busts and their stands are a scene on disk, so the example opens in the
+# editor with them; the script only moves two of the faces.
+scene = "scenes/face.scene.json"
+
+[window]
+title = "Ludwerk — Face"
+size = [1600, 900]

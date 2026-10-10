@@ -12,6 +12,7 @@
 #include "engine/core/toml.h"
 #include "engine/core/toml_edit.h"
 #include "engine/platform/file.h"
+#include "engine/platform/platform.h"
 #include "engine/scene/localization.h"
 
 namespace engine::app {
@@ -250,7 +251,8 @@ void saySettings(GraphicsLayer& layer, const GraphicsSettings& settings)
 struct LevelExtras
 {
     f64 foliageDensity;
-    f64 textureQuality;
+    // (No texture quality: that is the machine's memory's to start, the same
+    // at every level -- `textureQualityForMemory`.)
     f64 anisotropicFiltering;
     f64 lodBias;
     f64 maximumLodLevel;
@@ -260,14 +262,34 @@ struct LevelExtras
     f64 level;
 };
 constexpr std::array<LevelExtras, scene::kQualityPresets> Extras{{
-    {0.5, 0.0, 2.0, 0.5, 1.0, 16384.0, 0.0, 2.0, 0.0},
-    {0.75, 1.0, 4.0, 0.75, 0.0, 32768.0, 1.0, 4.0, 1.0},
-    {1.0, 2.0, 8.0, 1.0, 0.0, 65536.0, 1.0, 4.0, 2.0},
-    {1.0, 2.0, 16.0, 1.5, 0.0, 131072.0, 1.0, 4.0, 3.0},
+    {0.5, 2.0, 0.5, 1.0, 16384.0, 0.0, 2.0, 0.0},
+    {0.75, 4.0, 0.75, 0.0, 32768.0, 1.0, 4.0, 1.0},
+    {1.0, 8.0, 1.0, 0.0, 65536.0, 1.0, 4.0, 2.0},
+    {1.0, 16.0, 1.5, 0.0, 131072.0, 1.0, 4.0, 3.0},
 }};
+
+} // namespace
+
+core::i32 textureQualityForMemory(core::u64 systemMemoryBytes) noexcept
+{
+    constexpr core::u64 GiB = 1024ull * 1024ull * 1024ull;
+    if (systemMemoryBytes == 0)
+        return 2;
+    return systemMemoryBytes < 3 * GiB ? 0 : systemMemoryBytes < 5 * GiB ? 1 : 2;
+}
+
+core::u32 textureSkipOf(const scene::GraphicsModel& model) noexcept
+{
+    const f64 quality = std::clamp(model.effective(GraphicsSetting::TextureQuality), 0.0, 2.0);
+    return 2u - static_cast<core::u32>(std::lround(quality));
+}
+
+namespace {
 
 void seedPresets(scene::GraphicsModel& model, bool handheld)
 {
+    // By this machine's memory, the same for every level (D609).
+    const f64 textureQuality = static_cast<f64>(textureQualityForMemory(platform::systemMemoryBytes()));
     for (usize index = 0; index < scene::kQualityPresets; ++index) {
         GraphicsLayer& layer = model.presets[index];
         layer = GraphicsLayer{};
@@ -276,7 +298,7 @@ void seedPresets(scene::GraphicsModel& model, bool handheld)
         // A shadow quality is one past the level: zero is off.
         say(layer, GraphicsSetting::ShadowQuality, static_cast<f64>(index) + 1.0);
         say(layer, GraphicsSetting::FoliageDensity, extras.foliageDensity);
-        say(layer, GraphicsSetting::TextureQuality, extras.textureQuality);
+        say(layer, GraphicsSetting::TextureQuality, textureQuality);
         say(layer, GraphicsSetting::AnisotropicFiltering, extras.anisotropicFiltering);
         say(layer, GraphicsSetting::LODBias, extras.lodBias);
         say(layer, GraphicsSetting::MaximumLODLevel, extras.maximumLodLevel);

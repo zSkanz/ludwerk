@@ -96,6 +96,14 @@ void noteScriptError(std::string_view message);
 // This run is ending because it was asked to. Idempotent.
 void endRun() noexcept;
 
+// **Whether this run has put a frame in front of anybody.** Until it has, a
+// process that ends has shown its player nothing at all -- no window, or an
+// empty one -- and whatever ends it then owes them a sentence
+// (`app`'s start report). Said once by the frame loop, after its first
+// present; asked by whoever is about to end the process.
+void noteFirstFrame() noexcept;
+[[nodiscard]] bool firstFrameShown() noexcept;
+
 // --- For tests: the record's own text ---------------------------------------
 
 // The record and the report of a log at `log`: `engine.log` keeps

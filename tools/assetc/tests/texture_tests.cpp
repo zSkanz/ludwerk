@@ -245,3 +245,62 @@ TEST_CASE("an image with no pixels is refused rather than encoded")
     CHECK(error->message.find("asset.texture.err.encode_failed") != std::string::npos);
     CHECK(out.empty());
 }
+
+TEST_CASE("D609: a texture is taken without its largest levels, and never under the floor")
+{
+    // `GraphicsService.TextureQuality`: what a machine short of memory loads
+    // of a texture. The smaller texture is a texture in its own right -- its
+    // own width, its own first level -- and is exactly the level the whole
+    // one has there, since nothing is resampled: the levels were made by the
+    // compiler and one of them is simply where this begins.
+    seedRealCatalog();
+
+    const engine::asset::Image source = testImage(256, false);
+    std::vector<std::byte> ktx2;
+    REQUIRE_FALSE(engine::assetc::encodeTexture(source, true, ktx2).has_value());
+
+    engine::asset::TranscodeOptions options;
+    options.forceUncompressed = true;
+    engine::asset::TextureAsset whole;
+    REQUIRE_FALSE(engine::asset::transcodeTexture(ktx2, options, whole).has_value());
+    REQUIRE(whole.width == 256);
+    REQUIRE(whole.mips.size() >= 4);
+    CHECK(whole.skippedLevels == 0);
+
+    options.skipLevels = 1;
+    engine::asset::TextureAsset half;
+    REQUIRE_FALSE(engine::asset::transcodeTexture(ktx2, options, half).has_value());
+    CHECK(half.width == 128);
+    CHECK(half.height == 128);
+    CHECK(half.skippedLevels == 1);
+    REQUIRE(half.mips.size() == whole.mips.size() - 1);
+    CHECK(half.mips[0].width == 128);
+    CHECK(half.mips[0].offset == 0);
+    // Byte for byte the whole one's second level, and every level after it.
+    REQUIRE(half.pixels.size() == whole.pixels.size() - whole.mips[0].size);
+    CHECK(std::equal(half.pixels.begin(), half.pixels.end(),
+                     whole.pixels.begin() + static_cast<std::ptrdiff_t>(whole.mips[1].offset)));
+
+    options.skipLevels = 2;
+    engine::asset::TextureAsset quarter;
+    REQUIRE_FALSE(engine::asset::transcodeTexture(ktx2, options, quarter).has_value());
+    CHECK(quarter.width == 64);
+    CHECK(quarter.skippedLevels == 2);
+
+    // Asked for more than that, it stops at the floor: 64 on the longer side.
+    options.skipLevels = 6;
+    engine::asset::TextureAsset floored;
+    REQUIRE_FALSE(engine::asset::transcodeTexture(ktx2, options, floored).has_value());
+    CHECK(floored.width == engine::asset::TranscodeOptions::SkipFloor);
+    CHECK(floored.skippedLevels == 2);
+
+    // And a texture already that small is taken whole.
+    const engine::asset::Image icon = testImage(64, false);
+    std::vector<std::byte> small;
+    REQUIRE_FALSE(engine::assetc::encodeTexture(icon, true, small).has_value());
+    options.skipLevels = 2;
+    engine::asset::TextureAsset kept;
+    REQUIRE_FALSE(engine::asset::transcodeTexture(small, options, kept).has_value());
+    CHECK(kept.width == 64);
+    CHECK(kept.skippedLevels == 0);
+}

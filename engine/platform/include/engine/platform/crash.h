@@ -51,6 +51,18 @@ namespace engine::platform {
 // Returns false when the platform support is unavailable, which is not fatal.
 [[nodiscard]] bool installCrashHandler(const std::filesystem::path& directory);
 
+// **What a crash says to the person in front of the machine**, after its dump
+// and its note are written: a system dialog with this title and this text. A
+// game opened by a double click that dies on a fault otherwise closes with
+// nothing on the screen, and the report is in a folder its player has never
+// heard of. The words are handed over ready -- from the catalogue, with the
+// folder in them -- because the handler that shows them may format nothing.
+// An empty text is no dialog, which is what a run somebody is reading the
+// output of, and one with no window, ask for.
+//
+// Windows only. A signal handler elsewhere may not open a window.
+void setCrashNotice(std::string_view title, std::string_view text);
+
 // The path the handler WOULD write to, so a host can print it at startup. A
 // crash artifact nobody knows the name of is a crash artifact nobody sends.
 [[nodiscard]] std::filesystem::path crashArtifactPath();

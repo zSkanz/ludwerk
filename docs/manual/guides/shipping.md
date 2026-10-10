@@ -286,6 +286,42 @@ game's own folder under the user's application data
 opens with no permission asked. The engine uploads nothing and shows
 nothing: what you do with the path is yours, and so is whether to ask.
 
+## When the game does not open
+
+The report nobody can act on is "it didn't open". What a start leaves behind,
+and what a player sees, for each way a game can end before anybody has seen a
+frame of it:
+
+| How it ended | What the player sees | What is left to send |
+| --- | --- | --- |
+| A failure the engine found: no graphics device, a project it cannot read, content that is not there | A dialog with the errors and where the log is | The log, which begins with what ran and what it was asked |
+| The same, too early for a log: a missing catalogue, a mistyped flag in a shortcut | The same dialog | A start log in the system's temporary folder (`<temp>/ludwerk-start/start-<process>.log`), named in the dialog |
+| A failure that gave no reason | A dialog with its exit code | The log |
+| A fault: an invalid access, `abort`, an exception nothing caught | On Windows, a dialog saying it stopped and where its report is | A dump and a note beside the log; `RunService:GetLastRun()` says `Crashed` on the next run |
+| Something else ended it from inside: a library or a driver calling `exit` | A dialog, when no frame had been shown | A line in the log saying so |
+| It was closed before its first frame with nothing wrong | Nothing: its player closed it, or its script did | A line in the log saying so |
+
+**What the engine cannot answer for**, because the process is gone before any
+of its code runs again. These are the starts that still leave nothing on the
+screen:
+
+- **It was ended from outside**: the task manager, an antivirus, the system
+  wanting memory, the power. And a driver that ends the process directly, or
+  the system stopping it for a corrupted stack or heap (`__fastfail`), which
+  no handler in a process may catch. The next run's `GetLastRun()` says
+  `Unfinished`, and the log of the run that died stops where it died.
+- **It never started**: a system library the machine lacks (Windows shows its
+  own dialog), a file the antivirus removed, SmartScreen refusing an unsigned
+  program.
+- **A fault with no stack left to report it on**: a stack that overflowed can
+  end the process before the handler gets a turn.
+- **Outside Windows a fault shows no dialog.** The note is written; a signal
+  handler may not open a window.
+
+A dialog is shown only where there is a window and nobody is reading the
+program's output: started from a terminal, or by a test, a game says what it
+has to say there and opens nothing.
+
 ## When a player's picture is wrong
 
 A game draws through the graphics API its system does best: Direct3D 12 on

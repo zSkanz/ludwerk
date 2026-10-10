@@ -79,9 +79,30 @@ middle of a refresh tears there, as in every engine. Where the backend cannot
 tear, the newest frame is shown on each refresh instead. The log names the
 present mode and the driver each time the sync is set.
 
+**How much of a texture is loaded.** `TextureQuality` is `High` for all of
+each texture, `Medium` for half its size and a quarter of its memory, `Low`
+for a quarter and a sixteenth. **It starts at what the machine's memory can
+hold, not at the quality level**: `Low` on a machine with under three
+gigabytes, `Medium` under five, `High` above -- so a phone with twelve
+gigabytes at the `Medium` level keeps its textures whole, and one with two
+does not load what it cannot hold. A game or a player sets another, and the
+project file's `texture_quality` does for everybody.
+
+It is the world's compiled textures: a material's maps, a model's own images,
+decals and particles. **What is drawn at its own size is never reduced** -- a
+sprite, a tileset, a block world's faces, the interface -- and no texture is
+taken under 64 pixels. A change applies to what is loaded after it: set it
+before the scene that should use it. The frame report says when a machine is
+loading less than all of its textures, and how many.
+
+The interface's own pictures have a budget by the same memory (64 MiB on a
+phone with two gigabytes, 256 on a machine with eight): past it, the pictures
+not shown for longest leave the graphics card and are loaded again when a
+screen shows them. Nothing on the screen is ever among them.
+
 **What is drawn by yet.** A few settings are kept, saved and reported ahead of
 the renderer that reads them, so a menu written today does not change shape:
-`ViewDistance`, `TextureQuality`, `AnisotropicFiltering`, `LODBias`,
+`ViewDistance`, `AnisotropicFiltering`, `LODBias`,
 `MaximumLODLevel`, `ParticleBudget`, `SoftParticles`, `SkinWeights`,
 `TextureStreamingBudget`, `AsyncUploadBudget`, `MotionBlur`, `FogQuality`,
 `GlobalIllumination`, `Reflections` and `Brightness`. `IsApplied(name)` says

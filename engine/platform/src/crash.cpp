@@ -61,6 +61,22 @@ std::string& notePath() noexcept
 }
 
 #ifdef _WIN32
+// What a crash says on the screen (`setCrashNotice`), made ready before
+// anything went wrong, for the same reason the paths above are.
+std::wstring& crashNoticeTitle() noexcept
+{
+    static std::wstring title;
+    return title;
+}
+
+std::wstring& crashNoticeText() noexcept
+{
+    static std::wstring text;
+    return text;
+}
+#endif
+
+#ifdef _WIN32
 
 // The exception codes worth naming. A number is a thing to look up; a name is a
 // thing to read, and the difference decides whether the person who receives the
@@ -306,6 +322,13 @@ void writeDumpAndNote(EXCEPTION_POINTERS* exception, const char* headline) noexc
     // The dump is safe on disk; everything from here is best-effort, and a note
     // that comes out short is still a note somebody can read without a debugger.
     writeNote(headline, exception);
+
+    // And a word to whoever is looking at where the game was
+    // (`setCrashNotice`): the text was made before any of this happened.
+    if (!crashNoticeText().empty()) {
+        (void)::MessageBoxW(nullptr, crashNoticeText().c_str(), crashNoticeTitle().c_str(),
+                            MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST | MB_TASKMODAL);
+    }
 }
 
 LONG WINAPI writeMinidump(EXCEPTION_POINTERS* exception) noexcept
@@ -422,6 +445,28 @@ bool installCrashHandler(const std::filesystem::path& directory)
     for (const int signalNumber : {SIGSEGV, SIGABRT, SIGFPE, SIGILL, SIGBUS})
         ::signal(signalNumber, &writeSignalNote);
     return true;
+#endif
+}
+
+void setCrashNotice(std::string_view title, std::string_view text)
+{
+#ifdef _WIN32
+    const auto wide = [](std::string_view utf8) {
+        std::wstring out;
+        if (utf8.empty())
+            return out;
+        const int length = ::MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+        if (length <= 0)
+            return out;
+        out.resize(static_cast<std::size_t>(length));
+        (void)::MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), out.data(), length);
+        return out;
+    };
+    crashNoticeTitle() = wide(title);
+    crashNoticeText() = wide(text);
+#else
+    (void)title;
+    (void)text;
 #endif
 }
 

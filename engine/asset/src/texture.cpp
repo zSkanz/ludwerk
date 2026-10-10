@@ -167,7 +167,24 @@ std::optional<core::EngineError> transcodeTexture(std::span<const std::byte> ktx
     }
 
     const u32 declaredLevels = transcoder.get_levels();
-    const u32 levels = options.baseLevelOnly ? 1u : (declaredLevels > 0 ? declaredLevels : 1u);
+    const u32 fileLevels = declaredLevels > 0 ? declaredLevels : 1u;
+    // **The largest levels left out** (`TranscodeOptions::skipLevels`): as
+    // many as asked while a level is left and the one that becomes the first
+    // is not under the floor.
+    u32 first = 0;
+    while (first < options.skipLevels && first + 1 < fileLevels) {
+        basist::ktx2_image_level_info next{};
+        if (!transcoder.get_image_level_info(next, first + 1, 0, 0)) {
+            return core::makeError(ENG_TR("asset.texture.err.malformed"));
+        }
+        if (std::max(next.m_orig_width, next.m_orig_height) < TranscodeOptions::SkipFloor)
+            break;
+        ++first;
+        out.width = next.m_orig_width;
+        out.height = next.m_orig_height;
+    }
+    out.skippedLevels = first;
+    const u32 levels = options.baseLevelOnly ? 1u : fileLevels - first;
     const basist::transcoder_texture_format target = toBasis(out.format);
     const bool blocks = isBlockCompressed(out.format);
 
@@ -175,7 +192,7 @@ std::optional<core::EngineError> transcodeTexture(std::span<const std::byte> ktx
     out.mips.reserve(levels);
     for (u32 level = 0; level < levels; ++level) {
         basist::ktx2_image_level_info info{};
-        if (!transcoder.get_image_level_info(info, level, 0, 0)) {
+        if (!transcoder.get_image_level_info(info, first + level, 0, 0)) {
             return core::makeError(ENG_TR("asset.texture.err.malformed"));
         }
         TextureMip mip;
@@ -194,7 +211,7 @@ std::optional<core::EngineError> transcodeTexture(std::span<const std::byte> ktx
         // name says and it differs by format, which is the one thing easy to
         // get wrong here: blocks for a block format, PIXELS for RGBA.
         const u32 capacity = blocks ? blocksAcross(mip.width) * blocksAcross(mip.height) : mip.width * mip.height;
-        if (!transcoder.transcode_image_level(level, 0, 0, out.pixels.data() + mip.offset, capacity, target)) {
+        if (!transcoder.transcode_image_level(first + level, 0, 0, out.pixels.data() + mip.offset, capacity, target)) {
             const I18nArg args[] = {{"format", textureFormatName(out.format)}};
             return core::makeError(ENG_TR("asset.texture.err.transcode_failed"), args);
         }

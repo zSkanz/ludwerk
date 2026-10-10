@@ -1664,3 +1664,130 @@ TEST_CASE("local guests own independent intents and directed remote replies with
     fixture.world->engineState().networkTopology = scene::NetworkTopology::Replica;
     CHECK(fixture.failure(R"(assert(game:GetService("NetworkService"):AddLocalPlayer() == nil))") == "");
 }
+
+// --- Local players: what ADR 0195 owed ---------------------------------------
+
+TEST_CASE("ADR 0195: a guest is added only where nothing is on the wire")
+{
+    // As a host and as a dedicated server it is `nil`, not an error, as it is
+    // on a replica: a match is several players on one machine or several
+    // machines, never both. Alone again, the same call answers a player.
+    Fixture fixture;
+    REQUIRE(fixture.failure(R"(game:GetService("NetworkService"))") == "");
+    const auto service = scene::networkServiceOf(*fixture.world, fixture.runtime->dataModel());
+    REQUIRE(service.valid());
+    (void)scene::createPlayer(*fixture.world, service, 1, true);
+
+    for (const scene::NetworkTopology wired : {scene::NetworkTopology::Host, scene::NetworkTopology::Dedicated}) {
+        fixture.world->engineState().networkTopology = wired;
+        CHECK(fixture.failure(R"(
+            local net = game:GetService("NetworkService")
+            assert(net:AddLocalPlayer() == nil)
+            assert(#net:GetLocalPlayers() == 1)
+        )") == "");
+    }
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Solo;
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        local guest = net:AddLocalPlayer()
+        assert(guest ~= nil and #net:GetLocalPlayers() == 2)
+    )") == "");
+}
+
+TEST_CASE("ADR 0195: a guest is in the world's hash")
+{
+    // Its `UserId`, that it is local, and what it is holding: a world with a
+    // second player at the table is not the world without one, and two
+    // machines that disagree about it must not agree about the hash.
+    Fixture fixture;
+    REQUIRE(fixture.failure(R"(game:GetService("NetworkService"))") == "");
+    const auto service = scene::networkServiceOf(*fixture.world, fixture.runtime->dataModel());
+    REQUIRE(service.valid());
+    (void)scene::createPlayer(*fixture.world, service, 1, true);
+    const core::u64 alone = fixture.world->worldHash();
+
+    REQUIRE(fixture.failure(R"(
+        local guest = game:GetService("NetworkService"):AddLocalPlayer()
+        guest.Name = "Guest"
+        local context = Instance.new("InputContext")
+        context.Name = "GuestSeat"
+        context.Player = guest
+        context.Parent = game:GetService("InputService")
+        local move = Instance.new("InputAction")
+        move.Name = "Move"
+        move.Type = Enum.InputActionType.Direction2D
+        move.Parent = context
+    )") == "");
+    const core::u64 seated = fixture.world->worldHash();
+    CHECK(seated != alone);
+
+    // And its intent is in it: the same guest, pushing its stick.
+    fixture.world->inputActions().forEach(
+        [](core::InstanceId, scene::InputActionComponent& action) { action.axis = core::Vec3{1.0f, 0.0f, 0.0f}; });
+    scene::captureLocalIntents(*fixture.world);
+    CHECK(fixture.world->worldHash() != seated);
+}
+
+TEST_CASE("ADR 0195: FireAllClients arrives once at a machine with a guest, and an unreliable remote knows its players")
+{
+    Fixture fixture;
+    REQUIRE(fixture.failure(R"(game:GetService("NetworkService"))") == "");
+    const auto service = scene::networkServiceOf(*fixture.world, fixture.runtime->dataModel());
+    REQUIRE(service.valid());
+    (void)scene::createPlayer(*fixture.world, service, 1, true);
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        local guest = net:AddLocalPlayer()
+        guest.Name = "Guest"
+        game:SetAttribute("All", 0)
+        game:SetAttribute("AllAsGuest", 0)
+
+        local round = Instance.new("RemoteEvent")
+        round.Name = "Round"
+        round.Parent = workspace
+        round.ClientReceived:Connect(function(value)
+            assert(value == "starts")
+            game:SetAttribute("All", game:GetAttribute("All") + 1)
+        end)
+        round.LocalClientReceived:Connect(function()
+            game:SetAttribute("AllAsGuest", game:GetAttribute("AllAsGuest") + 1)
+        end)
+        round:FireAllClients("starts")
+
+        -- The unreliable kind, the same three ways: the guest speaks and is
+        -- heard as itself, is answered as itself, and the primary's answer
+        -- stays the primary's.
+        local aim = Instance.new("UnreliableRemoteEvent")
+        aim.Name = "Aim"
+        aim.Parent = workspace
+        aim.ServerReceived:Connect(function(player, value)
+            assert(player == guest and value == "left")
+            game:SetAttribute("Heard", true)
+            aim:FireClient(player, "seen")
+            aim:FireClient(net.LocalPlayer, "primary")
+        end)
+        aim.LocalClientReceived:Connect(function(player, value)
+            assert(player == guest and value == "seen")
+            game:SetAttribute("GuestAnswered", true)
+        end)
+        aim.ClientReceived:Connect(function(value)
+            assert(value == "primary")
+            game:SetAttribute("PrimaryAnswered", true)
+        end)
+        aim:FireServerFor(guest, "left")
+        assert(not pcall(function() aim:FireServerFor(workspace, "forged") end))
+    )") == "");
+    for (int pass = 0; pass < 4; ++pass) {
+        engine::script::fireRemoteMessages(fixture.runtime->state());
+        fixture.tick();
+    }
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(
+        -- Once: a guest is a second player at this machine, not a second machine.
+        assert(game:GetAttribute("All") == 1, `FireAllClients arrived {game:GetAttribute("All")} times`)
+        assert(game:GetAttribute("AllAsGuest") == 0)
+        assert(game:GetAttribute("Heard") == true)
+        assert(game:GetAttribute("GuestAnswered") == true)
+        assert(game:GetAttribute("PrimaryAnswered") == true)
+    )") == "");
+}

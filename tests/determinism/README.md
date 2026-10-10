@@ -98,3 +98,21 @@ changed every instance id after them, which changed the hash — correctly.
 |---|---|---|
 | `churn` | 10,000 | The gate. Built backwards from R10's list: seeded RNG, slot reuse through destroy/recreate, reparenting within a sibling chain, tag iteration, deferred handlers that raise more deferred work, and CFrame composition accumulated tick over tick. |
 | `example01` | 900 | `examples/01-instances`, so the milestone's own deliverable cannot rot silently. It is the cheapest gate that proves the example still builds its tree and evolves reproducibly, and unlike a pixel golden it needs no GPU and holds on every tier. |
+
+## Two controllers
+
+A line of `inputs.txt` may say which controller it is of, with `@<id>` after
+it (ADR 0195):
+
+```
+10 + Controller @2          # plugged in, saying nothing yet
+60 = LeftStickX 1 @2        # its stick, and nobody else's
+150 + ButtonSouth @2
+220 - Controller @2         # unplugged, whatever it was holding
+```
+
+That is the controller's own state -- what an `InputContext` with that
+`GamepadId` reads. What a context reading every controller sees follows from
+it as it does from devices: a button is held when any controller holds it, an
+axis is the one pushed furthest. A line with no `@` is every controller's and
+nobody's in particular, as before. `coop/` is the scenario that uses it.

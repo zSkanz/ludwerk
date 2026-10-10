@@ -602,3 +602,70 @@ TEST_CASE("a new glyph sends the rows it was written on, not the atlas")
     ui::resetGlyphCache();
     ui::setFaceProvider(nullptr, nullptr);
 }
+
+TEST_CASE("D609: the interface's pictures keep to a budget, and one let go comes back when it is asked for")
+{
+    // A game's menus name hundreds of pictures over an evening and show a
+    // handful at a time. Every one of them used to stay on the graphics card
+    // until the engine closed. Eight screens here, a picture each, shown one
+    // after another under a HUD that is always up -- and a budget with room
+    // for three and a half pictures.
+    Fixture fixture;
+    fixture.pictures(8, false, 256);
+    UiText text;
+    text.setMounts(&fixture.mounts);
+    const auto name = [](int index) { return "asset://picture-" + std::to_string(index) + ".png"; };
+    const auto show = [&](std::initializer_list<int> pictures, int frames) {
+        for (int frame = 0; frame < frames; ++frame) {
+            for (const int index : pictures)
+                (void)resolves(text, name(index));
+            text.sync(*fixture.device, *fixture.cmd);
+        }
+    };
+
+    // With no budget nothing is ever let go: the first three, then gone from
+    // the screen for a while, are all still there.
+    show({0, 1, 2}, 3);
+    show({}, 10);
+    REQUIRE(text.imagesHeld() == 3);
+    CHECK(text.imagesReleased() == 0);
+    const core::u64 one = text.imageBytes() / 3;
+    REQUIRE(one > 256u * 256u * 4u);
+
+    ui::ResolvedImage first{};
+    REQUIRE(text.requestImage(name(1), first));
+
+    text.setImageBudget(one * 3 + one / 2);
+    for (int screen = 3; screen < 8; ++screen)
+        show({0, screen}, 4);
+    show({0, 7}, 2);
+
+    // It fits, and what is on the screen is among what was kept.
+    CHECK(text.imageBytes() <= text.imageBudget());
+    CHECK(text.imagesHeld() <= 3);
+    CHECK(text.imagesReleased() >= 5);
+    CHECK(resolves(text, name(0)));
+    CHECK(resolves(text, name(7)));
+
+    // The second picture was let go long ago. Asked for again it is not
+    // there this frame, is loaded as it was the first time, and is the same
+    // number to the interface that it always was.
+    ui::ResolvedImage again{};
+    CHECK_FALSE(text.requestImage(name(1), again));
+    show({0, 1}, 2);
+    REQUIRE(text.requestImage(name(1), again));
+    CHECK(again.texture == first.texture);
+    CHECK(again.width == 256);
+    CHECK(text.imageBytes() <= text.imageBudget());
+
+    // What a machine is given: a thirty-second of its memory, between 48 MiB
+    // and 512.
+    constexpr core::u64 GiB = 1024ull * 1024ull * 1024ull;
+    CHECK(UiText::imageBudgetFor(2 * GiB) == 64ull * 1024 * 1024);
+    CHECK(UiText::imageBudgetFor(8 * GiB) == 256ull * 1024 * 1024);
+    CHECK(UiText::imageBudgetFor(1 * GiB) == 48ull * 1024 * 1024);
+    CHECK(UiText::imageBudgetFor(64 * GiB) == 512ull * 1024 * 1024);
+    CHECK(UiText::imageBudgetFor(0) == 256ull * 1024 * 1024);
+
+    text.destroy(*fixture.device);
+}

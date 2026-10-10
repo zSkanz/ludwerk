@@ -7,8 +7,22 @@ one is that shape, and several add.
 
 A model's shape keys come in with it. A clip that animates their weights
 plays them, a script sets them by name, and the model is drawn in the shape
-they add up to -- lit, in the depth pass and in its shadow. Sliders in the
-editor are the stage after this one (ADR 0196).
+they add up to -- lit, in the depth pass and in its shadow.
+
+`examples/36-face` is three busts of one model: one talks by its clip, one
+smiles, frowns and blinks by a script, one is at rest.
+
+## In the editor
+
+Select a `MeshPart` whose model has shape keys: **Shape keys**, under its
+properties, has a slider for each, and the viewport follows as you drag. A
+slider runs from nought to one; hold Ctrl and click it to type any number.
+The small button beside it gives that key back to the clips and the file.
+
+**It is a preview.** A weight is not saved with the scene and is not undone:
+what a face does in the game is its clips' and its scripts' to say. A face
+that should REST in a smile is a model exported with that key's value above
+nought, which is kept.
 
 ## A blink from a script
 
@@ -47,11 +61,14 @@ replicated, not in a replay, not in a save.
   client script, where the part is drawn. A server's script that calls
   `SetMorphWeight` moves a face nobody is looking at, and the script check
   says so (`SetMorphWeight is a player's: this script runs on the server`).
-- **What a clip plays is seen by everybody**, with the game doing nothing: the
-  animation that plays it is replicated already, and each machine works the
-  same weights out for itself. A face that has to be seen talking by every
-  player is a clip on an `AnimationPlayer`, or a `RemoteEvent` that tells
-  each client to set it.
+- **What a clip plays is seen where the clip is played.** An animation is
+  not replicated either: a track plays on the machine whose script called
+  `Play`. A face that every player must see talking is played by a client
+  script, on every machine, as a character's walk is -- told to by something
+  that IS replicated: an attribute, a `CharacterBody`'s state, a
+  `RemoteEvent`. The clip is the better carrier of the two, because every
+  machine that plays it works the same weights out of it; a script's weights
+  would have to be sent a number at a time.
 
 ## Weights in a clip
 

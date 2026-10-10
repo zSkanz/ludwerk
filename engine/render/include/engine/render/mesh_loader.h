@@ -59,6 +59,24 @@ public:
     // support.
     void setTranscodeOptions(const asset::TranscodeOptions& options) noexcept { transcode_ = options; }
 
+    // **How many of its largest levels a texture of the world is loaded
+    // without** (`GraphicsService.TextureQuality`, D609): nought, one or two.
+    // For what is seen at a distance and filtered -- a material's maps, a
+    // model's own images, a decal, a particle -- and for those as the
+    // compiler made them, with their levels; a loose picture is taken whole.
+    //
+    // **Not for what is drawn at its own size**: a sprite, a tileset, a block
+    // world's faces, the sun and the moon. A pixel-art tileset at half its
+    // size is a different, blurred tileset. One of those that names a texture
+    // already loaded smaller for a material has it loaded again, whole.
+    //
+    // It is what is loaded FROM NOW ON: a texture already on the card keeps
+    // the size it came in at until it is loaded again.
+    void setTextureSkip(core::u32 levels) noexcept { textureSkip_ = levels; }
+    [[nodiscard]] core::u32 textureSkip() const noexcept { return textureSkip_; }
+    // How many textures are on the card smaller than their file.
+    [[nodiscard]] core::usize texturesReduced() const noexcept { return reduced_.size(); }
+
     // Loads every `MeshPart` content the world names and the library does not
     // yet hold. Call at the FrameStart safe point with a command list open and
     // no render pass: uploads are copies, and a copy cannot run inside a pass.
@@ -260,6 +278,18 @@ private:
     std::filesystem::path contentRoot_;
     const asset::ContentMounts* mounts_ = nullptr;
     asset::TranscodeOptions transcode_;
+    // The texture quality's levels to leave out, and the textures loaded
+    // without them, in id order (D609).
+    core::u32 textureSkip_ = 0;
+    std::vector<core::NameAtom> reduced_;
+    [[nodiscard]] asset::TranscodeOptions transcodeFor(bool whole) const noexcept
+    {
+        asset::TranscodeOptions options = transcode_;
+        options.skipLevels = whole ? 0u : textureSkip_;
+        return options;
+    }
+    void noteReduced(core::NameAtom urn, bool reduced);
+    [[nodiscard]] bool isReduced(core::NameAtom urn) const noexcept;
     bool primitivesUploaded_ = false;
     bool deferredTextures_ = false;
     bool deferredMeshes_ = false;
@@ -292,6 +322,9 @@ private:
         // Whether the image is a COLOUR -- a base colour, an emission, a block
         // face -- and so stored sRGB, as the compiler stores those.
         bool srgb = false;
+        // Asked for by something drawn at its own size: taken whole, whatever
+        // the texture quality (D609).
+        bool whole = false;
         platform::IoRequest read;
         jobs::JobHandle decode;
         std::unique_ptr<TextureWork> work;

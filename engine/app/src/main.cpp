@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <mutex>
 #include <optional>
@@ -98,6 +100,24 @@ struct StartReport
 #endif
     // A dialog of its own was shown already.
     bool told = false;
+
+    // **Everything said before the log file was open** (D608), as it was
+    // printed: a start-up reads its options and its project before it knows
+    // where its log goes, and what it said meanwhile used to be in no file at
+    // all. Written into the log when it opens, and into a file of its own
+    // when the process ends before there is one.
+    std::vector<std::string> early;
+    bool logOpen = false;
+    // `main` got its answer: the process is ending the way it means to.
+    bool ended = false;
+    // Its arguments say it is a tool's run -- a replay, a check -- whatever
+    // its options make of "headless".
+    bool tool = false;
+    // What is said if it ends another way -- something called `exit` -- made
+    // ready while the catalogue is still there to make it from.
+    std::string exitTitle;
+    std::string exitText;
+    std::string exitClose;
 };
 
 StartReport& startReport()
@@ -109,14 +129,22 @@ StartReport& startReport()
 void installConsoleLogSink()
 {
     engine::core::setLogSink([](LogLevel level, std::string_view text) {
-        if (level == LogLevel::Error) {
+        {
             StartReport& report = startReport();
             const std::lock_guard lock(report.guard);
-            // The last few: a failure's own line and the ones that led to it.
-            constexpr std::size_t Kept = 6;
-            if (report.errors.size() == Kept)
-                report.errors.erase(report.errors.begin());
-            report.errors.emplace_back(text);
+            if (level == LogLevel::Error) {
+                // The last few: a failure's own line and the ones that led to it.
+                constexpr std::size_t Kept = 6;
+                if (report.errors.size() == Kept)
+                    report.errors.erase(report.errors.begin());
+                report.errors.emplace_back(text);
+            }
+            // Until the file is open, the lines it will begin with. Bounded:
+            // a start-up says a few dozen things, and a run whose log never
+            // opens must not keep every line it ever prints.
+            constexpr std::size_t EarlyKept = 512;
+            if (!report.logOpen && report.early.size() < EarlyKept)
+                report.early.push_back(engine::core::formatLogLine(level, text));
         }
         // Warnings and errors go to stderr so a headless CI run can
         // separate them from ordinary output without parsing.
@@ -145,23 +173,101 @@ void reportCatalogFailure(const std::string& diagnostic)
 // reason was in a log nobody had. A system dialog then, with the errors and
 // where the log is. Not where somebody is reading the output, not for a run
 // with no window, and not for a lost device, which has a dialog of its own.
+//
+// **Every start that failed, not only one that left an error** (D608). It
+// said nothing for a failure that logged no error line, nothing for one that
+// came before the options were read -- a missing catalogue, a bad flag in a
+// shortcut -- because "is this a window" was not known yet and was taken for
+// no, and what such a start had printed was in no file. Now: the lines said
+// before the log opened are written to a file of their own when the process
+// ends without one, a failure with no error line says its exit code, and
+// whether a window was meant is read from the arguments from the first
+// instruction.
+// The folder a start writes to before it knows its own: the system's
+// temporary one, under the engine's name. Not a game's folder -- the game is
+// not known yet -- and not the engine's user folder, which a shipped game's
+// player has never heard of (D595).
+std::filesystem::path startFolder()
+{
+    std::error_code error;
+    std::filesystem::path folder = std::filesystem::temp_directory_path(error);
+    if (error)
+        return {};
+    folder /= std::string(ENG_BRAND_SHORT) + "-start";
+    std::filesystem::create_directories(folder, error);
+    return error ? std::filesystem::path{} : folder;
+}
+
+// What was said before any log was open, in a file: where a start that
+// failed too early for a log left its reasons. Empty when it could not.
+std::string writeStartLog(const std::vector<std::string>& lines)
+{
+    const std::filesystem::path folder = startFolder();
+    if (folder.empty() || lines.empty())
+        return {};
+    // The folder is the engine's own and nobody empties it: what is older
+    // than a week goes, so a machine that fails to start every day keeps a
+    // week of reasons and not a year of them.
+    std::error_code error;
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(folder, error)) {
+        const std::string name = entry.path().filename().string();
+        if (!name.starts_with("start-") || entry.path().extension() != ".log")
+            continue;
+        const auto age = std::filesystem::file_time_type::clock::now() - entry.last_write_time(error);
+        if (!error && age > std::chrono::hours(24 * 7))
+            std::filesystem::remove(entry.path(), error);
+    }
+    const std::filesystem::path path = folder / ("start-" + std::to_string(engine::platform::processId()) + ".log");
+    std::FILE* file = nullptr;
+#ifdef _WIN32
+    (void)::_wfopen_s(&file, path.c_str(), L"wb");
+#else
+    file = std::fopen(path.c_str(), "wb");
+#endif
+    if (file == nullptr)
+        return {};
+    for (const std::string& line : lines)
+        std::fwrite(line.data(), 1, line.size(), file);
+    std::fclose(file);
+    return path.string();
+}
+
 void sayStartFailure(int code)
 {
     StartReport& report = startReport();
     std::string body;
     {
         const std::lock_guard lock(report.guard);
-        if (code == kExitOk || code == kExitDeviceLost || report.told || !report.windowed || report.errors.empty())
+        if (code == kExitOk || code == kExitDeviceLost || report.told || !report.windowed)
             return;
+        // A start that ended before its log was open leaves one now.
+        if (!report.logOpen && report.logPath.empty())
+            report.logPath = writeStartLog(report.early);
+        const bool worded = code != kExitNoCatalog;
         for (const std::string& line : report.errors) {
             if (!body.empty())
                 body += "\n\n";
             body += line;
         }
-        if (!report.logPath.empty() && code != kExitNoCatalog) {
-            const std::array<I18nArg, 1> args{I18nArg{"path", report.logPath}};
-            body += "\n\n" + engine::core::engineCatalog().format(ENG_TR("engine.start.err.log"), args);
+        if (body.empty() && worded) {
+            // It failed and said nothing of why: its code, which is at least
+            // what somebody can be asked for.
+            const std::array<I18nArg, 1> args{I18nArg{"code", static_cast<engine::core::i64>(code)}};
+            body = engine::core::engineCatalog().format(ENG_TR("engine.start.err.no_reason"), args);
         }
+        if (!report.logPath.empty()) {
+            if (worded) {
+                const std::array<I18nArg, 1> args{I18nArg{"path", report.logPath}};
+                body += "\n\n" + engine::core::engineCatalog().format(ENG_TR("engine.start.err.log"), args);
+            }
+            else {
+                // No catalogue, no words: the path alone, under the one
+                // sentence this file may write by itself.
+                body += "\n\n" + report.logPath;
+            }
+        }
+        if (body.empty())
+            return;
     }
     if (!engine::platform::outputGoesUnread())
         return;
@@ -172,6 +278,63 @@ void sayStartFailure(int code)
     (void)engine::platform::askChoice(nullptr, worded ? text.format(ENG_TR("engine.start.err.title")) : std::string(),
                                       body,
                                       {worded ? text.format(ENG_TR("engine.start.err.close")) : std::string("OK")});
+}
+
+// **Whether these arguments are a run with no window**, from the arguments
+// alone: what "is a failure a window's" is taken to be until the options are
+// read properly (D608). A game opened by a double click has none of these; a
+// shortcut that carries `--gpu=vulkan` has none of these either, and it was
+// that start -- arguments, and a failure before they were parsed -- that
+// closed without a word.
+[[nodiscard]] bool runsWithNoWindow(int argc, char** argv)
+{
+    constexpr std::array<std::string_view, 16> Quiet{
+        "--headless",   "--serve",        "--version",           "--run-tests",    "--check-scripts", "--replay",
+        "--bench",      "--write-types",  "--import-",           "--partition",    "--save-scene",    "--capture-out",
+        "--two-worlds", "--replica-gate", "--reads-mesh-format", "--record-replay"};
+    for (int index = 1; index < argc; ++index) {
+        const std::string_view arg = argv[index];
+        for (const std::string_view quiet : Quiet) {
+            if (arg.starts_with(quiet))
+                return true;
+        }
+    }
+    return false;
+}
+
+// **The process is leaving, and `main` did not get its answer** (D608):
+// something called `exit` -- a library, a driver. Nothing of the engine's own
+// does. The log gets a line, and a player who has seen no frame gets a
+// dialog; the words were made ready while there was a catalogue to make them
+// from, because this runs while the program is being taken down.
+void onProcessExit()
+{
+    StartReport& report = startReport();
+    std::string title;
+    std::string text;
+    std::string close;
+    {
+        const std::lock_guard lock(report.guard);
+        if (report.ended || report.exitText.empty())
+            return;
+        title = report.exitTitle;
+        text = report.exitText;
+        close = report.exitClose;
+        if (!report.logOpen && report.logPath.empty()) {
+            report.early.push_back(text + "\n");
+            report.logPath = writeStartLog(report.early);
+        }
+        if (!report.logPath.empty())
+            text += "\n\n" + report.logPath;
+        if (!report.windowed || report.told)
+            close.clear();
+    }
+    engine::core::appendToLogFile(report.exitText + "\n");
+    std::fprintf(stderr, "%s\n", report.exitText.c_str());
+    std::fflush(stderr);
+    if (close.empty() || engine::core::firstFrameShown() || !engine::platform::outputGoesUnread())
+        return;
+    (void)engine::platform::askChoice(nullptr, title, text, {close});
 }
 
 void printVersion()
@@ -1083,6 +1246,39 @@ static int hostMain(int argc, char** argv)
     }
 #endif
     installConsoleLogSink();
+    {
+        // From the first instruction a failure is a window's or it is not
+        // (D608); the options, once read, say it properly.
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        report.tool = runsWithNoWindow(argc, argv);
+#if !defined(__ANDROID__)
+        report.windowed = !report.tool;
+#endif
+    }
+    // **The first line, before anything that can fail** (D608): what this
+    // is, which process, and what it was asked -- facts, so it needs no
+    // catalogue, which is the first thing below that can be missing. Kept
+    // for the log and not printed: a tool that reads this program's output
+    // reads what it asked for, and this is nobody's answer. A fault from
+    // here on leaves its dump in the start folder until the run knows its
+    // own.
+    {
+        std::string first = std::string(ENG_BRAND_SHORT) + " " + ENG_VERSION_STRING + " " + ENG_PROFILE_NAME + " | " +
+                            std::to_string(engine::platform::processId()) + " |";
+        for (int index = 0; index < argc; ++index)
+            first += std::string(" ") + argv[index];
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        report.early.push_back(engine::core::formatLogLine(LogLevel::Info, first));
+    }
+    if (const std::filesystem::path folder = startFolder(); !folder.empty())
+        (void)engine::platform::installCrashHandler(folder);
+    // After the report and the log's own state exist, so both outlive it:
+    // this runs while the program is taken down, in the reverse of the order
+    // things were made. (Writing nothing is what makes the log's state now.)
+    engine::core::appendToLogFile(std::string_view{});
+    (void)std::atexit(&onProcessExit);
     // Before anything that can run for long: a stop asked for from outside
     // closes the engine as `game:Shutdown()` would, close handlers and all.
     engine::platform::installStopSignals();
@@ -1092,6 +1288,15 @@ static int hostMain(int argc, char** argv)
     if (!catalogLoad) {
         reportCatalogFailure(catalogLoad.diagnostic);
         return kExitNoCatalog;
+    }
+    {
+        // What an exit nobody announced will say, while there are words.
+        const engine::core::Catalog& text = engine::core::engineCatalog();
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        report.exitTitle = text.format(ENG_TR("engine.start.err.title"));
+        report.exitText = text.format(ENG_TR("engine.start.err.exit_called"));
+        report.exitClose = text.format(ENG_TR("engine.start.err.close"));
     }
 
     std::vector<std::string_view> args;
@@ -1426,6 +1631,31 @@ static int hostMain(int argc, char** argv)
         logOpened = openBeside();
     }
     const bool handlerInstalled = engine::platform::installCrashHandler(artifactDir);
+    {
+        // **The log begins with what was said before it could be opened**
+        // (D608): the first line, the options' complaints, the project file's.
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        if (logOpened) {
+            std::string said;
+            for (const std::string& line : report.early)
+                said += line;
+            engine::core::appendToLogFile(said);
+            report.logOpen = true;
+            report.early.clear();
+            report.early.shrink_to_fit();
+        }
+    }
+    // **A fault says so on the screen** (D608), where there is a screen and
+    // nobody reading the output: a game opened by a double click that died on
+    // a fault closed with nothing, its report in a folder its player had
+    // never heard of.
+    if (handlerInstalled && !options.headless && engine::platform::outputGoesUnread()) {
+        const engine::core::Catalog& text = engine::core::engineCatalog();
+        const std::array<I18nArg, 1> crashedArgs{I18nArg{"folder", artifactDir.string()}};
+        engine::platform::setCrashNotice(text.format(ENG_TR("engine.crash.title")),
+                                         text.format(ENG_TR("engine.crash.text"), crashedArgs));
+    }
 
     // **What the run before this one left** (ADR 0187), read before this run
     // writes anything of its own beside it: how it ended, and its report --
@@ -1632,6 +1862,26 @@ static int hostMain(int argc, char** argv)
 int engineHostMain(int argc, char** argv)
 {
     const int code = hostMain(argc, argv);
+    {
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        report.ended = true;
+    }
+    // **An end before the first frame is written down, whatever its code**
+    // (D608): a window that never showed anything and a process that answered
+    // "fine" is the one start nobody can tell from a game that did not open.
+    // A line, not a dialog -- what ends a run that early with no error is its
+    // player closing it, or its own script.
+    if (code == kExitOk && !engine::core::firstFrameShown()) {
+        bool windowed = false;
+        {
+            StartReport& report = startReport();
+            const std::lock_guard lock(report.guard);
+            windowed = report.windowed && report.logOpen && !report.tool;
+        }
+        if (windowed)
+            engine::core::log(LogLevel::Info, ENG_TR("engine.start.info.ended_before_first_frame"));
+    }
     // It ended because it was asked to, whatever it has to say about how: the
     // record that the next run reads says so (ADR 0187). A run that never gets
     // here is one that did not end well.

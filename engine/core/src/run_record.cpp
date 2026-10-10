@@ -1,6 +1,7 @@
 // What the run before this one left behind. See run_record.h.
 #include "engine/core/run_record.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -355,6 +356,24 @@ void resetRunRecordForTest() noexcept
     s.scriptErrors = 0;
     s.firstScriptError.clear();
     s.writtenErrors = 0;
+}
+
+namespace {
+std::atomic<bool>& frameShown() noexcept
+{
+    static std::atomic<bool> shown{false};
+    return shown;
+}
+} // namespace
+
+void noteFirstFrame() noexcept
+{
+    frameShown().store(true, std::memory_order_relaxed);
+}
+
+bool firstFrameShown() noexcept
+{
+    return frameShown().load(std::memory_order_relaxed);
 }
 
 } // namespace engine::core

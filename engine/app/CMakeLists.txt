@@ -1127,6 +1127,18 @@ if(ENG_BUILD_TESTS)
             -P ${CMAKE_SOURCE_DIR}/tests/lastrun/run_last_run_gate.cmake)
     set_tests_properties(last_run_gate PROPERTIES TIMEOUT 300)
 
+    # **A start that fails leaves a trace, and a log begins at the beginning**
+    # (D608): a run refused for an option it does not have leaves a start log
+    # with what ran and why it stopped, and an ordinary run's log opens on the
+    # line written before anything could fail. See the driver. No device.
+    add_test(NAME start_trace
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/instancestride
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/start-trace
+            -P ${CMAKE_SOURCE_DIR}/tests/lastrun/run_start_trace.cmake)
+    set_tests_properties(start_trace PROPERTIES TIMEOUT 120)
+
     # ADR 0107: a mirror shows what a mirror would, and a portal what is
     # beyond it (`@engine/views`, `Camera.ClipPlane`).
     add_test(NAME mirrors_gate
@@ -1724,6 +1736,32 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 300)
 
+    # **The face example's faces move** (ADR 0196): three busts, one talking
+    # by its clip's weights, one moved by the script's `SetMorphWeight`, one
+    # at rest -- eight morph draws in the frame report, and no warning.
+    add_test(NAME shape_keys_example
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/examples/36-face
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_face_example.cmake)
+    set_tests_properties(shape_keys_example PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
+    # **A machine short of memory loads less of each texture, and only of the
+    # ones that can spare it** (D609): at `Low` a material's texture is on
+    # the card without its two largest levels, and a sprite's -- and one a
+    # sprite shares with a material -- is whole. See the driver.
+    add_test(NAME texture_quality_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/texturequality
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/texture-quality
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_texture_quality.cmake)
+    set_tests_properties(texture_quality_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
     # **The report's draws by kind add up to its total**, and name the kinds
     # the scene has. See the driver.
     add_test(NAME frame_report_draws_by_kind
@@ -2118,7 +2156,7 @@ if(ENG_BUILD_TESTS)
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
         editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived
         decal_blend_gate decal_receives_gate foliage_decal_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d
-        temporal_upscale_gate frame_generation_gate motion_whole_gate morph_landing)
+        temporal_upscale_gate frame_generation_gate motion_whole_gate morph_landing shape_keys_example texture_quality_gate)
     if(WIN32)
         list(APPEND drawn_tests morph_landing_vulkan)
     endif()

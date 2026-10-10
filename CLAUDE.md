@@ -29,7 +29,13 @@ export window and targets), `rename-kickoff.md` (ADR 0109: the brand becomes
 textures, `ViewportFrame`, sub-worlds), then `game-ready-plan.md` (ADRs 0111
 to 0123: saves, HTTPS, terrain materials, foliage, wind, water, the network
 service, encryption, editable primitives, video and parallel scripts, in five
-ledgers it orders), and `ai-kickoff.md` (ADR 0108, the MCP server and the AI panel). `PROGRESS.md` says where things stand, and it is the
+ledgers it orders), and `ai-kickoff.md` (ADR 0108, the MCP server and the AI panel).
+**Since 2026-10-10 the owner's order of work is `level-up-roadmap.md`**: nine
+categories built one whole category at a time, each with one full gate at its
+end -- animation (state machine, IK, retargeting), indirect light, cinematics,
+the editor's profiler and material nodes, physics (vehicles, mesh cloth,
+destruction), audio (occlusion, voice), the world (automatic LOD, occlusion
+culling), the web, and a package manager. `PROGRESS.md` says where things stand, and it is the
 file to trust when this paragraph and it disagree.
 
 ## Commands
@@ -157,7 +163,7 @@ RNG/unordered iteration; stable parallel commit) · R11 main always green ·
 R12 conventional commits · R13 never edit `third_party/` in place ·
 R14 out-of-tree builds only · R15 v1 scope closed, and post-v1 phases open one
 at a time by human decision (1 editor, 2 effects/world, 3 2D and navmesh, and 4
-multiplayer are OPEN; mobile is OPEN for Android since 2026-09-26, iOS is not; Xbox/UWP and local co-op are OPEN since 2026-10-09) · R16 interpreter-first perf (iOS has no
+multiplayer are OPEN; mobile is OPEN for Android since 2026-09-26, iOS is not; Xbox/UWP and local co-op are OPEN since 2026-10-09; the web is OPEN since 2026-10-10) · R16 interpreter-first perf (iOS has no
 JIT) · R17 no backend
 types in the public API · R18 rendering is judged against a stated reference,
 and visual fidelity is a v1 target (ADR 0038).
@@ -193,6 +199,11 @@ and visual fidelity is a v1 target (ADR 0038).
   **Xbox/UWP** (a Developer Mode player and the optional Xbox provider, ADRs
   0188, 0190, 0191, 0193) and **local co-op** (several players on one machine)
   opened on 2026-10-09 -- the owner tested both and opened them as built.
+  **The web** (a game that opens from a link) opened on 2026-10-10 -- the
+  owner, approving the nine-category roadmap
+  (`docs/briefs/level-up-roadmap.md`, its eighth) and saying so himself: "a
+  fase WEB ABERTA". iOS stays closed until he says: it needs his Mac and his
+  Apple account, which are his to give.
   Opening one is the owner's decision — taking it for them is what R15 actually
   forbids.
 - Do not put a proprietary SDK in the engine. One is allowed only as an

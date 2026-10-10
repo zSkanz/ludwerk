@@ -73,6 +73,9 @@ struct TextureAsset
     // Every mip level, tightly packed, largest first.
     std::vector<TextureMip> mips;
     std::vector<std::byte> pixels;
+    // How many larger levels the file had that were left out
+    // (`TranscodeOptions::skipLevels`); nought for a texture taken whole.
+    u32 skippedLevels = 0;
 
     [[nodiscard]] bool valid() const noexcept { return width > 0 && height > 0 && !mips.empty(); }
 };
@@ -115,6 +118,15 @@ struct TranscodeOptions
     // word unless the caller says. Last, so the options written by position
     // before it existed mean what they meant.
     bool allowAstc = deviceSamplesAstc();
+    // **How many of the largest levels to leave out** (`GraphicsService.
+    // TextureQuality`, D609): one is half the size and a quarter of the
+    // memory, two a quarter and a sixteenth. The texture that comes out IS
+    // the smaller one -- its width, its height, its first level -- so
+    // nothing after this knows a larger one existed. Never past the last
+    // level, and never to a texture smaller than `SkipFloor` on its longer
+    // side: an icon of 64 is not what fills a phone's memory.
+    u32 skipLevels = 0;
+    static constexpr u32 SkipFloor = 64;
 };
 
 // Reads a KTX2 blob and transcodes it. Bad input is an error rather than a

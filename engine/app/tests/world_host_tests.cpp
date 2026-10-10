@@ -5068,3 +5068,46 @@ TEST_CASE("ADR 0183: a sealed game's scripts are found, required and run out of 
     const app::ProjectConfig config = app::loadProjectConfig(project.root, {});
     CHECK(config.name == "Sealed Game");
 }
+
+TEST_CASE("ADR 0195: the players at a machine are still at it after a change of scene")
+{
+    // A second player joins in the menu and the game loads its level: the
+    // guest is a player of the SESSION, not a thing of the scene that was
+    // open, and a game whose couch emptied at every loading screen would have
+    // to seat everybody again each time. Its `UserId` is the one it had, and
+    // a context made in the new scene can be given to it.
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    project.write("src/client/flow.luau", R"(
+        local SceneService = game:GetService("SceneService")
+        local NetworkService = game:GetService("NetworkService")
+        local InputService = game:GetService("InputService")
+
+        local guest = NetworkService:AddLocalPlayer()
+        assert(guest ~= nil)
+        local id = guest.UserId
+        print(`before players:{#NetworkService:GetLocalPlayers()}`)
+
+        SceneService.SceneLoaded:Connect(function(path: string)
+            local seats = NetworkService:GetLocalPlayers()
+            local same = #seats == 2 and seats[2] == guest and seats[2].UserId == id
+            local context = Instance.new("InputContext")
+            context.Name = "GuestSeat"
+            context.Player = seats[2]
+            context.GamepadId = 2
+            context.Parent = InputService
+            print(`after:{path} players:{#seats} same:{same} seated:{context.Player == guest}`)
+        end)
+        SceneService:LoadScene("scenes/b.scene.json")
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(sceneOptions(project)).has_value());
+    for (int tick = 0; tick < 8; ++tick)
+        host.tick();
+
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("before players:2"));
+    CHECK(log.contains("after:scenes/b.scene.json players:2 same:true seated:true"));
+}

@@ -8,9 +8,9 @@
 // **A weight is picture, not simulation.** Nothing in the world's state reads
 // one: it is not in the hash, not replicated and not in a replay, and what a
 // script sets here is kept on the machine the script ran on and no other. A
-// clip's weight channels are different in the one way that matters -- the
-// animation that plays them is replicated already, so every machine works the
-// same weights out for itself.
+// clip's weight channels are no different in that -- a track plays where it
+// was played, and animation is not on the wire -- but every machine that
+// plays the same clip works the same weights out of it.
 //
 // **A target is named by its name.** The file may not have arrived when a
 // script first asks -- a mesh loads over frames -- and an index means nothing

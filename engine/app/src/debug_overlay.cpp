@@ -75,6 +75,7 @@
 #include "engine/rhi/sdlgpu_interop.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/enum_registry.h"
+#include "engine/scene/morph_host.h"
 #include "engine/scene/skeleton_host.h"
 #include "engine/scene/value.h"
 #include "engine/scene/water.h"
@@ -410,6 +411,8 @@ SurfaceCompiler* g_surfaceCompiler = nullptr;
 // branch of one switch can read it. Null is legal -- a build with no renderer
 // has no skeletons, and the field is then what it was before, a text box.
 const scene::SkeletonHost* g_skeleton = nullptr;
+// And a mesh's shape keys (ADR 0196), on the same terms.
+scene::MorphHost* g_morphs = nullptr;
 
 // What this person chose to look at the engine through (ADR 0056), and what the
 // display said when the window opened.
@@ -5525,6 +5528,69 @@ void drawAttributes(scene::World& world, Inspector& inspector, core::InstanceId 
 // script finds what a streamed world brought in, `TagService:GetTagged` is the
 // call, and until now the only way to put a tag on anything was to write a line
 // of Luau -- in a world whose whole point is that it is authored.
+// **A mesh's shape keys, a slider each** (ADR 0196): what an artist looks
+// at to know the keys came through, and what a designer drags to see a face.
+//
+// **A preview, and it says so.** A weight is not a property: it is not in the
+// world's state, not saved with the scene and not undone -- a clip or a
+// script sets it when the game runs. So this writes where a script's
+// `SetMorphWeight` writes, on this machine, and nothing goes through the
+// inspector's queue. A slider runs from nought to one because that is where
+// a key is made to be seen; typing a number into it (Ctrl and a click) takes
+// any, as the API does.
+void drawShapeKeys(core::InstanceId primary, std::span<const core::InstanceId> targets)
+{
+    if (g_morphs == nullptr || targets.size() != 1)
+        return;
+    const core::u32 count = g_morphs->morphTargetCount(primary);
+    if (count == 0)
+        return;
+    if (!propertiesSection(core::tr(ENG_TR("engine.editor.shape_keys.title"))))
+        return;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.shape_keys.preview_note")));
+    ImGui::PopTextWrapPos();
+
+    // A face has fifty of them: a filter above a dozen.
+    static std::array<char, 64> filter{};
+    if (count > 12) {
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputTextWithHint("##shape-key-filter", core::tr(ENG_TR("engine.editor.editor.filter")), filter.data(),
+                                 filter.size());
+    }
+    const std::string_view needle = count > 12 ? std::string_view(filter.data()) : std::string_view{};
+
+    if (!beginSectionGrid("shape-keys"))
+        return;
+    const float inner = ImGui::GetStyle().ItemInnerSpacing.x;
+    const float clearWidth = ImGui::GetFrameHeight();
+    for (core::u32 target = 0; target < count; ++target) {
+        // A copy: setting a weight may move what the name's view points into.
+        const std::string name(g_morphs->morphTargetName(primary, target));
+        if (!needle.empty() && !containsFold(name, needle))
+            continue;
+        ImGui::PushID(static_cast<int>(target));
+        sectionName(name);
+        ImGui::TableSetColumnIndex(1);
+        float weight = g_morphs->morphWeight(primary, name);
+        ImGui::SetNextItemWidth(-(clearWidth + inner));
+        if (ImGui::SliderFloat("##weight", &weight, 0.0f, 1.0f, "%.2f") && std::isfinite(weight))
+            g_morphs->setMorphWeight(primary, name, weight);
+        ImGui::SameLine(0.0f, inner);
+        if (ImGui::Button("x##clear", ImVec2(clearWidth, 0.0f)))
+            g_morphs->clearMorphWeight(primary, name);
+        ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.shape_keys.clear_tip")));
+        ImGui::PopID();
+    }
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(1);
+    if (ImGui::Button(core::tr(ENG_TR("engine.editor.shape_keys.clear_all")), ImVec2(-FLT_MIN, 0.0f))) {
+        for (core::u32 target = 0; target < count; ++target)
+            g_morphs->clearMorphWeight(primary, std::string(g_morphs->morphTargetName(primary, target)));
+    }
+    endSectionGrid();
+}
+
 void drawTags(scene::World& world, Inspector& inspector, core::InstanceId primary,
               std::span<const core::InstanceId> targets)
 {
@@ -6164,6 +6230,7 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, headingBg);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 2.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+        drawShapeKeys(primary, targets);
         drawAttributes(world, inspector, primary, targets);
         drawTags(world, inspector, primary, targets);
         ImGui::PopStyleVar(2);
@@ -17266,6 +17333,11 @@ void DebugOverlay::setSkeleton(const scene::SkeletonHost* skeleton) noexcept
     g_skeleton = skeleton;
 }
 
+void DebugOverlay::setMorphs(scene::MorphHost* morphs) noexcept
+{
+    g_morphs = morphs;
+}
+
 void DebugOverlay::handleEvents(std::span<const platform::Event> events)
 {
     if (!active_)
@@ -17519,6 +17591,9 @@ void DebugOverlay::clearConsole()
 {}
 
 void DebugOverlay::setSkeleton(const scene::SkeletonHost*) noexcept
+{}
+
+void DebugOverlay::setMorphs(scene::MorphHost*) noexcept
 {}
 
 void DebugOverlay::render(rhi::ICmdList&, rhi::TextureHandle, const Frame&)

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -149,13 +150,15 @@ std::optional<core::EngineError> loadScenario(const std::filesystem::path& direc
             input.tick = static_cast<u64>(std::strtoull(tickText.c_str(), nullptr, 10));
             input.down = edge == "+";
             input.analog = edge == "=";
-            input.keyCode = input::keyCodeFromName(keyName);
+            // `Controller` is the controller itself, arriving or leaving.
+            input.presence = keyName == "Controller";
+            input.keyCode = input.presence ? 0 : input::keyCodeFromName(keyName);
 
             // An analogue line carries a fourth field. `900 = LeftStickX -0.5`
             // is a stick held half left for as long as the recording says --
             // held, like a key, because an axis has a value rather than an
             // edge.
-            bool wellFormed = input.keyCode != 0 && (edge == "+" || edge == "-" || input.analog);
+            bool wellFormed = (input.keyCode != 0 || input.presence) && (edge == "+" || edge == "-" || input.analog);
             if (input.analog) {
                 std::string valueText;
                 if (fields >> valueText)
@@ -163,6 +166,24 @@ std::optional<core::EngineError> loadScenario(const std::filesystem::path& direc
                 else
                     wellFormed = false;
             }
+            // **Whose controller**, last on the line: `@2` (ADR 0195). Only a
+            // controller's own button or axis can be one controller's, and a
+            // controller arriving or leaving is always somebody's.
+            std::string owner;
+            if (fields >> owner) {
+                char* end = nullptr;
+                const unsigned long id =
+                    owner.size() > 1 && owner[0] == '@' ? std::strtoul(owner.c_str() + 1, &end, 10) : 0;
+                const bool numbered = id != 0 && end != nullptr && *end == '\0';
+                const bool ofAController = input.presence || input::gamepadButtonSlotOf(input.keyCode) >= 0 ||
+                                           input::gamepadAxisSlotOf(input.keyCode) >= 0;
+                if (numbered && ofAController)
+                    input.gamepad = static_cast<core::u32>(id);
+                else
+                    wellFormed = false;
+            }
+            if (input.presence && (input.gamepad == 0 || input.analog))
+                wellFormed = false;
 
             if (!wellFormed) {
                 // Refused rather than skipped. A recording with a typo in it
@@ -264,12 +285,60 @@ std::optional<core::EngineError> runScenario(const ReplayScenario& scenario, Rep
     for (u64 tick = 1; tick <= scenario.ticks; ++tick) {
         while (nextInput < scenario.inputs.size() && scenario.inputs[nextInput].tick <= tick) {
             const ReplayInput& recorded = scenario.inputs[nextInput];
-            const auto slot = static_cast<usize>(recorded.keyCode);
-            if (recorded.analog)
-                device.axis[slot] = recorded.value;
-            else
-                device.held[slot] = recorded.down;
             ++nextInput;
+            const auto slot = static_cast<usize>(recorded.keyCode);
+            if (recorded.gamepad == 0) {
+                if (recorded.analog)
+                    device.axis[slot] = recorded.value;
+                else
+                    device.held[slot] = recorded.down;
+                continue;
+            }
+            // **One controller's own** (ADR 0195): its state, kept in id
+            // order as a device's is, and from it what "any controller"
+            // reads -- held when any holds it, the axis pushed furthest.
+            auto pad = std::find_if(device.gamepads.begin(), device.gamepads.end(),
+                                    [&](const input::GamepadSnapshot& other) { return other.id == recorded.gamepad; });
+            if (recorded.presence && !recorded.down) {
+                if (pad != device.gamepads.end())
+                    device.gamepads.erase(pad);
+            }
+            else if (pad == device.gamepads.end()) {
+                input::GamepadSnapshot arrived;
+                arrived.id = recorded.gamepad;
+                arrived.family = platform::GamepadType::Generic;
+                pad = device.gamepads.insert(
+                    std::upper_bound(
+                        device.gamepads.begin(), device.gamepads.end(), arrived,
+                        [](const input::GamepadSnapshot& a, const input::GamepadSnapshot& b) { return a.id < b.id; }),
+                    arrived);
+            }
+            if (!recorded.presence) {
+                if (const core::i32 button = input::gamepadButtonSlotOf(recorded.keyCode); button >= 0)
+                    pad->buttons[static_cast<usize>(button)] = recorded.down;
+                if (const core::i32 axis = input::gamepadAxisSlotOf(recorded.keyCode); axis >= 0)
+                    pad->axes[static_cast<usize>(axis)] = recorded.value;
+            }
+            // Every controller's button and axis again, from what is left.
+            for (usize code = 0; code < device.held.size(); ++code) {
+                const core::i32 button = input::gamepadButtonSlotOf(static_cast<core::i32>(code));
+                const core::i32 axis = input::gamepadAxisSlotOf(static_cast<core::i32>(code));
+                if (button >= 0) {
+                    device.held[code] = std::any_of(device.gamepads.begin(), device.gamepads.end(),
+                                                    [button](const input::GamepadSnapshot& other) {
+                                                        return other.buttons[static_cast<usize>(button)];
+                                                    });
+                }
+                if (axis >= 0) {
+                    float furthest = 0.0f;
+                    for (const input::GamepadSnapshot& other : device.gamepads) {
+                        const float candidate = other.axes[static_cast<usize>(axis)];
+                        if (std::abs(candidate) > std::abs(furthest))
+                            furthest = candidate;
+                    }
+                    device.axis[code] = furthest;
+                }
+            }
         }
         if (!scenario.inputs.empty())
             host.input().setSnapshot(device);

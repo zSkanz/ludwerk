@@ -98,11 +98,12 @@ hashes as it did.
   (`UIService.GamepadId`); a card each player picks from is the game's code.
 - **No online play with guests**, as above.
 - **No limit of its own.** A game chooses how many seats it has.
-- **A replay does not record which controller.** The recorder writes keys and
-  axes, not per-controller state, so in a replay a context that reads one
-  controller reads nothing. A comment in `input.h` says replays carry each
-  controller; they do not yet. Until they do, a scenario with a second player
-  cannot be a determinism trace.
+- ~~A replay does not record which controller.~~ It does since 2026-10-10:
+  a recording's line may end `@<controller>` (`900 + ButtonSouth @2`,
+  `900 = LeftStickX -0.5 @2`, `- Controller @2` to unplug one), and that is
+  the controller's own state, with what "any controller" reads following
+  from it as it does from devices. `tests/determinism/coop` is two players
+  at two controllers, as a trace.
 
 ## Tested, and not
 
@@ -114,15 +115,22 @@ while the aggregate still works, four controllers at once, one unplugged
 while another is held (`input_tests.cpp`); menu navigation belonging to its
 controller (`ui_navigation_tests.cpp`).
 
-Not tested: `AddLocalPlayer` as a host or a dedicated server; the controller
-list and its signals from a script; the unreliable remote's variants;
-`FireAllClients` with guests; guests across a change of scene; the world's
-hash with a guest in it. On hardware, two controllers moving two players is
-confirmed by the owner; three and four are not.
+Tested since 2026-10-10, each of which was listed here as not:
+`AddLocalPlayer` answering `nil` as a host and as a dedicated server; the
+world's hash with a guest in it, and with its intent; `FireAllClients`
+arriving once at a machine with a guest; the unreliable remote's three ways
+(`service_tests.cpp`, the three "ADR 0195:" cases); a guest still seated,
+with the `UserId` it had, after a change of scene (`world_host_tests.cpp`);
+and in `tests/determinism/coop`, from a recording: each controller moving its
+own player and not the other, a button heard by its own player alone, a
+controller unplugged with its stick still pushed moving nobody, and
+`InputService:GetGamepads()` through all of it.
+
+Not tested: `GamepadDisconnected` from a script (`GamepadConnected` is). On
+hardware, two controllers moving two players is confirmed by the owner; three
+and four are not.
 
 ## Owed
 
-1. Per-controller state in the replay recording, and then a determinism
-   scenario with two players.
-2. The tests listed above.
-3. The comment in `input.h` made true or removed.
+Nothing of what was listed here: the recording carries each controller, the
+tests are written, and the comment in `input.h` is true.

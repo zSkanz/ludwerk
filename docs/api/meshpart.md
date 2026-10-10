@@ -37,6 +37,6 @@ The weight this part is drawn with for one target **on this machine**: what a sc
 
 Sets how far this part is in one of its mesh's morph targets: 0 is the mesh at rest and 1 is that shape. Any number is allowed -- a file's own weights go past 1 and below 0 -- and several targets add.
 
-**It stays on the machine the script ran on.** A weight is picture and not simulation: it is not replicated, not in a replay, and a server with no window draws nothing with it. Set it in a client script, where the part is drawn. A clip's own weight channels are the way a face is seen by everybody: the animation that plays them is replicated already.
+**It stays on the machine the script ran on.** A weight is picture and not simulation: it is not replicated, not in a replay, and a server with no window draws nothing with it. Set it in a client script, where the part is drawn. An animation is not replicated either: a clip that keys weights plays them on the machine whose script played it.
 
 **The script's value wins** over what a playing clip says of that target, every frame, until `ClearMorphWeight` gives it back. Raises for a name the mesh does not have, once the mesh has loaded; set before that, the name is kept and takes effect when the mesh arrives.

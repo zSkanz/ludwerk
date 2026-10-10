@@ -198,6 +198,15 @@ void closeLogFile() noexcept
     }
 }
 
+void appendToLogFile(std::string_view text) noexcept
+{
+    std::FILE* file = fileSlot();
+    if (file == nullptr || text.empty())
+        return;
+    std::fwrite(text.data(), 1, text.size(), file);
+    std::fflush(file);
+}
+
 namespace {
 // The detail of the line being handed to the sinks, on the thread handing it.
 // Set around the sink's call alone and put back after it, so a line a sink

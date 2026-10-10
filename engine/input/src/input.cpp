@@ -192,6 +192,16 @@ constexpr std::string_view SwipeNames[] = {"SwipeUp", "SwipeDown", "SwipeLeft", 
 static_assert(std::size(SwipeNames) == static_cast<usize>(SwipeCount));
 constexpr std::string_view VirtualStickNames[] = {"VirtualStick1", "VirtualStick2"};
 
+i32 gamepadButtonSlotOf(i32 keyCode) noexcept
+{
+    return inRange(keyCode, PadButtonFirst, PadButtonCount) ? keyCode - PadButtonFirst + 1 : -1;
+}
+
+i32 gamepadAxisSlotOf(i32 keyCode) noexcept
+{
+    return inRange(keyCode, PadAxisFirst, PadAxisCount) ? keyCode - PadAxisFirst + 1 : -1;
+}
+
 i32 keyCodeFromName(std::string_view name) noexcept
 {
     if (name.empty())

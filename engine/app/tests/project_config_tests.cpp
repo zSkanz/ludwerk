@@ -961,3 +961,36 @@ HIGH_SCORE = "native-board"
     CHECK(config.platformServices.ids.at("leaderboards/xbox").at("HIGH_SCORE") == "native-board");
     CHECK(app::loadProjectConfig({}, {}).platformServices.providers.empty());
 }
+
+TEST_CASE("D609: a machine's memory says how much of a texture it starts at, at every quality level")
+{
+    // How much of a texture a machine can hold is its memory's to say, not
+    // its graphics card's speed. Under three gigabytes is low, under five
+    // medium, and a machine that does not say is taken at its word for
+    // nothing: high.
+    constexpr core::u64 MiB = 1024ull * 1024ull;
+    CHECK(app::textureQualityForMemory(1800 * MiB) == 0); // a phone sold as two gigabytes
+    CHECK(app::textureQualityForMemory(2900 * MiB) == 0);
+    CHECK(app::textureQualityForMemory(3700 * MiB) == 1); // one sold as four
+    CHECK(app::textureQualityForMemory(5600 * MiB) == 2); // one sold as six
+    CHECK(app::textureQualityForMemory(16384 * MiB) == 2);
+    CHECK(app::textureQualityForMemory(0) == 2);
+
+    // **The levels do not say**: a phone with twelve gigabytes at `Medium`
+    // keeps its textures whole. Every level of this machine's model starts at
+    // the one number its memory gives.
+    scene::GraphicsModel model;
+    app::seedGraphicsModel(model, {});
+    const core::f64 mine = static_cast<core::f64>(app::textureQualityForMemory(platform::systemMemoryBytes()));
+    for (core::i32 level = 0; level < static_cast<core::i32>(scene::kQualityPresets); ++level)
+        CHECK(model.presetValue(scene::GraphicsSetting::TextureQuality, level) == doctest::Approx(mine));
+
+    // What the loader is told: high leaves nothing out, low two levels -- and
+    // what a game or a player sets is what counts.
+    model.player.put(scene::GraphicsSetting::TextureQuality, 2.0);
+    CHECK(app::textureSkipOf(model) == 0);
+    model.player.put(scene::GraphicsSetting::TextureQuality, 1.0);
+    CHECK(app::textureSkipOf(model) == 1);
+    model.player.put(scene::GraphicsSetting::TextureQuality, 0.0);
+    CHECK(app::textureSkipOf(model) == 2);
+}

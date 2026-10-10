@@ -83,9 +83,11 @@ the manual says so where an artist will read it.
    `MeshPart:GetMorphTargets()`, `SetMorphWeight(name, weight)`,
    `GetMorphWeight(name)`, `ClearMorphWeight(name)`; a playing clip's weight
    channels; a script's value over the clip's for that target until cleared.
-4. **The editor and the proof.** A slider a target in Properties, previewing
-   live; an example head; the cost for one face, six heroes, and four hundred
-   bodies whose targets are all at nought, which must be today's. Not built.
+4. **The editor and the proof.** Done. A mesh's targets are sliders under
+   *Shape keys* in Properties -- a preview, written where a script's
+   `SetMorphWeight` writes and not saved with the scene, which the panel
+   says. `examples/36-face` is three busts of one model: one talks by its
+   clip, one is moved by a script, one is at rest. The cost, below.
 
 ## Drawing, as built
 
@@ -186,9 +188,16 @@ them, and there is no mechanism beyond saying so.
 (`AnimationSystem::drawnMorphWeights`), from where the tracks are, and not
 stored in the pose: a pose is built at the rate its mesh is seen, shared
 between the bodies of a crowd and skipped for one nobody looks at, and none
-of that suits a face. Track time and track weight are the simulation's and
-replicated, so every machine works out the same weights -- a face animated by
-a clip is seen by everybody. A clip fading in eases its weights in from the
+of that suits a face. Track time and track weight are advanced on the
+simulation's clock, so every machine that plays the same clip works the same
+weights out of it. **They are not replicated** -- a track plays where a
+script called `Play`, and `AnimationPlayer` is off the wire
+(`api/wire/state.wire.luau`: "the first candidate for protocol 2") -- so a
+face every player must see talking is played by a client script on each
+machine, as a character's walk already is. (This paragraph first said the
+animation was replicated already; it is not, and the manual said the same
+until the animation category's survey read the wire schema.) A clip fading in
+eases its weights in from the
 file's (a target the tracks speak for by less than a whole keeps the rest of
 its file's weight); past a whole, tracks are averaged as joints are. A clip
 from another file moves targets by name.
@@ -235,6 +244,34 @@ shadows on:
 | a model with no targets | 11 | 1.22 ms |
 | three targets, every weight at nought | 11 | 1.21 ms |
 | three targets, two of them above nought, on every body | 1,712 | 4.23 ms |
+
+And the example's bust -- 1,380 vertices, four materials, five targets, a
+skeleton of three joints and a clip playing on every one:
+
+| The scene | Draws a frame | Frame, median |
+| --- | --- | --- |
+| one face, at rest | 26 | 0.492 ms |
+| one face, two keys moving | 26 | 0.496 ms |
+| six faces, at rest | 26 | 0.527 ms |
+| six faces, two keys moving on each | 126 | 0.739 ms |
+| four hundred, the model with its keys taken out | 42 | 0.894 ms |
+| four hundred, with keys, all at nought | 42 | 0.891 ms |
+
+One face costs nothing that measures: a body alone is drawn alone already.
+Six talking heroes cost a fifth of a millisecond between them. Four hundred
+bodies that have keys and are not using them cost what four hundred without
+keys cost; the extraction that asks each for its weights is four microseconds
+dearer for all of them together.
+
+**The first frame a weight leaves nought** costs half a millisecond more than
+the frames either side of it (0.95 ms against 0.48) and no pipeline is made
+in it: they were made when the model loaded.
+
+**The editor's sliders are a preview, and that is a decision.** A weight is
+not a property of the world. Making it one -- so that a scene could save a
+statue's smile -- would put it in the hash and on the wire, for every
+target of every mesh; a face whose rest is a smile is a model whose file
+gives that key a weight, which the importer already keeps.
 
 ## Proof, stage 1
 

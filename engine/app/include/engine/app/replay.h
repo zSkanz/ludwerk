@@ -39,6 +39,15 @@ using core::u64;
 // An analogue line sets `axis` instead of a press: `900 = LeftStickX -0.5`.
 // Both shapes are one struct because a recording is read in tick order and a
 // second vector would have to be merged back into that order anyway.
+//
+// **A line may say which controller** (ADR 0195), with `@<id>` after it:
+// `900 + ButtonSouth @2`, `900 = LeftStickX -0.5 @2`. It is that controller's
+// own state then -- what a context with that `GamepadId` reads -- and the
+// state of "any controller" follows from it as it does from devices: a button
+// is held when any holds it, an axis is the one pushed furthest. A controller
+// is there from its first line; `900 - Controller @2` unplugs it, and
+// `+ Controller` plugs one in that has nothing to say yet. A line with no
+// `@` is as it always was: every controller's, and nobody's in particular.
 struct ReplayInput
 {
     u64 tick = 0;
@@ -46,6 +55,10 @@ struct ReplayInput
     bool down = false;
     bool analog = false;
     float value = 0.0f;
+    // The controller this is of; nought for a line that names none.
+    core::u32 gamepad = 0;
+    // `Controller`: the controller itself arriving (`down`) or leaving.
+    bool presence = false;
 };
 
 struct ReplayScenario

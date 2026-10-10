@@ -310,6 +310,23 @@ void MeshLoader::releasePendingTextures() noexcept
 // Three stages, and only the last one is on the frame, because only the frame
 // has a command list. The same shape `StreamingHost::pump` and the content
 // browser's thumbnails use, for the same reason.
+void MeshLoader::noteReduced(core::NameAtom urn, bool reduced)
+{
+    const auto byId = [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; };
+    const auto at = std::lower_bound(reduced_.begin(), reduced_.end(), urn, byId);
+    const bool held = at != reduced_.end() && at->id == urn.id;
+    if (reduced && !held)
+        reduced_.insert(at, urn);
+    else if (!reduced && held)
+        reduced_.erase(at);
+}
+
+bool MeshLoader::isReduced(core::NameAtom urn) const noexcept
+{
+    return std::binary_search(reduced_.begin(), reduced_.end(), urn,
+                              [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; });
+}
+
 core::u32 MeshLoader::pumpTextures(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::World& world,
                                    TextureLibrary& library)
 {
@@ -416,8 +433,10 @@ core::u32 MeshLoader::pumpTextures(rhi::IDevice& device, rhi::ICmdList& cmd, con
             continue;
         }
         textures_.push_back(handle);
-        if (made.compiled)
+        if (made.compiled) {
             library.set(pending.urn, handle, made.texture.width, made.texture.height);
+            noteReduced(pending.urn, made.texture.skippedLevels > 0);
+        }
         else
             library.set(pending.urn, handle, made.image.width, made.image.height);
         ++loaded;
@@ -446,9 +465,21 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
     // asks for. `StreamingHost::pump` orders its own pipeline the same way.
     core::u32 loaded = deferredTextures_ ? pumpTextures(device, cmd, world, library) : 0u;
 
-    const auto load = [&](core::NameAtom urn, bool srgb) {
-        if (urn.id == 0 || library.find(urn).valid())
+    const auto load = [&](core::NameAtom urn, bool srgb, bool whole = false) {
+        if (urn.id == 0)
             return;
+        if (library.find(urn).valid()) {
+            // **Loaded smaller for a material, and now a sprite's** (D609):
+            // what is drawn at its own size has it whole. Let go and loaded
+            // again -- once, since what comes back is not reduced.
+            if (!whole || !isReduced(urn))
+                return;
+            if (const rhi::TextureHandle held = library.take(urn); held.valid() && held != viewBlack_) {
+                std::erase(textures_, held);
+                device.destroy(held);
+            }
+            noteReduced(urn, false);
+        }
         // **A `view://` name is drawn, not read** (ADR 0107): the view host
         // puts the texture here while something draws into it. Until then it
         // is black, never a file lookup and never the missing-map warning.
@@ -551,12 +582,13 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
                 PendingTexture pending;
                 pending.urn = urn;
                 pending.srgb = srgb;
+                pending.whole = whole;
                 pending.work = std::make_unique<TextureWork>();
                 TextureWork* work = pending.work.get();
                 work->compiled = true;
                 work->bytes.assign(resolved.bytes.begin(), resolved.bytes.end());
-                pending.decode =
-                    jobs::schedule("texture-transcode", jobs::Domain::AssetIo, [work, options = transcode_]() noexcept {
+                pending.decode = jobs::schedule(
+                    "texture-transcode", jobs::Domain::AssetIo, [work, options = transcodeFor(whole)]() noexcept {
                         work->ok = !asset::transcodeTexture(work->bytes, options, work->texture).has_value();
                         work->bytes.clear();
                         work->bytes.shrink_to_fit();
@@ -568,7 +600,7 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
                 // No job to be had: transcoded here, as with nothing deferred.
             }
             asset::TextureAsset texture;
-            if (asset::transcodeTexture(resolved.bytes, transcode_, texture).has_value()) {
+            if (asset::transcodeTexture(resolved.bytes, transcodeFor(whole), texture).has_value()) {
                 markFailed();
                 return;
             }
@@ -579,6 +611,7 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
             }
             textures_.push_back(handle);
             library.set(urn, handle, texture.width, texture.height);
+            noteReduced(urn, texture.skippedLevels > 0);
             ++loaded;
             return;
         }
@@ -706,8 +739,8 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
     // A sky's sun and moon (ADR 0096): colours. Its six faces are not here --
     // they are resampled on the CPU by `SkyLoader`, which reads them itself.
     world.skies().forEach([&](core::InstanceId, const scene::SkyComponent& sky) {
-        load(sky.sunTexture, true);
-        load(sky.moonTexture, true);
+        load(sky.sunTexture, true, true);
+        load(sky.moonTexture, true, true);
     });
     // Decal images (F2): colours, like base colours.
     world.decals().forEach([&](core::InstanceId, const scene::DecalComponent& decal) { load(decal.texture, true); });
@@ -715,16 +748,19 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
     world.particleEmitters().forEach(
         [&](core::InstanceId, const scene::ParticleEmitterComponent& emitter) { load(emitter.texture, true); });
     // The 2D layer's pictures: a sprite's image and a tilemap's tileset.
-    world.parts2d().forEach([&](core::InstanceId, const scene::Part2DComponent& part) { load(part.image, true); });
+    // **Whole, whatever the texture quality** (D609): a sprite, a tileset and
+    // a block's face are drawn at their own size, texel for pixel.
+    world.parts2d().forEach(
+        [&](core::InstanceId, const scene::Part2DComponent& part) { load(part.image, true, true); });
     world.tilemaps2d().forEach(
-        [&](core::InstanceId, const scene::Tilemap2DComponent& tilemap) { load(tilemap.tileset, true); });
+        [&](core::InstanceId, const scene::Tilemap2DComponent& tilemap) { load(tilemap.tileset, true, true); });
     // A block world's images (V1), through the same door: compiled when the
     // compiler has seen them, a loose file when it has not.
     world.voxels().forEach([&](core::InstanceId, const scene::VoxelComponent& voxels) {
         for (const scene::VoxelBlockType& type : voxels.types) {
-            load(type.texture, true);
-            load(type.sideTexture, true);
-            load(type.bottomTexture, true);
+            load(type.texture, true, true);
+            load(type.sideTexture, true, true);
+            load(type.bottomTexture, true, true);
         }
     });
     // Pictures wanted before anything shows them (ADR 0131): as colour, which
@@ -892,7 +928,7 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
                     markFailed();
                     return;
                 }
-                work->options = transcode_;
+                work->options = transcodeFor(false);
                 work->blobs.resize(work->compiled.images.size());
                 work->textures.resize(work->compiled.images.size());
                 work->ok.assign(work->compiled.images.size(), core::u8{0});
@@ -1033,7 +1069,8 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
                 }
                 else {
                     const std::span<const std::byte> blob = mounts_->blob(slot.hash);
-                    transcoded = !blob.empty() && !asset::transcodeTexture(blob, transcode_, texture).has_value();
+                    transcoded =
+                        !blob.empty() && !asset::transcodeTexture(blob, transcodeFor(false), texture).has_value();
                 }
                 if (!transcoded) {
                     // A material without its texture still draws, tinted. A
@@ -1243,6 +1280,7 @@ core::u32 MeshLoader::forget(rhi::IDevice& device, std::span<const core::NameAto
             device.destroy(held);
             ++dropped;
         }
+        noteReduced(urn, false);
 
         // One on its way in is another file's by the time it lands (D571).
         if (const auto parked = std::find_if(pendingMeshes_.begin(), pendingMeshes_.end(),

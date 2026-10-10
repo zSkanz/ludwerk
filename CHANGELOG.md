@@ -249,7 +249,7 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 - **Shape keys: faces that blink, smile and talk** (ADR 0196). A model's
   morph targets come in with it and are drawn -- lit, in the depth pass and
-  in its shadow. A clip that keys their weights plays them, on every machine;
+  in its shadow. A clip that keys their weights plays them, where it is played;
   a script sets them by name with `MeshPart:SetMorphWeight`, reads them with
   `GetMorphWeight` and `GetMorphTargets`, and gives one back to the clips
   with `ClearMorphWeight`. **A weight a script sets stays on the machine the
@@ -257,7 +257,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   nought costs what it did without targets; one with a weight above nought is
   drawn on its own, and the frame report counts it as `morph`. See *Faces and
   shape keys* in the manual for what a face should be exported as, and what
-  is not done yet. The editor's sliders are the stage after this.
+  is not done yet. In the editor a mesh's keys are sliders under *Shape
+  keys* in Properties -- a preview, not saved with the scene.
+  `examples/36-face` is three busts that talk, smile and blink.
+- **A recording says which controller** (ADR 0195). A line of a replay's
+  `inputs.txt` may end `@<controller>` -- `900 + ButtonSouth @2`,
+  `900 = LeftStickX -0.5 @2`, `- Controller @2` to unplug one -- so two
+  players at two controllers are a determinism scenario
+  (`tests/determinism/coop`). A line with no `@` is what it always was.
 - **`SpringBone` and `SpringCollider`: capes, tails and hair** (ADR 0194).
   A `SpringBone` under a `MeshPart` names a joint of its rig, and the joints
   below it trail behind the body -- swinging on a turn, streaming on a run,
@@ -1531,6 +1538,25 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A small phone holds less, instead of being closed by the system** (D609).
+  The interface's pictures now keep to a budget set by the machine's memory:
+  past it, the ones not shown for longest leave the graphics card and are
+  loaded again when shown. And `GraphicsService.TextureQuality` is applied --
+  it was kept and read by nobody: the world's textures are loaded at half or
+  a quarter of their size where it says so, and it **starts at what the
+  machine's memory can hold** (low under three gigabytes, medium under five)
+  whatever the quality level. Sprites, tilesets, block faces and the
+  interface are never reduced. A game that set `TextureQuality` in its
+  options already now sees it take effect, for textures loaded after.
+- **A game that cannot start says so, whenever it fails** (D608). A start
+  that failed before its options were read -- a missing catalogue, a mistyped
+  flag in a shortcut -- or that failed without logging an error, closed with
+  nothing on the screen; so did a fault. Each now shows a dialog where there
+  is a window and nobody reading the output, and leaves something to send:
+  the log begins with what ran and what it was asked, and a start too early
+  for a log leaves a start log in the system's temporary folder. See *When
+  the game does not open* in the shipping guide for what each kind of end
+  leaves, and for the ones no program can answer for.
 - **A cape rests on its body, and no longer hangs inside it** (D607). A
   `SpringCollider` kept a chain's joints out and not the cloth between them:
   a link could cut a corner of the body, and a chain flung through it in one

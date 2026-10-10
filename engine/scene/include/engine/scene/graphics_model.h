@@ -57,7 +57,7 @@ namespace engine::scene {
     X(FoliageDensity, Number, 0.0, 1.0, 1.0, true, true)                                                               \
     X(FoliageDecals, Flag, 0.0, 1.0, 1.0, true, true)                                                                  \
     X(ViewDistance, Number, 0.25, 4.0, 1.0, true, false)                                                               \
-    X(TextureQuality, Choice, 0.0, 2.0, 2.0, true, false)                                                              \
+    X(TextureQuality, Choice, 0.0, 2.0, 2.0, true, true)                                                               \
     X(AnisotropicFiltering, Whole, 1.0, 16.0, 8.0, true, false)                                                        \
     X(LODBias, Number, 0.25, 4.0, 1.0, true, false)                                                                    \
     X(MaximumLODLevel, Whole, 0.0, 8.0, 0.0, true, false)                                                              \

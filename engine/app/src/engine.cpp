@@ -7,6 +7,7 @@
 #include "engine/core/brand.h"
 #include "engine/core/content_path.h"
 #include "engine/core/profile.h"
+#include "engine/core/run_record.h"
 #if ENG_DEBUG_UI
 #include "engine/app/surface_compiler.h"
 #else
@@ -2307,6 +2308,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // instead of only the tool. (`options.editor && !options.headless` is
     // identically `options.editor`: `main.cpp` refuses the two together.)
     meshLoader.setDeferredMeshes(!options.headless);
+    // How much of each texture of the world is loaded (D609): the texture
+    // quality, which a machine's memory starts and a game or a player sets.
+    meshLoader.setTextureSkip(textureSkipOf(graphicsHost));
     // And the UI's pictures, for the same reason and by the same predicate: an
     // `ImageLabel` names the same kind of PNG a material does, and the
     // synchronous path decoded every one a frame newly named, in that frame,
@@ -2315,6 +2319,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // The same mounts the meshes come from, so `TextLabel.Font` can name a face
     // out of the project the same way `MeshPart.MeshContent` names a model.
     uiText.setMounts(&contentMounts);
+    // What the interface's pictures may hold on the card, by this machine's
+    // memory (D609): 64 MiB on a phone with two gigabytes, 256 on a desk
+    // with eight.
+    uiText.setImageBudget(UiText::imageBudgetFor(platform::systemMemoryBytes()));
     // An `ImageLabel` showing `view://<name>` shows what that view draws.
     uiText.setViewLookup([&viewHost](std::string_view name, UiText::ViewPicture& out) {
         const ViewHost::View* view = viewHost.find(name);
@@ -3259,6 +3267,29 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         I18nArg{"scripts", std::round(scriptBytes / (1024.0 * 1024.0) * 10.0) / 10.0},
                     };
                     core::log(LogLevel::Info, ENG_TR("engine.frame.info.memory"), memory);
+                    // And of that, the interface's pictures against their
+                    // budget (D609) -- said only once any has been let go, or
+                    // they hold more than half of it: a game with a HUD of
+                    // six icons has nothing here to read.
+                    if (uiText.imagesReleased() != 0 || uiText.imageBytes() * 2 > uiText.imageBudget()) {
+                        const std::array<I18nArg, 4> pictures{
+                            I18nArg{"held", megabytes(uiText.imageBytes())},
+                            I18nArg{"count", static_cast<core::i64>(uiText.imagesHeld())},
+                            I18nArg{"budget", megabytes(uiText.imageBudget())},
+                            I18nArg{"released", static_cast<core::i64>(uiText.imagesReleased())},
+                        };
+                        core::log(LogLevel::Info, ENG_TR("engine.frame.info.ui_images"), pictures);
+                    }
+                    // And how much of each texture this machine is loading
+                    // (D609), where that is not all of it: a picture that
+                    // looks soft on a small phone is this line, not a defect.
+                    if (meshLoader.textureSkip() != 0) {
+                        const std::array<I18nArg, 2> leftOut{
+                            I18nArg{"levels", static_cast<core::i64>(meshLoader.textureSkip())},
+                            I18nArg{"reduced", static_cast<core::i64>(meshLoader.texturesReduced())},
+                        };
+                        core::log(LogLevel::Info, ENG_TR("engine.frame.info.texture_quality"), leftOut);
+                    }
                 }
                 if (reportPasses.frames() != 0) {
                     sayPassTimes(reportPasses);
@@ -3580,6 +3611,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 liveGraphics = graphicsSettingsOf(live, Handheld, &options.graphics);
                 if (renderer != nullptr)
                     renderer->setSettings(liveGraphics);
+                // For what is loaded from here on: a texture already on the
+                // card keeps the size it came in at.
+                meshLoader.setTextureSkip(textureSkipOf(live));
                 foliage.setSettings({.density = options.foliageDensity * static_cast<f32>(live.effective(
                                                                              scene::GraphicsSetting::FoliageDensity)),
                                      .shadowDistance = options.foliageShadowDistance,
@@ -7709,6 +7743,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // or a hot reload builds a new animation system, and a
                     // pointer set at boot would name the previous one.
                     overlay->setSkeleton(host->animation());
+                    overlay->setMorphs(host->morphs());
                 }
                 // **What the frame cost, handed over before it is drawn**
                 // (S5.12). The Stats readout showed frame time, backend and
@@ -7769,6 +7804,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             ENG_PROFILE_SCOPE("wait.present");
             device->submitAndPresent();
         }
+        // This run has put a frame in front of somebody (D608): what ends it
+        // from here is not a start that showed nothing.
+        core::noteFirstFrame();
         notePassTimes();
         const f64 presentMs = msSince(presentNs);
         noteLongWait("submit_present", presentMs);

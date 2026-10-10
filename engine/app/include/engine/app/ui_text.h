@@ -52,6 +52,28 @@ public:
 
     void destroy(rhi::IDevice& device);
 
+    // **How much of the graphics card the interface's pictures may hold**
+    // (D609), in bytes; nought is no limit. Every picture an `ImageLabel` ever
+    // named used to stay on the card until the engine closed: a game with a
+    // shop of four hundred icons, a map and a dozen full-screen menus held all
+    // of them through the level where none is shown, and on a phone with two
+    // gigabytes that is the memory the level needed. Past this, the pictures
+    // nothing has asked for longest are released, oldest first, until what is
+    // held fits; one that is asked for again is loaded again, as it was the
+    // first time. A picture on the screen is never released: it is asked for
+    // every frame.
+    void setImageBudget(core::u64 bytes) noexcept { imageBudget_ = bytes; }
+    [[nodiscard]] core::u64 imageBudget() const noexcept { return imageBudget_; }
+    // What the pictures hold now, how many of them are on the card, and how
+    // many have been released since the engine started.
+    [[nodiscard]] core::u64 imageBytes() const noexcept { return imageBytes_; }
+    [[nodiscard]] core::u32 imagesHeld() const noexcept;
+    [[nodiscard]] core::u64 imagesReleased() const noexcept { return imagesReleased_; }
+    // The budget a machine with this much memory is given: a thirty-second of
+    // it, and no less than 48 MiB nor more than 512. Two gigabytes is 64 MiB;
+    // eight is 256. Nought, for a machine that does not say, is 256.
+    [[nodiscard]] static core::u64 imageBudgetFor(core::u64 systemMemoryBytes) noexcept;
+
     // **Whether a UI picture may take more than one frame to arrive** (D128).
     //
     // A 1024-square PNG costs 14 to 36 ms to decode -- measured for D118 on a
@@ -161,6 +183,11 @@ private:
         // label naming a missing picture costs one lookup rather than one
         // attempt per frame.
         Failed,
+        // It was on the card and was let go to keep the budget (D609). Its
+        // place in the table stays its own -- the index handed to `ui` means
+        // this picture for as long as the engine runs -- and the next ask
+        // makes it `Requested` again.
+        Released,
     };
 
     // What a decode job writes into, in ONE heap allocation.
@@ -187,6 +214,10 @@ private:
         bool borrowed = false;
         core::u32 width = 0;
         core::u32 height = 0;
+        // What it holds on the card, every level, and the pass it was last
+        // asked for in: what the budget weighs and orders by.
+        core::u64 bytes = 0;
+        core::u64 lastAsked = 0;
         ImageState state = ImageState::Requested;
         platform::IoRequest read;
         jobs::JobHandle decode;
@@ -212,6 +243,13 @@ private:
     bool imagesChanged_ = false;
     std::vector<Image> imageEntries_;
     std::vector<rhi::TextureHandle> images_;
+    // The budget (D609): the pass count `lastAsked` is in, what is held, and
+    // what has been let go.
+    core::u64 imagePass_ = 0;
+    core::u64 imageBudget_ = 0;
+    core::u64 imageBytes_ = 0;
+    core::u64 imagesReleased_ = 0;
+    void trimImages(rhi::IDevice& device);
     ViewLookup viewLookup_;
 
     static bool requestImageThunk(void* user, std::string_view urn, ui::ResolvedImage& out);

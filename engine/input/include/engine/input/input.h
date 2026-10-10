@@ -176,6 +176,14 @@ inline constexpr usize kKeyCodeCount = 152;
 //
 // 0 for a name no item carries, and an empty view for `Unknown`.
 [[nodiscard]] i32 keyCodeFromName(std::string_view name) noexcept;
+
+// **A controller's own slot for an `Enum.KeyCode`**: the index into
+// `GamepadSnapshot::buttons`, or into `::axes`, of the button or the axis the
+// code names -- and -1 for a code that is not one. What lets a recording say
+// "controller two's `ButtonSouth`" and have it land where a device would have
+// put it (ADR 0195).
+[[nodiscard]] i32 gamepadButtonSlotOf(i32 keyCode) noexcept;
+[[nodiscard]] i32 gamepadAxisSlotOf(i32 keyCode) noexcept;
 [[nodiscard]] std::string_view keyCodeName(i32 keyCode) noexcept;
 
 // What the resolver reads. One frame's worth of device state, owned by the
@@ -277,10 +285,11 @@ struct DeviceState
     // every context read before there was more than one, so a local seat
     // never asks the system about a controller inside a tick.
     //
-    // **A replay does not carry these yet** (ADR 0195): the recording is keys
-    // and axes, and a context that reads one controller reads nothing when a
-    // trace is played back. This comment said replays carried them; they are
-    // owed, and until they are a second player is not a determinism scenario.
+    // **A replay carries these** (ADR 0195): a recording's line may name the
+    // controller it is of (`900 + ButtonSouth @2`), and a context that reads
+    // one controller reads in a replay what it read from the device -- which
+    // is what makes two players at two controllers a determinism scenario
+    // (`tests/determinism/coop`).
     std::vector<GamepadSnapshot> gamepads;
 };
 

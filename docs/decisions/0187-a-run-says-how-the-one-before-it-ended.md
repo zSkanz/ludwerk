@@ -102,6 +102,20 @@ run. All of them separate **learning that it happened** (the engine's) from
    handler is in. It is the instrument of the gate that checks all this: a
    crash cannot be checked from inside the process that has it.
 
+## Amended 2026-10-10: the run that dies before anybody sees it (D608)
+
+The record above is read by the NEXT run. A start that fails needs to be
+answered in the one that failed, and four still were not (D608): the engine
+now says, in that run, whatever it can. The first line of every log is
+written before anything can fail; what is said before the log opens becomes
+the log's beginning, or a start log of its own when no log ever opens; every
+failed start with a window shows a dialog; a fault shows one on Windows; an
+`exit` nobody announced is logged. `core::noteFirstFrame` is what tells a
+start that showed nothing from a game that ran. The manual lists, under *When
+the game does not open*, each way a start can end and what it leaves -- and
+the ways no process can answer for, which stay this record's to report on the
+run after.
+
 ## What it does not do
 
 - **No share sheet, no copy to a public folder.** On the newest phones a

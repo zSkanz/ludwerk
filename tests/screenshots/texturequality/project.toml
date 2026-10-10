@@ -1,0 +1,15 @@
+# How much of a texture is loaded (D609): a wall that wears a material, a
+# sprite, and a picture both a material and a sprite name. A project rather
+# than a bare script because its pictures and materials are files, and the
+# driver runs it at two texture qualities (`run_texture_quality.cmake`).
+
+[project]
+name = "Ludwerk Texture Quality"
+id = "dev.ludwerk.texturequality"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Texture Quality"
+width = 960
+height = 540
