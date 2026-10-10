@@ -2,6 +2,7 @@
 #include <string>
 
 #include "engine/app/script_sides.h"
+#include "engine/core/text_key.h"
 #include "project_fixture.h"
 
 using namespace engine;
@@ -37,6 +38,25 @@ TEST_CASE("a client script reaching for the server's storage is told it finds no
           std::vector<std::string>{"CurrentCamera"});
     // A solo game has one side, and nothing to say.
     CHECK(app::lintScriptSide(source, script::ScriptSide::Client, true, false).empty());
+}
+
+TEST_CASE("a server script that sets a morph weight is told nobody will see it (ADR 0196)")
+{
+    // A weight is kept by the machine that draws it: not replicated, not in a
+    // replay. Set by the server's script it shows on no player's screen, and
+    // a face that never moves is found a long way from the line that set it.
+    const std::string source = "local face = workspace.Hero.Face\n"
+                               "face:SetMorphWeight(\"Blink\", 1)\n"
+                               "print(face:GetMorphWeight(\"Blink\"))\n";
+    const std::vector<app::SideFinding> server = app::lintScriptSide(source, script::ScriptSide::Server, true, true);
+    REQUIRE(server.size() == 1);
+    CHECK(server[0].word == "SetMorphWeight");
+    CHECK(server[0].line == 1);
+    CHECK(server[0].key.hash == ENG_TR("script.warn.side_server_touches_player").hash);
+
+    // Where a player sits it is the right place, and reading one is anybody's.
+    CHECK(app::lintScriptSide(source, script::ScriptSide::Client, true, true).empty());
+    CHECK(app::lintScriptSide(source, script::ScriptSide::Server, true, false).empty());
 }
 
 TEST_CASE("a script for both sides that never asks which one it is on is told so, in a multiplayer project only")

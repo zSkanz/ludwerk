@@ -1788,11 +1788,18 @@ public:
     // it are simply taken. Oldest first is also the fairer rule: by position
     // alone, water beside the player waited behind every block of the
     // backlog at lower coordinates.
-    [[nodiscard]] std::vector<Position> takeDue(core::u64 tick, std::size_t budget)
+    //
+    // `looked`, when given, is how many entries of the index this read: what
+    // the test of that cost counts. It was a clock, and a clock on a busy
+    // machine once said this took four times as long out of four times the
+    // queue -- in one run of eighty-six.
+    [[nodiscard]] std::vector<Position> takeDue(core::u64 tick, std::size_t budget, std::size_t* looked = nullptr)
     {
         std::vector<Position> due;
         auto entry = m_byDue.begin();
         while (entry != m_byDue.end() && entry->first <= tick && due.size() < budget) {
+            if (looked != nullptr)
+                ++*looked;
             due.push_back(entry->second);
             m_byPosition.erase(entry->second);
             entry = m_byDue.erase(entry);

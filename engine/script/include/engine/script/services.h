@@ -34,6 +34,7 @@
 #include "engine/platform/event.h"
 #include "engine/platform/game_integration.h"
 #include "engine/scene/class_registry.h"
+#include "engine/scene/morph_host.h"
 #include "engine/scene/physics_sync.h"
 #include "engine/scene/physics_sync_2d.h"
 #include "engine/scene/skeleton_host.h"
@@ -385,6 +386,10 @@ public:
     // other. Null is a real state, and `Build` says so rather than raising a
     // sentence about a renderer nobody asked for.
     scene::SkeletonHost* skeleton = nullptr;
+    // And the third, for a mesh's morph targets (ADR 0196): what
+    // `MeshPart:SetMorphWeight` reaches. Null where nothing plays animation,
+    // and then a weight set is a weight nobody would have drawn.
+    scene::MorphHost* morph = nullptr;
 
     // Every `AnimationTrack` handle this VM has handed out. Append-only: a
     // record is four bytes and a signal id, and `LoadAnimation` is a load-once

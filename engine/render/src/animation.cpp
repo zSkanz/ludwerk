@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <iterator>
 
 #include "engine/core/profile.h"
 #include "engine/scene/world.h"
@@ -611,7 +612,9 @@ void AnimationSystem::sample(f64 fixedDt)
         if (mesh == nullptr)
             continue;
         const SkeletonLibrary::Entry* entry = skeletons_->find(mesh->meshContent);
-        if (entry == nullptr)
+        // No rig, no pose: a mesh with morph targets alone has an entry for
+        // its targets and its clips (ADR 0196).
+        if (entry == nullptr || entry->joints.empty())
             continue;
         // **Posed as often as it is seen** (H3): not at all where neither the
         // camera nor a shadow reached it last frame, and every second, fourth
@@ -1006,10 +1009,12 @@ core::InstanceId AnimationSystem::clipSourceUnder(core::InstanceId root) const
         if (mesh == nullptr)
             continue;
         const SkeletonLibrary::Entry* entry = skeletons_->find(mesh->meshContent);
-        if (entry == nullptr || entry->joints.empty())
+        if (entry == nullptr)
             continue;
-        if (!firstSkinned.valid())
+        if (!firstSkinned.valid() && !entry->joints.empty())
             firstSkinned = id;
+        // A mesh with clips: a rig's, or the weight clips of a face that has
+        // morph targets and no skeleton (ADR 0196).
         if (!entry->clips.empty())
             return id;
     }
@@ -1210,7 +1215,7 @@ void AnimationSystem::catchUp(core::InstanceId meshPart)
 {
     const scene::MeshPartComponent* mesh = world_->meshParts().find(meshPart);
     const SkeletonLibrary::Entry* entry = mesh != nullptr ? skeletons_->find(mesh->meshContent) : nullptr;
-    if (entry != nullptr)
+    if (entry != nullptr && !entry->joints.empty())
         rebuildPose(meshPart, *entry);
     stale_.erase(keyOf(meshPart));
 }
@@ -1306,6 +1311,235 @@ void AnimationSystem::retire(const scene::World& world)
             poses_.erase(keyOf(track.meshPart));
         }
     }
+    // And what scripts set on meshes that are gone.
+    for (auto entry = morphOverrides_.begin(); entry != morphOverrides_.end();) {
+        const core::InstanceId id{static_cast<core::u32>(entry->first & 0xFFFFFFFFu),
+                                  static_cast<core::u32>(entry->first >> 32)};
+        entry = world.alive(id) ? std::next(entry) : morphOverrides_.erase(entry);
+    }
+}
+
+// --- Morph targets (ADR 0196) --------------------------------------------------
+
+namespace {
+
+// A weight channel at `time`: one number a key, the middle of three on a
+// spline. `sampleChannel` is for a joint's three and four.
+[[nodiscard]] bool sampleWeight(const asset::AnimationChannel& channel, f32 time, f32& out) noexcept
+{
+    const usize perKey = channel.valuesPerKey();
+    if (channel.stride != 1 || channel.times.empty() || channel.values.size() < channel.times.size() * perKey)
+        return false;
+    const usize key = keyBefore(channel.times, time);
+    const bool last = key + 1 >= channel.times.size();
+    const auto valueOf = [&](usize index) { return channel.values[index * perKey + (perKey == 3 ? 1 : 0)]; };
+    const f32 from = valueOf(key);
+    if (channel.interpolation == asset::AnimationChannel::Interpolation::Step || last) {
+        out = from;
+        return true;
+    }
+    const f32 to = valueOf(key + 1);
+    const f32 s = fractionBetween(channel.times, key, time);
+    if (channel.interpolation == asset::AnimationChannel::Interpolation::CubicSpline) {
+        // Hermite, as `sampleChannel` has it.
+        const f32 span = channel.times[key + 1] - channel.times[key];
+        const f32 s2 = s * s;
+        const f32 s3 = s2 * s;
+        const f32 leaving = channel.values[key * 3 + 2];
+        const f32 arriving = channel.values[(key + 1) * 3];
+        out = (2.0f * s3 - 3.0f * s2 + 1.0f) * from + (s3 - 2.0f * s2 + s) * span * leaving +
+              (-2.0f * s3 + 3.0f * s2) * to + (s3 - s2) * span * arriving;
+        return true;
+    }
+    out = from + (to - from) * s;
+    return true;
+}
+
+// Where `name` is in `names`, or -1.
+[[nodiscard]] core::i32 targetNamed(const std::vector<std::string>& names, std::string_view name) noexcept
+{
+    for (usize index = 0; index < names.size(); ++index) {
+        if (names[index] == name)
+            return static_cast<core::i32>(index);
+    }
+    return -1;
+}
+
+} // namespace
+
+const SkeletonLibrary::Entry* AnimationSystem::morphsOf(core::InstanceId meshPart) const
+{
+    if (world_ == nullptr || skeletons_ == nullptr)
+        return nullptr;
+    const scene::MeshPartComponent* mesh = world_->meshParts().find(meshPart);
+    if (mesh == nullptr)
+        return nullptr;
+    const SkeletonLibrary::Entry* entry = skeletons_->find(mesh->meshContent);
+    return entry != nullptr && !entry->morphNames.empty() ? entry : nullptr;
+}
+
+core::u32 AnimationSystem::morphTargetCount(core::InstanceId meshPart) const
+{
+    const SkeletonLibrary::Entry* entry = morphsOf(meshPart);
+    return entry != nullptr ? static_cast<core::u32>(entry->morphNames.size()) : 0u;
+}
+
+std::string_view AnimationSystem::morphTargetName(core::InstanceId meshPart, core::u32 target) const
+{
+    const SkeletonLibrary::Entry* entry = morphsOf(meshPart);
+    return entry != nullptr && target < entry->morphNames.size() ? std::string_view{entry->morphNames[target]}
+                                                                 : std::string_view{};
+}
+
+std::span<const u32> AnimationSystem::weightTracks() const
+{
+    if (weightTracksAt_ == sampled_ && weightTracksOf_ == tracks_.size())
+        return weightTracks_;
+    weightTracksAt_ = sampled_;
+    weightTracksOf_ = tracks_.size();
+    weightTracks_.clear();
+    for (usize index = 1; index < tracks_.size(); ++index) {
+        const Track& track = tracks_[index];
+        if (!track.alive || track.clip == NoClip)
+            continue;
+        const SkeletonLibrary::Entry* source = skeletons_->find(track.content);
+        if (source != nullptr && track.clip < source->clips.size() && !source->clips[track.clip].weights.empty())
+            weightTracks_.push_back(static_cast<u32>(index));
+    }
+    return weightTracks_;
+}
+
+bool AnimationSystem::clipMorphWeights(core::InstanceId meshPart, const SkeletonLibrary::Entry& entry) const
+{
+    const std::span<const u32> candidates = weightTracks();
+    if (candidates.empty())
+        return false;
+    const scene::MeshPartComponent* mesh = world_->meshParts().find(meshPart);
+    if (mesh == nullptr)
+        return false;
+    const usize count = entry.morphNames.size();
+    morphSum_.assign(count, 0.0f);
+    morphTotal_.assign(count, 0.0f);
+    bool any = false;
+    for (const u32 index : candidates) {
+        const Track& track = tracks_[index];
+        if (!track.alive || track.clip == NoClip || track.weight <= 0.0f || !(track.playing || track.holding))
+            continue;
+        if (!drives(track, meshPart))
+            continue;
+        const SkeletonLibrary::Entry* source = skeletons_->find(track.content);
+        if (source == nullptr || track.clip >= source->clips.size())
+            continue;
+        // **By name when the clip is another file's**, as a joint is: two
+        // files number their targets as their exporter pleased.
+        const bool own = track.content == mesh->meshContent;
+        const auto time = static_cast<f32>(track.time);
+        for (const asset::AnimationChannel& channel : source->clips[track.clip].weights) {
+            core::i32 target = static_cast<core::i32>(channel.joint);
+            if (!own) {
+                target = channel.joint < source->morphNames.size()
+                             ? targetNamed(entry.morphNames, source->morphNames[channel.joint])
+                             : -1;
+            }
+            if (target < 0 || static_cast<usize>(target) >= count)
+                continue;
+            f32 value = 0.0f;
+            if (!sampleWeight(channel, time, value))
+                continue;
+            morphSum_[static_cast<usize>(target)] += value * track.weight;
+            morphTotal_[static_cast<usize>(target)] += track.weight;
+            any = true;
+        }
+    }
+    if (!any)
+        return false;
+    // **A target the tracks do not wholly speak for keeps the rest of its
+    // file's weight**: one clip fading in eases a smile in, where a joint --
+    // which always has a pose under it -- is averaged. Past a whole, the
+    // tracks are averaged as joints are.
+    morphScratch_.resize(count);
+    for (usize target = 0; target < count; ++target) {
+        const f32 rest = target < entry.morphDefaults.size() ? entry.morphDefaults[target] : 0.0f;
+        const f32 total = morphTotal_[target];
+        morphScratch_[target] = total <= 0.0f   ? rest
+                                : total >= 1.0f ? morphSum_[target] / total
+                                                : morphSum_[target] + (1.0f - total) * rest;
+    }
+    return true;
+}
+
+std::span<const f32> AnimationSystem::drawnMorphWeights(core::InstanceId meshPart) const
+{
+    const auto overrides = morphOverrides_.find(keyOf(meshPart));
+    const bool scripted = overrides != morphOverrides_.end() && !overrides->second.empty();
+    // The common answer, before anything is looked up: nobody set a weight
+    // on this mesh and no track anywhere plays one.
+    if (!scripted && weightTracks().empty())
+        return {};
+    const SkeletonLibrary::Entry* entry = morphsOf(meshPart);
+    if (entry == nullptr)
+        return {};
+    const bool clips = clipMorphWeights(meshPart, *entry);
+    if (!clips && !scripted)
+        return {};
+    if (!clips) {
+        morphScratch_.assign(entry->morphNames.size(), 0.0f);
+        for (usize target = 0; target < morphScratch_.size() && target < entry->morphDefaults.size(); ++target)
+            morphScratch_[target] = entry->morphDefaults[target];
+    }
+    // **The script's value wins while it is set.**
+    if (scripted) {
+        for (const MorphOverride& set : overrides->second) {
+            if (const core::i32 target = targetNamed(entry->morphNames, set.name); target >= 0)
+                morphScratch_[static_cast<usize>(target)] = set.weight;
+        }
+    }
+    return morphScratch_;
+}
+
+f32 AnimationSystem::morphWeight(core::InstanceId meshPart, std::string_view name) const
+{
+    // What a script set answers even before the mesh has loaded.
+    if (const auto overrides = morphOverrides_.find(keyOf(meshPart)); overrides != morphOverrides_.end()) {
+        for (const MorphOverride& set : overrides->second) {
+            if (set.name == name)
+                return set.weight;
+        }
+    }
+    const SkeletonLibrary::Entry* entry = morphsOf(meshPart);
+    if (entry == nullptr)
+        return 0.0f;
+    const core::i32 target = targetNamed(entry->morphNames, name);
+    if (target < 0)
+        return 0.0f;
+    if (clipMorphWeights(meshPart, *entry))
+        return morphScratch_[static_cast<usize>(target)];
+    return static_cast<usize>(target) < entry->morphDefaults.size() ? entry->morphDefaults[static_cast<usize>(target)]
+                                                                    : 0.0f;
+}
+
+void AnimationSystem::setMorphWeight(core::InstanceId meshPart, std::string_view name, f32 weight)
+{
+    if (!meshPart.valid() || name.empty())
+        return;
+    std::vector<MorphOverride>& overrides = morphOverrides_[keyOf(meshPart)];
+    for (MorphOverride& set : overrides) {
+        if (set.name == name) {
+            set.weight = weight;
+            return;
+        }
+    }
+    overrides.push_back(MorphOverride{std::string(name), weight});
+}
+
+void AnimationSystem::clearMorphWeight(core::InstanceId meshPart, std::string_view name)
+{
+    const auto overrides = morphOverrides_.find(keyOf(meshPart));
+    if (overrides == morphOverrides_.end())
+        return;
+    std::erase_if(overrides->second, [&](const MorphOverride& set) { return set.name == name; });
+    if (overrides->second.empty())
+        morphOverrides_.erase(overrides);
 }
 
 void AnimationSystem::present(core::InstanceId meshPart, std::span<const PresentedJoint> joints)

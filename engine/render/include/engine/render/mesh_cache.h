@@ -167,6 +167,10 @@ public:
     // their buffer -- which is what the table is read by.
     bool attachMorphs(rhi::IDevice& device, rhi::ICmdList& cmd, MeshHandle handle, const MorphTable& table,
                       core::EngineError* outError = nullptr);
+    // How many live meshes have a morph table: what tells the renderer to
+    // make the morph pipelines when such a mesh is LOADED, behind whatever
+    // curtain the load is behind, and not the frame a face first moves.
+    [[nodiscard]] u32 morphMeshCount() const noexcept { return morphMeshes_; }
 
     // Releases a static mesh's buffers, or gives a pooled mesh's slices back
     // to their pages. A dynamic handle is not released here; the ring reclaims
@@ -290,6 +294,7 @@ private:
     [[nodiscard]] std::optional<core::EngineError> growRing(rhi::IDevice& device, u32 vertices, u32 indices);
 
     std::vector<Entry> entries_;
+    u32 morphMeshes_ = 0;
     std::vector<u32> freeSlots_;
 
     // A ring replaced mid-frame, kept alive until nothing can be drawing from

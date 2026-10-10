@@ -508,6 +508,11 @@ void ScriptRuntime::setSkeleton(scene::SkeletonHost* skeleton)
     m_impl->services.skeleton = skeleton;
 }
 
+void ScriptRuntime::setMorph(scene::MorphHost* morph)
+{
+    m_impl->services.morph = morph;
+}
+
 void ScriptRuntime::fireAnimationEnded(std::span<const scene::TrackId> ended)
 {
     engine::script::fireAnimationEnded(m_impl->state, ended);

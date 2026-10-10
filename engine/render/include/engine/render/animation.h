@@ -17,6 +17,7 @@
 // idle/walk/jump".
 #pragma once
 
+#include <map>
 #include <memory>
 #include <span>
 #include <string>
@@ -28,6 +29,7 @@
 #include "engine/core/math.h"
 #include "engine/core/name_atom.h"
 #include "engine/scene/animation_host.h"
+#include "engine/scene/morph_host.h"
 #include "engine/scene/skeleton_host.h"
 
 namespace engine::scene {
@@ -51,6 +53,12 @@ public:
     {
         std::vector<asset::Joint> joints;
         std::vector<asset::AnimationClip> clips;
+        // The mesh's morph targets (ADR 0196), in its file's order: what each
+        // is called, and the weight the file gives it at rest. A mesh with
+        // targets and no skeleton has an entry for these and its clips alone
+        // -- so `joints` may be empty, and whoever wants a rig asks that.
+        std::vector<std::string> morphNames;
+        std::vector<f32> morphDefaults;
     };
 
     void set(core::NameAtom content, Entry entry);
@@ -119,7 +127,7 @@ struct SeenSkin
 // purpose: `AnimationHost` is about tracks and weights and names no joint,
 // while `SkeletonHost` is about joints and names no track. A caller that wants
 // a socket on a hand should not have to link the thing that plays clips.
-class AnimationSystem final : public scene::AnimationHost, public scene::SkeletonHost
+class AnimationSystem final : public scene::AnimationHost, public scene::SkeletonHost, public scene::MorphHost
 {
 public:
     // The world and the library are references the system keeps: it is created
@@ -149,6 +157,26 @@ public:
     void setJointOverride(core::InstanceId meshPart, core::u32 joint, const core::CFrameD& model) override;
     void clearJointOverrides(core::InstanceId meshPart) override;
     void commitOverrides() override;
+
+    // --- scene::MorphHost (ADR 0196) ----------------------------------------
+
+    [[nodiscard]] core::u32 morphTargetCount(core::InstanceId meshPart) const override;
+    [[nodiscard]] std::string_view morphTargetName(core::InstanceId meshPart, core::u32 target) const override;
+    [[nodiscard]] f32 morphWeight(core::InstanceId meshPart, std::string_view name) const override;
+    void setMorphWeight(core::InstanceId meshPart, std::string_view name, f32 weight) override;
+    void clearMorphWeight(core::InstanceId meshPart, std::string_view name) override;
+
+    // **The weights `meshPart` is drawn with now**, a target each in its
+    // file's order: the file's own, moved by the clips playing on it, and a
+    // script's over those. Empty when they are the file's own untouched --
+    // nothing plays a weight on this mesh and no script set one -- which is
+    // every body that is not a face in use, and costs it a lookup.
+    //
+    // Worked out when it is asked, from where the tracks are, and not kept in
+    // the pose: a pose is built at the rate its mesh is seen, shared between
+    // the bodies of a crowd and skipped for one nobody looks at, and a face's
+    // weights are none of those things. The span is good until the next call.
+    [[nodiscard]] std::span<const f32> drawnMorphWeights(core::InstanceId meshPart) const;
 
     // The pose of one `MeshPart`, or null for a mesh with no skeleton or nothing
     // driving it. Read by the renderer; null means "draw it in bind pose", which
@@ -375,6 +403,33 @@ private:
 
     const scene::World* world_ = nullptr;
     const SkeletonLibrary* skeletons_ = nullptr;
+
+    // **What scripts set, by name** (ADR 0196): a mesh's few overrides, in the
+    // order they were first set. By name and not by index because a script
+    // sets a weight on a mesh whose file may not have arrived, and keeps
+    // whatever it set across a reload of that file.
+    struct MorphOverride
+    {
+        std::string name;
+        f32 weight = 0.0f;
+    };
+    // Ordered, though nothing walks it for output: `retire` sweeps it.
+    std::map<core::u64, std::vector<MorphOverride>> morphOverrides_;
+    // The entry whose targets `meshPart` has, or null.
+    [[nodiscard]] const SkeletonLibrary::Entry* morphsOf(core::InstanceId meshPart) const;
+    // What the clips make of each target of `meshPart` into `morphScratch_`;
+    // false when no playing track has a weight channel for it.
+    bool clipMorphWeights(core::InstanceId meshPart, const SkeletonLibrary::Entry& entry) const;
+    mutable std::vector<f32> morphScratch_;
+    mutable std::vector<f32> morphSum_;
+    mutable std::vector<f32> morphTotal_;
+    // **The tracks whose clip has a weight channel at all**, found once a
+    // tick: nearly no clip has one, and a horde of bodies with targets and
+    // tracks without would otherwise ask every track about every body.
+    [[nodiscard]] std::span<const u32> weightTracks() const;
+    mutable std::vector<u32> weightTracks_;
+    mutable core::u64 weightTracksAt_ = ~core::u64{0};
+    mutable usize weightTracksOf_ = 0;
 
     // Index 0 is never handed out, so a `TrackId` of 0 can mean "none" the way
     // an invalid `InstanceId` does.

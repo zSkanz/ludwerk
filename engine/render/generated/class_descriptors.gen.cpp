@@ -93,6 +93,33 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setMeshPartMeshSize,
         },
     }};
+    static std::array<scene::MethodDesc, 4> meshPartMethods;
+    meshPartMethods = {{
+        scene::MethodDesc{
+            .name = atoms.intern("GetMorphTargets"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "The names of the mesh's morph targets -- an artist's shape keys -- in its file's order. Empty for a mesh that has none, **and for one whose file has not loaded yet**: a mesh arrives over frames, so ask after `ContentProvider:PreloadAsync`, or set weights by name without asking, which is kept until the mesh arrives.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("SetMorphWeight"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Sets how far this part is in one of its mesh's morph targets: 0 is the mesh at rest and 1 is that shape. Any number is allowed -- a file's own weights go past 1 and below 0 -- and several targets add.\012\012**It stays on the machine the script ran on.** A weight is picture and not simulation: it is not replicated, not in a replay, and a server with no window draws nothing with it. Set it in a client script, where the part is drawn. A clip's own weight channels are the way a face is seen by everybody: the animation that plays them is replicated already.\012\012**The script's value wins** over what a playing clip says of that target, every frame, until `ClearMorphWeight` gives it back. Raises for a name the mesh does not have, once the mesh has loaded; set before that, the name is kept and takes effect when the mesh arrives.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("GetMorphWeight"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "The weight this part is drawn with for one target **on this machine**: what a script set here, else what the clips playing on it make of it, else the weight its file gives it at rest. 0 for a name the mesh does not have.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("ClearMorphWeight"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Gives one target back to the clips and the file: what `SetMorphWeight` set for it is forgotten, and from the next frame it is drawn as the clips playing on the mesh say, or at its file's own weight.",
+        },
+    }};
     scene::ClassDescriptor meshPartDesc;
     meshPartDesc.name = atoms.intern("MeshPart");
     meshPartDesc.super = basePartClass;
@@ -102,6 +129,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     static constexpr std::array<std::string_view, 6> meshPartParents{{"Workspace", "Model", "BasePart", "ViewportFrame", "ReplicatedStorage", "ServerStorage"}};
     meshPartDesc.parents = meshPartParents;
     meshPartDesc.properties = meshPartProperties;
+    meshPartDesc.methods = meshPartMethods;
     meshPartDesc.attachComponents = native::attachMeshPartComponents;
     meshPartDesc.detachComponents = native::detachMeshPartComponents;
     classes.registerClass(meshPartDesc);

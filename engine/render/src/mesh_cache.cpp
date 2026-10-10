@@ -218,6 +218,7 @@ void MeshCache::destroy(rhi::IDevice& device)
         }
         entry.live = false;
     }
+    morphMeshes_ = 0;
     entries_.clear();
     freeSlots_.clear();
 
@@ -337,6 +338,7 @@ bool MeshCache::attachMorphs(rhi::IDevice& device, rhi::ICmdList& cmd, MeshHandl
     entry.resolved.morphFirstVertex = table.firstVertex;
     entry.resolved.morphVertexCount = table.vertexCount;
     entry.resolved.morphTargetCount = table.targetCount;
+    ++morphMeshes_;
     return true;
 }
 
@@ -508,8 +510,10 @@ void MeshCache::release(rhi::IDevice& device, MeshHandle handle)
             device.destroy(entry.resolved.indices);
         if (entry.resolved.skin.valid())
             device.destroy(entry.resolved.skin);
-        if (entry.resolved.morph.valid())
+        if (entry.resolved.morph.valid()) {
             device.destroy(entry.resolved.morph);
+            morphMeshes_ -= morphMeshes_ > 0 ? 1u : 0u;
+        }
     }
 
     entry.live = false;

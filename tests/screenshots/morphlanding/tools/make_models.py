@@ -13,10 +13,15 @@ kinds and two makings:
 - `made/plain.gltf` and `made/skinned.gltf` are the same pillar with NO
   targets, its vertices already where those weights put them and its normals
   already turned.
+- `driven/plain.gltf` and `driven/skinned.gltf` have the targets and leave
+  every weight at NOUGHT: at rest by their file. The scene's script sets the
+  plain one's weights by name, and the skinned one's clip carries them as
+  weight channels -- so what puts these in the same shape is the API and the
+  animation, and nothing the file says.
 
-Drawn in the same scene, the two makings are the same picture -- which says a
-morphed vertex lands where the file says, in the lit pass, in the depth the
-camera's prepass writes and in the shadow it casts.
+Drawn in the same scene, the three makings are the same picture -- which says
+a morphed vertex lands where its weights say, whoever set them, in the lit
+pass, in the depth the camera's prepass writes and in the shadow it casts.
 
 The skinned kind hangs every vertex on a joint, `Tip`, which a clip holds
 moved and turned: a target is applied before the joints (as glTF has it), and
@@ -99,7 +104,7 @@ def made():
     return [tuple(p) for p in places], [tuple(n) for n in turned]
 
 
-def write(path, with_targets, skinned):
+def write(path, with_targets, skinned, driven=False):
     blob = bytearray()
     views, accessors = [], []
 
@@ -146,7 +151,7 @@ def write(path, with_targets, skinned):
                     "NORMAL": add(floats(target_turns), 5126, "VEC3", count),
                 }
             )
-        mesh["weights"] = [weight for _, weight in TARGETS]
+        mesh["weights"] = [0.0 if driven else weight for _, weight in TARGETS]
         mesh["extras"] = {"targetNames": [name for name, _ in TARGETS]}
 
     document = {
@@ -195,6 +200,12 @@ def write(path, with_targets, skinned):
                 ],
             }
         ]
+        if driven:
+            # And the weights, held: a number a target a key.
+            held = add(floats([(weight,) for _, weight in TARGETS] * 2), 5126, "SCALAR", len(TARGETS) * 2)
+            clip = document["animations"][0]
+            clip["samplers"].append({"input": times, "output": held, "interpolation": "LINEAR"})
+            clip["channels"].append({"sampler": 2, "target": {"node": 0, "path": "weights"}})
     else:
         document["nodes"] = [{"name": "Pillar", "mesh": 0}]
     document["buffers"] = [
@@ -214,3 +225,4 @@ root = Path(__file__).resolve().parent.parent
 for kind, skinned in (("plain", False), ("skinned", True)):
     write(root / "content" / "models" / f"{kind}.gltf", True, skinned)
     write(root / "made" / f"{kind}.gltf", False, skinned)
+    write(root / "driven" / f"{kind}.gltf", True, skinned, driven=True)

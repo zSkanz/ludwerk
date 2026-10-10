@@ -18,3 +18,25 @@ offers is on the base's page, which is what keeps one added member on
 | `CollisionFidelity` | `Enum.CollisionFidelity` | — | read/write | How closely the collision shape follows the rendered geometry.<br><br>`Box` names a shape rather than an accuracy and is honoured exactly: a caller who asked for the bounding box gets it even when the mesh's geometry is loaded. Every other value asks for the geometry, and what it gets is a CONVEX HULL -- a hull is what a rigid-body solver can use directly, and a concave triangle mesh is a different shape class with different rules (it cannot be dynamic) that nothing in v1 asks for.<br><br>A mesh whose points have not arrived yet collides as its bounding box, which is the state of every `MeshPart` in the frame before its file finishes loading: a body with no shape for one frame is a body that falls through the floor. So does a mesh too degenerate to make a solid from -- three points are a triangle, not a hull.<br><br>The property reads back what was written rather than what it resolved to, because a value that silently became another value is worse than one that says what it did. |
 | `MeshContent` | `Content` | — | read/write | The glTF file this part renders. Setting it replaces the geometry; a file that fails to import leaves the previous mesh in place and reports why, because a part that silently becomes invisible is harder to diagnose than one that says it could not load. |
 | `MeshSize` | `vector` | `vector.create(1, 1, 1)` | read/write | What the mesh measures at its authored size, in metres. `Size` divided by this is what the part is scaled by, so setting `Size` to twice `MeshSize` draws the mesh at twice its authored size and collides with a hull to match -- which is what makes `Size` mean the same thing here as it does on a `Part`.<br><br>**The import writes it, and it is saved with the scene.** It is not read back off the file: the mesh's real bounds are known only where something loaded it, and a scene has to describe the same world whether or not anything is rendering. A part whose `Size` and `MeshSize` are both one draws exactly as it always has.<br><br>Writing it yourself stretches the mesh, which is a legitimate thing to want; zero and negative components are refused, since they are a division rather than a size. |
+
+## Methods
+
+### `ClearMorphWeight(name: string)`
+
+Gives one target back to the clips and the file: what `SetMorphWeight` set for it is forgotten, and from the next frame it is drawn as the clips playing on the mesh say, or at its file's own weight.
+
+### `GetMorphTargets(): { string }`
+
+The names of the mesh's morph targets -- an artist's shape keys -- in its file's order. Empty for a mesh that has none, **and for one whose file has not loaded yet**: a mesh arrives over frames, so ask after `ContentProvider:PreloadAsync`, or set weights by name without asking, which is kept until the mesh arrives.
+
+### `GetMorphWeight(name: string): number`
+
+The weight this part is drawn with for one target **on this machine**: what a script set here, else what the clips playing on it make of it, else the weight its file gives it at rest. 0 for a name the mesh does not have.
+
+### `SetMorphWeight(name: string, weight: number)`
+
+Sets how far this part is in one of its mesh's morph targets: 0 is the mesh at rest and 1 is that shape. Any number is allowed -- a file's own weights go past 1 and below 0 -- and several targets add.
+
+**It stays on the machine the script ran on.** A weight is picture and not simulation: it is not replicated, not in a replay, and a server with no window draws nothing with it. Set it in a client script, where the part is drawn. A clip's own weight channels are the way a face is seen by everybody: the animation that plays them is replicated already.
+
+**The script's value wins** over what a playing clip says of that target, every frame, until `ClearMorphWeight` gives it back. Raises for a name the mesh does not have, once the mesh has loaded; set before that, the name is kept and takes effect when the mesh arrives.

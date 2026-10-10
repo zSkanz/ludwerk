@@ -5,11 +5,70 @@ mesh in another shape; an artist makes each as a **shape key** (a *morph
 target*, in glTF's words) and gives it a weight: nought is the mesh at rest,
 one is that shape, and several add.
 
-**Where this stands.** A model's morph targets are imported and kept, and a
-model is **drawn** in the shape its file's own weights give it -- lit, in the
-depth pass and in its shadow. Setting a weight from a script, a clip that
-animates weights, and sliders in the editor are the next stages (ADR 0196),
-and this page grows with them.
+A model's shape keys come in with it. A clip that animates their weights
+plays them, a script sets them by name, and the model is drawn in the shape
+they add up to -- lit, in the depth pass and in its shadow. Sliders in the
+editor are the stage after this one (ADR 0196).
+
+## A blink from a script
+
+```luau
+local face = workspace.Hero.Face :: MeshPart
+
+print(face:GetMorphTargets()) --> { "Smile", "Blink", "JawOpen", ... }
+
+face:SetMorphWeight("Blink", 1)
+task.wait(0.12)
+face:ClearMorphWeight("Blink") -- back to whatever the clips say of it
+```
+
+- `GetMorphTargets()` is the names, in the file's order. **Empty until the
+  mesh has loaded**: ask after `ContentProvider:PreloadAsync`, or do not ask
+  -- a weight set by name on a mesh that has not arrived is kept and takes
+  effect when it does.
+- `SetMorphWeight(name, weight)` takes any number. Nought is rest and one is
+  the shape, and a file's own weights go past one and below nought, so yours
+  may. It raises for a name the mesh does not have, once the mesh is there to
+  say so.
+- `GetMorphWeight(name)` is what the part is drawn with on this machine.
+- `ClearMorphWeight(name)` gives the target back.
+
+**Who wins.** For each target: what a script set, while it is set; else what
+the clips playing on the mesh make of it; else the weight its file gives it.
+A script's value is not blended with the clip's -- it replaces it, every
+frame, until it is cleared.
+
+## Which machine a weight lives on
+
+**A weight is picture, not simulation.** It is not in the world's state: not
+replicated, not in a replay, not in a save.
+
+- **What a script sets stays on the machine that script ran on.** Set it in a
+  client script, where the part is drawn. A server's script that calls
+  `SetMorphWeight` moves a face nobody is looking at, and the script check
+  says so (`SetMorphWeight is a player's: this script runs on the server`).
+- **What a clip plays is seen by everybody**, with the game doing nothing: the
+  animation that plays it is replicated already, and each machine works the
+  same weights out for itself. A face that has to be seen talking by every
+  player is a clip on an `AnimationPlayer`, or a `RemoteEvent` that tells
+  each client to set it.
+
+## Weights in a clip
+
+A glTF animation that keys shape key values comes in as part of the clip of
+that name, beside whatever it does to the joints, and plays with it:
+`AnimationPlayer:LoadAnimation("Talk")` and `Play` as for any clip.
+
+- A clip **fading in eases its weights in** from the file's own, and one
+  fading out eases them back.
+- Two clips on the same target are averaged by their track weights, as two
+  clips on a joint are.
+- A target a clip says nothing of keeps the file's weight.
+- One `AnimationPlayer` on a `Model` plays a clip's weights on every mesh
+  under it that has those targets -- a body and a face exported as two meshes
+  of one file.
+- A clip from **another file** moves a mesh's targets by their names, so a
+  library of expressions can serve every head that names its keys the same.
 
 ## Making them
 
@@ -44,6 +103,10 @@ light). Their names come through as you gave them.
   of faces talking is nothing; a crowd of two hundred all talking is not what
   this stage is for.
 - The moment a body's keys are all back at nought it is in its run again.
+- **The first blink does not hitch.** What draws a morphing body is made when
+  a model that has shape keys is loaded -- behind the loading screen, or by
+  `ContentProvider:PreloadAsync` -- and not on the frame a weight first
+  leaves nought.
 - At most **eight keys move a body at once**. With more above nought, the
   eight largest are drawn and the rest wait.
 
@@ -55,11 +118,14 @@ light). Their names come through as you gave them.
 - A mesh with shape keys is drawn with the built-in surface, as a skinned one
   is: a surface shader on its material is not used.
 - A key's own tangents are not kept; the mesh's are used.
-- What the renderer culls by is the mesh at rest, grown to where each key
-  alone can take it. Weights past one, or several keys pushing the same way,
-  can take a vertex outside that.
+- **What the renderer culls by is the mesh at rest, grown to where each key
+  alone can take it at a weight of one and of minus one.** A weight outside
+  that, or several large keys pushing the same way, can take a vertex past
+  those bounds -- and then the mesh can vanish at the edge of the screen
+  while part of it is still in view. Keep big movements in the skeleton.
 
 ## Where to look next
 
 - [Skeletal animation](manual:animation/skeletal)
 - [Capes, tails and hair](manual:animation/secondary-motion)
+- [`MeshPart`](api:MeshPart) · [`AnimationPlayer`](api:AnimationPlayer)

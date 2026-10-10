@@ -1235,13 +1235,20 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         }
 
         // **The morph targets it is drawn with** (ADR 0196), once for the
-        // body: the file's own weights until something sets others. Decided
-        // from this frame's weights and nothing kept, so a body whose weights
-        // have all returned to nought has no row and is back in its run in
-        // this same frame.
+        // body: the file's own weights, moved by the clips playing on it and
+        // by what a script set. Decided from this frame's weights and nothing
+        // kept, so a body whose weights have all returned to nought has no
+        // row and is back in its run in this same frame.
         u32 morph = NoMorph;
         if (!entry->morphDefaults.empty()) {
-            if (const MorphDraw moved = selectMorphs(entry->morphDefaults); moved.count > 0) {
+            std::span<const f32> weights = entry->morphDefaults;
+            if (animation != nullptr) {
+                // The same count unless the mesh was reloaded with other
+                // targets a frame ago; then the file's own, for that frame.
+                if (const std::span<const f32> own = animation->drawnMorphWeights(id); own.size() == weights.size())
+                    weights = own;
+            }
+            if (const MorphDraw moved = selectMorphs(weights); moved.count > 0) {
                 morph = static_cast<u32>(out.morphs.size());
                 out.morphs.push_back(moved);
             }

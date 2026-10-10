@@ -1,5 +1,4 @@
 // Fluids in the block world (V1): the rules, and that they are deterministic.
-#include <chrono>
 #include <doctest/doctest.h>
 #include <utility>
 
@@ -321,35 +320,33 @@ TEST_CASE("D448: taking what is due costs the budget, not the queue")
     CHECK(taken == 1000 + 20u * scene::MaxFluidUpdatesPerTick);
     CHECK(wakes.size() == total - taken);
 
-    // **Twenty ticks' worth costs about the same out of four times the
-    // queue.** Copying and sorting the backlog each time, it cost four times
-    // as much; taking the budget, a fifth more. A ratio and not a bound in
-    // milliseconds: this ran in a tenth of a second alone and in three tenths
-    // beside two other builds, and a clock on a busy machine says how busy it
-    // is. The two are timed turn about and the least of each three kept, so a
-    // moment the machine was taken away is in neither -- and what is asked is
-    // under three times, where the defect is four and more.
+    // **Twenty ticks' worth reads the same number of entries out of four
+    // times the queue**: the budget, twenty times, whatever is waiting behind
+    // it. Copying and sorting the backlog each time, it read every entry due
+    // -- the whole queue, every tick.
+    //
+    // **A count and not a clock.** This was timed, as a ratio between the two
+    // queues with the least of three turns kept, and that held for eighty-five
+    // runs beside a full gate (the ratio between 1.0 and 1.7 against a limit
+    // of three) and missed once at 4.7: the larger queue is a hundred
+    // megabytes of tree nodes, and a busy machine's memory is not shared out
+    // evenly between a large thing and a small one. A clock on a busy machine
+    // says how busy it is; what the queue reads is the same on every machine.
     const auto twentyTicks = [](core::i32 side) {
         scene::FluidWakes queue;
         for (core::i32 z = 0; z < side; ++z) {
             for (core::i32 x = 0; x < side; ++x)
                 queue.schedule(scene::FluidWakes::Position{x, 0, z}, 0u);
         }
-        const auto began = std::chrono::steady_clock::now();
+        std::size_t looked = 0;
         std::size_t out = 0;
         for (int tick = 0; tick < 20; ++tick)
-            out += queue.takeDue(10, scene::MaxFluidUpdatesPerTick).size();
-        const double took = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - began).count();
+            out += queue.takeDue(10, scene::MaxFluidUpdatesPerTick, &looked).size();
         REQUIRE(out == 20u * scene::MaxFluidUpdatesPerTick);
-        return took;
+        return looked;
     };
-    double ofTheQueue = 1.0e9;
-    double ofFourTimesIt = 1.0e9;
-    for (int turn = 0; turn < 3; ++turn) {
-        ofTheQueue = std::min(ofTheQueue, twentyTicks(Side));
-        ofFourTimesIt = std::min(ofFourTimesIt, twentyTicks(Side * 2));
-    }
-    CAPTURE(ofTheQueue);
-    CAPTURE(ofFourTimesIt);
-    CHECK(ofFourTimesIt < 3.0 * ofTheQueue + 5.0);
+    const std::size_t ofTheQueue = twentyTicks(Side);
+    const std::size_t ofFourTimesIt = twentyTicks(Side * 2);
+    CHECK(ofTheQueue == 20u * scene::MaxFluidUpdatesPerTick);
+    CHECK(ofFourTimesIt == ofTheQueue);
 }

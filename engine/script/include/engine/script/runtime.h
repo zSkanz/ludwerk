@@ -29,6 +29,7 @@
 struct lua_State;
 
 namespace engine::scene {
+class MorphHost;
 class PredictedStepHost;
 } // namespace engine::scene
 
@@ -194,6 +195,8 @@ public:
     // module, where `Build` refuses rather than producing a ragdoll with no
     // limbs in it.
     void setSkeleton(scene::SkeletonHost* skeleton);
+    // Where `MeshPart:SetMorphWeight` and its fellows go (ADR 0196).
+    void setMorph(scene::MorphHost* morph);
 
     // Enqueues `Ended` for each track the host reported finished. Called right
     // after `AnimationHost::sample`, so the signal lands in the same drain as

@@ -594,8 +594,9 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // commit and this failed on the next build, before anything could reach a
     // script and find a name that answered nothing.
     // 294: per-device input inventory, local guests and explicitly owned remote sends.
-    CHECK(coverage.declared == 294);
-    CHECK(coverage.bound == 294);
+    // 298: `MeshPart`'s four for its morph targets (ADR 0196).
+    CHECK(coverage.declared == 298);
+    CHECK(coverage.bound == 298);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

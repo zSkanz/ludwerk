@@ -106,6 +106,7 @@ engine_add_module_tests(render
         tests/spring_chain_tests.cpp
         tests/spring_bones_tests.cpp
         tests/morph_tests.cpp
+        tests/morph_weights_tests.cpp
         tests/voxel_loader_tests.cpp
 )
 

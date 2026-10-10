@@ -427,6 +427,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // The same object through the narrower seam that names joints, which is
     // what `Ragdoll:Build` reads a rig through.
     m_runtime->setSkeleton(&*m_animation);
+    m_runtime->setMorph(&*m_animation);
     m_runtime->setInput(&m_input);
 
 #if ENG_PHYSICS_JOLT
@@ -763,6 +764,7 @@ std::optional<core::EngineError> WorldHost::restartRuntime()
     // The same object through the narrower seam that names joints, which is
     // what `Ragdoll:Build` reads a rig through.
     m_runtime->setSkeleton(&*m_animation);
+    m_runtime->setMorph(&*m_animation);
     m_runtime->setInput(&m_input);
     if (m_physics.has_value()) {
         m_runtime->setPhysics(&*m_physics);
@@ -1076,10 +1078,20 @@ void WorldHost::syncSkeletons()
         asset::CompiledMesh compiled;
         if (asset::decodeMesh(resolved.bytes, compiled).has_value())
             return;
-        if (compiled.joints.empty())
+        // A rig, or morph targets, or both (ADR 0196): a clip's weight
+        // channels play here too, and a script asks a mesh its targets'
+        // names on a machine that draws nothing.
+        if (compiled.joints.empty() && compiled.morphs.empty())
             return;
 
-        m_skeletons.set(content, render::SkeletonLibrary::Entry{std::move(compiled.joints), std::move(compiled.clips)});
+        render::SkeletonLibrary::Entry rig;
+        rig.joints = std::move(compiled.joints);
+        rig.clips = std::move(compiled.clips);
+        for (const asset::MorphTarget& target : compiled.morphs) {
+            rig.morphNames.push_back(target.name);
+            rig.morphDefaults.push_back(target.defaultWeight);
+        }
+        m_skeletons.set(content, std::move(rig));
     });
 }
 

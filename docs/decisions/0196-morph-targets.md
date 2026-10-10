@@ -79,11 +79,10 @@ the manual says so where an artist will read it.
 2. **Drawing.** Done, and not as first written here: see *Drawing, as
    built* below. A model is drawn in the shape its file's own weights give
    it; nothing sets a weight yet.
-3. **The API and the clips.** `MeshPart:GetMorphTargets()`,
-   `SetMorphWeight(name, weight)`, `GetMorphWeight(name)`; a playing clip's
-   weight channels; a script's value over the clip's for that target until
-   released. Presentation only, outside the world's hash: a weight set by a
-   client's script is that machine's. Not built.
+3. **The API and the clips.** Done: see *Weights, as built* below.
+   `MeshPart:GetMorphTargets()`, `SetMorphWeight(name, weight)`,
+   `GetMorphWeight(name)`, `ClearMorphWeight(name)`; a playing clip's weight
+   channels; a script's value over the clip's for that target until cleared.
 4. **The editor and the proof.** A slider a target in Properties, previewing
    live; an example head; the cost for one face, six heroes, and four hundred
    bodies whose targets are all at nought, which must be today's. Not built.
@@ -158,6 +157,64 @@ each instance naming where its own begin, as the palettes of a skinned run
 already are. It is not built because nothing asks for it yet, and it is
 written here so that the day something does, the design is not rediscovered.
 
+## Weights, as built
+
+**Where they are kept.** In the animation system (`render::AnimationSystem`,
+through a new seam `scene::MorphHost`, beside `AnimationHost` and
+`SkeletonHost`), and not in the world: a weight is not hashed, not
+replicated, not in a replay or a save. What a script sets is a few named
+numbers a mesh, on the machine the script ran on.
+
+**The order, for each target**: the script's value while one is set; else
+what the clips playing on the mesh make of it; else the file's weight at
+rest. A script's value replaces the clip's and is not blended with it;
+`ClearMorphWeight` gives the target back. (`SetMorphWeight(name, nil)` was
+considered for giving it back and `ClearMorphWeight` taken, to read as
+`ClearMaterialParameter` beside `SetMaterialParameter` does.)
+
+**By name.** A script sets a weight on a mesh whose file may not have
+arrived: the name is kept and takes effect when the mesh does. Once the mesh
+is there, a name it does not have raises -- a weight that silently did
+nothing would be found in a face that does not move.
+
+**No clamp.** A file's own weights go past one and below nought and are
+legal; so are a script's. The bounds grown at load cover each target alone
+at one and at minus one, the manual says that weights past that can leave
+them, and there is no mechanism beyond saying so.
+
+**A clip's weight channels are worked out when the mesh is drawn**
+(`AnimationSystem::drawnMorphWeights`), from where the tracks are, and not
+stored in the pose: a pose is built at the rate its mesh is seen, shared
+between the bodies of a crowd and skipped for one nobody looks at, and none
+of that suits a face. Track time and track weight are the simulation's and
+replicated, so every machine works out the same weights -- a face animated by
+a clip is seen by everybody. A clip fading in eases its weights in from the
+file's (a target the tracks speak for by less than a whole keeps the rest of
+its file's weight); past a whole, tracks are averaged as joints are. A clip
+from another file moves targets by name.
+
+A mesh with targets and no skeleton has an entry in the skeleton library for
+its targets' names and its clips alone; a clip in such a mesh is found by a
+player over its `Model` as a rig's is.
+
+**What a body that is not using any of this pays**: the tracks whose clip has
+a weight channel at all are listed once a tick -- nearly no clip has one --
+and a mesh no script set a weight on, in a world where that list is empty,
+is answered before anything is looked up. Four hundred skinned bodies with
+targets at nought and four hundred tracks: 0.690 ms a frame against 0.696
+with no targets, extraction 0.093 ms against 0.089.
+
+**A server's script that sets a weight** is told by the script check that
+nobody will see it (`script.warn.side_server_touches_player`, as for the
+camera and the interface): `SetMorphWeight` is in the list of words that are
+a player's. The call itself is kept, on a host that is also playing.
+
+**The pipelines are made when a mesh that has targets is loaded**
+(`MeshCache::morphMeshCount`), behind whatever its load is behind, and not
+the frame a weight first leaves nought -- stage 2 made them then, and a face
+that blinked for the first time in a fight would have paid for ten pipelines
+there. A game with no such mesh still makes none.
+
 ## Memory, stated
 
 As imported and compiled, a delta is 28 bytes (a vertex, a place, a normal),
@@ -194,6 +251,26 @@ delta that names a vertex the mesh lacks, deltas out of order, and a weight
 channel for a target that is not there are each refused.
 
 The determinism replays reproduce unmoved.
+
+## Proof, stage 3
+
+`engine/render/tests/morph_weights_tests.cpp`: a mesh nothing plays a weight
+on and no script set one on answers nothing, and is read as its file; a
+clip's weight channel moves its target on a mesh with no skeleton, holds at
+its end and lets go when stopped; a clip fading in eases in from the file's
+weight and two clips are averaged; a script's weight wins while set, past one
+and below nought, and clearing gives the target back the same frame; a weight
+set before its mesh loaded is kept and one on a mesh that is gone is not; a
+clip from another file moves targets by name; one player over a model plays
+the body's clip on a face.
+
+`tests/conformance/animation/morphs.spec.luau`: the four methods from Luau on
+a mesh that has not loaded. `script_sides_tests.cpp`: the server's script is
+told. `morph_landing` and `morph_landing_vulkan` gained a third run, `driven`:
+the same targets with every weight at nought in the file, shaped by the
+scene's `SetMorphWeight` (set before the file arrives) and by the weight
+channels of the skinned pillar's clip -- the same picture as the pillars made
+in that shape.
 
 ## Proof, stage 2
 

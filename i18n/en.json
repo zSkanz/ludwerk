@@ -579,6 +579,8 @@
   "script.err.not_a_page": "A UIPageLayout turns to one of its pages: a visible UIObject beside it, under the same parent, or an index that is a number.",
   "script.err.not_a_camera": "This is a Camera's method, and what it was called on is not a Camera.",
   "script.err.material_parameter_undeclared_default": "The default material lets a part override only Color, Transparency and Emissive, not {name}. Give the part a material that declares {name}.",
+  "script.err.morph_target_unknown": "This mesh has no morph target named \"{name}\". It has: {targets}.",
+  "script.err.morph_weight_not_finite": "A morph target's weight has to be a number: this one is infinite or not a number at all.",
   "script.err.material_parameter_type": "{name} takes a Color3 for Color and Emissive, and a number for every other built-in parameter; a surface shader parameter takes a number, a boolean, a Vector2, a vector or Color3, or four numbers in a table.",
   "scene.err.expected_material": "Cannot set {className}.{property}: it takes a Material from Material.load or material:Clone(), or nil.",
   "scene.err.expected_material_parameters": "Cannot set {className}.{property}: it takes a table of material parameters -- Color and Emissive as Color3, Transparency, Metalness, Roughness, NormalScale and AlphaCutoff as numbers.",

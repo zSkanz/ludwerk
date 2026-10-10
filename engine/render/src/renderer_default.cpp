@@ -6104,6 +6104,9 @@ bool DefaultRenderer::ensureMorph(rhi::IDevice& device)
 {
     if (morphTried_)
         return morphReady_;
+    // Timed by name: what a frame statistic shows the making of these cost,
+    // the once it happens.
+    ENG_PROFILE_SCOPE("prepare.morph_pipelines");
     morphTried_ = true;
     if (shaderLibrary_ == nullptr)
         return false;
@@ -8056,9 +8059,13 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             return draw.boneCount > 0 && !draw.transparent;
         }) >= static_cast<std::ptrdiff_t>(kMinInstanceBatch))
         (void)ensureSkinnedInstancing(device);
-    // And the morph pipelines, the first frame a body has a target above
-    // nought (ADR 0196): a world where none ever has builds nothing.
-    if (!morphTried_ && !world.morphs.empty())
+    // And the morph pipelines (ADR 0196), **when a mesh that has targets is
+    // loaded** and not the frame one of its weights first leaves nought: a
+    // face that blinks for the first time in the middle of a fight would
+    // otherwise pay for ten pipelines there. A mesh arrives behind whatever
+    // its load is behind -- a loading curtain, `ContentProvider:PreloadAsync`
+    // -- and so do these. A game with no such mesh builds nothing.
+    if (!morphTried_ && (meshes.morphMeshCount() > 0 || !world.morphs.empty()))
         (void)ensureMorph(device);
     buildInstanceBatches(world, meshes);
     if (!instanceStaging_.empty()) {

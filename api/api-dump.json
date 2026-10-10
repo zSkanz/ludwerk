@@ -3965,7 +3965,51 @@
           "Default": "vector.create(1, 1, 1)"
         }
       ],
-      "Methods": [],
+      "Methods": [
+        {
+          "Name": "ClearMorphWeight",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetMorphTargets",
+          "Parameters": [],
+          "Returns": ["{ string }"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetMorphWeight",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetMorphWeight",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "weight",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
       "Events": []
     },
     {

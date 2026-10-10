@@ -117,8 +117,11 @@ std::vector<SideFinding> lintScriptSide(std::string_view source, script::ScriptS
         return findings;
     const std::vector<Word> words = wordsOf(source);
     constexpr std::array<std::string_view, 2> ServerOnly{"ServerStorage", "ServerScriptService"};
-    constexpr std::array<std::string_view, 5> PlayerOnly{"CurrentCamera", "UIService", "InputService",
-                                                         "GraphicsService", "LocalizationService"};
+    // `SetMorphWeight` (ADR 0196): a weight is kept by the machine that
+    // draws it, and one set by the server's script is seen by nobody but a
+    // host who is also playing.
+    constexpr std::array<std::string_view, 6> PlayerOnly{"CurrentCamera",   "UIService",           "InputService",
+                                                         "GraphicsService", "LocalizationService", "SetMorphWeight"};
     for (const Word& word : words) {
         if (side == script::ScriptSide::Client && oneOf(word.text, ServerOnly)) {
             findings.push_back(SideFinding{word.line, word.column, static_cast<core::u32>(word.text.size()),

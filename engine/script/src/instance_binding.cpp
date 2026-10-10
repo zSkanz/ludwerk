@@ -1803,6 +1803,88 @@ int methodPageLayoutJumpToIndex(lua_State* L)
     return 0;
 }
 
+// --- A mesh's morph targets (ADR 0196) ---------------------------------------
+//
+// Through `scene::MorphHost`, which the animation system is. **None of these
+// writes the world**: a weight is kept by the system that draws it, on this
+// machine, and nothing replicates or records it.
+
+int methodGetMorphTargets(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const scene::MorphHost* morph = context(L).services->morph;
+    lua_newtable(L);
+    if (morph == nullptr)
+        return 1;
+    const core::u32 count = morph->morphTargetCount(id);
+    for (core::u32 target = 0; target < count; ++target) {
+        const std::string_view name = morph->morphTargetName(id, target);
+        lua_pushlstring(L, name.data(), name.size());
+        lua_rawseti(L, -2, static_cast<int>(target) + 1);
+    }
+    return 1;
+}
+
+// The name at `index`, checked against the mesh once it has loaded: a mesh
+// with targets and not this one is a typing mistake, and a weight that
+// silently did nothing would be found in a face that does not move.
+[[nodiscard]] std::string_view checkMorphTarget(lua_State* L, core::InstanceId id, int index, bool raiseUnknown)
+{
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, index, &length);
+    const std::string_view name{text, length};
+    const scene::MorphHost* morph = context(L).services->morph;
+    if (morph == nullptr || !raiseUnknown)
+        return name;
+    const core::u32 count = morph->morphTargetCount(id);
+    if (count == 0)
+        return name;
+    std::string known;
+    for (core::u32 target = 0; target < count; ++target) {
+        const std::string_view has = morph->morphTargetName(id, target);
+        if (has == name)
+            return name;
+        if (target < 12) {
+            known += known.empty() ? "" : ", ";
+            known += has;
+        }
+    }
+    if (count > 12)
+        known += ", ...";
+    const core::I18nArg args[] = {{"name", name}, {"targets", std::string_view{known}}};
+    raise(L, ENG_TR("script.err.morph_target_unknown"), args);
+}
+
+int methodSetMorphWeight(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const std::string_view name = checkMorphTarget(L, id, 2, true);
+    const double weight = luaL_checknumber(L, 3);
+    if (!std::isfinite(weight))
+        raise(L, ENG_TR("script.err.morph_weight_not_finite"));
+    if (scene::MorphHost* morph = context(L).services->morph; morph != nullptr)
+        morph->setMorphWeight(id, name, static_cast<f32>(weight));
+    return 0;
+}
+
+int methodGetMorphWeight(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const std::string_view name = checkMorphTarget(L, id, 2, false);
+    const scene::MorphHost* morph = context(L).services->morph;
+    lua_pushnumber(L, morph != nullptr ? static_cast<double>(morph->morphWeight(id, name)) : 0.0);
+    return 1;
+}
+
+int methodClearMorphWeight(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const std::string_view name = checkMorphTarget(L, id, 2, false);
+    if (scene::MorphHost* morph = context(L).services->morph; morph != nullptr)
+        morph->clearMorphWeight(id, name);
+    return 0;
+}
+
 int methodSetMaterialParameter(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
@@ -3133,6 +3215,10 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"Water", "Carve", methodWaterCarve},
     {"BasePart", "GetNetworkOwner", methodGetNetworkOwner},
     {"BasePart", "SetMaterialParameter", methodSetMaterialParameter},
+    {"MeshPart", "GetMorphTargets", methodGetMorphTargets},
+    {"MeshPart", "SetMorphWeight", methodSetMorphWeight},
+    {"MeshPart", "GetMorphWeight", methodGetMorphWeight},
+    {"MeshPart", "ClearMorphWeight", methodClearMorphWeight},
     {"TextInput", "CaptureFocus", methodTextInputCaptureFocus},
     {"TextInput", "ReleaseFocus", methodTextInputReleaseFocus},
     {"TextInput", "IsFocused", methodTextInputIsFocused},

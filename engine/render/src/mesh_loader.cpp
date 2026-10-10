@@ -1062,8 +1062,20 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
             if (completed != nullptr)
                 completed->push_back(content);
 
-            if (skeletons != nullptr && !compiled.joints.empty())
-                skeletons->set(content, SkeletonLibrary::Entry{std::move(compiled.joints), std::move(compiled.clips)});
+            // A rig, or morph targets, or both: what the animation plays on
+            // this mesh (ADR 0196 for the second).
+            if (skeletons != nullptr && (!compiled.joints.empty() || !compiled.morphs.empty())) {
+                SkeletonLibrary::Entry rig;
+                rig.joints = std::move(compiled.joints);
+                rig.clips = std::move(compiled.clips);
+                rig.morphNames.reserve(compiled.morphs.size());
+                rig.morphDefaults.reserve(compiled.morphs.size());
+                for (const asset::MorphTarget& target : compiled.morphs) {
+                    rig.morphNames.push_back(target.name);
+                    rig.morphDefaults.push_back(target.defaultWeight);
+                }
+                skeletons->set(content, std::move(rig));
+            }
         }
         else {
             // **A loose `.gltf` no longer feeds the runtime** (E9 step 14, the
