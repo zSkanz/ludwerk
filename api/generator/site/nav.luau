@@ -163,7 +163,7 @@ local Sections: { Section } = {
     {
         Slug = "animation",
         Title = "Animation",
-        Summary = "Tweens, skeletal clips, animation graphs, retargeting, reaching and looking, faces, and cinematics.",
+        Summary = "Tweens, skeletal clips, animation graphs, retargeting, reaching and looking, capes and cloth, faces, and cinematics.",
         Pages = {
             { Slug = "tweens", Title = "Tweens" },
             { Slug = "skeletal", Title = "Skeletal animation" },
