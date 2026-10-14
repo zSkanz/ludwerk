@@ -63,6 +63,47 @@
         });
     }
 
+    /* ---------- the navigation keeps its place ---------- */
+
+    /* Every page is a page load, and a load starts the navigation at its top:
+       choosing a class far down the list threw the list back to "Home". So the
+       list's scroll is kept for this tab as a page is left and put back as the
+       next one opens. With nothing kept -- a link from outside, a new tab --
+       the page's own entry is brought into view instead. */
+    var NAV_SCROLL_KEY = "engine-docs-nav-scroll";
+    if (sidebar) {
+        var restored = false;
+        try {
+            var kept = window.sessionStorage.getItem(NAV_SCROLL_KEY);
+            if (kept !== null && kept !== "") {
+                sidebar.scrollTop = parseInt(kept, 10) || 0;
+                restored = true;
+            }
+        } catch (error) {
+            /* Blocked storage: fall through to the current entry. */
+        }
+        var current = sidebar.querySelector(".nav-link.active");
+        if (current) {
+            var box = sidebar.getBoundingClientRect();
+            var item = current.getBoundingClientRect();
+            var hidden = item.top < box.top || item.bottom > box.bottom;
+            if (!restored || hidden) {
+                /* By hand rather than `scrollIntoView`, which would scroll the
+                   page as well as the list. */
+                sidebar.scrollTop += item.top - box.top - (box.height - item.height) / 2;
+            }
+        }
+        var keepScroll = function () {
+            try {
+                window.sessionStorage.setItem(NAV_SCROLL_KEY, String(sidebar.scrollTop));
+            } catch (error) {
+                /* Nothing to keep it in; the next page centres its entry. */
+            }
+        };
+        window.addEventListener("pagehide", keepScroll);
+        sidebar.addEventListener("click", keepScroll);
+    }
+
     /* ---------- on-this-page highlighting ---------- */
 
     var tocLinks = Array.prototype.slice.call(document.querySelectorAll(".toc a"));
