@@ -848,7 +848,7 @@ self-registration.**
 - **Sanitizers:** presets `linux-clang-asan` (ASan+UBSan), `linux-clang-tsan`
   (jobs/audio tests), `win-msvc-asan`. LTO
   (`INTERPROCEDURAL_OPTIMIZATION`) in shipping only.
-- **Luau configuration:** vendored pin (0.734; upgraded only via
+- **Luau configuration:** vendored pin (0.742 since 2026-10-14, ADR 0216; upgraded only via
   `tools/repo/vendor.luau` + ADR), `LUA_VECTOR_SIZE=3`, `LUA_VECTOR_DOUBLE=0`
   (ADR 0013); targets VM+CodeGen always; Compiler+Ast gated by
   `ENG_LUAU_COMPILER` (ON in debug/dev/profile/player, OFF shipping); **Analysis is

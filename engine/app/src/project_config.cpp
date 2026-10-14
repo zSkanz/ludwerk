@@ -753,6 +753,19 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     count("render.max_highlights", 0, 255, config.maxHighlights);
     count("save.max_slots", 1, 4096, config.saveMaxSlots);
     count("network.timeout", 1, 120, config.networkTimeoutSeconds);
+    count("network.max_connections_per_address", 0, 4095, config.networkMaxPerAddress);
+    for (const std::string& name : document.keys("luau.flags.")) {
+        // A flag's name is one word; a dotted one is a table under it, and
+        // no flag.
+        if (name.find('.') != std::string::npos)
+            continue;
+        const std::string key = "luau.flags." + name;
+        if (const std::optional<bool> on = document.boolean(key); on.has_value())
+            config.luauFlags.push_back(LuauFlagSetting{name, *on ? 1 : 0, true});
+        else if (const std::optional<f64> number = document.number(key);
+                 number.has_value() && std::isfinite(*number) && *number == std::floor(*number))
+            config.luauFlags.push_back(LuauFlagSetting{name, static_cast<core::i64>(*number), false});
+    }
     count("script.max_memory_mb", 16, 65536, config.scriptMemoryMb);
     if (const std::optional<f64> value = document.number("render.foliage_density");
         value.has_value() && *value >= 0.0 && *value <= 1.0)
@@ -955,6 +968,34 @@ bool writeProjectSetting(const std::filesystem::path& projectRoot, std::string_v
     if (!platform::writeTextFile(file, *edited))
         return fail(core::tr(ENG_TR("engine.editor.project_settings.could_not_write"), {{"path", file.string()}}));
     return true;
+}
+
+LuauFlagsWritten writeLuauFlagSettings(const std::filesystem::path& projectRoot, std::span<const LuauFlagInfo> flags,
+                                       const std::map<std::string, core::i64, std::less<>>& written,
+                                       std::string* diagnostic)
+{
+    LuauFlagsWritten out;
+    for (const LuauFlagInfo& flag : flags) {
+        if (flag.debug || !out.ok)
+            continue;
+        const std::string key = "luau.flags." + flag.name;
+        const auto said = written.find(flag.name);
+        if (flag.value != flag.engineDefault) {
+            out.settings.push_back(LuauFlagSetting{flag.name, flag.value, !flag.number});
+            if (said != written.end() && said->second == flag.value)
+                continue;
+            out.changed = true;
+            out.ok = writeProjectSetting(projectRoot, key,
+                                         flag.number ? core::tomlNumber(static_cast<f64>(flag.value))
+                                                     : core::tomlBoolean(flag.value != 0),
+                                         diagnostic);
+        }
+        else if (said != written.end()) {
+            out.changed = true;
+            out.ok = removeProjectSetting(projectRoot, key, diagnostic);
+        }
+    }
+    return out;
 }
 
 bool removeProjectSetting(const std::filesystem::path& projectRoot, std::string_view key, std::string* diagnostic)

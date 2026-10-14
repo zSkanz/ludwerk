@@ -1,11 +1,12 @@
 // `@std/net` -- the game VM's network surface (api-design.md §7, ADR 0012).
 //
-// **What v1 ships is client-side and nothing else.** `net.request` is an HTTP
+// **What ships is client-side and nothing else.** `net.request` is an HTTP
 // client; `net.serve` does NOT exist. That is a decision rather than an
 // omission, and it is worth having written down:
 //
-//   - The roadmap's the streaming work bullet is "the minimal socket/HTTP surface … (loopback
-//     echo example only -- replication is post-v1)". A server is not minimal:
+//   - The streaming work's roadmap bullet asked for "the minimal socket/HTTP
+//     surface" and nothing more; a match is `NetworkService`'s, over the
+//     transport, not this module's. A server is not minimal:
 //     it is a listener, a connection lifetime, a request router and a
 //     concurrency model, all of which are design nobody has approved.
 //   - ADR 0035 already decided that the ENGINE never listens, in any profile,

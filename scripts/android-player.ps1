@@ -73,7 +73,7 @@ cmake --build "$player" --target engine_host || exit /b 1
         }
         # The package the APK says it is, read out of it rather than guessed
         # from project.toml: the export decided it, and this only starts it.
-        $aapt = Join-Path $sdk 'build-tools\35.0.0\aapt2.exe'
+        $aapt = Join-Path $sdk 'build-tools\36.0.0\aapt2.exe'
         $appId = (& $aapt dump packagename $apk.FullName | Select-Object -First 1).Trim()
         if (-not $appId) { throw "could not read the package name out of $($apk.FullName)" }
         & $adb shell am start -n "$appId/engine.player.PlayerActivity" | Out-Null

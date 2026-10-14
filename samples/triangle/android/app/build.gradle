@@ -70,10 +70,10 @@ def sdlJavaDir = new File(repoRoot, 'third_party/sdl3/android-project/app/src/ma
 
 android {
     namespace = 'engine.triangle'
-    compileSdk = 35
+    compileSdk = 36
     // Pinned rather than left to AGP's built-in default, which moves with the
     // plugin version (R5). The nightly installs exactly this package.
-    buildToolsVersion = '35.0.0'
+    buildToolsVersion = '36.0.0'
     // Only used to strip the staged .so for packaging -- nothing here compiles
     // native code (see the block above) -- but naming it keeps the tool that
     // touches the binary on the same pinned NDK that produced it.
@@ -82,7 +82,7 @@ android {
     defaultConfig {
         applicationId = 'engine.triangle'
         minSdk = minSdkPin
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = engineVersion
     }

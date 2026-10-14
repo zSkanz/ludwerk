@@ -23,6 +23,23 @@ bool fatal_error() {
   ASSERT_FALSE(doc.is_alive());
   TEST_SUCCEED();
 }
+bool to_string_object() {
+  TEST_START();
+  auto json = R"({"\u0062\u0065\u0062\u0065": 2} })"_padded;
+  ondemand::parser parser;
+  ondemand::document doc;
+  auto error = parser.iterate(json).get(doc);
+  if(error) { return false; }
+  ondemand::object object;
+  error = doc.get_object().get(object);
+  if(error) { return false; }
+  for (auto field : object) {
+    std::string key;
+    error = field.unescaped_key().get(key);
+    if(error) { return false; }
+  }
+  return true;
+}
 
 bool simplepad() {
   std::string json = "[1]";
@@ -160,6 +177,68 @@ simdjson_inline simdjson_result<Car> simdjson::ondemand::document::get() & noexc
 
 #if SIMDJSON_EXCEPTIONS
 
+// Test matching the doc example in doc/basics.md
+// "Using for_each_at_path_with_wildcard for JSONPath Queries (On-Demand)"
+bool wildcard_basics_example() {
+  TEST_START();
+  simdjson::padded_string json_string = R"(
+{
+  "firstName": "John",
+  "lastName": "doe",
+  "age": 26,
+  "address": {
+    "streetAddress": "naist street",
+    "city": "Nara",
+    "postalCode": "630-0192"
+  },
+  "phoneNumbers": [
+    {
+      "type": "iPhone",
+      "numbers": ["0123-4567-8888", "0123-4567-8788"]
+    },
+    {
+      "type": "home",
+      "numbers": ["0123-4567-8910"]
+    }
+  ]
+})"_padded;
+
+  ondemand::parser parser;
+  ondemand::document doc = parser.iterate(json_string);
+
+  // Fetch all fields in the address object
+  std::vector<std::string_view> fields;
+  auto error = doc.for_each_at_path_with_wildcard("$.address.*",
+      [&](ondemand::value value) {
+        std::string_view field;
+        if (value.get(field) == SUCCESS) {
+          fields.push_back(field);
+        }
+      });
+  ASSERT_SUCCESS(error);
+  ASSERT_EQUAL(fields.size(), 3);
+  ASSERT_EQUAL(fields[0], "naist street");
+  ASSERT_EQUAL(fields[1], "Nara");
+  ASSERT_EQUAL(fields[2], "630-0192");
+
+  // Fetch all phone numbers
+  std::vector<std::string_view> numbers;
+  error = doc.for_each_at_path_with_wildcard("$.phoneNumbers[*].numbers[*]",
+      [&](ondemand::value value) {
+        std::string_view number;
+        if (value.get(number) == SUCCESS) {
+          numbers.push_back(number);
+        }
+      });
+  ASSERT_SUCCESS(error);
+  ASSERT_EQUAL(numbers.size(), 3);
+  ASSERT_EQUAL(numbers[0], "0123-4567-8888");
+  ASSERT_EQUAL(numbers[1], "0123-4567-8788");
+  ASSERT_EQUAL(numbers[2], "0123-4567-8910");
+
+  TEST_SUCCEED();
+}
+
 void main_capture() {
   padded_string json_padded = "{\"a\":[1,2,3], \"b\": 2, \"c\": \"hello\"}"_padded;
   std::vector<std::string_view> fields;
@@ -216,10 +295,47 @@ bool to_string_example() {
   ondemand::parser parser;
   ondemand::document doc = parser.iterate(json);
   std::string name;
-  doc["name"].get_string(name);
+  ASSERT_SUCCESS(doc["name"].get_string(name));
   ASSERT_EQUAL(name, "Daniel");
   TEST_SUCCEED();
 }
+#if SIMDJSON_STATIC_REFLECTION
+bool partial_car_extract() {
+  TEST_START();
+  auto json = R"( {
+         "make": "Toyota",
+         "model": "Camry",
+         "year": 2024,
+         "tire_pressure": [ 40.1, 39.9 ]
+       } )"_padded;
+  ondemand::parser parser;
+  ondemand::document doc = parser.iterate(json);
+  Car car{};
+  ASSERT_SUCCESS( (doc.extract_into<"make","model">(car)) );
+  ASSERT_EQUAL(car.make, "Toyota");
+  ASSERT_EQUAL(car.model, "Camry");
+  ASSERT_EQUAL(car.year, 0);  // Not extracted
+  ASSERT_EQUAL(car.tire_pressure.size(), 0); // Not extracted
+  TEST_SUCCEED();
+}
+
+bool temperature_example() {
+  TEST_START();
+  struct complicated_weather_data {
+    std::vector<std::string> time;
+    std::vector<float> temperature;
+  };
+  auto padded = R"({"time":["2023-03-15T12:00:00Z"],"temperature":[42]})"_padded;
+  simdjson::ondemand::parser parser;
+  simdjson::ondemand::document doc = parser.iterate(padded);
+  complicated_weather_data p = doc.get<complicated_weather_data>();
+  ASSERT_EQUAL(p.time.size(), 1);
+  ASSERT_EQUAL(p.time[0], "2023-03-15T12:00:00Z");
+  ASSERT_EQUAL(p.temperature.size(), 1);
+  ASSERT_EQUAL(p.temperature[0], 42);
+  TEST_SUCCEED();
+}
+#endif // SIMDJSON_STATIC_REFLECTION
 
 bool gen_raw1() {
   TEST_START();
@@ -591,6 +707,9 @@ bool recursive_print_json(ondemand::value element) {
       cout << "null";
     }
     break;
+  case ondemand::json_type::unknown:
+    cout << "undefined";
+    break;
   }
   TEST_SUCCEED();
 }
@@ -679,6 +798,9 @@ bool recursive_print_json_breakline(ondemand::value element) {
       cout << "null";
     }
     break;
+  case ondemand::json_type::unknown:
+    cout << "undefined";
+    break;
   }
   TEST_SUCCEED();
 }
@@ -704,7 +826,7 @@ bool basics_1() {
   TEST_START();
 
   ondemand::parser parser;
-  auto json = padded_string::load("twitter.json");
+  auto json = padded_string::load("twitter.json"); // this is a simdjson_result<padded_string>
   ondemand::document doc = parser.iterate(json); // load and parse a file
 
   simdjson_unused auto unused_doc = doc.get_object();
@@ -1418,6 +1540,41 @@ bool simple_error_example() {
 #include "simdjson.h"
 #include <iostream>
 
+  void scan_json_object_keys() {
+    auto json = R"({"price": 123.456789, "volume": 9999,
+                    "timestamp": "2025-09-04T09:45:00Z",
+                    "symbol": "XYZ", "currency": "USD", "change": 1.23,
+                    "isActive": true})"_padded;
+
+    simdjson::ondemand::parser parser;
+    simdjson::ondemand::document doc = parser.iterate(json);
+
+    for(auto keyvalue : doc.get_object()) {
+        simdjson::ondemand::raw_json_string key = keyvalue.key();
+        switch(key[0]) {
+            case 'p': // price
+                if (key == "price") {
+                    std::string_view price_str = keyvalue.value().raw_json();
+                    std::cout << "Price: " << price_str << std::endl;
+                }
+                break;
+            case 'v': // volume
+                if (key == "volume") {
+                    std::string_view volume_str = keyvalue.value().raw_json();
+                    std::cout << "Volume: " << volume_str << std::endl;
+                }
+                break;
+            case 't': // timestamp
+                if (key == "timestamp") {
+                    std::string_view timestamp = keyvalue.value();
+                    std::cout << "Timestamp: " << timestamp << std::endl;
+                }
+                break;
+            default: break;
+        }
+    }
+  }
+
   // prints the content of the array as hexadecimal 64-bit integers
   void f(simdjson::ondemand::array v) {
     for(uint64_t val : v) {
@@ -1921,6 +2078,7 @@ bool value_raw_json_object() {
 }
 
 #endif
+
 bool run() {
   return true
     && fatal_error()
@@ -1980,6 +2138,7 @@ bool run() {
     && current_location_no_error()
     && to_string_example_no_except()
   #if SIMDJSON_EXCEPTIONS
+    && wildcard_basics_example()
     && issue2215()
     && to_string_example()
     && raw_string()

@@ -98,9 +98,9 @@ check_version() { # expected, forbidden-pattern, label
         status=1
     fi
 }
-check_version "0.734" "pinned to 0\.7(0|1|2)[0-9]" "Luau"
+check_version "0.742" "pinned to 0\.7([0-3][0-9]|4[01])" "Luau"
 check_version "lute@1.0.0" "lute@0\." "Lute"
-check_version "luau-lsp@1.69.0" "luau-lsp@1\.6[0-8]\." "luau-lsp"
+check_version "luau-lsp@1.70.1" "luau-lsp@1\.(6[0-9]|70\.0)" "luau-lsp"
 
 # --- Legal sweep (R7) -------------------------------------------------------
 # **The name is assembled rather than written**, so this file -- which is code

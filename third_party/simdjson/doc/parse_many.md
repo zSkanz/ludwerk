@@ -132,7 +132,7 @@ Whitespace Characters:
 Some official formats **(non-exhaustive list)**:
 - [Newline-Delimited JSON (NDJSON)](https://github.com/ndjson/ndjson-spec)
 - [JSON lines (JSONL)](http://jsonlines.org/)
-- [Record separator-delimited JSON (RFC 7464)](https://tools.ietf.org/html/rfc7464) <- Not supported by JsonStream!
+- [Record separator-delimited JSON (RFC 7464)](https://tools.ietf.org/html/rfc7464) <- Not supported by simdjson!
 - [More on Wikipedia...](https://en.wikipedia.org/wiki/JSON_streaming)
 
 API
@@ -184,7 +184,7 @@ You may also call the `source()` method to get a `std::string_view` instance on 
 Let us illustrate the idea with code:
 
 
-```C++
+```cpp
     auto json = R"([1,2,3]  {"1":1,"2":3,"4":4} [1,2,3]  )"_padded;
     simdjson::dom::parser parser;
     simdjson::dom::document_stream stream;
@@ -217,6 +217,20 @@ got full document at 29
 ```
 
 
+
+**Advanced feature:**
+On non-Windows systems, you can use memory-file mapping to create a `simdjson::padded_string_view`
+from a file on disk.
+
+```cpp
+// If the macro _WIN32 is defined, this will not work since we do not support memory-file mapping
+// under Windows at this time.
+simdjson::padded_memory_map map(myfilename);
+if (!map.is_valid()) { /* handle error */ }
+simdjson::padded_string_view view = map.view(); // view is usable while padded_memory_map is in scope
+ondemand::document doc = parser.iterate(view); // parse the JSON
+```
+
 Incomplete streams
 -----------
 
@@ -225,7 +239,7 @@ Some users may need to work with truncated streams. The simdjson may truncate do
 
 Consider the following example where a truncated document (`{"key":"intentionally unclosed string  `) containing 39 bytes has been left within the stream. In such cases, the first two whole documents are parsed and returned, and the `truncated_bytes()` method returns 39.
 
-```C++
+```cpp
     auto json = R"([1,2,3]  {"1":1,"2":3,"4":4} {"key":"intentionally unclosed string  )"_padded;
     simdjson::dom::parser parser;
     simdjson::dom::document_stream stream;
@@ -238,4 +252,6 @@ Consider the following example where a truncated document (`{"key":"intentionall
 ```
 
 
-Importantly, you should only call `truncated_bytes()` after iterating through all of the documents since the stream cannot tell whether there are truncated documents at the very end when it may not have accessed that part of the data yet.
+Importantly, you should only call `truncated_bytes()` after iterating through all of the documents since the stream cannot tell whether there are truncated documents at the very end when it may not have accessed that part of the data yet. Importantly, it also assumes that no document reported an error: iteration stops at the first failed document, which can leave the bookkeeping from a mid-stream batch.
+
+If you need to detect a truncated tail outside those conditions, track it yourself from the last document that parsed successfully, using `current_index()` and `source()` on the iterator.

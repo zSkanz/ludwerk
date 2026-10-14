@@ -1,6 +1,6 @@
 # 0036 — simdjson is vendored for fastgltf, and fastgltf's downloader is made unreachable
 
-- Status: accepted
+- Status: accepted; amended 2026-10-14 (simdjson 4.6.11 -- see the end)
 - Date: 2026-08-20
 
 ## Context
@@ -68,3 +68,8 @@ targets — the patch will fail to apply if the file moved, which is the intende
 alarm. And the vendored `deps/` directory must never appear: if
 `third_party/fastgltf/deps/simdjson/` exists after a configure, the guard has
 been defeated and this ADR is no longer true.
+
+## Amendment, 2026-10-14
+
+fastgltf 0.9.1 targets simdjson 4.6.11, so that is the pin (ADR 0216). The rule
+is the same: simdjson moves when fastgltf's own CMake moves it.

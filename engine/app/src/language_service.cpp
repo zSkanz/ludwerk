@@ -8,7 +8,6 @@
 #include <Luau/ConfigResolver.h>
 #include <Luau/ConstraintSolver.h>
 #include <Luau/Error.h>
-#include <Luau/ExperimentalFlags.h>
 #include <Luau/FileResolver.h>
 #include <Luau/Frontend.h>
 #include <Luau/LinterConfig.h>
@@ -21,10 +20,11 @@
 #include <regex>
 #include <unordered_map>
 
+#include "engine/app/luau_flags.h"
 #include "engine/core/i18n.h"
+#include "engine/core/utf8_mark.h"
 #include "engine/platform/file.h"
 #include "engine/scene/world.h"
-#include "luau_analysis_flags.gen.h"
 
 namespace engine::app {
 
@@ -305,6 +305,7 @@ struct TreeResolver final : Luau::FileResolver
             std::string text;
             if (!platform::readTextFile(*file, text))
                 return std::nullopt;
+            core::dropUtf8Mark(text);
             std::error_code error;
             Read read{*file, std::filesystem::last_write_time(*file, error), 0};
             read.size = std::filesystem::file_size(*file, error);
@@ -315,7 +316,8 @@ struct TreeResolver final : Luau::FileResolver
         if (!at.has_value() || !tree->nodes[*at].script)
             return std::nullopt;
         const LanguageTree::Node& node = tree->nodes[*at];
-        return Luau::SourceCode{node.source, node.module ? Luau::SourceCode::Module : Luau::SourceCode::Script};
+        return Luau::SourceCode{std::string(core::withoutUtf8Mark(node.source)),
+                                node.module ? Luau::SourceCode::Module : Luau::SourceCode::Script};
     }
 
     // The modules read from the disk whose file is not what it was.
@@ -799,25 +801,13 @@ public:
 } // namespace
 
 // **The checker's flags, on** -- the ones Luau's own analyser runs with, and
-// so the ones `ludwerk check` runs with (`cmake/engine_luau_analysis_flags.cmake`
-// says why, and why none of the VM's). Process-wide and done once, before the
-// first frontend is made.
+// so the ones `ludwerk check` runs with -- and the project's on top
+// (`luau_flags.h`, `cmake/engine_luau_flags.cmake` says why, and why none of
+// the VM's). Process-wide: the engine applies them at start, and a checker
+// made before that (a test) applies the engine's defaults.
 struct AnalysisFlags
 {
-    AnalysisFlags()
-    {
-        static const bool once = [] {
-            for (Luau::FValue<bool>* flag = Luau::FValue<bool>::list; flag != nullptr; flag = flag->next) {
-                const std::string_view name = flag->name;
-                if (std::find(std::begin(LuauAnalysisFlags), std::end(LuauAnalysisFlags), name) !=
-                        std::end(LuauAnalysisFlags) &&
-                    !Luau::isAnalysisFlagExperimental(flag->name))
-                    flag->value = true;
-            }
-            return true;
-        }();
-        (void)once;
-    }
+    AnalysisFlags() { ensureLuauFlags(); }
 };
 
 struct LanguageCore::Impl

@@ -1,5 +1,5 @@
 diff --git a/Compiler/src/ConstantFolding.cpp b/Compiler/src/ConstantFolding.cpp
-index 8bf220d3..d8d3cc64 100644
+index d0bd655..b67830d 100644
 --- a/Compiler/src/ConstantFolding.cpp
 +++ b/Compiler/src/ConstantFolding.cpp
 @@ -9,6 +9,9 @@
@@ -10,9 +10,9 @@ index 8bf220d3..d8d3cc64 100644
 +double engine_dpow(double a, double b);
 +
  LUAU_FASTFLAG(LuauIntegerType2)
- 
- namespace Luau
-@@ -447,7 +450,7 @@ static void foldBinary(Constant& result, AstExprBinary::Op op, const Constant& l
+ LUAU_FASTFLAG(LuauExperimentalIfLocalSyntax)
+ LUAU_FASTFLAGVARIABLE(LuauCompileNoFoldVectorEqW)
+@@ -464,7 +467,7 @@ static void foldBinary(Constant& result, AstExprBinary::Op op, const Constant& l
          if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
          {
              result.type = Constant::Type_Number;
@@ -22,10 +22,10 @@ index 8bf220d3..d8d3cc64 100644
          break;
  
 diff --git a/VM/src/lbuiltins.cpp b/VM/src/lbuiltins.cpp
-index 9a70de36..eebcae43 100644
+index a8b0369..79205d1 100644
 --- a/VM/src/lbuiltins.cpp
 +++ b/VM/src/lbuiltins.cpp
-@@ -348,7 +348,7 @@ static int luauF_pow(lua_State* L, StkId res, TValue* arg0, int nresults, StkId
+@@ -345,7 +345,7 @@ static int luauF_pow(lua_State* L, StkId res, TValue* arg0, int nresults, StkId
      {
          double a1 = nvalue(arg0);
          double a2 = nvalue(args);
@@ -35,7 +35,7 @@ index 9a70de36..eebcae43 100644
      }
  
 diff --git a/VM/src/lnumutils.h b/VM/src/lnumutils.h
-index ef021161..630ca692 100644
+index ef02116..ec224ab 100644
 --- a/VM/src/lnumutils.h
 +++ b/VM/src/lnumutils.h
 @@ -9,7 +9,10 @@
@@ -51,10 +51,10 @@ index ef021161..630ca692 100644
  #define luai_numisnan(a) ((a) != (a))
  #define luai_numeq(a, b) ((a) == (b))
 diff --git a/VM/src/lvmexecute.cpp b/VM/src/lvmexecute.cpp
-index 4bf43954..e9b603e7 100644
+index ca67a27..b62b8a8 100644
 --- a/VM/src/lvmexecute.cpp
 +++ b/VM/src/lvmexecute.cpp
-@@ -2063,7 +2063,7 @@ reentry:
+@@ -2049,7 +2049,7 @@ reentry:
                  // fast-path
                  if (ttisnumber(rb) && ttisnumber(rc))
                  {
@@ -63,7 +63,7 @@ index 4bf43954..e9b603e7 100644
                      VM_NEXT();
                  }
                  else
-@@ -2298,7 +2298,7 @@ reentry:
+@@ -2284,7 +2284,7 @@ reentry:
                      double nk = nvalue(kv);
  
                      // pow is very slow so we specialize this for ^2, ^0.5 and ^3

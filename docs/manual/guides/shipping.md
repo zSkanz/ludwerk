@@ -199,7 +199,7 @@ checks, and what the export does about each.
 
 | It asks | The package |
 |---|---|
-| Which Android it targets | API 35 (Android 15), and it runs from API 21 up. |
+| Which Android it targets | API 36 (Android 16), which the Play store has required of new apps and updates since 2026-08-31, and it runs from API 21 up. |
 | Which processors | `arm64-v8a` only: 64-bit, which a store requires. |
 | That it loads where a page is 16 KB | Every native library in it is laid out for 16 KB pages. The export's last step reads each one and refuses a package with one that is not. |
 | What it may do: its permissions | Only what the game uses -- see below. None is one a player is ever asked about. |

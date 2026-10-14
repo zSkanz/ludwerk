@@ -444,6 +444,21 @@ end
 -- exceed it even though every individual file is valid. Leave room for the
 -- executable, quoting and process wrapper; dependencies still resolve normally
 -- inside each analysis invocation.
+--- **The project's Luau flags, as luau-lsp takes them** (ADR 0217), from the
+--- engine's `--print-luau-flags`: one `Name=value` a line, and nothing else
+--- read. luau-lsp turns every flag on unless it is told, so a syntax the
+--- runtime refuses would pass it; the engine says what each parser flag is.
+local function flagArguments(printed: string): { string }
+    local out: { string } = {}
+    for line in string.gmatch(printed, "[^\r\n]+") do
+        local name, value = string.match(line, "^([%a_][%w_]*)=([%w%-]+)$")
+        if name ~= nil and value ~= nil then
+            table.insert(out, `--flag:{name}={value}`)
+        end
+    end
+    return out
+end
+
 local function analysisCommands(prefix: { string }, files: { string }, budget: number?): { { string } }
     local limit = budget or 24000
     local base = 0
@@ -495,6 +510,16 @@ local function run(options: Options): number
 
     -- The new solver, which is what R2 says every script is checked by.
     local analyze: { string } = { analyser, "analyze", "--platform=standard", "--flag:LuauSolverV2=true" }
+    -- And the project's Luau flags, as the engine runs them (ADR 0217).
+    local engine = projectlib.findEngine()
+    if engine ~= nil and fs.exists(projectlib.joined(options.path, "project.toml")) then
+        local printed = process.run({ engine, options.path, "--print-luau-flags" })
+        if printed.ok then
+            for _, argument in flagArguments(printed.stdout) do
+                table.insert(analyze, argument)
+            end
+        end
+    end
     local scratch = projectlib.joined(options.path, ".engine/check")
     for _, definition in options.definitions do
         -- Named after the file (`@engine`, `@scene`): unnamed, the analyser
@@ -523,7 +548,6 @@ local function run(options: Options): number
         print(tr("cli.check.stylua_skipped"))
     end
 
-    local engine = projectlib.findEngine()
     if engine ~= nil then
         process.run({ engine, "--check-sides", options.path }, { stdio = "inherit" })
     else
@@ -631,4 +655,5 @@ return {
     voiceReport = voiceReport,
     projectScenes = projectScenes,
     editorCheck = editorCheck,
+    flagArguments = flagArguments,
 }

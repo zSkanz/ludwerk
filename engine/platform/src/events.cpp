@@ -719,6 +719,9 @@ GamepadType gamepadType(u32 id) noexcept
     switch (SDL_GetRealGamepadTypeForID(static_cast<SDL_JoystickID>(id))) {
     case SDL_GAMEPAD_TYPE_XBOX360:
     case SDL_GAMEPAD_TYPE_XBOXONE:
+    // A Steam controller's face buttons read A, B, X and Y where an Xbox
+    // pad's do, so its prompts are an Xbox pad's (SDL 3.4.18 names it).
+    case SDL_GAMEPAD_TYPE_STEAM:
         return GamepadType::Xbox;
     case SDL_GAMEPAD_TYPE_PS3:
     case SDL_GAMEPAD_TYPE_PS4:

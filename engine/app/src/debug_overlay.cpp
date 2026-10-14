@@ -10390,7 +10390,7 @@ constexpr std::array<const char*, 4> PlatformNamesInFile{"windows", "macos", "li
     return info.quality != display;
 }
 
-void drawProjectSettings(Editor& editor)
+void drawProjectSettings(Editor& editor, EditorCommands& commands)
 {
     if (!beginEditorDialog(labelled(ENG_TR("engine.editor.dialog.project_settings"), "###Project Settings").c_str(),
                            520.0f, []() {}))
@@ -10427,6 +10427,13 @@ void drawProjectSettings(Editor& editor)
     static bool resizable = true;
     static std::vector<std::string> pictures;
     static std::string problem;
+    // **The Luau page** (ADR 0217): every flag this engine's Luau has, each
+    // at what the file says over the engine's default; what the file said
+    // when the dialog opened, so a flag put back to its default is taken out
+    // of it rather than pinned; and what the advanced list is searched for.
+    static std::vector<LuauFlagInfo> luauFlags;
+    static std::map<std::string, core::i64, std::less<>> luauWritten;
+    static std::array<char, 64> luauSearch{};
 
     // Seeded on the frame it opens, and only then: re-reading every frame would
     // overwrite what somebody is typing with what is still on disk.
@@ -10476,6 +10483,20 @@ void drawProjectSettings(Editor& editor)
         fullscreen = config.fullscreen;
         resizable = config.resizable;
         pictures = projectPictures(root);
+        // What the file says over the engine's defaults -- not what this
+        // process runs with, which a setting refused at start leaves apart.
+        luauFlags = listLuauFlags();
+        luauWritten.clear();
+        for (LuauFlagInfo& flag : luauFlags)
+            flag.value = flag.engineDefault;
+        for (const LuauFlagSetting& setting : config.luauFlags) {
+            luauWritten[setting.name] = setting.value;
+            for (LuauFlagInfo& flag : luauFlags) {
+                if (flag.name == setting.name && !flag.debug && flag.number != setting.boolean)
+                    flag.value = setting.value;
+            }
+        }
+        luauSearch.fill(0);
     }
 
     if (ImGui::Button(core::tr(ENG_TR("engine.editor.modules.open")))) {
@@ -10652,6 +10673,136 @@ void drawProjectSettings(Editor& editor)
     if (ImGui::IsItemHovered())
         pointerTip("%s", core::tr(ENG_TR("engine.editor.project_settings.remember_player_settings_tip")));
 
+    // **Luau** (ADR 0217): the features by their names first, then every
+    // flag, for somebody who knows which one they want and why.
+    ImGui::SeparatorText(core::tr(ENG_TR("engine.editor.project_settings.luau")));
+    ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.project_settings.luau_intro")));
+    const auto flagNamed = [](std::string_view wantedName) -> LuauFlagInfo* {
+        for (LuauFlagInfo& flag : luauFlags) {
+            if (flag.name == wantedName)
+                return &flag;
+        }
+        return nullptr;
+    };
+    for (const LuauFeature& feature : luauFeatures()) {
+        bool on = true;
+        bool carried = true;
+        for (const std::string_view flagName : feature.flags) {
+            const LuauFlagInfo* flag = flagNamed(flagName);
+            carried = carried && flag != nullptr;
+            on = on && flag != nullptr && flag->value != 0;
+        }
+        // A feature this Luau does not have, gone into the language or never
+        // there, is not offered.
+        if (!carried)
+            continue;
+        if (ImGui::Checkbox(core::tr(feature.name), &on)) {
+            for (const std::string_view flagName : feature.flags)
+                flagNamed(flagName)->value = on ? 1 : 0;
+        }
+        if (ImGui::IsItemHovered())
+            pointerTip("%s", core::tr(feature.description));
+    }
+    if (ImGui::TreeNode(labelled(ENG_TR("engine.editor.project_settings.luau_advanced"), "###luau-advanced").c_str())) {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor(palette().danger));
+        ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.project_settings.luau_advanced_warning")));
+        ImGui::PopStyleColor();
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextWithHint("##luau-search", core::tr(ENG_TR("engine.editor.project_settings.luau_search")),
+                                 luauSearch.data(), luauSearch.size());
+        std::string wanted(luauSearch.data());
+        std::transform(wanted.begin(), wanted.end(), wanted.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        constexpr ImGuiTableFlags table = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV |
+                                          ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
+                                          ImGuiTableFlags_NoSavedSettings;
+        if (ImGui::BeginTable("##luau-flags", 4, table, ImVec2(0.0f, 260.0f))) {
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.project_settings.luau_column.flag")),
+                                    ImGuiTableColumnFlags_WidthStretch, 3.0f);
+            ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.project_settings.luau_column.value")),
+                                    ImGuiTableColumnFlags_WidthStretch, 1.4f);
+            ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.project_settings.luau_column.default")),
+                                    ImGuiTableColumnFlags_WidthStretch, 0.8f);
+            ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.project_settings.luau_column.reads")),
+                                    ImGuiTableColumnFlags_WidthStretch, 0.9f);
+            ImGui::TableHeadersRow();
+            for (LuauFlagInfo& flag : luauFlags) {
+                // Luau's own instrumentation and the solver's switch are
+                // not a project's (ADR 0217): not offered at all.
+                if (flag.debug)
+                    continue;
+                if (!wanted.empty()) {
+                    std::string lowered = flag.name;
+                    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    if (lowered.find(wanted) == std::string::npos)
+                        continue;
+                }
+                ImGui::PushID(flag.name.c_str());
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                const bool changed = flag.value != flag.engineDefault;
+                if (changed)
+                    ImGui::PushStyleColor(ImGuiCol_Text, themeColor(palette().accent));
+                ImGui::TextUnformatted(flag.name.c_str());
+                if (changed)
+                    ImGui::PopStyleColor();
+                ImGui::TableNextColumn();
+                if (flag.number) {
+                    ImGui::SetNextItemWidth(changed ? -60.0f : -1.0f);
+                    ImGui::InputScalar("##value", ImGuiDataType_S64, &flag.value);
+                }
+                else {
+                    bool on = flag.value != 0;
+                    if (ImGui::Checkbox("##value", &on))
+                        flag.value = on ? 1 : 0;
+                }
+                if (changed) {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(core::tr(ENG_TR("engine.editor.project_settings.luau_reset"))))
+                        flag.value = flag.engineDefault;
+                }
+                ImGui::TableNextColumn();
+                if (flag.number)
+                    ImGui::TextDisabled("%lld", static_cast<long long>(flag.engineDefault));
+                else
+                    ImGui::TextDisabled("%s", flag.engineDefault != 0
+                                                  ? core::tr(ENG_TR("engine.editor.project_settings.luau_true"))
+                                                  : core::tr(ENG_TR("engine.editor.project_settings.luau_false")));
+                ImGui::TableNextColumn();
+                core::TextKey area = ENG_TR("engine.editor.project_settings.luau_area.other");
+                switch (flag.area) {
+                case LuauFlagArea::Parser:
+                    area = ENG_TR("engine.editor.project_settings.luau_area.parser");
+                    break;
+                case LuauFlagArea::Compiler:
+                    area = ENG_TR("engine.editor.project_settings.luau_area.compiler");
+                    break;
+                case LuauFlagArea::Vm:
+                    area = ENG_TR("engine.editor.project_settings.luau_area.vm");
+                    break;
+                case LuauFlagArea::CodeGen:
+                    area = ENG_TR("engine.editor.project_settings.luau_area.codegen");
+                    break;
+                case LuauFlagArea::Analysis:
+                    area = ENG_TR("engine.editor.project_settings.luau_area.checker");
+                    break;
+                case LuauFlagArea::Other:
+                    break;
+                }
+                ImGui::TextUnformatted(core::tr(area));
+                if (ImGui::IsItemHovered())
+                    pointerTip("%s", changesCompiledCode(flag.area)
+                                         ? core::tr(ENG_TR("engine.editor.project_settings.luau_compiled_tip"))
+                                         : core::tr(ENG_TR("engine.editor.project_settings.luau_checker_tip")));
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        ImGui::TreePop();
+    }
+
     if (!problem.empty()) {
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Text, themeColor(palette().danger));
@@ -10721,6 +10872,18 @@ void drawProjectSettings(Editor& editor)
                                              &problem);
                 else if (levelsWritten[level].test(index))
                     ok = removeProjectSetting(root, key, &problem);
+            }
+        }
+        // **The Luau flags, by the same rule** (`writeLuauFlagSettings`).
+        if (ok) {
+            const LuauFlagsWritten luau = writeLuauFlagSettings(root, luauFlags, luauWritten, &problem);
+            ok = luau.ok;
+            if (luau.ok && luau.changed) {
+                luauWritten.clear();
+                for (const LuauFlagSetting& setting : luau.settings)
+                    luauWritten[setting.name] = setting.value;
+                commands.luauFlags = luau.settings;
+                editor.report(core::tr(ENG_TR("engine.editor.project_settings.luau_next_play")), false);
             }
         }
         for (std::size_t index = 0; ok && index < PlatformNamesInFile.size(); ++index) {
@@ -12356,7 +12519,7 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
         ImGui::OpenPopup("###About");
     }
 
-    drawProjectSettings(editor);
+    drawProjectSettings(editor, commands);
 
     if (dialogs.exportWindow) {
         dialogs.exportWindow = false;

@@ -7,6 +7,7 @@ engine_add_module(app
     LAYER 6
     SOURCES
         src/world_host.cpp
+        src/luau_flags.cpp
         src/world_host_sub_worlds.cpp
         src/network_session.cpp
         src/match_launcher.cpp
@@ -144,6 +145,13 @@ if(ENG_PHYSICS_BOX2D)
     target_link_libraries(engine_app PRIVATE engine::physics_box2d)
 endif()
 
+# **Every Luau flag, by the library that reads it** (ADR 0217), in every build:
+# a project's `[luau.flags]` reach a shipped game's VM as much as the editor's
+# checker. Read from the vendored sources, so the lists move with the pin.
+include(${CMAKE_SOURCE_DIR}/cmake/engine_luau_flags.cmake)
+engine_luau_flags("${CMAKE_CURRENT_BINARY_DIR}/generated/luau_flags.gen.h")
+target_include_directories(engine_app PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
 # The debug overlay (ADR 0011). Dev builds only: the option lives beside the
 # dependency in third_party/CMakeLists.txt, and a shipping build declares no
 # ImGui target at all -- so what is linked here IS the whole feature.
@@ -175,11 +183,6 @@ if(ENG_DEBUG_UI)
     # compiles it.
     target_sources(engine_app PRIVATE src/language_service.cpp src/script_check.cpp)
     target_link_libraries(engine_app PRIVATE Luau.Analysis)
-    # The flags the checker runs with: the ones Luau's own analyser runs with,
-    # read from the vendored sources (see the file for why, and why only its).
-    include(${CMAKE_SOURCE_DIR}/cmake/engine_luau_analysis_flags.cmake)
-    engine_luau_analysis_flags("${CMAKE_CURRENT_BINARY_DIR}/generated/luau_analysis_flags.gen.h")
-    target_include_directories(engine_app PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
     # **The surface shader compiler** (ADR 0091), and only here: it RUNS
     # `shadercross` rather than linking it, so the editor carries no compiler
@@ -432,7 +435,7 @@ engine_add_module_tests(app
 # replication module's own field applier, so it is built where the module is.
 # The language service's own suite, where the service is (ADR 0093).
 if(ENG_BUILD_TESTS AND ENG_DEBUG_UI)
-    target_sources(engine_app_tests PRIVATE tests/language_service_tests.cpp)
+    target_sources(engine_app_tests PRIVATE tests/language_service_tests.cpp tests/luau_flags_tests.cpp)
     # The Timeline panel, drawn against an ImGui with no window (ADR 0204).
     target_sources(engine_app_tests PRIVATE tests/timeline_panel_tests.cpp tests/profiler_panel_tests.cpp
                                            tests/performance_preferences_tests.cpp)

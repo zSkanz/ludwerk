@@ -1,12 +1,10 @@
-cmake_minimum_required(VERSION 3.12)
-
-cmake_policy(SET CMP0077 NEW)
+cmake_minimum_required(VERSION 3.13)
 
 if ("${CMAKE_MAJOR_VERSION}.${CMAKE_MINOR_VERSION}" VERSION_GREATER_EQUAL "3.24")
     cmake_policy(SET CMP0135 NEW)
 endif ()
 
-project(fastgltf VERSION 0.9.0 LANGUAGES C CXX)
+project(fastgltf VERSION 0.9.1 LANGUAGES C CXX)
 
 option(FASTGLTF_USE_CUSTOM_SMALLVECTOR "Uses a custom SmallVector type optimised for small arrays" OFF)
 option(FASTGLTF_ENABLE_TESTS "Enables test targets for fastgltf" OFF)
@@ -14,7 +12,6 @@ option(FASTGLTF_ENABLE_EXAMPLES "Enables example targets for fastgltf" OFF)
 option(FASTGLTF_ENABLE_DOCS "Enables the configuration of targets that build/generate documentation" OFF)
 option(FASTGLTF_ENABLE_GLTF_RS "Enables the benchmark usage of gltf-rs" OFF)
 option(FASTGLTF_ENABLE_ASSIMP "Enables the benchmark usage of assimp" OFF)
-option(FASTGLTF_ENABLE_DEPRECATED_EXT "Enables support for deprecated extensions" OFF)
 option(FASTGLTF_DISABLE_CUSTOM_MEMORY_POOL "Disables the memory allocation algorithm based on polymorphic resources" OFF)
 option(FASTGLTF_USE_64BIT_FLOAT "Default to 64-bit double precision floats for everything" OFF)
 option(FASTGLTF_COMPILE_AS_CPP20 "Have the library compile as C++20" OFF)
@@ -22,6 +19,7 @@ option(FASTGLTF_ENABLE_CPP_MODULES "Enables the fastgltf::module target, which u
 option(FASTGLTF_USE_STD_MODULE "Use the std module when compiling using C++ modules" OFF)
 option(FASTGLTF_ENABLE_KHR_IMPLICIT_SHAPES "Enable support for the experimental KHR_implicit_shapes extension" OFF)
 option(FASTGLTF_ENABLE_KHR_PHYSICS_RIGID_BODIES "Enable support for the experimental KHR_physics_rigid_bodies extension" OFF)
+option(FASTGLTF_ENABLE_INSTALL "Enables installation of library using CMake's install(). Should be disabled when you want to use your own version of simdjson" ON)
 
 if (FASTGLTF_COMPILE_AS_CPP20)
     set(FASTGLTF_COMPILE_TARGET cxx_std_20)
@@ -84,8 +82,21 @@ if (SIMDJSON_TARGET_VERSION)
     target_compile_definitions(fastgltf PRIVATE SIMDJSON_TARGET_VERSION="${SIMDJSON_TARGET_VERSION}")
 endif ()
 
+# Old versions of GCC and Clang require linking with the standard filesystem library
+# See https://en.cppreference.com/w/cpp/filesystem.html#Notes
+set(FILESYSTEM_LIB "")
+
+if(CMAKE_COMPILER_IS_GNUCXX AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.1)
+    set(FILESYSTEM_LIB stdc++fs)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
+    set(FILESYSTEM_LIB c++fs)
+endif()
+
+if(FILESYSTEM_LIB)
+    target_link_libraries(fastgltf PRIVATE ${FILESYSTEM_LIB})
+endif()
+
 target_compile_definitions(fastgltf PUBLIC "FASTGLTF_USE_CUSTOM_SMALLVECTOR=$<BOOL:${FASTGLTF_USE_CUSTOM_SMALLVECTOR}>")
-target_compile_definitions(fastgltf PUBLIC "FASTGLTF_ENABLE_DEPRECATED_EXT=$<BOOL:${FASTGLTF_ENABLE_DEPRECATED_EXT}>")
 target_compile_definitions(fastgltf PUBLIC "FASTGLTF_DISABLE_CUSTOM_MEMORY_POOL=$<BOOL:${FASTGLTF_DISABLE_CUSTOM_MEMORY_POOL}>")
 target_compile_definitions(fastgltf PUBLIC "FASTGLTF_USE_64BIT_FLOAT=$<BOOL:${FASTGLTF_USE_64BIT_FLOAT}>")
 target_compile_definitions(fastgltf PUBLIC "FASTGLTF_ENABLE_KHR_IMPLICIT_SHAPES=$<BOOL:${FASTGLTF_ENABLE_KHR_IMPLICIT_SHAPES}>")
@@ -130,31 +141,33 @@ write_basic_package_version_file(
     COMPATIBILITY SameMajorVersion
 )
 
-install(
-    FILES ${FASTGLTF_HEADERS}
-    DESTINATION include/fastgltf
-)
+if (FASTGLTF_ENABLE_INSTALL)
+    install(
+        FILES ${FASTGLTF_HEADERS}
+        DESTINATION include/fastgltf
+    )
 
-install(FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/fastgltfConfigVersion.cmake"
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/fastgltf
-)
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/fastgltfConfigVersion.cmake"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/fastgltf
+    )
 
-install(
-    TARGETS fastgltf
-    EXPORT fastgltf-targets
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
+    install(
+        TARGETS fastgltf
+        EXPORT fastgltf-targets
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
 
-install(
-    EXPORT fastgltf-targets
-    FILE fastgltfConfig.cmake
-    NAMESPACE fastgltf::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/fastgltf
-)
+    install(
+        EXPORT fastgltf-targets
+        FILE fastgltfConfig.cmake
+        NAMESPACE fastgltf::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/fastgltf
+    )
+endif ()
 
 
 if (FASTGLTF_ENABLE_EXAMPLES)

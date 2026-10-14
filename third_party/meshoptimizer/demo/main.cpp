@@ -1677,6 +1677,59 @@ void tangents(const Mesh& mesh)
 	printf("Tangents : %d corners, %d splits in %.2f msec\n", int(mesh.indices.size()), int(newvertices.size() - mesh.vertices.size()), (end - start) * 1000);
 }
 
+void normals(const Mesh& mesh, float smoothing)
+{
+	// note: normal generation produces a normal vector per *corner* (3 per triangle), even for indexed inputs
+	// you could split the existing vertices on the fly (see tangents()), here we demonstrate an alternative approach with full reindexing
+	std::vector<float> normals(mesh.indices.size() * 3);
+
+	double start = timestamp();
+
+	const float crease = 1.f; // 1 rad ~= 60 deg
+	meshopt_generateNormals(&normals[0], &mesh.indices[0], mesh.indices.size(), &mesh.vertices[0].px, mesh.vertices.size(), sizeof(Vertex), crease, smoothing);
+
+	double middle = timestamp();
+
+	std::vector<Vertex> unindexed(mesh.indices.size());
+
+	for (size_t i = 0; i < mesh.indices.size(); ++i)
+	{
+		unindexed[i] = mesh.vertices[mesh.indices[i]];
+		unindexed[i].nx = normals[i * 3 + 0];
+		unindexed[i].ny = normals[i * 3 + 1];
+		unindexed[i].nz = normals[i * 3 + 2];
+	}
+
+	std::vector<unsigned int> remap(mesh.indices.size());
+	size_t vertex_count = meshopt_generateVertexRemap(&remap[0], NULL, mesh.indices.size(), &unindexed[0], mesh.indices.size(), sizeof(Vertex));
+
+	std::vector<unsigned int> newindices(mesh.indices.size());
+	meshopt_remapIndexBuffer(&newindices[0], NULL, mesh.indices.size(), &remap[0]);
+
+	std::vector<Vertex> newvertices(vertex_count);
+	meshopt_remapVertexBuffer(&newvertices[0], &unindexed[0], mesh.indices.size(), sizeof(Vertex), &remap[0]);
+
+	double end = timestamp();
+
+	printf("Normals %d: %d corners, %d vertices in %.2f msec; reindexed in %.2f msec\n",
+	    int(ceilf(smoothing)), int(mesh.indices.size()), int(vertex_count), (middle - start) * 1000, (end - middle) * 1000);
+}
+
+void remesh(const Mesh& mesh, int resolution, unsigned int options = 0)
+{
+	double start = timestamp();
+	size_t capacity = meshopt_remesh(NULL, 0, &mesh.indices[0], mesh.indices.size(), &mesh.vertices[0].px, mesh.vertices.size(), sizeof(Vertex), resolution, options);
+	double middle = timestamp();
+	std::vector<float> triangles(capacity * 3 * 3);
+	size_t count = meshopt_remesh(&triangles[0], capacity, &mesh.indices[0], mesh.indices.size(), &mesh.vertices[0].px, mesh.vertices.size(), sizeof(Vertex), resolution, options);
+	double end = timestamp();
+
+	assert(count <= capacity);
+
+	printf("Remesh%3d: %d triangles => %d triangles in %.2f msec (count %.2f msec, compute %.2f msec)\n", resolution,
+	    int(mesh.indices.size() / 3), int(count), (end - start) * 1000, (middle - start) * 1000, (end - middle) * 1000);
+}
+
 void nanite(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices); // nanite.cpp
 
 bool loadMesh(Mesh& mesh, const char* path)
@@ -1867,6 +1920,10 @@ void process(const char* path)
 	coverage(mesh);
 
 	tangents(mesh);
+	normals(mesh, 1.5f);
+
+	remesh(mesh, 128);
+	remesh(mesh, 128, meshopt_RemeshSolve);
 
 	if (path)
 		processDeinterleaved(path);
@@ -1878,7 +1935,7 @@ void processDev(const char* path)
 	if (!loadMesh(mesh, path))
 		return;
 
-	encodeMeshletsDXR(mesh, 128, /* min_exp= */ -14);
+	remesh(mesh, 160, meshopt_RemeshSolve);
 }
 
 void processNanite(const char* path)

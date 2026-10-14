@@ -16,6 +16,9 @@ add_cpp_test(ondemand_error_tests                    LABELS ondemand acceptance 
 add_cpp_test(ondemand_error_location_tests           LABELS ondemand acceptance per_implementation)
 add_cpp_test(ondemand_json_pointer_tests             LABELS ondemand acceptance per_implementation)
 add_cpp_test(ondemand_json_path_tests                LABELS ondemand acceptance per_implementation)
+add_cpp_test(compile_time_json_path_tests            LABELS ondemand acceptance per_implementation)
+add_cpp_test(compile_time_json_pointer_tests         LABELS ondemand acceptance per_implementation)
+add_cpp_test(compile_time_no_validation_tests        LABELS ondemand acceptance per_implementation)
 add_cpp_test(ondemand_key_string_tests               LABELS ondemand acceptance per_implementation)
 add_cpp_test(ondemand_misc_tests                     LABELS ondemand acceptance per_implementation)
 add_cpp_test(ondemand_number_tests                   LABELS ondemand acceptance per_implementation)
@@ -33,6 +36,9 @@ add_cpp_test(ondemand_iterate_many_csv               LABELS ondemand acceptance 
 add_cpp_test(ondemand_custom_types_tests             LABELS ondemand acceptance per_implementation)
 add_cpp_test(ondemand_custom_types_document_tests    LABELS ondemand acceptance per_implementation)
 add_cpp_test(ondemand_stl_types_tests                LABELS ondemand acceptance per_implementation)
+add_cpp_test(ondemand_convert_tests                  LABELS ondemand acceptance per_implementation)
+add_cpp_test(ondemand_unknown_tests                  LABELS ondemand acceptance per_implementation)
+add_cpp_test(ondemand_wildcard_tests                 LABELS ondemand acceptance per_implementation)
 if(NOT SIMDJSON_SANITIZE)
   add_cpp_test(ondemand_cacheline              LABELS ondemand acceptance per_implementation)
 endif()
@@ -42,9 +48,9 @@ if(HAVE_POSIX_FORK AND HAVE_POSIX_WAIT) # assert tests use fork and wait, which 
 endif()
 
 # Copy the simdjson dll into the tests directory
-if(MSVC AND BUILD_SHARED_LIBS)
+if(WIN32 AND BUILD_SHARED_LIBS)
   add_custom_command(TARGET ondemand_parse_api_tests POST_BUILD        # Adds a post-build event
     COMMAND ${CMAKE_COMMAND} -E copy_if_different  # which executes "cmake -E copy_if_different..."
         "$<TARGET_FILE:simdjson>"      # <--this is in-file
         "$<TARGET_FILE_DIR:ondemand_parse_api_tests>")                 # <--this is out-file path
-endif(MSVC AND BUILD_SHARED_LIBS)
+endif(WIN32 AND BUILD_SHARED_LIBS)

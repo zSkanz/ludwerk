@@ -43,7 +43,7 @@ local DebugAlias = "androiddebugkey"
 local DebugPassword = "android"
 
 local Abi = "arm64-v8a"
-local BuildTools = "35.0.0"
+local BuildTools = "36.0.0"
 
 local function home(): string
     return path.format(process.homedir())

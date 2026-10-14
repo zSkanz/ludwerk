@@ -65,8 +65,8 @@ def keystore = project.findProperty('engine.keystore')
 
 android {
     namespace = 'engine.player'
-    compileSdk = 35
-    buildToolsVersion = '35.0.0'
+    compileSdk = 36
+    buildToolsVersion = '36.0.0'
     // The NDK only strips the prebuilt library here; `ludwerk android
     // install-tools` installs none, and without one the library is packaged as
     // it is. Named only when it is installed, so its absence is not an error.
@@ -77,7 +77,7 @@ android {
     defaultConfig {
         applicationId = applicationIdOf
         minSdk = minSdkPin
-        targetSdk = 35
+        targetSdk = 36
         versionCode = versionCodeOf
         versionName = versionNameOf
         resValue 'string', 'app_name', appName

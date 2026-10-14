@@ -4,6 +4,7 @@
 #include <deque>
 #include <engine/app/content_tree.h>
 #include <engine/app/inspector.h>
+#include <engine/app/luau_flags.h>
 #include <engine/app/picking.h>
 #include <engine/app/terrain_import.h>
 #include <engine/asset/material.h>
@@ -516,6 +517,10 @@ struct EditorCommands
     // Close the editor. The menu's File > Exit, which is the one every
     // application has and the one people reach for before the window button.
     bool quit = false;
+    // **The project's Luau flags, changed** (ADR 0217): Project Settings
+    // wrote them to `project.toml`. The loop stops the checker, applies them,
+    // tells VS Code, and checks every open tab again.
+    std::optional<std::vector<LuauFlagSetting>> luauFlags;
     // **Save everything unsaved**: the unsaved-changes dialog's Save. The
     // stamp, the scene, the material being edited and every changed tab of a
     // content file -- before the verb the dialog was guarding, and instead of

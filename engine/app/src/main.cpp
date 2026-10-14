@@ -291,11 +291,11 @@ void sayStartFailure(int code)
 // closed without a word.
 [[nodiscard]] bool runsWithNoWindow(int argc, char** argv)
 {
-    constexpr std::array<std::string_view, 18> Quiet{
+    constexpr std::array<std::string_view, 19> Quiet{
         "--headless",      "--serve",        "--version",        "--run-tests",    "--check-scripts",
         "--replay",        "--bench",        "--write-types",    "--import-",      "--partition",
         "--save-scene",    "--capture-out",  "--two-worlds",     "--replica-gate", "--reads-mesh-format",
-        "--record-replay", "--describe-rig", "--bake-irradiance"};
+        "--record-replay", "--describe-rig", "--bake-irradiance", "--print-luau-flags"};
     for (int index = 1; index < argc; ++index) {
         const std::string_view arg = argv[index];
         for (const std::string_view quiet : Quiet) {
@@ -459,6 +459,19 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
                 engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_port"));
                 return kExitUsage;
             }
+            continue;
+        }
+        // **Players one address may be** (`[network]
+        // max_connections_per_address`), nought for any number: what a
+        // dedicated server's operator sets for a LAN house or a mobile crowd.
+        if (arg.starts_with("--max-per-address=")) {
+            engine::core::u64 count = 0;
+            if (!numericValue(arg.substr(std::string_view("--max-per-address=").size()), count) || count > 4095) {
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_max_per_address"));
+                return kExitUsage;
+            }
+            options.network.maxPeersPerAddress = static_cast<engine::core::u32>(count);
+            options.maxPerAddressFromFlag = true;
             continue;
         }
         if (arg.starts_with("--max-players=")) {
@@ -902,6 +915,13 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.headless = true;
             continue;
         }
+        if (arg == "--print-luau-flags") {
+            // The project's Luau flags, as the tools that check scripts take
+            // them (ADR 0217), printed and gone.
+            options.printLuauFlags = true;
+            options.headless = true;
+            continue;
+        }
         if (arg == "--check-scripts") {
             // The same shape: the scene as the editor holds it, checked, gone.
             options.checkScriptsOnly = true;
@@ -1277,7 +1297,7 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
     }
     if (!options.replayRoot.empty() || !options.benchRoot.empty() || !options.twoWorldsRoot.empty() ||
         !options.replicaGateProject.empty() || options.partitionOnly || options.writeTypesOnly ||
-        options.checkScriptsOnly || options.launcher || options.terrainImport.has_value())
+        options.checkScriptsOnly || options.printLuauFlags || options.launcher || options.terrainImport.has_value())
         return kExitOk;
 
     // A conformance run needs a ceiling for the same reason, and a generous one:
@@ -1595,7 +1615,20 @@ static int hostMain(int argc, char** argv)
     // content directory `ludwerk build` is about to pack.
     // **`ludwerk check`'s side pass** (ADR 0138 §8): every script a project
     // carries, linted for the side it runs on. Warnings, so the exit is clean.
+    // **A build step compiles with the project's Luau flags** (ADR 0217),
+    // named by the project's root after the directory it compiles: what the
+    // game it ships is compiled with is what its scripts were checked with.
+    const auto projectFlags = [&args](std::size_t at) {
+        if (args.size() <= at)
+            return;
+        const engine::app::ProjectConfig project =
+            engine::app::loadProjectConfig(std::filesystem::path(args[at]), engine::app::GraphicsOverrides{});
+        for (const std::string& problem : engine::app::applyLuauFlags(project.luauFlags))
+            engine::core::log(LogLevel::Warn, ENG_TR("engine.luau_flags.warn.setting"),
+                              std::array<I18nArg, 1>{I18nArg{"problem", problem}});
+    };
     if (args.size() == 2 && args[0] == "--check-sides") {
+        projectFlags(1);
         const engine::core::usize found = engine::app::checkProjectSides(std::filesystem::path(args[1]));
         const std::array<I18nArg, 1> counted{I18nArg{"count", static_cast<engine::core::i64>(found)}};
         engine::core::log(LogLevel::Info, ENG_TR("engine.cli.sides_checked"), counted);
@@ -1603,7 +1636,8 @@ static int hostMain(int argc, char** argv)
     }
     if (args.size() == 1 && args[0].starts_with("--describe-rig="))
         return describeRig(std::filesystem::path(args[0].substr(std::string_view{"--describe-rig="}.size())));
-    if (args.size() == 2 && args[0] == "--compile-content-scripts") {
+    if ((args.size() == 2 || args.size() == 3) && args[0] == "--compile-content-scripts") {
+        projectFlags(2);
         engine::app::ScriptPackageReport report;
         if (!engine::app::compileContentScripts(std::filesystem::path(args[1]), report)) {
             const std::array<I18nArg, 2> failed{I18nArg{"path", report.failed}, I18nArg{"message", report.message}};
@@ -1614,7 +1648,8 @@ static int hostMain(int argc, char** argv)
         engine::core::log(LogLevel::Info, ENG_TR("engine.cli.compiled_scripts"), compiled);
         return kExitOk;
     }
-    if (args.size() == 2 && args[0] == "--compile-scripts") {
+    if ((args.size() == 2 || args.size() == 3) && args[0] == "--compile-scripts") {
+        projectFlags(2);
         engine::app::ScriptPackageReport report;
         if (!engine::app::compileGameScripts(std::filesystem::path(args[1]), report)) {
             const std::array<I18nArg, 2> failed{I18nArg{"path", report.failed}, I18nArg{"message", report.message}};
@@ -1672,6 +1707,26 @@ static int hostMain(int argc, char** argv)
             engine::core::log(LogLevel::Warn, ENG_TR("app.warn.project_config"), configArgs);
         }
 
+        // **The project's Luau flags, before the first script is compiled**
+        // (ADR 0217): the runtime, the editor's checker, hot reload and
+        // `--check-scripts` all read them from here on.
+        for (const std::string& problem : engine::app::applyLuauFlags(config.luauFlags))
+            engine::core::log(LogLevel::Warn, ENG_TR("engine.luau_flags.warn.setting"),
+                              std::array<I18nArg, 1>{I18nArg{"problem", problem}});
+        // **VS Code told the same** (ADR 0217), where somebody edits this
+        // project: in the editor, and under `ludwerk dev`. Only the engine's
+        // own keys of the project's settings file, and only when they differ.
+        if (isProject && (options.editor || !options.devControlUrl.empty()) &&
+            !engine::app::writeVsCodeLuauFlags(options.scriptPath))
+            engine::core::log(LogLevel::Warn, ENG_TR("engine.luau_flags.warn.vscode"));
+        if (options.printLuauFlags) {
+            // **What a tool that checks scripts must be told**, one
+            // `Name=value` a line: `ludwerk check` passes each to luau-lsp.
+            for (const auto& [name, value] : engine::app::luauToolFlags())
+                std::printf("%s=%s\n", name.c_str(), value.c_str());
+            return kExitOk;
+        }
+
         options.graphics = config.graphics;
         // The measuring keys (ADR 0171): the flag beats the file, and what the
         // file hides is added to what the flag does.
@@ -1706,6 +1761,9 @@ static int hostMain(int argc, char** argv)
         if (options.defaultRelay.empty())
             options.defaultRelay = config.networkRelay;
         options.network.timeoutMs = config.networkTimeoutSeconds * 1000u;
+        // The run's own number wins over the project's.
+        if (!options.maxPerAddressFromFlag)
+            options.network.maxPeersPerAddress = config.networkMaxPerAddress;
         options.maxViewsPerFrame = config.maxViewsPerFrame;
         options.maxHighlights = config.maxHighlights;
         options.foliageDensity = config.foliageDensity;

@@ -66,12 +66,12 @@ TEST_CASE("Extension KHR_texture_basisu", "[gltf-loader]") {
 
 // TODO: Add tests for MSFT_texture_dds, KHR_mesh_quantization extension
 
-TEST_CASE("Extension EXT_meshopt_compression", "[gltf-loader]") {
+TEST_CASE("Extension KHR_meshopt_compression", "[gltf-loader]") {
 	auto brainStem = sampleAssets / "Models" / "BrainStem" / "glTF-Meshopt";
 	fastgltf::GltfFileStream jsonData(brainStem / "BrainStem.gltf");
 	REQUIRE(jsonData.isOpen());
 
-	fastgltf::Parser parser(fastgltf::Extensions::EXT_meshopt_compression | fastgltf::Extensions::KHR_mesh_quantization);
+	fastgltf::Parser parser(fastgltf::Extensions::KHR_meshopt_compression | fastgltf::Extensions::KHR_mesh_quantization);
 	auto asset = parser.loadGltfJson(jsonData, brainStem, fastgltf::Options::None);
 	REQUIRE(asset.error() == fastgltf::Error::None);
 	REQUIRE(fastgltf::validate(asset.get()) == fastgltf::Error::None);
@@ -84,7 +84,7 @@ TEST_CASE("Extension EXT_meshopt_compression", "[gltf-loader]") {
 		auto& mc = *asset->bufferViews[0].meshoptCompression;
 		REQUIRE(mc.bufferIndex == 0);
 		REQUIRE(mc.byteOffset == 0);
-		REQUIRE(mc.byteLength == 2646);
+		REQUIRE(mc.byteLength == 686);
 		REQUIRE(mc.byteStride == 4);
 		REQUIRE(mc.mode == fastgltf::MeshoptCompressionMode::Attributes);
 		REQUIRE(mc.count == 34084);
@@ -92,11 +92,21 @@ TEST_CASE("Extension EXT_meshopt_compression", "[gltf-loader]") {
 	{
 		auto& mc = *asset->bufferViews[1].meshoptCompression;
 		REQUIRE(mc.bufferIndex == 0);
-		REQUIRE(mc.byteOffset == 2648);
-		REQUIRE(mc.byteLength == 68972);
+		REQUIRE(mc.byteOffset == 688);
+		REQUIRE(mc.byteLength == 67060);
 		REQUIRE(mc.byteStride == 4);
 		REQUIRE(mc.mode == fastgltf::MeshoptCompressionMode::Attributes);
 		REQUIRE(mc.filter == fastgltf::MeshoptCompressionFilter::Octahedral);
+		REQUIRE(mc.count == 34084);
+	}
+	{
+		auto& mc = *asset->bufferViews[2].meshoptCompression;
+		REQUIRE(mc.bufferIndex == 0);
+		REQUIRE(mc.byteOffset == 67748);
+		REQUIRE(mc.byteLength == 138908);
+		REQUIRE(mc.byteStride == 12);
+		REQUIRE(mc.mode == fastgltf::MeshoptCompressionMode::Attributes);
+		REQUIRE(mc.filter == fastgltf::MeshoptCompressionFilter::Exponential);
 		REQUIRE(mc.count == 34084);
 	}
 }
@@ -394,7 +404,6 @@ TEST_CASE("Extension EXT_mesh_gpu_instancing", "[gltf-loader]") {
     REQUIRE(nodes[0].findInstancingAttribute("ROTATION") != nodes[0].instancingAttributes.cend());
 }
 
-#if FASTGLTF_ENABLE_DEPRECATED_EXT
 TEST_CASE("Extension KHR_materials_pbrSpecularGlossiness", "[gltf-loader]") {
     auto specularGlossinessTest = sampleAssets / "Models" / "SpecGlossVsMetalRough" / "glTF";
     fastgltf::GltfFileStream jsonData(specularGlossinessTest / "SpecGlossVsMetalRough.gltf");
@@ -424,7 +433,6 @@ TEST_CASE("Extension KHR_materials_pbrSpecularGlossiness", "[gltf-loader]") {
     REQUIRE(materials[3].specularGlossiness->diffuseTexture.has_value());
     REQUIRE(materials[3].specularGlossiness->diffuseTexture.value().textureIndex == 7);
 }
-#endif
 
 // TODO: Add tests for MSFT_packing_* extensions
 
@@ -600,6 +608,9 @@ TEST_CASE("Extension KHR_implicit_shapes", "[gltf-loader]") {
 		},
 		[](const fastgltf::CylinderShape& cylinder) {
 			REQUIRE(false);
+		},
+		[](const fastgltf::PlaneShape& plane) {
+			REQUIRE(false);
 		}
 		},
 		box0);
@@ -616,6 +627,9 @@ TEST_CASE("Extension KHR_implicit_shapes", "[gltf-loader]") {
 			REQUIRE(false);
 		},
 		[](const fastgltf::CylinderShape& cylinder) {
+			REQUIRE(false);
+		},
+		[](const fastgltf::PlaneShape& plane) {
 			REQUIRE(false);
 		}
 		},
@@ -636,6 +650,9 @@ TEST_CASE("Extension KHR_implicit_shapes", "[gltf-loader]") {
 		},
 		[](const fastgltf::CylinderShape& cylinder) {
 			REQUIRE(false);
+		},
+		[](const fastgltf::PlaneShape& plane) {
+			REQUIRE(false);
 		}
 		},
 		capsule6);
@@ -655,6 +672,9 @@ TEST_CASE("Extension KHR_implicit_shapes", "[gltf-loader]") {
 			REQUIRE(cylinder.height == Catch::Approx(0.06662015616893768));
 			REQUIRE(cylinder.radiusBottom == Catch::Approx(0.15483441948890686));
 			REQUIRE(cylinder.radiusTop == Catch::Approx(0.15483441948890686));
+		},
+		[](const fastgltf::PlaneShape& plane) {
+			REQUIRE(false);
 		}
 		},
 		cylinder2);
@@ -700,7 +720,7 @@ TEST_CASE("Extension KHR_physics_rigid_bodies simple", "[gltf-loader]") {
 	REQUIRE(node.physicsRigidBody->collider.has_value());
 	REQUIRE(node.physicsRigidBody->collider->geometry.shape.has_value());
 	REQUIRE(node.physicsRigidBody->collider->geometry.shape == 0);
-	REQUIRE(!node.physicsRigidBody->collider->geometry.node.has_value());
+	REQUIRE(!node.physicsRigidBody->collider->geometry.mesh.has_value());
 	REQUIRE(node.physicsRigidBody->collider->physicsMaterial == 0);
 	REQUIRE(node.physicsRigidBody->collider->collisionFilter == 0);
 
@@ -708,17 +728,17 @@ TEST_CASE("Extension KHR_physics_rigid_bodies simple", "[gltf-loader]") {
 	REQUIRE(!node.physicsRigidBody->joint.has_value());
 
 
-	const auto& node10 = asset->nodes.at(11);
+	const auto& node9 = asset->nodes.at(9);
 
-	REQUIRE(node10.physicsRigidBody);
-	REQUIRE(!node10.physicsRigidBody->motion.has_value());
-	REQUIRE(!node10.physicsRigidBody->collider.has_value());
+	REQUIRE(node9.physicsRigidBody);
+	REQUIRE(!node9.physicsRigidBody->motion.has_value());
+	REQUIRE(!node9.physicsRigidBody->collider.has_value());
 
-	REQUIRE(node10.physicsRigidBody->trigger.has_value());
+	REQUIRE(node9.physicsRigidBody->trigger.has_value());
 	fastgltf::visit_exhaustive(fastgltf::visitor{
 		[](const fastgltf::GeometryTrigger& geo) {
 			REQUIRE(geo.geometry.convexHull);
-			REQUIRE(geo.geometry.node == 10);
+			REQUIRE(geo.geometry.mesh == 7);
 			REQUIRE(geo.collisionFilter.has_value());
 			REQUIRE(geo.collisionFilter == 0);
 		},
@@ -726,9 +746,9 @@ TEST_CASE("Extension KHR_physics_rigid_bodies simple", "[gltf-loader]") {
 			REQUIRE(false);
 		}
 		},
-		*node10.physicsRigidBody->trigger);
+		*node9.physicsRigidBody->trigger);
 
-	REQUIRE(!node10.physicsRigidBody->joint.has_value());
+	REQUIRE(!node9.physicsRigidBody->joint.has_value());
 }
 
 TEST_CASE("Extension KHR_physics_rigid_bodies complex", "[gltf-loader]") {
@@ -810,15 +830,60 @@ TEST_CASE("Extension KHR_physics_rigid_bodies complex", "[gltf-loader]") {
 
 	REQUIRE(joint9.drives.size() == 0);
 
-	const auto& node10 = asset->nodes.at(10);
-	REQUIRE(node10.physicsRigidBody);
-	REQUIRE(!node10.physicsRigidBody->collider.has_value());
-	REQUIRE(!node10.physicsRigidBody->motion.has_value());
-	REQUIRE(!node10.physicsRigidBody->trigger.has_value());
-	REQUIRE(node10.physicsRigidBody->joint.has_value());
-	const auto& joint = *node10.physicsRigidBody->joint;
-	REQUIRE(joint.connectedNode == 9);
+	const auto& node8 = asset->nodes.at(8);
+	REQUIRE(node8.physicsRigidBody);
+	REQUIRE(!node8.physicsRigidBody->collider.has_value());
+	REQUIRE(!node8.physicsRigidBody->motion.has_value());
+	REQUIRE(!node8.physicsRigidBody->trigger.has_value());
+	REQUIRE(node8.physicsRigidBody->joint.has_value());
+	const auto& joint = *node8.physicsRigidBody->joint;
+	REQUIRE(joint.connectedNode == 7);
 	REQUIRE(joint.joint == 0);
 	REQUIRE(joint.enableCollision == false);
 }
 #endif
+
+TEST_CASE("Extension KHR_node_visibility", "[gltf-loader]") {
+	fastgltf::Parser parser(fastgltf::Extensions::KHR_node_visibility);
+	auto khrNodeVisibilityValid = path / "khr_node_visibility_valid.gltf";
+	fastgltf::GltfFileStream jsonData(khrNodeVisibilityValid);
+	REQUIRE(jsonData.isOpen());
+	auto asset = parser.loadGltfJson(jsonData, khrNodeVisibilityValid);
+	REQUIRE(asset.error() == fastgltf::Error::None);
+	REQUIRE(fastgltf::validate(asset.get()) == fastgltf::Error::None);
+
+	REQUIRE(asset->nodes.size() == 3);
+	REQUIRE(asset->nodes[0].visible); // If KHR_node_visibility extension is not present, nodes are visible by default.
+	REQUIRE(asset->nodes[1].visible);
+	REQUIRE(!asset->nodes[2].visible);
+}
+
+TEST_CASE("Extension KHR_node_selectability", "[gltf-loader]") {
+	fastgltf::Parser parser(fastgltf::Extensions::KHR_node_selectability);
+	auto khrNodeSelectabilityValid = path / "khr_node_selectability_valid.gltf";
+	fastgltf::GltfFileStream jsonData(khrNodeSelectabilityValid);
+	REQUIRE(jsonData.isOpen());
+	auto asset = parser.loadGltfJson(jsonData, khrNodeSelectabilityValid);
+	REQUIRE(asset.error() == fastgltf::Error::None);
+	REQUIRE(fastgltf::validate(asset.get()) == fastgltf::Error::None);
+
+	REQUIRE(asset->nodes.size() == 3);
+	REQUIRE(asset->nodes[0].selectable); // If KHR_node_selectability extension is not present, nodes are selectable by default.
+	REQUIRE(asset->nodes[1].selectable);
+	REQUIRE(!asset->nodes[2].selectable);
+}
+
+TEST_CASE("Extension KHR_node_hoverability", "[gltf-loader]") {
+	fastgltf::Parser parser(fastgltf::Extensions::KHR_node_hoverability);
+	auto khrNodeHoverabilityValid = path / "khr_node_hoverability_valid.gltf";
+	fastgltf::GltfFileStream jsonData(khrNodeHoverabilityValid);
+	REQUIRE(jsonData.isOpen());
+	auto asset = parser.loadGltfJson(jsonData, khrNodeHoverabilityValid);
+	REQUIRE(asset.error() == fastgltf::Error::None);
+	REQUIRE(fastgltf::validate(asset.get()) == fastgltf::Error::None);
+
+	REQUIRE(asset->nodes.size() == 3);
+	REQUIRE(asset->nodes[0].hoverable); // If KHR_node_hoverability extension is not present, nodes are hoverable by default.
+	REQUIRE(asset->nodes[1].hoverable);
+	REQUIRE(!asset->nodes[2].hoverable);
+}

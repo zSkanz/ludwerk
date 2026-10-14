@@ -545,17 +545,28 @@ void typeText(OpenScript& tab, ScriptEditorCommands& out, std::size_t index, std
 // One for the editor, made the first time a tab asks, from the definitions the
 // build stages beside the host. None when they are missing: completion then
 // answers from the tree and the file alone, as it did before.
+struct LanguageServiceSlot
+{
+    std::unique_ptr<LanguageService> service;
+    bool tried = false;
+};
+
+LanguageServiceSlot& languageServiceSlot()
+{
+    static LanguageServiceSlot slot;
+    return slot;
+}
+
 [[nodiscard]] LanguageService* languageService()
 {
-    static std::unique_ptr<LanguageService> service;
-    static bool tried = false;
-    if (!tried) {
-        tried = true;
+    LanguageServiceSlot& slot = languageServiceSlot();
+    if (!slot.tried) {
+        slot.tried = true;
         std::string definitions;
         if (platform::readTextFile(platform::paths().contentDir / "runtime" / "types" / "engine.d.luau", definitions))
-            service = std::make_unique<LanguageService>(std::move(definitions));
+            slot.service = std::make_unique<LanguageService>(std::move(definitions));
     }
-    return service.get();
+    return slot.service.get();
 }
 
 // The scripts a require can reach, from the top of `root`'s tree: a require
@@ -3322,6 +3333,13 @@ void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands
     ImGui::End();
 }
 
+void stopLanguageService()
+{
+    LanguageServiceSlot& slot = languageServiceSlot();
+    slot.service.reset();
+    slot.tried = false;
+}
+
 void releaseScriptPaneFocus()
 {
     ImGuiContext& g = *ImGui::GetCurrentContext();
@@ -3420,6 +3438,9 @@ void drawScriptEditor(ScriptEditor&, core::u32, DebugView&, const scene::World*,
 {}
 
 void releaseScriptPaneFocus()
+{}
+
+void stopLanguageService()
 {}
 
 void drawDebugPanel(ScriptEditor&, DebugView&, ScriptEditorCommands&, bool&, const ScriptActionButton&,

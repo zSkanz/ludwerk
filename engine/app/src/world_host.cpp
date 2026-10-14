@@ -21,6 +21,7 @@
 #include "engine/audio/scene_types.h"
 #include "engine/core/build_info.h"
 #include "engine/core/content_path.h"
+#include "engine/core/utf8_mark.h"
 #include "engine/core/json.h"
 #include "engine/core/log.h"
 #include "engine/input/scene_types.h"
@@ -78,6 +79,7 @@ constexpr std::string_view ConformanceRunnerPath = "runtime/conformance/runner.l
     std::ostringstream buffer;
     buffer << file.rdbuf();
     out = buffer.str();
+    core::dropUtf8Mark(out);
     return true;
 }
 

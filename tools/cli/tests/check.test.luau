@@ -49,6 +49,20 @@ test.suite("check", function(suite)
         assert.eq(#check.analysisCommands(prefix, {}), 0)
     end)
 
+    suite:case("the project's Luau flags reach luau-lsp, and nothing else the engine printed", function()
+        -- What `--print-luau-flags` prints: a log line, then the flags.
+        local printed = "[info] Ludwerk: engine initialized.\r\n"
+            .. "LuauExperimentalIfLocalSyntax=true\n"
+            .. "LuauExportValueSyntax=false\n"
+            .. "LuauTypeInferIterationLimit=2000\n"
+            .. "not a flag = true\n"
+        local arguments = check.flagArguments(printed)
+        assert.eq(#arguments, 3)
+        assert.eq(arguments[1], "--flag:LuauExperimentalIfLocalSyntax=true")
+        assert.eq(arguments[2], "--flag:LuauExportValueSyntax=false")
+        assert.eq(arguments[3], "--flag:LuauTypeInferIterationLimit=2000")
+    end)
+
     suite:case("an exported game and the engine's own folder are never walked", function()
         -- `ludwerk build` writes `dist/`, and check and fmt went
         -- through every exported copy of the game with the source.

@@ -1,15 +1,16 @@
 // Root build file. Version pins and the out-of-tree rule live here.
 //
-// The Android Gradle Plugin is pinned to the version SDL3 itself vendors in
-// `third_party/sdl3/android-project/build.gradle` (8.7.3), and Gradle to the
-// version its wrapper names (8.12, see gradle/wrapper/gradle-wrapper.properties).
-// Matching upstream is the cheapest way to stay inside a combination the
-// vendored Java glue is known to build under; newer numbers would be a change
-// nobody had a reason for, and R5 forbids the "latest" that would otherwise
-// make the choice implicitly.
+// The Android Gradle Plugin is pinned to 8.9.3: API 36, which the Play store
+// requires of new apps and updates since 2026-08-31, needs 8.9.1 or later, and
+// 8.9.3 is that line's last fix. SDL3 vendors 8.7.3 in
+// `third_party/sdl3/android-project/build.gradle`, and its Java glue builds
+// under both. Gradle is the version the wrapper names (8.12, see
+// gradle/wrapper/gradle-wrapper.properties), above 8.9's floor of 8.11.1, on
+// JDK 17. R5 forbids the "latest" that would otherwise make the choice
+// implicitly.
 
 plugins {
-    id 'com.android.application' version '8.7.3' apply false
+    id 'com.android.application' version '8.9.3' apply false
 }
 
 // R14, applied to Gradle. Left alone, AGP writes `app/build/` straight into the

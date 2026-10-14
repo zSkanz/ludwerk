@@ -42,6 +42,42 @@ namespace {
     return std::nullopt;
 }
 
+// **How far a thing is from where a player looks from, to its nearest
+// edge**, squared -- not to its centre. A 4 km floor centred on the origin is
+// under a player standing on it 1 km out, and measured from its centre it was
+// never sent: the player stood on nothing and was corrected every tick. A
+// part is its box, oriented as it is; a sprite is the circle round its
+// rectangle. Nothing else has a place to be far from.
+[[nodiscard]] std::optional<double> reachSquared(const scene::World& world, core::InstanceId id,
+                                                 const core::DVec3& from)
+{
+    if (const scene::PartComponent* part = world.parts().find(id); part != nullptr) {
+        const core::DVec3 delta = from - part->cframe.position;
+        const core::Mat3& axes = part->cframe.rotation;
+        const double half[3] = {0.5 * static_cast<double>(part->size.x), 0.5 * static_cast<double>(part->size.y),
+                                0.5 * static_cast<double>(part->size.z)};
+        double squared = 0.0;
+        for (int axis = 0; axis < 3; ++axis) {
+            // Along the part's own axis, past its face or nothing.
+            const double along = static_cast<double>(axes.m[axis][0]) * delta.x +
+                                 static_cast<double>(axes.m[axis][1]) * delta.y +
+                                 static_cast<double>(axes.m[axis][2]) * delta.z;
+            const double beyond = std::max(std::abs(along) - half[axis], 0.0);
+            squared += beyond * beyond;
+        }
+        return squared;
+    }
+    if (const scene::Part2DComponent* sprite = world.parts2d().find(id); sprite != nullptr) {
+        const double dx = from.x - static_cast<double>(sprite->position.x);
+        const double dy = from.y - static_cast<double>(sprite->position.y);
+        const double dz = from.z;
+        const double reach = 0.5 * std::hypot(static_cast<double>(sprite->size.x), static_cast<double>(sprite->size.y));
+        const double beyond = std::max(std::sqrt(dx * dx + dy * dy + dz * dz) - reach, 0.0);
+        return beyond * beyond;
+    }
+    return std::nullopt;
+}
+
 // **A token nobody can guess** (ADR 0085), from the operating system's
 // entropy. Not simulation state -- it never reaches the world or its hash --
 // so this is not the unseeded randomness R10 forbids; the `UserId` it maps to
@@ -2475,12 +2511,30 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
     }
     std::vector<net::TransportEvent> events;
     (void)m_transport.poll(events, 0);
+    m_receives += 1;
     for (const net::TransportEvent& event : events) {
         switch (event.kind) {
         case net::TransportEvent::Kind::Connected:
             if (peerFor(event.peer) == nullptr) {
                 Peer peer;
                 peer.id = event.peer;
+                peer.address = m_transport.addressOf(event.peer);
+                // **A flood, by its rate** (`MaxConnectsPerAddressPerSecond`,
+                // `MaxHandshakesPerAddress`): let go before it costs a hello.
+                if (peer.address != 0) {
+                    std::deque<u64>& begun = m_connectsByAddress[peer.address];
+                    while (!begun.empty() && begun.front() + 60 <= m_receives)
+                        begun.pop_front();
+                    begun.push_back(m_receives);
+                    u32 waiting = 0;
+                    for (const Peer& other : m_peers)
+                        waiting += other.address == peer.address && !other.welcomed ? 1u : 0u;
+                    if (begun.size() > MaxConnectsPerAddressPerSecond || waiting >= MaxHandshakesPerAddress) {
+                        m_stats.messagesDropped += 1;
+                        m_transport.drop(event.peer);
+                        break;
+                    }
+                }
                 m_peers.push_back(std::move(peer));
                 std::sort(m_peers.begin(), m_peers.end(),
                           [](const Peer& a, const Peer& b) { return a.id.value < b.id.value; });
@@ -2950,6 +3004,22 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 PlayerToken token;
                 token.high = reader.u64v();
                 token.low = reader.u64v();
+                const u64 luauFlags = reader.u64v();
+                // **Other Luau flags are other scripts** (ADR 0217): the same
+                // source parsed, compiled or run another way, so a world that
+                // parts from this one by the first tick. Said, like a version.
+                if (reader.ok() && version == generated::ProtocolVersion && !peer->welcomed &&
+                    luauFlags != m_luauFlags) {
+                    core::log(core::LogLevel::Info, ENG_TR("net.info.refused_luau_flags"));
+                    Writer refused;
+                    refused.u8v(static_cast<u8>(MessageType::Refused));
+                    refused.u8v(RefusedLuauFlags);
+                    refused.text({});
+                    (void)sendBytes(m_transport, peer->id, refused.bytes, net::Delivery::Reliable, ControlChannel,
+                                    m_stats);
+                    m_transport.disconnect(peer->id);
+                    break;
+                }
                 if (!reader.ok() || version != generated::ProtocolVersion || peer->welcomed) {
                     // **Said, not just done**: the replica learns why.
                     if (reader.ok() && !peer->welcomed) {
@@ -2989,6 +3059,27 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     peer = peerFor(event.peer);
                     if (peer == nullptr)
                         break;
+                }
+                // **An address with as many players as it may be says so**
+                // -- a household, a school, a carrier's NAT -- rather than
+                // being dropped and heard as a lost connection.
+                if (m_maxPerAddress != 0 && peer->address != 0) {
+                    u32 fromThere = 0;
+                    for (const Peer& other : m_peers)
+                        fromThere += other.welcomed && other.address == peer->address ? 1u : 0u;
+                    if (fromThere >= m_maxPerAddress) {
+                        const std::array<core::I18nArg, 1> args{
+                            core::I18nArg{"most", static_cast<core::i64>(m_maxPerAddress)}};
+                        core::log(core::LogLevel::Info, ENG_TR("net.info.refused_address_limit"), args);
+                        Writer refused;
+                        refused.u8v(static_cast<u8>(MessageType::Refused));
+                        refused.u8v(RefusedAddressLimit);
+                        refused.text({});
+                        (void)sendBytes(m_transport, peer->id, refused.bytes, net::Delivery::Reliable, ControlChannel,
+                                        m_stats);
+                        m_transport.disconnect(peer->id);
+                        break;
+                    }
                 }
                 // **A full server says so**, after a returning player's
                 // old connection was let go -- that seat is theirs.
@@ -3914,17 +4005,19 @@ std::vector<u32> AuthoritySession::interestOf(const scene::World& world, const P
     std::vector<u8> positioned(count, 0);
     std::vector<u8> marked(count, 0);
     for (usize at = 0; at < count; ++at) {
-        const std::optional<core::DVec3> place = placeOf(world, m_order[at].id);
-        if (!place.has_value())
+        // The nearest of the machine's players, to the nearest edge
+        // (`reachSquared`).
+        std::optional<f64> nearest;
+        for (usize from = 0; from < fociCount; ++from) {
+            const std::optional<f64> squared = reachSquared(world, m_order[at].id, foci[from]);
+            if (!squared.has_value())
+                break;
+            nearest = nearest.has_value() ? std::min(*nearest, *squared) : *squared;
+        }
+        if (!nearest.has_value())
             continue;
         positioned[at] = 1;
-        // The nearest of the machine's players.
-        f64 distance = 0.0;
-        for (usize from = 0; from < fociCount; ++from) {
-            const core::DVec3 delta = *place - foci[from];
-            const f64 squared = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
-            distance = from == 0 ? squared : std::min(distance, squared);
-        }
+        const f64 distance = *nearest;
         const f64 reach = std::binary_search(peer.known.begin(), peer.known.end(), m_order[at].netId) ? keep : radius;
         inRange[at] = distance <= reach * reach ? 1 : 0;
         // What the peer owns it simulates, so it has it wherever it is.
@@ -4390,6 +4483,7 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             hello.u32v(generated::ProtocolVersion);
             hello.u64v(m_token.high);
             hello.u64v(m_token.low);
+            hello.u64v(m_luauFlags);
             sendBytes(m_transport, m_authority, hello.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
             continue;
         }

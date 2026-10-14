@@ -33,6 +33,9 @@ compiles *all* the implementations into the executable. On Intel, it will includ
 (icelake, haswell, westmere and fallback), on 64-bit ARM it will include just one since running dispatching is  unnecessary, and on PPC
 it will include 2 (ppc64 and fallback).
 
+On Loongson processors, LASX runtime dispatching is only enabled on GCC 15+, not on LLVM or older versions of GCC.
+Thus unless you compile specifically for LASX or use GCC 15+, you will not benefit from LASX support.
+
 If you know more about where you're going to run and want to save the space, you can disable any of
 these implementations at compile time with `-DSIMDJSON_IMPLEMENTATION_X=0` (where X is ICELAKE, HASWELL,
 WESTMERE, ARM64, PPC64, LSX, LASX and FALLBACK).
@@ -55,7 +58,7 @@ Inspecting the Detected Implementation
 
 You can check what implementation is running with `active_implementation`:
 
-```c++
+```cpp
 cout << "simdjson v" << SIMDJSON_VERSION << endl;
 cout << "Detected the best implementation for your machine: " << simdjson::get_active_implementation()->name();
 cout << "(" << simdjson::get_active_implementation()->description() << ")" << endl;
@@ -68,7 +71,7 @@ Querying Available Implementations
 
 You can list all available implementations, regardless of which one was selected:
 
-```c++
+```cpp
 for (auto implementation : simdjson::get_available_implementations()) {
   cout << implementation->name() << ": " << implementation->description() << endl;
 }
@@ -76,7 +79,7 @@ for (auto implementation : simdjson::get_available_implementations()) {
 
 And look them up by name:
 
-```c++
+```cpp
 cout << simdjson::get_available_implementations()["fallback"]->description() << endl;
 ```
 When an implementation is not available, the bracket call `simdjson::get_available_implementations()[name]`
@@ -93,7 +96,7 @@ Manually Selecting the Implementation
 If you're trying to do performance tests or see how different implementations of simdjson run, you
 can select the CPU architecture yourself:
 
-```c++
+```cpp
 // Use the fallback implementation, even though my machine is fast enough for anything
 simdjson::get_active_implementation() = simdjson::get_available_implementations()["fallback"];
 ```
@@ -102,7 +105,7 @@ You are responsible for ensuring that the requirements of the selected implement
 Furthermore, you should check that the implementation is available before setting it to `simdjson::get_active_implementation()`
 by comparing it with the null pointer.
 
-```c++
+```cpp
 auto my_implementation = simdjson::get_available_implementations()["haswell"];
 if (! my_implementation) { exit(1); }
 if (! my_implementation->supported_by_runtime_system()) { exit(1); }
@@ -114,7 +117,7 @@ Checking that an Implementation can Run on your System
 
 You should call `supported_by_runtime_system()` to compare the processor's features with the need of the implementation.
 
-```c++
+```cpp
 for (auto implementation : simdjson::get_available_implementations()) {
   if (implementation->supported_by_runtime_system()) {
     cout << implementation->name() << ": " << implementation->description() << endl;

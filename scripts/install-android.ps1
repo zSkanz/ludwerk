@@ -3,7 +3,7 @@
 #
 #   * the Android command-line tools (sdkmanager) under %LOCALAPPDATA%\Android\Sdk
 #   * the NDK this repository pins (cmake/toolchains/android.cmake, R5)
-#   * platforms;android-35, build-tools;35.0.0 and platform-tools (adb)
+#   * platforms;android-36, build-tools;36.0.0 and platform-tools (adb)
 #   * a JDK 17 and the Gradle the triangle sample's wrapper pins, both under
 #     the build root's toolchains folder -- never on PATH and never JAVA_HOME,
 #     so a machine's own Java is left alone (Gradle 8.12 does not run on 24+)
@@ -105,7 +105,7 @@ if (-not (Test-Path $sdkmanager)) {
 # accepted", and the command still exits zero.
 $answers = Join-Path $downloads 'yes.txt'
 Set-Content -Encoding ascii $answers (("y`r`n") * 40)
-$packages = "`"ndk;$ndk`" `"platforms;android-35`" `"build-tools;35.0.0`" `"platform-tools`""
+$packages = "`"ndk;$ndk`" `"platforms;android-36`" `"build-tools;36.0.0`" `"platform-tools`""
 cmd /c "set JAVA_HOME=$jdk&& `"$sdkmanager`" --sdk_root=`"$sdk`" --licenses < `"$answers`" > nul 2>&1"
 cmd /c "set JAVA_HOME=$jdk&& `"$sdkmanager`" --sdk_root=`"$sdk`" --install $packages"
 if ($LASTEXITCODE -ne 0) { throw "sdkmanager failed" }
@@ -120,6 +120,6 @@ if ($userPath -notlike "*$adb*") {
 }
 
 Write-Host ""
-Write-Host "[android] NDK $ndk, platform 35, build-tools 35.0.0 and adb under $sdk" -ForegroundColor Green
+Write-Host "[android] NDK $ndk, platform 36, build-tools 36.0.0 and adb under $sdk" -ForegroundColor Green
 Write-Host "[android] JDK 17 at $jdk and $gradleName under $tools"
 Write-Host "[android] ANDROID_HOME is set for new shells; scripts/localgate.ps1 -Only android builds for arm64"

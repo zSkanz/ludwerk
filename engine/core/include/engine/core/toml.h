@@ -66,6 +66,9 @@ public:
     [[nodiscard]] std::span<const std::string> strings(std::string_view key) const;
     // Startup configuration sections with project-defined keys (platform ID maps).
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> stringValues(std::string_view prefix) const;
+    // Every key under `prefix`, whatever it holds, less the prefix, in the
+    // file's order: a table whose keys the project names (`[luau.flags]`).
+    [[nodiscard]] std::vector<std::string> keys(std::string_view prefix) const;
 
 private:
     enum class Kind : u8

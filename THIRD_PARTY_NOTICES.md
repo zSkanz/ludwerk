@@ -15,16 +15,16 @@ vendored yet; the roadmap allows lazy vendoring so long as the row exists.
 
 | Dependency | Version | Commit | License | Upstream | Vendored path |
 |---|---|---|---|---|---|
-| luau | 0.734 | `3fc82b1071ab` | MIT | https://github.com/luau-lang/luau | `third_party/luau/` |
-| sdl3 | 3.4.14 | `147a8ee32dbf` | zlib | https://github.com/libsdl-org/SDL | `third_party/sdl3/` |
+| luau | 0.742 | `8387cfb461b3` | MIT | https://github.com/luau-lang/luau | `third_party/luau/` |
+| sdl3 | 3.4.18 | `829a65d769d9` | zlib | https://github.com/libsdl-org/SDL | `third_party/sdl3/` |
 | sdl_shadercross | main-2026-06-26 | `e55cf5e31ced` | zlib | https://github.com/libsdl-org/SDL_shadercross | `third_party/sdl_shadercross/` |
 | spirv_cross | sdl-shadercross-pin | `1a6169566c73` | Apache-2.0 | https://github.com/KhronosGroup/SPIRV-Cross | `third_party/spirv_cross/` |
 | jolt | 5.6.0 | `e77f175595e6` | MIT | https://github.com/jrouwe/JoltPhysics | `third_party/jolt/` |
 | box2d | 3.1.1 | `8c661469c950` | MIT | https://github.com/erincatto/box2d | `third_party/box2d/` |
 | miniaudio | 0.11.25 | `9634bedb5b5a` | MIT-0 OR Unlicense | https://github.com/mackron/miniaudio | `third_party/miniaudio/` |
-| fastgltf | 0.9.0 | `0d1b67a28c49` | MIT | https://github.com/spnda/fastgltf | `third_party/fastgltf/` |
-| simdjson | 3.12.3 | `7382dc2be88e` | Apache-2.0 OR MIT | https://github.com/simdjson/simdjson | `third_party/simdjson/` |
-| meshoptimizer | 1.2 | `9d9890c73011` | MIT | https://github.com/zeux/meshoptimizer | `third_party/meshoptimizer/` |
+| fastgltf | 0.9.1 | `705564d4d545` | MIT | https://github.com/spnda/fastgltf | `third_party/fastgltf/` |
+| simdjson | 4.6.11 | `f5de14f09256` | Apache-2.0 OR MIT | https://github.com/simdjson/simdjson | `third_party/simdjson/` |
+| meshoptimizer | 1.3 | `9e1f07b159d3` | MIT | https://github.com/zeux/meshoptimizer | `third_party/meshoptimizer/` |
 | basis_universal | 2.50 | `9bebe16726b3` | Apache-2.0 | https://github.com/BinomialLLC/basis_universal | `third_party/basis_universal/` |
 | ktx | latest-tag | _not vendored yet_ | Apache-2.0 | https://github.com/KhronosGroup/KTX-Software | `third_party/ktx/` |
 | stb | master-2026-08-01 | `2c980bb59875` | MIT OR Public Domain | https://github.com/nothings/stb | `third_party/stb/` |
@@ -35,7 +35,7 @@ vendored yet; the roadmap allows lazy vendoring so long as the row exists.
 | assimp | 6.0.5 | `392a658f9c27` | BSD-3-Clause | https://github.com/assimp/assimp | `third_party/assimp/` |
 | doctest | 2.5.3 | `2d0a9359a60c` | MIT | https://github.com/doctest/doctest | `third_party/doctest/` |
 | blake3 | 1.8.7 | `f3149ec5bb54` | CC0-1.0 OR Apache-2.0 | https://github.com/BLAKE3-team/BLAKE3 | `third_party/blake3/` |
-| xxhash | 0.8.3 | `e626a72bc232` | BSD-2-Clause | https://github.com/Cyan4973/xxHash | `third_party/xxhash/` |
+| xxhash | 0.8.4 | `c87183a77d67` | BSD-2-Clause | https://github.com/Cyan4973/xxHash | `third_party/xxhash/` |
 | libsodium | 1.0.22 | `77e1ce5d6dee` | ISC | https://github.com/jedisct1/libsodium | `third_party/libsodium/` |
 | inter | 4.1 | `e3a3d4c57d5e` | OFL-1.1 | https://github.com/rsms/inter | `third_party/inter/` |
 | smaa | master-2013-11-06 | `71c806a838bd` | MIT | https://github.com/iryoku/smaa | `third_party/smaa/` |
@@ -68,8 +68,8 @@ Policy: permissive licenses only (MIT / BSD / zlib / Apache-2.0 / public domain)
 No GPL, no LGPL, and no commercial dependency in the default build path. Adding
 or upgrading a dependency requires the maintainer's approval and an ADR.
 
-Tooling installed via rokit (not vendored): Lute 1.0.0 (MIT), luau-lsp 1.69.0
-(MIT), StyLua 2.5.2 (MPL-2.0 — a build tool, never linked into the engine or
+Tooling installed via rokit (not vendored): Lute 1.0.0 (MIT), luau-lsp 1.70.1
+(MIT), StyLua 2.6.0 (MPL-2.0 — a build tool, never linked into the engine or
 shipped games).
 
 An installation of the engine carries the first two as programs (ADR 0152) --

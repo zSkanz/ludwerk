@@ -4,5 +4,5 @@
 
 [tools]
 lute = "luau-lang/lute@1.0.0"
-luau-lsp = "JohnnyMorganz/luau-lsp@1.69.0"
-stylua = "JohnnyMorganz/StyLua@2.5.2"
+luau-lsp = "JohnnyMorganz/luau-lsp@1.70.1"
+stylua = "JohnnyMorganz/StyLua@2.6.0"

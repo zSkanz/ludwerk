@@ -1,5 +1,6 @@
 #include "engine/app/network_session.h"
 
+#include "engine/app/luau_flags.h"
 #include "engine/app/world_host.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
@@ -151,6 +152,10 @@ struct JoinTarget
 #if ENG_ENABLE_REPLICATION
     if (reason == replication::RefusedFull)
         return core::engineCatalog().format(ENG_TR("net.err.refused_full"));
+    if (reason == replication::RefusedAddressLimit)
+        return core::engineCatalog().format(ENG_TR("net.err.refused_address_limit"));
+    if (reason == replication::RefusedLuauFlags)
+        return core::engineCatalog().format(ENG_TR("net.err.refused_luau_flags"));
     // The game's own words for a removal, or the engine's where it gave none.
     if (reason == replication::RefusedRemoved)
         return words.empty() ? core::engineCatalog().format(ENG_TR("net.info.removed")) : words;
@@ -244,6 +249,7 @@ std::optional<core::EngineError> NetworkSession::begin(replication::Topology top
     config.relay = relay.relay;
     config.joinCode = relay.code;
     config.relayDirect = relay.direct;
+    config.luauFlags = luauFlagsFingerprint();
     m_tokenKey.clear();
     if (topology == replication::Topology::Replica) {
         // A host is the same host by its code as by its address, to the

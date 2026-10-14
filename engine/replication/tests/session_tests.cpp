@@ -4031,7 +4031,7 @@ struct EnetMatch
                                                       .channels = 6,
                                                       .timeoutMs = 10000,
                                                       .maxMessageBytes = MaxAuthorityMessageBytes,
-                                                      .maxPeersPerAddress = MaxPeersPerAddress})
+                                                      .maxPeersPerAddress = DefaultPeersPerAddress + MaxHandshakesPerAddress})
                           .has_value());
         REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
         REQUIRE_FALSE(clientTransport->connect("127.0.0.1", port, toServer).has_value());
@@ -4157,6 +4157,133 @@ struct SwarmMatch
 };
 
 } // namespace
+
+namespace {
+
+// **Players of one address**: an authority over ENet on this machine's
+// loopback, and `joiners` replicas dialling it from the same address -- what
+// a household behind one router, a LAN house or a carrier's NAT is to it.
+// Returns how many were welcomed and how many were told why they were not.
+struct OneAddress
+{
+    usize welcomed = 0;
+    usize refusedForAddress = 0;
+};
+
+OneAddress joinFromOneAddress(core::u16 port, core::u32 limit, usize joiners)
+{
+    seedCatalog();
+    std::unique_ptr<net::ITransport> serverTransport = net::createEnetTransport();
+    REQUIRE_FALSE(serverTransport
+                      ->open(net::TransportConfig{.port = port,
+                                                  .maxPeers = 64,
+                                                  .channels = 6,
+                                                  .timeoutMs = 10000,
+                                                  .maxMessageBytes = MaxAuthorityMessageBytes,
+                                                  .maxPeersPerAddress =
+                                                      limit == 0 ? 0 : limit + MaxHandshakesPerAddress})
+                      .has_value());
+    RealSide server;
+    (void)scene::createPlayer(server.world, server.network, 1, true);
+    AuthoritySession authority(*serverTransport);
+    authority.setMaxPeersPerAddress(limit);
+
+    std::vector<std::unique_ptr<net::ITransport>> transports;
+    std::vector<std::unique_ptr<RealSide>> sides;
+    std::vector<std::optional<ReplicaSession>> replicas(joiners);
+    for (usize at = 0; at < joiners; ++at) {
+        transports.push_back(net::createEnetTransport());
+        sides.push_back(std::make_unique<RealSide>());
+        REQUIRE_FALSE(transports.back()->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
+        net::PeerId toServer;
+        REQUIRE_FALSE(transports.back()->connect("127.0.0.1", port, toServer).has_value());
+        (void)scene::createPlayer(sides.back()->world, sides.back()->network, 0, true);
+        replicas[at].emplace(*transports.back(), toServer);
+    }
+
+    OneAddress result;
+    const auto began = std::chrono::steady_clock::now();
+    for (core::u64 tick = 1; std::chrono::steady_clock::now() - began < std::chrono::seconds(10); ++tick) {
+        authority.receive(server.world, server.workspace);
+        authority.send(server.world, server.workspace, tick);
+        authority.sendMessages(server.world);
+        result = OneAddress{};
+        for (usize at = 0; at < joiners; ++at) {
+            replicas[at]->receive(sides[at]->world, sides[at]->workspace);
+            replicas[at]->sendIntent(sides[at]->world, tick);
+            replicas[at]->sendMessages(sides[at]->world);
+            result.welcomed += replicas[at]->welcomed() ? 1u : 0u;
+            result.refusedForAddress += replicas[at]->refused() == RefusedAddressLimit ? 1u : 0u;
+        }
+        if (result.welcomed + result.refusedForAddress == joiners)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+    return result;
+}
+
+} // namespace
+
+TEST_CASE("a server takes more than eight players of one address, and refuses one too many by saying so")
+{
+    // Eight was the limit, and refused the ninth of a household, a LAN house,
+    // a school or a carrier's NAT as a lost connection. Twelve from one
+    // address: all welcomed under the default; with a limit of ten, ten
+    // welcomed and two told why, in their own words -- not dropped.
+    const OneAddress plenty = joinFromOneAddress(47944, DefaultPeersPerAddress, 12);
+    CHECK(plenty.welcomed == 12);
+    CHECK(plenty.refusedForAddress == 0);
+
+    const OneAddress some = joinFromOneAddress(47945, 10, 12);
+    CHECK(some.welcomed == 10);
+    CHECK(some.refusedForAddress == 2);
+}
+
+TEST_CASE("a joiner whose Luau flags are not the server's is told so, and one whose are is welcomed")
+{
+    // **ADR 0217**: other parser, compiler or VM flags are other scripts --
+    // a world that parts from the server's by the first tick. Refused by
+    // name, as another protocol is, never let in to drift.
+    const auto join = [](core::u64 server, core::u64 joiner) {
+        seedCatalog();
+        auto network = net::createMemoryNetwork();
+        std::unique_ptr<net::ITransport> serverTransport = net::createMemoryTransport(network);
+        std::unique_ptr<net::ITransport> clientTransport = net::createMemoryTransport(network);
+        REQUIRE_FALSE(
+            serverTransport->open(net::TransportConfig{.port = 47947, .maxPeers = 4, .channels = 6}).has_value());
+        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
+        net::PeerId toServer;
+        REQUIRE_FALSE(clientTransport->connect("memory", 47947, toServer).has_value());
+        RealSide host;
+        RealSide guest;
+        (void)scene::createPlayer(host.world, host.network, 1, true);
+        (void)scene::createPlayer(guest.world, guest.network, 0, true);
+        AuthoritySession authority(*serverTransport);
+        authority.setLuauFlags(server);
+        ReplicaSession replica(*clientTransport, toServer);
+        replica.setLuauFlags(joiner);
+        for (core::u64 tick = 1; tick <= 8; ++tick) {
+            authority.receive(host.world, host.workspace);
+            authority.send(host.world, host.workspace, tick);
+            replica.receive(guest.world, guest.workspace);
+            replica.sendIntent(guest.world, tick);
+        }
+        return std::pair{replica.welcomed(), replica.refused()};
+    };
+    const auto [same, sameReason] = join(0x1234, 0x1234);
+    CHECK(same);
+    CHECK(sameReason == 0);
+    const auto [other, otherReason] = join(0, 0x1234);
+    CHECK_FALSE(other);
+    CHECK(otherReason == RefusedLuauFlags);
+}
+
+TEST_CASE("a server with no limit on an address takes every player of it")
+{
+    const OneAddress all = joinFromOneAddress(47946, 0, 12);
+    CHECK(all.welcomed == 12);
+    CHECK(all.refusedForAddress == 0);
+}
 
 TEST_CASE("ADR 0162: a replicated swarm's agents reach a replica over a link that loses a third")
 {

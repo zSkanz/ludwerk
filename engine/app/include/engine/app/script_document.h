@@ -386,6 +386,9 @@ public:
     // Whether the text has moved since `refreshDiagnostics` last ran, so the
     // panel can ask at rest instead of on a timer.
     [[nodiscard]] bool diagnosticsStale() const noexcept { return m_diagnosticsRevision != m_revision; }
+    // What was found is to be found again with the text unchanged: the
+    // language itself changed under it (ADR 0217, a project's Luau flags).
+    void markDiagnosticsStale() noexcept { m_diagnosticsRevision = ~0ull; }
 
     // --- Positions -----------------------------------------------------------
 

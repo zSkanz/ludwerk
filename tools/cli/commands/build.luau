@@ -360,7 +360,8 @@ local function run(options: Options): number
                 if host == nil then
                     return tr("cli.build.err.no_script_compiler")
                 end
-                local compiled = process.run({ host :: string, "--compile-content-scripts", staged })
+                -- The project, so the compiler runs with its Luau flags (ADR 0217).
+                local compiled = process.run({ host :: string, "--compile-content-scripts", staged, project.root })
                 if not compiled.ok then
                     return compiled.stdout .. compiled.stderr
                 end
@@ -523,7 +524,7 @@ local function run(options: Options): number
             if host == nil then
                 return tr("cli.build.err.no_script_compiler")
             end
-            local compiled = process.run({ host :: string, "--compile-scripts", gameDir })
+            local compiled = process.run({ host :: string, "--compile-scripts", gameDir, project.root })
             if not compiled.ok then
                 return compiled.stdout .. compiled.stderr
             end

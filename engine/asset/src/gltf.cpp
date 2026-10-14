@@ -1172,6 +1172,16 @@ std::size_t Importer::morphOf(std::size_t meshIndex, std::size_t target)
     made.name = std::move(name);
     if (meshIndex < asset_.meshes.size() && target < asset_.meshes[meshIndex].weights.size())
         made.defaultWeight = static_cast<f32>(asset_.meshes[meshIndex].weights[target]);
+    // **A node's weights over its mesh's** (glTF 2.0, 5.25): the weights the
+    // node that places the mesh starts it at. Never read before fastgltf
+    // 0.9.1, which did not parse them, so a face exported with its node set
+    // to a smile came in neutral.
+    for (const fg::Node& node : asset_.nodes) {
+        if (node.meshIndex.has_value() && *node.meshIndex == meshIndex && target < node.weights.size()) {
+            made.defaultWeight = static_cast<f32>(node.weights[target]);
+            break;
+        }
+    }
     out_.morphs.push_back(std::move(made));
     return out_.morphs.size() - 1;
 }

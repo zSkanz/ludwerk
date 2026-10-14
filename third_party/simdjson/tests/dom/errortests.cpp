@@ -114,6 +114,20 @@ namespace parser_load {
     TEST_SUCCEED();
   }
 
+  bool parser_load_string_view_subpath() {
+    TEST_START();
+    const std::string valid_path(TWITTER_JSON);
+    const std::string backing = valid_path + ".extra";
+    const std::string_view view(backing.data(), valid_path.size());
+    uint64_t count_from_string = 0;
+    uint64_t count_from_view = 0;
+    dom::parser parser;
+    ASSERT_SUCCESS(parser.load(valid_path)["search_metadata"]["count"].get(count_from_string));
+    ASSERT_SUCCESS(parser.load(view)["search_metadata"]["count"].get(count_from_view));
+    ASSERT_EQUAL(count_from_view, count_from_string);
+    TEST_SUCCEED();
+  }
+
   bool parser_load_chain() {
     TEST_START();
     dom::parser parser;
@@ -136,6 +150,7 @@ namespace parser_load {
         && parser_load_nonexistent()
         && parser_load_many_nonexistent()
         && padded_string_load_nonexistent()
+        && parser_load_string_view_subpath()
         && parser_load_chain()
         && parser_load_many_chain()
         && parser_parse_many_documents_error_in_the_middle()
@@ -178,6 +193,19 @@ namespace adversarial {
     ASSERT_ERROR( parser.parse(json, len).get(foo), TAPE_ERROR ); // Parse just the first digit
     TEST_SUCCEED();
   }
+  bool allocation_limits() {
+    TEST_START();
+    dom::parser parser;
+    ASSERT_ERROR( parser.allocate(64, 0), CAPACITY );
+    ASSERT_ERROR( parser.allocate(SIZE_MAX, DEFAULT_MAX_DEPTH), CAPACITY );
+    ASSERT_ERROR( parser.allocate(SIZE_MAX - 63, DEFAULT_MAX_DEPTH), CAPACITY );
+    ASSERT_ERROR( parser.allocate(64, SIZE_MAX), CAPACITY );
+    ASSERT_SUCCESS( parser.allocate(1024, DEFAULT_MAX_DEPTH) );
+    auto json = "[1,2,3]"_padded;
+    dom::element doc;
+    ASSERT_SUCCESS( parser.parse(json).get(doc) );
+    TEST_SUCCEED();
+  }
   bool run() {
     constexpr size_t filler_size = 65;
     static_assert(filler_size > SIMDJSON_PADDING, "corruption test doesn't have enough padding"); // 33 = std::strlen(PADDING_FILLED_WITH_NUMBERS)
@@ -185,6 +213,7 @@ namespace adversarial {
       && number_overrun_at_root()
       && number_overrun_in_array()
       && number_overrun_in_object()
+      && allocation_limits()
     ;
   }
 }

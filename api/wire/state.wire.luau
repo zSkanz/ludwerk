@@ -4264,6 +4264,13 @@ local Messages: { Schema.Message } = {
                 Doc = "The player token the authority gave on an earlier join, or zero the first time.",
             },
             { Name = "tokenLow", Type = "u64" },
+            {
+                Name = "luauFlags",
+                Type = "u64",
+                Doc = "What the replica's project changed of Luau that compiled code can tell, as one "
+                    .. "number, zero for nothing (protocol 53, ADR 0217). Any other than the authority's is "
+                    .. "refused: other syntax, another compiler or another VM is not the same scripts.",
+            },
         },
         Doc = "A replica announcing itself: protocol version, then the player token the authority "
             .. "gave it last time, or zeros the first time. **Version first, so a mismatch is refused "
@@ -5195,7 +5202,10 @@ local Messages: { Schema.Message } = {
                 Name = "reason",
                 Type = "u8",
                 Doc = "1: the replica speaks another protocol. 2: the server is full. 3: the host removed "
-                    .. "this player (protocol 40, `Player:Kick`).",
+                    .. "this player (protocol 40, `Player:Kick`). 4: the replica's network address already "
+                    .. "has as many players on the server as it allows (`[network] "
+                    .. "max_connections_per_address`). 5: the replica's game runs with other Luau flags than "
+                    .. "the server's (protocol 53, ADR 0217).",
             },
             {
                 Name = "text",

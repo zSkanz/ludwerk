@@ -1,6 +1,6 @@
 # 0086 — Streaming cells are cubes
 
-- Status: accepted
+- Status: accepted; amended 2026-10-14 (interest to a part's edge -- see the end)
 - Date: 2026-09-23
 - Amends: architecture.md §10 ("uniform world grid", which was 2D), ADR 0053
   (the partitioner's cells)
@@ -78,3 +78,10 @@ the village loaded the cave.
 - A band is `chunkSize` tall. A world that wants thinner bands, say for a
   tower of floors, would need the band height to be a setting of its own. That
   waits for a world that needs it.
+
+## Amendment, 2026-10-14: to a part's edge, not its centre
+
+Item 6's sphere was measured to each part's centre, so a 4 km floor was never
+sent to a player standing on it 1 km out, and the player's character fell
+through it on their machine. Interest is now measured to the part's oriented
+box (ADR 0216). The radius and its hysteresis are unchanged.

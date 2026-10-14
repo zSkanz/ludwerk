@@ -7,6 +7,7 @@
 #include <cstdlib>
 
 #include "engine/core/log.h"
+#include "engine/core/utf8_mark.h"
 #include "engine/scene/scene_file.h"
 #include "engine/scene/world.h"
 #include "engine/script/bytecode.h"
@@ -673,9 +674,11 @@ std::string treePathOf(const scene::World& w, core::InstanceId id)
 core::u64 scriptTextHash(std::string_view text) noexcept
 {
     // FNV-1a: stable across runs and machines, which a `std::hash` is not
-    // promised to be -- and it only has to tell two texts apart.
+    // promised to be -- and it only has to tell two texts apart. A file's
+    // byte-order mark is not part of its text, so a file saved with one
+    // equals the same text loaded without it.
     core::u64 hash = 0xCBF29CE484222325ull;
-    for (const char c : text) {
+    for (const char c : core::withoutUtf8Mark(text)) {
         hash ^= static_cast<unsigned char>(c);
         hash *= 0x100000001B3ull;
     }

@@ -1,9 +1,18 @@
 cmake_minimum_required(VERSION 3.14)
 
+# Build performance optimizations
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands for faster IDE integration")
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
+# Enable parallel compilation on MSVC
+if(MSVC)
+  add_compile_options(/MP)
+endif()
+
 project(
     simdjson
     # The version number is modified by tools/release.py
-    VERSION 3.12.3
+    VERSION 4.6.11
     DESCRIPTION "Parsing gigabytes of JSON per second"
     HOMEPAGE_URL "https://simdjson.org/"
     LANGUAGES CXX C
@@ -20,8 +29,8 @@ string(
 # ---- Options, variables ----
 
 # These version numbers are modified by tools/release.py
-set(SIMDJSON_LIB_VERSION "25.0.0" CACHE STRING "simdjson library version")
-set(SIMDJSON_LIB_SOVERSION "25" CACHE STRING "simdjson library soversion")
+set(SIMDJSON_LIB_VERSION "33.0.0" CACHE STRING "simdjson library version")
+set(SIMDJSON_LIB_SOVERSION "33" CACHE STRING "simdjson library soversion")
 
 option(SIMDJSON_BUILD_STATIC_LIB "Build simdjson_static library along with simdjson (only makes sense if BUILD_SHARED_LIBS=ON)" OFF)
 if(SIMDJSON_BUILD_STATIC_LIB AND NOT BUILD_SHARED_LIBS)
@@ -43,6 +52,20 @@ if(SIMDJSON_DISABLE_DEPRECATED_API)
   )
 endif()
 
+if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.25.0")
+    option(SIMDJSON_STATIC_REFLECTION "Enables static reflection (experimental), requires C++26" OFF)
+else()
+    set(SIMDJSON_STATIC_REFLECTION OFF CACHE BOOL "Enables static reflection (experimental)" FORCE)
+    message(WARNING "SIMDJSON_STATIC_REFLECTION is disabled because your CMake version is below 3.25")
+endif()
+
+if(SIMDJSON_STATIC_REFLECTION)
+  simdjson_add_props(
+      target_compile_definitions PUBLIC
+      SIMDJSON_STATIC_REFLECTION=1
+  )
+endif()
+
 option(SIMDJSON_DEVELOPMENT_CHECKS "Enable development-time aids, such as \
 checks for incorrect API usage. Enabled by default in DEBUG." OFF)
 if(SIMDJSON_DEVELOPMENT_CHECKS)
@@ -53,9 +76,12 @@ if(SIMDJSON_DEVELOPMENT_CHECKS)
 endif()
 
 if(is_top_project)
+  option(SIMDJSON_INSTALL "Enable target install" ON)
   option(SIMDJSON_DEVELOPER_MODE "Enable targets for developing simdjson" OFF)
   option(BUILD_SHARED_LIBS "Build simdjson as a shared library" OFF)
   option(SIMDJSON_SINGLEHEADER "Disable singleheader generation" ON)
+else()
+  option(SIMDJSON_INSTALL "Enable target install" ${BUILD_SHARED_LIBS})
 endif()
 
 include(cmake/handle-deprecations.cmake)
@@ -69,10 +95,45 @@ add_library(simdjson ${SIMDJSON_SOURCES})
 add_library(simdjson::simdjson ALIAS simdjson)
 set(SIMDJSON_LIBRARIES simdjson)
 
+# Check for <bit> header compatibility
+include(CheckIncludeFileCXX)
+check_include_file_cxx(bit SIMDJSON_HAS_BIT_HEADER)
+
+# Enable precompiled headers for faster builds
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.16")
+  set(SIMDJSON_PRECOMPILE_HEADERS
+    <algorithm>
+    <array>
+    <atomic>
+    <cassert>
+    <cctype>
+    <cerrno>
+    <cstddef>
+    <cstdint>
+    <cstdlib>
+    <cstring>
+    <memory>
+    <string>
+    <utility>
+    <vector>
+  )
+
+  if(SIMDJSON_HAS_BIT_HEADER)
+    list(APPEND SIMDJSON_PRECOMPILE_HEADERS <bit>)
+  endif()
+
+  target_precompile_headers(simdjson PRIVATE ${SIMDJSON_PRECOMPILE_HEADERS})
+endif()
+
 if(SIMDJSON_BUILD_STATIC_LIB)
   add_library(simdjson_static STATIC ${SIMDJSON_SOURCES})
   add_library(simdjson::simdjson_static ALIAS simdjson_static)
   list(APPEND SIMDJSON_LIBRARIES simdjson_static)
+
+  # Reuse precompiled headers for static library
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.16")
+    target_precompile_headers(simdjson_static REUSE_FROM simdjson)
+  endif()
 endif()
 
 set_target_properties(
@@ -84,7 +145,7 @@ set_target_properties(
 )
 
 # FIXME: Use proper CMake integration for exports
-if(MSVC AND BUILD_SHARED_LIBS)
+if(WIN32 AND BUILD_SHARED_LIBS)
   target_compile_definitions(
       simdjson
       PRIVATE SIMDJSON_BUILDING_WINDOWS_DYNAMIC_LIBRARY=1
@@ -98,7 +159,24 @@ simdjson_add_props(
     PRIVATE "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>"
 )
 
-simdjson_add_props(target_compile_features PUBLIC cxx_std_11)
+# Optimize linker settings for faster builds
+if(MSVC)
+  target_link_options(simdjson PRIVATE /INCREMENTAL)
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_link_options(simdjson PRIVATE /DEBUG:FASTLINK)
+  endif()
+endif()
+
+if(SIMDJSON_STATIC_REFLECTION)
+  # We would like to require C++26, but no compiler supports that!
+  # This is a hack:
+  simdjson_add_props(
+      target_compile_options PUBLIC
+      -freflection -fexpansion-statements -stdlib=libc++ -std=c++26
+  )
+else()
+  simdjson_add_props(target_compile_features PUBLIC cxx_std_11)
+endif()
 
 # workaround for GNU GCC poor AVX load/store code generation
 if(
@@ -111,23 +189,11 @@ if(
   )
 endif()
 
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(loongarch64)$")
-    option(SIMDJSON_PREFER_LSX "Prefer LoongArch SX" ON)
-    include(CheckCXXCompilerFlag)
-    check_cxx_compiler_flag(-mlasx COMPILER_SUPPORTS_LASX)
-    check_cxx_compiler_flag(-mlsx COMPILER_SUPPORTS_LSX)
-    if(COMPILER_SUPPORTS_LASX AND NOT SIMDJSON_PREFER_LSX)
-        simdjson_add_props(
-            target_compile_options PRIVATE
-            -mlasx
-        )
-    elseif(COMPILER_SUPPORTS_LSX)
-        simdjson_add_props(
-            target_compile_options PRIVATE
-            -mlsx
-        )
-    endif()
-endif()
+option(SIMDJSON_MINUS_ZERO_AS_FLOAT "Treat -0 as a floating-point value" OFF)
+
+if(SIMDJSON_MINUS_ZERO_AS_FLOAT)
+  simdjson_add_props(target_compile_definitions PRIVATE SIMDJSON_MINUS_ZERO_AS_FLOAT=1)
+endif(SIMDJSON_MINUS_ZERO_AS_FLOAT)
 
 # GCC and Clang have horrendous Debug builds when using SIMD.
 # A common fix is to use '-Og' instead.
@@ -141,6 +207,14 @@ if(
   simdjson_add_props(
       target_compile_options PRIVATE
       $<$<CONFIG:DEBUG>:-Og>
+  )
+  # -Og defines __OPTIMIZE__, so the header would not auto-enable
+  # SIMDJSON_DEVELOPMENT_CHECKS in Debug. Keep the checks in Debug only;
+  # a bare define here leaked into Release and RelWithDebInfo on
+  # GCC/Clang (since #2590).
+  simdjson_add_props(
+      target_compile_definitions PUBLIC
+      $<$<CONFIG:DEBUG>:SIMDJSON_DEVELOPMENT_CHECKS>
   )
 endif()
 
@@ -157,86 +231,88 @@ endif()
 
 # ---- Install rules ----
 
-include(CMakePackageConfigHelpers)
-include(GNUInstallDirs)
+if(SIMDJSON_INSTALL)
+    include(CMakePackageConfigHelpers)
+    include(GNUInstallDirs)
 
-if(SIMDJSON_SINGLEHEADER)
-  install(
-      FILES singleheader/simdjson.h
-      DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-      COMPONENT simdjson_Development
-  )
+    if(SIMDJSON_SINGLEHEADER)
+      install(
+          FILES singleheader/simdjson.h
+          DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+          COMPONENT simdjson_Development
+      )
+    endif()
+
+    install(
+        TARGETS simdjson
+        EXPORT simdjsonTargets
+        RUNTIME COMPONENT simdjson_Runtime
+        LIBRARY COMPONENT simdjson_Runtime
+        NAMELINK_COMPONENT simdjson_Development
+        ARCHIVE COMPONENT simdjson_Development
+        INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+    )
+    configure_file(cmake/simdjson-config.cmake.in simdjson-config.cmake @ONLY)
+
+    write_basic_package_version_file(
+        simdjson-config-version.cmake
+        COMPATIBILITY SameMinorVersion
+    )
+
+    set(
+        SIMDJSON_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/simdjson"
+        CACHE STRING "CMake package config location relative to the install prefix"
+    )
+    mark_as_advanced(SIMDJSON_INSTALL_CMAKEDIR)
+
+    install(
+        FILES
+        "${PROJECT_BINARY_DIR}/simdjson-config.cmake"
+        "${PROJECT_BINARY_DIR}/simdjson-config-version.cmake"
+        DESTINATION "${SIMDJSON_INSTALL_CMAKEDIR}"
+        COMPONENT simdjson_Development
+    )
+
+    install(
+        EXPORT simdjsonTargets
+        NAMESPACE simdjson::
+        DESTINATION "${SIMDJSON_INSTALL_CMAKEDIR}"
+        COMPONENT simdjson_Development
+    )
+
+    if(SIMDJSON_BUILD_STATIC_LIB)
+      install(
+          TARGETS simdjson_static
+          EXPORT simdjson_staticTargets
+          ARCHIVE COMPONENT simdjson_Development
+          INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+      )
+      install(
+          EXPORT simdjson_staticTargets
+          NAMESPACE simdjson::
+          DESTINATION "${SIMDJSON_INSTALL_CMAKEDIR}"
+          COMPONENT simdjson_Development
+      )
+    endif()
+
+    # pkg-config
+    include(cmake/JoinPaths.cmake)
+    join_paths(PKGCONFIG_INCLUDEDIR "\${prefix}" "${CMAKE_INSTALL_INCLUDEDIR}")
+    join_paths(PKGCONFIG_LIBDIR "\${prefix}" "${CMAKE_INSTALL_LIBDIR}")
+
+    if(SIMDJSON_ENABLE_THREADS)
+      set(PKGCONFIG_CFLAGS "-DSIMDJSON_THREADS_ENABLED=1")
+      if(CMAKE_THREAD_LIBS_INIT)
+        set(PKGCONFIG_LIBS_PRIVATE "Libs.private: ${CMAKE_THREAD_LIBS_INIT}")
+      endif()
+    endif()
+
+    configure_file("simdjson.pc.in" "simdjson.pc" @ONLY)
+    install(
+        FILES "${CMAKE_CURRENT_BINARY_DIR}/simdjson.pc"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
+    )
 endif()
-
-install(
-    TARGETS simdjson
-    EXPORT simdjsonTargets
-    RUNTIME COMPONENT simdjson_Runtime
-    LIBRARY COMPONENT simdjson_Runtime
-    NAMELINK_COMPONENT simdjson_Development
-    ARCHIVE COMPONENT simdjson_Development
-    INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-)
-configure_file(cmake/simdjson-config.cmake.in simdjson-config.cmake @ONLY)
-
-write_basic_package_version_file(
-    simdjson-config-version.cmake
-    COMPATIBILITY SameMinorVersion
-)
-
-set(
-    SIMDJSON_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/simdjson"
-    CACHE STRING "CMake package config location relative to the install prefix"
-)
-mark_as_advanced(SIMDJSON_INSTALL_CMAKEDIR)
-
-install(
-    FILES
-    "${PROJECT_BINARY_DIR}/simdjson-config.cmake"
-    "${PROJECT_BINARY_DIR}/simdjson-config-version.cmake"
-    DESTINATION "${SIMDJSON_INSTALL_CMAKEDIR}"
-    COMPONENT simdjson_Development
-)
-
-install(
-    EXPORT simdjsonTargets
-    NAMESPACE simdjson::
-    DESTINATION "${SIMDJSON_INSTALL_CMAKEDIR}"
-    COMPONENT simdjson_Development
-)
-
-if(SIMDJSON_BUILD_STATIC_LIB)
-  install(
-      TARGETS simdjson_static
-      EXPORT simdjson_staticTargets
-      ARCHIVE COMPONENT simdjson_Development
-      INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-  )
-  install(
-      EXPORT simdjson_staticTargets
-      NAMESPACE simdjson::
-      DESTINATION "${SIMDJSON_INSTALL_CMAKEDIR}"
-      COMPONENT simdjson_Development
-  )
-endif()
-
-# pkg-config
-include(cmake/JoinPaths.cmake)
-join_paths(PKGCONFIG_INCLUDEDIR "\${prefix}" "${CMAKE_INSTALL_INCLUDEDIR}")
-join_paths(PKGCONFIG_LIBDIR "\${prefix}" "${CMAKE_INSTALL_LIBDIR}")
-
-if(SIMDJSON_ENABLE_THREADS)
-  set(PKGCONFIG_CFLAGS "-DSIMDJSON_THREADS_ENABLED=1")
-  if(CMAKE_THREAD_LIBS_INIT)
-    set(PKGCONFIG_LIBS_PRIVATE "Libs.private: ${CMAKE_THREAD_LIBS_INIT}")
-  endif()
-endif()
-
-configure_file("simdjson.pc.in" "simdjson.pc" @ONLY)
-install(
-    FILES "${CMAKE_CURRENT_BINARY_DIR}/simdjson.pc"
-    DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
-)
 
 #
 # CPack
@@ -314,18 +390,25 @@ add_subdirectory(fuzz)
 #
 # Source files should be just ASCII
 #
-find_program(FIND find)
-find_program(FILE file)
-find_program(GREP grep)
-if(FIND AND FILE AND GREP)
+find_program(FIND_CMD find)
+find_program(FILE_CMD file)
+find_program(GREP_CMD grep)
+if(FIND_CMD AND FILE_CMD AND GREP_CMD)
   add_test(
       NAME just_ascii
       COMMAND sh -c "\
-${FIND} include src windows tools singleheader tests examples benchmark \
--path benchmark/checkperf-reference -prune -name '*.h' -o -name '*.cpp' \
--type f -exec ${FILE} '{}' \; | ${GREP} -qv ASCII || exit 0  && exit 1"
+non_ascii=$(${FIND_CMD} include src windows tools singleheader tests examples benchmark \
+  -path benchmark/checkperf-reference -prune -name '*.h' -o -name '*.cpp' \
+  -type f -exec ${FILE_CMD} '{}' \; | ${GREP_CMD} -v ASCII); \
+if [ -n \"$non_ascii\" ]; then \
+  echo 'The following files contain non-ASCII characters:'; \
+  echo \"$non_ascii\"; \
+  exit 1; \
+fi"
       WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
   )
+else()
+  message(WARNING "just_ascii test disabled because required tools were not found: find='${FIND_CMD}', file='${FILE_CMD}', grep='${GREP_CMD}'")
 endif()
 
 ##

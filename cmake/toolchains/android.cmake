@@ -1,10 +1,10 @@
-# Android cross-compile toolchain -- nightly, compile-only
-# (architecture.md §8; roadmap "Early Android portability check").
+# Android cross-compile toolchain (architecture.md §8).
 #
-# Mobile is post-v1 (R15). This file exists for one reason: so that a toolchain
-# or API break in `platform` / `rhi_api` / `rhi_sdlgpu` is found the night it
-# lands instead of at the first renderer's device checkpoint, when the RHI interface is about
-# to freeze. Nothing here is a step toward shipping on Android.
+# It began as a compile-only check, so that a toolchain or API break in
+# `platform` / `rhi_api` / `rhi_sdlgpu` was found the night it landed. Android
+# has been open since 2026-09-26 (R15), and this is now what the Android
+# player is built with (`scripts/android-player.ps1`) as well as the local
+# gate's `android` stage.
 #
 # It is a thin wrapper over the NDK's own android.toolchain.cmake rather than a
 # hand-written toolchain, because the NDK owns the mapping from ABI and API

@@ -10,6 +10,8 @@
 #include <string>
 #include <utility>
 
+#include "engine/core/utf8_mark.h"
+
 namespace engine::app {
 namespace {
 
@@ -87,6 +89,9 @@ ScriptDocument::ScriptDocument(std::string_view text)
 
 bool ScriptDocument::setText(std::string_view text)
 {
+    // A file's byte-order mark is not a character of the script: the runtime
+    // skips it, so the editor and the checker do (`core::withoutUtf8Mark`).
+    text = core::withoutUtf8Mark(text);
     m_lines.clear();
     clearHistory();
     m_revision = 0;

@@ -221,6 +221,12 @@ inline constexpr u8 RefusedFull = 2;
 // The host removed this player (`Player:Kick`, ADR 0167), with words of the
 // game's own, at most this many bytes.
 inline constexpr u8 RefusedRemoved = 3;
+// The address it came from already has as many players on this authority as
+// it allows (`setMaxPeersPerAddress`).
+inline constexpr u8 RefusedAddressLimit = 4;
+// Its game runs with other Luau flags than the authority's (ADR 0217): other
+// syntax, another compiler or another VM, so not the same scripts.
+inline constexpr u8 RefusedLuauFlags = 5;
 inline constexpr usize MaxRemovedReasonBytes = 512;
 // Players this authority remembers across connections (ADR 0085). Past it,
 // the longest-known one not connected now is forgotten: its next visit is a
@@ -259,9 +265,18 @@ inline constexpr core::f64 TeleportMetresPerTick = 2.0;
 inline constexpr u64 MaxCollisionLeadTicks = 15;
 // The most the adaptive interpolation delay adds over what it was set to.
 inline constexpr u32 MaxAddedInterpolationDelay = 20;
-// Connections one address may hold on an authority: a household behind one
-// router is a few players, and a flood from one machine is not a crowd.
-inline constexpr usize MaxPeersPerAddress = 8;
+// **Players one address may be on an authority by default**, `[network]
+// max_connections_per_address` and `--max-per-address`, nought for no limit.
+// Eight refused the ninth player of a household or a LAN house behind one
+// router, of a school behind one NAT, and of a carrier's NAT, where phones by
+// the thousand share an address -- and the ninth heard "connection lost".
+inline constexpr u32 DefaultPeersPerAddress = 64;
+// **A flood is told from a crowd by its rate, not its count**: connections
+// begun from one address in the last second of receives, and connections of
+// it that have not said hello yet. Past either, the connection is let go
+// without a word -- a machine dialling in a loop is not owed one.
+inline constexpr u32 MaxConnectsPerAddressPerSecond = 20;
+inline constexpr u32 MaxHandshakesPerAddress = 16;
 
 // **What an authority may cost a replica** -- a server a player joined is not
 // trusted with that player's machine either. A message naming more than these
@@ -396,6 +411,12 @@ public:
     // transport holds. Past it a replica is told `Refused` and let go -- the
     // transport keeps one slot over so that there is a connection to say it on.
     void setMaxPlayers(u32 players) noexcept { m_maxPlayers = players; }
+    // Players one address may be, nought for any number
+    // (`DefaultPeersPerAddress`).
+    void setMaxPeersPerAddress(u32 players) noexcept { m_maxPerAddress = players; }
+    // What this machine's Luau flags come to (`Config::luauFlags`): a
+    // replica's that differs is refused.
+    void setLuauFlags(u64 fingerprint) noexcept { m_luauFlags = fingerprint; }
     // **Says what will be missing on every replica** (protocol 44), where a
     // person is developing: an instance of a class the wire does not carry,
     // under one it does -- the name tag a server script hung on a character.
@@ -449,6 +470,8 @@ private:
     struct Peer
     {
         net::PeerId id;
+        // The address it came from (`ITransport::addressOf`), nought unknown.
+        u64 address = 0;
         bool welcomed = false;
         // The newest state this peer has proved it holds. Zero: none yet.
         u64 acked = 0;
@@ -822,6 +845,12 @@ private:
     std::map<u32, core::NameAtom> m_classNames;
     std::deque<std::shared_ptr<const WorldState>> m_history;
     u32 m_maxPlayers = 0;
+    u32 m_maxPerAddress = DefaultPeersPerAddress;
+    u64 m_luauFlags = 0;
+    // Receives so far, and when each address last began connections: the
+    // second a flood is counted over, in the authority's own receives.
+    u64 m_receives = 0;
+    std::map<u64, std::deque<u64>> m_connectsByAddress;
     // The world's atom table, for the strings a message carries. Captured by
     // `send`, which is the only caller that can need it.
     // The last capture's walk, in pre-order, and each network id's place in
@@ -961,6 +990,9 @@ public:
     // Welcomes that made this machine a new player (`Status::freshJoins`).
     [[nodiscard]] u32 freshJoins() const noexcept { return m_freshJoins; }
     void setPlayerToken(const PlayerToken& token) noexcept { m_token = token; }
+    // What this machine's Luau flags come to (`Config::luauFlags`), said in
+    // the hello.
+    void setLuauFlags(u64 fingerprint) noexcept { m_luauFlags = fingerprint; }
     // **How the own character is stepped again when the authority corrects
     // it** (ADR 0076, as amended). Each tick's prediction keeps the command
     // the physics step consumed; a correction puts the character where the
@@ -1144,6 +1176,7 @@ private:
     bool m_sceneHeard = false;
     u32 m_freshJoins = 0;
     PlayerToken m_token;
+    u64 m_luauFlags = 0;
     u32 m_playerId = 0;
     // **This machine's guests, by seat** (protocol 48): the local player in
     // each of seats 1 to 3, whether the authority has been asked for it on

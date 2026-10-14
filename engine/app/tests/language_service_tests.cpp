@@ -10,6 +10,8 @@
 #include "engine/app/require_paths.h"
 #include "engine/platform/file.h"
 #include "engine/scene/world.h"
+#include "engine/script/bytecode.h"
+#include "engine/script/modules.h"
 #include "inspector_fixture.h"
 
 using namespace engine;
@@ -17,6 +19,7 @@ using app::Completion;
 using app::LanguageCore;
 using app::LanguageTree;
 using app::Position;
+using app::ScriptDocument;
 
 namespace {
 
@@ -181,6 +184,73 @@ TEST_CASE("a signal's type is a pack, and the error for one type says how to wri
     REQUIRE(bare.diagnostics.size() == 1);
     CHECK(bare.diagnostics.front().message.find("<<(Vector2)>>") != std::string::npos);
     CHECK(core.check("game.ScriptService.Pack").diagnostics.empty());
+}
+
+TEST_CASE("a session in a script tab: a member typed is offered, an error comes and goes")
+{
+    // What a person does in the editor's script tab, with no window: the
+    // checklist a Luau upgrade is held to (docs/decisions, the upgrade's ADR).
+    // Saving and the hot reload after it are `script_files_tests` and the
+    // hot-reload tests.
+    LanguageCore core(definitions());
+    ScriptDocument document("--!strict\nlocal part = Instance.new(\"Part\")\n");
+    const auto check = [&core, &document] {
+        TreeBuilder builder;
+        const core::u32 service = builder.add(0, "ServerScriptService", "ServerScriptService");
+        (void)builder.add(service, "Session", "Script", document.text());
+        core.update(builder.tree);
+        return core.check("game.ServerScriptService.Session");
+    };
+    CHECK(check().diagnostics.empty());
+
+    // A member, typed: the part's own are offered.
+    const Position typed = document.insert(Position{2, 0}, "part.");
+    TreeBuilder builder;
+    const core::u32 service = builder.add(0, "ServerScriptService", "ServerScriptService");
+    (void)builder.add(service, "Session", "Script", document.text());
+    core.update(builder.tree);
+    const app::LanguageCompletions members = core.complete("game.ServerScriptService.Session", typed);
+    CHECK(offers(members, "Anchored"));
+    CHECK(offers(members, "Size"));
+    CHECK(offers(members, "Destroy"));
+
+    // Finished wrongly, an error; put right, none.
+    Position caret = document.insert(typed, "Anchored = 3\n");
+    CHECK_FALSE(check().diagnostics.empty());
+    REQUIRE(document.undo(caret));
+    caret = document.insert(typed, "Anchored = true\n");
+    CHECK(check().diagnostics.empty());
+    document.refreshDiagnostics();
+    CHECK(document.diagnostics().empty());
+}
+
+TEST_CASE("a script that begins with a byte-order mark runs, and the editor and the checker agree")
+{
+    // **Reported**: Notepad and Windows PowerShell 5 write a UTF-8 mark at
+    // the start of a file. The game ran such a script, but `--check-scripts`
+    // and the editor's tab said "Expected identifier ... got Unicode character
+    // U+feff" and that `--!strict` was misplaced. Everything that reads a
+    // script now reads it without its mark.
+    const std::string marked = "\xEF\xBB\xBF--!strict\nlocal speed: number = 16\nprint(speed)\n";
+
+    std::string bytecode;
+    CHECK_FALSE(script::bytecodeOf(marked, "=Marked", bytecode).has_value());
+
+    ScriptDocument document(marked);
+    document.refreshDiagnostics();
+    CHECK(document.diagnostics().empty());
+    CHECK(document.text().starts_with("--!strict"));
+
+    LanguageCore core(definitions());
+    TreeBuilder builder;
+    const core::u32 service = builder.add(0, "ServerScriptService", "ServerScriptService");
+    (void)builder.add(service, "Marked", "Script", marked);
+    core.update(builder.tree);
+    CHECK(core.check("game.ServerScriptService.Marked").diagnostics.empty());
+
+    // Hot reload compares a file with the text it loaded: the same script,
+    // saved with the mark and without it, is one text.
+    CHECK(script::scriptTextHash(marked) == script::scriptTextHash(marked.substr(3)));
 }
 
 TEST_CASE("signature help names the parameters and the one being typed")

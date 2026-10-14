@@ -128,6 +128,11 @@ struct ReplayCheckpoint
 struct ReplayTrace
 {
     std::vector<ReplayCheckpoint> checkpoints;
+    // **What the recording run's Luau flags came to** (ADR 0217), nought for
+    // the engine's own -- and then not written, so a trace recorded with them
+    // is the same bytes it always was. A run with other flags compiles other
+    // scripts, and is refused rather than compared.
+    u64 luauFlags = 0;
 
     [[nodiscard]] u64 finalHash() const noexcept { return checkpoints.empty() ? 0u : checkpoints.back().hash; }
 };

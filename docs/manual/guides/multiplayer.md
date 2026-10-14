@@ -486,13 +486,15 @@ to.
 | `Folder` | Yes | The instance. |
 | `Attachment` | Yes | Its place on its part. |
 | `Bone` | Yes | Its place, the joint it names and its `Transform`. Where it lands in the world is worked out on each machine, from the pose drawn there. |
-| A joint, a weld, a mover | Yes | What was authored ([network ownership](#handing-a-part-over-network-ownership)). |
+| A joint, a weld, a mover | Yes | What was authored ([network ownership](#handing-a-part-over-network-ownership)). A joint that breaks under its `BreakForce` arrives disabled, and the pieces of a `BasePart:Fracture` arrive as parts held by joints ([Destruction](manual:physics/destruction)). |
+| `VehicleController`, `VehicleWheel` | Yes | What was authored, what the driver asks, and what the authority's simulation answered. The chassis travels as any body does, and the driver's own machine predicts it ([Vehicles](manual:physics/vehicles)). |
 | `PointLight`, `SpotLight` | Yes | Every property. |
 | `ParticleEmitter` | Yes | Every property -- its picture and its three sequences among them -- and each `Emit`. The particles are each machine's own. |
 | `Decal` | Yes | Every property. |
 | `Highlight` | Yes | Every property. Its `Adornee` arrives as that machine's copy of what it names. |
 | `Beam`, `Trail` | Yes | Every property, the sequences and the two attachments among them, and a trail's `Clear`. A trail's pieces are laid on each machine. |
 | `SpringBone`, `SpringCollider` | Yes | Every property. The swing is each machine's own, at its own frame rate. |
+| `Cloth` | Yes | Every property. Where each vertex hangs is each machine's own, and no vertex is ever sent ([Cloth](manual:animation/cloth)). |
 | `Sound` | Yes | `Content`, `Playing`, `Looped`, `Volume`, `PlaybackSpeed`, `Category` and the two roll-off distances. Never `TimePosition`, and not its `Group`. Each machine finds `Content` in its own voice language ([Dubbing](manual:audio/dubbing)). |
 | `Caption` | Yes | Every property: a line a server says is read on every machine, in each one's own text language. |
 | `LipSync` | Yes | Every property. The mouth is moved on each machine, from what it plays. |

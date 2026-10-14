@@ -101,8 +101,8 @@ struct MeshLod
 };
 
 // One meshlet: a cluster of triangles with its own bounding sphere and normal
-// cone. **Emitted from day one and consumed by nothing** (ADR 0010): the
-// GPU-driven path is post-v1, and an asset re-baked later is an asset every
+// cone. **Emitted from day one and consumed by nothing yet** (ADR 0010): the
+// GPU-driven path is not built, and an asset re-baked later is an asset every
 // shipped game has to re-download.
 struct Meshlet
 {

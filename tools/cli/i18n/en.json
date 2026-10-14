@@ -158,7 +158,7 @@
   "cli.build.err.android_version_code": "[export.android] version_code = {code}: it has to be a whole number of at least 1.",
   "cli.build.err.android_keystore": "The debug key could not be made at {path}.",
   "cli.build.err.android_gradle": "Gradle could not assemble the APK. Its output is above.",
-  "cli.build.err.android_no_apksigner": "The SDK's apksigner is not at {path}. Install build-tools 35.0.0.",
+  "cli.build.err.android_no_apksigner": "The SDK's apksigner is not at {path}. Install build-tools 36.0.0.",
   "cli.build.err.android_unsigned": "{path} did not verify as signed.",
   "cli.build.done_android_bundle": "Built {path}: the App Bundle a store takes. The game is in an install-time asset pack in it.",
   "cli.build.err.android_bundle_value": "[export.android] bundle must be true or false. Leave it out and a release makes a bundle and a debug build does not.",

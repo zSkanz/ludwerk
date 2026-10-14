@@ -14,6 +14,7 @@
 
 #include <array>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -22,6 +23,7 @@
 #include <vector>
 
 #include "engine/app/frame_pacing.h"
+#include "engine/app/luau_flags.h"
 #include "engine/core/types.h"
 #include "engine/platform/game_integration.h"
 #include "engine/render/settings.h"
@@ -142,6 +144,15 @@ struct ProjectConfig
     // `[network] timeout` -- seconds the other end may go silent before this
     // machine says it is gone. From 1 to 120; ten by default.
     core::u32 networkTimeoutSeconds = 10;
+    // `[network] max_connections_per_address` -- players one address may be
+    // on this game's server: a household, a LAN house, a school, a carrier's
+    // NAT. Nought for any number; 64 by default.
+    core::u32 networkMaxPerAddress = 64;
+
+    // **`[luau.flags]`** (ADR 0217): Luau's flags the project sets, each a
+    // switch or a number, in the file's order. Applied before the first script
+    // is compiled, and told to every tool that checks one.
+    std::vector<LuauFlagSetting> luauFlags;
 
     // **What the views may cost** (ADR 0107), `[render]`: how many camera
     // textures are drawn in one frame, the largest side one may have, and how
@@ -313,6 +324,22 @@ inline constexpr bool Handheld = false;
 // is not an error.
 [[nodiscard]] bool removeProjectSetting(const std::filesystem::path& projectRoot, std::string_view key,
                                         std::string* diagnostic = nullptr);
+
+// **The Luau flags, written as Project Settings shows them** (ADR 0217): each
+// that differs from the engine's default under `[luau.flags]`, and each the
+// file said (`written`) that no longer does taken out -- never pinned at the
+// default. A name this Luau does not have stays in the file as it was: it is
+// the file's, and said at every start. `settings` is what is in force after.
+struct LuauFlagsWritten
+{
+    bool ok = true;
+    bool changed = false;
+    std::vector<LuauFlagSetting> settings;
+};
+[[nodiscard]] LuauFlagsWritten writeLuauFlagSettings(const std::filesystem::path& projectRoot,
+                                                     std::span<const LuauFlagInfo> flags,
+                                                     const std::map<std::string, core::i64, std::less<>>& written,
+                                                     std::string* diagnostic = nullptr);
 
 // A setting's key in a project file: its table and its name in snake case
 // -- `graphics.shadow_quality`, `display.window_mode` -- and the words a file

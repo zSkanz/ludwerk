@@ -65,7 +65,7 @@ jobs:
     outputs:
       code: ${{ steps.decide.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Both endpoints of the diff have to be present, so the shallow
           # default will not do. `blob:none` is what keeps that affordable:
@@ -159,7 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Documentation gate
         run: scripts/gates/docs-lint.sh
@@ -216,7 +216,7 @@ jobs:
       # reach. The stats step below stops it explicitly instead.
       SCCACHE_IDLE_TIMEOUT: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set the out-of-tree build root (R14) and the compiler-cache location
         shell: bash
@@ -243,7 +243,7 @@ jobs:
           # tag, once in the file name.
           name="sccache-v${SCCACHE_VERSION}-${triple}"
           archive="${RUNNER_TEMP}/${name}.${ext}"
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "$archive" \
+          bash scripts/lib/backoff.sh curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "$archive" \
             "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${name}.${ext}"
           mkdir -p "${RUNNER_TEMP}/sccache-bin"
           if [[ "$ext" == "zip" ]]; then
@@ -334,7 +334,7 @@ jobs:
       # No restore-keys: a near-miss here is not a partial win, it is the wrong
       # archive for the pin. Missing and re-downloading is the correct outcome.
       - name: Cache the pinned DirectXShaderCompiler archive
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ runner.temp }}/engine-build/toolchains/dxc/**/*.zip
@@ -359,7 +359,7 @@ jobs:
       # an existing entry: without it, the first run after a pin change would be
       # the only one that ever saved.
       - name: Cache the compiler cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/sccache
           key: sccache-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('third_party/manifest.json', 'CMakePresets.json', 'cmake/**') }}-${{ github.run_id }}
@@ -401,7 +401,7 @@ jobs:
             Windows) archive="rokit-${ROKIT_VERSION}-windows-x86_64.zip" ;;
             *)       archive="rokit-${ROKIT_VERSION}-linux-x86_64.zip" ;;
           esac
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o /tmp/rokit.zip             "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/${archive}"
+          bash scripts/lib/backoff.sh curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o /tmp/rokit.zip             "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/${archive}"
           unzip -q /tmp/rokit.zip -d /tmp/rokit
           /tmp/rokit/rokit self-install
           # **A Windows path on Windows.** `$HOME` in the runner's bash is
@@ -421,7 +421,7 @@ jobs:
           "$HOME/.rokit/bin/rokit" authenticate github --token "$GH_TOKEN"
           # --no-trust-check: the tools are pinned in the in-repo, ADR-gated
           # rokit.toml (R5); the interactive trust prompt has no answer in CI.
-          "$HOME/.rokit/bin/rokit" install --no-trust-check
+          bash scripts/lib/backoff.sh "$HOME/.rokit/bin/rokit" install --no-trust-check
 
       - name: Configure, build and test (Linux)
         if: runner.os == 'Linux'
@@ -467,7 +467,7 @@ jobs:
       # than with none. Kept for a day: it is a hand-off, not a release.
       - name: Hand the compiled shaders to the macOS job
         if: runner.os == 'Linux' && !cancelled()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: shaders-for-macos
           path: ${{ env.ENG_BUILD_ROOT }}/${{ matrix.preset }}/engine/app/content/shaders
@@ -624,7 +624,7 @@ jobs:
       SCCACHE_IDLE_TIMEOUT: "0"
     steps:
       # The shared steps are `build-test`'s, where each is explained.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # As in `build-test`, where it is explained.
       - name: Set the out-of-tree build root (R14) and the compiler-cache location
@@ -650,7 +650,7 @@ jobs:
           # tag, once in the file name.
           name="sccache-v${SCCACHE_VERSION}-${triple}"
           archive="${RUNNER_TEMP}/${name}.${ext}"
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "$archive" \
+          bash scripts/lib/backoff.sh curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "$archive" \
             "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${name}.${ext}"
           mkdir -p "${RUNNER_TEMP}/sccache-bin"
           if [[ "$ext" == "zip" ]]; then
@@ -671,7 +671,7 @@ jobs:
 
       # As in `build-test`, where it is explained.
       - name: Cache the pinned DirectXShaderCompiler archive
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ runner.temp }}/engine-build/toolchains/dxc/**/*.zip
@@ -684,7 +684,7 @@ jobs:
       # ten gigabytes.
       - name: Cache the compiler cache
         if: matrix.shard == 1
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/sccache
           key: sccache-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('third_party/manifest.json', 'CMakePresets.json', 'cmake/**') }}-${{ github.run_id }}
@@ -694,7 +694,7 @@ jobs:
 
       - name: Restore the compiler cache
         if: matrix.shard != 1
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/sccache
           key: sccache-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('third_party/manifest.json', 'CMakePresets.json', 'cmake/**') }}-${{ github.run_id }}
@@ -724,7 +724,7 @@ jobs:
             Windows) archive="rokit-${ROKIT_VERSION}-windows-x86_64.zip" ;;
             *)       archive="rokit-${ROKIT_VERSION}-linux-x86_64.zip" ;;
           esac
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o /tmp/rokit.zip             "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/${archive}"
+          bash scripts/lib/backoff.sh curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o /tmp/rokit.zip             "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/${archive}"
           unzip -q /tmp/rokit.zip -d /tmp/rokit
           /tmp/rokit/rokit self-install
           # **A Windows path on Windows.** `$HOME` in the runner's bash is
@@ -744,7 +744,7 @@ jobs:
           "$HOME/.rokit/bin/rokit" authenticate github --token "$GH_TOKEN"
           # --no-trust-check: the tools are pinned in the in-repo, ADR-gated
           # rokit.toml (R5); the interactive trust prompt has no answer in CI.
-          "$HOME/.rokit/bin/rokit" install --no-trust-check
+          bash scripts/lib/backoff.sh "$HOME/.rokit/bin/rokit" install --no-trust-check
 
       # The presets use the Ninja generator with `strategy: external`, so the
       # MSVC environment must be established first. vswhere avoids hardcoding
@@ -938,7 +938,7 @@ jobs:
     # rate plus headroom. A warm run is a cache restore.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set the out-of-tree build root (R14) and the cache key
         shell: bash
@@ -952,7 +952,7 @@ jobs:
 
       - name: Restore the built compiler
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           key: dxc-source-${{ matrix.platform }}-${{ env.DXC_COMMIT }}
           path: |
@@ -973,13 +973,13 @@ jobs:
             macOS-arm64) asset="macos-aarch64" ;;
             macOS-*)   asset="macos-x86_64" ;;
           esac
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "${RUNNER_TEMP}/rokit.zip" \
+          bash scripts/lib/backoff.sh curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "${RUNNER_TEMP}/rokit.zip" \
             "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/rokit-${ROKIT_VERSION}-${asset}.zip"
           unzip -q "${RUNNER_TEMP}/rokit.zip" -d "${RUNNER_TEMP}/rokit"
           "${RUNNER_TEMP}/rokit/rokit" self-install
           echo "$HOME/.rokit/bin" >> "$GITHUB_PATH"
           "$HOME/.rokit/bin/rokit" authenticate github --token "$GH_TOKEN"
-          "$HOME/.rokit/bin/rokit" install --no-trust-check
+          bash scripts/lib/backoff.sh "$HOME/.rokit/bin/rokit" install --no-trust-check
 
       - name: Ensure Ninja
         if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
@@ -1006,7 +1006,7 @@ jobs:
         run: lute tools/repo/toolchain.luau build dxc --jobs=4 --platform=${{ matrix.platform }}
 
       - name: Upload the built compiler
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dxc-${{ matrix.platform }}
           path: |
@@ -1043,7 +1043,7 @@ jobs:
     # a commit with nothing wrong in it, and `main` held back for it.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set out-of-tree build root (R14)
         shell: bash
@@ -1082,7 +1082,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "${RUNNER_TEMP}/rokit.zip" \
+          bash scripts/lib/backoff.sh curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "${RUNNER_TEMP}/rokit.zip" \
             "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/rokit-${ROKIT_VERSION}-macos-aarch64.zip"
           unzip -q "${RUNNER_TEMP}/rokit.zip" -d "${RUNNER_TEMP}/rokit"
           "${RUNNER_TEMP}/rokit/rokit" self-install
@@ -1090,7 +1090,7 @@ jobs:
           "$HOME/.rokit/bin/rokit" authenticate github --token "$GH_TOKEN"
           # --no-trust-check: the tools are pinned in the in-repo, ADR-gated
           # rokit.toml (R5); the interactive trust prompt has no answer in CI.
-          "$HOME/.rokit/bin/rokit" install --no-trust-check
+          bash scripts/lib/backoff.sh "$HOME/.rokit/bin/rokit" install --no-trust-check
           "$HOME/.rokit/bin/lute" setup
 
       - name: Configure and build
@@ -1124,7 +1124,7 @@ jobs:
       # cancelled for it. Linux and Windows run it; nothing in it is macOS's.
       # Where the engine looks for them: `content/shaders` beside the host.
       - name: The shaders a Tier-2 host compiled
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: shaders-for-macos
           path: ${{ env.ENG_BUILD_ROOT }}/macos-clang-dev/engine/app/content/shaders
@@ -1143,7 +1143,7 @@ jobs:
       # for a reason no local machine reproduces.
       - name: The soak reports, on failure (macOS)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-soak-reports
           path: ${{ env.ENG_BUILD_ROOT }}/macos-clang-dev/engine/app/*soak*.json
@@ -1187,7 +1187,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Installed by pinned URL rather than a third-party action: one fewer
       # supply-chain surface, and the version is visible in this file.
@@ -1195,7 +1195,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o /tmp/rokit.zip \
+          bash scripts/lib/backoff.sh curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o /tmp/rokit.zip \
             "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/rokit-${ROKIT_VERSION}-linux-x86_64.zip"
           unzip -q /tmp/rokit.zip -d /tmp/rokit
           /tmp/rokit/rokit self-install
@@ -1214,7 +1214,7 @@ jobs:
           rokit authenticate github --token "$GH_TOKEN"
           # --no-trust-check: tools are pinned in the in-repo, ADR-gated
           # rokit.toml (R5); the interactive trust prompt has no answer in CI.
-          rokit install --no-trust-check
+          bash scripts/lib/backoff.sh rokit install --no-trust-check
           lute --version
           stylua --version
           luau-lsp --version
@@ -1258,7 +1258,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install the pinned clang-format
         run: |

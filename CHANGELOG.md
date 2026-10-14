@@ -11,6 +11,18 @@ here.
 
 ### Fixed
 
+- A server takes more than eight players from one network address: a
+  household, a LAN house, a school or a mobile carrier. The limit is
+  `[network] max_connections_per_address` or `--max-per-address=N`, 64 by
+  default, 0 for no limit. A player over it gets a `JoinFailed` that says why,
+  where before they saw "connection lost". A flood from one address is still
+  dropped, judged by how fast it connects.
+- A part larger than the streaming radius is sent to a player standing on it
+  far from its centre. Interest is measured to the part's edge, so a 4 km floor
+  no longer leaves the players on it falling through and corrected every tick.
+- A script saved with a byte-order mark (Notepad, Windows PowerShell 5) checks
+  clean in the editor and in `--check-scripts`, as it already ran in the game.
+- A glTF node's morph weights are where its targets start, over its mesh's.
 - A content file read in the middle of its author's save no longer drops
   what was loaded: a sound, a material, a viseme track or face map, a
   sequence, an animation graph and the roles beside a model keep what was
@@ -28,6 +40,14 @@ here.
 
 ### Added
 
+- Luau's flags are a project setting: `[luau.flags]` in `project.toml`, and
+  Project Settings > Luau, which offers `if local` and exported values by name
+  and every flag under Advanced. The game, the editor's checker,
+  `ludwerk check` and VS Code read the same values. A player whose game has
+  other values cannot join (protocol 53), and a replay recorded with other
+  values is refused.
+- `engine-host <project> --print-luau-flags` prints the values the tools that
+  check scripts are given.
 - In a sequence, `"$$..."` is a string that begins with `$` where a value
   goes; the writer puts the second `$` back.
 - `assetc --cache <dir>`: a source is answered from what an earlier compile of
@@ -57,6 +77,15 @@ here.
 
 ### Changed
 
+- Luau 0.742, luau-lsp 1.70.1, StyLua 2.6.0, SDL 3.4.18, fastgltf 0.9.1 with
+  simdjson 4.6.11, meshoptimizer 1.3 and xxHash 0.8.4. Bytecode exported by
+  the previous build still loads: the compiler still writes version 9, and the
+  VM now reads versions 3 to 14.
+- Android games target API 36 (Android 16), which Google Play requires of new
+  apps and updates. They still run from API 21. Building needs SDK platform 36
+  and build-tools 36.0.0; `scripts/install-android.ps1` installs them.
+- The wire protocol is 53. A build before this one cannot join a server of
+  this one, or the other way round.
 - In the editor, the scene is edited, and Play starts, in the project's
   graphics settings; a player's saved ones are Play's only when asked for.
 - Models are compiled side by side, one to a worker, and give the same bytes

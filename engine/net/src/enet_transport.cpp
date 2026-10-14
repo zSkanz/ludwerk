@@ -927,6 +927,17 @@ public:
         return m_peers.size();
     }
 
+    [[nodiscard]] u64 addressOf(PeerId peer) const noexcept override
+    {
+        std::lock_guard lock(m_mutex);
+        const auto at = m_peers.find(peer.value);
+        if (at == m_peers.end())
+            return 0;
+        // The host only: a household's players share it and differ by port.
+        // A relayed joiner has a loopback address of its own (`Pipe`).
+        return (u64{1} << 32) | static_cast<u64>(at->second->address.host);
+    }
+
     [[nodiscard]] PeerLink link(PeerId peer) const noexcept override
     {
         std::lock_guard lock(m_mutex);

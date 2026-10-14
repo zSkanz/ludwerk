@@ -199,24 +199,34 @@ task.spawn(function()
     local driftSum, driftCount, driftMax = 0, 0, 0
     local simulatedSpans: { number } = {}
     local function simulatedJumpOf(at: vector): number
-        -- The simulated place moves a tick at a time, whatever the frame:
-        -- its line is a tick long.
+        -- The simulated place moves a tick at a time: its line is a tick long.
         local saved = spans
         spans = simulatedSpans
         local jump = jumpOf(simulated, at, 1)
         spans = saved
         return jump
     end
-    RunService:BindToRenderStep("CarJumps", 1, function(span: number)
-        drawnJump = math.max(drawnJump, jumpOf(drawn, car:GetRenderCFrame().Position, span))
-        local moved = #simulated == 0 or vector.magnitude(car.Position - simulated[#simulated]) > 0
-        if moved then
-            simJump = math.max(simJump, simulatedJumpOf(car.Position))
-        end
+    -- **Counted in ticks, never in frames** (tests/editorshots/README.md):
+    -- the simulated place and the drift are read at the end of every tick,
+    -- as the authority reads its own car, so how many frames the machine
+    -- drew between two ticks changes nothing.
+    local tickLength = 1 / 60
+    local ticking = RunService.Heartbeat:Connect(function(dt: number)
+        tickLength = dt
+        simJump = math.max(simJump, simulatedJumpOf(car.Position))
         local drift = NetworkService:GetStats().PredictedDrift
         driftSum += drift
         driftCount += 1
         driftMax = math.max(driftMax, drift)
+    end)
+    -- What is drawn can only be read in a frame. A frame that covers several
+    -- ticks moves the car several ticks' worth off its line -- a stop in one
+    -- tick is that stop times the frame's ticks -- so the jump is a tick's
+    -- share of it, which a machine under load and one drawing every tick
+    -- both measure the same.
+    RunService:BindToRenderStep("CarJumps", 1, function(span: number)
+        local ticks = math.max(1, span / tickLength)
+        drawnJump = math.max(drawnJump, jumpOf(drawn, car:GetRenderCFrame().Position, span) / ticks)
     end)
 
     local start, straight, corner, stopping, contact, hitches = 0, 0, 0, 0, 0, 0
@@ -279,6 +289,7 @@ task.spawn(function()
     stopping, h = corrections(3)
     hitches += h
     RunService:UnbindFromRenderStep("CarJumps")
+    ticking:Disconnect()
     local authorityJump = jumps:InvokeServerAsync(false) :: number
     task.wait(1)
 

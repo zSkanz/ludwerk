@@ -1,23 +1,20 @@
 // The transport seam (ADR 0012, architecture.md §2 `net_api`).
 //
-// **This interface is the deliverable; the implementation behind it is not.**
-// v1 ships primitives and a loopback echo -- replication is post-v1 (R15) --
-// so what the streaming work owes is a shape future replication can be built on without the
-// engine being rebuilt around it. ADR 0012 names GameNetworkingSockets as the
-// eventual default with ENet as the LAN option; the manifest row for GNS says
-// in full why only ENet is vendored, and the short version is that GNS brings
-// protobuf and OpenSSL for a seam with no v1 caller.
+// **What every match goes through.** Replication (ADR 0069 onwards) sits on
+// this interface and nothing below it: ENet for a direct match, the relay and
+// its hole punching (ADR 0178) behind the same calls, the in-memory network
+// the tests use, and a lossy wrapper that loses, reorders and delays on
+// purpose. ADR 0012 named GameNetworkingSockets as the eventual default; the
+// manifest row for it says why it is not vendored, and ENet is what ships.
 //
 // **No ENet type appears here** (R17). A caller that can see an `ENetPeer`
 // writes code that only works with one transport, which defeats the seam on the
 // first line of the first use.
 //
-// What is deliberately NOT here, so that a later reader does not mistake it for
-// an oversight: no replication, no entity ownership, no serialisation, no
-// prediction, no clock synchronisation. This moves BYTES between two endpoints,
-// with a reliability flag per message. Everything above that is a design nobody
-// has approved yet, and a half-built version of it here would be worse than
-// none.
+// What is deliberately NOT here: no entity, no ownership, no serialisation, no
+// prediction, no clock. This moves BYTES between two endpoints, on channels,
+// each message reliable or not, and says who is connected and from where.
+// Everything above that is `replication`'s.
 #pragma once
 
 #include <cstddef>
@@ -37,6 +34,7 @@ namespace engine::net {
 using core::f32;
 using core::u16;
 using core::u32;
+using core::u64;
 using core::u8;
 using core::usize;
 
@@ -272,6 +270,14 @@ public:
         (void)peer;
         return PeerPath::None;
     }
+    // **Which address a peer came from, as a key**: equal for two peers of one
+    // address, nought where the transport cannot say. What an authority counts
+    // the connections of one household, one school or one carrier's NAT by.
+    [[nodiscard]] virtual u64 addressOf(PeerId peer) const noexcept
+    {
+        (void)peer;
+        return 0;
+    }
     // **Keeps a peer's address away for a while**, where the transport is what
     // stands between it and the host: a relayed joiner's address is the
     // relay's to refuse. Nothing for a peer that came by itself -- its address
@@ -288,8 +294,8 @@ public:
 //
 // Its properties are worth stating where a caller will read them: UDP, optional
 // reliability and sequencing, **no encryption and no authentication**. An ENet
-// channel is a LAN or an otherwise trusted link. Anything else waits for the
-// GameNetworkingSockets row in the manifest to be filled in.
+// match is as private as the network it crosses until ADR 0120's encryption,
+// decided over ENet, is built.
 // **How a name becomes an address**: the system's resolver, unless a test has
 // put its own in the way to say when a name starts to be found. It is
 // handed the name and answers a dotted address, or false for "no such name";

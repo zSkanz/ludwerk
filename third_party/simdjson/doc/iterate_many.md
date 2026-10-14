@@ -8,7 +8,7 @@ library provides high-speed access to files or streams containing multiple small
 {"text":"a"}
 {"text":"b"}
 {"text":"c"}
-...
+"..."
 ```
 ... you want to read the entries (individual JSON documents) as quickly and as conveniently as possible. Importantly, the input might span several gigabytes, but you want to use a small (fixed) amount of memory. Ideally, you'd also like the parallelize the processing (using more than one core) to speed up the process.
 
@@ -132,7 +132,7 @@ E.g., `[1,2]{"32":1}` is recognized as two documents.
 Some official formats **(non-exhaustive list)**:
 - [Newline-Delimited JSON (NDJSON)](https://github.com/ndjson/ndjson-spec/)
 - [JSON lines (JSONL)](http://jsonlines.org/)
-- [Record separator-delimited JSON (RFC 7464)](https://tools.ietf.org/html/rfc7464) <- Not supported by JsonStream!
+- [Record separator-delimited JSON (RFC 7464)](https://tools.ietf.org/html/rfc7464) <- Not supported by simdjson!
 - [More on Wikipedia...](https://en.wikipedia.org/wiki/JSON_streaming)
 
 API
@@ -140,8 +140,10 @@ API
 
 Example:
 
-```c++
+```cpp
+//  R"( ... )" is a C++ raw string literal.
 auto json = R"({ "foo": 1 } { "foo": 2 } { "foo": 3 } )"_padded;
+// _padded returns an simdjson::padded_string instance
 ondemand::parser parser;
 ondemand::document_stream docs = parser.iterate_many(json);
 for (auto doc : docs) {
@@ -151,6 +153,20 @@ for (auto doc : docs) {
 ```
 
 See [basics.md](basics.md#newline-delimited-json-ndjson-and-json-lines) for an overview of the API.
+
+
+**Advanced feature:**
+On non-Windows systems, you can use memory-file mapping to create a `simdjson::padded_string_view`
+from a file on disk.
+
+```cpp
+// If the macro _WIN32 is defined, this will not work since we do not support memory-file mapping
+// under Windows at this time.
+simdjson::padded_memory_map map(myfilename);
+if (!map.is_valid()) { /* handle error */ }
+simdjson::padded_string_view view = map.view(); // view is usable while padded_memory_map is in scope
+ondemand::document doc = parser.iterate(view); // parse the JSON
+```
 
 ## Use cases
 
@@ -197,7 +213,7 @@ and `error()` to check if there were any error.
 Let us illustrate the idea with code:
 
 
-```C++
+```cpp
     auto json = R"([1,2,3]  {"1":1,"2":3,"4":4} [1,2,3]  )"_padded;
     simdjson::ondemand::parser parser;
     simdjson::ondemand::document_stream stream;
@@ -238,7 +254,7 @@ Some users may need to work with truncated streams. The simdjson may truncate do
 
 Consider the following example where a truncated document (`{"key":"intentionally unclosed string  `) containing 39 bytes has been left within the stream. In such cases, the first two whole documents are parsed and returned, and the `truncated_bytes()` method returns 39.
 
-```C++
+```cpp
     auto json = R"([1,2,3]  {"1":1,"2":3,"4":4} {"key":"intentionally unclosed string  )"_padded;
     simdjson::ondemand::parser parser;
     simdjson::ondemand::document_stream stream;
@@ -257,7 +273,9 @@ This will print:
 39 bytes
 ```
 
-Importantly, you should only call `truncated_bytes()` after iterating through all of the documents since the stream cannot tell whether there are truncated documents at the very end when it may not have accessed that part of the data yet.
+Importantly, you should only call `truncated_bytes()` after iterating through all of the documents since the stream cannot tell whether there are truncated documents at the very end when it may not have accessed that part of the data yet. Importantly, it also assumes that no document reported an error: iteration stops at the first failed document, which can leave the bookkeeping from a mid-stream batch.
+
+If you need to detect a truncated tail outside those conditions, track it yourself from the last document that parsed successfully, using `current_index()` and `source()` on the iterator.
 
 Comma-separated documents
 -----------
@@ -267,7 +285,7 @@ is effectively ignored, as it is set to at least the document size.
 
 Example:
 
-```C++
+```cpp
     auto json = R"( 1, 2, 3, 4, "a", "b", "c", {"hello": "world"} , [1, 2, 3])"_padded;
     ondemand::parser parser;
     ondemand::document_stream doc_stream;
@@ -309,12 +327,12 @@ The first argument is usually a tag type (often an empty struct) that uniquely i
 
 
 You can deserialize you own data structures conveniently if your system supports C++20.
-When it is the case, the macro `SIMDJSON_SUPPORTS_DESERIALIZATION` will be set to 1 by
+When it is the case, the macro `SIMDJSON_SUPPORTS_CONCEPTS` will be set to 1 by
 the simdjson library.
 
 Consider a custom class `Car`:
 
-```C++
+```cpp
 struct Car {
   std::string make;
   std::string model;
@@ -328,7 +346,7 @@ You may support deserializing directly from a JSON value or document to your own
 by defining a single `tag_invoke` function:
 
 
-```C++
+```cpp
 namespace simdjson {
 // This tag_invoke MUST be inside simdjson namespace
 template <typename simdjson_value>
@@ -370,7 +388,7 @@ tag_invoke functions.
 Given a stream of JSON documents, you can add them to a data structure
 such as a `std::vector<Car>` like so if you support exceptions:
 
-```C++
+```cpp
   padded_string json =
       R"( { "make": "Toyota", "model": "Camry",  "year": 2018,
        "tire_pressure": [ 40.1, 39.9 ] }
@@ -391,7 +409,7 @@ such as a `std::vector<Car>` like so if you support exceptions:
 Otherwise you may use this longer version for explicit handling of errors:
 
 
-```C++
+```cpp
   std::vector<Car> cars;
   for(auto doc : stream) {
     Car c;

@@ -2436,8 +2436,11 @@ local Classes: { Schema.Class } = {
                 Doc = "Fires when a join fails. This machine stays in single-player, in the state it was in "
                     .. "before `Join` was called, so the menu that called `Join` is still there to handle the "
                     .. "event.\n\n"
-                    .. "The reason is passed as readable text: the server did not answer, the server is full, or "
-                    .. "it runs a different version. With a join code, it can also be that the relay did not "
+                    .. "The reason is passed as readable text: the server did not answer, the server is full, it "
+                    .. "runs a different version, or it is taking no more players from this machine's network "
+                    .. "address. Players behind one router or one mobile network share an address, and a server "
+                    .. "allows 64 of them by default (`[network] max_connections_per_address` in `project.toml`, or "
+                    .. "`--max-per-address` for a dedicated server; 0 is no limit). With a join code, it can also be that the relay did not "
                     .. "answer, no match has that code, the host has blocked this machine, or no connection could "
                     .. "be established in time.",
             },

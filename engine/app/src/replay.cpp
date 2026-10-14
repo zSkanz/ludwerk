@@ -10,6 +10,7 @@
 #include <system_error>
 
 #include "engine/app/content_import.h"
+#include "engine/app/luau_flags.h"
 #include "engine/app/world_host.h"
 #include "engine/core/json.h"
 #include "engine/core/log.h"
@@ -411,6 +412,8 @@ std::optional<core::EngineError> writeTrace(const std::filesystem::path& path, c
         return core::makeError(ENG_TR("engine.replay.err.open_failed"), args);
     }
 
+    if (trace.luauFlags != 0)
+        file << "luau-flags " << hex(trace.luauFlags) << '\n';
     for (const ReplayCheckpoint& checkpoint : trace.checkpoints)
         file << checkpoint.tick << ' ' << hex(checkpoint.hash) << '\n';
 
@@ -436,6 +439,15 @@ std::optional<core::EngineError> readTrace(const std::filesystem::path& path, Re
             line.pop_back();
         if (line.empty())
             continue;
+        if (constexpr std::string_view Flags = "luau-flags "; line.starts_with(Flags)) {
+            const std::string_view digits = std::string_view(line).substr(Flags.size());
+            if (std::from_chars(digits.data(), digits.data() + digits.size(), out.luauFlags, 16).ptr !=
+                digits.data() + digits.size()) {
+                const std::array<I18nArg, 2> args{I18nArg{"path", path.string()}, I18nArg{"reason", line}};
+                return core::makeError(ENG_TR("engine.replay.err.bad_trace"), args);
+            }
+            continue;
+        }
 
         std::istringstream fields(line);
         u64 tick = 0;
@@ -522,6 +534,7 @@ std::optional<core::EngineError> runReplayGate(const std::filesystem::path& root
         ReplayTrace first;
         if (auto error = runScenario(scenario, first); error.has_value())
             return error;
+        first.luauFlags = luauFlagsFingerprint();
 
         const std::filesystem::path tracePath = tracePathFor(directory);
 
@@ -607,6 +620,10 @@ std::optional<core::EngineError> runReplayGate(const std::filesystem::path& root
         if (auto error = readTrace(tracePath, golden); error.has_value())
             return error;
 
+        if (golden.luauFlags != first.luauFlags) {
+            const std::array<I18nArg, 1> args{I18nArg{"path", tracePath.string()}};
+            return core::makeError(ENG_TR("engine.replay.err.luau_flags_differ"), args);
+        }
         if (auto error = compareTraces(golden, first, "recorded", "this build"); error.has_value())
             return error;
 

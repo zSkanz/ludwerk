@@ -9,7 +9,8 @@ assignees: ''
 
 Before submitting an issue, please ensure that you have read the documentation:
 
-* Basics is an overview of how to use simdjson and its APIs: https://github.com/simdjson/simdjson/blob/master/doc/basics.md
+* Basics is an overview of how to use simdjson and its APIs to parse JSON: https://github.com/simdjson/simdjson/blob/master/doc/basics.md
+* Builder is an overview of how to use simdjson to generate JSON: https://github.com/simdjson/simdjson/blob/master/doc/builder.md
 * Performance shows some more advanced scenarios and how to tune for them: https://github.com/simdjson/simdjson/blob/master/doc/performance.md
 * Contributing: https://github.com/simdjson/simdjson/blob/master/CONTRIBUTING.md
 * We follow the [JSON specification as described by RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.txt) (T. Bray, 2017). If you wish to support features that are not part of RFC 8259, then you should not refer to your issue as a bug.
@@ -28,6 +29,9 @@ We accept the identification of an issue by a sanitizer or some checker tool (e.
 
 We recommend that you run your tests using different optimization levels. In particular, we recommend your run tests with the simdjson library and you code compiled in debug mode. The simdjson then sets the SIMDJSON_DEVELOPMENT_CHECKS macro to 1, and this triggers additional checks on your code and on the internals of the library. If possible, we recommend that you run tests with sanitizers (e.g., see [No more leaks with sanitize flags in gcc and clang](https://lemire.me/blog/2016/04/20/no-more-leaks-with-sanitize-flags-in-gcc-and-clang/)).  You can compile the library with sanitizers for debugging purposes (e.g., set SIMDJSON_SANITIZE to ON using CMake), but you should also turn on sanitizers on your own code. You may also use tools like valgrind or the commercial equivalent.
 
+Mixing debug and release simdjson code is unsafe: you either build all your code using simdjson in
+release mode or all of it in debug mode.
+
 Before reporting a bug, please ensure that you have read our documentation.
 
 **To Reproduce**
@@ -37,7 +41,7 @@ If we cannot reproduce the issue, then we cannot address it. Note that a stack t
 
 It should be possible to trigger the bug by using solely simdjson with our default build setup. If you can only observe the bug within some specific context, with some other software, please reduce the issue first.
 
-**simjson release**
+**simdjson release**
 
 Unless you plan to contribute to simdjson, you should only work from releases. Please be mindful that our main branch may have additional features, bugs and documentation items.
 
@@ -54,6 +58,9 @@ We support up-to-date 64-bit ARM and x64 FreeBSD, macOS, Windows and Linux syste
 * We do not support unreleased or experimental compilers. If you encounter an issue with a
 pre-release version of a compiler, do not report it as a bug to simdjson. However, we always
 invite contributions either in the form an analysis or of a code contribution.
+* Vendors (e.g., Apple and Microsoft) stop supporting old systems. Once a compiler system is no longer supported by its vendor, we no longer support it. We will gladly accept code contributions, but we do not consider it a *bug* if you have issues with an obsolete compiler systems. This policy extends to obsolete standard libraries, linkers and other build tools. Please do not report it as an issue. If you cannot resolve the issue yourself, we encourage you to reach out to the vendor for legacy support. As of 2026, Windows 10 is no longer supported.
+
+Under Windows, we support Visual Studio (both with LLVM and without). We do not support MinGW and other alternate compiler systems. Windows users should be aware that there [is a long-running bug with GCC under Windows](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=54412).
 
 **Indicate whether you are willing or able to provide a bug fix as a pull request**
 

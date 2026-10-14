@@ -6,6 +6,7 @@
 #endif
 #include "simdjson.h"
 #include <cstdio>
+#include <vector>
 // Returns the default size of the page in bytes on this system.
 long page_size() {
 #ifdef _WIN32
@@ -22,7 +23,7 @@ long page_size() {
 // page boundary.
 bool need_allocation(const char *buf, size_t len) {
   return ((reinterpret_cast<uintptr_t>(buf + len - 1) % page_size())
-    + simdjson::SIMDJSON_PADDING > static_cast<uintptr_t>(page_size()));
+    + simdjson::SIMDJSON_PADDING >= static_cast<uintptr_t>(page_size()));
 }
 
 bool check_need_allocation() {

@@ -4,6 +4,8 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
+
 using namespace std::string_literals;
 
 #include "simdjson.h"
@@ -292,6 +294,281 @@ bool json_path_invalidation() {
   }
   TEST_SUCCEED();
 }
+
+bool json_path_with_wildcard() {
+  TEST_START();
+
+  simdjson::padded_string json_string = R"(
+  {
+    "firstName": "John",
+    "lastName" : "doe",
+    "age"      : 26,
+    "address"  : {
+      "streetAddress": "naist street",
+      "city"         : "Nara",
+      "postalCode"   : "630-0192"
+    },
+    "phoneNumbers": [
+      {
+        "type"  : "iPhone",
+        "numbers": [
+          "0123-4567-8888",
+          "0123-4567-8788",
+          "0123-4567-8887"
+        ]
+      },
+      {
+        "type"  : "home",
+        "numbers": [
+          "0123-4567-8910",
+          "0123-4267-8910",
+          "0103-4567-8910"
+        ]
+      },
+      { },
+      {
+        "type": "office",
+        "numbers": [ ]
+      }
+    ],
+    "empty_object": { },
+    "empty_array": [ ]
+  })"_padded;
+
+  dom::parser parser;
+  dom::element parsed_json;
+  ASSERT_SUCCESS(parser.parse(json_string).get(parsed_json));
+  std::vector<dom::element> values;
+
+
+  std::string_view string_value;
+  std::uint64_t num_value;
+  dom::object obj;
+  ASSERT_EQUAL(parsed_json.at_path_with_wildcard("$").error(), INVALID_JSON_POINTER);
+  ASSERT_EQUAL(parsed_json.at_path_with_wildcard("1").error(), INVALID_JSON_POINTER);
+  ASSERT_EQUAL(parsed_json.at_path_with_wildcard("2").error(), INVALID_JSON_POINTER);
+  ASSERT_EQUAL(parsed_json.at_path_with_wildcard("a").error(), INVALID_JSON_POINTER);
+  ASSERT_EQUAL(parsed_json.at_path_with_wildcard("$2").error(), INVALID_JSON_POINTER);
+  ASSERT_EQUAL(parsed_json.at_path_with_wildcard("$a").error(), INVALID_JSON_POINTER);
+  // $.*
+  ASSERT_SUCCESS(parsed_json.at_path_with_wildcard("$.*").get(values));
+
+  ASSERT_SUCCESS(values[0].get(string_value));
+  ASSERT_EQUAL(string_value, "John");
+
+  ASSERT_SUCCESS(values[1].get(string_value));
+  ASSERT_EQUAL(string_value, "doe");
+
+  ASSERT_SUCCESS(values[2].get(num_value));
+  ASSERT_EQUAL(num_value, 26);
+
+  ASSERT_SUCCESS(values[3].get(obj));
+  ASSERT_SUCCESS(obj["streetAddress"].get(string_value));
+  ASSERT_EQUAL(string_value, "naist street");
+
+  ASSERT_SUCCESS(obj["city"].get(string_value));
+  ASSERT_EQUAL(string_value, "Nara");
+
+  // $[*]
+  ASSERT_SUCCESS(parsed_json.at_path_with_wildcard("$[*]").get(values));
+
+  ASSERT_SUCCESS(values[0].get(string_value));
+  ASSERT_EQUAL(string_value, "John");
+
+  ASSERT_SUCCESS(values[1].get(string_value));
+  ASSERT_EQUAL(string_value, "doe");
+
+  ASSERT_SUCCESS(values[2].get(num_value));
+  ASSERT_EQUAL(num_value, 26);
+
+  ASSERT_SUCCESS(values[3].get(obj));
+  ASSERT_SUCCESS(obj["streetAddress"].get(string_value));
+  ASSERT_EQUAL(string_value, "naist street");
+
+  ASSERT_SUCCESS(obj["city"].get(string_value));
+  ASSERT_EQUAL(string_value, "Nara");
+
+  // $.address.*
+  ASSERT_SUCCESS(parsed_json.at_path_with_wildcard("$.address.*").get(values));
+
+  std::vector<std::string> expected = {"naist street", "Nara", "630-0192"};
+  for (int i = 0; i < 3; i++) {
+    ASSERT_SUCCESS(values[i].get(string_value));
+    ASSERT_EQUAL(string_value, expected[i]);
+  }
+
+  // $.*.streetAddress
+  ASSERT_SUCCESS(parsed_json.at_path_with_wildcard("$.*.streetAddress").get(values));
+
+  ASSERT_SUCCESS(values[0].get(string_value));
+  ASSERT_EQUAL(string_value, "naist street");
+
+  // $.phoneNumbers[*].numbers[*]
+  ASSERT_SUCCESS(parsed_json.at_path_with_wildcard("$.phoneNumbers[*].numbers[*]").get(values));
+
+  std::vector<std::string> expected_numbers = {
+    "0123-4567-8888",
+    "0123-4567-8788",
+    "0123-4567-8887",
+    "0123-4567-8910",
+    "0123-4267-8910",
+    "0103-4567-8910"
+  };
+
+  for (int i = 0; i < 6; i++) {
+    ASSERT_SUCCESS(values[i].get(string_value));
+    ASSERT_EQUAL(string_value, expected_numbers[i]);
+  }
+
+  // $.phoneNumbers[*].numbers[1]
+  ASSERT_SUCCESS(parsed_json.at_path_with_wildcard("$.phoneNumbers[*].numbers[1]").get(values));
+
+  ASSERT_SUCCESS(values[0].get(string_value));
+  ASSERT_EQUAL(string_value, expected_numbers[1]);
+
+  ASSERT_SUCCESS(values[1].get(string_value));
+  ASSERT_EQUAL(string_value, expected_numbers[4]);
+
+  // $.empty_object.*
+  ASSERT_SUCCESS(parsed_json.at_path_with_wildcard("$.empty_object.*").get(values));
+
+  ASSERT_EQUAL(values.size(), 0);
+
+  // $.empty_array.*
+  ASSERT_SUCCESS(parsed_json.at_path_with_wildcard("$.empty_array.*").get(values));
+  ASSERT_EQUAL(values.size(), 0);
+
+  // $.phoneNumbers.*.numbers[3]
+  ASSERT_SUCCESS(parsed_json.at_path_with_wildcard("$.phoneNumbers.*.numbers[3]").get(values));
+
+  ASSERT_EQUAL(values.size(), 0);
+
+  TEST_SUCCEED();
+}
+
+// Backport of https://github.com/simdjson/simdjson/pull/2801
+// Unterminated bracket-quoted keys used to throw std::out_of_range from
+// get_next_key_and_json_path, aborting noexcept at_path_with_wildcard.
+bool unterminated_bracket_quote_wildcard() {
+  std::cout << "Running unterminated_bracket_quote_wildcard test" << std::endl;
+  auto json = R"({"a": [1, 2, 3], "address": {"city": "Nara"}, "ok": 1})"_padded;
+  dom::parser parser;
+  dom::element doc;
+  ASSERT_SUCCESS(parser.parse(json).get(doc));
+
+  // Paths that contain '*' take the wildcard branch and call
+  // get_next_key_and_json_path. Malformed first-segment bracket-quotes must
+  // surface INVALID_JSON_POINTER (and must not abort).
+  const char *first_segment_malformed[] = {
+      R"($["a*)",
+      R"($['a*)",
+      R"($["a"*)",
+      R"($['a'*)",
+      R"($["unterminated*)",
+      R"($['unterminated*)",
+      R"($["*)",
+      R"($['*)",
+      R"($["a"*)", // quote closed but ']' missing before '*'
+  };
+  for (const char *path : first_segment_malformed) {
+    std::cout << "  malformed first segment: " << path << std::endl;
+    ASSERT_EQUAL(doc.at_path_with_wildcard(path).error(), INVALID_JSON_POINTER);
+  }
+
+  // When the first segment is valid but a later bracket-quote is not, child
+  // processing swallows the error and returns an empty result (SUCCESS).
+  // The important property is no throw/abort.
+  const char *later_segment_malformed[] = {
+      R"($["a"]["b*)",
+      R"($["a"]['b*)",
+      R"($["ok"].*)", // ok is a scalar; wildcard suffix yields empty
+  };
+  for (const char *path : later_segment_malformed) {
+    std::cout << "  later-segment / empty result path: " << path << std::endl;
+    std::vector<dom::element> values;
+    ASSERT_SUCCESS(doc.at_path_with_wildcard(path).get(values));
+    ASSERT_EQUAL(values.size(), 0);
+  }
+
+  // Well-formed bracket-quoted segments still work with wildcards.
+  std::vector<dom::element> values;
+  ASSERT_SUCCESS(doc.at_path_with_wildcard(R"($["address"].*)").get(values));
+  ASSERT_EQUAL(values.size(), 1);
+  std::string_view city;
+  ASSERT_SUCCESS(values[0].get(city));
+  ASSERT_EQUAL(city, "Nara");
+
+  ASSERT_SUCCESS(doc.at_path_with_wildcard(R"($['address'].*)").get(values));
+  ASSERT_EQUAL(values.size(), 1);
+  ASSERT_SUCCESS(values[0].get(city));
+  ASSERT_EQUAL(city, "Nara");
+
+  // Non-wildcard at_path uses json_path_to_pointer_conversion (already guarded
+  // for a missing ']'; quotes are not stripped there, so unterminated
+  // forms are still INVALID_JSON_POINTER).
+  ASSERT_EQUAL(doc.at_path(R"($["a")").error(), INVALID_JSON_POINTER);
+  ASSERT_EQUAL(doc.at_path(R"($['a')").error(), INVALID_JSON_POINTER);
+  int64_t ok_val = 0;
+  ASSERT_SUCCESS(doc.at_path("$.ok").get(ok_val));
+  ASSERT_EQUAL(ok_val, 1);
+
+  TEST_SUCCEED();
+}
+
+// Deterministic fuzz-style sweep of truncated / malformed JSONPath strings.
+// Ensures at_path_with_wildcard never aborts on incomplete bracket-quotes.
+bool json_path_malformed_deterministic_fuzz() {
+  std::cout << "Running json_path_malformed_deterministic_fuzz test" << std::endl;
+  auto json = R"({"a":{"b":[1,2,3]},"x":1,"*":true})"_padded;
+  dom::parser parser;
+  dom::element doc;
+  ASSERT_SUCCESS(parser.parse(json).get(doc));
+
+  // Seeds that exercise quote / bracket / wildcard combinations.
+  const char *seeds[] = {
+      R"($["a*)",
+      R"($['a*)",
+      R"($["a"][*])",
+      R"($['a'][*])",
+      R"($[*]["b*)",
+      R"($[*]['b*)",
+      R"($["a"]["b*)",
+      R"($["*")",
+      R"($["*"]*)",
+      R"($[*].*)",
+      R"($["a"*].*)",
+      R"($.a["b*)",
+      R"($[")",
+      R"($[')",
+      R"($["])",
+      R"($['])",
+      R"($[""])",
+      R"($[''])",
+      R"($["a])",
+      R"($['a])",
+  };
+
+  for (const char *seed : seeds) {
+    const std::string full(seed);
+    // Try every non-empty prefix so truncation of a once-valid path is covered.
+    for (size_t len = 1; len <= full.size(); len++) {
+      const std::string path = full.substr(0, len);
+      // Must return an error code (or empty success), never throw/abort.
+      auto result = doc.at_path_with_wildcard(path);
+      (void)result.error();
+    }
+  }
+
+  // A few fully valid paths mixed in to keep the happy path warm.
+  std::vector<dom::element> values;
+  ASSERT_SUCCESS(doc.at_path_with_wildcard("$.*").get(values));
+  ASSERT_TRUE(values.size() >= 1);
+  ASSERT_SUCCESS(doc.at_path_with_wildcard(R"($["a"].*)").get(values));
+  ASSERT_TRUE(values.size() >= 1);
+
+  TEST_SUCCEED();
+}
+
 // for 0.5 version and following (standard compliant)
 bool modern_support() {
 #if SIMDJSON_EXCEPTIONS
@@ -314,7 +591,8 @@ bool modern_support() {
 }
 
 int main() {
-  if (true && demo() && modern_support() &&
+  if (true && json_path_with_wildcard() && unterminated_bracket_quote_wildcard() &&
+      json_path_malformed_deterministic_fuzz() && demo() && modern_support() &&
       run_success_test(TEST_RFC_JSON, "$.foo", "[\"bar\",\"baz\"]") &&
       run_success_test(TEST_RFC_JSON, "$.foo[0]", "\"bar\"") &&
       run_success_test(TEST_RFC_JSON, "$.", "0") &&

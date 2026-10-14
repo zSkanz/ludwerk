@@ -1,6 +1,6 @@
 # 0093 — The script editor types code with Luau's own checker
 
-- Status: accepted; amended 2026-09-25 (the new solver -- see the end)
+- Status: accepted; amended 2026-09-25 (the new solver), 2026-10-06 and 2026-10-14 (the project's flags) -- see the end
 - Date: 2026-09-24
 - Amends: [0057](0057-a-script-is-an-instance-and-the-editor-edits-one-thing.md)
   §5 (autocomplete comes from the engine's own reflection, not from Analysis)
@@ -183,3 +183,11 @@ mistakes written into a project are said at their lines.
 definitions and the engine's modules from beside its own binary, never from
 a project's `.engine/types/`; that folder is for an outside analyser, and
 `ludwerk check` rewrites it when it is another engine's.
+
+## Amendment, 2026-10-14: the project's flags on top
+
+The checker's flags are still on as Luau's analyser runs them, and the
+project's `[luau.flags]` are applied after them. The same values reach the
+runtime, `ludwerk check` and VS Code (ADR 0217). The list of flags is now
+generated for every library, not for the checker's alone
+(`cmake/engine_luau_flags.cmake`).

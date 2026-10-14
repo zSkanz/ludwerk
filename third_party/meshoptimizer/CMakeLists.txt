@@ -12,7 +12,7 @@ if(POLICY CMP0092)
     cmake_policy(SET CMP0092 NEW) # Enables clean /W4 override for MSVC
 endif()
 
-project(meshoptimizer VERSION 1.2 LANGUAGES CXX)
+project(meshoptimizer VERSION 1.3 LANGUAGES CXX)
 
 option(MESHOPT_BUILD_DEMO "Build demo" OFF)
 option(MESHOPT_BUILD_GLTFPACK "Build gltfpack" OFF)
@@ -39,6 +39,7 @@ set(SOURCES
     src/partition.cpp
     src/quantization.cpp
     src/rasterizer.cpp
+    src/remesher.cpp
     src/simplifier.cpp
     src/spatialorder.cpp
     src/stripifier.cpp

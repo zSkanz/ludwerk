@@ -1069,6 +1069,37 @@ static void encodeFilterExpZero()
 		assert(decoded[i] == 0);
 }
 
+static void encodeFilterExpOverflow()
+{
+	// at bits=24, values with an all-ones mantissa round up to 2^23 which must be clamped
+	const float data[4] = {
+	    0.99999994f, // largest float below 1.0
+	    -0.99999994f,
+	    255.99998f, // largest float below 256.0
+	    1.f,
+	};
+	const unsigned int expected[4] = {
+	    0xe97fffff,
+	    0xe9800000, // -2^23 is representable as is
+	    0xf17fffff,
+	    0xea400000,
+	};
+
+	unsigned int encoded[4];
+	meshopt_encodeFilterExp(encoded, 4, 4, 24, data, meshopt_EncodeExpSeparate);
+
+	assert(memcmp(encoded, expected, sizeof(expected)) == 0);
+
+	float decoded[4];
+	memcpy(decoded, encoded, sizeof(decoded));
+	meshopt_decodeFilterExp(decoded, 4, 4);
+
+	assert(decoded[0] == 0.99999988f);
+	assert(decoded[1] == -1.f);
+	assert(decoded[2] == 255.99997f);
+	assert(decoded[3] == 1.f);
+}
+
 static void encodeFilterExpZeroShared()
 {
 	const float data[4] = {
@@ -2633,6 +2664,33 @@ static void simplifyUpdateLocked(unsigned int options)
 	assert(vb[3][3] == 0.2f);
 }
 
+static void simplifyFolds()
+{
+	const float vb[] = {
+	    0, 0, 0, 1, 0, 0, 2, 0, 0,
+	    0, 1, 0, 1, 1, 0, 2, 1, 0 //
+	};
+
+	// 0 1 2
+	// 3 4 5 + flipped versions
+	const unsigned int ib[] = {
+	    0, 1, 3, 3, 1, 4, 1, 2, 4, 4, 2, 5,
+	    0, 3, 1, 3, 4, 1, 1, 4, 2, 4, 5, 2 //
+	};
+
+	unsigned int result[24];
+
+	// without fold preservation, the errors for all collapses are close to zero because there are no open edges to prevent this
+	assert(meshopt_simplify(result, ib, 24, vb, 6, 12, 0, 1e-3f) == 0);
+	assert(meshopt_simplify(result, ib, 24, vb, 6, 12, 0, 1e-3f, meshopt_SimplifyPreserveFolds) == 12);
+
+	const unsigned int expected[] = {
+	    0, 2, 3, 3, 2, 5, 0, 3, 2, 3, 5, 2 //
+	};
+
+	assert(memcmp(result, expected, sizeof(expected)) == 0);
+}
+
 static void filterTriangles()
 {
 	// v0/v3 match fully; v0/v4 match on prefix only
@@ -3441,6 +3499,70 @@ static void tangentDegenerate()
 			assert(fabsf(tangents[i * 4 + k] - expected[i][k]) < 1e-3f);
 }
 
+static void normalsBasic()
+{
+	const float vertices[][3] = {
+	    {-1.f, -0.57735f, 0.f},
+	    {1.f, -0.57735f, 0.f},
+	    {0.f, 1.15470f, 0.f},
+	    {0.f, 0.f, 0.38f},
+	};
+
+	// flattened tetrahedron (apex is closer to the base so that we can get soft side edges)
+	const unsigned int indices[] = {0, 2, 1, 0, 1, 3, 1, 2, 3, 2, 0, 3};
+
+	float normals[12 * 3];
+	meshopt_generateNormals(normals, indices, 12, vertices[0], 4, sizeof(vertices[0]), 3.14159265f / 3.f, 0.f);
+
+	const float base[3] = {0.f, 0.f, -1.f};
+	const float side0[3] = {-0.2707f, -0.1563f, 0.9499f};
+	const float side1[3] = {0.2707f, -0.1563f, 0.9499f};
+	const float side2[3] = {0.f, 0.3126f, 0.9499f};
+	const float apex[3] = {0.f, 0.f, 1.f};
+
+	const float* expected[12] = {base, base, base, side0, side1, apex, side1, side2, apex, side2, side0, apex};
+
+	for (size_t i = 0; i < 12; ++i)
+		for (size_t k = 0; k < 3; ++k)
+			assert(fabsf(normals[i * 3 + k] - expected[i][k]) < 1e-3f);
+
+	// shared vertices around soft side edges get the same normal vector
+	for (size_t k = 0; k < 3; ++k)
+	{
+		assert(normals[3 * 3 + k] == normals[10 * 3 + k]); // side0
+		assert(normals[4 * 3 + k] == normals[6 * 3 + k]);  // side1
+		assert(normals[7 * 3 + k] == normals[9 * 3 + k]);  // side2
+		assert(normals[5 * 3 + k] == normals[8 * 3 + k]);  // apex
+		assert(normals[5 * 3 + k] == normals[11 * 3 + k]); // apex
+	}
+}
+
+static void normalsDegenerate()
+{
+	const float vertices[][3] = {
+	    {0.f, 0.f, 0.f},
+	    {0.f, 1.f, 0.f},
+	    {1.f, 0.f, 0.f},
+	    {2.f, 0.f, 0.f},
+	    {0.f, 0.5f, 0.f},
+	};
+
+	// degenerate triangle connects the triangles across a hard edge
+	const unsigned int indices[] = {0, 1, 2, 0, 2, 3, 0, 3, 4};
+
+	float normals[9 * 3];
+	meshopt_generateNormals(normals, indices, 9, vertices[0], 5, sizeof(vertices[0]), 3.14159265f * 3.f / 4.f, 0.f);
+
+	const float negative[3] = {0.f, 0.f, -1.f};
+	const float zero[3] = {0.f, 0.f, 0.f};
+	const float positive[3] = {0.f, 0.f, 1.f};
+	const float* expected[9] = {negative, negative, negative, zero, zero, zero, positive, positive, positive};
+
+	for (size_t i = 0; i < 9; ++i)
+		for (size_t k = 0; k < 3; ++k)
+			assert(fabsf(normals[i * 3 + k] - expected[i][k]) < 1e-3f);
+}
+
 void runTests()
 {
 	decodeIndexV0();
@@ -3503,6 +3625,7 @@ void runTests()
 	encodeFilterQuat12();
 	encodeFilterExp();
 	encodeFilterExpZero();
+	encodeFilterExpOverflow();
 	encodeFilterExpZeroShared();
 	encodeFilterExpAlias();
 	encodeFilterExpClamp();
@@ -3557,6 +3680,7 @@ void runTests()
 	simplifyUpdate();
 	simplifyUpdateLocked(0);
 	simplifyUpdateLocked(meshopt_SimplifySparse);
+	simplifyFolds();
 
 	filterTriangles();
 	adjacency();
@@ -3579,4 +3703,6 @@ void runTests()
 
 	tangentsBasic();
 	tangentDegenerate();
+	normalsBasic();
+	normalsDegenerate();
 }

@@ -350,6 +350,23 @@ struct hash<std::pair<uint64_t, uint64_t> >
 };
 } // namespace std
 
+struct PrimitiveCacheEntry
+{
+	size_t offset;
+	size_t size;
+	QuantizationTexture qt;
+};
+
+static bool sameQuantization(const QuantizationTexture& lhs, const QuantizationTexture& rhs, const Settings& settings)
+{
+	if (!settings.quantize || settings.tex_float)
+		return true;
+
+	return lhs.offset[0] == rhs.offset[0] && lhs.offset[1] == rhs.offset[1] &&
+	       lhs.scale[0] == rhs.scale[0] && lhs.scale[1] == rhs.scale[1] &&
+	       lhs.bits == rhs.bits && lhs.normalized == rhs.normalized;
+}
+
 static size_t process(cgltf_data* data, const char* input_path, const char* output_path, const char* report_path, std::vector<Mesh>& meshes, std::vector<Animation>& animations, const Settings& settings, std::string& json, std::string& bin, std::string& fallback, size_t& fallback_size, const char* meshopt_ext)
 {
 	if (settings.verbose)
@@ -420,6 +437,9 @@ static size_t process(cgltf_data* data, const char* input_path, const char* outp
 		if (!settings.keep_attributes)
 			filterStreams(mesh, mi);
 
+		if (settings.mesh_normals && (!mi.unlit || settings.keep_attributes))
+			generateNormals(mesh, settings.normals_crease);
+
 		if (settings.mesh_tangents && (mi.needs_tangents || settings.keep_attributes))
 			generateTangents(mesh);
 	}
@@ -430,7 +450,7 @@ static size_t process(cgltf_data* data, const char* input_path, const char* outp
 	markNeededNodes(data, nodes, meshes, animations, settings);
 	markNeededMaterials(data, materials, meshes, settings);
 
-	if (settings.simplify_scaled && settings.simplify_ratio < 1)
+	if (settings.simplify_ratio < 1)
 		computeMeshQuality(meshes);
 
 	for (size_t i = 0; i < meshes.size(); ++i)
@@ -582,7 +602,7 @@ static size_t process(cgltf_data* data, const char* input_path, const char* outp
 		ext_texture_transform = ext_texture_transform || mi.uses_texture_transform;
 	}
 
-	std::unordered_map<std::pair<uint64_t, uint64_t>, std::pair<size_t, size_t> > primitive_cache;
+	std::unordered_map<std::pair<uint64_t, uint64_t>, PrimitiveCacheEntry> primitive_cache;
 
 	for (size_t i = 0; i < meshes.size(); ++i)
 	{
@@ -614,18 +634,19 @@ static size_t process(cgltf_data* data, const char* input_path, const char* outp
 
 			if (prim.geometry_duplicate)
 			{
-				std::pair<size_t, size_t>& primitive_json = primitive_cache[std::make_pair(prim.geometry_hash[0], prim.geometry_hash[1])];
+				PrimitiveCacheEntry& entry = primitive_cache[std::make_pair(prim.geometry_hash[0], prim.geometry_hash[1])];
 
-				if (primitive_json.second)
+				if (entry.size && sameQuantization(entry.qt, qt, settings))
 				{
 					// reuse previously written accessors
-					json_meshes.append(json_meshes, primitive_json.first, primitive_json.second);
+					json_meshes.append(json_meshes, entry.offset, entry.size);
 				}
 				else
 				{
-					primitive_json.first = json_meshes.size();
+					entry.offset = json_meshes.size();
 					writeMeshGeometry(json_meshes, views, json_accessors, accr_offset, prim, qp, qt, settings);
-					primitive_json.second = json_meshes.size() - primitive_json.first;
+					entry.size = json_meshes.size() - entry.offset;
+					entry.qt = qt;
 				}
 			}
 			else
@@ -1244,8 +1265,6 @@ Settings defaults()
 	settings.mesh_dedup = true;
 	settings.simplify_ratio = 1.f;
 	settings.simplify_error = 1e-2f;
-	settings.simplify_attributes = true;
-	settings.simplify_scaled = true;
 
 	for (int kind = 0; kind < TextureKind__Count; ++kind)
 	{
@@ -1366,6 +1385,11 @@ int main(int argc, char** argv)
 		{
 			settings.mesh_tangents = true;
 		}
+		else if (strcmp(arg, "-gn") == 0 && i + 1 < argc && isdigit(argv[i + 1][0]))
+		{
+			settings.mesh_normals = true;
+			settings.normals_crease = clamp(float(atof(argv[++i])), 0.f, 180.f);
+		}
 		else if (strcmp(arg, "-at") == 0 && i + 1 < argc && isdigit(argv[i + 1][0]))
 		{
 			settings.trn_bits = clamp(atoi(argv[++i]), 1, 24);
@@ -1433,17 +1457,7 @@ int main(int argc, char** argv)
 		}
 		else if (strcmp(arg, "-sv") == 0)
 		{
-			fprintf(stderr, "Warning: attribute aware simplification is enabled by default; option -sv is only provided for compatibility and may be removed in the future\n");
-		}
-		else if (strcmp(arg, "-svd") == 0)
-		{
-			fprintf(stderr, "Warning: option -svd disables attribute aware simplification and is temporary; avoid production usage\n");
-			settings.simplify_attributes = false;
-		}
-		else if (strcmp(arg, "-ssd") == 0)
-		{
-			fprintf(stderr, "Warning: option -ssd disables scaled simplification error and is temporary; avoid production usage\n");
-			settings.simplify_scaled = false;
+			settings.simplify_update = true;
 		}
 		else if (strcmp(arg, "-sp") == 0)
 		{
@@ -1671,6 +1685,7 @@ int main(int argc, char** argv)
 			fprintf(stderr, "\nSimplification:\n");
 			fprintf(stderr, "\t-si R: simplify meshes targeting triangle/point count ratio R (default: 1; R should be between 0 and 1)\n");
 			fprintf(stderr, "\t-se E: limit simplification error to E (default: 0.01 = 1%% deviation; E should be between 0 and 1)\n");
+			fprintf(stderr, "\t-sv: simplify with vertex position and attribute optimization\n");
 			fprintf(stderr, "\t-sp: use permissive simplification mode to allow simplification across attribute discontinuities\n");
 			fprintf(stderr, "\t-sa: aggressively simplify to the target ratio disregarding quality\n");
 			fprintf(stderr, "\t-slb: lock border vertices during simplification to avoid gaps on connected meshes\n");
@@ -1688,6 +1703,7 @@ int main(int argc, char** argv)
 			fprintf(stderr, "\t-vnf: use floating point attributes for normals\n");
 			fprintf(stderr, "\t-vi: use interleaved vertex attributes (reduces compression efficiency)\n");
 			fprintf(stderr, "\t-gt: generate tangent frames when needed, replacing existing tangents\n");
+			fprintf(stderr, "\t-gn A: generate normals when absent, using crease angle A (degrees)\n");
 			fprintf(stderr, "\t-kv: keep source vertex attributes even if they aren't used\n");
 			fprintf(stderr, "\nAnimations:\n");
 			fprintf(stderr, "\t-at N: use N-bit quantization for translations (default: 16; N should be between 1 and 24)\n");
@@ -1750,9 +1766,9 @@ int main(int argc, char** argv)
 	}
 
 #ifdef GLTFPACK_NO_EXPERIMENTAL
-	if (settings.mesh_tangents)
+	if (settings.mesh_normals)
 	{
-		fprintf(stderr, "Option -gt is not available in this build\n");
+		fprintf(stderr, "Option -gn is not available in this build\n");
 		return 1;
 	}
 #endif
@@ -1776,6 +1792,54 @@ extern "C" int pack(int argc, char** argv)
 #endif
 
 #ifdef GLTFFUZZ
+extern "C" size_t LLVMFuzzerMutate(uint8_t* data, size_t size, size_t max_size);
+
+extern "C" size_t LLVMFuzzerCustomMutator(uint8_t* data, size_t size, size_t max_size, unsigned int seed)
+{
+	// parse glTF/JSON chunk headers
+	if (size < 28 || memcmp(data, "glTF", 4) != 0 || memcmp(data + 16, "JSON", 4) != 0)
+		return LLVMFuzzerMutate(data, size, max_size);
+
+	uint32_t total_size, json_size;
+	memcpy(&total_size, data + 8, 4);
+	memcpy(&json_size, data + 12, 4);
+
+	// parse BIN chunk header (note, we assume it's required for simplicity)
+	if (json_size > size - 28 || memcmp(data + 24 + json_size, "BIN", 4) != 0)
+		return LLVMFuzzerMutate(data, size, max_size);
+
+	uint32_t bin_size;
+	memcpy(&bin_size, data + 20 + json_size, 4);
+
+	// final validation; note that all chunks must be 4 byte aligned
+	if (total_size != size || bin_size > size - 28 - json_size || 28 + json_size + bin_size != size || ((bin_size | json_size) & 3) != 0)
+		return LLVMFuzzerMutate(data, size, max_size);
+
+	// pick chunk to mutate; we default to mutating JSON but mutate BIN with 10% probability
+	bool mutate_bin = seed % 10 == 0;
+	size_t target_offset = mutate_bin ? 28 + json_size : 20;
+	size_t target_size = mutate_bin ? bin_size : json_size;
+
+	size_t target_capacity = (max_size - (size - target_size)) & ~3;
+
+	// mutate chunk and pad it to 4 byte boundary to maintain GLB alignment
+	std::vector<uint8_t> target(data + target_offset, data + target_offset + target_size);
+	target.resize(target_capacity);
+	target.resize(LLVMFuzzerMutate(target.data(), target_size, target_capacity));
+	target.resize((target.size() + 3) & ~3, mutate_bin ? 0 : ' ');
+
+	uint32_t new_target_size = uint32_t(target.size());
+	uint32_t new_total_size = uint32_t(size - target_size + new_target_size);
+
+	// patch the target chunk and update chunk length as well as total length
+	memmove(data + target_offset + new_target_size, data + target_offset + target_size, size - target_offset - target_size);
+	memcpy(data + target_offset, target.data(), new_target_size);
+	memcpy(data + 8, &new_total_size, 4);
+	memcpy(data + target_offset - 8, &new_target_size, 4);
+
+	return new_total_size;
+}
+
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* buffer, size_t size)
 {
 	Settings settings = defaults();
@@ -1798,7 +1862,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* buffer, size_t size)
 
 	std::string json, bin, fallback;
 	size_t fallback_size = 0;
-	process(data, NULL, NULL, NULL, meshes, animations, settings, json, bin, fallback, fallback_size, NULL);
+	process(data, NULL, NULL, NULL, meshes, animations, settings, json, bin, fallback, fallback_size, "KHR_meshopt_compression");
 
 	cgltf_free(data);
 

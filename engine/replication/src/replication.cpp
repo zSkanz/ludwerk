@@ -46,6 +46,7 @@ public:
             m_replica->setCorrectionLog(m_config.logCorrections);
             if (m_config.token.valid())
                 m_replica->setPlayerToken(m_config.token);
+            m_replica->setLuauFlags(m_config.luauFlags);
             m_replica->setInterpolationDelay(m_config.interpolationDelayTicks);
             if (m_probe)
                 m_replica->setReferenceProbe(m_probe);
@@ -60,11 +61,16 @@ public:
         transport.maxPeers = std::min<usize>(static_cast<usize>(m_config.maxPeers) + 1, net::EnetPeerCap);
         // What a client sends up is small, and a client is not trusted.
         transport.maxMessageBytes = MaxAuthorityMessageBytes;
-        transport.maxPeersPerAddress = MaxPeersPerAddress;
+        // ENet's own count of one address, above the authority's, so the
+        // connection that is one too many lives long enough to be told why.
+        transport.maxPeersPerAddress =
+            m_config.maxPeersPerAddress == 0 ? 0 : m_config.maxPeersPerAddress + MaxHandshakesPerAddress;
         if (auto error = m_transport->open(transport); error.has_value())
             return error;
         m_authority.emplace(*m_transport);
         m_authority->setMaxPlayers(m_config.maxPeers);
+        m_authority->setMaxPeersPerAddress(m_config.maxPeersPerAddress);
+        m_authority->setLuauFlags(m_config.luauFlags);
         m_authority->setUncarriedWarnings(m_config.developer);
         // **A host is a host with or without its relay** (ADR 0178): one that
         // cannot be found -- no internet, a name mistyped -- is said in the

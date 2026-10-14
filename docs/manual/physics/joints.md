@@ -175,8 +175,15 @@ without a joint, are on [Movers and powered joints](manual:physics/movers).
 
 ## What is not here
 
-No `Motor6D`: a character is posed by its skeleton, and a jointed one by
-powered joints.
+- No `Motor6D`. A character is posed by its skeleton, and a jointed one by
+  powered joints.
+- No wheel joint. A vehicle's wheels are cast along their suspension, not
+  jointed to the chassis: see [Vehicles](manual:physics/vehicles).
+- No cloth made of joints. A cape hangs as a `Cloth` on its own mesh: see
+  [Cloth](manual:animation/cloth).
+- Breaking is here: every joint can give under load. A part cut into pieces
+  that are held together by breakable joints is
+  [Destruction](manual:physics/destruction).
 
 ## Where to look next
 

@@ -215,7 +215,7 @@ by hand.
 ludwerk android install-tools
 ```
 
-A JDK 17, the Android SDK (platform 35, build-tools 35.0.0, platform-tools)
+A JDK 17, the Android SDK (platform 36, build-tools 36.0.0, platform-tools)
 and Gradle 8.12, into your Ludwerk folder -- what an Android export needs. No
 NDK: the player is prebuilt. A second run installs only what is missing.
 

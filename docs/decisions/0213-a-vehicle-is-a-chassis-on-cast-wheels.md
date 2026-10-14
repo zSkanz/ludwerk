@@ -110,7 +110,13 @@ and drawn two to seven centimetres back and forth. So, for a chassis:
   (`PhysicsSync::VehiclePull`) to the authority's place and velocity, so a
   drift that does not grow is gone in about a second and two machines never
   settle a few centimetres apart about where a car is, which decides what it
-  hits. `NetworkService:GetStats().PredictedDrift` says how far it was at the
+  hits. **A fifth an answer, not a fifth a tick**: the pull happens where an
+  answer is taken, so it closes half a drift in three answers whatever the
+  snapshot rate. At the default, an answer a tick, that is 50 ms. A game
+  that sends a snapshot every third tick closes it in 150 ms, and the drift
+  between answers grows for three ticks rather than one. The three
+  centimetres bound it either way: past them the car is corrected. Measured
+  at an answer a tick; a lower rate was not measured. `NetworkService:GetStats().PredictedDrift` says how far it was at the
   last answer. Three, not five: measured, the drift's mean is one to three
   millimetres and its largest thirteen, and three centimetres is where a
   shove between two cars started to be told apart from it;

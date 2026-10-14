@@ -108,6 +108,13 @@ struct Config
     // a startup failure that reads as "networking is broken" rather than as "you
     // asked for too many".
     u32 maxPeers = 32;
+    // How many of them one address may be, nought for any number
+    // (`DefaultPeersPerAddress`).
+    u32 maxPeersPerAddress = 64;
+    // **What the project changed of Luau that compiled code can tell**
+    // (ADR 0217), as one number, nought for nothing: a joiner whose number is
+    // not the host's runs other scripts, and is refused before it plays.
+    u64 luauFlags = 0;
     // Snapshots per second. A COUNT of ticks between sends rather than a
     // millisecond interval, so it is a function of the simulation rather than of
     // the wall clock (R10).

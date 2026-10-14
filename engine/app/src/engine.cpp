@@ -5679,6 +5679,22 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 if (editorCommands.quit)
                     quit = true;
 
+                // **The project's Luau flags changed** (ADR 0217): the checker
+                // stopped first, so no check is half way through a parse when
+                // the language changes under it; then applied, VS Code told,
+                // and every open tab checked again. The next Play compiles
+                // with them.
+                if (editorCommands.luauFlags.has_value()) {
+                    stopLanguageService();
+                    for (const std::string& problem : applyLuauFlags(*editorCommands.luauFlags))
+                        core::log(core::LogLevel::Warn, ENG_TR("engine.luau_flags.warn.setting"),
+                                  std::array<core::I18nArg, 1>{core::I18nArg{"problem", problem}});
+                    if (!writeVsCodeLuauFlags(editor.content().root().parent_path()))
+                        core::log(core::LogLevel::Warn, ENG_TR("engine.luau_flags.warn.vscode"));
+                    for (std::size_t index = 0; OpenScript* tab = scripts.at(index); ++index)
+                        tab->document.markDiagnosticsStale();
+                }
+
                 // **Leaving this project for another one** (ADR 0055). Both
                 // start the browser as a new process and close this editor,
                 // which is what a project being a PROCESS makes them: a project

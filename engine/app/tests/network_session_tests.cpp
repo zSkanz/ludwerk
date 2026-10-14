@@ -1377,6 +1377,117 @@ TEST_CASE("a hundred jumps onto a block's corner over jitter and loss are not co
     CHECK(clean.corrections == 0);
 }
 
+// **A floor larger than the interest radius** (the MMO load test): a 4 km
+// anchored part centred on the origin, a 150 m radius, and a player standing
+// on it a kilometre out each way. Measured from its centre the floor was never
+// sent, `workspace.Floor` was nil on the client, and the predicted character
+// fell through it and was corrected every tick.
+constexpr std::string_view WideFloorServer = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+local Corner = require("@shared/corner")
+game:GetService("StreamingService").LoadRadius = 150
+NetworkService:Host(47150)
+local function block(name: string, size: vector, position: vector)
+    local part = Instance.new("Part")
+    part.Name = name
+    part.Anchored = true
+    part.Size = size
+    part.Position = position
+    part.Parent = workspace
+end
+block("Floor", vector.create(4000, 1, 4000), vector.create(0, -0.5, 0))
+-- Far from the player, so the radius is seen to be at work at all.
+block("Far", vector.create(4, 4, 4), vector.create(1600, 2, 1000))
+local bodies: { [Player]: CharacterBody } = {}
+RunService.Heartbeat:Connect(function()
+    for _, player in NetworkService:GetPlayers() do
+        if player.UserId ~= 2 then
+            continue
+        end
+        local body = bodies[player]
+        if not body then
+            body = Instance.new("CharacterBody")
+            body.Size = vector.create(2, 4, 2)
+            body.Position = vector.create(1000, 3, 1000)
+            body.WalkSpeed = 8
+            body.Parent = workspace
+            bodies[player] = body
+            player.Character = body
+        end
+        Corner.drive(player, body :: CharacterBody)
+    end
+end)
+)";
+
+constexpr std::string_view WideFloorClient = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+local InputService = game:GetService("InputService")
+local Corner = require("@shared/corner")
+local context = Instance.new("InputContext")
+context.Parent = workspace
+local move = Instance.new("InputAction")
+move.Name = "Move"
+move.Type = Enum.InputActionType.Direction2D
+move.Parent = context
+local stick = Instance.new("InputBinding")
+stick.KeyCode = Enum.KeyCode.VirtualStick1
+stick.Parent = move
+NetworkService:Join("memory:47150")
+
+-- Stands, then walks back and forth across the floor, a second each way.
+local frames = 0
+RunService.Heartbeat:Connect(function()
+    local me = NetworkService.LocalPlayer
+    local body = if me then me.Character else nil
+    if NetworkService.State ~= Enum.NetworkState.Connected or not me or not body then
+        return
+    end
+    frames += 1
+    local run = 0
+    if frames > 60 then
+        run = if (frames // 60) % 2 == 0 then 1 else -1
+    end
+    InputService:SetVirtualState(Enum.KeyCode.Virtual1, run)
+    Corner.drive(me, body :: CharacterBody)
+    if frames == 480 then
+        print("wide-floor-done")
+    end
+end)
+)";
+
+TEST_CASE("a part larger than the interest radius is sent to a player standing on it far from its centre")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    server.project.write("src/shared/corner.luau", std::string(CornerShared));
+    server.project.write("src/server/init.luau", std::string(WideFloorServer));
+    server.bootOver(wire, nullptr);
+    Machine client;
+    client.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    client.project.write("src/shared/corner.luau", std::string(CornerShared));
+    client.project.write("src/client/init.luau", std::string(WideFloorClient));
+    client.bootOver(wire, nullptr);
+    HostReplay replay(*client.host);
+    client.network->setCharacterReplay(&replay);
+
+    for (int frame = 0; frame < 6000 && !log.contains("wide-floor-done"); ++frame) {
+        server.frame();
+        client.frame();
+    }
+    REQUIRE(log.contains("wide-floor-done"));
+
+    const scene::World& world = client.host->world();
+    CHECK(world.findFirstChild(client.host->workspace(), world.atoms().lookup("Floor")).valid());
+    CHECK_FALSE(world.findFirstChild(client.host->workspace(), world.atoms().lookup("Far")).valid());
+    const replication::IReplication* replica = client.network->replication();
+    REQUIRE(replica != nullptr);
+    CHECK(replica->stats().corrections == 0);
+}
+
 // The same game with three loose crates in the walk: the client runs at them
 // and back for ten seconds, pushing them into each other.
 constexpr std::string_view CrateServer = R"(

@@ -37,8 +37,8 @@ namespace document_stream_tests {
             // it does not do UTF-8 validation in stage one, but it will do
             // so when we access the document.
             if(err == SUCCESS) {
-                ondemand::json_type t;
-                err = doc.type().get(t);
+                std::string_view document_string;
+                err = doc.get_string().get(document_string);
             }
             if((err == SUCCESS) && (document_index != 1)) {
               std::cerr << "Only the first document should be valid." << std::endl;
@@ -840,10 +840,10 @@ namespace document_stream_tests {
           if(doc.get_bool().get(b) == SUCCESS) { bool_count +=b; }
           // If we don't access the document at all, other than get_bool(),
           // then some simdjson kernels will allow you to iterate through
-          // 3 'documents'. By asking for the type, we make the iteration
+          // 3 'documents'. By trying to access the content, we make the iteration
           // terminate after the first 'document'.
-          ondemand::json_type t;
-          if(doc.type().get(t) != SUCCESS) { break; }
+          std::string_view document_string;
+          if(doc.get_string().get(document_string) != SUCCESS) { break; }
         }
         return (bool_count == 0) && (total_count == 1);
     }
@@ -880,6 +880,30 @@ namespace document_stream_tests {
         ASSERT_SUCCESS(parser.iterate_many(json).get(doc));
         int64_t x;
         ASSERT_SUCCESS((*doc.begin()).get_int64().get(x));
+        ASSERT_EQUAL(x,133);
+        TEST_SUCCEED();
+    }
+
+    bool uint32_with_trailing() {
+        TEST_START();
+        auto json = R"( 133 badstuff )"_padded;
+        ondemand::parser parser;
+        ondemand::document_stream doc;
+        ASSERT_SUCCESS(parser.iterate_many(json).get(doc));
+        uint32_t x;
+        ASSERT_SUCCESS((*doc.begin()).get_uint32().get(x));
+        ASSERT_EQUAL(x,133);
+        TEST_SUCCEED();
+    }
+
+    bool int32_with_trailing() {
+        TEST_START();
+        auto json = R"( 133 badstuff )"_padded;
+        ondemand::parser parser;
+        ondemand::document_stream doc;
+        ASSERT_SUCCESS(parser.iterate_many(json).get(doc));
+        int32_t x;
+        ASSERT_SUCCESS((*doc.begin()).get_int32().get(x));
         ASSERT_EQUAL(x,133);
         TEST_SUCCEED();
     }
@@ -921,16 +945,43 @@ namespace document_stream_tests {
         TEST_SUCCEED();
     }
 
+    // structural_indexes[] is relative to batch_start while current_index() is
+    // absolute, so source() used to underflow on every batch after the first.
+    bool source_across_batches() {
+        TEST_START();
+        std::string raw;
+        for (int k = 0; k < 200; k++) { raw += std::to_string(100000 + k); raw += "\n"; }
+        auto input = simdjson::padded_string(raw);
+        ondemand::parser parser;
+        ondemand::document_stream stream;
+        ASSERT_SUCCESS(parser.iterate_many(input, 64).get(stream));
+        size_t count = 0;
+        for (auto it = stream.begin(); it != stream.end(); ++it) {
+            auto doc = *it;
+            ASSERT_SUCCESS(doc.error());
+            std::string_view src = it.source();
+            ASSERT_TRUE(it.current_index() <= input.size());
+            ASSERT_TRUE(src.size() <= input.size() - it.current_index());
+            ASSERT_EQUAL(src, std::to_string(100000 + count));
+            count++;
+        }
+        ASSERT_EQUAL(count, size_t(200));
+        TEST_SUCCEED();
+    }
+
     bool run() {
         return
             issue2181() &&
             issue2170() &&
             issue2137() &&
             skipbom() &&
+            source_across_batches() &&
             issue1977() &&
             string_with_trailing() &&
             uint64_with_trailing() &&
             int64_with_trailing() &&
+            uint32_with_trailing() &&
+            int32_with_trailing() &&
             bool_with_trailing() &&
             null_with_trailing() &&
             truncated_utf8() &&

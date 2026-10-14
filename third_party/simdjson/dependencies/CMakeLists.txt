@@ -7,12 +7,12 @@ option(SIMDJSON_ALLOW_DOWNLOADS
 cmake_dependent_option(SIMDJSON_COMPETITION "Compile competitive benchmarks" ON
         SIMDJSON_ALLOW_DOWNLOADS OFF)
 cmake_dependent_option(SIMDJSON_GOOGLE_BENCHMARKS "compile the Google Benchmark benchmarks" ON
-        SIMDJSON_ALLOW_DOWNLOADS OFF)
+        "SIMDJSON_ALLOW_DOWNLOADS OR MINGW" OFF)
 
 if(SIMDJSON_GOOGLE_BENCHMARKS)
   CPMAddPackage(
         NAME google_benchmarks
-        URL https://github.com/google/benchmark/archive/refs/tags/v1.7.1.zip
+        URL https://github.com/google/benchmark/archive/refs/tags/v1.9.5.zip
         OPTIONS
         "BENCHMARK_ENABLE_TESTING OFF"
         "BENCHMARK_ENABLE_INSTALL OFF"
@@ -22,7 +22,7 @@ endif()
 
 CPMAddPackage(
         NAME simdjson-data
-        URL https://github.com/simdjson/simdjson-data/archive/a5b13babe65c1bba7186b41b43d4cbdc20a5c470.zip
+        URL https://github.com/simdjson/simdjson-data/archive/351949906abde446f0314bf79606fb5d884f5be7.zip
 )
 
 option(SIMDJSON_USE_BOOST_JSON "Try to include BOOST_JSON, this may break your binaries under some systems." OFF)
@@ -93,19 +93,11 @@ int main() {}
 
   CPMAddPackage(
       NAME nlohmann_json
-      URL https://github.com/nlohmann/json/archive/refs/tags/v3.10.5.zip
+      URL https://github.com/nlohmann/json/archive/refs/tags/v3.12.0.zip
   )
 
   set_property(TARGET nlohmann_json APPEND PROPERTY INTERFACE_COMPILE_DEFINITIONS SIMDJSON_COMPETITION_NLOHMANN_JSON)
 
-  CPMAddPackage(
-      NAME json11
-      URL https://github.com/dropbox/json11/archive/ec4e45219af1d7cde3d58b49ed762376fccf1ace.zip
-      DOWNLOAD_ONLY YES
-  )
-  add_library(json11 STATIC "${json11_SOURCE_DIR}/json11.cpp")
-  target_include_directories(json11 SYSTEM PUBLIC "${json11_SOURCE_DIR}")
-  target_compile_definitions(json11 INTERFACE SIMDJSON_COMPETITION_JSON11)
 
   set(jsoncpp_SOURCE_DIR "${simdjson_SOURCE_DIR}/dependencies/jsoncppdist")
   add_library(jsoncpp STATIC "${jsoncpp_SOURCE_DIR}/jsoncpp.cpp")
@@ -114,7 +106,7 @@ int main() {}
 
   CPMAddPackage(
       NAME rapidjson
-      URL https://github.com/Tencent/rapidjson/archive/f54b0e47a08782a6131cc3d60f94d038fa6e0a51.zip
+      URL https://github.com/Tencent/rapidjson/archive/805d7ed5dfe97a39b8b0816fd5eeed8731dc4936.zip
       DOWNLOAD_ONLY YES
   )
   add_library(rapidjson INTERFACE)
@@ -177,7 +169,7 @@ int main() {}
   endif()
 
   add_library(competition-all INTERFACE)
-  target_link_libraries(competition-all INTERFACE competition-core jsoncpp json11 fastjson gason ujson4c)
+  target_link_libraries(competition-all INTERFACE competition-core jsoncpp fastjson gason ujson4c)
 endfunction()
 
 if(SIMDJSON_COMPETITION)

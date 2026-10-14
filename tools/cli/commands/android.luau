@@ -2,7 +2,7 @@
 --[[
 	`ludwerk android install-tools` — what an Android export needs on a machine
 	that has never built for Android (ADR 0104 §6): a JDK 17, the SDK's command
-	line tools, platform 35, build-tools 35.0.0 and platform-tools (adb), and
+	line tools, platform 36, build-tools 36.0.0 and platform-tools (adb), and
 	the Gradle the template pins. **No NDK**: the player is prebuilt.
 
 	Everything goes into the user's Ludwerk folder -- never on PATH, never
@@ -35,7 +35,7 @@ local tr = catalog.tr
 local JdkVersion = "17.0.20.1+1"
 local CmdlineToolsBuild = "13114758"
 local GradleVersion = "8.12"
-local SdkPackages = { "platforms;android-35", "build-tools;35.0.0", "platform-tools" }
+local SdkPackages = { "platforms;android-36", "build-tools;36.0.0", "platform-tools" }
 
 -- **What each pinned archive's bytes are**, SHA-256: the JDK's as
 -- Adoptium publishes it, Gradle's as Gradle does, and the command-line tools'

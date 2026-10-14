@@ -479,16 +479,18 @@ TEST_CASE_FIXTURE(CatalogFixture, "gltf: a mirroring node reverses the winding o
 TEST_CASE_FIXTURE(CatalogFixture, "gltf: an accessor that reads past its own buffer view is an error")
 {
     // Both 48-byte views -- positions and normals -- are halved while the
-    // accessors still claim four elements of twelve bytes each. Nothing in
-    // fastgltf's own validation looks at this, so without the importer's bounds
-    // check the read runs off the end of the buffer.
+    // accessors still claim four elements of twelve bytes each. fastgltf's
+    // validation has caught this itself since 0.9.1, so it is refused as an
+    // invalid document; the importer's own bounds check stays behind it, for
+    // what that validation does not look at, and either refusal is a refusal.
     std::string text = fixtureText("quad.gltf");
     REQUIRE(replaceAll(text, "\"byteLength\": 48", "\"byteLength\": 24") == 2u);
 
     Model model;
     const auto error = importGltf(toBytes(text), dataDirectory(), unoptimized(), model);
     REQUIRE(error.has_value());
-    CHECK(error->message.find("asset.gltf.err.accessor_out_of_range") != std::string::npos);
+    CHECK((error->message.find("asset.gltf.err.accessor_out_of_range") != std::string::npos ||
+           error->message.find("asset.gltf.err.invalid_document") != std::string::npos));
     CHECK(model.mesh.vertices.empty());
 
     // The other shape of the same lie: an element count far larger than the
@@ -1493,6 +1495,19 @@ TEST_CASE_FIXTURE(CatalogFixture, "gltf: a mesh's morph targets import by name, 
         else
             CHECK(delta.normal.y == doctest::Approx(0.0));
     }
+}
+
+TEST_CASE_FIXTURE(CatalogFixture, "gltf: a node's morph weights are where its targets start")
+{
+    // `morph_quad_node_weights.gltf`: the quad above, its node giving the
+    // weights [0.5, 0.75] over its mesh's [0, 0.25]. The node's are what the
+    // face starts at; fastgltf before 0.9.1 never parsed them.
+    Model model;
+    REQUIRE_FALSE(
+        importGltf(readFixture("morph_quad_node_weights.gltf"), dataDirectory(), unoptimized(), model).has_value());
+    REQUIRE(model.morphs.size() == 2);
+    CHECK(model.morphs[0].defaultWeight == doctest::Approx(0.5));
+    CHECK(model.morphs[1].defaultWeight == doctest::Approx(0.75));
 }
 
 TEST_CASE_FIXTURE(CatalogFixture, "gltf: morph targets follow their vertices through the optimizer")

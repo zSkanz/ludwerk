@@ -65,9 +65,9 @@ jobs:
   sanitizers:
     name: ASan + UBSan
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 140
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set out-of-tree build root (R14)
         shell: bash
@@ -123,8 +123,13 @@ jobs:
       # singletons -- the message catalog, the job pool, SDL's own state -- and
       # reporting those on every run would bury the reports that matter. What is
       # wanted is the memory-error half.
+      # **Two hours, not seventy-five minutes.** The nightly of 2026-10-14 (run
+      # 38544278457) was stopped by the old limit at test 190 of 192 -- a
+      # timeout, not a finding -- and a suite that stops before its end has
+      # not run under the sanitizers at all. The suite grows with every
+      # category; this leaves it room, and a hosted runner allows six hours.
       - name: Build and test under the sanitizers
-        timeout-minutes: 75
+        timeout-minutes: 120
         shell: bash
         env:
           ENG_LINUX_PRESET: linux-clang-asan
@@ -188,7 +193,7 @@ jobs:
     timeout-minutes: 45
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set out-of-tree build root (R14)
         shell: bash
@@ -221,7 +226,7 @@ jobs:
       # beside each output showing which pixels moved.
       - name: The images this run produced
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lavapipe-goldens
           path: |
@@ -259,7 +264,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set out-of-tree build root (R14)
         shell: bash
@@ -419,7 +424,7 @@ jobs:
     # schedule.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set out-of-tree build root (R14)
         shell: bash
@@ -460,7 +465,7 @@ jobs:
       # engine_dxc.cmake re-hashes it against third_party/manifest.json on every
       # configure, so a restored archive is checked rather than trusted.
       - name: Cache the pinned DirectXShaderCompiler archive
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ runner.temp }}/engine-build/toolchains/dxc/**/*.zip
@@ -519,7 +524,7 @@ jobs:
 
       # AGP 8.7 needs a JDK 17 toolchain. Pinned here rather than taken from
       # whatever the image default happens to be that week.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
@@ -642,7 +647,7 @@ jobs:
       # scheduled, short enough that a stale APK is not lying around to be
       # tested by mistake.
       - name: Upload the APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: engine-triangle-apk-${{ github.sha }}
           path: ${{ env.ENG_BUILD_ROOT }}/android-triangle-gradle/app/outputs/apk/debug/*.apk

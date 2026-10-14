@@ -168,6 +168,11 @@ void drawScriptEditor(ScriptEditor& editor, core::u32 dockNode, DebugView& debug
 // resolves the hovered window before the first `Begin`.
 void releaseScriptPaneFocus();
 
+// **The checker stopped**, its thread joined, before Luau's flags change
+// under it (ADR 0217); the next tab that asks makes a new one, which reads
+// every script again with the flags as they are then.
+void stopLanguageService();
+
 // The stack, the variables and the transport. A panel of its own rather than a
 // strip inside the code pane, because it is worth looking at while looking at
 // the code -- which is what a dock node is for.

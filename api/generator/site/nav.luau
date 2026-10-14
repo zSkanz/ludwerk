@@ -60,6 +60,7 @@ local Sections: { Section } = {
             { Slug = "frame", Title = "The frame, phase by phase" },
             { Slug = "determinism", Title = "Determinism" },
             { Slug = "scripts", Title = "Scripts, modules and requires" },
+            { Slug = "luau-flags", Title = "Luau language settings" },
             { Slug = "datatypes", Title = "Datatypes and units" },
             { Slug = "sandbox", Title = "What a script may do" },
         },

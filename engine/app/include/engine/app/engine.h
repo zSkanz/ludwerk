@@ -194,6 +194,12 @@ struct EngineOptions
     // without clicking through the menu. `startupSceneData` is `--scene-data=`,
     // JSON, which the scene's `GetLoadData` answers.
     bool startupSceneFromFlag = false;
+    // `--max-per-address` was given: the project's `[network]
+    // max_connections_per_address` does not replace it.
+    bool maxPerAddressFromFlag = false;
+    // `--print-luau-flags`: the project's Luau flags as the tools that check
+    // scripts take them (ADR 0217), printed, and the run ends.
+    bool printLuauFlags = false;
     std::string startupSceneData;
     // `[network] server` (ADR 0106): where `NetworkService:Join()` goes with no
     // address.

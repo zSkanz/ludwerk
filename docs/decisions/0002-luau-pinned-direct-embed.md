@@ -1,6 +1,6 @@
 # 0002 — Luau 0.734 pinned, embedded directly in the C++ core
 
-- Status: accepted
+- Status: accepted; amended 2026-10-14 (Luau 0.742 -- see the end)
 - Date: 2026-08-19
 
 ## Context
@@ -27,3 +27,10 @@ later.
 Full control of the VM, compile options, allocator hooks, memory categories and
 codegen. Cost: we own upgrades (patch set + recompile) and must read vendored
 headers — not memory — for API truth.
+
+## Amendment, 2026-10-14: Luau 0.742
+
+The pin is **Luau 0.742**, approved by the maintainer with the
+other dependencies of ADR 0216, which also sets the checklist every later
+upgrade is held to. Luau's flags became a project setting in the same change
+(ADR 0217). The rest of this record stands.

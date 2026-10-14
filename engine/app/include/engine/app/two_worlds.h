@@ -7,9 +7,9 @@
 // is two Luau VMs, rendered into two targets.
 //
 // Networking is the second caller and the reason this matters more than it did
-// when it was only the editor's: the post-v1 multiplayer design puts an
-// authoritative world and a replica in one process over a loopback transport,
-// which is impossible if anything here assumes one world.
+// when it was only the editor's: the multiplayer tests put an authoritative
+// world and a replica in one process over a loopback transport, which is
+// impossible if anything here assumes one world.
 //
 // **Why this is a mode and not a unit test.** Two hosts that both construct
 // prove nothing -- a global both of them scribble into would still construct.

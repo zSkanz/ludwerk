@@ -123,3 +123,10 @@ document = {
 out = Path(__file__).resolve().parent / "morph_quad.gltf"
 out.write_text(json.dumps(document, indent=1) + "\n", encoding="utf-8")
 print("wrote", out)
+
+# The same quad, its node giving the weights it starts at: what a node says
+# over what its mesh does (glTF 2.0, 5.25).
+document["nodes"][0]["weights"] = [0.5, 0.75]
+out = Path(__file__).resolve().parent / "morph_quad_node_weights.gltf"
+out.write_text(json.dumps(document, indent=1) + "\n", encoding="utf-8")
+print("wrote", out)

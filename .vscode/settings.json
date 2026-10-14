@@ -47,7 +47,7 @@
     ],
 
     "$comment.ignore": [
-        "Lute 1.0.0's own generated typedefs do not typecheck under the pinned luau-lsp 1.69.0",
+        "Lute 1.0.0's own generated typedefs did not typecheck under luau-lsp 1.69.0,",
         "so CI ignores them and so must the editor. third_party is vendored",
         "upstream code governed by ADR 0021 and is never ours to fix."
     ],

@@ -15,6 +15,16 @@ std::vector<std::pair<std::string, std::string>> TomlDocument::stringValues(std:
     }
     return result;
 }
+
+std::vector<std::string> TomlDocument::keys(std::string_view prefix) const
+{
+    std::vector<std::string> result;
+    for (const auto& entry : entries_) {
+        if (entry.key.starts_with(prefix))
+            result.push_back(entry.key.substr(prefix.size()));
+    }
+    return result;
+}
 namespace {
 
 constexpr std::string_view kSpaces = " \t";
