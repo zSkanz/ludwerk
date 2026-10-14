@@ -1,0 +1,15 @@
+# shot, then what must be so in it: `x,y=r,g,b` at fractions of the frame (imgprobe), within ten of each channel;
+# `x,y!=r,g,b` is that it is NOT that colour there. Every probe is of a flat colour of the interface, and of a
+# place -- never of how much of something a machine had done by the shot.
+# The Body page while editing: the bar that marks where the layer starts, on Move; and its three states, each
+# where the graph's own `editor` key has it.
+anim-editing 0.3509375,0.5116667=137,209,133 0.4003125,0.4950000=49,49,49 0.5378125,0.3838889=49,49,49 0.5378125,0.6561111=49,49,49
+# The blend across two parameters selected: its plot beside the canvas -- the ground of it, and two of its
+# clips' points, Run at the top and WalkBack at the foot.
+anim-blend 0.6878125,0.4450000=31,31,31 0.6859375,0.3405556=55,148,255 0.6859375,0.4994444=55,148,255
+# The list, asked for where nothing is, with three letters typed: its field, and its one row.
+anim-list 0.3753125,0.6861111=48,48,48 0.3753125,0.7338889=14,62,99
+# The state it added, which nothing leads to: hollow -- the canvas shows through it.
+anim-unreachable 0.3628125,0.7427778=31,31,31
+# An arrow drawn to it from Fall's edge: it can be come to, and is a state like the others.
+anim-arrow-made 0.3628125,0.7427778=49,49,49 0.5378125,0.6561111=49,49,49

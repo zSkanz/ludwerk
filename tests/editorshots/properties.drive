@@ -1,0 +1,23 @@
+# Properties on examples/40-cinematic while EDITING: a skinned mesh's shape
+# keys and rig roles (they were not there until the game had played),
+# and a LipSync's map picker. Coordinates are a 1600 by 900 frame's.
+wait 60
+click 170 106
+wait 4
+text Bust
+wait 12
+click 156 177
+wait 40
+shot mesh-properties
+move 1420 500
+wheel -40
+wait 8
+wheel -40
+wait 8
+shot shape-keys-and-rig
+click 180 221
+wait 30
+click 1579 206
+wait 12
+shot map-picker
+quit

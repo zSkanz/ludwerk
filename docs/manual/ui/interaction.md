@@ -1,0 +1,254 @@
+# Buttons and interaction
+
+Three events, all on `UIObject`, all carrying **no arguments**:
+
+| Event | Fires when |
+|---|---|
+| `UIObject.Activated` | A pointer press **and** release both land on this object. |
+| `UIObject.PointerEntered` | The pointer moves onto it. |
+| `UIObject.PointerExited` | The pointer moves off it. |
+
+```luau
+--!strict
+local button = Instance.new("TextButton")
+button.Size = UDim2.new(0, 120, 0, 40)
+button.Text = "START"
+button.Parent = screen
+
+button.Activated:Connect(function()
+    startGame()
+end)
+```
+
+They are on `UIObject` rather than on the button classes because **anything can
+be pressed** — a plain `Frame` fires `Activated` too. `TextButton` and
+`ImageButton` add no property; they exist because they are the classes a reader
+recognizes.
+
+They are **device-neutral by design**: a click, a tap and a bound gamepad button
+all produce `Activated`, which is why there is no mouse-button-specific event.
+For the same reason the hover pair is named for a *pointer* rather than a mouse
+— a finger is one too.
+
+Like every signal here, all three are **deferred**: your handler runs at the
+next resumption point, not inside the click.
+
+## A press that slides off is canceled
+
+`Activated` requires the press and the release on the **same** element. A press
+that started on a button and released elsewhere is a canceled press — which is
+what every UI in the world does, and what people rely on to change their mind.
+
+**A press that became something else is not a press either.** A press that
+dragged an element by its `UIDragDetector`, scrolled a `ScrollFrame`, or swiped
+a page fires no `Activated` on what was under it.
+
+## What answers a click
+
+Hit-testing walks every enabled `ScreenGui`, ordered by
+`ScreenGui.DisplayOrder`; within one tree the topmost `UIObject.ZIndex` wins,
+ties broken by document order.
+
+Four rules decide whether an element is reachable at all:
+
+- **`Active` says whether it takes the pointer.** Until you write it, it is
+  what the object is: a button, a `TextInput` and a `ScrollFrame` take the
+  pointer; a `TextLabel` and an `ImageLabel` do not, so a press on the icon or
+  the caption inside a button is a press on the button; and a `Frame` takes it
+  when it draws a background (`BackgroundTransparency` under 1), so a veil
+  behind a dialog blocks what is under it and a clear frame that only holds a
+  layout lets every press through. What you write wins: `Active = true` on a
+  clear frame is an invisible blocker, and **a panel made of an `ImageLabel`
+  needs `Active = true`** or presses go through its picture.
+- **`Visible = false` prunes it and its descendants.**
+- **Clipping removes what is clipped away.** An element scrolled off the end of
+  a `ScrollFrame` does not answer a click that lands where it would have been.
+- Interaction runs **after** layout, deliberately — a hit test against last
+  frame's rectangles is a click that lands where a button used to be.
+
+## Hover is a pair of edges
+
+When the pointer moves from one element to another, `PointerExited` fires on the
+old one and then `PointerEntered` on the new one. A destroyed element stops
+being hovered, pressed or focused rather than leaving a stale reference behind.
+
+## Focus
+
+Focus moves on a **press**. Pressing anywhere that is not a `TextInput` —
+including empty space — drops it and fires `TextInput.FocusLost`.
+
+```luau
+field.Focused:Connect(function()
+    -- keystrokes come here now
+end)
+
+field.FocusLost:Connect(function(submitted: boolean)
+    if submitted then
+        commit(field.Text) -- Return, not a click elsewhere
+    end
+end)
+```
+
+Everything else a field does -- selection, the clipboard, undo, several lines,
+a password, focus from code -- is on its own page:
+[Text input](manual:ui/text-input).
+
+`submitted` is true when the field was left by pressing Return (or the
+keypad's Enter), and false when a press elsewhere took the focus.
+
+## The UI and the rest of the input system
+
+**A press on something that takes the pointer is the interface's.** That is the
+`uiConsumed` every raw input event carries, and what it means depends on the
+device:
+
+| Device | `uiConsumed` is true when |
+|---|---|
+| Mouse | the pointer is over an element that takes it (`Active`), for the buttons, the wheel and motion |
+| Touch | that finger came down on such an element -- for its whole press, wherever it is dragged |
+| Keyboard | a `TextInput` has the focus |
+| Gamepad | never: the interface takes only what the game has not bound -- see [A gamepad and the arrow keys](manual:ui/selection) |
+
+A gesture (`TouchSwiped` and the rest) is not started by a press the interface
+took.
+
+While the pointer is over any `UIObject`, the UI **claims the pointer**: mouse
+buttons, movement and wheel are marked consumed before any `InputContext`
+resolves. So a button drawn over the world does not also shoot the gun — the one
+behavior every UI system is judged by.
+
+While a `TextInput` has focus, the UI claims the **keyboard** the same way.
+
+Two consequences worth knowing:
+
+- **Mouse codes only, unless a field is focused.** A key pressed while the
+  pointer merely rests over a HUD is still the game's.
+- `InputService.IsKeyDown` deliberately **ignores** what the UI consumed. A poll
+  asks what the hardware is doing; an event asks what happened to the game. The
+  raw events carry a `uiConsumed` flag so a handler can tell.
+
+## Scrolling
+
+A `ScrollFrame` is scrolled by hand:
+
+- **the wheel**, over it: three lines a notch. A frame that cannot move that
+  way -- it is at its end, or its canvas fits -- hands the wheel to the scroll
+  frame it is inside, and failing that to a `UIPageLayout` under the pointer;
+- **a drag**, by a finger or a held mouse: the content follows the pointer. The
+  row under the finger is not pressed when the list moved; in a list with
+  nowhere to scroll, it is;
+- **a fling**: let go while moving and the list glides on, slowing, about as
+  far as it was going fast. A press on a gliding list stops it there and
+  presses nothing; the next press does;
+- **past the end** it gives -- less the further it is pulled -- and springs
+  back when the finger lifts, and a fling that reaches the end bounces.
+  `ElasticBehavior` says when: `WhenScrollable` (the default: on an axis with
+  somewhere to scroll), `Always`, or `Never`. `CanvasPosition` never leaves the
+  canvas; the give is drawn and not reported;
+- **the bar**: drag the thumb and the canvas goes as far along itself as the
+  thumb goes along its track; press the track beside the thumb and it moves a
+  view that way;
+- **a selection**: moved by a gamepad or the arrow keys -- or set by a script
+  -- out of sight, every scroll frame it is inside scrolls just far enough to
+  show it.
+
+**A list inside another** -- a column of rows on a sideways carousel -- needs no
+code. The drag's first few pixels say which way it goes, and the innermost
+frame that scrolls that way and has somewhere to go takes it, keeping that axis
+until the finger lifts: down scrolls the column, sideways turns the carousel.
+A sideways drag on a list over the pages of a `UIPageLayout` turns the page the
+same way.
+
+`ScrollingEnabled = false` stops every hand -- the wheel, a drag, the bar and a
+selection -- and leaves `CanvasPosition` to scripts. `ScrollingDirection` (`X`,
+`Y` or `XY`) says which axes a hand moves; a frame that only scrolls across takes
+the wheel across.
+
+`CanvasPosition` is a property like any other: write it to scroll from a
+script, and read it to know where the player is.
+
+## Dragging
+
+A `UIDragDetector` under an element makes it something a pointer drags -- a
+window by its title bar, a slider's thumb, a dial:
+
+```luau
+local thumb = Instance.new("TextButton")
+thumb.Size = UDim2.new(0, 40, 1, 0)
+thumb.Parent = track
+
+local drag = Instance.new("UIDragDetector")
+drag.DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine
+drag.ResponseStyle = Enum.UIDragDetectorResponseStyle.Scale
+drag.BoundingUI = track -- it stays on its track
+drag.Parent = thumb
+
+drag.DragContinue:Connect(function()
+	volume = thumb.Position.X.Scale / (1 - thumb.Size.X.Offset / track.AbsoluteSize.X)
+end)
+```
+
+A press on the element, or on anything inside it, that then moves more than a
+few pixels is a drag. One that does not move is still a press.
+
+| `DragStyle` | The element |
+|---|---|
+| `TranslatePlane` | Follows the pointer on both axes. |
+| `TranslateLine` | Slides along `DragAxis` -- `(1, 0)` across, `(0, 1)` down -- and nowhere else. |
+| `Rotate` | Turns about its own middle as the pointer goes round it. |
+| `Scriptable` | Does not move: the signals say where the pointer is. |
+
+| `ResponseStyle` | What is written |
+|---|---|
+| `Offset` | The offset of the element's `Position`, in its units. |
+| `Scale` | The scale of its `Position`, a fraction of its parent: the same place at any size. |
+| `CustomOffset`, `CustomScale` | Nothing. `DragUDim2` and `DragRotation` say how far, and a script applies it. |
+
+**Limits.** `BoundingUI` keeps the element inside another. `MinDragTranslation`
+and `MaxDragTranslation` bound how far it may go from where the drag began, and
+`MinDragAngle` and `MaxDragAngle` how far it may turn; a pair that is equal --
+as a new detector's are -- is no limit.
+
+**Signals.** `DragStart(position)`, `DragContinue(position)` and
+`DragEnd(position)`, the pointer's place in pixels.
+
+The detector writes `Position`, so an element placed by a layout -- which has
+no position of its own -- is not moved; use `CustomOffset` there and apply
+`DragUDim2` yourself.
+
+## Driving an action from a button
+
+There is no property binding a `UIObject` to an `InputAction`. The shipped path
+is a **virtual key**, which is a real input the whole system already understands:
+
+```luau
+--!strict
+local InputService = game:GetService("InputService")
+local RunService = game:GetService("RunService")
+
+touchJump.Activated:Connect(function()
+    InputService:SetVirtualState(Enum.KeyCode.Virtual1, 1)
+end)
+
+-- Cleared once per tick, so the action sees exactly one press.
+RunService.Heartbeat:Connect(function()
+    InputService:SetVirtualState(Enum.KeyCode.Virtual1, 0)
+end)
+```
+
+The value binds through an ordinary `InputBinding`, resolves in the ordinary
+order, is eaten by an ordinary sinking context, and is carried by a recorded
+stream — which is what makes it one input model rather than two.
+
+`SetVirtualState` carries a **value, not a press**: write 1 and 0 for a button,
+anything between for a slider or a thumbstick axis. Bound to a boolean action it
+counts as pressed past half deflection.
+
+## Where to look next
+
+- [A gamepad and the arrow keys](manual:ui/selection) -- the same buttons, with no pointer
+
+- [Actions, bindings and contexts](manual:input/actions)
+- [The UI tree](manual:ui/tree)
+- [Text input](manual:ui/text-input)
+- [`UIObject`](api:UIObject)

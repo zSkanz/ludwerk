@@ -1,0 +1,30 @@
+{
+  "format": "animgraph",
+  "version": 1,
+  "parameters": {
+    "Speed": { "number": 0 },
+    "Armed": { "boolean": false },
+    "Attack": { "trigger": true },
+    "Mood": { "number": 2, "from": "Attribute.Mood" }
+  },
+  "layers": [
+    {
+      "name": "Body",
+      "start": "Idle",
+      "states": { "Idle": { "clip": "Idle" }, "Run": { "clip": "Run" } },
+      "transitions": [
+        { "from": "Idle", "to": "Run", "when": [ ["Speed", ">", 1] ], "fade": 0.1 },
+        { "from": "Run", "to": "Idle", "when": [ ["Speed", "<=", 1] ], "fade": 0.1 }
+      ]
+    },
+    {
+      "name": "Arms",
+      "start": "None",
+      "states": { "None": {}, "Slash": { "clip": "Slash", "loop": false } },
+      "transitions": [
+        { "from": "None", "to": "Slash", "when": [ ["Attack"], ["Armed"] ], "fade": 0 },
+        { "from": "Slash", "to": "None", "when": [ ["Armed", "==", false] ], "fade": 0 }
+      ]
+    }
+  ]
+}

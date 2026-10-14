@@ -1,0 +1,119 @@
+{
+ "cues": [
+  {
+   "start": 0.0,
+   "end": 0.11,
+   "value": "B"
+  },
+  {
+   "start": 0.11,
+   "end": 0.215,
+   "value": "C"
+  },
+  {
+   "start": 0.215,
+   "end": 0.27,
+   "value": "B"
+  },
+  {
+   "start": 0.27,
+   "end": 0.315,
+   "value": "X"
+  },
+  {
+   "start": 0.315,
+   "end": 0.42,
+   "value": "E"
+  },
+  {
+   "start": 0.42,
+   "end": 0.475,
+   "value": "A"
+  },
+  {
+   "start": 0.475,
+   "end": 0.58,
+   "value": "C"
+  },
+  {
+   "start": 0.58,
+   "end": 0.635,
+   "value": "B"
+  },
+  {
+   "start": 0.635,
+   "end": 0.68,
+   "value": "X"
+  },
+  {
+   "start": 0.68,
+   "end": 0.84,
+   "value": "B"
+  },
+  {
+   "start": 0.84,
+   "end": 1.045,
+   "value": "X"
+  },
+  {
+   "start": 1.045,
+   "end": 1.15,
+   "value": "D"
+  },
+  {
+   "start": 1.15,
+   "end": 1.26,
+   "value": "B"
+  },
+  {
+   "start": 1.26,
+   "end": 1.305,
+   "value": "X"
+  },
+  {
+   "start": 1.305,
+   "end": 1.36,
+   "value": "H"
+  },
+  {
+   "start": 1.36,
+   "end": 1.465,
+   "value": "C"
+  },
+  {
+   "start": 1.465,
+   "end": 1.52,
+   "value": "B"
+  },
+  {
+   "start": 1.52,
+   "end": 1.565,
+   "value": "X"
+  },
+  {
+   "start": 1.565,
+   "end": 1.67,
+   "value": "F"
+  },
+  {
+   "start": 1.67,
+   "end": 1.725,
+   "value": "B"
+  },
+  {
+   "start": 1.725,
+   "end": 1.77,
+   "value": "X"
+  },
+  {
+   "start": 1.77,
+   "end": 1.825,
+   "value": "B"
+  },
+  {
+   "start": 1.825,
+   "end": 2.035,
+   "value": "C"
+  }
+ ]
+}

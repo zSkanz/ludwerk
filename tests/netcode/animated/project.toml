@@ -1,0 +1,9 @@
+# The two-process animation gate's game (ADR 0197, protocol 44): a character
+# the SERVER spawns and walks, runs, jumps and makes attack, and a joiner that
+# only watches. `run_animated.cmake` copies it and runs both ends.
+
+[project]
+name = "Netcode Animated"
+id = "dev.ludwerk.netcode-animated"
+version = "1.0.0"
+engine = "0.1"

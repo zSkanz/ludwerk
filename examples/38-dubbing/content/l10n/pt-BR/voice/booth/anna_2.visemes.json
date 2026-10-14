@@ -1,0 +1,179 @@
+{
+ "cues": [
+  {
+   "start": 0.0,
+   "end": 0.11,
+   "value": "B"
+  },
+  {
+   "start": 0.11,
+   "end": 0.215,
+   "value": "E"
+  },
+  {
+   "start": 0.215,
+   "end": 0.27,
+   "value": "B"
+  },
+  {
+   "start": 0.27,
+   "end": 0.375,
+   "value": "F"
+  },
+  {
+   "start": 0.375,
+   "end": 0.48,
+   "value": "C"
+  },
+  {
+   "start": 0.48,
+   "end": 0.525,
+   "value": "X"
+  },
+  {
+   "start": 0.525,
+   "end": 0.63,
+   "value": "E"
+  },
+  {
+   "start": 0.63,
+   "end": 0.675,
+   "value": "X"
+  },
+  {
+   "start": 0.675,
+   "end": 0.94,
+   "value": "B"
+  },
+  {
+   "start": 0.94,
+   "end": 1.045,
+   "value": "E"
+  },
+  {
+   "start": 1.045,
+   "end": 1.1,
+   "value": "A"
+  },
+  {
+   "start": 1.1,
+   "end": 1.205,
+   "value": "D"
+  },
+  {
+   "start": 1.205,
+   "end": 1.25,
+   "value": "X"
+  },
+  {
+   "start": 1.25,
+   "end": 1.305,
+   "value": "B"
+  },
+  {
+   "start": 1.305,
+   "end": 1.41,
+   "value": "D"
+  },
+  {
+   "start": 1.41,
+   "end": 1.455,
+   "value": "X"
+  },
+  {
+   "start": 1.455,
+   "end": 1.51,
+   "value": "G"
+  },
+  {
+   "start": 1.51,
+   "end": 1.615,
+   "value": "E"
+  },
+  {
+   "start": 1.615,
+   "end": 1.67,
+   "value": "B"
+  },
+  {
+   "start": 1.67,
+   "end": 1.715,
+   "value": "X"
+  },
+  {
+   "start": 1.715,
+   "end": 1.82,
+   "value": "C"
+  },
+  {
+   "start": 1.82,
+   "end": 1.865,
+   "value": "X"
+  },
+  {
+   "start": 1.865,
+   "end": 1.97,
+   "value": "C"
+  },
+  {
+   "start": 1.97,
+   "end": 2.08,
+   "value": "B"
+  },
+  {
+   "start": 2.08,
+   "end": 2.185,
+   "value": "F"
+  },
+  {
+   "start": 2.185,
+   "end": 2.24,
+   "value": "B"
+  },
+  {
+   "start": 2.24,
+   "end": 2.345,
+   "value": "C"
+  },
+  {
+   "start": 2.345,
+   "end": 2.39,
+   "value": "X"
+  },
+  {
+   "start": 2.39,
+   "end": 2.445,
+   "value": "B"
+  },
+  {
+   "start": 2.445,
+   "end": 2.55,
+   "value": "C"
+  },
+  {
+   "start": 2.55,
+   "end": 2.595,
+   "value": "X"
+  },
+  {
+   "start": 2.595,
+   "end": 2.65,
+   "value": "B"
+  },
+  {
+   "start": 2.65,
+   "end": 2.755,
+   "value": "E"
+  },
+  {
+   "start": 2.755,
+   "end": 2.81,
+   "value": "G"
+  },
+  {
+   "start": 2.81,
+   "end": 2.915,
+   "value": "E"
+  }
+ ]
+}

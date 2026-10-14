@@ -1,0 +1,24 @@
+{
+  "format": "sequence",
+  "version": 1,
+  "bindings": ["Lamp"],
+  "tracks": [
+    { "type": "property", "target": "Lamp/Light", "property": "Brightness", "keys": [
+        { "time": 0, "value": 0 },
+        { "time": 0.6, "value": 6 } ] },
+    { "type": "marker", "keys": [
+        { "time": 0, "name": "Opening" },
+        { "time": 0.2, "name": "Choice" },
+        { "time": 0.4, "name": "Leaving" } ] },
+    { "type": "hold", "keys": [
+        { "time": 0.3, "name": "Answer" } ] },
+    { "type": "fade", "keys": [
+        { "time": 0, "value": 1 },
+        { "time": 0.1, "value": 0 } ] },
+    { "type": "bars", "keys": [
+        { "time": 0, "value": 1 } ] },
+    { "type": "event", "keys": [
+        { "time": 0.1, "name": "Before" },
+        { "time": 0.5, "name": "After" } ] }
+  ]
+}

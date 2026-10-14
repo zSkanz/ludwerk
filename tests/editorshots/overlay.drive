@@ -1,0 +1,6 @@
+# A game's own overlay, drawn with no window: examples/15-multiplayer run by
+# itself, the panel open from the first frame. Coordinates are a 1600 by 900
+# frame's.
+wait 90
+shot overlay
+quit

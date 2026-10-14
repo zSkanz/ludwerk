@@ -1,0 +1,54 @@
+Ludwerk: a file that is only read is shared with a writer and with a rename.
+
+On Windows a reader decides, when it opens a file, what anybody else may do
+with it until it closes. SDL opened a file it only reads with FILE_SHARE_READ,
+in SDL_IOFromFile -- which SDL_LoadFile and the thread-pool asynchronous read
+go through -- and in the ioring asynchronous read. For the length of a read,
+then, the program that makes the file could not save it: a truncating write
+was refused, and so was a save that writes beside the file and renames the
+new one over it. An engine that reloads a file when it changes reads it at
+exactly the moment its author's tool is most likely to save it again, and the
+tool said "file in use".
+
+Seen as a test's own second write of a sound, refused in silence while the
+frame's prefetch of the first still had the file.
+
+The fix shares write and delete as well, for a file opened for reading only.
+A file opened for writing is shared as it was. What a reader then sees of a
+file written under it is whatever the disk held as it read; the engine reads
+again when it is told the file changed.
+
+diff --git a/src/io/SDL_iostream.c b/src/io/SDL_iostream.c
+index 31c74ab..039cdc5 100644
+--- a/src/io/SDL_iostream.c
++++ b/src/io/SDL_iostream.c
+@@ -123,9 +123,12 @@ static HANDLE SDLCALL windows_file_open(const char *filename, const char *mode)
+ 
+     {
+         LPWSTR str = WIN_UTF8ToStringW(filename);
++        // Ludwerk: a file that is only read is shared with a writer and with
++        // a rename as well -- the program that makes the file saves it while
++        // it is being read, instead of being told it is in use.
+         h = CreateFileW(str,
+                        (w_right | r_right),
+-                       (w_right) ? 0 : FILE_SHARE_READ,
++                       (w_right) ? 0 : (FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE),
+                        NULL,
+                        (must_exist | truncate | a_mode),
+                        FILE_ATTRIBUTE_NORMAL,
+diff --git a/src/io/windows/SDL_asyncio_windows_ioring.c b/src/io/windows/SDL_asyncio_windows_ioring.c
+index 81a5d84..13e6276 100644
+--- a/src/io/windows/SDL_asyncio_windows_ioring.c
++++ b/src/io/windows/SDL_asyncio_windows_ioring.c
+@@ -488,7 +488,10 @@ static bool SDL_SYS_AsyncIOFromFile_ioring(const char *file, const char *mode, S
+         return false;
+     }
+ 
+-    HANDLE handle = CreateFileW(wstr, access_mode, FILE_SHARE_READ, NULL, create_mode, FILE_ATTRIBUTE_NORMAL, NULL);
++    // Ludwerk: a file that is only read is shared with a writer and with a
++    // rename as well, as in SDL_iostream.c.
++    const DWORD share_mode = (access_mode & GENERIC_WRITE) ? FILE_SHARE_READ : (FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
++    HANDLE handle = CreateFileW(wstr, access_mode, share_mode, NULL, create_mode, FILE_ATTRIBUTE_NORMAL, NULL);
+     SDL_free(wstr);
+     if (!handle) {
+         return WIN_SetError("CreateFileW");

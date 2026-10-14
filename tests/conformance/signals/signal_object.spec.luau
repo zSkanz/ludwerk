@@ -1,0 +1,156 @@
+--!strict
+--- Conformance: the user-creatable `Signal` and its `Connection`.
+--- Written from api-design.md §2.3 (the `Signal<T...>` / `Connection` row),
+--- §3.1, and divergences #4 and #5 of §2.5.
+
+local testing = require("@engine/testing")
+
+local describe = testing.describe
+local it = testing.it
+local expect = testing.expect
+
+describe("Signal.new", function()
+    it("is reachable as a global, without a require", function()
+        expect(Signal).Never:ToBeNil()
+        expect((Signal :: any).new):ToBeA("function")
+    end)
+
+    it("returns a distinct signal from every call", function()
+        local first = Signal.new()
+        local second = Signal.new()
+        expect(first).Never:ToBe(second)
+    end)
+
+    -- The type is named `Signal`, and `typeof` says exactly that.
+    it("reports its type as Signal", function()
+        local sig = Signal.new()
+        expect(typeof(sig)):ToBe("Signal")
+    end)
+
+    it("reports a connection's type as Connection", function()
+        local sig = Signal.new()
+        local connection = sig:Connect(function() end)
+        expect(typeof(connection)):ToBe("Connection")
+        connection:Disconnect()
+    end)
+
+    it("exposes Fire, Connect, Once, Wait and Destroy", function()
+        local sig = Signal.new() :: any
+        expect(sig.Fire):ToBeA("function")
+        expect(sig.Connect):ToBeA("function")
+        expect(sig.Once):ToBeA("function")
+        expect(sig.Wait):ToBeA("function")
+        expect(sig.Destroy):ToBeA("function")
+    end)
+
+    it("accepts a fire with no connections", function()
+        local sig = Signal.new()
+        sig:Fire("nobody is listening")
+        task.wait()
+    end)
+end)
+
+describe("Connection", function()
+    it("is connected as soon as Connect returns", function()
+        local sig = Signal.new()
+        local connection = sig:Connect(function() end)
+        expect(connection.Connected):ToBe(true)
+    end)
+
+    it("reports itself disconnected after Disconnect", function()
+        local sig = Signal.new()
+        local connection = sig:Connect(function() end)
+        connection:Disconnect()
+        expect(connection.Connected):ToBe(false)
+    end)
+
+    it("stays disconnected when Disconnect is called a second time", function()
+        local sig = Signal.new()
+        local connection = sig:Connect(function() end)
+        connection:Disconnect()
+        connection:Disconnect()
+        expect(connection.Connected):ToBe(false)
+    end)
+
+    it("leaves the other connections of the same signal connected", function()
+        local sig = Signal.new()
+        local first = sig:Connect(function() end)
+        local second = sig:Connect(function() end)
+        first:Disconnect()
+        expect(first.Connected):ToBe(false)
+        expect(second.Connected):ToBe(true)
+        second:Disconnect()
+    end)
+
+    it("is connected before a Once handler has been invoked", function()
+        local sig = Signal.new()
+        local connection = sig:Once(function() end)
+        expect(connection.Connected):ToBe(true)
+        connection:Disconnect()
+    end)
+
+    it("is disconnected after a Once handler has been invoked", function()
+        local sig = Signal.new()
+        local connection = sig:Once(function() end)
+        sig:Fire()
+        task.wait()
+        expect(connection.Connected):ToBe(false)
+    end)
+end)
+
+describe("Signal:Destroy", function()
+    it("invokes nothing for a fire queued before the signal was destroyed", function()
+        local sig = Signal.new()
+        local count = 0
+        sig:Connect(function()
+            count += 1
+        end)
+
+        sig:Fire()
+        sig:Destroy()
+
+        task.wait()
+        expect(count):ToBe(0)
+    end)
+
+    it("reports the connections of a destroyed signal as disconnected", function()
+        local sig = Signal.new()
+        local connection = sig:Connect(function() end)
+        sig:Destroy()
+        task.wait()
+        expect(connection.Connected):ToBe(false)
+    end)
+
+    it("DisconnectAll ends every connection and keeps the signal (ADR 0094)", function()
+        local sig = Signal.new()
+        local count = 0
+        local first = sig:Connect(function()
+            count += 1
+        end)
+        local second = sig:Connect(function()
+            count += 1
+        end)
+        sig:DisconnectAll()
+        expect(first.Connected):ToBe(false)
+        expect(second.Connected):ToBe(false)
+        sig:Fire()
+        task.wait()
+        expect(count):ToBe(0)
+
+        -- Still usable: DisconnectAll is not Destroy.
+        sig:Connect(function()
+            count += 1
+        end)
+        sig:Fire()
+        task.wait()
+        expect(count):ToBe(1)
+    end)
+
+    it("DisconnectAll refuses an instance's own event", function()
+        local part = Instance.new("Part")
+        expect(function()
+            part.Touched:DisconnectAll()
+        end):ToThrow()
+        part:Destroy()
+    end)
+end)

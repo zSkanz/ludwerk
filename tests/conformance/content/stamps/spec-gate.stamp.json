@@ -1,0 +1,24 @@
+{
+ "format": "scene",
+ "version": 3,
+ "root": {
+  "class": "Model",
+  "name": "Gate",
+  "parameters": [
+   {"name": "Width", "type": "number", "default": 2, "min": 1, "max": 10, "drives": [{"node": "00000001", "property": "Size", "component": "X"}]},
+   {"name": "Style", "type": "string", "default": "plain", "choices": ["plain", "fancy"]},
+   {"name": "Open", "type": "boolean", "default": false}
+  ],
+  "children": [
+   {
+    "class": "Part",
+    "name": "Rail",
+    "sid": "00000001",
+    "properties": {
+     "Size": [2, 0.5, 0.2],
+     "Anchored": true
+    }
+   }
+  ]
+ }
+}

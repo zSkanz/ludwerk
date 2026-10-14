@@ -1,0 +1,22 @@
+# A meadow (ADR 0116): grass and flowers grown over terrain by rules, drawn by
+# a cull on the GPU, and moved by the wind.
+#
+# No scene file: the script builds the ground and says where things grow. The
+# two models are generated -- tapered quads and a flower head -- so the
+# example carries no one else's art.
+
+[project]
+name = "Ludwerk Meadow"
+id = "dev.ludwerk.meadow"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Meadow"
+width = 1280
+height = 720
+
+# The whole field and its shadows near the camera; a phone takes half.
+[render]
+foliage_density = 1.0
+foliage_shadow_distance = 30

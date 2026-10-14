@@ -1,0 +1,36 @@
+{
+  "format": "sequence",
+  "version": 1,
+  "bindings": ["Hero"],
+  "tracks": [
+    { "type": "cast", "as": "Guard", "model": "guard", "keys": [
+        { "time": 1 },
+        { "time": 9.5, "show": false } ] },
+    { "type": "property", "target": "Guard", "property": "Position", "keys": [
+        { "time": 1, "value": [-9, 0.95, -6] },
+        { "time": 4, "value": [-1.6, 0.95, -0.4], "ease": "sineOut" } ] },
+    { "type": "camera", "path": "curve", "keys": [
+        { "time": 0, "position": [-3, 2.2, 7], "lookAt": "Hero", "fieldOfView": 50, "cut": true },
+        { "time": 3, "position": [5, 2.4, 5], "lookAt": "Hero" },
+        { "time": 5.6, "position": [8, 2.6, -1], "lookAt": "Hero", "keepInSight": true },
+        { "time": 0.2, "afterLine": "ambush.halt", "position": [-0.4, 0.7, 2.2], "relativeTo": "Hero",
+          "lookAt": "Guard", "fieldOfView": 42, "cut": true },
+        { "time": 7, "position": [-0.4, 0.7, 2.2], "relativeTo": "Hero", "lookAt": "Guard", "shake": [0.06, 9] },
+        { "time": 8.5, "position": [-0.5, 0.8, 2.6], "relativeTo": "Hero", "lookAt": "Guard" } ] },
+    { "type": "line", "keys": [
+        { "time": 4.2, "line": "ambush.halt", "at": "Guard" } ] },
+    { "type": "event", "keys": [
+        { "time": 7, "name": "Struck" } ] },
+    { "type": "property", "target": "Hero/Flash", "property": "Brightness", "keys": [
+        { "time": 6.9, "value": 0 },
+        { "time": 7, "value": "$Blow" },
+        { "time": 7.8, "value": 0, "ease": "sineOut" } ] },
+    { "type": "fade", "keys": [
+        { "time": 0, "value": 1 },
+        { "time": 1, "value": 0, "ease": "sineOut" } ] },
+    { "type": "bars", "keys": [
+        { "time": 0, "value": 1 },
+        { "time": 9, "value": 1 },
+        { "time": 10, "value": 0 } ] }
+  ]
+}

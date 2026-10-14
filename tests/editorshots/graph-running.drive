@@ -1,0 +1,50 @@
+# The same graph while the game runs (ADR 0211): the state the layer is in
+# lit, and then -- the game paused, Grounded and Rise set in Properties as a
+# script would set them, and four ticks stepped -- Fall lit, Move fading out
+# of it, the arrow between them just taken. `sleep` is the clock's: the
+# character has to have landed, and frames are no measure of that; the steps
+# are ticks, which is why the fade is where it is on any machine.
+# Coordinates are a 1600 by 900 frame's.
+wait 60
+drag 700 607 700 820
+wait 6
+key ctrl+p
+wait 8
+text hero.animgraph
+wait 10
+key enter
+wait 30
+click 170 106
+wait 4
+text Animation
+wait 12
+click 172 177
+wait 20
+click 781 41
+sleep 4000
+click 490 76
+wait 10
+shot anim-running
+# Pause; Grounded off; Rise typed; four steps.
+click 781 41
+wait 6
+click 1417 570
+wait 4
+dbl 1498 592
+wait 4
+key ctrl+a
+wait 2
+text -5
+wait 2
+key enter
+wait 6
+click 819 41
+wait 4
+click 819 41
+wait 4
+click 819 41
+wait 4
+click 819 41
+wait 4
+shot anim-fading
+quit

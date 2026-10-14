@@ -1,0 +1,219 @@
+Ludwerk: a lost D3D12 device crashes the first draw that needs a descriptor heap.
+
+0002 and 0004 stopped SDL reading through the NULL uniform buffer a lost
+device hands back. A descriptor heap is the same NULL by another door. A
+command buffer takes its two GPU descriptor heaps from a pool at its first
+draw or dispatch, and again whenever a draw's tables might not fit
+(D3D12_INTERNAL_SetGPUDescriptorHeaps). The pool is refilled as earlier
+command buffers finish; when it is empty a heap is created, and on a lost
+device that fails -- "Failed to create descriptor heap!" -- and returns NULL.
+SetGPUDescriptorHeaps then reads `viewHeap->handle`, and the process dies of
+an access violation inside SDL.
+
+Whether the pool is empty at that moment is a race with the frames still in
+flight, so the same removal ended one run cleanly and killed the next: seen on
+a hosted Windows runner whose software device was removed under a test,
+after "Failed to map buffer pool!" three times and "Could
+not create buffer!" forty.
+
+The fix leaves the command buffer with no heaps when either could not be had,
+and a draw or dispatch with no heaps is not recorded: the bind functions say
+so and their callers return. The draw is going nowhere -- there is no device
+to draw it -- and the error stays set, so the submit that follows fails and
+the application is told its device is gone. Still present upstream on
+2026-10-12.
+
+diff --git a/src/gpu/d3d12/SDL_gpu_d3d12.c b/src/gpu/d3d12/SDL_gpu_d3d12.c
+index 613b1cb4..a6266470 100644
+--- a/src/gpu/d3d12/SDL_gpu_d3d12.c
++++ b/src/gpu/d3d12/SDL_gpu_d3d12.c
+@@ -5030,6 +5030,16 @@ static void D3D12_INTERNAL_SetGPUDescriptorHeaps(D3D12CommandBuffer *commandBuff
+     viewHeap = D3D12_INTERNAL_AcquireGPUDescriptorHeapFromPool(commandBuffer, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+     samplerHeap = D3D12_INTERNAL_AcquireGPUDescriptorHeapFromPool(commandBuffer, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+ 
++    // Ludwerk: NULL once the device is lost and the pool is empty -- a heap
++    // could not be made, and the error is set. The command buffer is left
++    // with none, which every bind below reads as "draw nothing": the submit
++    // that follows fails and says why.
++    if (viewHeap == NULL || samplerHeap == NULL) {
++        commandBuffer->gpuDescriptorHeaps[0] = NULL;
++        commandBuffer->gpuDescriptorHeaps[1] = NULL;
++        return;
++    }
++
+     commandBuffer->gpuDescriptorHeaps[0] = viewHeap;
+     commandBuffer->gpuDescriptorHeaps[1] = samplerHeap;
+ 
+@@ -5042,6 +5052,13 @@ static void D3D12_INTERNAL_SetGPUDescriptorHeaps(D3D12CommandBuffer *commandBuff
+         heaps);
+ }
+ 
++// Ludwerk: false on a lost device that could make no heap.
++static bool D3D12_INTERNAL_HasGPUDescriptorHeaps(const D3D12CommandBuffer *commandBuffer)
++{
++    return commandBuffer->gpuDescriptorHeaps[D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV] != NULL &&
++           commandBuffer->gpuDescriptorHeaps[D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER] != NULL;
++}
++
+ static void D3D12_INTERNAL_WriteGPUDescriptors(
+     D3D12CommandBuffer *commandBuffer,
+     D3D12_DESCRIPTOR_HEAP_TYPE heapType,
+@@ -5052,6 +5069,13 @@ static void D3D12_INTERNAL_WriteGPUDescriptors(
+     D3D12DescriptorHeap *heap;
+     D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
+ 
++    // Ludwerk: the binds do not come here without heaps; this is the last
++    // line of defence, as the overflow below is.
++    gpuBaseDescriptor->ptr = 0;
++    if (!D3D12_INTERNAL_HasGPUDescriptorHeaps(commandBuffer)) {
++        return;
++    }
++
+     /* Descriptor overflow, acquire new heaps.
+      * The whole group has to fit, not only its first descriptor: a group that
+      * starts a few slots short of the end would otherwise be written past it.
+@@ -5060,6 +5084,9 @@ static void D3D12_INTERNAL_WriteGPUDescriptors(
+      * every table can be rebound; this is the last line of defence. */
+     if (commandBuffer->gpuDescriptorHeaps[heapType]->currentDescriptorIndex + resourceHandleCount > commandBuffer->gpuDescriptorHeaps[heapType]->maxDescriptors) {
+         D3D12_INTERNAL_SetGPUDescriptorHeaps(commandBuffer);
++        if (!D3D12_INTERNAL_HasGPUDescriptorHeaps(commandBuffer)) {
++            return;
++        }
+     }
+ 
+     heap = commandBuffer->gpuDescriptorHeaps[heapType];
+@@ -5106,7 +5133,9 @@ static bool D3D12_INTERNAL_EnsureGPUDescriptorSpace(
+     return true;
+ }
+ 
+-static void D3D12_INTERNAL_BindGraphicsResources(
++// Ludwerk: false when there is nothing to bind into -- a lost device that
++// could make no descriptor heap -- and the draw is then not recorded.
++static bool D3D12_INTERNAL_BindGraphicsResources(
+     D3D12CommandBuffer *commandBuffer)
+ {
+     D3D12GraphicsPipeline *graphicsPipeline = commandBuffer->currentGraphicsPipeline;
+@@ -5131,6 +5160,9 @@ static void D3D12_INTERNAL_BindGraphicsResources(
+         commandBuffer->needFragmentStorageTextureBind = true;
+         commandBuffer->needFragmentStorageBufferBind = true;
+     }
++    if (!D3D12_INTERNAL_HasGPUDescriptorHeaps(commandBuffer)) {
++        return false;
++    }
+ 
+     D3D12_CPU_DESCRIPTOR_HANDLE cpuHandles[MAX_TEXTURE_SAMPLERS_PER_STAGE];
+     D3D12_GPU_DESCRIPTOR_HANDLE gpuDescriptorHandle;
+@@ -5339,6 +5371,7 @@ static void D3D12_INTERNAL_BindGraphicsResources(
+             commandBuffer->needFragmentUniformBufferBind[i] = false;
+         }
+     }
++    return true;
+ }
+ 
+ static void D3D12_DrawIndexedPrimitives(
+@@ -5350,7 +5383,9 @@ static void D3D12_DrawIndexedPrimitives(
+     Uint32 firstInstance)
+ {
+     D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+-    D3D12_INTERNAL_BindGraphicsResources(d3d12CommandBuffer);
++    if (!D3D12_INTERNAL_BindGraphicsResources(d3d12CommandBuffer)) {
++        return;
++    }
+ 
+     ID3D12GraphicsCommandList_DrawIndexedInstanced(
+         d3d12CommandBuffer->graphicsCommandList,
+@@ -5369,7 +5404,9 @@ static void D3D12_DrawPrimitives(
+     Uint32 firstInstance)
+ {
+     D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+-    D3D12_INTERNAL_BindGraphicsResources(d3d12CommandBuffer);
++    if (!D3D12_INTERNAL_BindGraphicsResources(d3d12CommandBuffer)) {
++        return;
++    }
+ 
+     ID3D12GraphicsCommandList_DrawInstanced(
+         d3d12CommandBuffer->graphicsCommandList,
+@@ -5388,7 +5425,9 @@ static void D3D12_DrawPrimitivesIndirect(
+     D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+     D3D12Buffer *d3d12Buffer = ((D3D12BufferContainer *)buffer)->activeBuffer;
+ 
+-    D3D12_INTERNAL_BindGraphicsResources(d3d12CommandBuffer);
++    if (!D3D12_INTERNAL_BindGraphicsResources(d3d12CommandBuffer)) {
++        return;
++    }
+ 
+     ID3D12GraphicsCommandList_ExecuteIndirect(
+         d3d12CommandBuffer->graphicsCommandList,
+@@ -5411,7 +5450,9 @@ static void D3D12_DrawIndexedPrimitivesIndirect(
+     D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+     D3D12Buffer *d3d12Buffer = ((D3D12BufferContainer *)buffer)->activeBuffer;
+ 
+-    D3D12_INTERNAL_BindGraphicsResources(d3d12CommandBuffer);
++    if (!D3D12_INTERNAL_BindGraphicsResources(d3d12CommandBuffer)) {
++        return;
++    }
+ 
+     ID3D12GraphicsCommandList_ExecuteIndirect(
+         d3d12CommandBuffer->graphicsCommandList,
+@@ -5591,6 +5632,11 @@ static void D3D12_INTERNAL_BindComputeReadWriteResources(
+     D3D12_CPU_DESCRIPTOR_HANDLE cpuHandles[MAX_TEXTURE_SAMPLERS_PER_STAGE];
+     D3D12_GPU_DESCRIPTOR_HANDLE gpuDescriptorHandle;
+ 
++    // Ludwerk: no heaps on a lost device, and so no tables.
++    if (!D3D12_INTERNAL_HasGPUDescriptorHeaps(d3d12CommandBuffer)) {
++        return;
++    }
++
+     if (pipeline->header.numReadWriteStorageTextures > 0) {
+         for (Uint32 i = 0; i < pipeline->header.numReadWriteStorageTextures; i += 1) {
+             cpuHandles[i] = d3d12CommandBuffer->computeReadWriteStorageTextureDescriptorHandles[i];
+@@ -5798,7 +5844,8 @@ static void D3D12_PushComputeUniformData(
+         length);
+ }
+ 
+-static void D3D12_INTERNAL_BindComputeResources(
++// Ludwerk: false as a draw's, above, and the dispatch is not recorded.
++static bool D3D12_INTERNAL_BindComputeResources(
+     D3D12CommandBuffer *commandBuffer)
+ {
+     D3D12ComputePipeline *computePipeline = commandBuffer->currentComputePipeline;
+@@ -5815,6 +5862,9 @@ static void D3D12_INTERNAL_BindComputeResources(
+         commandBuffer->needComputeReadOnlyStorageBufferBind = true;
+         D3D12_INTERNAL_BindComputeReadWriteResources(commandBuffer);
+     }
++    if (!D3D12_INTERNAL_HasGPUDescriptorHeaps(commandBuffer)) {
++        return false;
++    }
+ 
+     D3D12_CPU_DESCRIPTOR_HANDLE cpuHandles[MAX_TEXTURE_SAMPLERS_PER_STAGE];
+     D3D12_GPU_DESCRIPTOR_HANDLE gpuDescriptorHandle;
+@@ -5911,6 +5961,7 @@ static void D3D12_INTERNAL_BindComputeResources(
+         }
+         commandBuffer->needComputeUniformBufferBind[i] = false;
+     }
++    return true;
+ }
+ 
+ static void D3D12_DispatchCompute(
+@@ -5921,7 +5972,9 @@ static void D3D12_DispatchCompute(
+ {
+     D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+ 
+-    D3D12_INTERNAL_BindComputeResources(d3d12CommandBuffer);
++    if (!D3D12_INTERNAL_BindComputeResources(d3d12CommandBuffer)) {
++        return;
++    }
+     ID3D12GraphicsCommandList_Dispatch(
+         d3d12CommandBuffer->graphicsCommandList,
+         groupcountX,
+@@ -5937,7 +5990,9 @@ static void D3D12_DispatchComputeIndirect(
+     D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+     D3D12Buffer *d3d12Buffer = ((D3D12BufferContainer *)buffer)->activeBuffer;
+ 
+-    D3D12_INTERNAL_BindComputeResources(d3d12CommandBuffer);
++    if (!D3D12_INTERNAL_BindComputeResources(d3d12CommandBuffer)) {
++        return;
++    }
+     ID3D12GraphicsCommandList_ExecuteIndirect(
+         d3d12CommandBuffer->graphicsCommandList,
+         d3d12CommandBuffer->renderer->indirectDispatchCommandSignature,

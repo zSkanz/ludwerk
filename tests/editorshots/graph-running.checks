@@ -1,0 +1,9 @@
+# shot, then what must be so in it: `x,y=r,g,b` at fractions of the frame (imgprobe), within ten of each channel;
+# `x,y!=r,g,b` is that it is NOT that colour there. Every probe is of a flat colour of the interface, and of a
+# place -- never of how much of something a machine had done by the shot.
+# The game running, the character landed: the line along the top that says the graph cannot be changed -- its
+# ground above the words, where no sentence puts a letter -- Move lit, the state the layer is in, and Fall not.
+anim-running 0.3128125,0.1383333=3,111,194 0.4003125,0.4950000=0,120,212 0.5378125,0.6561111=49,49,49
+# Paused, Grounded and Rise set, four ticks stepped: Fall is the state the layer is in, and Move is neither
+# lit nor unlit -- it is being faded out of, whatever its weight has come to -- and Jump was never entered.
+anim-fading 0.3128125,0.1383333=3,111,194 0.5378125,0.6483333=0,120,212 0.4003125,0.4950000!=0,120,212 0.4003125,0.4950000!=49,49,49 0.5378125,0.3838889=49,49,49

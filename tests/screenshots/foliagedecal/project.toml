@@ -1,0 +1,14 @@
+# A decal paints the foliage that stands in it (ADR 0185): two fields of
+# upright cards and a mark laid over the middle of both. A project so the
+# driver can give it the card the foliage cards' test draws.
+
+[project]
+name = "Ludwerk Foliage Decal"
+id = "dev.ludwerk.foliagedecal"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Foliage Decal"
+width = 1000
+height = 500

@@ -1,0 +1,13 @@
+{
+  "speaker.anna": "Ana",
+  "speaker.bruno": "Bruno",
+  "meeting.anna_1": "Você veio. Eu já ia apagar a lâmpada.",
+  "meeting.bruno_1": "Deixe acesa. Eu trouxe a chave daquela porta.",
+  "meeting.anna_2": "Então abra, e vamos ver o que tem lá.",
+  "hud.playing": "Espaço ou A: pular   P: pausar",
+  "hud.paused": "Pausado.   P: continuar   Espaço ou A: pular",
+  "hud.over": "Enter ou Start: tocar de novo",
+  "hud.skipped": "Pulado: a lâmpada está acesa e a porta aberta, como no fim.   Enter ou Start: tocar de novo",
+  "hud.voice": "V: voz {voice}   T: texto {text}",
+  "hud.event": "A sequência disse: {name}"
+}

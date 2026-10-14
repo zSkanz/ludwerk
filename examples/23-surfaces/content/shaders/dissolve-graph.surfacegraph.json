@@ -1,0 +1,254 @@
+{
+  "format": "surfacegraph",
+  "version": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "Parameter",
+      "title": "Base",
+      "at": [645, -130],
+      "fields": {
+        "Name": "Base",
+        "Type": "colour",
+        "Default": "0.55 0.58 0.62",
+        "Range": ""
+      }
+    },
+    {
+      "id": 2,
+      "kind": "Parameter",
+      "title": "Rim",
+      "at": [645, 265],
+      "fields": {
+        "Name": "Rim",
+        "Type": "colour",
+        "Default": "6 2.2 0.4",
+        "Range": ""
+      }
+    },
+    {
+      "id": 3,
+      "kind": "Parameter",
+      "title": "Threshold",
+      "at": [430, 114],
+      "fields": {
+        "Name": "Threshold",
+        "Type": "number",
+        "Default": "0",
+        "Range": "0 1"
+      }
+    },
+    {
+      "id": 4,
+      "kind": "Parameter",
+      "title": "Rim width",
+      "at": [430, 244],
+      "fields": {
+        "Name": "RimWidth",
+        "Type": "number",
+        "Default": "0.06",
+        "Range": "0 0.3"
+      }
+    },
+    {
+      "id": 5,
+      "kind": "WorldPosition",
+      "at": [0, 10]
+    },
+    {
+      "id": 6,
+      "kind": "Noise",
+      "title": "Coarse",
+      "at": [215, 0]
+    },
+    {
+      "id": 7,
+      "kind": "Constant",
+      "title": "Fine scale",
+      "at": [0, 80],
+      "fields": {
+        "Type": "number",
+        "Value": "7"
+      }
+    },
+    {
+      "id": 8,
+      "kind": "Noise",
+      "title": "Fine",
+      "at": [215, 90]
+    },
+    {
+      "id": 9,
+      "kind": "Constant",
+      "title": "Coarse share",
+      "at": [215, 180],
+      "fields": {
+        "Type": "number",
+        "Value": "0.65"
+      }
+    },
+    {
+      "id": 10,
+      "kind": "Lerp",
+      "title": "Noise",
+      "at": [430, 20]
+    },
+    {
+      "id": 11,
+      "kind": "Step",
+      "title": "Kept",
+      "at": [645, 0]
+    },
+    {
+      "id": 12,
+      "kind": "Expression",
+      "title": "Rim amount",
+      "at": [645, 90],
+      "fields": {
+        "Code": "b > 0.0f ? 1.0f - saturate((a - b) / c) : 0.0f",
+        "Type": "number"
+      }
+    },
+    {
+      "id": 13,
+      "kind": "Multiply",
+      "title": "Glow",
+      "at": [860, 255]
+    },
+    {
+      "id": 14,
+      "kind": "Constant",
+      "title": "Rough",
+      "at": [860, -115],
+      "fields": {
+        "Type": "number",
+        "Value": "0.5"
+      }
+    },
+    {
+      "id": 15,
+      "kind": "Constant",
+      "title": "Metal",
+      "at": [860, -215],
+      "fields": {
+        "Type": "number",
+        "Value": "0.6"
+      }
+    },
+    {
+      "id": 16,
+      "kind": "Surface",
+      "at": [1075, -20]
+    }
+  ],
+  "links": [
+    {
+      "from": 5,
+      "output": "Out",
+      "to": 6,
+      "input": "Position"
+    },
+    {
+      "from": 5,
+      "output": "Out",
+      "to": 8,
+      "input": "Position"
+    },
+    {
+      "from": 7,
+      "output": "Out",
+      "to": 8,
+      "input": "Scale"
+    },
+    {
+      "from": 8,
+      "output": "Out",
+      "to": 10,
+      "input": "A"
+    },
+    {
+      "from": 6,
+      "output": "Out",
+      "to": 10,
+      "input": "B"
+    },
+    {
+      "from": 9,
+      "output": "Out",
+      "to": 10,
+      "input": "T"
+    },
+    {
+      "from": 3,
+      "output": "Out",
+      "to": 11,
+      "input": "Edge"
+    },
+    {
+      "from": 10,
+      "output": "Out",
+      "to": 11,
+      "input": "X"
+    },
+    {
+      "from": 10,
+      "output": "Out",
+      "to": 12,
+      "input": "a"
+    },
+    {
+      "from": 3,
+      "output": "Out",
+      "to": 12,
+      "input": "b"
+    },
+    {
+      "from": 4,
+      "output": "Out",
+      "to": 12,
+      "input": "c"
+    },
+    {
+      "from": 2,
+      "output": "Out",
+      "to": 13,
+      "input": "A"
+    },
+    {
+      "from": 12,
+      "output": "Out",
+      "to": 13,
+      "input": "B"
+    },
+    {
+      "from": 11,
+      "output": "Out",
+      "to": 16,
+      "input": "Alpha"
+    },
+    {
+      "from": 1,
+      "output": "Out",
+      "to": 16,
+      "input": "BaseColor"
+    },
+    {
+      "from": 13,
+      "output": "Out",
+      "to": 16,
+      "input": "Emissive"
+    },
+    {
+      "from": 15,
+      "output": "Out",
+      "to": 16,
+      "input": "Metallic"
+    },
+    {
+      "from": 14,
+      "output": "Out",
+      "to": 16,
+      "input": "Roughness"
+    }
+  ]
+}

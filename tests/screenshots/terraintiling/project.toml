@@ -1,0 +1,16 @@
+# A terrain layer's repeat, broken up (ADR 0113's amendment): three fields of
+# the built-in grass -- repeating as it did, broken up as it is by default, and
+# on hexagonal cells -- photographed from above near and far. A project rather
+# than a bare scene so the driver and a person run it the same way; the world
+# is built by its script.
+
+[project]
+name = "Ludwerk Terrain Tiling"
+id = "dev.ludwerk.terraintiling"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Terrain Tiling"
+width = 960
+height = 540

@@ -1,0 +1,1808 @@
+#include <lua.h>
+
+#include <algorithm>
+#include <bit>
+#include <doctest/doctest.h>
+#include <limits>
+#include <ostream>
+#include <string>
+#include <vector>
+
+#include "engine/core/json.h"
+#include "engine/input/input.h"
+#include "engine/scene/class_registry.h"
+#include "engine/scene/localization.h"
+#include "engine/scene/players.h"
+#include "engine/scene/world.h"
+#include "engine/script/remote.h"
+#include "engine/script/scenes.h"
+#include "engine/script/services.h"
+#include "script_fixture.h"
+
+namespace core = engine::core;
+namespace scene = engine::scene;
+using engine::script::testing::Fixture;
+
+namespace {
+// Test-only native implementation, never registered in the editor/module catalog.
+class IdentityTestProvider final : public engine::platform::GameIntegration
+{
+public:
+    bool authenticated = false;
+    bool pending = false;
+    std::string failure;
+    bool achievements = false;
+    std::string lastArgument;
+    std::vector<std::string> capabilities;
+    std::string payload;
+    bool available() const override { return true; }
+    bool signedIn() const override { return authenticated; }
+    engine::platform::IntegrationUser user() const override { return {"42", "Test Player"}; }
+    bool supports(std::string_view operation) const override
+    {
+        return operation == "Identity" || operation == "SignIn" || (achievements && operation == "UnlockAchievement") ||
+               std::find(capabilities.begin(), capabilities.end(), operation) != capabilities.end();
+    }
+    std::string begin(std::string_view, std::string_view argument) override
+    {
+        if (!failure.empty())
+            return failure;
+        pending = true;
+        lastArgument = argument;
+        return {};
+    }
+    bool poll(bool& success, std::string& reason) override
+    {
+        if (!pending)
+            return false;
+        pending = false;
+        success = failure.empty();
+        authenticated = success;
+        reason = failure;
+        return true;
+    }
+    std::string response() const override { return payload; }
+};
+} // namespace
+
+TEST_CASE("generic identity exists without integrations and its async failure does not park")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        assert(game:FindService("IdentityService") == nil)
+        local identity = game:GetService("IdentityService")
+        assert(identity.Parent == game)
+        assert(game:GetService("IdentityService") == identity)
+        assert(game:FindService("IdentityService") == identity)
+        assert(not identity:IsAvailable() and not identity:IsSignedIn())
+        assert(identity:GetLocalUser() == nil)
+        local co = coroutine.create(function()
+            local ok, reason = identity:SignInAsync()
+            assert(not ok and reason == "IntegrationUnavailable")
+        end)
+        assert(coroutine.resume(co))
+        assert(coroutine.status(co) == "dead")
+    )") == "");
+}
+
+TEST_CASE("generic achievements resolve project IDs and do not invent unsupported progress")
+{
+    Fixture fixture;
+    fixture.world->engineState().enabledIntegrations = {"xbox"};
+    auto native = std::make_unique<IdentityTestProvider>();
+    auto* provider = native.get();
+    provider->authenticated = true;
+    provider->achievements = true;
+    auto& entry = engine::script::context(fixture.runtime->state()).services->integrations["xbox"];
+    entry.attempted = true;
+    entry.provider = std::move(native);
+    engine::platform::PlatformServiceConfiguration config;
+    config.ids["achievements/xbox"]["FIRST_WIN"] = "17";
+    fixture.runtime->setPlatformServices(std::move(config));
+    CHECK(fixture.failure(R"(
+        local achievements = game:GetService("AchievementService")
+        assert(achievements:IsAvailable() and achievements:Supports("Unlock"))
+        assert(not achievements:Supports("GetProgress"))
+        assert(not achievements:Supports("SetProgress"))
+        assert(not achievements:Supports("invented"))
+        local progress, reason = achievements:GetProgressAsync("FIRST_WIN")
+        assert(progress == nil and reason == "NotSupported")
+        local ok, errorCode = achievements:UnlockAsync("MISSING")
+        assert(not ok and errorCode == "UnknownAchievement")
+        task.spawn(function()
+            local unlocked, error = achievements:UnlockAsync("FIRST_WIN")
+            assert(unlocked and error == nil)
+            game:SetAttribute("AchievementCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(provider->lastArgument == "17");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("AchievementCompleted") == true))") == "");
+    provider->failure = "NativeFailure:0x80004005";
+    CHECK(fixture.failure(R"(
+        local ok, reason = game:GetService("AchievementService"):UnlockAsync("FIRST_WIN")
+        assert(not ok and reason == "ProviderError")
+        local nativeOk, nativeReason = game:GetService("XboxService"):UnlockAchievementAsync("17")
+        assert(not nativeOk and nativeReason == "NativeFailure:0x80004005")
+    )") == "");
+}
+
+TEST_CASE("generic store is honest about absent capabilities and validates native product results")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local store = game:GetService("StoreService")
+        assert(not store:IsAvailable())
+        local owned, reason = store:OwnsAsync("DLC_01")
+        assert(owned == nil and reason == "IntegrationUnavailable")
+    )") == "");
+    fixture.world->engineState().enabledIntegrations = {"xbox"};
+    auto native = std::make_unique<IdentityTestProvider>();
+    auto* provider = native.get();
+    auto& entry = engine::script::context(fixture.runtime->state()).services->integrations["xbox"];
+    entry.attempted = true;
+    entry.provider = std::move(native);
+    CHECK(fixture.failure(R"(
+        local store = game:GetService("StoreService")
+        assert(not store:IsAvailable() and not store:Supports("Purchase"))
+        local ok, reason = store:PurchaseAsync("DLC_01")
+        assert(not ok and reason == "NotSupported")
+    )") == "");
+    provider->capabilities = {"GetProduct", "OwnsProduct"};
+    provider->payload = R"({"Id":"DLC_01","DisplayName":"Test product","Description":"Test only"})";
+    engine::platform::PlatformServiceConfiguration config;
+    config.ids["store/xbox"]["DLC_01"] = "native-product";
+    fixture.runtime->setPlatformServices(std::move(config));
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local product, reason = game:GetService("StoreService"):GetProductAsync("DLC_01")
+            assert(product ~= nil and reason == nil and product.Id == "DLC_01")
+            game:SetAttribute("ProductCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(provider->lastArgument.find("native-product") != std::string::npos);
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("ProductCompleted") == true))") == "");
+    provider->payload = "{}";
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local product, reason = game:GetService("StoreService"):GetProductAsync("DLC_01")
+            assert(product == nil and reason == "InvalidProviderResponse")
+            game:SetAttribute("InvalidProductRejected", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("InvalidProductRejected") == true))") == "");
+    provider->payload = "false";
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local owns, reason = game:GetService("StoreService"):OwnsAsync("DLC_01")
+            assert(owns == false and reason == nil)
+            game:SetAttribute("OwnershipCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("OwnershipCompleted") == true))") == "");
+}
+
+TEST_CASE("generic cloud slots use the shared async seam and retain explicit conflicts")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local cloud = game:GetService("CloudSaveService")
+        assert(not cloud:IsAvailable())
+        local data, reason = cloud:ReadAsync("save_1")
+        assert(data == nil and reason == "IntegrationUnavailable")
+    )") == "");
+    fixture.world->engineState().enabledIntegrations = {"test"};
+    auto native = std::make_unique<IdentityTestProvider>();
+    auto* provider = native.get();
+    provider->capabilities = {"CloudRead", "CloudWrite"};
+    auto& entry = engine::script::context(fixture.runtime->state()).services->integrations["test"];
+    entry.attempted = true;
+    entry.provider = std::move(native);
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local ok, reason = game:GetService("CloudSaveService"):WriteAsync("save_1", 'quoted "save"\nline')
+            assert(ok and reason == nil)
+            game:SetAttribute("CloudWriteCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("CloudWriteCompleted") == true))") == "");
+    core::JsonDocument request;
+    REQUIRE(request.parse(provider->lastArgument));
+    CHECK(request.root()["id"].asString() == "save_1");
+    CHECK(request.root()["data"].asString() == "quoted \"save\"\nline");
+    provider->failure = "Conflict";
+    CHECK(fixture.failure(R"(
+        local data, reason = game:GetService("CloudSaveService"):ReadAsync("save_1")
+        assert(data == nil and reason == "Conflict")
+    )") == "");
+    provider->failure.clear();
+    provider->payload = "\"remote save\"";
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local data, reason = game:GetService("CloudSaveService"):ReadAsync("save_1")
+            assert(data == "remote save" and reason == nil)
+            game:SetAttribute("CloudReadCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("CloudReadCompleted") == true))") == "");
+}
+
+TEST_CASE("generic leaderboards map boards and validate scores, counts and ranked responses")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local boards = game:GetService("LeaderboardService")
+        assert(not boards:IsAvailable())
+        local rows, reason = boards:GetTopAsync("HIGH_SCORE", 10)
+        assert(rows == nil and reason == "IntegrationUnavailable")
+    )") == "");
+    fixture.world->engineState().enabledIntegrations = {"test"};
+    auto native = std::make_unique<IdentityTestProvider>();
+    auto* provider = native.get();
+    provider->capabilities = {"GetLeaderboardTop", "SubmitLeaderboardScore"};
+    provider->payload = R"([{"UserId":"test:42","DisplayName":"Player","Rank":1,"Score":100}])";
+    auto& entry = engine::script::context(fixture.runtime->state()).services->integrations["test"];
+    entry.attempted = true;
+    entry.provider = std::move(native);
+    engine::platform::PlatformServiceConfiguration config;
+    config.ids["leaderboards/test"]["HIGH_SCORE"] = "native-board";
+    fixture.runtime->setPlatformServices(std::move(config));
+    CHECK(fixture.failure(R"(
+        local boards = game:GetService("LeaderboardService")
+        assert(boards:IsAvailable() and not boards:Supports("GetAroundPlayer"))
+        local rows, reason = boards:GetTopAsync("HIGH_SCORE", 101)
+        assert(rows == nil and reason == "InvalidArgument")
+        local ok, errorCode = boards:SubmitScoreAsync("HIGH_SCORE", math.huge)
+        assert(not ok and errorCode == "InvalidArgument")
+        task.spawn(function()
+            local rows, reason = boards:GetTopAsync("HIGH_SCORE", 10)
+            assert(rows ~= nil and reason == nil and rows[1].UserId == "test:42")
+            assert(rows[1].Rank == 1 and rows[1].Score == 100)
+            game:SetAttribute("LeaderboardCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    core::JsonDocument request;
+    REQUIRE(request.parse(provider->lastArgument));
+    CHECK(request.root()["id"].asString() == "native-board");
+    CHECK(request.root()["count"].asInteger() == 10);
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("LeaderboardCompleted") == true))") == "");
+}
+
+TEST_CASE("generic social queries preserve namespaces and never infer communication permission from errors")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local social = game:GetService("SocialService")
+        assert(not social:IsAvailable())
+        local permission, reason = social:CanCommunicateWithAsync("test:7")
+        assert(permission == nil and reason == "IntegrationUnavailable")
+    )") == "");
+    fixture.world->engineState().enabledIntegrations = {"test"};
+    auto native = std::make_unique<IdentityTestProvider>();
+    auto* provider = native.get();
+    provider->capabilities = {"GetFriends", "CanCommunicate", "GetPresence"};
+    provider->payload = "false";
+    auto& entry = engine::script::context(fixture.runtime->state()).services->integrations["test"];
+    entry.attempted = true;
+    entry.provider = std::move(native);
+    CHECK(fixture.failure(R"(
+        local social = game:GetService("SocialService")
+        assert(social:IsAvailable() and not social:Supports("IsBlocked"))
+        local permission, reason = social:CanCommunicateWithAsync("different:7")
+        assert(permission == nil and reason == "InvalidUser")
+        task.spawn(function()
+            local allowed, reason = social:CanCommunicateWithAsync("test:7")
+            assert(allowed == false and reason == nil)
+            game:SetAttribute("CommunicationChecked", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("CommunicationChecked") == true))") == "");
+    core::JsonDocument request;
+    REQUIRE(request.parse(provider->lastArgument));
+    CHECK(request.root()["id"].asString() == "7");
+    provider->payload = R"({"IsOnline":false,"Status":null})";
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local presence, reason = game:GetService("SocialService"):GetPresenceAsync("test:7")
+            assert(presence ~= nil and presence.IsOnline == false and presence.Status == nil and reason == nil)
+            game:SetAttribute("PresenceChecked", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("PresenceChecked") == true))") == "");
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local friends, reason = game:GetService("SocialService"):GetFriendsAsync()
+            assert(friends == nil and reason == "NotSignedIn")
+            game:SetAttribute("SocialFailureReceived", true)
+        end)
+    )") == "");
+    provider->failure = "NotSignedIn";
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("SocialFailureReceived") == true))") == "");
+}
+
+TEST_CASE("generic identity shares platform authentication and reports explicit errors")
+{
+    Fixture fixture;
+    fixture.world->engineState().enabledIntegrations = {"xbox"};
+    auto native = std::make_unique<IdentityTestProvider>();
+    auto* provider = native.get();
+    auto& entry = engine::script::context(fixture.runtime->state()).services->integrations["xbox"];
+    entry.attempted = true;
+    entry.provider = std::move(native);
+    CHECK(fixture.failure(R"(
+        local identity = game:GetService("IdentityService")
+        assert(identity:IsAvailable() and not identity:IsSignedIn())
+        assert(identity:GetLocalUser() == nil)
+        task.spawn(function()
+            local ok, errorCode = identity:SignInAsync()
+            assert(ok and errorCode == nil)
+            local user = identity:GetLocalUser()
+            assert(user ~= nil and user.Id == "xbox:42")
+            assert(user.DisplayName == "Test Player" and user.Platform == "xbox")
+            assert(user.IsSignedIn and identity:IsSignedIn())
+            assert(game:GetService("XboxService"):GetUserId() == "42")
+            game:SetAttribute("IdentityCompleted", true)
+        end)
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("IdentityCompleted") == true))") == "");
+    provider->failure = "PermissionDenied";
+    CHECK(fixture.failure(R"(
+        local ok, reason = game:GetService("IdentityService"):SignInAsync()
+        assert(not ok and reason == "PermissionDenied")
+    )") == "");
+    engine::platform::PlatformServiceConfiguration config;
+    config.providers["identity"] = "unregistered";
+    fixture.runtime->setPlatformServices(std::move(config));
+    CHECK(fixture.failure(R"(
+        local identity = game:GetService("IdentityService")
+        assert(not identity:IsAvailable())
+        local ok, reason = identity:SignInAsync()
+        assert(not ok and reason == "ProviderUnavailable")
+    )") == "");
+}
+
+TEST_CASE("InputService preference aliases and device signals reach deferred Luau handlers")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local input = game:GetService("InputService")
+        assert(input.PreferredInput == input.LastInputDeviceType)
+        assert(input.PreferredGamepadType == Enum.GamepadType.Unknown)
+        assert(input.PreferredGamepadId == 0)
+        game:SetAttribute("DeviceChanges", 0)
+        input.InputDeviceChanged:Connect(function(kind)
+            assert(kind == Enum.InputDeviceType.Gamepad)
+            assert(input.PreferredInput == kind)
+            game:SetAttribute("DeviceChanges", game:GetAttribute("DeviceChanges") + 1)
+        end)
+        input.PreferredGamepadTypeChanged:Connect(function(kind)
+            assert(kind == Enum.GamepadType.PlayStation)
+            game:SetAttribute("DeviceChanges", game:GetAttribute("DeviceChanges") + 1)
+        end)
+        input.PreferredGamepadIdChanged:Connect(function(id)
+            assert(id == 73)
+            game:SetAttribute("DeviceChanges", game:GetAttribute("DeviceChanges") + 1)
+        end)
+        input.GamepadConnected:Connect(function(id, kind)
+            assert(id == 73 and kind == Enum.GamepadType.PlayStation)
+            game:SetAttribute("DeviceChanges", game:GetAttribute("DeviceChanges") + 1)
+        end)
+    )") == "");
+    engine::input::InputSystem system;
+    engine::platform::Event events[2];
+    events[0].type = engine::platform::EventType::GamepadAdded;
+    events[0].gamepadId = 73;
+    events[0].gamepadFamily = engine::platform::GamepadType::PlayStation;
+    events[1] = events[0];
+    events[1].type = engine::platform::EventType::GamepadButtonDown;
+    events[1].gamepadButton = engine::platform::GamepadButton::South;
+    system.pumpFrame(events);
+    system.dispatchSimTick(*fixture.world, 1);
+    fixture.runtime->fireInputDeviceEvents(system.drainDeviceEvents());
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("DeviceChanges") == 0))") == "");
+    fixture.tick();
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("DeviceChanges") == 4))") == "");
+    system.dispatchSimTick(*fixture.world, 2);
+    fixture.runtime->fireInputDeviceEvents(system.drainDeviceEvents());
+    fixture.tick();
+    CHECK(fixture.failure(R"(assert(game:GetAttribute("DeviceChanges") == 4))") == "");
+}
+
+TEST_CASE("the world boots with game, Workspace and the three script services")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        assert(typeof(game) == "Instance")
+        assert(game.ClassName == "DataModel")
+        assert(game.Parent == nil)
+
+        assert(typeof(workspace) == "Instance")
+        assert(workspace.ClassName == "Workspace")
+        -- Reached through the global as well as through GetService, and it is
+        -- the same instance either way.
+        assert(workspace.Parent == game)
+        assert(game:GetService("Workspace") == workspace)
+
+        -- The mount points exist before anything mounts (ADR 0105), and the
+        -- game's has its three fixed folders.
+        local global = game:FindService("GlobalScriptService")
+        assert(global ~= nil)
+        assert(global:FindFirstChild("Server") ~= nil)
+        assert(global:FindFirstChild("Client") ~= nil)
+        assert(global:FindFirstChild("Shared") ~= nil)
+        assert(game:FindService("ServerScriptService") ~= nil)
+        assert(game:FindService("ClientScriptService") ~= nil)
+
+        -- Retired, and it says where its code lives now.
+        local ok, message = pcall(function()
+            return game:GetService("ScriptService")
+        end)
+        assert(not ok)
+        assert(string.find(tostring(message), "ClientScriptService", 1, true) ~= nil)
+    )") == "");
+}
+
+TEST_CASE("default eager services exist from boot and GetService is a lookup")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        -- **There before anything asked**, which is what makes the tree the same
+        -- shape before a line of script has run as after -- and what lets an
+        -- editor show it. It was created by its first `GetService` until
+        -- then, so `RunService` and `HotReloadService` appeared in the Explorer
+        -- when you pressed play and vanished when you stopped.
+        assert(game:FindService("RunService") ~= nil)
+
+        local run = game:GetService("RunService")
+        assert(run.ClassName == "RunService")
+        assert(run.Parent == game)
+
+        -- Every later call returns the same instance.
+        assert(game:GetService("RunService") == run)
+        assert(game:FindService("RunService") == run)
+
+        -- And it is an ordinary child of game.
+        local found = false
+        for _, child in game:GetChildren() do
+            if child == run then
+                found = true
+            end
+        end
+        assert(found)
+    )") == "");
+}
+
+TEST_CASE("every default service class in the build has an instance under game")
+{
+    // **Counted against the registry rather than named**, because a list written
+    // by hand is a list that goes stale the day somebody adds a service -- and
+    // the failure would be invisible until a person noticed a missing row in the
+    // Explorer, which is exactly how this was found in the first place.
+    Fixture fixture;
+
+    const scene::ClassRegistry& classes = fixture.classes;
+    const scene::World& world = *fixture.world;
+    const core::InstanceId dataModel = fixture.runtime->dataModel();
+
+    core::usize services = 0;
+    core::usize present = 0;
+    for (scene::ClassId id = 1; id < static_cast<scene::ClassId>(classes.classCount()); ++id) {
+        const scene::ClassDescriptor* descriptor = classes.find(id);
+        if (descriptor == nullptr || !hasFlag(descriptor->flags, scene::ClassFlags::Service) ||
+            !descriptor->integration.empty() || descriptor->lazyService)
+            continue;
+        ++services;
+        if (world.findFirstChildOfClass(dataModel, id).valid())
+            ++present;
+    }
+
+    CHECK(services > 5);
+    CHECK(present == services);
+}
+
+TEST_CASE("the services read GlobalScriptService, Workspace, Lighting, then alphabetically")
+{
+    // **The order is what a person reads**, so it is asserted as a list rather
+    // than as a rule: a test that recomputed the rule would agree with any
+    // implementation of it, including the wrong one.
+    //
+    // The two at the front are the two a scene IS -- the world and how it is
+    // lit -- and past those a dozen names is a list scanned by name.
+    Fixture fixture;
+
+    const scene::World& world = *fixture.world;
+    std::vector<std::string> names;
+    for (core::InstanceId child = world.firstChild(fixture.runtime->dataModel()); child.valid();
+         child = world.nextSibling(child)) {
+        names.emplace_back(world.atoms().text(world.name(child)));
+    }
+
+    // The game's own service first, set apart from the scene's (ADR 0105).
+    REQUIRE(names.size() >= 4);
+    CHECK(names[0] == "GlobalScriptService");
+    CHECK(names[1] == "Workspace");
+    CHECK(names[2] == "Lighting");
+
+    // Everything after the pinned ones, in name order, checked as a whole --
+    // "is sorted" is the claim, and one out-of-place pair is what it forbids.
+    const std::vector<std::string> rest(names.begin() + 3, names.end());
+    CHECK(std::is_sorted(rest.begin(), rest.end()));
+    CHECK(std::adjacent_find(rest.begin(), rest.end()) == rest.end());
+}
+
+TEST_CASE("GetService raises on an unknown name and FindService does not")
+{
+    Fixture fixture;
+
+    CHECK(fixture.raises(R"(game:GetService("Nonexistent"))", "scene.err.unknown_service"));
+    // A class that exists but is not a service is not a service.
+    CHECK(fixture.raises(R"(game:GetService("Part"))", "scene.err.unknown_service"));
+
+    // Asking whether something exists is not the same as asking for it.
+    CHECK(fixture.failure(R"(
+        assert(game:FindService("Nonexistent") == nil)
+        assert(game:FindService("Part") == nil)
+    )") == "");
+}
+
+TEST_CASE("a service cannot be constructed, only reached")
+{
+    Fixture fixture;
+
+    CHECK(fixture.raises(R"(Instance.new("RunService"))", "scene.err.not_creatable"));
+    CHECK(fixture.raises(R"(Instance.new("DataModel"))", "scene.err.not_creatable"));
+}
+
+// --- RunService --------------------------------------------------------------
+
+TEST_CASE("the phase signals fire once per tick, carrying the timestep")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local run = game:GetService("RunService")
+        local marker = Instance.new("Folder")
+        local beats = 0
+        local seenDelta = 0
+
+        run.Heartbeat:Connect(function(dt)
+            beats += 1
+            seenDelta = dt
+            marker:SetAttribute("beats", beats)
+            marker:SetAttribute("dt", dt)
+        end)
+    )") == "");
+
+    fixture.tick(3);
+    CHECK(fixture.errors() == "");
+
+    CHECK(fixture.failure(R"(
+        local run = game:GetService("RunService")
+        -- Read back through an attribute, because the chunk that connected has
+        -- finished and its locals are gone.
+        assert(run.SimTime > 0, tostring(run.SimTime))
+    )") == "");
+}
+
+TEST_CASE("SimTime advances with the tick and Pause stops it")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local run = game:GetService("RunService")
+        assert(run.SimTime == 0)
+        assert(run:IsPaused() == false)
+
+        run:Pause()
+        assert(run:IsPaused() == true)
+        -- Idempotent: pausing a paused world is a no-op, not an error.
+        run:Pause()
+        assert(run:IsPaused() == true)
+
+        run:Resume()
+        assert(run:IsPaused() == false)
+        run:Resume()
+        assert(run:IsPaused() == false)
+    )") == "");
+
+    fixture.tick(30);
+    CHECK(fixture.failure(R"(
+        local run = game:GetService("RunService")
+        -- Constant for the whole tick and advancing by FixedTimestep between
+        -- ticks; 30 ticks at the default 1/60 is half a second.
+        assert(math.abs(run.SimTime - 0.5) < 1e-9, tostring(run.SimTime))
+    )") == "");
+}
+
+TEST_CASE("FixedTimestep is the grid every timing guarantee rests on")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local physics = game:GetService("PhysicsService")
+        assert(math.abs(physics.FixedTimestep - 1 / 60) < 1e-12)
+    )") == "");
+
+    // Writable from the physics work, and the write round-trips immediately: what it does NOT
+    // do is change the tick this frame is already running on, which is the
+    // whole reason the property has a requested value and an active one.
+    CHECK(fixture.failure(R"(
+        local physics = game:GetService("PhysicsService")
+        physics.FixedTimestep = 1 / 120
+        assert(math.abs(physics.FixedTimestep - 1 / 120) < 1e-12)
+    )") == "");
+
+    // The range architecture.md §3 states, 30 Hz to 240 Hz. Outside it the
+    // guarantees expressed against the tick stop meaning anything, so the write
+    // is refused rather than clamped -- a clamp would read back as a number
+    // nobody wrote.
+    //
+    // The key is the property's own (fixed with the input and UI work). A setter still answers
+    // with a bool and the descriptor still carries one key, so the key states
+    // the whole DOMAIN rather than the failure -- which is why the same one
+    // covers a wrong-typed value: "it takes a tick length from 1/240 to 1/30"
+    // is true of `"fast"` as much as of 1/10. What it stopped doing is
+    // answering "it takes a number" about a number.
+    CHECK(fixture.raises(R"(game:GetService("PhysicsService").FixedTimestep = 1 / 10)",
+                         "scene.err.number_fixed_timestep"));
+    CHECK(fixture.raises(R"(game:GetService("PhysicsService").FixedTimestep = 1 / 1000)",
+                         "scene.err.number_fixed_timestep"));
+    CHECK(fixture.raises(R"(game:GetService("PhysicsService").FixedTimestep = 0 / 0)",
+                         "scene.err.number_fixed_timestep"));
+    CHECK(fixture.raises(R"(game:GetService("PhysicsService").FixedTimestep = "fast")",
+                         "scene.err.number_fixed_timestep"));
+}
+
+// --- TagService --------------------------------------------------------------
+
+TEST_CASE("TagService finds instances by tag, wherever they are parented")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local tags = game:GetService("TagService")
+        local parented = Instance.new("Part")
+        local orphan = Instance.new("Part")
+        parented.Parent = workspace
+
+        parented:AddTag("Pickup")
+        orphan:AddTag("Pickup")
+
+        local found = tags:GetTagged("Pickup")
+        assert(#found == 2, tostring(#found))
+
+        -- Tags are pure instance state with no relationship to the tree, so an
+        -- instance parented to nil is returned like any other.
+        local sawOrphan = false
+        for _, instance in found do
+            if instance == orphan then
+                sawOrphan = true
+            end
+        end
+        assert(sawOrphan)
+
+        assert(#tags:GetTagged("Nothing") == 0)
+    )") == "");
+}
+
+TEST_CASE("GetAllTags is what is carried now, not every name ever seen")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local tags = game:GetService("TagService")
+        local part = Instance.new("Part")
+
+        assert(#tags:GetAllTags() == 0)
+        part:AddTag("Alpha")
+        part:AddTag("Beta")
+        assert(#tags:GetAllTags() == 2)
+
+        -- A tag leaves the set the moment its last carrier drops it, even
+        -- though the signal reporting the drop is deferred like everything else.
+        part:RemoveTag("Alpha")
+        local remaining = tags:GetAllTags()
+        assert(#remaining == 1, tostring(#remaining))
+        assert(remaining[1] == "Beta")
+    )") == "");
+}
+
+TEST_CASE("the tag signals fire deferred, with the instance that gained or lost it")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local tags = game:GetService("TagService")
+        local part = Instance.new("Part")
+        local marker = Instance.new("Folder")
+
+        tags:GetInstanceAddedSignal("Pickup"):Connect(function(instance)
+            marker:SetAttribute("added", instance == part)
+        end)
+        tags:GetInstanceRemovedSignal("Pickup"):Connect(function(instance)
+            marker:SetAttribute("removed", instance == part)
+        end)
+
+        part:AddTag("Pickup")
+        -- Deferred, so a handler sees it at the next resumption point rather
+        -- than inside the AddTag call that added it.
+        assert(marker:GetAttribute("added") == nil)
+
+        task.wait()
+        assert(marker:GetAttribute("added") == true)
+
+        part:RemoveTag("Pickup")
+        task.wait()
+        assert(marker:GetAttribute("removed") == true)
+
+        -- The same object every time, like every other instance signal.
+        assert(tags:GetInstanceAddedSignal("Pickup") == tags:GetInstanceAddedSignal("Pickup"))
+        assert(tags:GetInstanceAddedSignal("Pickup") ~= tags:GetInstanceRemovedSignal("Pickup"))
+    )") == "");
+
+    fixture.tick(3);
+    CHECK(fixture.errors() == "");
+}
+
+TEST_CASE("Destroy strips every tag, so the removed signal reports it")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local tags = game:GetService("TagService")
+        local marker = Instance.new("Folder")
+        local victim = Instance.new("Part")
+        victim:AddTag("Pickup")
+
+        tags:GetInstanceRemovedSignal("Pickup"):Connect(function(instance)
+            -- A destroyed handle still resolves for the drain in which it
+            -- arrives, so a handler can read what it lost before it goes.
+            marker:SetAttribute("lost", instance.ClassName)
+        end)
+
+        victim:Destroy()
+        task.wait()
+        assert(marker:GetAttribute("lost") == "Part", tostring(marker:GetAttribute("lost")))
+        assert(#tags:GetTagged("Pickup") == 0)
+    )") == "");
+
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+}
+
+// --- WaitForChild ------------------------------------------------------------
+
+TEST_CASE("WaitForChild returns immediately when the child is already there")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local root = Instance.new("Folder")
+        local child = Instance.new("Part")
+        child.Name = "Target"
+        child.Parent = root
+
+        -- No yield: a matching child already present returns without parking.
+        assert(root:WaitForChild("Target") == child)
+    )") == "");
+
+    CHECK(fixture.errors() == "");
+}
+
+TEST_CASE("WaitForChild parks until the child exists, however it came to")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local root = Instance.new("Folder")
+        local marker = Instance.new("Folder")
+
+        task.spawn(function()
+            local found = root:WaitForChild("Target")
+            marker:SetAttribute("found", found.ClassName)
+        end)
+        assert(marker:GetAttribute("found") == nil)
+
+        task.wait()
+        assert(marker:GetAttribute("found") == nil)
+
+        local child = Instance.new("Part")
+        child.Name = "Target"
+        child.Parent = root
+
+        task.wait()
+        assert(marker:GetAttribute("found") == "Part", tostring(marker:GetAttribute("found")))
+    )") == "");
+
+    fixture.tick(4);
+    CHECK(fixture.errors() == "");
+}
+
+TEST_CASE("a sibling renamed into the awaited name satisfies a waiter")
+{
+    Fixture fixture;
+
+    // The contract is about the state, not about the event that produced it.
+    CHECK(fixture.failure(R"(
+        local root = Instance.new("Folder")
+        local marker = Instance.new("Folder")
+        local sibling = Instance.new("Part")
+        sibling.Name = "Something"
+        sibling.Parent = root
+
+        task.spawn(function()
+            marker:SetAttribute("found", root:WaitForChild("Target") == sibling)
+        end)
+
+        task.wait()
+        assert(marker:GetAttribute("found") == nil)
+
+        sibling.Name = "Target"
+        task.wait()
+        assert(marker:GetAttribute("found") == true)
+    )") == "");
+
+    fixture.tick(4);
+    CHECK(fixture.errors() == "");
+}
+
+TEST_CASE("a timeout expires to nil, with no error and no warning")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local root = Instance.new("Folder")
+        local marker = Instance.new("Folder")
+
+        task.spawn(function()
+            local found = root:WaitForChild("Never", 2 / 60)
+            marker:SetAttribute("expired", found == nil)
+        end)
+
+        task.wait()
+        assert(marker:GetAttribute("expired") == nil)
+
+        task.wait(3 / 60)
+        assert(marker:GetAttribute("expired") == true)
+    )") == "");
+
+    fixture.tick(6);
+    CHECK(fixture.errors() == "");
+    // The timeout form never warns, however long its timeout: you said how long
+    // you were prepared to wait.
+    CHECK_FALSE(fixture.logContains("Infinite yield"));
+}
+
+TEST_CASE("an unbounded wait warns after five sim-seconds and keeps waiting")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local root = Instance.new("Folder")
+        root.Name = "Patient"
+        local marker = Instance.new("Folder")
+
+        task.spawn(function()
+            marker:SetAttribute("found", root:WaitForChild("Eventually").ClassName)
+        end)
+    )") == "");
+
+    // Five sim-seconds is 300 ticks; one more to cross it.
+    fixture.tick(299);
+    CHECK_FALSE(fixture.logContains("Infinite yield"));
+
+    fixture.tick(2);
+    CHECK(fixture.logContains("Infinite yield"));
+
+    // Warned ONCE, and still waiting: the warning is a diagnostic, not a poll.
+    CHECK(fixture.logCount("Infinite yield") == 1);
+    fixture.tick(60);
+    CHECK(fixture.logCount("Infinite yield") == 1);
+}
+
+// --- DebugService ------------------------------------------------------------
+
+TEST_CASE("DebugService exposes bounded diagnostic CPU captures")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local debug = game:GetService("DebugService")
+        assert(debug:GetProfileReport() == nil)
+        assert(not debug:CaptureProfile(0))
+        assert(not debug:CaptureProfile(121))
+    )") == "");
+}
+
+TEST_CASE("MessageOut carries every print and warn with its level")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local debugService = game:GetService("DebugService")
+        local marker = Instance.new("Folder")
+        local count = 0
+
+        debugService.MessageOut:Connect(function(message, level)
+            count += 1
+            marker:SetAttribute("last", message)
+            marker:SetAttribute("level", level.Name)
+            marker:SetAttribute("count", count)
+        end)
+
+        print("hello", 42)
+        warn("careful")
+
+        task.wait()
+        -- Exactly one fire per call, tab-separated like print itself.
+        assert(marker:GetAttribute("count") == 2, tostring(marker:GetAttribute("count")))
+        assert(marker:GetAttribute("last") == "careful")
+        assert(marker:GetAttribute("level") == "Warning", tostring(marker:GetAttribute("level")))
+    )") == "");
+
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+}
+
+TEST_CASE("the gizmos validate their arguments and draw nothing headless")
+{
+    Fixture fixture;
+
+    // A silent no-op rather than an error, so debug drawing left in shared code
+    // cannot fail a headless test.
+    CHECK(fixture.failure(R"(
+        local debugService = game:GetService("DebugService")
+        debugService:DrawLine(Vector3.zero, Vector3.new(0, 1, 0))
+        debugService:DrawLine(Vector3.zero, Vector3.new(0, 1, 0), Color3.new(1, 0, 0))
+        debugService:DrawBox(CFrame.new(), Vector3.one)
+        debugService:DrawSphere(Vector3.zero, 2)
+    )") == "");
+
+    // Validated even headless: a no-op that also skipped the checks would make
+    // headless the one place a typo survives.
+    CHECK(fixture.failure(R"(game:GetService("DebugService"):DrawSphere(Vector3.zero, "big"))") != "");
+    CHECK(fixture.failure(R"(game:GetService("DebugService"):DrawLine(1, 2))") != "");
+}
+
+TEST_CASE("a stat nothing published raises rather than answering zero")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local debugService = game:GetService("DebugService")
+        -- Answered from the world, so it is exact at any moment.
+        assert(debugService:GetStat("InstanceCount") > 0)
+
+        debugService:SetCustomStat("Enemies", 7)
+        assert(debugService:GetStat("Enemies") == 7)
+        debugService:SetCustomStat("Enemies", 9)
+        assert(debugService:GetStat("Enemies") == 9)
+    )") == "");
+
+    CHECK(fixture.raises(R"(game:GetService("DebugService"):GetStat("Misspelt"))", "scene.err.unknown_stat"));
+}
+
+TEST_CASE("the panels are a closed set and OverlayVisible starts off")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local debugService = game:GetService("DebugService")
+        -- Off in shipped builds too, so a game offers the overlay deliberately.
+        assert(debugService.OverlayVisible == false)
+        debugService.OverlayVisible = true
+        assert(debugService.OverlayVisible == true)
+
+        debugService:ShowPanel("Stats")
+        debugService:ShowPanel("Stats")
+        debugService:HidePanel("Stats")
+        debugService:HidePanel("Stats")
+    )") == "");
+
+    CHECK(fixture.raises(R"(game:GetService("DebugService"):ShowPanel("Nope"))", "scene.err.unknown_stat"));
+    CHECK(fixture.raises(R"(game:GetService("DebugService"):HidePanel("Nope"))", "scene.err.unknown_stat"));
+}
+
+// --- Shutdown ----------------------------------------------------------------
+
+TEST_CASE("BindToClose runs at shutdown, and Shutdown asks for one")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local marker = Instance.new("Folder")
+        marker.Name = "CloseMarker"
+        marker.Parent = workspace
+
+        game:BindToClose(function()
+            marker:SetAttribute("first", true)
+        end)
+        game:BindToClose(function()
+            marker:SetAttribute("second", true)
+        end)
+
+        assert(marker:GetAttribute("first") == nil)
+        game:Shutdown()
+    )") == "");
+
+    CHECK(engine::script::shutdownRequested(fixture.runtime->state()));
+    engine::script::runCloseHandlers(fixture.runtime->state());
+    CHECK(fixture.errors() == "");
+
+    CHECK(fixture.failure(R"(
+        local marker = workspace:FindFirstChild("CloseMarker")
+        assert(marker ~= nil)
+        assert(marker:GetAttribute("first") == true)
+        assert(marker:GetAttribute("second") == true)
+    )") == "");
+}
+
+TEST_CASE("a close handler that errors does not stop the others")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local marker = Instance.new("Folder")
+        marker.Name = "CloseMarker"
+        marker.Parent = workspace
+
+        game:BindToClose(function()
+            error("deliberate")
+        end)
+        game:BindToClose(function()
+            marker:SetAttribute("ran", true)
+        end)
+    )") == "");
+
+    engine::script::runCloseHandlers(fixture.runtime->state());
+    CHECK(fixture.logContains("deliberate"));
+
+    CHECK(fixture.failure(R"(
+        assert(workspace:FindFirstChild("CloseMarker"):GetAttribute("ran") == true)
+    )") == "");
+}
+
+// --- game.Loaded -------------------------------------------------------------
+
+TEST_CASE("game.Loaded is deferred, so a file-scope connection is in time")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local marker = Instance.new("Folder")
+        marker.Name = "LoadedMarker"
+        marker.Parent = workspace
+
+        game.Loaded:Connect(function(...)
+            marker:SetAttribute("loaded", true)
+            assert(select("#", ...) == 0)
+        end)
+    )") == "");
+
+    engine::script::fireDataModelLoaded(fixture.runtime->state());
+    fixture.tick();
+    CHECK(fixture.errors() == "");
+
+    CHECK(fixture.failure(R"(
+        assert(workspace:FindFirstChild("LoadedMarker"):GetAttribute("loaded") == true)
+    )") == "");
+}
+
+TEST_CASE("RemoteEvent on a replica: FireServer goes out, and speaking to clients is refused")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Replica;
+    CHECK(fixture.failure(R"(
+        local remote = Instance.new("RemoteEvent")
+        remote.Name = "Ready"
+        remote.Parent = workspace
+        remote:FireServer("ready", 3)
+    )") == "");
+    // **Out, not in**: a replica's own FireServer is for the authority, and is
+    // never delivered to this machine.
+    REQUIRE(fixture.world->engineState().remoteOutbox.size() == 1);
+    CHECK(fixture.world->engineState().remoteOutbox[0].toServer);
+    CHECK(fixture.world->engineState().remoteInbox.empty());
+
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Ready"):FireAllClients("no"))", "net.err.remote_authority_only"));
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Ready"):FireClient(workspace, "no"))",
+                         "net.err.remote_authority_only"));
+    // A value that cannot travel is refused before anything is queued.
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Ready"):FireServer(function() end))", "net.err.remote_value"));
+    CHECK(fixture.world->engineState().remoteOutbox.size() == 1);
+}
+
+TEST_CASE("an UnreliableRemoteEvent's message is marked as one, and limited to sixteen kibibytes")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Replica;
+    CHECK(fixture.failure(R"(
+        local fast = Instance.new("UnreliableRemoteEvent")
+        fast.Name = "Aim"
+        fast.Parent = workspace
+        fast:FireServer(vector.create(1, 2, 3))
+        local sure = Instance.new("RemoteEvent")
+        sure.Name = "Bought"
+        sure.Parent = workspace
+        sure:FireServer("sword")
+    )") == "");
+    // The session reads the kind from the message, and sends each its way.
+    REQUIRE(fixture.world->engineState().remoteOutbox.size() == 2);
+    CHECK(fixture.world->engineState().remoteOutbox[0].unreliable);
+    CHECK(fixture.world->engineState().remoteOutbox[0].toServer);
+    CHECK_FALSE(fixture.world->engineState().remoteOutbox[1].unreliable);
+
+    // **Sixteen kibibytes, and its own error**: a reliable event carries four
+    // times that, and the same string through it is taken.
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Aim"):FireServer(string.rep("x", 17000)))",
+                         "net.err.unreliable_too_large"));
+    CHECK(fixture.failure(R"(workspace:FindFirstChild("Bought"):FireServer(string.rep("x", 17000)))") == "");
+    CHECK(fixture.failure(R"(workspace:FindFirstChild("Aim"):FireServer(string.rep("x", 15000)))") == "");
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Aim"):FireServer(table.create(5000, "abcd")))",
+                         "net.err.unreliable_too_large"));
+    REQUIRE(fixture.world->engineState().remoteOutbox.size() == 4);
+    CHECK(fixture.world->engineState().remoteOutbox[3].unreliable);
+
+    // A buffer is under the same limit, and is never a table's key.
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Aim"):FireServer(buffer.create(17000)))",
+                         "net.err.unreliable_too_large"));
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Aim"):FireServer({ [buffer.create(4)] = 1 }))",
+                         "net.err.remote_key"));
+
+    // Only the authority speaks to clients, on either kind.
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Aim"):FireAllClients("no"))", "net.err.remote_authority_only"));
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Aim"):FireClient(workspace, "no"))",
+                         "net.err.remote_authority_only"));
+}
+
+TEST_CASE("RemoteEvent on a dedicated server: nobody to send as, and every message goes out")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Dedicated;
+    CHECK(fixture.failure(R"(
+        local remote = Instance.new("RemoteEvent")
+        remote.Name = "Round"
+        remote.Parent = workspace
+        remote:FireAllClients("starts")
+    )") == "");
+    // No player at this machine, so nothing is delivered here.
+    CHECK(fixture.world->engineState().remoteInbox.empty());
+    REQUIRE(fixture.world->engineState().remoteOutbox.size() == 1);
+    CHECK_FALSE(fixture.world->engineState().remoteOutbox[0].toServer);
+    CHECK(fixture.world->engineState().remoteOutbox[0].userId == 0);
+
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Round"):FireServer())", "net.err.remote_no_player"));
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Round"):FireClient(workspace))", "net.err.remote_not_player"));
+}
+
+TEST_CASE("RemoteFunction on a replica: the question goes out numbered, and the answer resumes the caller")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Replica;
+    CHECK(fixture.failure(R"(
+        local remote = Instance.new("RemoteFunction")
+        remote.Name = "Shop"
+        remote.Parent = workspace
+        task.spawn(function()
+            workspace:SetAttribute("Price", remote:InvokeServerAsync("sword"))
+        end)
+        task.spawn(function()
+            local ok, message = pcall(function()
+                return remote:InvokeServerAsync("shield")
+            end)
+            workspace:SetAttribute("Refused", if ok then "no" else tostring(message))
+        end)
+    )") == "");
+    std::vector<scene::RemoteMessage>& outbox = fixture.world->engineState().remoteOutbox;
+    REQUIRE(outbox.size() == 2);
+    CHECK(outbox[0].toServer);
+    CHECK(outbox[0].call != 0u);
+    CHECK(outbox[1].call != outbox[0].call);
+    const core::InstanceId remote = outbox[0].remote;
+
+    // What the session delivers when the authority answers: the price for the
+    // first, and a failure -- one string -- for the second.
+    lua_State* L = fixture.runtime->state();
+    scene::RemoteMessage price;
+    price.remote = remote;
+    price.call = outbox[0].call;
+    price.reply = true;
+    lua_pushnumber(L, 150);
+    engine::script::encodeRemoteArguments(L, lua_gettop(L), 1, price.payload, price.refs);
+    lua_pop(L, 1);
+    scene::RemoteMessage refusal;
+    refusal.remote = remote;
+    refusal.call = outbox[1].call;
+    refusal.reply = true;
+    refusal.failed = true;
+    lua_pushstring(L, "sold out");
+    engine::script::encodeRemoteArguments(L, lua_gettop(L), 1, refusal.payload, refusal.refs);
+    lua_pop(L, 1);
+    outbox.clear();
+    fixture.world->engineState().remoteInbox = {price, refusal};
+    engine::script::fireRemoteMessages(L);
+
+    CHECK(fixture.failure(R"(
+        assert(workspace:GetAttribute("Price") == 150, "the answer arrived")
+        local refused = workspace:GetAttribute("Refused") :: string
+        assert(string.find(refused, "sold out", 1, true) ~= nil, "the failure raised at the caller")
+    )") == "");
+}
+
+TEST_CASE("RemoteFunction on a dedicated server: nobody to ask as")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Dedicated;
+    CHECK(fixture.raises(R"(
+        local remote = Instance.new("RemoteFunction")
+        remote:InvokeServerAsync()
+    )",
+                         "net.err.remote_no_player"));
+    CHECK(fixture.world->engineState().remoteOutbox.empty());
+}
+
+TEST_CASE("Sound:Play starts from the start, Resume carries on, and a seek is where Play starts")
+{
+    // **Reported: "I play a sound, then play again, and nothing plays".** A
+    // `Play` that resumed was a `Play` that did nothing to a sound paused at its
+    // end. `Play` starts again; `Resume` is what carries on.
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local sound = Instance.new("Sound")
+        sound.Parent = workspace
+
+        sound.TimePosition = 0.5
+        sound:Play()
+        assert(sound.Playing)
+        assert(sound.TimePosition == 0.5, "a seek is where Play starts")
+
+        sound:Pause()
+        assert(not sound.Playing)
+        assert(sound.TimePosition == 0.5)
+        sound:Resume()
+        assert(sound.Playing)
+        assert(sound.TimePosition == 0.5, "Resume carries on")
+
+        sound:Play()
+        assert(sound.TimePosition == 0, "Play starts from the start")
+
+        sound:Stop()
+        assert(not sound.Playing)
+        assert(sound.TimePosition == 0)
+    )") == "");
+}
+
+TEST_CASE("Promise and Collector are globals, and work (ADR 0094)")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        assert(type(Promise) == "table" and type(Collector) == "table")
+        assert(Promise.new(function() end):GetStatus() == Enum.PromiseState.Started)
+
+        -- The executor runs at once; a chain resolves through its handlers.
+        local order = {}
+        local p = Promise.new(function(resolve)
+            table.insert(order, "executor")
+            resolve(2)
+        end)
+        table.insert(order, "after new")
+        assert(order[1] == "executor" and order[2] == "after new")
+        local doubled = p:AndThen(function(x) return x * 2 end)
+        local ok, value = doubled:Await()
+        assert(ok and value == 4, "chain resolves")
+
+        -- A handler that errors rejects; Catch recovers.
+        local recovered = Promise.resolve(1):AndThen(function() error("boom") end):Catch(function(e)
+            return "recovered"
+        end)
+        assert(recovered:ExpectAsync() == "recovered")
+
+        -- Adopting a promise; all; race.
+        assert(Promise.resolve(Promise.resolve(7)):ExpectAsync() == 7)
+        local values = Promise.all({ Promise.resolve(1), Promise.resolve(2) }):ExpectAsync()
+        assert(values[1] == 1 and values[2] == 2)
+        assert(Promise.race({ Promise.resolve("first"), Promise.new(function() end) }):ExpectAsync() == "first")
+
+        -- Cancelling runs the hook and settles as Canceled.
+        local hooked = false
+        local pending = Promise.new(function(_, _, onCancel)
+            onCancel(function() hooked = true end)
+        end)
+        pending:Cancel()
+        assert(hooked and pending:GetStatus() == Enum.PromiseState.Canceled)
+
+        -- Collector: newest first, keyed, destroyed.
+        local cleaned = {}
+        local c = Collector.new()
+        c:Add(function() table.insert(cleaned, "a") end)
+        c:Add(function() table.insert(cleaned, "b") end)
+        c:Add(function() table.insert(cleaned, "keyed") end, nil, "k")
+        c:Remove("k")
+        assert(cleaned[1] == "keyed")
+        c:Cleanup()
+        assert(cleaned[2] == "b" and cleaned[3] == "a", "reverse order")
+        local part = c:Add(Instance.new("Part"))
+        local signal = c:Add(Signal.new())
+        c:Destroy()
+        assert(part.Parent == nil)
+        assert(not pcall(function() c:Add(function() end) end), "a destroyed Collector refuses")
+    )") == "");
+}
+
+TEST_CASE("a remote payload whose table key is NaN is dropped, not a thrown error")
+{
+    Fixture fixture;
+    REQUIRE(fixture.booted);
+    lua_State* L = fixture.runtime->state();
+    const int top = lua_gettop(L);
+
+    // One argument: a table of one pair, keyed by a NaN number -- what a peer
+    // can put on the wire and Luau refuses to index by.
+    const auto nanBits = std::bit_cast<core::u64>(std::numeric_limits<double>::quiet_NaN());
+    std::vector<core::u8> numberKey{1, 7, 1, 0, 0, 0, 3};
+    for (int byte = 0; byte < 8; ++byte)
+        numberKey.push_back(static_cast<core::u8>(nanBits >> (8 * byte)));
+    numberKey.push_back(2);
+    CHECK(engine::script::decodeRemoteArguments(L, numberKey, {}) == -1);
+    CHECK(lua_gettop(L) == top);
+
+    // The same through a vector key with a NaN in it.
+    const auto nanFloat = std::bit_cast<core::u32>(std::numeric_limits<float>::quiet_NaN());
+    std::vector<core::u8> vectorKey{1, 7, 1, 0, 0, 0, 5};
+    for (int axis = 0; axis < 3; ++axis) {
+        for (int byte = 0; byte < 4; ++byte)
+            vectorKey.push_back(static_cast<core::u8>((axis == 1 ? nanFloat : 0u) >> (8 * byte)));
+    }
+    vectorKey.push_back(2);
+    CHECK(engine::script::decodeRemoteArguments(L, vectorKey, {}) == -1);
+    CHECK(lua_gettop(L) == top);
+
+    // A NaN VALUE is a number like any other and arrives.
+    std::vector<core::u8> nanValue{1, 3};
+    for (int byte = 0; byte < 8; ++byte)
+        nanValue.push_back(static_cast<core::u8>(nanBits >> (8 * byte)));
+    CHECK(engine::script::decodeRemoteArguments(L, nanValue, {}) == 1);
+    lua_settop(L, top);
+}
+
+// --- LocalizationService (ADR 0154) ------------------------------------------------
+
+namespace {
+
+[[nodiscard]] scene::Localization twoLanguages()
+{
+    scene::Localization localization;
+    REQUIRE(localization.load("en", R"({"menu.play": "Play", "menu.quit": "Quit", "hud.score": "Score: {points}",
+                                        "hud.greeting": "Hello, {name}!"})"));
+    REQUIRE(localization.load("pt-BR", R"({"menu.play": "Jogar", "hud.score": "Pontos: {points}"})"));
+    return localization;
+}
+
+} // namespace
+
+TEST_CASE("LocalizationService: a key is read in the player's locale, and LocaleChanged says when that changes")
+{
+    Fixture fixture;
+    const scene::Localization localization = twoLanguages();
+    fixture.world->setLocalization(&localization);
+    fixture.world->engineState().locale = "en";
+
+    CHECK(fixture.failure(R"(
+        local Localization = game:GetService("LocalizationService")
+        assert(Localization.Locale == "en")
+        local locales = Localization:GetLocales()
+        assert(#locales == 2 and locales[1] == "en" and locales[2] == "pt-BR")
+
+        assert(Localization:Translate("menu.play") == "Play")
+        assert(Localization:Translate("hud.score", { points = 1200 }) == "Score: 1200")
+        assert(Localization:Translate("hud.score", { points = 2.5 }) == "Score: 2.5")
+        assert(Localization:Translate("hud.greeting", { name = "Ana", unused = true }) == "Hello, Ana!")
+
+        local heard = {}
+        Localization.LocaleChanged:Connect(function(locale)
+            table.insert(heard, locale)
+        end)
+
+        Localization.Locale = "pt-BR"
+        assert(Localization.Locale == "pt-BR")
+        assert(Localization:Translate("menu.play") == "Jogar")
+        assert(Localization:Translate("hud.score", { points = 7 }) == "Pontos: 7")
+        -- What Portuguese lacks is read in the project's default.
+        assert(Localization:Translate("menu.quit") == "Quit")
+
+        -- The same locale again is no change; a language alone is narrowed.
+        Localization.Locale = "pt-BR"
+        Localization.Locale = "pt"
+        assert(Localization.Locale == "pt-BR")
+        task.wait()
+        assert(#heard == 1 and heard[1] == "pt-BR", `heard {#heard}`)
+
+        -- A locale the game has nothing for is refused, and nothing changes.
+        assert(not pcall(function()
+            Localization.Locale = "fr"
+        end))
+        assert(not pcall(function()
+            (Localization :: any).Locale = 12
+        end))
+        assert(Localization.Locale == "pt-BR")
+    )") == "");
+}
+
+TEST_CASE("LocalizationService: a key nobody has comes back as the key, and is warned about once")
+{
+    Fixture fixture;
+    const scene::Localization localization = twoLanguages();
+    fixture.world->setLocalization(&localization);
+    fixture.world->engineState().locale = "en";
+    fixture.logged.clear();
+
+    CHECK(fixture.failure(R"(
+        local Localization = game:GetService("LocalizationService")
+        assert(Localization:Translate("menu.options") == "menu.options")
+        assert(Localization:Translate("menu.options") == "menu.options")
+        assert(Localization:Translate("menu.options", { any = 1 }) == "menu.options")
+        -- The engine's own text is read by the same call.
+        assert(Localization:Translate("scene.err.number_positive") == "It takes a number greater than zero.")
+    )") == "");
+
+    int warned = 0;
+    for (const auto& [level, text] : fixture.logged) {
+        if (level == core::LogLevel::Warn && text.find("menu.options") != std::string::npos)
+            ++warned;
+    }
+    CHECK(warned == 1);
+}
+
+TEST_CASE("LocalizationService: a machine with no player reads the default locale and may not choose one")
+{
+    Fixture fixture;
+    scene::Localization localization = twoLanguages();
+    localization.setDefaultLocale("pt-BR");
+    fixture.world->setLocalization(&localization);
+    // A dedicated server: whatever the locale says, there is nobody reading.
+    fixture.world->engineState().locale = "en";
+    fixture.world->engineState().graphicsDisplay = false;
+
+    CHECK(fixture.failure(R"(
+        local Localization = game:GetService("LocalizationService")
+        assert(Localization:Translate("menu.play") == "Jogar")
+        assert(not pcall(function()
+            Localization.Locale = "pt-BR"
+        end))
+        assert(Localization.Locale == "en")
+    )") == "");
+}
+
+TEST_CASE("LocalizationService: with no catalogs at all the engine's text is still there")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local Localization = game:GetService("LocalizationService")
+        assert(#Localization:GetLocales() == 1)
+        assert(Localization:Translate("scene.err.number_positive") == "It takes a number greater than zero.")
+        assert(Localization:Translate("nobody.has.this") == "nobody.has.this")
+    )") == "");
+}
+
+TEST_CASE("inactive optional services remain callable without yielding or simulating success")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        assert(game:FindService("XboxService") == nil)
+        local xbox = game:GetService("XboxService")
+        assert(xbox == game:GetService("XboxService"))
+        assert(not xbox:IsAvailable())
+        assert(not xbox:IsSignedIn())
+        assert(xbox:GetUserId() == nil and xbox:GetGamertag() == nil)
+        local co = coroutine.create(function()
+            local ok, code = xbox:SignInAsync()
+            assert(not ok and code == "IntegrationDisabled")
+            ok, code = xbox:UnlockAchievementAsync("FIRST_KILL")
+            assert(not ok and code == "IntegrationDisabled")
+        end)
+        assert(coroutine.resume(co))
+        assert(coroutine.status(co) == "dead")
+        local ok, code = xbox:UnlockAchievementAsync("")
+        assert(not ok and code == "InvalidArgument")
+    )") == "");
+    CHECK(fixture.errors().empty());
+}
+
+TEST_CASE("enabled integration without a provider reports BackendUnavailable")
+{
+    Fixture fixture;
+    fixture.world->engineState().enabledIntegrations.push_back("xbox");
+    CHECK(fixture.failure(R"(
+        local xbox = game:GetService("XboxService")
+        assert(not xbox:IsAvailable())
+        local ok, code = xbox:SignInAsync()
+        assert(not ok and code == "BackendUnavailable")
+    )") == "");
+    CHECK(fixture.errors().empty());
+}
+
+TEST_CASE("inactive service warns once in development and stays silent in players")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local xbox = game:GetService("XboxService")
+        xbox:IsAvailable()
+        xbox:SignInAsync()
+    )") == "");
+    CHECK(fixture.logCount("XboxService") == 0);
+    engine::script::setDeveloperWarnings(fixture.runtime->state(), true);
+    CHECK(fixture.failure(R"(
+        local xbox = game:GetService("XboxService")
+        xbox:IsAvailable()
+        xbox:SignInAsync()
+        game:GetService("XboxService")
+    )") == "");
+    CHECK(fixture.logCount("XboxService") == 1);
+}
+
+TEST_CASE("local guests own independent intents and directed remote replies without peer impersonation")
+{
+    Fixture fixture;
+    REQUIRE(fixture.failure(R"(game:GetService("NetworkService"))") == "");
+    const auto service = scene::networkServiceOf(*fixture.world, fixture.runtime->dataModel());
+    REQUIRE(service.valid());
+    (void)scene::createPlayer(*fixture.world, service, 1, true);
+    const auto remotePeer = scene::createPlayer(*fixture.world, service, 9, false);
+    REQUIRE(remotePeer.valid());
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        assert(#net:GetLocalPlayers() == 1)
+        local guest = net:AddLocalPlayer()
+        assert(guest ~= nil and guest ~= net.LocalPlayer)
+        guest.Name = "Guest"
+        assert(guest.UserId >= 2147483648)
+        assert(#net:GetLocalPlayers() == 2 and #net:GetPlayers() == 3)
+        local context = Instance.new("InputContext")
+        context.Name = "GuestContext"
+        context.Player = guest
+        context.GamepadId = 22
+        assert(context.Player == guest and context.GamepadId == 22)
+        context.Parent = game:GetService("InputService")
+        local action = Instance.new("InputAction")
+        action.Name = "Move"
+        action.Type = Enum.InputActionType.Direction2D
+        action.Parent = context
+        local remote = Instance.new("RemoteEvent")
+        remote.Name = "GuestReply"
+        remote.Parent = workspace
+        remote.ServerReceived:Connect(function(player, value)
+            assert(player == guest and value == "choose")
+            remote:FireClient(player, "cards")
+        end)
+        remote.LocalClientReceived:Connect(function(player, value)
+            assert(player == guest and value == "cards")
+            game:SetAttribute("GuestReply", true)
+        end)
+        remote.ClientReceived:Connect(function(value)
+            assert(value == "primary")
+            game:SetAttribute("PrimaryReply", true)
+        end)
+        remote:FireServerFor(guest, "choose")
+        remote:FireClient(net.LocalPlayer, "primary")
+        assert(not pcall(function() remote:FireServerFor(net:FindFirstChild("Player9"), "forged") end))
+        assert(not pcall(function() context.GamepadId = -1 end))
+        assert(not pcall(function() context.GamepadId = 1.5 end))
+        assert(not pcall(function() context.Player = net:FindFirstChild("Player9") end))
+    )") == "");
+    fixture.world->inputActions().forEach(
+        [](core::InstanceId, scene::InputActionComponent& action) { action.axis = core::Vec3{0.75f, -0.25f, 0.0f}; });
+    scene::captureLocalIntents(*fixture.world);
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        assert(net:FindFirstChild("Guest"):GetIntent("Move") == Vector2.new(0.75, -0.25))
+        assert(net.LocalPlayer:GetIntent("Move") == false)
+    )") == "");
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        game:GetService("RunService"):BindToIntent("GuestMovement", function(intent)
+            intent:Set("Move", Vector2.new(-0.5, 0.25))
+        end, net:FindFirstChild("Guest"))
+        game:GetService("RunService"):BindToIntent("PrimaryJump", function(intent)
+            intent:Set("Jump", true)
+        end)
+        assert(not pcall(function()
+            game:GetService("RunService"):BindToIntent("Forged", function() end, net:FindFirstChild("Player9"))
+        end))
+    )") == "");
+    engine::script::runIntentWriters(fixture.runtime->state());
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        assert(net:FindFirstChild("Guest"):GetIntent("Move") == Vector2.new(-0.5, 0.25))
+        assert(net.LocalPlayer:GetIntent("Move") == false)
+        assert(net.LocalPlayer:GetIntent("Jump") == true)
+    )") == "");
+    for (int pass = 0; pass < 3; ++pass) {
+        engine::script::fireRemoteMessages(fixture.runtime->state());
+        fixture.tick();
+    }
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(
+        assert(game:GetAttribute("GuestReply") == true and game:GetAttribute("PrimaryReply") == true)
+        local net = game:GetService("NetworkService")
+        assert(not net:RemoveLocalPlayer(net.LocalPlayer))
+        assert(not net:RemoveLocalPlayer(net:FindFirstChild("Player9")))
+        local guest = net:FindFirstChild("Guest")
+        assert(net:RemoveLocalPlayer(guest))
+        assert(not net:RemoveLocalPlayer(guest))
+        assert(#net:GetLocalPlayers() == 1)
+        assert(not pcall(function() workspace:FindFirstChild("GuestReply"):FireServerFor(guest) end))
+    )") == "");
+    scene::captureLocalIntents(*fixture.world);
+    CHECK(fixture.failure(R"(assert(game:GetService("NetworkService").LocalPlayer:GetIntent("Move") == false))") == "");
+    // A dedicated server has nobody at it to sit down.
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Dedicated;
+    CHECK(fixture.failure(R"(assert(game:GetService("NetworkService"):AddLocalPlayer() == nil))") == "");
+}
+
+// --- Local players: what ADR 0195 owed ---------------------------------------
+
+TEST_CASE("ADR 0205: a guest sits down wherever somebody is at the machine, four at most")
+{
+    // Offline, hosting and joined to somebody's match alike (protocol 48):
+    // a machine's players are players of the match it is in. A dedicated
+    // server has nobody at it, and answers `nil` -- not an error.
+    Fixture fixture;
+    REQUIRE(fixture.failure(R"(game:GetService("NetworkService"))") == "");
+    const auto service = scene::networkServiceOf(*fixture.world, fixture.runtime->dataModel());
+    REQUIRE(service.valid());
+    (void)scene::createPlayer(*fixture.world, service, 1, true);
+
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Dedicated;
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        assert(net:AddLocalPlayer() == nil)
+        assert(#net:GetLocalPlayers() == 1)
+    )") == "");
+
+    int seated = 1;
+    for (const scene::NetworkTopology wired :
+         {scene::NetworkTopology::Host, scene::NetworkTopology::Replica, scene::NetworkTopology::Solo}) {
+        fixture.world->engineState().networkTopology = wired;
+        ++seated;
+        CHECK(fixture.failure("local net = game:GetService('NetworkService')\n"
+                              "local guest = net:AddLocalPlayer()\n"
+                              "assert(guest ~= nil and #net:GetLocalPlayers() == " +
+                              std::to_string(seated) + ")") == "");
+    }
+    // The fifth has nowhere to sit, and one that leaves makes room.
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        assert(#net:GetLocalPlayers() == 4)
+        assert(net:AddLocalPlayer() == nil)
+        assert(net:RemoveLocalPlayer(net:GetLocalPlayers()[4]))
+    )") == "");
+    fixture.tick();
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        assert(#net:GetLocalPlayers() == 3)
+        assert(net:AddLocalPlayer() ~= nil)
+    )") == "");
+}
+
+TEST_CASE("ADR 0195: a guest is in the world's hash")
+{
+    // Its `UserId`, that it is local, and what it is holding: a world with a
+    // second player at the table is not the world without one, and two
+    // machines that disagree about it must not agree about the hash.
+    Fixture fixture;
+    REQUIRE(fixture.failure(R"(game:GetService("NetworkService"))") == "");
+    const auto service = scene::networkServiceOf(*fixture.world, fixture.runtime->dataModel());
+    REQUIRE(service.valid());
+    (void)scene::createPlayer(*fixture.world, service, 1, true);
+    const core::u64 alone = fixture.world->worldHash();
+
+    REQUIRE(fixture.failure(R"(
+        local guest = game:GetService("NetworkService"):AddLocalPlayer()
+        guest.Name = "Guest"
+        local context = Instance.new("InputContext")
+        context.Name = "GuestSeat"
+        context.Player = guest
+        context.Parent = game:GetService("InputService")
+        local move = Instance.new("InputAction")
+        move.Name = "Move"
+        move.Type = Enum.InputActionType.Direction2D
+        move.Parent = context
+    )") == "");
+    const core::u64 seated = fixture.world->worldHash();
+    CHECK(seated != alone);
+
+    // And its intent is in it: the same guest, pushing its stick.
+    fixture.world->inputActions().forEach(
+        [](core::InstanceId, scene::InputActionComponent& action) { action.axis = core::Vec3{1.0f, 0.0f, 0.0f}; });
+    scene::captureLocalIntents(*fixture.world);
+    CHECK(fixture.world->worldHash() != seated);
+}
+
+TEST_CASE("ADR 0195: FireAllClients arrives once at a machine with a guest, and an unreliable remote knows its players")
+{
+    Fixture fixture;
+    REQUIRE(fixture.failure(R"(game:GetService("NetworkService"))") == "");
+    const auto service = scene::networkServiceOf(*fixture.world, fixture.runtime->dataModel());
+    REQUIRE(service.valid());
+    (void)scene::createPlayer(*fixture.world, service, 1, true);
+    CHECK(fixture.failure(R"(
+        local net = game:GetService("NetworkService")
+        local guest = net:AddLocalPlayer()
+        guest.Name = "Guest"
+        game:SetAttribute("All", 0)
+        game:SetAttribute("AllAsGuest", 0)
+
+        local round = Instance.new("RemoteEvent")
+        round.Name = "Round"
+        round.Parent = workspace
+        round.ClientReceived:Connect(function(value)
+            assert(value == "starts")
+            game:SetAttribute("All", game:GetAttribute("All") + 1)
+        end)
+        round.LocalClientReceived:Connect(function()
+            game:SetAttribute("AllAsGuest", game:GetAttribute("AllAsGuest") + 1)
+        end)
+        round:FireAllClients("starts")
+
+        -- The unreliable kind, the same three ways: the guest speaks and is
+        -- heard as itself, is answered as itself, and the primary's answer
+        -- stays the primary's.
+        local aim = Instance.new("UnreliableRemoteEvent")
+        aim.Name = "Aim"
+        aim.Parent = workspace
+        aim.ServerReceived:Connect(function(player, value)
+            assert(player == guest and value == "left")
+            game:SetAttribute("Heard", true)
+            aim:FireClient(player, "seen")
+            aim:FireClient(net.LocalPlayer, "primary")
+        end)
+        aim.LocalClientReceived:Connect(function(player, value)
+            assert(player == guest and value == "seen")
+            game:SetAttribute("GuestAnswered", true)
+        end)
+        aim.ClientReceived:Connect(function(value)
+            assert(value == "primary")
+            game:SetAttribute("PrimaryAnswered", true)
+        end)
+        aim:FireServerFor(guest, "left")
+        assert(not pcall(function() aim:FireServerFor(workspace, "forged") end))
+    )") == "");
+    for (int pass = 0; pass < 4; ++pass) {
+        engine::script::fireRemoteMessages(fixture.runtime->state());
+        fixture.tick();
+    }
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.failure(R"(
+        -- Once: a guest is a second player at this machine, not a second machine.
+        assert(game:GetAttribute("All") == 1, `FireAllClients arrived {game:GetAttribute("All")} times`)
+        assert(game:GetAttribute("AllAsGuest") == 0)
+        assert(game:GetAttribute("Heard") == true)
+        assert(game:GetAttribute("GuestAnswered") == true)
+        assert(game:GetAttribute("PrimaryAnswered") == true)
+    )") == "");
+}

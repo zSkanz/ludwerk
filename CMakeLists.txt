@@ -1,0 +1,209 @@
+# Ludwerk superbuild root.
+#
+# Builds are ALWAYS out-of-tree: binaryDir = $env{ENG_BUILD_ROOT}/<preset>
+# (rule R14). scripts/bootstrap.* sets ENG_BUILD_ROOT if unset.
+
+cmake_minimum_required(VERSION 3.28)
+
+project(Engine
+    VERSION 0.0.1
+    DESCRIPTION "Standalone game engine scripted in Luau with a familiar Instance/Service developer experience"
+    LANGUAGES CXX C)
+
+# Objective-C++ on Apple, for the one file that talks to `NSURLSession`
+# (`engine/net`, ADR 0063). Here and not in that module: a language enabled in
+# a subdirectory leaves CMake's rules for it unset everywhere else, and the
+# configure fails on `CMAKE_OBJCXX_COMPILE_OBJECT`.
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+    message(FATAL_ERROR "In-tree builds are forbidden (rule R14). Use a preset: cmake --preset <name>")
+endif()
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# C++20 modules are not used anywhere in this repository or in anything it
+# vendors, but CMake 3.28+ scans every C++20 translation unit for module
+# dependencies regardless -- an extra pass per file, on both tiers, to discover
+# nothing.
+#
+# Turning it off also removes a toolchain requirement that is not uniformly met:
+# the scan needs `clang-scan-deps`, and Ubuntu ships it only under a versioned
+# name, so a plain `apt-get install clang` produces a compiler that cannot
+# build C++20 targets under CMake's default. Found by running the Linux tier in
+# a container on the dev machine rather than on a hosted runner.
+#
+# Reversible in one line if the engine ever adopts modules -- at which point the
+# scanner becomes a real requirement rather than a tax.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
+# **A compiler cache, when one is installed** (ADR 0148). sccache, at the
+# version CI pins, keys each object by its preprocessed source and its flags,
+# so what a branch switch, a regenerated file with the same contents or a
+# fresh build tree would recompile comes back from the cache instead. Local
+# only: nothing it touches ships. `scripts/bootstrap.ps1` and the Tier-2 image
+# install it; without it the build is what it always was. CI passes its own
+# launcher, which this leaves alone. MSVC's shared PDB is the one thing sccache
+# cannot cache, so the debug information goes into each object instead
+# (`Embedded`, as CI already builds) and the linker still writes the PDB.
+#
+# **Not through a localised MSVC**. Ninja learns an object's headers
+# from the compiler's `/showIncludes` notes, matched against a prefix CMake
+# reads from the compiler at configure time. sccache compiles in a server of
+# its own, with no console, where a localised `cl` writes that note -- here
+# "Observação: incluindo arquivo:" -- in another codepage than the one the
+# prefix was read in: the two never match, ninja records NO header
+# dependencies, and every build after a header edit reuses objects compiled
+# against the old header (again, by another road). Where the prefix is
+# plain ASCII -- an English compiler, which is CI's -- nothing can differ.
+option(ENG_COMPILER_CACHE "Compile through sccache when it is installed" ON)
+set(engine_cache_safe ON)
+if(MSVC AND "${CMAKE_CXX_CL_SHOWINCLUDES_PREFIX}" MATCHES "[^ -~]")
+    set(engine_cache_safe OFF)
+    message(STATUS "Not compiling through sccache: this MSVC's /showIncludes note is not ASCII")
+endif()
+if(ENG_COMPILER_CACHE AND engine_cache_safe AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    find_program(ENG_SCCACHE sccache HINTS "$ENV{ENG_BUILD_ROOT}/toolchains/sccache")
+    if(ENG_SCCACHE)
+        set(CMAKE_C_COMPILER_LAUNCHER "${ENG_SCCACHE}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${ENG_SCCACHE}")
+        if(MSVC)
+            set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
+        endif()
+        message(STATUS "Compiling through ${ENG_SCCACHE}")
+    endif()
+endif()
+
+# Profiles: debug | dev | profile | player | shipping (docs/architecture.md §8)
+set(ENG_PROFILE "dev" CACHE STRING "Ludwerk build profile")
+
+set(ENG_CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+set(ENG_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
+set(ENG_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
+
+# ABI-defining and repo-wide BEFORE any subdirectory (ADR 0013). These are
+# already Luau's defaults; stating them makes the decision explicit and, more
+# importantly, guarantees that if they are ever changed they change for the VM
+# and for our code together. A per-target definition here would be an ABI
+# landmine: LUA_VECTOR_DOUBLE alone moves LUA_TVECTOR's ordinal in `lua_Type`.
+add_compile_definitions(LUA_VECTOR_SIZE=3 LUA_VECTOR_DOUBLE=0)
+
+# An opt-in UWP feasibility build, not an exportable engine player (ADR 0191).
+# It must not pull SDL or desktop SDKs into the app-container target.
+option(ENG_BUILD_UWP_PROBE "Build the isolated Xbox Developer Mode platform probe" OFF)
+if(ENG_BUILD_UWP_PROBE)
+    if(NOT MSVC OR NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
+        message(FATAL_ERROR "The UWP probe requires MSVC and CMAKE_SYSTEM_NAME=WindowsStore")
+    endif()
+    include(${ENG_CMAKE_DIR}/engine_provenance.cmake)
+    add_subdirectory(platforms/uwp)
+    return()
+endif()
+
+option(ENG_BUILD_UWP_PLAYER "Build the native AppContainer game player" OFF)
+if(ENG_BUILD_UWP_PLAYER)
+    if(NOT MSVC OR NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
+        message(FATAL_ERROR "The UWP player requires MSVC and CMAKE_SYSTEM_NAME=WindowsStore")
+    endif()
+    set(ENG_PROFILE player CACHE STRING "Engine profile" FORCE)
+    set(ENG_BUILD_TESTS OFF CACHE BOOL "Build tests" FORCE)
+    set(ENG_DEBUG_UI OFF CACHE BOOL "Build debug UI" FORCE)
+    set(ENG_SHADER_TOOLCHAIN OFF CACHE BOOL "Host shader compiler" FORCE)
+    set(ENG_RHI_SDLGPU OFF CACHE BOOL "SDL GPU backend" FORCE)
+    set(ENG_RHI_CAPTURE OFF CACHE BOOL "Capture backend" FORCE)
+    set(ENG_RHI_NULL OFF CACHE BOOL "Null backend" FORCE)
+    set(ENG_RHI_D3D12 ON CACHE BOOL "Native D3D12 backend" FORCE)
+    set(ENG_ENABLE_REPLICATION ON CACHE BOOL "Multiplayer support" FORCE)
+    add_compile_definitions(WINAPI_FAMILY=WINAPI_FAMILY_APP)
+endif()
+set(ENG_PLATFORM_UWP ${ENG_BUILD_UWP_PLAYER})
+add_compile_definitions(ENG_PLATFORM_UWP=$<BOOL:${ENG_PLATFORM_UWP}>)
+include(${ENG_CMAKE_DIR}/engine_options.cmake)
+include(${ENG_CMAKE_DIR}/engine_warnings.cmake)
+include(${ENG_CMAKE_DIR}/engine_sanitizers.cmake)
+include(${ENG_CMAKE_DIR}/engine_provenance.cmake)
+include(${ENG_CMAKE_DIR}/engine_module.cmake)
+include(${ENG_CMAKE_DIR}/engine_device_tests.cmake)
+
+# The shader toolchain, before third_party/: engine_dxc.cmake fetches and
+# verifies DirectXShaderCompiler (ADR 0032) and seeds the find results that
+# SDL_shadercross resolves during add_subdirectory.
+include(${ENG_CMAKE_DIR}/engine_dxc.cmake)
+include(${ENG_CMAKE_DIR}/engine_shaders.cmake)
+
+if(ENG_BUILD_TESTS)
+    enable_testing()
+endif()
+
+# **No multiply-add the source did not write** (ADR 0083). A fused multiply-add
+# rounds once where the written `a * b + c` rounds twice, so a compiler that
+# fuses on its own gives different bits from one that does not -- and Clang
+# fuses by default wherever the target has the instruction, which is every ARM
+# machine and so every Mac. Off everywhere, vendored code included, because
+# Luau's VM and the physics are on the simulation's path too. MSVC contracts
+# only under `/fp:contract` or `/fp:fast`, and this build passes neither.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    add_compile_options(-ffp-contract=off)
+endif()
+
+add_subdirectory(third_party)
+
+# Modules are added in layer order; engine_add_module() refuses a dependency it
+# has not seen yet, which makes an out-of-order edit a configure error rather
+# than a subtle cycle (architecture.md §2).
+add_subdirectory(engine/core)
+add_subdirectory(engine/jobs)
+add_subdirectory(engine/platform)
+add_subdirectory(engine/rhi)
+add_subdirectory(engine/net)
+add_subdirectory(engine/asset)
+add_subdirectory(engine/physics)
+add_subdirectory(engine/scene)
+add_subdirectory(engine/nav)
+add_subdirectory(engine/render)
+add_subdirectory(engine/replication)
+add_subdirectory(engine/audio)
+add_subdirectory(engine/input)
+add_subdirectory(engine/ui)
+add_subdirectory(engine/script)
+add_subdirectory(engine/app)
+
+# Repo tooling, after third_party so it can link what it vendors.
+add_subdirectory(tools/imgcmp)
+
+# The offline asset compiler, after every engine module it links. It sits
+# with the other tools rather than under engine/ because it is not part of the
+# runtime: it is what `ludwerk build-assets` drives.
+add_subdirectory(tools/assetc)
+
+# The application-identity tool. Windows-only inside; see its CMakeLists
+# for why a Windows icon has no portable writer.
+add_subdirectory(tools/iconpatch)
+
+# The surface shaders the engine ships, wrapped at build time (ADR 0091).
+add_subdirectory(tools/surfacewrap)
+
+# The relay a host behind a NAT is reached through (ADR 0178): a program of
+# its own, for a machine the internet can reach.
+if(NOT ANDROID)
+    add_subdirectory(tools/relay)
+endif()
+
+# Standalone native samples, after every module they may link. They consume the
+# engine and nothing in the engine consumes them, so they come last.
+add_subdirectory(samples)
+
+# Engine shaders (ADR 0006). Attached here rather than in engine/app because the
+# shader build belongs to the content pipeline, not to the host module's source
+# list -- `engine_host` is simply the target that must not be considered built
+# until its shaders exist.
+engine_add_shaders(engine_host GLOB "${CMAKE_CURRENT_SOURCE_DIR}/shaders/src/*.hlsl"
+    SURFACES "${CMAKE_CURRENT_SOURCE_DIR}/shaders/surface/*.surface.hlsl"
+    COMPUTE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/compute/*.hlsl")
+
+# Optional proprietary adapters stay outside the default dependency graph.
+add_subdirectory(platforms/xbox)

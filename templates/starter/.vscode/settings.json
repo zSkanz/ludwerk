@@ -1,0 +1,12 @@
+{
+    "luau-lsp.platform.type": "standard",
+    "luau-lsp.sourcemap.enabled": false,
+    "luau-lsp.fflags.enableNewSolver": true,
+    "luau-lsp.fflags.override": {
+        "LuauSolverV2": "true"
+    },
+    "luau-lsp.types.definitionFiles": [
+        ".engine/types/engine.d.luau",
+        ".engine/types/scene.d.luau"
+    ]
+}

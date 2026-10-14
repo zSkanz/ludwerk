@@ -1,0 +1,14 @@
+# A terrain layer whose material gives off light glows (ADR 0113, amended):
+# rock on one side and lava on the other, with no light in the world at all.
+# A project rather than a bare scene, because the two materials are files.
+
+[project]
+name = "Ludwerk Terrain Glow"
+id = "dev.ludwerk.terrainglow"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Terrain Glow"
+width = 640
+height = 360

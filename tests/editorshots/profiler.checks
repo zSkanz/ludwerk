@@ -1,0 +1,13 @@
+# shot, then what must be so in it: `x,y=r,g,b` at fractions of the frame (imgprobe), within ten of each channel.
+# A frame chosen on the strip of a game that is playing, with both switches on: the legend's first and third
+# swatches (the panel is drawn), the playhead's head where the strip was pressed (the frame is chosen and
+# held), and the whole bar of the row `frame` (the Systems tab has a tree to show).
+profiler-frame 0.0365625,0.5372222=86,156,214 0.1290625,0.5372222=120,190,120 0.6253125,0.4572222=255,255,255 0.6753125,0.6094444=55,148,255
+# The Scripts tab with the lines sampled: the playhead still, and the bar of the line with most samples.
+profiler-scripts 0.6253125,0.4572222=255,255,255 0.5628125,0.8316667=55,148,255
+# The GPU tab with the passes timed: the whole bar of "All passes". With the switch on and no pass timed
+# there is a sentence here and no bar. (That the editor draws at all with the passes timed is an earlier fix.)
+profiler-gpu 0.6253125,0.4572222=255,255,255 0.6753125,0.6305556=55,148,255
+profiler-memory 0.6253125,0.4572222=255,255,255 0.0365625,0.5372222=86,156,214
+# The worst frame, back on Systems: a frame is chosen, and its tree is shown.
+profiler-worst 0.6753125,0.6094444=55,148,255 0.0365625,0.5372222=86,156,214

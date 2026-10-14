@@ -1,0 +1,8 @@
+{
+  "speakers": {
+    "guard": { "name": "speaker.guard", "color": "#E8B04A" }
+  },
+  "lines": {
+    "halt": { "speaker": "guard", "seconds": 1.6 }
+  }
+}

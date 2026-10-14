@@ -1,0 +1,341 @@
+// Audio (ADR 0009, api-design.md §2.1 and §2.2).
+//
+// **The simulation owns the timeline and the device is downstream.** That is
+// the whole design, in one rule: `Sound.TimePosition`
+// advances by `FixedTimestep * PlaybackSpeed` per tick, `Ended` is raised from
+// that timeline at a drain, and `AudioSystem::update` pushes the resulting voice
+// state to the mixer once per frame, after the tick. If the mixer's position
+// were the source of truth, a script reading `TimePosition` would be reading the
+// wall clock through a side door (R10) and the same replay would diverge between
+// two machines with different buffer sizes.
+//
+// **What v1 actually makes a sound with.** `Sound.Content` is `Inert` until the streaming work's
+// asset pipeline can decode a file, so a voice synthesizes a short enveloped
+// tone whose pitch comes from a hash of the content id. It is obviously a
+// placeholder and it is deliberately not silence: a silent audio system is one
+// nobody can tell is broken, and the mixer, the buses, the distance attenuation
+// and the underrun counter are all real and all exercised by it.
+//
+// **The underrun counter is ours.** The roadmap's gate says "buffer underrun
+// counter zero in a 60 s soak", and the string `underrun` appears in miniaudio
+// only in comments and ALSA log messages -- there is no counter to read. So this
+// module defines one, and defines what it counts: a data callback that found the
+// command ring empty of an update it was expecting, plus every command dropped
+// because that ring was full. Both are real failure modes of the design above,
+// and both are zero in a healthy run.
+#pragma once
+
+#include <array>
+#include <cstddef>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+
+#include "engine/asset/content.h"
+#include "engine/core/error.h"
+#include "engine/core/id.h"
+#include "engine/core/math.h"
+#include "engine/core/types.h"
+
+namespace engine::asset {
+struct LocalizationIndex;
+}
+
+namespace engine::scene {
+class SoundMeter;
+class World;
+} // namespace engine::scene
+
+namespace engine::audio {
+
+using core::f32;
+using core::f64;
+using core::u32;
+using core::u64;
+
+namespace detail {
+
+// **When the mixer's cursor is taken from the simulation instead of kept.**
+//
+// The two clocks are the same clock in a healthy run -- the simulation advances
+// `TimePosition` by a fixed step and the device advances the cursor by a buffer
+// -- but they are quantised differently, so on any given frame one of them is
+// ahead. Re-seeding the cursor from the timeline every frame is what an earlier defect was:
+// a frame in which no tick ran dragged the cursor BACK by a frame's worth of
+// samples and the mixer replayed sixteen milliseconds it had already played,
+// sixty times a second.
+//
+// So the cursor is kept, and the timeline is taken only when the two have
+// genuinely parted company -- which is a seek, a rewind, or a sound that was
+// stopped and started again. `tolerance` is what "genuinely" means: a drift
+// smaller than it is the two clocks being quantised differently, and a drift
+// larger than it is somebody having moved one of them.
+//
+// A looped sound is compared the short way round the loop, so the frame in
+// which the mixer has wrapped and the timeline has not is not mistaken for a
+// seek to the beginning of the file.
+[[nodiscard]] bool shouldTakeTimeline(f64 mixerSeconds, f64 timelineSeconds, f64 duration, bool looped,
+                                      f64 tolerance) noexcept;
+
+// **Where a source sits across the listener**, as the sine of its azimuth: -1
+// hard left, +1 hard right, 0 straight ahead.
+//
+// **Horizontal only, and that is a decision rather than a simplification.** Two
+// speakers cannot express elevation: a source directly overhead has no left and
+// no right, and panning it by whatever sliver of horizontal offset it happens to
+// have would swing it across the field as somebody looked up.
+//
+// **Straight behind is also 0**, and that is honest rather than wrong. Front and
+// back are indistinguishable on two channels without a head model, and pretending
+// otherwise means choosing a side for a sound that is on neither.
+[[nodiscard]] f32 panOf(const core::CFrameD& ear, const core::DVec3& source) noexcept;
+
+// **Which of several ears at one machine a source is heard by** (ADR 0205):
+// the nearest -- and `first` on a tie, so a sound as far from two listeners as
+// each other does not change hands between them from frame to frame.
+[[nodiscard]] const core::CFrameD& nearestEar(const core::CFrameD& first, std::span<const core::CFrameD> others,
+                                              const core::DVec3& source) noexcept;
+
+// The two channel gains for a pan, constant POWER rather than constant
+// amplitude.
+//
+// Two channels at half amplitude are quieter than one channel at full, so a
+// linear pan dips in the middle -- a source crossing in front of the listener
+// audibly ducks as it passes. Both gains are 0.707 at the centre, which keeps
+// the sum of squares at one wherever it is.
+void panGains(f32 pan, f32& left, f32& right) noexcept;
+
+// **How long a sound file is, from what it SAYS** -- in frames at the mixer's
+// 48 kHz, or nothing when the file declares no length. Ogg Vorbis is read by hand
+// (its last page's granule over the identification header's rate), everything
+// else through its decoder's header. A pure function of the bytes, which is why
+// the tick may use it: two machines agree on it however fast their disks are.
+[[nodiscard]] std::optional<u64> probeFrames(std::span<const std::byte> bytes);
+
+} // namespace detail
+
+struct AudioStats
+{
+    // See the header comment. Zero in a healthy run, and the gate says so.
+    u64 underruns = 0;
+    u64 droppedCommands = 0;
+    // How many voices the mixer summed on its last callback.
+    u32 activeVoices = 0;
+    // False when no device could be opened and the null backend is in use --
+    // every CI runner, and any machine with no sound card. Not an error: a game
+    // that cannot open a device still has to run.
+    // How many distinct `Sound.Content` files have been decoded, and how many
+    // were asked for and could not be.
+    //
+    // Here because "is this the real sound or the placeholder tone" is a
+    // question a person listening cannot always answer -- a short file and a
+    // short tone are hard to tell apart on laptop speakers -- and a number is.
+    u32 clipsLoaded = 0;
+    u32 clipsMissing = 0;
+    // Of `clipsLoaded`, how many are STREAMED: long enough that the encoded bytes
+    // are kept and each voice decodes a little ahead of the mixer, rather than
+    // the whole file being decoded and held.
+    u32 clipsStreamed = 0;
+    // How many times the TICK had to decode a file itself, because the file's
+    // header did not say how long it is. Zero for every format that declares a
+    // length -- which is the point: the tick reads a header, never a decode.
+    u32 tickDecodes = 0;
+    bool deviceOpen = false;
+};
+
+// The mixer and the timeline. Held by `app` beside the physics mirror and the
+// input system, and for the same reasons: `scene` cannot own it without L3
+// depending on a device, and a process-global would make two worlds share one.
+class AudioSystem
+{
+public:
+    AudioSystem() = default;
+    ~AudioSystem();
+
+    AudioSystem(const AudioSystem&) = delete;
+    AudioSystem& operator=(const AudioSystem&) = delete;
+
+    // Opens a device, or falls back to the null backend and says so once at
+    // Info. `headless` skips the attempt entirely: a headless run has no reason
+    // to hold an audio device open, and on a CI runner the attempt is a wasted
+    // second and a log line nobody reads.
+    // Where `Sound.Content` is resolved from. Null -- the state of a test and
+    // of a world that has gone away -- makes every sound the placeholder tone,
+    // which is what this class did for all of the input and UI work.
+    void setContentMounts(const asset::ContentMounts* mounts) noexcept;
+
+    [[nodiscard]] std::optional<core::EngineError> start(bool headless);
+    void stop();
+
+    // Advances every playing sound by one tick and raises `Ended` and `Loaded`
+    // on the world's change queue. Called from the sim tick.
+    void tick(scene::World& world, f64 fixedDt);
+
+    // How long the sound this content names is, in seconds -- read from the
+    // file's HEADER on the first ask and answered from a cache after. The
+    // header is a pure function of the bytes, so the answer is the same whether
+    // or not anything has been decoded yet; only a format that declares no
+    // length is decoded to count it, and `AudioStats::tickDecodes` says so.
+    //
+    // **This is what the timeline is measured against**, which is why it is here
+    // rather than inside the mixer: `Ended` fires when `TimePosition` reaches a
+    // sound's LENGTH, and until an earlier fix that length was a one-second constant for
+    // every sound in the world -- so a two-minute track stopped after a second.
+    // A content that names nothing, or that cannot be decoded, answers with the
+    // placeholder tone's length, because the tone is what such a sound plays.
+    [[nodiscard]] f64 clipDuration(std::string_view content);
+    // **How long a line takes to say** (ADRs 0200, 0204), before it is said:
+    // the slot of its sound -- the longest of its languages -- or, for a line
+    // nobody recorded, the reading time of its caption in the default
+    // language. The number `Sound.TimeLength` will be for the sound
+    // `DialogueService:Say` makes of it, and what a sequence lays a line out by.
+    [[nodiscard]] f64 lineSeconds(const scene::World& world, std::string_view sound, std::string_view textKey,
+                                  core::f32 seconds);
+    // **The same line as this machine hears it**: the length of its
+    // recording in the language the world's voices are in now -- shorter in
+    // one language than another, and never longer than the slot above. What
+    // a picture is cut to (ADR 0204: a key written `afterLine`); never what
+    // the simulation runs by, which is the slot. A line nobody recorded is
+    // its slot.
+    [[nodiscard]] f64 lineHeardSeconds(const scene::World& world, std::string_view sound, std::string_view textKey,
+                                       core::f32 seconds);
+
+    // --- A sound in the player's language (ADR 0200) -------------------------
+    //
+    // What the game holds in other languages, or null for a game that holds
+    // nothing localized -- which then costs nothing here. Not owned: it is
+    // the host's, and outlives every tick that reads it.
+    //
+    // **It decides a length, and so it is simulation's**: a sound that has a
+    // recording in another language lasts as long as the LONGEST of them, on
+    // every machine, whatever language that machine hears and whatever files
+    // it has. Read from the index when the game was exported, measured from
+    // the files' headers when it runs from a folder.
+    void setLocalized(const asset::LocalizationIndex* index) noexcept;
+    // The language sounds are resolved in. Each machine's own, and never the
+    // tick's: a sound that is playing finishes in the language it started
+    // in, and the next `Play` is heard in the new one.
+    void setVoiceLocale(std::string_view locale);
+    [[nodiscard]] std::string_view voiceLocale() const noexcept;
+
+    // **A file changed under a name** (hot reload): what was read of it is
+    // let go, and the next sound that names it reads it again. A re-recorded
+    // line is heard without the world being made anew.
+    void forget(std::span<const std::string> names);
+
+    // The file a playing sound resolved to on this machine -- its name in
+    // the language it is heard in -- or empty for one that is not playing.
+    // What a viseme track is found beside.
+    [[nodiscard]] std::string_view heardAs(const scene::World& world, core::InstanceId sound) const noexcept;
+    // The sounds that can be heard here this frame: playing and in range,
+    // whatever the player's volumes are -- a muted line is still being said.
+    // In the order the frame met them. What a caption is current by.
+    [[nodiscard]] std::span<const core::InstanceId> heardNow() const noexcept;
+
+    // **How loud what this machine is playing of a sound is right now**, 0 to
+    // 1, and the same moment in three bands (80-500, 500-2,500, 2,500-10,000
+    // Hz). The recording's own level at the sound's place in its timeline,
+    // with no volume in it: a mouth opens the same whatever a slider says.
+    // Worked out when asked, once a frame a sound, and never otherwise.
+    [[nodiscard]] f32 loudness(const scene::World& world, core::InstanceId sound);
+    [[nodiscard]] std::array<f32, 3> bands(const scene::World& world, core::InstanceId sound);
+    // The same of everything of a category that can be heard here, mixed as
+    // the game mixes it and before the player's volumes.
+    [[nodiscard]] std::array<f32, 3> categoryBands(const scene::World& world, core::i32 category);
+    // The language a sound is heard in here: the locale of its file, empty
+    // for the default language's, nothing for a sound with no recording.
+    [[nodiscard]] std::optional<std::string> spokenIn(const scene::World& world, core::InstanceId sound);
+    // The four above as the world asks for them (`World::setSoundMeter`).
+    [[nodiscard]] scene::SoundMeter* meter() noexcept;
+    // How many windows of samples were analysed since the start: what a test
+    // counts to see that a sound nobody asked about cost nothing.
+    [[nodiscard]] u64 meterWork() const noexcept;
+
+    // What music is multiplied by under a voice, as the mixer has it now: 1
+    // with nobody speaking, eased towards `MusicUnderVoice` while a voice is
+    // heard. The mixer's, advanced by the audio it renders.
+    [[nodiscard]] f32 musicDuck() const noexcept;
+
+    // **Auditioning a file is not the game playing a sound**, and this is the
+    // whole difference between the two.
+    //
+    // Somebody clicking a speaker in the properties grid wants to hear what a
+    // `Content` names. Every way of doing that THROUGH the `Sound` is wrong in
+    // the same way: `Playing` is the game's state, `Ended` is a past-tense fact
+    // about the simulation's timeline, and a world that is not ticking cannot
+    // advance either. So an audition is its own voice with its own cursor,
+    // advanced by the DEVICE -- which is exactly why it may not be a `Sound`. A
+    // timeline the wall clock drives is the one thing the rest of this class
+    // exists to keep out of the world (R10).
+    //
+    // It is heard while `setSuspended` is on, which is the state of an editor
+    // that is not playing, and it stops on its own at the end of the clip.
+    // Auditioning while one is already playing replaces it: the button is a
+    // preview and two previews at once is not a thing anybody asked for.
+    void audition(std::string_view content, f32 volume, f32 speed);
+    void stopAudition() noexcept;
+
+    // Whether an audition is running -- of this content, or of anything when
+    // `content` is empty. False the moment it reaches the end, which is what
+    // turns a pause button back into a play button.
+    [[nodiscard]] bool auditioning(std::string_view content = {}) const;
+
+    // Pushes this frame's voice state to the mixer. Called once per frame, after
+    // the ticks -- what the speakers do is a consequence of the simulation.
+    //
+    // While suspended it pushes silence and reads the world anyway, which is the
+    // difference between pausing and stopping: a `Sound`'s `TimePosition` and
+    // `Playing` are untouched, so resuming continues rather than restarts.
+    //
+    // `ear` overrides where the listener STANDS AND WHICH WAY IT FACES, for the
+    // one caller that has a camera the world does not contain: an editor
+    // rendering through its own view because the game made none. Null -- every
+    // other caller -- puts the ear on `listener`, and a `listener` naming no
+    // camera leaves it at the origin facing -Z, which is what a world with no
+    // camera has always sounded like.
+    //
+    // A frame rather than an instance, because an override camera is not in the
+    // world and has no id to name. It is the same argument `ViewOverride` makes
+    // to the renderer, and it has to be the same DECISION as well or the picture
+    // and the sound disagree about where you are standing -- and now about which
+    // way you are looking, because the rotation is what decides left from right.
+    //
+    // **`others`: the other ears at this machine** (ADR 0205) -- the cameras
+    // of the other players' views of a shared window. Each sound is then
+    // heard by the ear it is NEAREST to: as loud as it is from there, and to
+    // that listener's left or right. Two players at two ends of a map each
+    // hear what is beside them, once -- not twice, and not at the average of
+    // two places where neither of them is.
+    void update(scene::World& world, core::InstanceId listener, const core::CFrameD* ear = nullptr,
+                std::span<const core::CFrameD> others = {});
+
+    // Silences the mixer without changing a single `Sound`.
+    //
+    // The editor is what needs this: a world that is not ticking should not be
+    // audible, and the alternative -- pausing a game and still hearing its
+    // ambience -- is the same wrong-owner mistake as an editor whose cursor
+    // belongs to the game. It is a HOST decision, and no script can reach it:
+    // `SoundService.Volume` is the game's control and this is the tool's.
+    void setSuspended(bool suspended) noexcept { m_suspended = suspended; }
+    [[nodiscard]] bool suspended() const noexcept { return m_suspended; }
+
+    [[nodiscard]] AudioStats stats() const noexcept;
+
+    // **The audio callback's work, run on the caller's thread**, into
+    // `interleaved` (stereo f32 at 48 kHz, cleared first). What a test uses to
+    // hear what the mixer would play without a device; a device callback and
+    // this take the same lock, so the two never mix at once.
+    void renderInto(std::span<f32> interleaved);
+
+private:
+    bool m_suspended = false;
+
+    struct Impl;
+    // A pointer rather than a member so that `miniaudio.h` -- 95,000 lines of
+    // it -- stays out of every translation unit that includes this header. R17
+    // is about the Luau API; the same instinct applies one layer down.
+    Impl* m_impl = nullptr;
+};
+
+} // namespace engine::audio

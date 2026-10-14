@@ -1,0 +1,59 @@
+Ludwerk: a lost D3D12 device crashes the first draw after a pipeline is bound.
+
+0002 stopped SDL_PushGPU*UniformData dereferencing the NULL uniform buffer a
+lost device hands back. The same NULL has a second way in. Binding a pipeline
+acquires a uniform buffer for each of its slots that has none
+(D3D12_BindGraphicsPipeline, D3D12_BindComputePipeline); on a lost device each
+acquire fails -- "Failed to map buffer pool!", once a slot -- and leaves the
+slot NULL. The next draw or dispatch then binds its root constant buffer
+views from `uniformBuffers[i]->buffer`, and the process dies of an access
+violation inside SDL.
+
+Seen three times on hosted Windows runners, whose software device was removed
+under a test: the message twice -- a vertex slot and a fragment slot --
+and then the fault, every time.
+
+The fix binds nothing for a slot that has no buffer. The draw goes nowhere --
+there is no device to draw it -- and the error stays set, so the submit that
+follows fails and the application is told its device is gone. Still present
+upstream on 2026-10-12.
+
+diff --git a/src/gpu/d3d12/SDL_gpu_d3d12.c b/src/gpu/d3d12/SDL_gpu_d3d12.c
+index a2005599..613b1cb4 100644
+--- a/src/gpu/d3d12/SDL_gpu_d3d12.c
++++ b/src/gpu/d3d12/SDL_gpu_d3d12.c
+@@ -5233,7 +5233,11 @@ static void D3D12_INTERNAL_BindGraphicsResources(
+ 
+     for (Uint32 i = 0; i < MAX_UNIFORM_BUFFERS_PER_STAGE; i += 1) {
+         if (commandBuffer->needVertexUniformBufferBind[i]) {
+-            if (graphicsPipeline->header.num_vertex_uniform_buffers > i) {
++            // Ludwerk: NULL once the device is lost -- the pipeline's bind
++            // could not make it, and the error is set. Nothing to bind: the
++            // draw is going nowhere, and the next submit says why.
++            if (graphicsPipeline->header.num_vertex_uniform_buffers > i &&
++                commandBuffer->vertexUniformBuffers[i] != NULL) {
+                 ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(
+                     commandBuffer->graphicsCommandList,
+                     graphicsPipeline->rootSignature->vertexUniformBufferRootIndex[i],
+@@ -5324,7 +5328,9 @@ static void D3D12_INTERNAL_BindGraphicsResources(
+ 
+     for (Uint32 i = 0; i < MAX_UNIFORM_BUFFERS_PER_STAGE; i += 1) {
+         if (commandBuffer->needFragmentUniformBufferBind[i]) {
+-            if (graphicsPipeline->header.num_fragment_uniform_buffers > i) {
++            // Ludwerk: as the vertex stage's, above.
++            if (graphicsPipeline->header.num_fragment_uniform_buffers > i &&
++                commandBuffer->fragmentUniformBuffers[i] != NULL) {
+                 ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(
+                     commandBuffer->graphicsCommandList,
+                     graphicsPipeline->rootSignature->fragmentUniformBufferRootIndex[i],
+@@ -5894,7 +5900,9 @@ static void D3D12_INTERNAL_BindComputeResources(
+ 
+     for (Uint32 i = 0; i < MAX_UNIFORM_BUFFERS_PER_STAGE; i += 1) {
+         if (commandBuffer->needComputeUniformBufferBind[i]) {
+-            if (computePipeline->header.numUniformBuffers > i) {
++            // Ludwerk: as a draw's, above.
++            if (computePipeline->header.numUniformBuffers > i &&
++                commandBuffer->computeUniformBuffers[i] != NULL) {
+                 ID3D12GraphicsCommandList_SetComputeRootConstantBufferView(
+                     commandBuffer->graphicsCommandList,
+                     computePipeline->rootSignature->uniformBufferRootIndex[i],

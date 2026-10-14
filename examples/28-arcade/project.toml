@@ -1,0 +1,21 @@
+# An arcade (ADR 0107 §3): two cabinets, each running a small game in a world
+# of its own -- a `SubWorld` -- with its picture on the cabinet's screen.
+#
+# No scene file for the hall: the script builds it. The game inside the
+# cabinets is a scene of its own, `content/scenes/arcade.scene.json`, with its
+# own code in `src/scenes/arcade/server/`.
+
+[project]
+name = "Ludwerk Arcade"
+id = "dev.ludwerk.arcade"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Arcade"
+width = 1280
+height = 720
+
+# Two cabinets, two worlds -- which is the default limit, said out loud.
+[render]
+max_sub_worlds = 2

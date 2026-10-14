@@ -1,0 +1,7 @@
+{
+  "name": "cutscene",
+  "script": ".",
+  "seed": 20261010,
+  "ticks": 1500,
+  "checkpointEvery": 50
+}

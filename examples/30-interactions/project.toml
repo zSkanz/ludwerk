@@ -1,0 +1,15 @@
+# A room you use without a line of input code (ADR 0126): a button on the wall
+# that lights the lamp when clicked, and a door that opens when you hold E by
+# it. The engine casts the pointer, shows the prompt, and -- in a match --
+# checks with the server that you could reach what you pressed.
+
+[project]
+name = "Ludwerk Interactions"
+id = "dev.ludwerk.interactions"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Interactions"
+width = 1280
+height = 720

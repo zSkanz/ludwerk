@@ -1,0 +1,7 @@
+# shot, then what must be so in it: `x,y=r,g,b` at fractions of the frame (imgprobe), within ten of each channel.
+# A field of the popup a track is added from, where a lane was.
+timeline-add-track 0.62531,0.80389=48,48,48
+# The key's menu, over the second line's bar.
+timeline-key-menu 0.41906,0.81722=24,24,24
+# The field a line's key is named in, over the rows.
+timeline-key-name 0.12531,0.84056=48,48,48

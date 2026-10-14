@@ -1,0 +1,17 @@
+# The far flight (ADR 0150): a world four kilometres across at a metre voxel,
+# laid by `--import-terrain`, and flown over corner to corner and back. The
+# project has no ground of its own: `terrain_far_flight` copies it into the
+# build tree, imports the hills there, and flies that. Measured by hand on the
+# sixteen-kilometre world too (`tests/perf/README.md`).
+
+[project]
+name = "Ludwerk Far Flight"
+id = "dev.ludwerk.farflight"
+version = "1.0.0"
+engine = "0.1"
+scene = "scenes/main.scene.json"
+
+[window]
+title = "Ludwerk — Far Flight"
+width = 1280
+height = 720

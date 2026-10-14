@@ -1,0 +1,224 @@
+// Reading and writing a file the way the *platform* stores it (architecture.md
+// §2). Reading is for content; writing is for the HOST alone -- see the
+// "Writing" block below, which is where R4 is argued.
+//
+// `std::filesystem` plus `fopen` is not a portable content reader. Inside an
+// Android APK the content directory is a directory of zip entries in the
+// package, and there is no path any C runtime can open -- which is the reason
+// this header exists rather than each module keeping its own `fopen` helper.
+//
+// SDL already owns that translation: an SDL_IOStream opened on a *relative*
+// path is an AAssetManager entry on Android and an ordinary file everywhere
+// else, and it opens absolute paths with the native API on every desktop tier.
+// ADR 0004 makes this module and the SDL GPU backend the only places allowed to
+// see SDL, so the seam belongs here and callers above it stay SDL-free (R17).
+//
+// Paths reach SDL as UTF-8 (`path::u8string()`), never as the narrow native
+// encoding. On Windows SDL converts UTF-8 back to wide and calls CreateFileW,
+// so a project under an accented directory survives the round trip;
+// `path::string()` would hand MSVC's ANSI code page a string it cannot encode
+// and lose the bytes.
+//
+// Failure is a bool rather than an EngineError on purpose: "the file was not
+// readable" means something different to each caller -- a missing shader blob
+// is a deployment fault, a missing project file is a user mistake -- and only
+// the caller knows which key to raise.
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace engine::platform {
+
+// Whole-file read. `out` is replaced on success and left untouched otherwise.
+[[nodiscard]] bool readFile(const std::filesystem::path& path, std::vector<std::byte>& out);
+
+// The same read, delivered as bytes in a std::string for JSON and other text.
+// No transcoding and no newline translation: the bytes are the file's.
+[[nodiscard]] bool readTextFile(const std::filesystem::path& path, std::string& out);
+
+// **A file's bytes mapped into memory, read only**: a shipped
+// game's content pack is gigabytes, and reading it whole at mount held all of
+// it for the life of the process. The system pages in what is touched and can
+// drop it again. Only a real file maps -- an APK entry is not one -- and
+// `open` answers false for anything it cannot map, so the caller reads it the
+// ordinary way instead.
+class MappedFile
+{
+public:
+    MappedFile() = default;
+    ~MappedFile() { close(); }
+    MappedFile(const MappedFile&) = delete;
+    MappedFile& operator=(const MappedFile&) = delete;
+
+    [[nodiscard]] bool open(const std::filesystem::path& path);
+    void close() noexcept;
+    [[nodiscard]] std::span<const std::byte> bytes() const noexcept { return {m_data, m_size}; }
+
+private:
+    const std::byte* m_data = nullptr;
+    std::size_t m_size = 0;
+};
+
+// **One process at a time**: a lock that is a file, held by whichever
+// process has it open and locked -- and let go by the system itself when
+// that process ends, however it ends, which a lock that is merely a file's
+// being there cannot say. For work two processes must not do to one folder
+// at once: compiling a project's content into its store.
+//
+// What each system uses: on Windows and Xbox, `LockFileEx` on the file's
+// first byte, through a handle opened to share; on Linux, Android and macOS,
+// `flock`. Both keep out only those who ask, which is every process of this
+// engine, and both end with the process.
+//
+// `tryLock` never waits. Whoever waits decides how: the one caller there is
+// has a window to keep answering while it does.
+class FileLock
+{
+public:
+    enum class Taken
+    {
+        // This process holds it now.
+        Yes,
+        // Another process does.
+        Busy,
+        // The file cannot be made or locked at all -- a folder that is not
+        // there, a disk that is read only. Not a reason to wait.
+        Unavailable,
+    };
+
+    FileLock() = default;
+    ~FileLock() { unlock(); }
+    FileLock(const FileLock&) = delete;
+    FileLock& operator=(const FileLock&) = delete;
+
+    // The file's folder must exist. A lock this object already holds is let
+    // go of first.
+    [[nodiscard]] Taken tryLock(const std::filesystem::path& path);
+    void unlock() noexcept;
+    [[nodiscard]] bool held() const noexcept { return m_handle != kNone; }
+
+private:
+    static constexpr std::intptr_t kNone = -1;
+    std::intptr_t m_handle = kNone;
+};
+
+// Whether a file can be opened for reading.
+//
+// **Opens and closes rather than stats**, for the reason `readFile` exists at
+// all: inside an APK the content directory is a set of zip entries and no path
+// any C runtime can stat, so existence has to mean "can it be opened" and SDL
+// is what knows how. On every other platform this is a stat behind an open.
+//
+// It exists because the alternative was worse: `ContentMounts::resolve`
+// READ THE WHOLE FILE to decide it existed, threw the bytes away, and then
+// started an asynchronous read of the same file. On a slow filesystem that
+// synchronous read was a frame hitch of tens of milliseconds inside the
+// streaming pump, and it was doing twice the IO to get there.
+[[nodiscard]] bool fileExists(const std::filesystem::path& path);
+
+// --- Writing -----------------------------------------------------------------
+//
+// **The caller of everything below is the HOST -- the editor, the CLI, a
+// tool -- and never a script.** None of it is registered as a native module
+// in `engine/script/src/`, and none of it may be: `io` and `os.remove` are
+// absent from the game VM by design (api-design.md §1.1) and R4 says the
+// sandbox is never weakened. A game that could write a file could write the
+// next file the host loads.
+//
+// Writes never land inside an APK -- a package is read-only, and what a game
+// saves goes to app-private storage -- so the APK argument that put `readFile`
+// here does not by itself apply. What does apply is the other half of the same
+// reason: the write seam is the one place that knows how a path becomes bytes
+// on this tier, and keeping both directions behind it means a platform whose
+// writable storage is not a C-runtime path (a sandboxed container URL, a SAF
+// document tree) is one file to change rather than every caller.
+
+// Whole-file write, replacing whatever was there. Returns false and leaves the
+// existing file untouched on any failure.
+//
+// **Atomic: the bytes go to a temporary file beside the target and are then
+// RENAMED over it**, because the alternative loses data. Opening the target
+// itself truncates it, so an interruption between the truncate and the last
+// byte -- a crash, a kill, a full disk -- leaves a half-written scene where a
+// good one was, and the good one is gone. A rename is a single directory
+// operation on every tier this engine ships to (MoveFileExW with
+// MOVEFILE_REPLACE_EXISTING on Windows, rename(2) elsewhere): a reader sees
+// either the whole old file or the whole new one, and a write that dies partway
+// leaves only a temporary to collect.
+//
+// The guarantee is against an interrupted PROCESS, not against a power cut: the
+// bytes are handed to the OS, and SDL exposes no fsync to force them to the
+// platter before the rename.
+//
+// The temporary is created in the target's own directory, never in the system
+// temporary directory, because a rename is only atomic within one filesystem --
+// across volumes Windows degrades it into a copy, which is exactly the
+// non-atomic write this exists to avoid.
+//
+// The parent directory must already exist; this does not create it. A typo'd
+// path should fail rather than silently scatter directories -- call
+// `createDirectories` first, deliberately.
+[[nodiscard]] bool writeFile(const std::filesystem::path& path, std::span<const std::byte> bytes);
+
+// The same write, taking text as bytes. No transcoding and no newline
+// translation: what is passed is what lands on disk, which is what keeps a
+// scene file recorded on one platform byte-identical on another.
+[[nodiscard]] bool writeTextFile(const std::filesystem::path& path, std::string_view text);
+
+// Creates `path` and every missing parent. True if it already exists as a
+// directory; false if it exists as a FILE, which is a caller's mistake and not
+// a state to write into.
+//
+// It is here rather than left to `std::filesystem::create_directories` --
+// which `engine/app/src/engine.cpp` calls directly before writing a capture,
+// and which is not wrong -- because it is half of ONE operation with
+// `writeFile`. A save that made its directory with `std::filesystem` and wrote
+// its bytes through this seam is split across two path conventions, and the day
+// a tier's writable storage stops being a path both of them understand, only
+// one of the two halves moves. A save is atomic about its bytes; it should be
+// single-seamed about its location too.
+//
+// The scope is deliberately just that. For anything that is not preparing a
+// write target -- enumerating a content tree the way `bench.cpp` does, testing
+// for a directory, removing a build output -- `std::filesystem` remains the
+// right answer, and wrapping it here would add surface without adding a
+// capability.
+[[nodiscard]] bool createDirectories(const std::filesystem::path& path);
+
+// **`writeFile`, and the bytes flushed to the device before the rename** (ADR
+// 0111): a game's save is the one file whose loss a player notices, and a
+// power cut between the write and the platter is how a phone loses one. The
+// flush is `SDL_FlushIO`, which asks the OS to write its buffers out where the
+// platform can.
+[[nodiscard]] bool writeFileDurable(const std::filesystem::path& path, std::span<const std::byte> bytes);
+// The same for text: what the editor saves a document with --
+// a scene, a stamp, a material is somebody's work, and it is a save.
+[[nodiscard]] bool writeTextFileDurable(const std::filesystem::path& path, std::string_view text);
+
+// Renames `from` over `to`, replacing it. False when either is not there to
+// take part, or the OS refused.
+[[nodiscard]] bool renameFile(const std::filesystem::path& from, const std::filesystem::path& to);
+
+// Removes a file, or an empty directory. True when it is gone, including when
+// it was never there.
+bool removeFile(const std::filesystem::path& path);
+
+// `text` as ONE folder's name: a path separator, a character Windows refuses
+// in a name and a control character become `-`, and dots and spaces at either
+// end go. Never empty -- `game` stands for nothing left. `ludwerk saves`
+// builds the same folder the same way.
+[[nodiscard]] std::string pathComponent(std::string_view text);
+
+// **Where a game keeps its own files on this machine**, by the company and the
+// name it declares (ADR 0111): `%APPDATA%/<company>/<name>/` on Windows,
+// `~/.local/share/<company>/<name>/` on Linux, the app's internal storage on
+// Android. Made if it is not there. Empty where the platform has no such place.
+[[nodiscard]] std::filesystem::path preferencePath(std::string_view company, std::string_view name);
+
+} // namespace engine::platform

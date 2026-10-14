@@ -1,0 +1,9 @@
+{
+  "hud.player": "Player {number}",
+  "hud.mode": "{mode}   {players} at the screen   Tab or Y: share it another way   Enter: seat a second at the keyboard",
+  "mode.Dynamic": "Together, and apart across a line",
+  "mode.Columns": "Side by side",
+  "mode.Rows": "One above another",
+  "mode.Grid": "The window's quarters",
+  "mode.None": "One picture"
+}

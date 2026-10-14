@@ -1,0 +1,773 @@
+// The in-game UI: layout, text and the 2D draw list (architecture.md §2 `ui`,
+// ADR 0011 as amended by ADR 0040).
+//
+// Three stages, and they are separate because they run at different times and
+// for different reasons:
+//
+//   1. **Layout** turns the Instance tree into rectangles. It runs only for a
+//      `ScreenGui` something marked dirty, which is why every layout-affecting
+//      property setter in `native_accessors.cpp` walks up to mark one.
+//
+//   2. **Text** measures runs and turns them into geometry. Layout needs the
+//      measurement (a label that sizes to its text) and drawing needs the
+//      geometry, and both come out of one walk over the same face. v1's face is
+//      the vector one vendored inside stb, for the reason `text.cpp` states at
+//      length: a TrueType face needs a FILE, and shipping one is a licence
+//      decision that belongs to a human (R6).
+//
+//   3. **The draw list** is a flat, ordered array of coloured and textured
+//      quads. `render` consumes it; nothing here knows what a GPU is.
+//
+// **Coordinates are window pixels, y down, origin top-left**, throughout. That
+// is the convention every UI system in the world uses and the opposite of the
+// world's; the conversion happens once, in the 2D pass's projection.
+#pragma once
+
+#include <array>
+#include <functional>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "engine/core/id.h"
+#include "engine/core/math.h"
+#include "engine/core/sequence.h"
+#include "engine/core/types.h"
+
+namespace engine::scene {
+class World;
+struct ScreenGuiComponent;
+} // namespace engine::scene
+
+namespace engine::ui {
+
+using core::f32;
+using core::i32;
+using core::u32;
+using core::u64;
+using core::usize;
+
+// What `TextLabel` needs a font to answer, and the only thing layout asks of
+// the text system. Separated from the atlas so that a headless run -- which has
+// no GPU and therefore no atlas texture -- still measures text and therefore
+// still lays out identically. A layout that depended on whether there was a
+// screen would be a layout the determinism gate could not check.
+struct TextRunMetrics
+{
+    // The tight box the run occupies, in pixels.
+    core::Vec2 size;
+    // Distance from the top of the box to the first line's baseline. Drawing
+    // needs it; layout does not, and it is here because both come out of one
+    // walk over the glyphs.
+    f32 ascent = 0.0f;
+    u32 lineCount = 0;
+};
+
+// --- The draw list -----------------------------------------------------------
+
+// One quad. Everything the 2D pass draws is one of these: a background, a
+// nine-slice patch, a glyph. A single shape rather than a tagged union of three
+// because they differ only in which texture they sample and over what UVs, and
+// a pass that sorts one array is a pass that batches.
+struct DrawQuad
+{
+    // Top-left and bottom-right in window pixels.
+    core::Vec2 min;
+    core::Vec2 max;
+    // Source rectangle in the texture, normalized. Equal corners mean "no
+    // texture": the shader multiplies by white and the quad is a flat colour.
+    core::Vec2 uvMin;
+    core::Vec2 uvMax;
+    core::Color3 color{1.0f, 1.0f, 1.0f};
+    f32 alpha = 1.0f;
+    // Which texture the quad samples: 0 is none, 1 is the glyph atlas. Image
+    // textures join it when `ImageLabel` can name one the pipeline has loaded,
+    // which is the streaming work's asset work.
+    u32 texture = 0;
+    // The scissor rectangle this quad is clipped to, as an index into
+    // `DrawList::scissors`. 0 is "the whole window", which is why that entry is
+    // always present.
+    u32 scissor = 0;
+    // Corner radius in pixels, from a `UICorner` on the element. Zero is
+    // a square corner and is the overwhelmingly common case; the shader's
+    // rounded-rectangle distance costs nothing at zero, which is why this is a
+    // number on every quad rather than a second pipeline.
+    //
+    // It rounds the DRAWING only. Layout does not see it and neither does the
+    // hit test -- `UICorner`'s own doc says so, and a button whose corner you
+    // could see through but not click through would be worse than a square one.
+    f32 cornerRadius = 0.0f;
+
+    // --- The turn, from `GuiObject.Rotation` ---------------------------------
+    //
+    // An affine `p -> R*p + t`, with `turn` holding `(cos, sin)` and
+    // `turnOffset` the translation. Identity is `(1, 0)` and `(0, 0)`, which is
+    // what a quad nobody turned carries.
+    //
+    // **A full affine rather than an angle and a pivot**, which is the shape it
+    // looks like it wants. A turned element inside a turned ancestor spins about
+    // two different points, and composing those is
+    // `R(a+b)(p - Q) + R(a)(Q - P) + P` -- a turn about one point plus a
+    // translation that is not that point. Angle-and-pivot cannot express it, so
+    // it would either lose nesting or acquire a special case; `R*p + t` composes
+    // as `(R_a*R_b, R_a*t_b + t_a)` and has neither.
+    //
+    // Applied to POSITION only. The vertex's own local frame -- the two
+    // coordinates `cornerRadius` measures against -- stays in the quad's upright
+    // space, so a rounded corner is still round after a turn instead of becoming
+    // an ellipse.
+    //
+    // **Named `turn` deliberately, and not after the property it carries.**
+    // `inertcheck` sweeps by field name, so a helper here wearing that name
+    // would itself count as a reader of the component field it is drawing --
+    // which is the collision that let `GuiObject.Rotation` sit stored and unread
+    // for the whole of v1. A word nothing else uses keeps the lint's
+    // answer about that field an honest one, and this comment avoids spelling
+    // it for exactly the same reason.
+    core::Vec2 turn{1.0f, 0.0f};
+    core::Vec2 turnOffset{0.0f, 0.0f};
+
+    // **A lean, for rich text's italic**: the quad's top edge is drawn this
+    // many pixels right of its bottom per pixel of height. Zero -- upright --
+    // is every quad but an italic glyph's, and a vertex is moved by it before
+    // the turn above, so a turned label's italics lean with the label.
+    f32 slant = 0.0f;
+
+    // --- `UIGradient` (ADR 0110) ----------------------------------------------
+    //
+    // Which of `DrawList::gradients` colours this quad, plus one; 0 is none,
+    // and is every quad of an element with no gradient. The rest says where
+    // the gradient lies: the element's box in the same upright pixels `min`
+    // and `max` are in (before the turn), so a glyph deep inside a label is
+    // coloured by where it is in the LABEL, not in itself.
+    u32 gradient = 0;
+    core::Rect gradientBox{};
+    // `Enum.GradientType` and `Enum.GradientTileMode`.
+    u32 gradientType = 0;
+    u32 gradientTile = 0;
+    // Radians, clockwise on screen.
+    f32 gradientAngle = 0.0f;
+    f32 gradientScale = 1.0f;
+    // Pixels: `Offset` already multiplied by the box's size.
+    core::Vec2 gradientOffset{};
+
+    // --- A border `UIStroke` (ADR 0110) ----------------------------------------
+    //
+    // A quad that is a stroke's band rather than a fill: it covers the band's
+    // outer edge, and the fragment keeps what lies between `strokeInner` and
+    // `strokeOuter` pixels from `strokeBox`'s edge (negative is inside). The
+    // box's corners are rounded by `cornerRadius`, as the element's are.
+    bool borderStroke = false;
+    core::Rect strokeBox{};
+    f32 strokeInner = 0.0f;
+    f32 strokeOuter = 0.0f;
+    // `Enum.LineJoinMode`.
+    u32 strokeJoin = 0;
+    // A glyph's outline (a text stroke) rather than the glyph: coloured by the
+    // stroke's own gradient, never by the element's.
+    bool outline = false;
+
+    // --- A `CanvasGroup` (ADR 0128) -------------------------------------------
+    //
+    // `group` is which of `DrawList::groups` this quad is drawn INTO, plus one;
+    // 0 is the screen, and is every quad outside a group. `groupPicture` is
+    // which group's picture this quad SHOWS, plus one: the one quad a group is
+    // on the screen, carrying the group's colour and transparency.
+    u32 group = 0;
+    u32 groupPicture = 0;
+};
+
+// One `CanvasGroup` of a frame (ADR 0128): a picture its quads are drawn into
+// and one quad shows. A host that cannot make the picture draws the group's
+// quads where they would have gone -- into `parent` -- and the group is then
+// an ordinary frame.
+struct DrawGroup
+{
+    core::InstanceId owner;
+    // What the picture covers, in window pixels. Its quads are in the same
+    // pixels: the host moves them by `-box.min` on the way in.
+    core::Rect box;
+    // The group this one is inside, plus one; 0 is the screen. A group inside
+    // a group is listed AFTER it, so pictures are drawn last to first.
+    u32 parent = 0;
+    // Everything that is drawn into the picture, hashed: the picture is drawn
+    // again when this moves, and not otherwise.
+    u64 signature = 0;
+    // Something in it changes without its quads changing -- a `ViewportFrame`,
+    // a gradient -- so it is drawn every frame.
+    bool live = false;
+};
+
+// One distinct gradient of a frame (ADR 0110): its two sequences, which is
+// everything that becomes a row of the gradient table. The rest of a gradient
+// -- shape, tiling, angle -- rides on each quad, so two elements with the same
+// colours and different shapes share a row.
+struct DrawGradient
+{
+    core::ColorSequence color;
+    core::NumberSequence transparency;
+
+    [[nodiscard]] bool operator==(const DrawGradient&) const = default;
+};
+
+// A text stroke (ADR 0110): what `UIStroke` on a text object, or rich text's
+// `<stroke>`, asks the glyphs for. A thickness of zero is none.
+struct TextStroke
+{
+    f32 thickness = 0.0f;
+    core::Color3 color{0.0f, 0.0f, 0.0f};
+    f32 alpha = 1.0f;
+    // `Enum.LineJoinMode`: 0 Round, 1 Bevel, 2 Miter.
+    u32 join = 0;
+    // `thickness` is a fraction of the font size rather than pixels.
+    bool scaled = false;
+    // Which of `DrawList::gradients` colours it, plus one, and where -- copied
+    // onto every stroke quad as a fill's gradient is.
+    u32 gradient = 0;
+    u32 gradientType = 0;
+    u32 gradientTile = 0;
+    f32 gradientAngle = 0.0f;
+    f32 gradientScale = 1.0f;
+    core::Vec2 gradientOffset{};
+};
+
+struct DrawList
+{
+    std::vector<DrawQuad> quads;
+    // Index 0 is the whole window. A `ClipsDescendants` element pushes one.
+    std::vector<core::Rect> scissors;
+    // Every distinct gradient the quads name, in the order first named.
+    std::vector<DrawGradient> gradients;
+    // Every `CanvasGroup` that draws this frame.
+    std::vector<DrawGroup> groups;
+
+    void clear()
+    {
+        quads.clear();
+        scissors.clear();
+        gradients.clear();
+        groups.clear();
+    }
+
+    // The index plus one a quad names `gradient` by: an existing entry when an
+    // equal one is already here, a new one otherwise.
+    [[nodiscard]] u32 gradientSlot(const DrawGradient& gradient);
+};
+
+// What the glyph store has been asked for and what it has done about it.
+//
+// A COUNTER surface, like `LayoutStats` beside it, and for the same reason: the
+// property worth asserting is "a second frame of the same label fills nothing
+// new", and that is a number rather than a duration.
+//
+// `missingGlyphs` is the one to watch in a real game. It counts codepoints the
+// face could not draw, so a label in Portuguese that comes out full of boxes is
+// a number somebody can see before a player reports it.
+struct GlyphCacheStats
+{
+    // Live entries, each one a (face, size, codepoint) triple.
+    u64 entries = 0;
+    // Entries created. Rises once per new triple and never for a repeat.
+    u64 fills = 0;
+    u64 hits = 0;
+    // How many times the store filled up and was emptied. Non-zero means one
+    // frame asked for more than the whole atlas holds; see `text.cpp`.
+    u64 clears = 0;
+    // How many times a page of the atlas nobody had shown for longest was
+    // emptied to make room (ADR 0169): what a screen of large text costs in
+    // place of a clear. The glyphs on it are rasterised again if they come
+    // back.
+    u64 evictions = 0;
+    u64 missingGlyphs = 0;
+    // Text broken into lines: found in the line cache, and broken anew.
+    // A label that moves, fades or is drawn again is a hit.
+    u64 lineHits = 0;
+    u64 lineMisses = 0;
+};
+
+// The glyph atlas: single-channel COVERAGE, one byte a texel, row-major.
+//
+// Coverage rather than colour, because a glyph has no colour of its own -- the
+// label's `TextColor3` supplies it, and the shader multiplies. One byte a texel
+// rather than four is the difference between a one-megabyte atlas and a four-
+// megabyte one for the same text.
+//
+// Empty until something has been rasterised, and empty forever on a build whose
+// content has no font: the fallback face draws vector rectangles and samples
+// nothing.
+struct GlyphAtlas
+{
+    std::span<const core::u8> pixels;
+    u32 width = 0;
+    u32 height = 0;
+    // Rises whenever a glyph is added. What an uploader compares against, so a
+    // frame that added no glyphs costs no upload -- which is every frame after
+    // the first few.
+    u64 version = 0;
+    // **The version each row was last written at**, a row of the atlas
+    // each: an uploader that holds version N sends the rows past N and no
+    // others -- a glyph is a few rows of a shelf, and the atlas is a thousand.
+    std::span<const u64> rowVersions;
+    // The version the atlas was last emptied at: an uploader behind it holds
+    // pixels that are nowhere now, and sends all of it.
+    u64 clearedAt = 0;
+};
+
+// **The atlas is pages** (ADR 0169): each a square of coverage of its own,
+// made when the one before is full, at most `kGlyphPages` of them -- eight
+// megabytes of coverage. A glyph's quad names its page as its texture: 1 is
+// the first page, `kGlyphPages` the last, and a picture's texture is numbered
+// from `kFirstImageTexture`. `version` is one count for every page, so an
+// uploader that holds one number knows what of each page is newer.
+inline constexpr u32 kGlyphPages = 8;
+inline constexpr u32 kFirstImageTexture = 1 + kGlyphPages;
+[[nodiscard]] u32 glyphAtlasPages() noexcept;
+[[nodiscard]] GlyphAtlas glyphAtlas(u32 page = 0) noexcept;
+// The count every page's `version` is: rises when any glyph is added or any
+// page emptied.
+[[nodiscard]] u64 glyphAtlasVersion() noexcept;
+// **A frame begins**: what is shown from now on is this frame's, and a page
+// holding any of it is not one that is emptied to make room. Called by
+// `buildWithSettledGlyphs`; a test that builds text by hand calls it itself.
+void beginGlyphFrame() noexcept;
+
+// Supplies the bytes of a named face, for `TextLabel.Font`.
+//
+// A CALLBACK because `ui` has no content mounts and must not grow any: resolving
+// `asset://fonts/thing.ttf` is the asset system's job, and the app is what joins
+// the two. Null -- the default -- means only the built-in default face exists,
+// which is what a test or a headless run wants.
+//
+// Returning false means "no such face"; the caller falls back to the default and
+// says so once per name rather than once per frame.
+using FaceProvider = bool (*)(void* user, std::string_view name, std::vector<core::u8>& out);
+void setFaceProvider(FaceProvider provider, void* user) noexcept;
+
+// What an `ImageLabel.Image` resolves to: which texture index to sample and how
+// big the picture is in its own pixels.
+//
+// The SIZE is not decoration. `ScaleType.Slice` cuts a nine-patch at pixel
+// offsets, and `ScaleType.Tile` repeats at the picture's own size -- neither can
+// be computed from the box alone, and a layout module has no other way to learn
+// them.
+struct ResolvedImage
+{
+    u32 texture = 0;
+    u32 width = 0;
+    u32 height = 0;
+};
+
+// Resolves an `asset://` URI to a texture the UI can name. Same shape and same
+// reason as `FaceProvider`: `ui` has no content mounts and no GPU, and the app
+// is the only thing that has both.
+//
+// False means "not loaded", and the caller draws the tint as a flat rectangle --
+// which is what an image still streaming in looks like, and is better than a
+// hole.
+using ImageProvider = bool (*)(void* user, std::string_view urn, ResolvedImage& out);
+void setImageProvider(ImageProvider provider, void* user) noexcept;
+
+[[nodiscard]] const GlyphCacheStats& glyphCacheStats() noexcept;
+
+// Empties the store and zeroes the counters. For the tests, and for a future
+// caller that swaps a face at runtime -- which is the case the key exists for.
+void resetGlyphCache() noexcept;
+
+// **A frame's text built against one atlas**. The geometry of a label is
+// the place of each glyph in the atlas when it was built, and a store that
+// fills is cleared -- so a label built before a clear in the same frame draws
+// whatever the atlas holds there now. `build` is the frame's whole interface,
+// and it is built again, once, when its glyphs cleared the store: the second
+// build finds this frame's glyphs already there.
+template <class Build>
+void buildWithSettledGlyphs(Build&& build)
+{
+    beginGlyphFrame();
+    const u64 before = glyphCacheStats().clears;
+    build();
+    if (glyphCacheStats().clears != before)
+        build();
+}
+
+// **The size a `TextScaled` label draws at, from the size that would exactly
+// fill its box.** Never larger, so the text still fits, and on a ladder rather
+// than continuous: whole pixels up to 24, every 2 px up to 48, every 4 px up
+// to the cap -- so dragging a label's handles asks the glyph cache for a few
+// dozen sizes rather than one per frame. Capped at 100 px, which is where the
+// reference platform stops scaled text too; past it a glyph is bigger than
+// the atlas can hold a line of.
+[[nodiscard]] f32 scaledTextSize(f32 fits) noexcept;
+inline constexpr f32 kMaxScaledTextSize = 100.0f;
+
+// Measures a run at a size, optionally wrapped to a width.
+//
+// `maxWidth` of 0 means no wrapping. Wrapping breaks at spaces, and mid-word
+// only for a word wider than the box: a word cut at a random letter is worse
+// than one that overhangs.
+[[nodiscard]] TextRunMetrics measureText(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth);
+
+// **One line of a laid-out text** (ADR 0139): the bytes it covers and how wide
+// it is. What a text field needs to put a caret, a selection and a click in
+// the same places the drawing puts the glyphs -- the lines come from the same
+// breaking `buildTextGeometry` does.
+struct TextLine
+{
+    usize begin = 0;
+    usize end = 0;
+    f32 width = 0.0f;
+};
+[[nodiscard]] std::vector<TextLine> textLines(std::string_view text, std::string_view font, f32 pixelSize,
+                                              f32 maxWidth);
+// The width of a run on one line, in pixels.
+[[nodiscard]] f32 textWidth(std::string_view run, std::string_view font, f32 pixelSize);
+// The height of one line, in pixels.
+[[nodiscard]] f32 textLineHeight(std::string_view font, f32 pixelSize);
+
+// **A text cut to what a box holds, and ended with an ellipsis** (ADR 0168,
+// `Enum.TextOverflow.Ellipsis`): measured with `font` at `pixelSize`, broken
+// at `maxWidth` as the drawing breaks it (zero for one line). Every line
+// wider than the box is cut at a whole character with room for the ellipsis,
+// and so is the last of the lines the box is tall enough for when there are
+// more after it; at least one line is kept. The text itself when it fits.
+// The ellipsis is the face's own character, or three full stops in a face
+// that has none.
+[[nodiscard]] std::string ellipsizedText(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth,
+                                         core::Vec2 box);
+
+// The quads one run draws, aligned inside `box`. Appended rather than returned,
+// because a draw list is built by appending and a label is one of many.
+// `stroke`, when it has a thickness, outlines every glyph (ADR 0110): the
+// outlines first, all of them, and the text over them, so no glyph's outline
+// covers its neighbour.
+void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth, core::Rect box,
+                       i32 horizontalAlignment, i32 verticalAlignment, core::Color3 color, f32 alpha, u32 scissor,
+                       std::vector<DrawQuad>& out, const TextStroke& stroke = {});
+
+// **Rich text**: the same two answers for a label whose `RichText` is on,
+// reading its text as markup -- `<b>`, `<i>`, `<u>`, `<s>`, `<font color size
+// transparency>`, `<br/>` and the five XML entities. `pixelSize`, `color` and
+// `alpha` are the label's own, which every run starts from; a tag this reader
+// does not understand is drawn as text, so a mistake shows as itself.
+[[nodiscard]] TextRunMetrics measureRichText(std::string_view markup, std::string_view font, f32 pixelSize,
+                                             f32 maxWidth);
+// `stroke` is the label's own; a `<stroke>` tag replaces it for what it
+// encloses.
+void buildRichTextGeometry(std::string_view markup, std::string_view font, f32 pixelSize, f32 maxWidth, core::Rect box,
+                           i32 horizontalAlignment, i32 verticalAlignment, core::Color3 color, f32 alpha, u32 scissor,
+                           std::vector<DrawQuad>& out, const TextStroke& stroke = {});
+
+// The text a markup string reads as, with its tags taken out and its entities
+// put back. What a screen reader, a copy, or a length limit should see.
+[[nodiscard]] std::string plainTextOf(std::string_view markup);
+
+// How many times the solver has run, and over how many elements. A COUNTER
+// rather than a duration, and the milestone's benchmark asserts the first is
+// zero on an idle frame: at this scale a timing assertion measures the clock,
+// and "~zero microseconds" is the shape of gate that passes while doing
+// nothing.
+struct LayoutStats
+{
+    u64 solverRuns = 0;
+    u64 elementsLaidOut = 0;
+};
+
+// Lays out every dirty `ScreenGui` under `uiService`, writing `AbsolutePosition`
+// and `AbsoluteSize` into each element's component and clearing the dirty flag.
+//
+// `windowSize` is the drawable size in pixels. A change to it dirties every
+// tree, because a scale is a fraction of something that just changed.
+void layout(scene::World& world, core::InstanceId uiService, core::Vec2 windowSize);
+
+// **Where an element's own text goes**: `box`, its rectangle, less its
+// `UIPadding` -- the first among its children, the one its children are laid
+// out by. A `UIPadding` in a button moved what the button holds and not
+// what the button says: a label aligned to the left sat against the edge the
+// padding was there to keep it from, and a field's caret and placeholder with
+// it. One rectangle, asked by what draws the text and by what puts a caret in
+// it, so the two cannot part. Never inside out: padding wider than the box
+// leaves a box of no width where the padding meets.
+[[nodiscard]] core::Rect textRectOf(const scene::World& world, core::InstanceId element, core::Rect box) noexcept;
+// How many pixels one unit of a `ScreenGui` is in a window this size: the
+// window's height over its `ReferenceHeight`, or one where it has none.
+[[nodiscard]] f32 screenScale(const scene::ScreenGuiComponent& screen, core::Vec2 windowSize) noexcept;
+
+// **Whether a screen is anybody's to see** (ADR 0205). One with a `Player`
+// whose player has left is nobody's: it is not laid out, drawn or pressed
+// until it is given another player, or none.
+[[nodiscard]] bool screenLive(const scene::World& world, const scene::ScreenGuiComponent& screen) noexcept;
+
+// **Where in the window a screen is laid out** (ADR 0205): its player's view
+// while the window is shared in rectangles, and the whole window otherwise --
+// a screen with no player, one picture, or two views across a line.
+[[nodiscard]] core::Rect screenRegion(const scene::World& world, const scene::ScreenGuiComponent& screen,
+                                      core::Vec2 windowSize) noexcept;
+
+// **One tree against a canvas of its own**: the children of `root` laid
+// out inside `(0, 0)` to `canvasSize`, with `AbsolutePosition` and
+// `AbsoluteSize` in the canvas's pixels rather than the window's. What a
+// `BillboardGui` and a `SurfaceGui` are laid out with, every frame they are
+// drawn -- they have no dirty flag, since a billboard's canvas changes size
+// with its distance.
+void layoutCanvas(scene::World& world, core::InstanceId root, core::Vec2 canvasSize);
+
+[[nodiscard]] const LayoutStats& layoutStats() noexcept;
+void resetLayoutStats() noexcept;
+
+// --- Pages (ADR 0128) --------------------------------------------------------
+
+// Turning a page is `scene::turnPage` (`engine/scene/ui_pages.h`), since a
+// script turns one too.
+//
+// **What moves by itself, moved by `seconds`**: the slide of every page layout
+// that is turning, and every `ScrollFrame` that was thrown or pulled past its
+// end. Once a frame, before `layout`; a tree something slid in is
+// laid out again. Frame time rather than simulation time -- a page turn is
+// drawn, not simulated, and `CurrentPage` already changed when it was asked.
+void advance(scene::World& world, f32 seconds);
+
+// --- Interaction -------------------------------------------------------------
+
+// What the UI needs to know about the pointer and the keyboard this frame.
+//
+// Handed in rather than read, because `ui` is L5 and `platform` is L1: the host
+// already has both, and a module that reached for a device would be a module
+// that behaves differently in a replay.
+// **One thing done to the focused text field** (ADR 0139), in the order the
+// keys were pressed: a frame that saw Ctrl+A then a typed letter replaces the
+// selection with it, and the reverse does not.
+struct TextCommand
+{
+    enum class Kind : core::u8
+    {
+        // `text`, typed or committed by an input method.
+        Insert,
+        // `move`, with `extend` for Shift.
+        Move,
+        // Up and Down: a line in a multi-line field, the ends in a single one.
+        LineUp,
+        LineDown,
+        // Backspace and Delete, `word` for Ctrl.
+        DeleteBackward,
+        DeleteForward,
+        SelectAll,
+        Copy,
+        Cut,
+        Paste,
+        Undo,
+        Redo,
+        // Return; `ctrl` submits a multi-line field, which otherwise takes a
+        // new line.
+        Return,
+        Escape,
+        // `extend` for Shift+Tab, which goes to the previous field.
+        Tab,
+    };
+    Kind kind = Kind::Insert;
+    core::u8 move = 0;
+    bool extend = false;
+    bool word = false;
+    bool ctrl = false;
+    std::string_view text;
+};
+
+// **A finger that is not the pointer**. The pointer is the mouse, or on
+// a touch screen the first finger down; every other finger on the glass is one
+// of these. It presses and releases what is under it as the pointer would --
+// a button's `Activated`, both ends on the same element -- and does nothing
+// else: it hovers nothing, drags nothing, scrolls nothing and takes no focus.
+// A thumb resting on a game's stick must not make the rest of the screen deaf.
+struct InteractionTouch
+{
+    core::u64 finger = 0;
+    core::Vec2 position;
+    // It came down this frame, and it lifted this frame; both, for a tap that
+    // began and ended between two frames.
+    bool pressed = false;
+    bool released = false;
+};
+
+// **One local player's controller, to that player's own interfaces** (ADR
+// 0205): the same four things a controller says to everybody's.
+struct PlayerNavigation
+{
+    core::InstanceId player;
+    core::i8 navigateX = 0;
+    core::i8 navigateY = 0;
+    bool activate = false;
+    core::i8 pageStep = 0;
+};
+
+struct InteractionInput
+{
+    core::Vec2 pointer;
+    // The other fingers down or just lifted, in the order they came down.
+    std::span<const InteractionTouch> touches;
+    // **`InputService.PointerLocked`**: a first-person mouse, and the
+    // game's -- nothing of the interface is under it, nothing it presses is a
+    // press, and its motion is never sunk. The keyboard and the gamepad still
+    // select (ADR 0128); a game that wants a click on its interface lets the
+    // pointer go, as a menu does.
+    bool pointerLocked = false;
+    bool pressed = false;
+    bool released = false;
+    // **Both in one frame, and the release came first**: the end of one
+    // click and the start of the next -- a quick double click. Without it a
+    // frame that holds both is a press then a release.
+    bool releasedFirst = false;
+    // UTF-8, as the platform delivered it this frame. Empty for most frames.
+    std::string_view text;
+    bool backspace = false;
+    // Forward delete, which is a different key and a different edit: backspace
+    // takes what is BEFORE the caret and this takes what is after. Without both
+    // a caret can only ever be used to insert.
+    bool forwardDelete = false;
+    // Caret movement, as the four things a single-line field can do with it.
+    // Separate flags rather than a signed step, because a frame that saw both
+    // arrows should do nothing rather than average them.
+    bool caretLeft = false;
+    bool caretRight = false;
+    bool caretHome = false;
+    bool caretEnd = false;
+    bool submit = false;
+
+    // --- A text field's full keyboard, mouse and clipboard (ADR 0139) ---------
+    //
+    // The commands, in the order they happened. When there are any, the flags
+    // above are not read.
+    std::span<const TextCommand> commands;
+    // An input method's composition as the platform last reported it, and its
+    // cursor in characters; `compositionChanged` when a report came this frame.
+    std::string_view composition;
+    i32 compositionCursor = 0;
+    bool compositionChanged = false;
+    // The press's count (2 double, 3 triple), whether Shift was held with it,
+    // and whether the button is still held (a drag).
+    core::u8 clicks = 1;
+    bool shiftPress = false;
+    bool pointerHeld = false;
+    // Seconds, for the caret's blink.
+    core::f64 time = 0.0;
+    // The system's clipboard, through the host. Unset: copy and paste do
+    // nothing.
+    std::function<std::optional<std::string>()> readClipboard;
+    std::function<void(std::string_view)> writeClipboard;
+
+    // The element of a world canvas -- a `SurfaceGui` or a `BillboardGui` --
+    // under the pointer, as the host found it by casting the pointer's ray into
+    // the world. A screen element under the pointer wins over it: the screen is
+    // drawn in front of the world.
+    core::InstanceId worldOver;
+
+    // --- A gamepad, the arrow keys and the wheel (ADR 0128) --------------------
+    //
+    // One step of the selection, as the host read it off the d-pad, the left
+    // stick and the arrows: -1, 0 or 1 on each axis, y down, on the frame it
+    // was pressed and again each time it repeats while held.
+    core::i8 navigateX = 0;
+    core::i8 navigateY = 0;
+    // `ButtonA` or Enter went down: the selected object is activated.
+    bool navigateActivate = false;
+    // A shoulder button went down: -1 turns a page back, 1 forwards.
+    core::i8 pageStep = 0;
+    // The wheel this frame, in notches; positive y is away from the hand.
+    core::Vec2 wheel;
+    // Each local player's own controller (ADR 0205), for the `ScreenGui`s
+    // that are that player's.
+    std::array<PlayerNavigation, 4> players{};
+    core::u32 playerCount = 0;
+};
+
+// The answer the host needs back: whether the UI took the pointer.
+//
+// **This is the "engine-owned high-priority InputContext with Sink" of
+// architecture.md §2, without the Instance.** A context in the tree would be
+// visible to `GetChildren`, to a tree walk and to a serializer -- an object a
+// game can see, reparent and destroy, whose destruction would silently turn off
+// every button. A flag the host passes to `input` is the same behaviour with
+// nothing to break.
+struct InteractionResult
+{
+    // True while the pointer is over any visible element. `input` marks the
+    // mouse codes consumed for that frame, so a button over the world does not
+    // also shoot the gun.
+    bool pointerOverUi = false;
+
+    // True while a `TextInput` has focus. `input` marks the KEYBOARD codes
+    // consumed for that frame, which is the same claim one device over: a player
+    // typing `w` into a chat box should not also walk forward. It is also what
+    // makes `uiConsumed` mean something on `InputService.InputBegan` for a key
+    // (ADR 0041) -- a flag that was always false for the keyboard would be
+    // honest and useless.
+    bool textInputFocused = false;
+
+    // The focused field, what its keyboard is, and where its caret is in
+    // window pixels -- for the host to raise the right on-screen keyboard and
+    // to tell an input method where to open its candidates (ADR 0139).
+    core::InstanceId focusedInput;
+    i32 keyboardType = 0;
+    bool masked = false;
+    bool multiLine = false;
+    core::Rect caret;
+
+    // **An object is selected** (ADR 0128): the d-pad, the left stick, the
+    // arrows, `ButtonA` and Enter are the interface's this frame, the same
+    // claim as the two above for the codes a selection is driven by.
+    bool selectionActive = false;
+    // The wheel was used by something under the pointer -- a scroll frame or
+    // a page layout -- so it is not also the game's zoom.
+    bool wheelTaken = false;
+};
+
+// Fires `Activated`, `PointerEntered` and `PointerExited`, moves focus between
+// `TextInput`s, and edits the focused one's text. Reads the rectangles the
+// layout produced; computes no layout of its own.
+[[nodiscard]] InteractionResult updateInteraction(scene::World& world, core::InstanceId uiService,
+                                                  const InteractionInput& input);
+
+// **Forgets what was hovered, pressed and focused.** Those are ids into ONE
+// world, and play and stop replace it: a focus kept across the swap is a
+// text field of a world that is gone still holding the keyboard.
+void resetInteraction() noexcept;
+
+// The topmost visible element under a point, or an invalid id. Exposed for the
+// tests, which is the only reason it is not private: a hit test is easier to
+// believe as a case than as a consequence.
+[[nodiscard]] core::InstanceId hitTest(const scene::World& world, core::InstanceId uiService, core::Vec2 point);
+
+// The topmost visible element under a point WHETHER OR NOT it takes the
+// pointer: what an editor's click selects. A label is not pressed in a game
+// and is very much something a person arranging the interface points at.
+[[nodiscard]] core::InstanceId elementAt(const scene::World& world, core::InstanceId uiService, core::Vec2 point);
+
+// **Whether a gamepad or the arrow keys can select an element**
+// (`UIObject.Selectable`, ADR 0128). What it was told, or -- told nothing --
+// what it is: a button and a text input are, and nothing else is.
+[[nodiscard]] bool isSelectable(const scene::World& world, core::InstanceId id);
+
+// **Whether an element takes the pointer** (`UIObject.Active`): what a
+// press lands on, what the pointer is "over", and what makes a press the
+// interface's rather than the game's. What it was told, or -- told nothing --
+// what it is: a button, a text input and a scroll frame take it; a label does
+// not, so a press on a button's icon is a press on the button; and a frame
+// takes it when it draws a background, so a veil behind a dialog blocks what is
+// under it and a clear frame that only lays things out does not.
+[[nodiscard]] bool takesPointer(const scene::World& world, core::InstanceId id);
+
+// The topmost visible element of one canvas tree under a point in the canvas's
+// own pixels, as `layoutCanvas` laid it out -- a world canvas's answer to the
+// same question.
+[[nodiscard]] core::InstanceId hitTestCanvas(const scene::World& world, core::InstanceId root, core::Vec2 point);
+
+// Walks every enabled `ScreenGui` in `DisplayOrder` and emits its quads in
+// draw order -- `ZIndex`, then document order. Reads the rectangles the layout
+// produced and computes nothing: a draw list that laid anything out would make
+// "what is on screen" depend on when it was asked.
+void buildDrawList(const scene::World& world, core::InstanceId uiService, DrawList& out);
+
+// The same for one canvas tree laid out by `layoutCanvas`: quads in the
+// canvas's pixels, `ZIndex` then document order. Replaces what `out` held.
+void buildCanvasDrawList(const scene::World& world, core::InstanceId root, DrawList& out);
+
+} // namespace engine::ui

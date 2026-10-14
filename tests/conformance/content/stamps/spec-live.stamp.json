@@ -1,0 +1,91 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "Folder",
+  "name": "SpecLive",
+  "children": [
+   {
+    "class": "Script",
+    "name": "Maker",
+    "properties": {
+     "Source": "--!strict\nlocal into = workspace:FindFirstChild(\"ScriptLiveSpec\")\nlocal p = Instance.new(\"Part\")\np.Name = script:GetAttribute(\"Make\") :: string\np.Parent = into\n"
+    }
+   },
+   {
+    "class": "Script",
+    "name": "Ticker",
+    "properties": {
+     "Source": "--!strict\nlocal RunService = game:GetService(\"RunService\")\nRunService.Heartbeat:Connect(function()\n    local p = Instance.new(\"Part\")\n    p.Name = \"Tick\"\n    p.Parent = workspace:FindFirstChild(\"ScriptLiveTicks\")\nend)\n"
+    }
+   },
+   {
+    "class": "Model",
+    "name": "Crate",
+    "children": [
+     {
+      "class": "Part",
+      "name": "Body"
+     },
+     {
+      "class": "Script",
+      "name": "Maker",
+      "properties": {
+       "Source": "--!strict\nlocal into = workspace:FindFirstChild(\"ScriptLiveSpec\")\nlocal p = Instance.new(\"Part\")\np.Name = script:GetAttribute(\"Make\") :: string\np.Parent = into\n"
+      },
+      "attributes": {
+       "Make": "FromCrate"
+      }
+     }
+    ]
+   },
+   {
+    "class": "Script",
+    "name": "ServerMaker",
+    "properties": {
+     "Source": "--!strict\nlocal into = workspace:FindFirstChild(\"ScriptLiveSpec\")\nlocal p = Instance.new(\"Part\")\np.Name = script:GetAttribute(\"Make\") :: string\np.Parent = into\n",
+     "RunContext": "Server"
+    },
+    "attributes": {
+     "Make": "FromServer"
+    }
+   },
+   {
+    "class": "Script",
+    "name": "ClientMaker",
+    "properties": {
+     "Source": "--!strict\nlocal into = workspace:FindFirstChild(\"ScriptLiveSpec\")\nlocal p = Instance.new(\"Part\")\np.Name = script:GetAttribute(\"Make\") :: string\np.Parent = into\n",
+     "RunContext": "Client"
+    },
+    "attributes": {
+     "Make": "FromClient"
+    }
+   },
+   {
+    "class": "Script",
+    "name": "SharedMaker",
+    "properties": {
+     "Source": "--!strict\nlocal into = workspace:FindFirstChild(\"ScriptLiveSpec\")\nlocal p = Instance.new(\"Part\")\np.Name = script:GetAttribute(\"Make\") :: string\np.Parent = into\n",
+     "RunContext": "Shared"
+    },
+    "attributes": {
+     "Make": "FromShared"
+    }
+   },
+   {
+    "class": "Script",
+    "name": "Waiter",
+    "properties": {
+     "Source": "--!strict\nlocal into = workspace:FindFirstChild(\"ScriptLiveSpec\")\nworkspace:WaitForChild(\"ScriptLiveBeacon\")\nlocal p = Instance.new(\"Part\")\np.Name = \"AfterWait\"\np.Parent = into\n"
+    }
+   },
+   {
+    "class": "Script",
+    "name": "Escaper",
+    "properties": {
+     "Source": "--!strict\nlocal RunService = game:GetService(\"RunService\")\nlocal ticks = workspace:FindFirstChild(\"ScriptLiveTicks\")\n-- Its own `script` global, cleared: the run is still its own.\nscript = nil\nRunService.Heartbeat:Connect(function()\n    local p = Instance.new(\"Part\")\n    p.Name = \"Tick\"\n    p.Parent = ticks\nend)\n"
+    }
+   }
+  ]
+ }
+}

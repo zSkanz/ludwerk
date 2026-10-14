@@ -1,0 +1,7 @@
+{
+  "format": "material",
+  "version": 1,
+  "parent": "engine://terrain/rock",
+  "instanceParameters": [],
+  "properties": {}
+}

@@ -1,0 +1,15 @@
+# An ambush in an alley: a sequence that brings somebody who was not in the
+# scene, a camera that goes round a wall on one curve and is kept in sight of
+# the hero, a blow whose weight the game says, and a second sequence the
+# script writes as it runs. Built by its script.
+
+[project]
+name = "Ludwerk Ambush"
+id = "dev.ludwerk.ambush"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"
+
+[window]
+title = "Ludwerk — Ambush"
+size = [1600, 900]

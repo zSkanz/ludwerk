@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<defs><mask id="ink" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<polygon points="14,3 14.1951,3.01921 14.3827,3.07612 14.5556,3.16853 14.7071,3.29289 14.8315,3.44443 14.9239,3.61732 14.9808,3.80491 15,4 15,14 14.9808,14.1951 14.9239,14.3827 14.8315,14.5556 14.7071,14.7071 14.5556,14.8315 14.3827,14.9239 14.1951,14.9808 14,15 4,15 3.80491,14.9808 3.61732,14.9239 3.44443,14.8315 3.29289,14.7071 3.16853,14.5556 3.07612,14.3827 3.01921,14.1951 3,14 3,4 3.01921,3.80491 3.07612,3.61732 3.16853,3.44443 3.29289,3.29289 3.44443,3.16853 3.61732,3.07612 3.80491,3.01921 4,3" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="8,21 21,21 21,8" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="7,9 9,11 13,6" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</mask></defs><rect width="24" height="24" fill="white" mask="url(#ink)"/>
+</svg>

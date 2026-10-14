@@ -1,0 +1,25 @@
+{
+ "format": "scene",
+ "version": 3,
+ "root": {
+  "class": "Part",
+  "name": "Guard",
+  "properties": {
+   "Size": [0.9, 1.9, 0.7],
+   "Anchored": true,
+   "CanCollide": false
+  },
+  "children": [
+   {
+    "class": "PointLight",
+    "name": "Lantern",
+    "sid": "00000001",
+    "properties": {
+     "Color": [1, 0.72, 0.42],
+     "Brightness": 1.6,
+     "Range": 9
+    }
+   }
+  ]
+ }
+}

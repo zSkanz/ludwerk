@@ -1,0 +1,9 @@
+{
+  "format": "material",
+  "version": 1,
+  "parent": "engine://terrain/ice",
+  "instanceParameters": [],
+  "properties": {
+    "FootstepSound": "asset://sounds/step_ice.wav"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "format": "material",
+  "version": 1,
+  "parent": "",
+  "instanceParameters": [],
+  "properties": {
+    "Color": [0.1, 0.05, 0.04],
+    "Transparency": 0,
+    "ColorMap": "",
+    "NormalMap": "",
+    "MetallicRoughnessMap": "",
+    "Emissive": [1.5, 0.45, 0.1],
+    "EmissiveMap": "",
+    "Metalness": 0,
+    "Roughness": 0.8,
+    "NormalScale": 1,
+    "AlphaMode": "Opaque",
+    "AlphaCutoff": 0.5,
+    "DoubleSided": false
+  }
+}

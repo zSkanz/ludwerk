@@ -1,0 +1,8 @@
+# A game with an error nothing catches, which then ends when asked to (ADR
+# 0187). The other of the two projects `run_last_run_gate.cmake` runs.
+
+[project]
+name = "Ludwerk Last Run"
+id = "dev.ludwerk.lastrun"
+version = "1.2.0"
+engine = "0.1"

@@ -1,0 +1,15 @@
+{
+  "visemes": {
+    "A": {},
+    "B": { "JawOpen": 0.16, "Wide": 0.55 },
+    "C": { "JawOpen": 0.45, "Wide": 0.35 },
+    "D": { "JawOpen": 0.9 },
+    "E": { "JawOpen": 0.45, "Round": 0.55 },
+    "F": { "JawOpen": 0.14, "Round": 0.95 },
+    "G": { "JawOpen": 0.08, "Wide": 0.2 },
+    "H": { "JawOpen": 0.35 },
+    "X": {}
+  },
+  "bands": { "open": "JawOpen", "wide": "Wide", "round": "Round" },
+  "loudness": "JawOpen"
+}

@@ -1,0 +1,35 @@
+# The animation graph of examples/37-character in the Graph panel (ADR 0211),
+# while editing: its Body page; the blend across two parameters selected, with
+# its plot; the list, asked for where nothing is; the state it adds, which
+# nothing leads to; and an arrow drawn to it from another state's edge.
+# Nothing is saved. Coordinates are a 1600 by 900 frame's.
+wait 60
+drag 700 607 700 820
+wait 6
+key ctrl+p
+wait 8
+text hero.animgraph
+wait 10
+key enter
+wait 30
+shot anim-editing
+click 625 455
+wait 6
+shot anim-blend
+rclick 480 650
+wait 6
+text sta
+wait 6
+shot anim-list
+key enter
+wait 8
+move 700 760
+wait 4
+shot anim-unreachable
+# From Fall's right edge to the new state.
+drag 925 585 520 660
+wait 8
+move 700 760
+wait 4
+shot anim-arrow-made
+quit

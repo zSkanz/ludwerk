@@ -1,0 +1,15 @@
+{
+  "speakers": {
+    "anna": { "name": "speaker.anna", "color": "#E8B04A" },
+    "bruno": { "name": "speaker.bruno", "color": "#6FB7E9" },
+    "clara": { "name": "speaker.clara", "color": "#C792EA" }
+  },
+  "lines": {
+    "anna_1": { "speaker": "anna", "sound": "asset://voice/booth/anna_1.wav" },
+    "bruno_1": { "speaker": "bruno", "sound": "asset://voice/booth/bruno_1.wav" },
+    "clara_1": { "speaker": "clara", "sound": "asset://voice/booth/clara_1.wav" },
+    "anna_2": { "speaker": "anna", "sound": "asset://voice/booth/anna_2.wav" },
+    "bruno_2": { "speaker": "bruno", "sound": "asset://voice/booth/bruno_2.wav" },
+    "clara_2": { "speaker": "clara" }
+  }
+}

@@ -1,0 +1,362 @@
+// `createReplication`: the one door to a socket (ADR 0070, clause 2).
+#include "engine/replication/replication.h"
+
+#include <algorithm>
+#include <optional>
+#include <utility>
+
+#include "engine/core/error.h"
+#include "engine/core/i18n.h"
+#include "engine/core/log.h"
+#include "engine/replication/session.h"
+#include "wire_schema.gen.h"
+
+namespace engine::replication {
+namespace {
+
+// The schema's four channels -- Control, State, Intent and Ownership (ADR
+// 0099) -- opened whether or not a session uses them all, so the count never
+// depends on what a game does.
+constexpr u8 ChannelCount = static_cast<u8>(std::size(generated::Channels));
+
+class Replication final : public IReplication
+{
+public:
+    Replication(std::unique_ptr<net::ITransport> transport, const Config& config)
+        : m_transport(std::move(transport)), m_config(config)
+    {}
+
+    [[nodiscard]] std::optional<core::EngineError> start()
+    {
+        net::TransportConfig transport;
+        transport.channels = ChannelCount;
+        transport.timeoutMs = m_config.timeoutMs;
+        if (m_config.topology == Topology::Replica) {
+            transport.port = 0;
+            transport.maxPeers = 1;
+            transport.simulatedDelayMs = m_config.simulatedDelayMs;
+            transport.simulatedJitterMs = m_config.simulatedJitterMs;
+            transport.simulatedLossPercent = m_config.simulatedLossPercent;
+            if (auto error = m_transport->open(transport); error.has_value())
+                return error;
+            net::PeerId authority;
+            if (auto error = dial(authority); error.has_value())
+                return error;
+            m_replica.emplace(*m_transport, authority);
+            m_replica->setCorrectionLog(m_config.logCorrections);
+            if (m_config.token.valid())
+                m_replica->setPlayerToken(m_config.token);
+            m_replica->setInterpolationDelay(m_config.interpolationDelayTicks);
+            if (m_probe)
+                m_replica->setReferenceProbe(m_probe);
+            m_replica->setCharacterReplay(m_characterReplay);
+            m_replica->setSceneChanger(m_sceneChanger);
+            m_replica->setScriptTemplates(m_templates);
+            m_replica->setWelcomeHandler(m_welcomeHandler);
+            return std::nullopt;
+        }
+        transport.port = m_config.port;
+        // One over the players: a connection to say "full" on.
+        transport.maxPeers = std::min<usize>(static_cast<usize>(m_config.maxPeers) + 1, net::EnetPeerCap);
+        // What a client sends up is small, and a client is not trusted.
+        transport.maxMessageBytes = MaxAuthorityMessageBytes;
+        transport.maxPeersPerAddress = MaxPeersPerAddress;
+        if (auto error = m_transport->open(transport); error.has_value())
+            return error;
+        m_authority.emplace(*m_transport);
+        m_authority->setMaxPlayers(m_config.maxPeers);
+        m_authority->setUncarriedWarnings(m_config.developer);
+        // **A host is a host with or without its relay** (ADR 0178): one that
+        // cannot be found -- no internet, a name mistyped -- is said in the
+        // log and as `RelayState`, and the match is joined by address as ever.
+        if (!m_config.relay.empty()) {
+            if (auto error = m_transport->useRelay(m_config.relay); error.has_value()) {
+                core::logText(core::LogLevel::Warn, error->message);
+                m_relayRefused = true;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // A replica's dial: by the host's code where it was given one, by its
+    // address otherwise.
+    [[nodiscard]] std::optional<core::EngineError> dial(net::PeerId& authority)
+    {
+        if (!m_config.joinCode.empty())
+            return m_transport->connectByCode(m_config.relay, m_config.joinCode, m_config.relayDirect, authority);
+        return m_transport->connect(m_config.address, m_config.port, authority);
+    }
+
+    void receive(scene::World& world, core::InstanceId root, bool ticking) override
+    {
+        if (m_authority.has_value()) {
+            m_authority->receive(world, root, ticking);
+            // What the relay tells a joiner before it tries: a host with no
+            // room is not knocked on.
+            if (!m_config.relay.empty())
+                m_transport->setOccupancy(m_authority->peerCount(), m_authority->maxPlayers());
+        }
+        else if (m_replica.has_value()) {
+            m_replica->receive(world, root, ticking);
+            if (m_config.redial)
+                redial();
+        }
+    }
+
+    void send(const scene::World& world, core::InstanceId root, u64 tick) override
+    {
+        m_tick = tick;
+        // **A count of ticks, never milliseconds** (R10): what a peer is told
+        // is a function of the simulation, not of how fast this machine ran it.
+        if (m_authority.has_value() && tick % std::max<u32>(1, m_config.ticksPerSnapshot) == 0)
+            m_authority->send(world, root, tick);
+        // Intent every tick: it is small, and a snapshot rate is a choice about
+        // the world while an input rate is a choice about how a game feels.
+        if (m_replica.has_value()) {
+            // Who else is at this machine first (protocol 48): a guest's
+            // intents travel from the tick its seat is answered.
+            m_replica->syncGuests(world);
+            m_replica->sendIntent(world, tick);
+        }
+    }
+
+    void sendMessages(scene::World& world) override
+    {
+        if (m_authority.has_value())
+            m_authority->sendMessages(world);
+        else if (m_replica.has_value())
+            m_replica->sendMessages(world);
+        // The tick's sends leave now, together.
+        m_transport->flush();
+    }
+
+    void setMaxPeers(u32 peers) override
+    {
+        if (m_authority.has_value())
+            m_authority->setMaxPlayers(std::min(peers, m_config.maxPeers));
+    }
+
+    bool removePlayer(scene::World& world, core::InstanceId root, u32 userId, std::string_view reason) override
+    {
+        return m_authority.has_value() && m_authority->removePlayer(world, root, userId, reason);
+    }
+
+    void noteTimeDropped() override
+    {
+        if (m_replica.has_value())
+            m_replica->noteTimeDropped();
+    }
+
+    [[nodiscard]] Status status() const override
+    {
+        Status status;
+        status.topology = m_config.topology;
+        status.authority = hasAuthority(m_config.topology);
+        if (m_authority.has_value()) {
+            status.serverTick = m_tick;
+            status.serverClock = m_tick;
+            status.peerCount = m_authority->peerCount();
+            const net::PeerLink worst = m_authority->worstLink();
+            status.pingMs = worst.roundTripMs;
+            status.jitterMs = worst.jitterMs;
+            status.loss = worst.loss;
+            // Refused at the start is unreachable until the transport says
+            // otherwise: a relay whose name was not found is looked up again,
+            // and found, it is as any other.
+            const net::RelayState relayState = m_transport->relayState();
+            status.relayState = m_relayRefused && relayState == net::RelayState::None
+                                    ? static_cast<u8>(net::RelayState::Unreachable)
+                                    : static_cast<u8>(relayState);
+            status.joinCode = m_transport->joinCode();
+            status.path = static_cast<u8>(m_authority->worstPath());
+        }
+        else if (m_replica.has_value()) {
+            status.serverTick = m_replica->appliedTick();
+            status.serverClock = m_replica->serverClock();
+            status.peerCount = m_replica->welcomed() ? 1 : 0;
+            status.welcomed = m_replica->welcomed();
+            status.lost = m_replica->lost();
+            status.refused = m_replica->refused();
+            status.refusedText = m_replica->refusedText();
+            status.token = m_replica->playerToken();
+            status.freshJoins = m_replica->freshJoins();
+            const net::PeerLink link = m_replica->link();
+            status.pingMs = link.roundTripMs;
+            status.jitterMs = link.jitterMs;
+            status.loss = link.loss;
+            status.path = static_cast<u8>(m_replica->path());
+            status.joinFailure = static_cast<u8>(m_replica->joinFailure());
+        }
+        return status;
+    }
+
+    void setReferenceProbe(std::function<bool(core::InstanceId)> probe) override
+    {
+        m_probe = std::move(probe);
+        if (m_replica.has_value())
+            m_replica->setReferenceProbe(m_probe);
+    }
+
+    void setCharacterReplay(scene::ICharacterReplay* replay) override
+    {
+        m_characterReplay = replay;
+        if (m_replica.has_value())
+            m_replica->setCharacterReplay(replay);
+    }
+
+    void setSceneChanger(SceneChanger changer) override
+    {
+        m_sceneChanger = std::move(changer);
+        if (m_replica.has_value())
+            m_replica->setSceneChanger(m_sceneChanger);
+    }
+
+    void setWelcomeHandler(std::function<void(scene::World&)> handler) override
+    {
+        m_welcomeHandler = std::move(handler);
+        if (m_replica.has_value())
+            m_replica->setWelcomeHandler(m_welcomeHandler);
+    }
+
+    void setScriptTemplates(std::function<ScriptTemplates*()> templates) override
+    {
+        m_templates = std::move(templates);
+        if (m_replica.has_value())
+            m_replica->setScriptTemplates(m_templates);
+    }
+
+    [[nodiscard]] std::vector<core::InstanceId> drainStreamedOut() override
+    {
+        return m_replica.has_value() ? m_replica->drainStreamedOut() : std::vector<core::InstanceId>{};
+    }
+
+    [[nodiscard]] VisualCorrection visualCorrection(core::usize seat) const override
+    {
+        return m_replica.has_value() ? m_replica->visualCorrection(seat) : VisualCorrection{};
+    }
+
+    [[nodiscard]] Stats stats() const override
+    {
+        if (m_authority.has_value())
+            return m_authority->stats();
+        if (m_replica.has_value())
+            return m_replica->stats();
+        return {};
+    }
+
+    void shutdown() override
+    {
+        m_authority.reset();
+        m_replica.reset();
+        if (m_transport != nullptr)
+            m_transport->close();
+    }
+
+    ~Replication() override { shutdown(); }
+
+    Replication(const Replication&) = delete;
+    Replication& operator=(const Replication&) = delete;
+
+private:
+    // **A replica whose connection went dials again, and keeps dialling**
+    // (ADR 0085): after one second, then two, four and so on to thirty, counted
+    // in ticks so a slow machine waits as long in game time as a fast one. The
+    // authority welcomes the same player back when it answers; until then the
+    // world the replica holds stands still rather than vanishing.
+    void redial()
+    {
+        m_receives += 1;
+        // Refused is an answer: dialling again would be asked again.
+        if (m_replica->refused() != 0)
+            return;
+        if (!m_replica->lost()) {
+            if (m_attempts > 0)
+                m_sayWhenWelcomed = true;
+            m_attempts = 0;
+            m_redialAt = 0;
+            // Said at the welcome, which is when it is known who answered:
+            // the server this machine left, or one that has never heard of
+            // it -- which is a new player in a new world, and it said "as the
+            // same player" of both.
+            if (m_replica->welcomed()) {
+                if (m_sayWhenWelcomed) {
+                    m_sayWhenWelcomed = false;
+                    core::log(core::LogLevel::Info, m_replica->freshJoins() != m_freshJoinsSaid
+                                                        ? ENG_TR("net.info.rejoined")
+                                                        : ENG_TR("net.info.reconnected"));
+                }
+                m_freshJoinsSaid = m_replica->freshJoins();
+            }
+            return;
+        }
+        if (m_redialAt == 0) {
+            core::log(core::LogLevel::Warn, ENG_TR("net.warn.connection_lost"));
+            m_redialAt = m_receives + RedialFirstTicks;
+            return;
+        }
+        if (m_receives < m_redialAt)
+            return;
+        net::PeerId authority;
+        if (!dial(authority).has_value())
+            m_replica->rebind(authority);
+        m_attempts = std::min<u32>(m_attempts + 1, RedialDoublings);
+        m_redialAt = m_receives + (RedialFirstTicks << m_attempts);
+    }
+
+    // One second at the fixed rate, doubled up to five times: thirty-two.
+    static constexpr u64 RedialFirstTicks = 60;
+    static constexpr u32 RedialDoublings = 5;
+
+    std::unique_ptr<net::ITransport> m_transport;
+    Config m_config;
+    u64 m_receives = 0;
+    u64 m_redialAt = 0;
+    u32 m_attempts = 0;
+    bool m_sayWhenWelcomed = false;
+    u32 m_freshJoinsSaid = 0;
+    // The relay this authority was asked to register with could not be found.
+    bool m_relayRefused = false;
+    std::optional<AuthoritySession> m_authority;
+    std::optional<ReplicaSession> m_replica;
+    std::function<bool(core::InstanceId)> m_probe;
+    scene::ICharacterReplay* m_characterReplay = nullptr;
+    SceneChanger m_sceneChanger;
+    std::function<void(scene::World&)> m_welcomeHandler;
+    std::function<ScriptTemplates*()> m_templates;
+    u64 m_tick = 0;
+};
+
+} // namespace
+
+std::unique_ptr<IReplication> createReplication(const Config& config, std::optional<core::EngineError>& error)
+{
+    return createReplicationOver(net::createEnetTransport(), config, error);
+}
+
+std::unique_ptr<IReplication> createReplicationOver(std::unique_ptr<net::ITransport> transport, const Config& config,
+                                                    std::optional<core::EngineError>& error)
+{
+    error.reset();
+    if (config.topology == Topology::Solo)
+        return nullptr;
+    // Refused here as well as by the transport, in the players' terms rather
+    // than the transport's, and before a socket is opened.
+    if (config.topology != Topology::Replica && (config.maxPeers == 0 || config.maxPeers > net::EnetPeerCap)) {
+        const core::I18nArg args[] = {{"count", static_cast<core::i64>(config.maxPeers)},
+                                      {"cap", static_cast<core::i64>(net::EnetPeerCap)}};
+        error = core::makeError(ENG_TR("net.err.replication_peer_cap"), args);
+        return nullptr;
+    }
+    if (transport == nullptr) {
+        error = core::makeError(ENG_TR("net.err.transport_init_failed"));
+        return nullptr;
+    }
+    auto replication = std::make_unique<Replication>(std::move(transport), config);
+    if (std::optional<core::EngineError> failed = replication->start(); failed.has_value()) {
+        error = std::move(failed);
+        return nullptr;
+    }
+    return replication;
+}
+
+} // namespace engine::replication

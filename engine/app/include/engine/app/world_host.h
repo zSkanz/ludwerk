@@ -1,0 +1,1000 @@
+// The world, the VM, and the project they run (architecture.md §2 "app", §3).
+//
+// This is what `engine/app/src/script_host.cpp` and `preview_api.cpp` were
+// standing in for through the first window: the reflection registries, a `scene::World`, a
+// booted `script::ScriptRuntime`, and the file-backed half of `require`.
+//
+// `app` owns it rather than `script` for one reason that decides the rest:
+// resolution policy belongs with the filesystem. `script` never opens a file --
+// it asks a `ModuleLoader` for source at a canonical project-relative path --
+// and that is what keeps a Luau require deterministic under R10 and lets a test
+// mount a project that exists only in memory.
+#pragma once
+
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <set>
+#include <span>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#include "engine/app/mouths.h"
+#include "engine/app/preserved.h"
+#include "engine/app/sequences.h"
+#include "engine/asset/content.h"
+#include "engine/asset/localized.h"
+#include "engine/asset/material.h"
+#include "engine/audio/audio.h"
+#include "engine/core/error.h"
+#include "engine/core/name_atom.h"
+#include "engine/input/input.h"
+#include "engine/nav/nav.h"
+#include "engine/physics/backends.h"
+#include "engine/platform/game_integration.h"
+#include "engine/render/animation.h"
+#include "engine/render/draw_poses.h"
+#include "engine/render/ik_controls.h"
+#include "engine/render/spring_bones.h"
+#include "engine/render/transform_history.h"
+#include "engine/scene/class_registry.h"
+#include "engine/scene/enum_registry.h"
+#include "engine/scene/localization.h"
+#include "engine/scene/physics_sync.h"
+#include "engine/scene/physics_sync_2d.h"
+#include "engine/scene/scene_file.h"
+#include "engine/scene/world.h"
+#include "engine/script/modules.h"
+#include "engine/script/runtime.h"
+#include "engine/script/save_store.h"
+#include "engine/script/services.h"
+
+namespace engine::render {
+class DebugDraw;
+}
+
+namespace engine::replication {
+class ScriptTemplates;
+} // namespace engine::replication
+
+namespace engine::asset {
+class SealedGame;
+} // namespace engine::asset
+
+namespace engine::app {
+
+using core::f32;
+using core::f64;
+
+struct WorldHostOptions
+{
+    // A directory is a project root and gets the full mount; a file is mounted
+    // as a single entry `Script`. Empty runs an empty
+    // world, which is what `engine-host --version` and the render gates need.
+    std::filesystem::path projectPath;
+
+    // The world's own deterministic stream. Recorded in a replay, because a
+    // replay stores seeds and never draws (ADR 0025).
+    core::u64 seed = 1;
+
+    f64 fixedTimestep = 1.0 / 60.0;
+
+    // The hot-reload bag, owned by whoever outlives this host -- which is the
+    // point of it (ADR 0024). Null runs the world with the runtime's own bag,
+    // which dies with the VM and is right for a world nobody will reload.
+    script::ReloadState* reloadState = nullptr;
+
+    // Whether this world is the product of a reload, which is the whole of what
+    // `HotReloadService:IsReload` answers.
+    bool isReload = false;
+
+    // Whether the process has a window. The only thing the host does with it is
+    // decide whether to open an audio device: a headless run has no reason to
+    // hold one, and on a CI runner the attempt costs a second and a log line
+    // nobody reads. The sound TIMELINE runs either way, which is what makes
+    // `Ended` land on the same tick in both.
+    bool headless = true;
+
+    // The `PreserveOnReload` instances the outgoing world was carrying. They go
+    // into the tree after the project is mounted and **before** the entry
+    // scripts are deferred, so a script that looks for what it left behind
+    // finds it already there. Null for a cold boot.
+    const std::vector<PreservedTree>* preserved = nullptr;
+
+    // Every `*.spec.luau` under this directory is mounted as an entry `Script`
+    // alongside the project's own, and one more synthesized entry runs the
+    // suite once `game.Loaded` has fired (api-design.md §3). Empty means an
+    // ordinary run.
+    std::filesystem::path conformanceRoot;
+
+    // **The authored world this run starts with, applied before a single line
+    // of script has run** (ADR 0047, and `scene_file.h`'s own opening: "boot
+    // reads it and then starts the scripts"). Absolute; empty for a project
+    // with no scene, which is every example before `06-scene`.
+    //
+    // The order is the whole of an earlier defect. A scene load REPLACES the contents of
+    // `Workspace` -- it has to, or a second load would double everything -- so
+    // applying one after the boot drain destroys every instance the entry
+    // scripts just built while the VM goes on holding references to them and
+    // its connections stay connected. The next tick then raises
+    // `instance_dead` on a handle that was valid when it was taken, once per
+    // frame, forever. Loading first cannot do that: there is nothing alive yet
+    // to invalidate, and a script that builds its world builds it on top of
+    // the file rather than under it.
+    // How the scene below reads the stamps it names (ADR 0049). Empty is legal
+    // and means a project with no stamps -- or a scene whose stamped instances
+    // are counted as missing rather than silently dropped.
+    //
+    // **Give a field added here a default member initializer**, which is not
+    // tidiness: Clang reports a skipped field without one as
+    // `-Wmissing-field-initializers`, `-Werror` turns that into six broken
+    // builds, and MSVC says nothing at all -- which is what the Tier-2 stage
+    // exists to catch. Position is irrelevant; the default is what matters.
+    // **Partitions the scene before it is applied** (ADR 0053), and answers with
+    // the file to apply instead: what stayed authored, with everything the grid
+    // took out of it.
+    //
+    // A hook rather than a step this class performs, for one reason of order.
+    // The partitioner needs the class, enum and atom registries -- a scene node
+    // means what `readSceneNode` says it means -- and those exist only once this
+    // host has built them. So the caller supplies the policy and this supplies
+    // the moment: after the registries, before the scene, and therefore before
+    // a line of script (an earlier defect's order, one step earlier).
+    //
+    // Absent, or answering with an empty path, leaves `bootScene` to be applied
+    // as it is, which is every project that streams nothing.
+    //
+    // **The `= nullptr` is load-bearing**, and the rule is narrower than the
+    // paragraph below it used to say. Clang's `-Wmissing-field-initializers`
+    // fires for a field a designated initialiser SKIPS and that has no default
+    // member initializer of its own -- position in the struct has nothing to do
+    // with it. `headless` is skipped by three call sites and says nothing,
+    // because it has a default; this one without a default broke every one of
+    // them under `-Werror`, on Clang, where MSVC was silent. That is what the
+    // Tier-2 stage is for.
+    std::function<std::filesystem::path(scene::World&, const std::filesystem::path&)> partitionScene = nullptr;
+
+    // **Every streamed cell let go**: called when a scene is changed
+    // at run time, before the old scene is cleared, so its cells leave with
+    // it; the new scene then meets `partitionScene` as the boot's did. Unset,
+    // nothing streams, and there is nothing to let go. `= nullptr` for the
+    // reason above.
+    std::function<void()> resetStreaming = nullptr;
+
+    scene::StampSource bootStamps;
+    // `--net-log-client-writes` (ADR 0186 §5): a client-side script's write
+    // to a property that travels, on a machine that is hosting, is logged.
+    bool logClientWrites = false;
+    std::filesystem::path bootScene;
+    // **The scene's text, when it came from a content pack** rather than a
+    // file: a built game ships `content/` as a pack, and the scene -- which now
+    // carries the project's scripts (ADR 0092) -- is in it. `bootScene` still
+    // names it, for the report; this is what is read, and a scene read from a
+    // pack is not partitioned, because the grid's cache is keyed on a file.
+    std::string bootSceneText;
+    // `content/global.json`'s text (ADR 0105): what is authored under
+    // `GlobalScriptService` and is not code. Empty when the project has none.
+    std::string bootGlobalText;
+    // **The boot scene's content-relative path** (ADR 0106), which is what
+    // `SceneService.CurrentScene` says: `scenes/main.scene.json`.
+    std::string bootScenePath = {};
+    // **What the boot scene's `GetLoadData` answers**, as JSON: a run
+    // started in a scene by name is handed what a `LoadScene` would have.
+    // Empty hands it nothing.
+    std::string bootSceneData = {};
+    // How a scene named at run time is read: a content-relative path in, its
+    // text out, from a file or the pack. Absent, it is read from the
+    // project's `content/` folder.
+    std::function<std::optional<std::string>(std::string_view)> readContent = nullptr;
+    // `[network] server`, which `NetworkService:Join()` with no address dials.
+    std::string defaultServer = {};
+    // `[network] relay` (ADR 0178).
+    std::string defaultRelay = {};
+
+    // **Whether boot starts the entry scripts, or only mounts them** (ADR 0058).
+    //
+    // True everywhere except the editor, and that asymmetry is the decision: a
+    // game, `ludwerk dev`, a headless run, the conformance runner and a replay all
+    // want behaviour running the moment the world exists. A TOOL wants the world
+    // it was given and nothing else, because a file scope that runs on open puts
+    // instances nobody authored into a tree somebody is about to save.
+    //
+    // Mounting is unaffected either way -- the `Script` instances are in the
+    // tree, the Explorer shows them, `Source` is editable and a tab can open one
+    // (ADR 0057). What waits is the first resumption, and with it `game.Loaded`.
+    bool startScripts = true;
+
+    // **The posture, set before a single script runs** (ADR 0070). A script's
+    // file scope reads `NetworkService.Authority` in the boot drain -- that is
+    // where "build the level only if I decide the world" lives -- so a value
+    // that arrived after boot would be read wrong exactly once, by the code
+    // that most needs it right.
+    scene::NetworkTopology networkTopology = scene::NetworkTopology::Solo;
+
+    // **A world run inside another's `SubWorld`** (ADR 0107 §3): it mounts its
+    // scene's own code and none of the game's -- `src/client`, `src/server`
+    // and `src/shared` are the host game's -- and holds no sub-world of its own.
+    bool subWorld = false;
+    // `[render] max_sub_worlds`: how many sub-worlds this world may run at once.
+    core::u32 maxSubWorlds = 2;
+    // **The size of what the world will be drawn into**, known before the
+    // first frame: `UIService.ViewportSize`, `Camera.ViewportSize` and the
+    // camera's conversions read it from a script's first line, where they
+    // read zero until a frame had been drawn. Zero when nothing is drawn.
+    core::Vec2 viewportSize{};
+    // **Whether this machine works `IrradianceVolume`s out and takes
+    // `ReflectionProbe`s' pictures**, known before the first script runs
+    // too: a volume made by a script's first line is not ready where it will
+    // be worked out, and is ready where nothing ever will. Whatever does the
+    // work says it again every frame, since a setting may change.
+    bool volumesWorked = false;
+    bool probesTaken = false;
+    // **What the machine has**, known before the first script runs too:
+    // `InputService.TouchAvailable`, `KeyboardAvailable` and
+    // `GamepadAvailable`. A run with no window says what the platform is: a
+    // keyboard on a desktop, a touchscreen on a phone.
+    bool touchAvailable = false;
+    bool keyboardAvailable = false;
+    bool gamepadAvailable = false;
+
+    // **Where `SaveService` writes** (ADR 0111), decided by the host: the
+    // player's own folder for a game, `.engine/saves/` in the project for the
+    // editor's Play and `ludwerk dev`. Empty keeps saves in memory.
+    std::filesystem::path saveDirectory{};
+    std::vector<std::string> enabledIntegrations{};
+    std::unordered_map<std::string, std::string> integrationConfigurations{};
+    platform::PlatformServiceConfiguration platformServices{};
+    // `[save] max_slot_bytes` and `max_slots`.
+    core::u64 saveMaxSlotBytes = 4u * 1024u * 1024u;
+    core::u32 saveMaxSlots = 64;
+
+    // `[scene] close_grace_seconds` (ADR 0124 §4): how long a `LoadScene`
+    // waits for the old scene's `scene:BindToClose` handlers, in simulated
+    // seconds.
+    f64 sceneCloseGrace = 5.0;
+    // `[script] max_memory_mb`: the scripts' heap cap; 0 for none.
+    core::u32 scriptMemoryMb = 0;
+    // **The warnings a person testing a game wants** and a player never reads:
+    // a close handler dropped with its scene, a message nobody listens to. The
+    // editor, `dev` and a match's windows; never an exported game.
+    bool developer = false;
+    // **A run of specs, not a game**: the conformance suite is one
+    // resumption from its first spec to its last, and on a machine doing
+    // other things that is longer than a stuck script is given. The watchdog
+    // is a minute here; a spec that hangs still ends, inside its test's own
+    // limit.
+    bool testRun = false;
+
+    // **What a scene being prepared warms** (ADR 0125 §2): the host hands the
+    // content names its parse holds to whoever loads assets -- the mesh loader
+    // in a windowed run -- and asks how much of it has arrived, from 0 to 1.
+    // Absent, nothing is warmed and a prepared scene is ready once parsed.
+    std::function<void(scene::World&, const std::vector<std::string>&)> warmContent = nullptr;
+    // Where one warmed name stands: nothing while it is on its way, then
+    // whether it arrived (ADR 0131 §3 asks this of each name).
+    std::function<std::optional<bool>(scene::World&, std::string_view)> warmedContent = nullptr;
+    // `ContentProvider:Keep` and `:Release`: names to hold whatever
+    // scenes come and go (`keep` true), or to stop holding. Absent, nothing
+    // is ever let go and there is nothing to hold.
+    std::function<void(scene::World&, const std::vector<std::string>&, bool keep)> holdContent = nullptr;
+
+    // **The graphics settings' layers** (ADR 0147): what the command line, the
+    // project, the player's file and each preset say, given to the world when
+    // it is made so that a script's first line reads them -- the frame puts
+    // them back from then on. And whether there is a display to apply a
+    // script's write to: a dedicated server has none.
+    scene::GraphicsModel graphics{};
+    bool graphicsDisplay = true;
+
+    // **The game's catalogs and the locale the player starts in** (ADR 0154):
+    // the host's, alive as long as the world is.
+    const scene::Localization* localization = nullptr;
+    std::string locale = "en";
+
+    // **What the player hears** (ADR 0200), the host's as the locale is.
+    // The voice language they chose, empty for "it follows the text"; the
+    // system's own languages in its order; their volumes and how they want
+    // subtitles. And the languages whose packs the host mounted beside the
+    // game's own: with what the game shipped, what this machine can play.
+    std::string voiceChoice{};
+    std::vector<std::string> systemLocales{};
+    std::vector<std::string> mountedVoices{};
+    scene::PlayerSound playerSound{};
+};
+
+// What the conformance run reported. Read after the loop, because the run ends
+// by calling `game:Shutdown()` and the host notices that the way it notices any
+// other shutdown.
+struct ConformanceReport
+{
+    bool ran = false;
+    core::i64 total = 0;
+    core::i64 passed = 0;
+    core::i64 failed = 0;
+
+    // The per-case results, already JSON, as the runner produced them. Written
+    // verbatim to `--test-report=PATH`; `ludwerk test` turns it into TAP or JUnit
+    // rather than parsing a console whose every line is catalog-resolved.
+    std::string json;
+};
+
+class WorldHost
+{
+public:
+    WorldHost();
+    ~WorldHost();
+
+    WorldHost(const WorldHost&) = delete;
+    WorldHost& operator=(const WorldHost&) = delete;
+
+    // Boots the VM, mounts the project and defers every entry script. The
+    // scripts do not run here: they run at the first drain, which is what makes
+    // their first resumption a scheduled event like any other (api-design.md
+    // §3).
+    [[nodiscard]] std::optional<core::EngineError> boot(const WorldHostOptions& options);
+
+    // One simulation tick: the four phase signals with a drain after each, the
+    // task-resume phase between `PostSimulation` and `Heartbeat`, and the
+    // retirement of everything destroyed during it. This is architecture.md §3's
+    // resumption order, and it is the only place it is written down as code.
+    void tick();
+
+    // Publishes the engine's own instrumentation for this frame. Called between
+    // frames, so a stat never changes halfway through a tick that reads it.
+    void publishStats(const script::FrameStats& stats);
+
+    // What the streaming host produced this frame, turned into deferred
+    // signals. Here rather than in `engine.cpp` because firing one needs the
+    // VM, and the VM is this class's.
+    // Resumes the coroutines whose `@std/net.request` calls have finished.
+    // Called every frame at the same safe point streaming advances at, and for
+    // the same reason: a completion must enter game code where the frame loop
+    // says, not where the socket did.
+    void publishNetworkResults();
+
+    // **Whether ground is drawn as it will be** (ADR 0159): kept for
+    // `Terrain:IsMeshed`, and asked of every `Terrain:WaitForMeshAsync`
+    // parked, at the same safe point as the streaming results.
+    void publishTerrainMeshed(std::function<bool(core::InstanceId, core::DVec3, f64)> meshed);
+    void publishStreamingResults(const std::vector<core::InstanceId>& streamedOut,
+                                 const std::function<bool(core::DVec3, f64)>& areaResident);
+
+    // Whether a script still holds `id` -- the question the husk contract asks
+    // before anything leaves the world (architecture.md §4). Asked by the
+    // streaming glue and by a replica losing interest, which are the same event.
+    [[nodiscard]] bool instanceHeld(core::InstanceId id);
+
+    // Husks this world is keeping for a script, swept at every publish: one no
+    // script holds any more is destroyed, and one a script parented back into
+    // the world is not a husk any more and is left alone.
+    [[nodiscard]] core::usize huskCount() const noexcept { return m_husks.size(); }
+
+    // The render-rate phase. Never fires headless -- headless is the same
+    // scheduler minus the render steps, and this is one of them.
+    //
+    // **A render phase** (ADR 0136), in order: the input a frame reads at
+    // `Rate = Render`, the render steps by priority, then `PreRender`. Within
+    // it `GetRenderCFrame` answers from `poses` -- the frame's, resolved before
+    // the scripts run -- and a camera written is presented. No poses answers
+    // the simulated place, as a phase outside it does.
+    void preRender(f64 renderDt, const render::DrawPoses* poses = nullptr);
+    // A content file's bytes -- from the pack, or loose -- or false: what a
+    // volume's `Baked` names (ADR 0207).
+    [[nodiscard]] bool readContentBytes(std::string_view urn, std::vector<std::byte>& out) const;
+    // **A sequence's camera, as a script would have it** (`BindCamera`, ADR
+    // 0204): the function bound for the camera's player is asked, in a
+    // render phase of its own with the frame's poses to read, and `camera`
+    // is what it answered. False where none is bound, or it changed nothing.
+    bool askSequenceCamera(Sequences::Camera& camera, const render::DrawPoses* poses = nullptr);
+
+    // Where `DebugService`'s gizmos go this frame. Null clears it, which is what
+    // a headless run leaves it as: the calls become silent no-ops rather than
+    // errors, so debug drawing left in shared code cannot fail a headless test.
+    void setGizmoTarget(render::DebugDraw* draw);
+
+    // Entry scripts this world mounted, and how many of them failed to
+    // compile. The reload reads both: a reload that mounted nothing, or that
+    // mounted something it could not compile, is a gate passing while doing
+    // nothing.
+    // What the restore did, filled during `boot`. Zeroes on a cold boot.
+    [[nodiscard]] const PreserveReport& preserveReport() const noexcept { return m_preserveReport; }
+
+    // What `bootScene` did, filled during `boot`. `applied` is false when the
+    // project has no scene and when the one it names would not read -- the
+    // caller needs the difference, because an editor only adopts a scene it
+    // actually has.
+    [[nodiscard]] bool bootSceneApplied() const noexcept { return m_bootSceneApplied; }
+    // Whether `content/global.json` was there and could not be read: then
+    // nothing may write over it, or a save would delete what it held.
+    [[nodiscard]] bool globalUnreadable() const noexcept { return m_globalUnreadable; }
+    // The scene whose own code is mounted (`src/scenes/<name>/`): renamed with
+    // its file in the editor, so restarting the server code finds it.
+    [[nodiscard]] const std::string& sceneName() const noexcept { return m_sceneName; }
+    void setSceneName(std::string name) { m_sceneName = std::move(name); }
+
+    // **Replaces the scene with the one at `path`** (ADR 0106), content-
+    // relative. The old scene goes whole -- its world, its services' contents
+    // and settings, the code it mounted from `src/scenes/<scene>/`, and with
+    // them the threads of its scripts -- and the new one opens from the
+    // engine's settings, reads its file, mounts its own code and starts its
+    // scripts. `GlobalScriptService` stays, and so does a `ScreenGui` with
+    // `KeepOnSceneLoad`. `data` is what `GetLoadData` answers afterwards.
+    //
+    // Per host, with no state anywhere else: a second host beside this one
+    // loads its own scenes the same way.
+    //
+    // **The old scene closes first** (ADR 0124): its `scene:BindToClose`
+    // handlers, then its saves, then what its scripts registered goes.
+    // `closeHandlersRan` says the handlers already ran and were waited for,
+    // which is `applyPendingScene`'s path; a direct call -- a match following
+    // its authority -- gives them one pass and does not wait.
+    [[nodiscard]] std::optional<core::EngineError> loadScene(const std::string& path, std::vector<core::u8> data = {},
+                                                             bool closeHandlersRan = false,
+                                                             const scene::ParsedScene* prepared = nullptr,
+                                                             core::u32 preparedScene = 0);
+    // A scene's text, found under `content/` and, with `parse`, read through
+    // -- or why it cannot be: what `LoadScene` checks before anything closes.
+    [[nodiscard]] std::optional<core::EngineError> readSceneText(const std::string& path, std::string& text,
+                                                                 bool parse) const;
+    // Mounts the code of the scene at `path` from `src/scenes/<scene>/`, after
+    // taking out what the scene before it mounted. What `loadScene` does
+    // between reading and starting, exposed for the editor's own scene opening.
+    void remountSceneScripts(std::string_view path);
+    // Takes a `LoadScene` a script asked for and carries it out. Called at the
+    // safe point between ticks, which is the end of `tick`.
+    bool applyPendingScene();
+    // **A match's scene is the server's**: every scene change this
+    // machine had asked for -- queued, closing, or prepared in the background
+    // -- is dropped, and a `LoadSceneAsync` waiting on one is told it failed.
+    // A `Join` calls it; a replica's own requests never get as far.
+    void cancelSceneChanges();
+    // **A scene prepared in the background** (ADR 0125): a `LoadSceneAsync`
+    // started, its parse polled, its content warmed, `Ready` fired, and its
+    // activation handed to the close above. At the same safe point, before it.
+    void stepSceneLoad();
+    // Lets go of the scene being prepared, waiting for its job if it runs.
+    void dropPrepared();
+
+    // **Server code starts again, fresh** (ADR 0105 §2): what `src/server/`
+    // and the current scene's `src/scenes/<scene>/server/` mount, put back and
+    // started. For a machine that becomes the authority again after leaving a
+    // match, whose server code went when it joined.
+    void restartServerCode();
+    // Solo again after a join (ADR 0137 §5): the current scene loaded again,
+    // the server code restarted, every script checked against "live".
+    // `scene` is the one to load: the scene a join was made from. Empty,
+    // the one the world is in now.
+    void returnToSolo(std::string_view scene = {});
+    // **The scene's client code, held and let go**. Held: a join is
+    // under way and what is under `ClientScriptService` stops. Let go: the
+    // world it runs in is here -- the server's, or this machine's own again
+    // -- and it starts, fresh.
+    void holdSceneClientCode(bool held);
+    // **A replica's own scripts, kept while the authority's instances come**
+    // (ADR 0138 §6): what a join's clear takes out of this machine's scene and
+    // puts back under what the authority sends. Null in a build without
+    // replication.
+    [[nodiscard]] replication::ScriptTemplates* scriptTemplates() const noexcept { return m_scriptTemplates.get(); }
+    // One warning for each storage holding a `Script`, which does not run there.
+    void warnScriptsInStorage();
+    [[nodiscard]] const scene::SceneIoReport& bootSceneReport() const noexcept { return m_bootSceneReport; }
+
+    [[nodiscard]] core::u64 mountedScriptCount() const;
+    // Every `Script` in the world, from a file or from the scene (ADR 0092):
+    // what "this project has behaviour" means now that a scene carries its
+    // scripts.
+    [[nodiscard]] core::u64 scriptCount() const;
+
+    // **Mounts one more file**, while editing, exactly as the project's open
+    // would have: a `Script` (or a `ModuleScript`) under `container` at the
+    // path the file is at relative to `root`, its folders made as needed, and a
+    // row in the mount table so play starts it and a require resolves against
+    // it (ADR 0105). `file` and `root` are project-relative with '/'
+    // separators; `container` is spelled as `MountedScript::container`.
+    // Nothing when the file cannot be read.
+    [[nodiscard]] core::InstanceId mountScriptFile(std::string_view file, std::string_view root,
+                                                   std::string_view container, bool module);
+    // The same, for a file under `src/client`.
+    [[nodiscard]] core::InstanceId mountScriptFile(std::string_view relative);
+    // The directory the project was mounted from; empty for a single file.
+    [[nodiscard]] const std::filesystem::path& projectRoot() const noexcept { return m_root; }
+    // `.luaurc`'s aliases, as a require is resolved by -- which the script
+    // editor's checker resolves the same require with.
+    [[nodiscard]] const std::unordered_map<std::string, std::string>& requireAliases() const noexcept
+    {
+        return m_aliases;
+    }
+    [[nodiscard]] core::u64 scriptLoadFailures() const;
+
+    [[nodiscard]] scene::World& world() noexcept { return *m_world; }
+
+    // **A sub-world this host runs** (ADR 0107 §3): booted at the end of the
+    // tick its `SubWorld:Load()` was called in, and ticked once for each of
+    // this world's ticks after that, in the order they were loaded.
+    struct SubWorldRun
+    {
+        // The `SubWorld` instance, in this world.
+        core::InstanceId owner;
+        // Unique for this host's life, so a cache keyed on it -- the frame's
+        // meshes for it -- cannot take a reloaded world for the one before.
+        core::u64 serial = 0;
+        std::unique_ptr<WorldHost> host;
+        // Where its world was before its last tick, so its feed is drawn
+        // between ticks like the world around it (ADR 0134). Drawn, never
+        // simulated.
+        std::unique_ptr<render::TransformHistory> history = std::make_unique<render::TransformHistory>();
+    };
+    [[nodiscard]] std::span<const SubWorldRun> subWorlds() const noexcept { return m_subWorlds; }
+    // The world a `SubWorld` runs, or null while it is not loaded.
+    [[nodiscard]] WorldHost* subWorld(core::InstanceId owner) noexcept;
+
+    // The registries this host's world was built against.
+    //
+    // **Exposed so a SECOND world can share them**, which the prefab stage
+    // needs (ADR 0049): a stage is a world of its own -- no services, no
+    // scripts, no scene -- and a world built against a second set of
+    // registries would mint different `ClassId`s for the same classes, so an
+    // instance could not be described by one and read by the other.
+    //
+    // Shared rather than copied: a registry is a build-time fact, and two
+    // copies of one is two answers to "what is a Part".
+    [[nodiscard]] scene::ClassRegistry& classes() noexcept { return m_classes; }
+    [[nodiscard]] scene::EnumRegistry& enums() noexcept { return m_enums; }
+    [[nodiscard]] core::AtomTable& atoms() noexcept { return m_atoms; }
+
+    // `Workspace`, which is what `render::extract` treats as the world root:
+    // whatever is parented under it is in the world and whatever is not, is not.
+    [[nodiscard]] core::InstanceId workspace() const noexcept { return m_workspace; }
+
+    // `game`. Where an attribute a whole run has to agree about lives -- the
+    // conformance report's counters, and the flag a replay scenario names.
+    [[nodiscard]] core::InstanceId dataModel() const noexcept;
+
+    // The `Lighting` service, which carries the environment `extract` reads.
+    // Invalid in a build with no render module, which is not an error.
+    [[nodiscard]] core::InstanceId lighting() const noexcept { return m_lighting; }
+
+    // The parent of every `ScreenGui`. A boot service for the same reason
+    // `Lighting` is: the frame reads it whether or not a script asks for it,
+    // and a service resolved after the host cached its id is how the first renderer spent four
+    // milestones lighting scenes with defaults.
+    [[nodiscard]] core::InstanceId uiService() const noexcept { return m_uiService; }
+
+    // The mixer and the sound timeline. Owned here beside the physics
+    // mirror and the input system, and for the same reasons.
+    [[nodiscard]] audio::AudioSystem& audio() noexcept { return m_audio; }
+
+    // Where a compiled mesh comes from, for the skeleton half of one. Set before
+    // `boot`, because `syncSkeletons` runs at the top of the FIRST tick and a
+    // rig that arrived one tick late would be a character that starts a replay
+    // in its bind pose.
+    void setContentMounts(const asset::ContentMounts* mounts);
+    [[nodiscard]] const asset::ContentMounts* contentMounts() const noexcept { return m_mounts; }
+
+    // **What a URN a part wears means** (ADR 0090). The host's own library,
+    // reading through the mounts, unless the process lends it one -- the
+    // editor does, so the game's world, a stamp's stage and the material
+    // panel's preview all resolve one URN to one material. Set before `boot`:
+    // a script's file scope can call `Material.load`.
+    void setMaterialLibrary(asset::MaterialLibrary* library) noexcept;
+    [[nodiscard]] asset::MaterialLibrary& materials() noexcept { return *m_materials; }
+    // The library this host was LENT, or null for its own -- what a reload
+    // hands the host that replaces this one.
+    [[nodiscard]] asset::MaterialLibrary* lentMaterials() const noexcept
+    {
+        return m_materials == &m_ownMaterials ? nullptr : m_materials;
+    }
+
+    // `Workspace.CurrentCamera`, which is the audio listener (§2.1). Resolved
+    // per call rather than cached: it is a property a script may reassign, and a
+    // cached id is how the first renderer spent four milestones lighting scenes with defaults.
+    [[nodiscard]] core::InstanceId currentCamera() const noexcept
+    {
+        const scene::WorkspaceComponent* component = m_world->workspaces().find(m_workspace);
+        return component == nullptr ? core::InstanceId{} : component->currentCamera;
+    }
+
+    // The physics mirror, or null in a build with no physics backend. The world
+    // owns it because a hot reload rebuilds the world, and a simulation that
+    // outlived the tree it mirrors would be holding bodies for parts that no
+    // longer exist.
+    // The Input Action System. The host owns it for the reason it owns the
+    // physics mirror: `scene` cannot hold it without L3 depending on
+    // `platform`, and a process-global would make two worlds in one process
+    // share a keyboard.
+    //
+    // `pumpInput` folds a frame's events into the device snapshot and is the
+    // only caller that reads a device at all; `tick` and `preRender` dispatch.
+    // A replay drives `input().setSnapshot` instead of pumping, which is what
+    // makes the replay a replay of INPUT rather than of the API underneath it.
+    void pumpInput(std::span<const platform::Event> events);
+    [[nodiscard]] input::InputSystem& input() noexcept { return m_input; }
+
+    // The skeletons and clips read out of each skinned glTF. Read-only from
+    // outside: the host fills it, at the tick's own safe point, because
+    // animation is SIMULATION -- it advances on the SimClock, a script reads
+    // `TimePosition` off it, and it has to run in a headless replay where there
+    // is no renderer at all.
+    [[nodiscard]] const render::SkeletonLibrary& skeletons() const noexcept { return m_skeletons; }
+    [[nodiscard]] const render::GraphLibrary& graphs() const noexcept { return m_graphs; }
+
+    // **What changed on disk is forgotten, and read again when next asked
+    // for**: a model's joints and clips, the roles beside it, an
+    // animation graph. The loaders that draw forget their own; these are the
+    // simulation's. How many it let go.
+    core::u32 forgetContent(std::span<const core::NameAtom> urns);
+
+    // **What is being said on this machine, this frame** (ADR 0200): the
+    // captions of the sounds that can be heard here, in the order they
+    // started, and `CaptionStarted` and `CaptionEnded` for what changed since
+    // the frame before. Called after the audio's own frame. Picture: nothing
+    // of it reaches a tick.
+    void stepCaptions();
+    // **And every mouth that moves with what is said** (ADR 0200), after the
+    // audio's frame too: a `LipSync`'s face follows the voice this machine
+    // hears. `seconds` since the frame before. Picture, like the captions.
+    void stepMouths(core::f32 seconds)
+    {
+        if (m_world.has_value() && m_animation)
+            m_mouths.step(*m_world, m_audio, *m_animation, m_mounts, seconds);
+    }
+    [[nodiscard]] const Mouths& mouths() const noexcept { return m_mouths; }
+    // **The sequences being played** (ADR 0204). Stepped by the tick; the
+    // frame asks it for the view to draw through and, after the mouths, has
+    // it put its shape keys on the frame's layer. `ahead` is seconds past
+    // the last tick -- behind it, where the frame draws between two.
+    [[nodiscard]] Sequences& sequences() noexcept { return m_sequences; }
+    [[nodiscard]] const Sequences& sequences() const noexcept { return m_sequences; }
+    void presentSequences(core::f64 ahead)
+    {
+        if (m_world.has_value() && m_animation)
+            m_sequences.present(*m_world, *m_animation, ahead);
+    }
+    // What the game holds in other languages, as this host read it.
+    [[nodiscard]] const asset::LocalizationIndex& localized() const noexcept { return m_localized; }
+    [[nodiscard]] const scene::DialogueLines& dialogueLines() const noexcept { return m_dialogue; }
+
+    // The poses `render::extract` reads. Null before `boot`, which is the same
+    // window in which there is no world to extract from.
+    [[nodiscard]] const render::AnimationSystem* animation() const noexcept
+    {
+        return m_animation ? &*m_animation : nullptr;
+    }
+
+    // A mesh's morph targets and their weights (ADR 0196), for the editor's
+    // sliders: the same system, through the seam a script's
+    // `MeshPart:SetMorphWeight` goes through. Null before `boot`.
+    [[nodiscard]] scene::MorphHost* morphs() noexcept { return m_animation ? &*m_animation : nullptr; }
+    // And its animation graphs (ADR 0197), for the editor's readout: where a
+    // script's `SetParameter` goes.
+    [[nodiscard]] scene::AnimationHost* graphHost() noexcept { return m_animation ? &*m_animation : nullptr; }
+
+    // **A frame of the world's capes, tails and hair** (ADR 0194), before the
+    // frame is extracted: stepped from the pose and the drawn place of each
+    // body, and presented to the renderer alone. Nothing the simulation reads
+    // is written, and a host that draws nothing never calls it.
+    //
+    // **And, before them, its limbs, its looks and its feet** (ADR 0198): the
+    // pose a frame is drawn with is made in one order -- what reaches and
+    // looks, then the feet, then the chains that hang from all of it -- and
+    // then what is held to a bone is drawn where the frame has the bone.
+    void stepSecondaryMotion(render::DrawPoses& poses, render::SpringFrame frame, const render::IkFrame& limbs)
+    {
+        if (!m_animation)
+            return;
+        m_animation->clearPresented();
+        m_limbs.update(world(), *m_animation, poses, limbs);
+        frame.afterLimbs = true;
+        m_springs.update(world(), *m_animation, poses, frame);
+        render::IkControls::carryHeld(world(), *m_animation, poses);
+    }
+    [[nodiscard]] const render::SpringBones& secondaryMotion() const noexcept { return m_springs; }
+    [[nodiscard]] const render::IkControls& limbs() const noexcept { return m_limbs; }
+
+    // What a frame's extraction reached of the world's rigs: `fresh` for
+    // the main view, the views after it adding theirs.
+    void reportSeenSkins(std::span<const render::SeenSkin> seen, bool fresh)
+    {
+        if (m_animation)
+            m_animation->reportSeen(seen, fresh);
+    }
+    // `GraphicsService.AnimationDetail`, as the settings have it now.
+    void setAnimationDetail(core::f32 detail)
+    {
+        if (m_animation)
+            m_animation->setDetail(detail);
+    }
+
+    // **The rigs every `MeshPart` names, loaded now** rather than at the top of
+    // the next tick -- which, while the editor is editing, never comes. The
+    // skeleton overlay reads through this; a tick still does it for itself.
+    void loadSkeletons() { syncSkeletons(); }
+
+    [[nodiscard]] scene::PhysicsSync* physics() noexcept { return m_physics ? &*m_physics : nullptr; }
+    [[nodiscard]] const scene::PhysicsSync* physics() const noexcept { return m_physics ? &*m_physics : nullptr; }
+    [[nodiscard]] scene::PhysicsSync2D* physics2d() noexcept { return m_physics2d ? &*m_physics2d : nullptr; }
+    [[nodiscard]] script::ScriptRuntime& runtime() noexcept { return *m_runtime; }
+
+    // The game's saves (ADR 0111): written now and waited for. On close, before
+    // the runtime is rebuilt, and when the app goes to the background -- a
+    // phone ends a backgrounded game without a close.
+    void flushSaves();
+    [[nodiscard]] script::SaveStore* saves() noexcept { return m_saves.get(); }
+
+    // **Throws the VM away and builds another one on the same world** (ADR 0058).
+    //
+    // What a play session accumulates is not in the world: it is connections,
+    // required modules, deferred entries, timers and whatever a script left in
+    // its globals. Restoring the world at stop never touched any of it, so a
+    // second play inherited every one -- which is why "two plays in a row are
+    // identical" was not true and nobody had reported it.
+    //
+    // Three things survive on purpose. The **world** does, because the editor
+    // has already restored it to where play was pressed and rebuilding it would
+    // throw away that restore. The **DataModel** does, because it is the one
+    // instance a VM makes that the world then owns -- the new runtime adopts it
+    // and finds every service under it rather than building a second set. And
+    // the **mount table** does, because it says which FILE each `Script` came
+    // from, which is a fact about the project rather than about the VM.
+    //
+    // No script is started. This is the editor's stop, and the editor starts
+    // scripts when somebody presses play.
+    [[nodiscard]] std::optional<core::EngineError> restartRuntime();
+    [[nodiscard]] bool shutdownRequested();
+    // What a script asked to be put on the clipboard since this was last
+    // asked (`InputService:SetClipboard`, ADR 0177), once.
+    [[nodiscard]] std::optional<std::string> takeClipboardText();
+
+    // Read off `game`'s attributes, which is where the runner script puts them.
+    // Attributes rather than a private channel, because the runner is an
+    // ordinary entry script and everything it does should be something a
+    // project could do.
+    [[nodiscard]] ConformanceReport conformanceReport() const;
+
+    // Runs the `BindToClose` callbacks and WAITS for them, up to
+    // `graceSeconds` of wall clock (`architecture.md` §app: "wait <= 30 s
+    // (configurable)").
+    //
+    // Waiting means advancing the world: a handler that yields on `task.wait`
+    // resumes on the SimClock, so a shutdown that drained once and left would
+    // cut off every handler that saved anything asynchronously -- which is
+    // exactly what it did until the physics work.
+    //
+    // The cap is wall clock rather than sim time, because its job is to stop a
+    // handler that never finishes from holding the process open, and a handler
+    // that never finishes never advances sim time either.
+    //
+    // **Paced to the tick, and never on a paused world**: the loop
+    // unpauses the world it is closing, waits out each tick in wall time, and
+    // hands results from the HTTP worker to their threads, so a handler that
+    // saves, fetches or waits finishes as it would have while the game ran.
+    // `pump` is called once a tick -- the window's events, where there is a
+    // window, so the system does not call a closing game unresponsive.
+    void close(core::f64 graceSeconds = 30.0, const std::function<void()>& pump = {});
+
+    // `HotReloadService.PreReload` on the outgoing world and `PostReload` on
+    // the incoming one, each fired and then drained -- the drain is the point,
+    // because a handler that has not run yet has not saved anything yet.
+    void firePreReload();
+    void firePostReload();
+
+private:
+    // Reads `@engine/*` out of the content directory and registers each. They are
+    // shipped content rather than compiled-in strings so that a project can read
+    // the same file its editor does.
+    [[nodiscard]] std::optional<core::EngineError> registerRuntimeModules();
+
+    // Reads the skeleton and clips of every `MeshPart` content the library does
+    // not yet hold, once per URN -- out of the COMPILED mesh (the compiled-assets work).
+    //
+    // It used to read the source `.gltf` and parse it with `skeletonOnly`, which
+    // was the third of the loose feeds the cut-over removed. What it does now is
+    // `decodeMesh` over the same blob the renderer uploads, so a headless replay
+    // and a rendered frame get their joints from one set of bytes rather than
+    // from two readers that could disagree about a rig.
+    //
+    // Synchronous, at the top of a tick, which is the same narrowing
+    // `MeshLoader` made for the same reason: the streaming work is the milestone with a job pool
+    // and something to stream, and a background loader with one caller and no
+    // eviction policy is the speculative half of the design.
+    void syncSkeletons();
+    // One model's joints, clips and morph targets, if nothing has them yet.
+    void loadSkeleton(core::NameAtom content);
+    // The graphs `AnimationPlayer`s name (ADR 0197), each read once.
+    void syncGraphs();
+    // Says which properties a scene file named that were not applied.
+    void saySceneRefusals(const scene::SceneIoReport& report) const;
+    // A content file as text -- from the pack, or loose -- or nothing.
+    [[nodiscard]] std::optional<std::string> readContentText(std::string_view urn) const;
+
+    [[nodiscard]] std::optional<core::EngineError> mountProject(const std::filesystem::path& path);
+
+    // The sub-worlds' half of a tick (`world_host_sub_worlds.cpp`): what was
+    // unloaded goes, what was loaded boots, input and messages cross, and each
+    // running one ticks.
+    void stepSubWorlds();
+    [[nodiscard]] bool bootSubWorld(core::InstanceId owner);
+    // Every sub-world closed and forgotten: this world is closing, or its
+    // runtime is being rebuilt.
+    void closeSubWorlds();
+    [[nodiscard]] std::optional<core::EngineError> mountConformance(const std::filesystem::path& root);
+
+    core::AtomTable m_atoms;
+    scene::ClassRegistry m_classes;
+    scene::EnumRegistry m_enums;
+    // Constructed in `boot`, because the registries have to be populated first
+    // and a `World` holds references to them.
+    std::optional<scene::World> m_world;
+    // Before the runtime, so it outlives every VM that holds a slot of it.
+    std::unique_ptr<script::SaveStore> m_saves;
+    std::optional<script::ScriptRuntime> m_runtime;
+    // A scene read and parsed off the main thread (ADR 0125).
+    struct PrepareTask;
+    // A scene closing (ADR 0124 §4): where the change goes once its handlers
+    // finish or the grace runs out, and the tick it started on.
+    struct SceneClose
+    {
+        std::string path;
+        std::vector<core::u8> data;
+        core::u64 startedTick = 0;
+        // A prepared scene's parse and serial, when the change is its activation.
+        std::shared_ptr<PrepareTask> prepared;
+        core::u32 preparedScene = 0;
+    };
+    std::optional<SceneClose> m_sceneClose;
+
+    // The scene being prepared (ADR 0125), read and parsed by `task`.
+    struct Prepared
+    {
+        core::u32 id = 0;
+        std::shared_ptr<PrepareTask> task;
+        bool warming = false;
+    };
+    std::optional<Prepared> m_prepared;
+    // An activation begun: `SceneLoading` has been fired, and the next safe
+    // point starts the close.
+    bool m_activationPending = false;
+    // Off the main thread in a windowed run; at the safe point, whole, in a
+    // headless one -- where the tick `Ready` fires on is part of what a replay
+    // reproduces (R10).
+    bool m_prepareInBackground = false;
+    std::function<void(scene::World&, const std::vector<std::string>&)> m_warmContent;
+    std::function<std::optional<bool>(scene::World&, std::string_view)> m_warmedContent;
+    std::function<void(scene::World&, const std::vector<std::string>&, bool keep)> m_holdContent;
+    // What a prepared scene is warming, to measure its `Progress` by.
+    std::vector<std::string> m_preparedContent;
+    // `ContentProvider:PreloadAsync` (ADR 0131 §3): where one name stands.
+    [[nodiscard]] script::ContentState contentState(std::string_view content);
+    f64 m_sceneCloseGrace = 5.0;
+    bool m_developer = false;
+    bool m_testRun = false;
+    std::unordered_map<std::string, std::string> m_integrationConfigurations;
+    platform::PlatformServiceConfiguration m_platformServices;
+    core::u32 m_scriptMemoryMb = 0;
+    // The watchdog and the heap cap onto a runtime just made.
+    void configureRuntime();
+    // Instances reparented to nil because a script held them when they
+    // streamed out, in the order they left.
+    std::vector<core::InstanceId> m_husks;
+    // Declared before the mirror, and destroyed after it: the mirror holds a
+    // reference to this and tears its world down in its own destructor.
+    physics::PhysicsResult m_backend;
+    std::optional<scene::PhysicsSync> m_physics;
+    // The plane's simulation (the 2D layer), beside the 3D one and stepped
+    // after it: the two share no body, so the order between them is only
+    // the order their signals are raised in.
+    physics::Physics2DResult m_backend2d;
+    std::optional<scene::PhysicsSync2D> m_physics2d;
+    // Walkable ground and paths over it (ADR 0089), built from the world where
+    // queries ask. Null in a build without Recast.
+    std::unique_ptr<nav::INavigation> m_navigation;
+    input::InputSystem m_input;
+
+    // The skeletons the mesh loader reads out of each glTF, and the system that
+    // plays their clips. Both live here rather than beside the renderer because
+    // animation is SIMULATION: it advances on the SimClock, it has to run in a
+    // headless replay, and a script reads `TimePosition` off it. What the
+    // renderer takes is the pose it produces.
+    //
+    // Declared after `m_world` because the system holds a reference to it, and
+    // before nothing: `m_animation` is destroyed first, which is the order its
+    // own references need.
+    render::SkeletonLibrary m_skeletons;
+    // Where a compiled mesh comes from. Borrowed from whoever built the mounts
+    // -- the same object `MeshLoader` and the audio system are handed -- because
+    // a second set of mounts is a second answer to "what is this URN".
+    //
+    // **Null is a working configuration**, not an error: a host booted with no
+    // project (a bare script, a conformance run) resolves nothing, and the only
+    // consequence is that a `MeshPart` naming a rig has no skeleton, which is
+    // already true of one naming a file that does not exist.
+    const asset::ContentMounts* m_mounts = nullptr;
+    // **A game in other languages** (ADR 0200): which it has voice for and how
+    // long each localized sound is -- the export's index, or the project's
+    // own folder read as it stands -- and its dialogue lines. Read when the
+    // world is made, and again when a development run sees them change.
+    asset::LocalizationIndex m_localized;
+    scene::DialogueLines m_dialogue;
+    std::filesystem::path m_looseContent;
+    std::vector<std::string> m_mountedVoices;
+    void openLocalized();
+    asset::MaterialLibrary m_ownMaterials;
+    asset::MaterialLibrary* m_materials = &m_ownMaterials;
+    // Content atoms already attempted, so a file with no skeleton is parsed once
+    // rather than once a tick forever.
+    // **A set rather than a list**, because `syncSkeletons` asks about every
+    // `MeshPart` on every tick for ever and a linear scan made that cost
+    // `meshParts x distinct skeleton-less meshes`. Its iteration order never
+    // reaches anything observable -- membership is the only question asked of
+    // it -- so R10 has nothing to say here.
+    std::unordered_set<core::u32> m_skeletonsTried;
+    // The animation graphs players name (ADR 0197), and the ones tried: a
+    // graph that cannot be read is said once, not once a tick.
+    render::GraphLibrary m_graphs;
+    std::unordered_set<core::u32> m_graphsTried;
+    std::vector<std::pair<core::InstanceId, core::u64>> m_graphDigests;
+    std::optional<render::AnimationSystem> m_animation;
+    render::SpringBones m_springs;
+    Mouths m_mouths;
+    Sequences m_sequences;
+    render::IkControls m_limbs;
+
+    // The two things `boot` was handed that a REBUILT runtime has to be handed
+    // again (`restartRuntime`). Kept rather than re-derived: the reload bag
+    // belongs to whoever outlives this host and the stamp source is a policy the
+    // caller chose, and neither is recoverable from the world.
+    script::ReloadState* m_reloadState = nullptr;
+    scene::StampSource m_stampSource;
+    bool m_logClientWrites = false;
+
+    std::filesystem::path m_root;
+    // **A sealed game's own files** (ADR 0183): set where the project folder
+    // has its scripts in its pack and not on the disk. Scripts are found,
+    // `require` resolved and `.luaurc` read through it then.
+    std::shared_ptr<const asset::SealedGame> m_sealed;
+    core::InstanceId m_workspace;
+    core::InstanceId m_lighting;
+    core::InstanceId m_uiService;
+    audio::AudioSystem m_audio;
+    PreserveReport m_preserveReport;
+    scene::SceneIoReport m_bootSceneReport;
+    bool m_bootSceneApplied = false;
+    // Screens already warned about, by name: once each.
+    std::set<std::string> m_warnedGlobalScreens;
+    bool m_globalUnreadable = false;
+    // How a scene named at run time is read, and its stamps (ADR 0106).
+    std::function<std::optional<std::string>(std::string_view)> m_readContent;
+    scene::StampSource m_stamps;
+    // Shared rather than unique so the type can stay incomplete here: a build
+    // without replication never makes one (see `scriptTemplates`).
+    std::shared_ptr<replication::ScriptTemplates> m_scriptTemplates;
+    std::function<std::filesystem::path(scene::World&, const std::filesystem::path&)> m_partitionScene;
+    std::function<void()> m_resetStreaming;
+    // The project was a directory, so "no scripts" is worth a warning; a lone
+    // file named on the command line is the script.
+    bool m_projectIsDirectory = false;
+    // The booting scene's file name without `.scene.json`: the folder under
+    // `src/scenes/` its own scripts mount from (ADR 0105).
+    std::string m_sceneName;
+    render::DebugDraw* m_gizmos = nullptr;
+
+    // Aliases from the project's `.luaurc`, read once at boot. Parsed with
+    // `core::json` rather than `Luau::parseConfig`, which treats any key it does
+    // not recognise as a hard error that aborts the whole require (U-42) -- a
+    // `$schema` line would break `require` at runtime.
+    std::unordered_map<std::string, std::string> m_aliases;
+
+    // What a sub-world's seed is drawn from, with the order it was loaded in.
+    core::u64 m_seed = 1;
+    core::u64 m_nextSubWorld = 1;
+    // **Last, so destroyed first**: a sub-world borrows this host's mounts and
+    // material library, and must be gone before either is.
+    std::vector<SubWorldRun> m_subWorlds;
+
+    friend struct WorldHostLoader;
+};
+
+} // namespace engine::app

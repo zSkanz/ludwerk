@@ -1,0 +1,422 @@
+--!strict
+--- Conformance: terrain, from a script (ADR 0067; a grid of voxels by ADR 0082).
+---
+--- **The point of these is that a brush in the editor and a script are the same
+--- verbs.** Every rule the sculpting tool relies on -- a fill that reaches the
+--- floor makes ground, one that does not makes a slab, painting moves nothing,
+--- material zero erases in one verb and is refused by the other -- is asserted
+--- here, against the shipped API rather than against the C++ that implements it.
+
+local testing = require("@engine/testing")
+
+local describe, it, expect = testing.describe, testing.it, testing.expect
+local beforeEach, afterEach = testing.beforeEach, testing.afterEach
+
+--- A material id: the terrain's layer of that number (ADR 0113), and a new
+--- terrain's first eight are the engine's -- 1 is grass, 2 sand, 3 rock. Zero
+--- means "remove" to `FillBall` and `FillBlock`, so every non-zero value is some
+--- kind of ground.
+local Grass = 1
+local Sand = 2
+local Rock = 3
+
+describe("terrain", function()
+    local terrain: Terrain
+
+    beforeEach(function()
+        terrain = Instance.new("Terrain")
+        terrain.Name = "ConformanceTerrain"
+        -- The world's floor and ceiling: no voxel is written outside them.
+        terrain.MinHeight = -32
+        terrain.MaxHeight = 32
+        terrain.Parent = workspace
+    end)
+
+    afterEach(function()
+        terrain:Destroy()
+    end)
+
+    it("a fill that reaches the floor makes ground you can stand on", function()
+        local changed = terrain:FillBlock(vector.create(0, -20, 0), vector.create(16, 40, 16), Rock)
+        expect(changed > 0):ToBe(true)
+
+        local height = terrain:HeightAt(0, 0)
+        expect(height):ToBeCloseTo(0, 1)
+    end)
+
+    it("every column of a block carries its material, not just the first", function()
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(16, 40, 16), Rock)
+        -- Seven metres from the middle, which is inside the block and in the same
+        -- chunk as the middle. This is the case that once came back as no ground
+        -- at all.
+        expect(terrain:HeightAt(7, 7)):ToBeCloseTo(0, 1)
+        expect(terrain:HeightAt(-7, -7)):ToBeCloseTo(0, 1)
+    end)
+
+    it("filling one corner of a tile does not put ground under the rest of it", function()
+        terrain:FillBlock(vector.create(4, -20, 4), vector.create(4, 40, 4), Rock)
+        expect(terrain:HeightAt(4, 4)):ToBeCloseTo(0, 1)
+        -- Ten metres away, sharing the chunk, there is no ground.
+        expect(terrain:HeightAt(14, 14)):ToBe(nil)
+    end)
+
+    it("digging with material zero removes ground", function()
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(32, 40, 32), Rock)
+        local before = terrain:HeightAt(0, 0)
+        expect(before).Never:ToBe(nil)
+
+        terrain:FillBall(vector.create(0, 0, 0), 6, 0)
+        local after = terrain:HeightAt(0, 0)
+        expect(after).Never:ToBe(nil)
+        expect((after :: number) < (before :: number)):ToBe(true)
+    end)
+
+    it("painting changes the material and leaves the ground where it is", function()
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(32, 40, 32), Rock)
+        local before = terrain:HeightAt(0, 0)
+        expect(before).Never:ToBe(nil)
+
+        local painted = terrain:PaintBall(vector.create(0, before :: number, 0), 4, Sand)
+        expect(painted > 0):ToBe(true)
+        expect(terrain:HeightAt(0, 0)):ToBeCloseTo(before :: number, 3)
+    end)
+
+    it("painting with material zero is refused rather than erasing", function()
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(32, 40, 32), Rock)
+        local before = terrain:HeightAt(0, 0)
+
+        expect(terrain:PaintBall(vector.create(0, 0, 0), 8, 0)):ToBe(0)
+        expect(terrain:HeightAt(0, 0)):ToBeCloseTo(before :: number, 3)
+    end)
+
+    it("painting out of reach of the surface touches nothing", function()
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(32, 40, 32), Rock)
+        expect(terrain:PaintBall(vector.create(0, 20, 0), 1, Sand)):ToBe(0)
+    end)
+
+    it("clearing empties the field", function()
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(32, 40, 32), Rock)
+        expect(terrain:HeightAt(0, 0)).Never:ToBe(nil)
+
+        terrain:Clear()
+        expect(terrain:HeightAt(0, 0)):ToBe(nil)
+    end)
+
+    it("a cave leaves the ground above it standing", function()
+        -- The thing a height map cannot express, as one script can see it: a hole
+        -- with ground above AND below it. `HeightAt` answers the top of the
+        -- column, so the roof is still where it was -- and a ray from above finds
+        -- the roof, not the cave.
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(48, 40, 48), Rock)
+        local roof = terrain:HeightAt(0, 0)
+        expect(roof).Never:ToBe(nil)
+
+        terrain:FillBall(vector.create(0, -6, 0), 4, 0)
+        expect(terrain:HeightAt(0, 0)):ToBeCloseTo(roof :: number, 1)
+    end)
+    it("writes a heightmap in one call, row after row, clamped to its range", function()
+        -- Three columns by two rows at the default metre voxel, starting at the
+        -- column the origin is in -- whose centre is half a metre in.
+        local written = terrain:WriteHeights(vector.create(0, 0, 0), 3, { 1, 2, 3, 4, 5, 100 }, Sand)
+        expect(written > 0):ToBe(true)
+        expect(terrain:HeightAt(0.5, 0.5)):ToBeCloseTo(1, 2)
+        expect(terrain:HeightAt(2.5, 0.5)):ToBeCloseTo(3, 2)
+        expect(terrain:HeightAt(0.5, 1.5)):ToBeCloseTo(4, 2)
+        -- Past `MaxHeight`, it stops there, within the voxel the ceiling is in.
+        local ceiling = terrain:HeightAt(2.5, 1.5) :: number
+        expect(ceiling > 31 and ceiling <= 32):ToBe(true)
+
+        expect(function()
+            terrain:WriteHeights(vector.create(0, 0, 0), 4, { 1, 2, 3, 4, 5, 6 })
+        end):ToThrow()
+        expect(function()
+            terrain:WriteHeights(vector.create(0, 0, 0), 0, { 1 })
+        end):ToThrow()
+    end)
+
+    it("reads voxels out and writes them back exactly", function()
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(16, 40, 16), Rock)
+        terrain:FillBall(vector.create(2, 0, 2), 3, Sand)
+        local materials, occupancies, size = terrain:ReadVoxels(vector.create(-4, -4, -4), vector.create(4, 4, 4))
+        expect(size.x):ToBe(8)
+        expect(#materials):ToBe(size.x * size.y * size.z)
+        expect(#occupancies):ToBe(#materials)
+        -- The voxel at the low corner is deep in the rock, full.
+        expect(materials[1]):ToBe(Rock)
+        expect(occupancies[1]):ToBeCloseTo(1, 3)
+
+        terrain:Clear()
+        expect(terrain:HeightAt(0, 0)):ToBe(nil)
+        local changed = terrain:WriteVoxels(vector.create(-4, -4, -4), size, materials, occupancies)
+        expect(changed > 0):ToBe(true)
+        local again, againOccupancies = terrain:ReadVoxels(vector.create(-4, -4, -4), vector.create(4, 4, 4))
+        for index = 1, #materials do
+            expect(again[index]):ToBe(materials[index])
+            expect(againOccupancies[index]):ToBeCloseTo(occupancies[index], 3)
+        end
+
+        expect(function()
+            terrain:WriteVoxels(vector.create(0, 0, 0), vector.create(2, 2, 2), { 1 }, { 1 })
+        end):ToThrow()
+    end)
+
+    it("refuses a place or a reach that is not a finite number, rather than answering zero", function()
+        -- The terrain audit: a NaN centre or an infinite radius changed
+        -- nothing and returned 0, which a script cannot tell from ground that
+        -- already was what it asked for.
+        local nan = 0 / 0
+        local origin = vector.create(0, 0, 0)
+        expect(function()
+            terrain:FillBall(vector.create(nan, 0, 0), 4, Rock)
+        end):ToThrow()
+        expect(function()
+            terrain:FillBall(origin, nan, Rock)
+        end):ToThrow()
+        expect(function()
+            terrain:FillBall(origin, math.huge, Rock)
+        end):ToThrow()
+        expect(function()
+            terrain:FillBall(origin, -1, Rock)
+        end):ToThrow()
+        expect(function()
+            terrain:SmoothBall(vector.create(0, math.huge, 0), 4)
+        end):ToThrow()
+        expect(function()
+            terrain:FlattenBall(origin, 4, nan)
+        end):ToThrow()
+        expect(function()
+            terrain:ReplaceMaterial(vector.create(-nan, 0, 0), vector.create(4, 4, 4), Rock, Sand)
+        end):ToThrow()
+        expect(function()
+            terrain:HeightAt(nan, 0)
+        end):ToThrow()
+        -- Wholly above the ceiling is not a mistake: nothing there to change.
+        expect(terrain:FillBall(vector.create(0, 10000, 0), 4, Rock)):ToBe(0)
+    end)
+
+    it("refuses a region too large to count, and a size or an occupancy that is not a number", function()
+        -- Each side as long as a terrain can name: the three multiplied pass
+        -- 2^64 and wrapped to a count the limit let through, and the loop then
+        -- ran the true sizes.
+        expect(function()
+            terrain:ReadVoxels(vector.create(-1e9, -1e9, -1e9), vector.create(1e9, 1e9, 1e9))
+        end):ToThrow()
+        local nan = 0 / 0
+        for _, size in { vector.create(nan, 1, 1), vector.create(math.huge, 1, 1), vector.create(1e12, 1e12, 1e12) } do
+            expect(function()
+                terrain:WriteVoxels(vector.create(0, 0, 0), size, {}, {})
+            end):ToThrow()
+        end
+        -- And nothing is written when one occupancy of many is not a number.
+        terrain:Clear()
+        expect(function()
+            terrain:WriteVoxels(vector.create(0, 0, 0), vector.create(2, 1, 1), { 1, 1 }, { 1, nan })
+        end):ToThrow()
+        expect(terrain.CellCount):ToBe(0)
+    end)
+
+    it("names a voxel by its index and finds its centre", function()
+        local cell = terrain:WorldToCell(vector.create(2.7, -0.2, -3.1))
+        expect(cell.x):ToBe(2)
+        expect(cell.y):ToBe(-1)
+        expect(cell.z):ToBe(-4)
+        local centre = terrain:CellCenterToWorld(cell)
+        expect(centre.x):ToBeCloseTo(2.5, 3)
+        expect(centre.y):ToBeCloseTo(-0.5, 3)
+        expect(centre.z):ToBeCloseTo(-3.5, 3)
+    end)
+
+    it("cuts a well with a cylinder and swaps what the ground is made of", function()
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(32, 40, 32), Rock)
+        terrain:FillCylinder(vector.create(0, -10, 0), 20, 2, 0)
+        -- Down the middle is less than half full to the bottom of the well:
+        -- occupancy ramps across four voxels, so a well two metres wide is
+        -- partly full everywhere and air where it crosses a half.
+        local _, occupancies = terrain:ReadVoxels(vector.create(0, -12, 0), vector.create(1, -11, 1))
+        expect(occupancies[1] < 0.5):ToBe(true)
+
+        local swapped = terrain:ReplaceMaterial(vector.create(-8, -8, -8), vector.create(8, 0, 8), Rock, Sand)
+        expect(swapped > 0):ToBe(true)
+        local after = terrain:ReadVoxels(vector.create(5, -3, 5), vector.create(6, -2, 6))
+        expect(after[1]):ToBe(Sand)
+    end)
+
+    it("smooths a step and flattens a hill", function()
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(32, 40, 32), Rock)
+        terrain:RaiseBall(vector.create(0, 0, 0), 6, 4)
+        local peak = terrain:HeightAt(0, 0) :: number
+        expect(peak > 3):ToBe(true)
+        terrain:FlattenBall(vector.create(0, 2, 0), 5, 1, 1)
+        expect((terrain:HeightAt(0, 0) :: number) < peak):ToBe(true)
+        expect(terrain:SmoothBall(vector.create(0, 1, 0), 5) > 0):ToBe(true)
+    end)
+
+    it("grows the surface out along its slope, and wears it back in", function()
+        -- The editor's Raise and Lower, from a script.
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(32, 40, 32), Rock)
+        local flat = terrain:HeightAt(0, 0) :: number
+        expect(terrain:GrowBall(vector.create(0, flat, 0), 5, 2) > 0):ToBe(true)
+        local grown = terrain:HeightAt(0, 0) :: number
+        expect(grown > flat + 1):ToBe(true)
+        expect(terrain:GrowBall(vector.create(0, grown, 0), 5, -3) > 0):ToBe(true)
+        expect((terrain:HeightAt(0, 0) :: number) < grown - 1):ToBe(true)
+        expect(function()
+            terrain:GrowBall(vector.create(0, 0, 0), 5, 0 / 0)
+        end):ToThrow()
+    end)
+
+    it("paints over the ground a little at a time, under it, and off it again (ADR 0114)", function()
+        terrain:FillBlock(vector.create(0, -8, 0), vector.create(16, 16, 16), Rock)
+        local low = vector.create(-1, -2, -1)
+        local high = vector.create(1, 0, 1)
+        local before = terrain:ReadVoxels(low, high)
+        -- Blended over: the ground under is what it was, and something changed.
+        expect(terrain:PaintBall(vector.create(0, -0.5, 0), 3, Sand, {
+            Mode = Enum.TerrainPaintMode.Blend,
+            Strength = 0.3,
+            Falloff = 0.5,
+        }) > 0):ToBe(true)
+        local blended = terrain:ReadVoxels(low, high)
+        expect(blended[1]):ToBe(before[1])
+        -- Taken off again, and then painted outright.
+        expect(terrain:PaintBall(vector.create(0, -0.5, 0), 3, 0, { Mode = Enum.TerrainPaintMode.Erase }) > 0):ToBe(
+            true
+        )
+        terrain:PaintBall(vector.create(0, -0.5, 0), 3, Sand, { Mode = Enum.TerrainPaintMode.Replace })
+        expect(terrain:ReadVoxels(low, high)[1]):ToBe(Sand)
+        expect(function()
+            terrain:PaintBall(vector.create(0, 0, 0), 3, Sand, { Strength = 0 / 0 })
+        end):ToThrow()
+        expect(function()
+            terrain:PaintBall(vector.create(0, 0, 0), 3, Sand, { Mode = Enum.ScaleType.Fit } :: any)
+        end):ToThrow()
+    end)
+
+    it("refuses what no terrain can hold, rather than wrapping it or running out of memory", function()
+        -- Terrain audit: each of these used to be a wrapped
+        -- id that erased, a height that allocated gigabytes a column, a
+        -- setting no save could read back, or a chunk no save could hold.
+        expect(function()
+            terrain:FillBall(vector.create(0, 0, 0), 2, 256)
+        end):ToThrow()
+        expect(function()
+            terrain:PaintBall(vector.create(0, 0, 0), 2, -1)
+        end):ToThrow()
+        expect(function()
+            terrain:RaiseBall(vector.create(0, 0, 0), 2, math.huge, Rock)
+        end):ToThrow()
+        expect(function()
+            terrain:SmoothBall(vector.create(0, 0, 0), 2, 0 / 0)
+        end):ToThrow()
+        expect(function()
+            terrain.VoxelSize = 0.05
+        end):ToThrow()
+        expect(function()
+            terrain.MaxHeight = 2e6
+        end):ToThrow()
+
+        -- A raise far past the band is a raise to its ceiling, and done.
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(8, 8, 8), Rock)
+        expect(terrain:RaiseBall(vector.create(0, -16, 0), 2, 1e9, Rock) > 0):ToBe(true)
+        expect((terrain:HeightAt(0, 0) :: number) <= 32):ToBe(true)
+
+        -- A ball fifty thousand kilometres out makes nothing, not a chunk past
+        -- every key a save can write.
+        local before = terrain.CellCount
+        expect(terrain:FillBall(vector.create(5e7, 0, 0), 10, Rock)):ToBe(0)
+        expect(terrain.CellCount):ToBe(before)
+    end)
+
+    it("a ray meets the ground with nothing moving anywhere near it", function()
+        -- Colliders are built near things that move, and there are none here:
+        -- the ray is answered by the voxels themselves (ADR 0082).
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(32, 40, 32), Rock)
+        local hit = workspace:Raycast(vector.create(3, 50, 3), vector.create(0, -100, 0))
+        expect(hit).Never:ToBe(nil)
+        local result = hit :: RaycastResult
+        expect(result.Instance):ToBe(terrain)
+        expect(result.Position.y):ToBeCloseTo(0, 1)
+        expect(result.Normal.y > 0.99):ToBe(true)
+
+        local params = RaycastParams.new({ Filter = { terrain } :: { Instance } })
+        expect(workspace:Raycast(vector.create(3, 50, 3), vector.create(0, -100, 0), params)):ToBe(nil)
+    end)
+
+    it("starts with no layers, and a list set is the list read", function()
+        -- A new terrain's materials are the project's to choose: none come
+        -- with it (2026-09-29).
+        expect(#terrain:GetLayers()):ToBe(0)
+        local layers = {
+            "engine://terrain/grass",
+            "engine://terrain/sand",
+            "engine://terrain/rock",
+        }
+        terrain:SetLayers(layers)
+        expect(terrain:GetLayers()[Rock]):ToBe("engine://terrain/rock")
+
+        -- Replacing a layer and adding one: the voxels keep their numbers.
+        layers[Rock] = "engine://terrain/basalt"
+        table.insert(layers, "engine://terrain/snow")
+        terrain:SetLayers(layers)
+        local read = terrain:GetLayers()
+        expect(#read):ToBe(4)
+        expect(read[Rock]):ToBe("engine://terrain/basalt")
+        expect(read[4]):ToBe("engine://terrain/snow")
+
+        expect(function()
+            terrain:SetLayers({ 1 } :: any)
+        end):ToThrow()
+    end)
+
+    it("starts with no rules, paints by the ones it is given, and writes them when asked", function()
+        expect(#terrain:GetRules()):ToBe(0)
+        -- A slope rock, and a snow line after it, with the defaults filled in.
+        terrain:SetRules({ { Material = Rock, SlopeMin = 45 }, { Material = 4, HeightMin = 20 } })
+        local rules = terrain:GetRules()
+        expect(rules[1].Material):ToBe(Rock)
+        expect(rules[1].Enabled):ToBe(true)
+        local read = terrain:GetRules()
+        expect(#read):ToBe(2)
+        expect(read[2].Material):ToBe(4)
+        expect(read[2].HeightMin):ToBe(20)
+        expect(read[2].SlopeMax):ToBe(90)
+        expect(#read[2].AppliesTo):ToBe(0)
+
+        -- A crater's walls are steep: applying writes rock into them.
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(32, 40, 32), Grass)
+        terrain:FillBall(vector.create(0, 0, 0), 8, 0)
+        expect(terrain:ApplyRules(vector.create(-12, -10, -12), vector.create(12, 10, 12)) > 0):ToBe(true)
+        expect(terrain:ApplyRules(vector.create(-12, -10, -12), vector.create(12, 10, 12))):ToBe(0)
+
+        -- No rules at all is the automatic rock turned off.
+        terrain:SetRules({})
+        expect(#terrain:GetRules()):ToBe(0)
+        expect(function()
+            terrain:SetRules({ { Material = 0 } })
+        end):ToThrow()
+        expect(function()
+            terrain:SetRules({ { SlopeMin = 120 } })
+        end):ToThrow()
+    end)
+
+    it("raises new ground of a material where there was none", function()
+        local changed = terrain:RaiseBall(vector.create(0, 0, 0), 4, 3, Sand)
+        expect(changed > 0):ToBe(true)
+        local materials = terrain:ReadVoxels(vector.create(0.2, 0.2, 0.2), vector.create(0.8, 0.8, 0.8))
+        expect(materials[1]):ToBe(Sand)
+    end)
+
+    it("writes a heightmap with a material per column", function()
+        terrain:WriteHeights(vector.create(0, 0, 0), 2, { 2, 2, 2, 2 }, { Grass, Sand, Rock, Grass })
+        local grass = terrain:ReadVoxels(vector.create(0.2, 1.2, 0.2), vector.create(0.8, 1.8, 0.8))
+        local sand = terrain:ReadVoxels(vector.create(1.2, 1.2, 0.2), vector.create(1.8, 1.8, 0.8))
+        local rock = terrain:ReadVoxels(vector.create(0.2, 1.2, 1.2), vector.create(0.8, 1.8, 1.8))
+        expect(grass[1]):ToBe(Grass)
+        expect(sand[1]):ToBe(Sand)
+        expect(rock[1]):ToBe(Rock)
+
+        expect(function()
+            terrain:WriteHeights(vector.create(0, 0, 0), 2, { 2, 2, 2, 2 }, { Grass })
+        end):ToThrow()
+    end)
+end)

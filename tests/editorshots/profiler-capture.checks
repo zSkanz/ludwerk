@@ -1,0 +1,12 @@
+# shot, then what must be so in it: `x,y=r,g,b` at fractions of the frame (imgprobe), within ten of each channel;
+# `x,y!=r,g,b` is that it is NOT that colour there.
+# The file opened: its frames have the strip's whole width -- a bar a third of the way along and one near its
+# right end, where a run of a hundred and fifty frames in a panel with room for six hundred has the strip's own
+# grey and nothing on it -- and the Systems tab has the file's tree, the whole bar of its row `frame`.
+# **A bar, and not which band of it**: asked two pixels up from the strip's foot, where a frame of any
+# length has one -- a run held to sixty a second is a bar twenty pixels tall where one long frame has the strip
+# at its tallest. Which band is at its foot is how long the machine took to simulate, and this used to ask for
+# the wait's colour five pixels up: true on a desk, and not on a runner sharing its cores with two other shards.
+capture-open 0.3753125,0.5194444!=48,48,48 0.7503125,0.5194444!=48,48,48 0.6753125,0.6094444=55,148,255
+# Its worst frame, found as a run's is.
+capture-worst 0.6753125,0.6094444=55,148,255

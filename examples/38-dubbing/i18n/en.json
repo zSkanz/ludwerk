@@ -1,0 +1,19 @@
+{
+  "speaker.anna": "Anna",
+  "speaker.bruno": "Bruno",
+  "speaker.clara": "Clara",
+  "booth.anna_1": "My mouth follows a track made for this take.",
+  "booth.bruno_1": "Mine follows the colour of my voice.",
+  "booth.clara_1": "And mine only how loud I am.",
+  "booth.anna_2": "Change the voice language and listen again.",
+  "booth.bruno_2": "Nobody dubbed this line, so you read it.",
+  "booth.clara_2": "And nobody has recorded this one at all.",
+  "way.track": "a track, in each language",
+  "way.bands": "three bands of the sound",
+  "way.loudness": "loudness alone",
+  "menu.options": "Options",
+  "menu.voice": "Voice: {locale}",
+  "menu.voice_follows": "Voice: same as the text",
+  "menu.text": "Text: {locale}",
+  "menu.hint": "Esc or Start: options   Arrows or d-pad: move   Enter or A: press"
+}

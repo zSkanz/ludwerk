@@ -1,0 +1,9 @@
+{
+  "hud.player": "Jogador {number}",
+  "hud.mode": "{mode}   {players} na tela   Tab ou Y: dividir de outro jeito   Enter: sentar um segundo no teclado",
+  "mode.Dynamic": "Juntos, e separados por uma linha",
+  "mode.Columns": "Lado a lado",
+  "mode.Rows": "Um acima do outro",
+  "mode.Grid": "Os quartos da janela",
+  "mode.None": "Uma imagem"
+}

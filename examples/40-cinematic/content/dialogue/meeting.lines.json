@@ -1,0 +1,11 @@
+{
+  "speakers": {
+    "anna": { "name": "speaker.anna", "color": "#E8B04A" },
+    "bruno": { "name": "speaker.bruno", "color": "#6FB7E9" }
+  },
+  "lines": {
+    "anna_1": { "speaker": "anna", "sound": "asset://voice/meeting/anna_1.wav" },
+    "bruno_1": { "speaker": "bruno", "sound": "asset://voice/meeting/bruno_1.wav" },
+    "anna_2": { "speaker": "anna", "sound": "asset://voice/meeting/anna_2.wav" }
+  }
+}

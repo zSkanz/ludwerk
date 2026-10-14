@@ -1,0 +1,9 @@
+{
+  "format": "material",
+  "version": 1,
+  "parent": "engine://terrain/basalt",
+  "instanceParameters": [],
+  "properties": {
+    "FootstepSound": "asset://sounds/step_hard.wav"
+  }
+}

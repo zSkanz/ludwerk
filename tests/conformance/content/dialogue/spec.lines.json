@@ -1,0 +1,10 @@
+{
+  "speakers": {
+    "guide": { "name": "spec.speaker.guide", "color": "#E8B04A" }
+  },
+  "lines": {
+    "hello": { "speaker": "guide", "sound": "asset://voice/spec/hello.wav" },
+    "written": { "speaker": "guide", "seconds": 0.25 },
+    "aside": { "text": "spec.menu.play", "seconds": 0.25 }
+  }
+}

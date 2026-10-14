@@ -1,0 +1,10 @@
+# The two-process guests gate's game (ADR 0205, protocol 48): a server, and a
+# joiner with somebody else at its screen. `run_guests.cmake` copies it and
+# runs both ends.
+
+[project]
+name = "Netcode Guests"
+id = "dev.ludwerk.netcode-guests"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"

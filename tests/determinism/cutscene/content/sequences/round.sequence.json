@@ -1,0 +1,11 @@
+{
+  "format": "sequence",
+  "version": 1,
+  "bindings": [],
+  "length": 6,
+  "tracks": [
+    { "type": "event", "keys": [
+        { "time": 0, "name": "Begin" },
+        { "time": 3, "name": "Half" } ] }
+  ]
+}

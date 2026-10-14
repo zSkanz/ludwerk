@@ -1,0 +1,10 @@
+# shot, then what must be so in it: `x,y=r,g,b` at fractions of the frame (imgprobe), within ten of each channel.
+# The joint the control names, picked out in the list of the rig's joints.
+joint-picker 0.93781,0.43167=14,62,99
+# A layer's state as a bar that has begun to fill -- the left end of Lean's, whose clip plays once and stays
+# at its end, so the bar never goes back to nothing -- and the bar at the window's foot says the game runs.
+# **Its first pixels, and not how far it has come** (a sweep): this asked for the fill three fifths of the
+# way along, which is how much of the clip a machine has played by the shot. The editor's game follows the
+# clock and the drive counts frames: six frames after Play the fill has not reached there, and on a machine
+# six times as quick as a desk it would not have by the shot either.
+graph-running 0.8821875,0.53722=51,93,141 0.50031,0.98944=0,120,212

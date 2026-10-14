@@ -1,0 +1,6 @@
+# shot, then what must be so in it: `x,y=r,g,b` at fractions of the frame (imgprobe), within ten of each channel.
+# Open: the playhead stands at nought and nothing is at fifteen and a half seconds; a cut is a bar of
+# the accent's colour on the camera's lane; and a line is a bar, filled, from its start to its end.
+timeline-open 0.21781,0.83389=55,148,255 0.63219,0.83389=24,24,24 0.37469,0.78833=55,148,255 0.36781,0.81833!=24,24,24
+# The ruler pressed at fifteen and a half seconds: the playhead is there, and gone from nought.
+timeline-scrubbed 0.63219,0.83389=55,148,255 0.21781,0.83389=24,24,24

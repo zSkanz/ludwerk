@@ -1,0 +1,12 @@
+{
+  "format": "sequence",
+  "version": 1,
+  "bindings": [],
+  "length": 60,
+  "tracks": [
+    { "type": "event", "keys": [
+        { "time": 0, "name": "Begin" },
+        { "time": 0.5, "name": "Early" },
+        { "time": 58, "name": "Never" } ] }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "dubbed",
+  "script": ".",
+  "seed": 20261011,
+  "ticks": 900,
+  "checkpointEvery": 30,
+  "voiceLocales": ["pt-BR", "ja"]
+}

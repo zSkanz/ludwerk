@@ -1,0 +1,12 @@
+# What a character carries, over a real connection (protocol 44): a server
+# spawns a thing three ways -- a stamp, a `Clone`, `Instance.new` -- with a
+# light, a cape's chain and collider, a bone, a highlight, a trail, a beam, an
+# emitter with sequences of its own and a playing sound under it, and a joiner
+# says what of each it was sent. `run_carried.cmake` runs the two and reads
+# what the joiner printed.
+
+[project]
+name = "Carried"
+id = "dev.ludwerk.netcode-carried"
+version = "1.0.0"
+engine = "0.1"

@@ -1,0 +1,1210 @@
+"""Author the Orbit icon family as SVG and rasterize the same geometry with Pillow.
+
+Run from any directory: python tools/repo/draw_icons.py
+Only the existing art-tool dependency (Pillow) is required.
+"""
+
+import html
+import json
+import math
+import sys
+import tomllib
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
+
+ROOT = Path(__file__).resolve().parents[2]
+ART = ROOT / "art/editor-icons/orbit"
+THEME = ROOT / "icons/default"
+SCALE = 32
+STROKE = 1.8
+BRAND_NAME = tomllib.loads((ROOT / "branding/brand.toml").read_text(encoding="utf-8"))["name"]
+
+
+class Icon:
+    """A 24-unit drawing; both exports use exactly the same geometry."""
+
+    def __init__(self):
+        self.alpha = Image.new("L", (24 * SCALE, 24 * SCALE))
+        self.draw = ImageDraw.Draw(self.alpha)
+        self.svg = []
+
+    def line(self, *points, width=STROKE, closed=False, fill=False):
+        coords = [(x * SCALE, y * SCALE) for x, y in points]
+        color = "white"
+        data = " ".join(f"{x:g},{y:g}" for x, y in points)
+        tag = "polygon" if closed else "polyline"
+        self.svg.append(f'<{tag} points="{data}" fill="{color if fill else "none"}" '
+                        f'stroke="white" stroke-width="{width}" stroke-linecap="round" stroke-linejoin="round"/>')
+        if fill:
+            self.draw.polygon(coords, fill=255)
+        if closed:
+            coords.append(coords[0])
+        self.draw.line(coords, fill=255, width=round(width * SCALE), joint="curve")
+        r = width * SCALE / 2
+        for x, y in coords:
+            self.draw.ellipse((x-r, y-r, x+r, y+r), fill=255)
+        return self
+
+    def circle(self, x, y, r, fill=False, hole=False):
+        box = tuple(v * SCALE for v in (x-r, y-r, x+r, y+r))
+        if hole:
+            self.draw.ellipse(box, fill=0)
+        elif fill:
+            self.draw.ellipse(box, fill=255)
+        else:
+            outer = tuple(v * SCALE for v in (x-r-STROKE/2, y-r-STROKE/2, x+r+STROKE/2, y+r+STROKE/2))
+            inner = tuple(v * SCALE for v in (x-r+STROKE/2, y-r+STROKE/2, x+r-STROKE/2, y+r-STROKE/2))
+            self.draw.ellipse(outer, fill=255)
+            self.draw.ellipse(inner, fill=0)
+        if hole:
+            self.svg.append(f'<circle cx="{x}" cy="{y}" r="{r}" fill="black"/>')
+        elif fill:
+            self.svg.append(f'<circle cx="{x}" cy="{y}" r="{r}" fill="white"/>')
+        else:
+            self.svg.append(f'<circle cx="{x}" cy="{y}" r="{r+STROKE/2}" fill="white"/>')
+            self.svg.append(f'<circle cx="{x}" cy="{y}" r="{r-STROKE/2}" fill="black"/>')
+        return self
+
+    def rect(self, x, y, w, h, r=2, fill=False):
+        # Sample the corner arcs so the SVG and PNG share the same contour.
+        pts = []
+        for cx, cy, start in [(x+w-r,y+r,-90),(x+w-r,y+h-r,0),(x+r,y+h-r,90),(x+r,y+r,180)]:
+            for step in range(9):
+                a = math.radians(start + step * 90 / 8)
+                pts.append((cx+r*math.cos(a), cy+r*math.sin(a)))
+        return self.line(*pts, closed=True, fill=fill)
+
+    def arc(self, x, y, r, start, end):
+        return self.line(*[(x+r*math.cos(math.radians(a)), y+r*math.sin(math.radians(a)))
+                           for a in [start+(end-start)*i/48 for i in range(49)]])
+
+    def ellipse_arc(self, x, y, rx, ry, start=0, end=360):
+        return self.line(*[(x+rx*math.cos(math.radians(a)), y+ry*math.sin(math.radians(a)))
+                           for a in [start+(end-start)*i/64 for i in range(65)]])
+
+    def export(self, path):
+        svg_path = ART / path.replace(".png", ".svg")
+        svg_path.parent.mkdir(parents=True, exist_ok=True)
+        # A luminance mask gives subtractive details real transparency in SVG too.
+        body = "\n".join(self.svg)
+        svg_path.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">\n'
+                            '<defs><mask id="ink" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">\n'
+                            + body + '\n</mask></defs><rect width="24" height="24" fill="white" mask="url(#ink)"/>\n</svg>\n', encoding="utf-8")
+        image = Image.new("RGBA", (256, 256), "white")
+        image.putalpha(self.alpha.resize((256, 256), Image.Resampling.LANCZOS))
+        image.save(THEME / path)
+        return image
+
+
+def page(i):
+    return i.line((6,3),(14,3),(19,8),(19,21),(6,21),closed=True).line((14,3),(14,8),(19,8))
+
+
+def cube(i):
+    return i.line((12,3),(21,8),(21,17),(12,22),(3,17),(3,8),closed=True).line((3,8),(12,13),(21,8)).line((12,13),(12,22))
+
+
+def speaker(i):
+    return i.line((3,10),(7,10),(12,6),(12,20),(7,16),(3,16),closed=True)
+
+
+def text(i, y=7):
+    return i.line((8,y),(16,y)).line((12,y),(12,y+9))
+
+
+def arrow(i, direction):
+    if direction == "left":
+        i.line((15,5),(8,12),(15,19))
+    elif direction == "right":
+        i.line((9,5),(16,12),(9,19))
+    else:
+        i.line((5,15),(12,8),(19,15))
+    return i
+
+
+TOOLKIT = {
+    "interaction": ("ClickDetector", "ProximityPrompt", "ProximityPromptService", "DragDetector"),
+    "physics": ("LinearVelocity", "AngularVelocity", "AlignPosition", "AlignOrientation", "VectorForce", "Torque",
+                "PrismaticConstraint", "RopeConstraint", "RodConstraint", "SpringConstraint", "NoCollisionConstraint"),
+    "ui": ("UIGridLayout", "UIPageLayout", "UIFlexItem", "UIScale", "UIAspectRatioConstraint",
+           "UISizeConstraint", "UITextSizeConstraint", "CanvasGroup", "UIDragDetector"),
+    "effects": ("Highlight", "Beam", "Trail"),
+    "modeling": ("UnionOperation", "NegateOperation", "action.Union", "action.Negate", "action.Separate",
+                 "action.ShapeCornerWedge", "action.ShapeTruss"),
+    "audio": ("ReverbSoundEffect", "EchoSoundEffect", "EqualizerSoundEffect", "LowPassSoundEffect",
+              "HighPassSoundEffect", "DistortionSoundEffect", "CompressorSoundEffect", "ChorusSoundEffect",
+              "PitchShiftSoundEffect", "HapticService"),
+    "services": ("ContentProvider", "TextChatService", "TextChannel", "TextChatCommand",
+                 "ChatWindowConfiguration", "BubbleChatConfiguration"),
+}
+
+
+def toolkit_icon(group, name):
+    key = f"action.{name}" if group == "action" else name
+    if group not in ("action", "class") or not any(key in names for names in TOOLKIT.values()):
+        return None
+    i = Icon()
+    if name == "ClickDetector":
+        i.line((8,8),(8,21),(12,17),(16,21),(19,18),(15,14),(20,12),closed=True)
+        i.line((3,8),(1,8)).line((8,3),(8,1)).line((3,3),(4,4)).line((12,4),(14,2))
+    elif name in ("ProximityPrompt", "ProximityPromptService"):
+        i.rect(7,6,10,12,2).circle(12,12,1.5,True)
+        i.arc(12,12,10,145,215).arc(12,12,10,-35,35)
+        if name == "ProximityPromptService": i.line((9,2),(15,2)).line((9,22),(15,22))
+    elif name == "DragDetector":
+        i.rect(3,13,8,8,1).line((9,15),(20,4)).line((14,4),(20,4),(20,10))
+        i.line((3,8),(3,3),(8,3))
+    elif name == "LinearVelocity":
+        i.line((3,12),(21,12)).line((16,7),(21,12),(16,17))
+        i.line((3,6),(9,6)).line((3,18),(9,18))
+    elif name == "AngularVelocity":
+        i.arc(12,12,9,45,315).line((14,5.6),(18.4,5.6),(18.4,2))
+        i.line((12,7),(12,17))
+    elif name == "AlignPosition":
+        i.rect(9,9,6,6,1)
+        for pts in (((2,12),(6,12)),((18,12),(22,12)),((12,2),(12,6)),((12,18),(12,22))): i.line(*pts)
+        i.line((4,10),(6,12),(4,14)).line((20,10),(18,12),(20,14))
+    elif name == "AlignOrientation":
+        i.line((12,3),(12,21)).line((3,17),(21,17))
+        i.line((5,12),(12,5),(19,12)).arc(12,12,9,0,35)
+    elif name == "VectorForce":
+        i.rect(3,14,7,7,1).line((10,14),(20,4)).line((13,4),(20,4),(20,11))
+        i.line((3,10),(6,7)).line((14,21),(17,18))
+    elif name == "Torque":
+        i.circle(8,15,5).line((8,15),(18,5)).line((13,5),(18,5),(18,10))
+        i.arc(8,15,7,180,270)
+    elif name == "PrismaticConstraint":
+        i.line((3,5),(21,5)).line((3,19),(21,19)).rect(8,8,8,8,1)
+        i.line((3,12),(8,12)).line((16,12),(21,12))
+    elif name in ("RopeConstraint", "RodConstraint", "SpringConstraint"):
+        if name == "RopeConstraint": i.line(*[(4+16*n/32,7+9*math.sin(math.pi*n/32)) for n in range(33)])
+        elif name == "RodConstraint": i.line((5,12),(19,12),width=3)
+        else: i.line((4,12),(6,12),(8,6),(11,18),(14,6),(17,18),(19,12),(20,12))
+        y = 7 if name == "RopeConstraint" else 12
+        i.circle(3,y,2).circle(21,y,2)
+    elif name == "NoCollisionConstraint":
+        i.line((3,6),(8,6),(8,18),(3,18)).line((21,6),(16,6),(16,18),(21,18))
+        i.line((9,3),(15,21))
+    elif name == "UIGridLayout":
+        i.rect(2,3,20,18,1).line((2,9),(22,9)).line((2,15),(22,15)).line((9,3),(9,21)).line((16,3),(16,21))
+    elif name == "UIPageLayout":
+        i.rect(6,3,12,14,1).line((2,6),(2,15)).line((22,6),(22,15))
+        for x in (8,12,16): i.circle(x,21,0.9,True)
+    elif name == "UIFlexItem":
+        i.rect(8,5,8,14,1).line((2,12),(6,12)).line((18,12),(22,12))
+        i.line((4,10),(2,12),(4,14)).line((20,10),(22,12),(20,14))
+    elif name == "UIScale":
+        i.line((3,10),(3,21),(14,21)).rect(7,3,14,14,1)
+        i.line((10,14),(18,6)).line((13,6),(18,6),(18,11))
+    elif name == "UIAspectRatioConstraint":
+        i.rect(2,5,20,14,1).line((6,15),(18,9)).line((6,11),(6,15),(10,15)).line((14,9),(18,9),(18,13))
+    elif name == "UISizeConstraint":
+        i.line((3,8),(3,3),(8,3)).line((16,21),(21,21),(21,16)).rect(8,8,8,8,1)
+    elif name == "UITextSizeConstraint":
+        text(i,7)
+        i.line((3,6),(3,3),(8,3)).line((16,21),(21,21),(21,18))
+    elif name == "CanvasGroup":
+        i.rect(2,3,15,14,1).line((7,21),(21,21),(21,8)).rect(6,7,7,6,1)
+    elif name == "UIDragDetector":
+        i.line((12,3),(3,3),(3,21),(21,21),(21,12))
+        i.line((9,15),(21,3)).line((15,3),(21,3),(21,9))
+    elif name == "Highlight":
+        i.rect(7,7,10,10,1)
+        for pts in (((2,7),(2,2),(7,2)),((17,2),(22,2),(22,7)),((2,17),(2,22),(7,22)),((17,22),(22,22),(22,17))): i.line(*pts)
+    elif name == "Beam":
+        i.line((4,8),(20,11)).line((4,16),(20,13)).line((4,8),(4,16))
+        i.circle(3,12,2,True).circle(21,12,2,True)
+    elif name == "Trail":
+        i.line((2,6),(8,6),(13,10),(17,16),(21,18))
+        i.line((2,12),(7,12),(12,16),(16,20),(21,21)).circle(21,19.5,2,True)
+    elif name in ("Union", "UnionOperation"):
+        i.line((3,3),(14,3),(14,10),(21,10),(21,21),(10,21),(10,14),(3,14),closed=True)
+    elif name in ("Negate", "NegateOperation"):
+        i.line((3,3),(21,3),(21,9),(12,9),(12,21),(3,21),closed=True)
+        i.line((16,16),(22,16))
+    elif name == "Separate":
+        i.rect(2,3,7,7,1).rect(15,14,7,7,1)
+        i.line((4,16),(4,21),(9,21)).line((15,3),(20,3),(20,8))
+    elif name == "ShapeCornerWedge":
+        i.line((3,18),(13,3),(21,17),(12,22),(3,18),closed=True).line((13,3),(12,22))
+    elif name == "ShapeTruss":
+        i.rect(6,2,12,20,0.5).line((6,2),(18,9),(6,15),(18,22))
+    elif name == "ReverbSoundEffect":
+        i.line((7,3),(3,3),(3,21),(7,21)).line((17,3),(21,3),(21,21),(17,21))
+        i.line((8,9),(11,12),(8,15)).line((14,7),(17,12),(14,17))
+    elif name == "EchoSoundEffect":
+        i.line((3,9),(6,12),(3,15)).line((9,6),(14,12),(9,18)).line((17,3),(22,12),(17,21))
+    elif name == "EqualizerSoundEffect":
+        for x,y in ((4,13),(12,5),(20,9)):
+            i.line((x,21),(x,y)).line((x-2,y),(x+2,y))
+    elif name in ("LowPassSoundEffect", "HighPassSoundEffect"):
+        i.line((3,3),(3,21),(22,21))
+        if name == "LowPassSoundEffect": i.line((6,7),(12,7),(16,11),(20,17))
+        else: i.line((6,17),(10,11),(14,7),(20,7))
+    elif name == "DistortionSoundEffect":
+        i.line((2,16),(5,16),(5,6),(10,6),(10,18),(15,18),(15,6),(20,6),(20,12),(22,12))
+    elif name == "CompressorSoundEffect":
+        i.line((3,12),(6,12),(9,8),(12,16),(15,8),(18,12),(21,12))
+        i.line((7,2),(12,5),(17,2)).line((7,22),(12,19),(17,22))
+    elif name == "ChorusSoundEffect":
+        for y in (7,16): i.line(*[(2+n/2,y+2.5*math.sin(n*math.pi/20)) for n in range(41)])
+    elif name == "PitchShiftSoundEffect":
+        i.circle(6,18,3).line((9,18),(9,5),(14,4))
+        i.line((19,20),(19,5)).line((16,8),(19,5),(22,8))
+    elif name == "HapticService":
+        i.rect(8,3,8,18,2).line((11,17),(13,17))
+        i.line((4,6),(2,9),(4,12),(2,15),(4,18)).line((20,6),(22,9),(20,12),(22,15),(20,18))
+    elif name == "ContentProvider":
+        i.line((3,13),(3,21),(21,21),(21,13)).rect(8,2,8,7,1)
+        i.line((12,10),(12,16)).line((8,13),(12,17),(16,13))
+    elif name == "TextChatService":
+        i.line((2,3),(18,3),(18,14),(8,14),(3,18),(3,14),(2,14),closed=True)
+        i.line((22,8),(22,20),(18,20),(15,23),(15,20),(10,20))
+    elif name == "TextChannel":
+        i.line((2,3),(22,3),(22,17),(10,17),(5,22),(5,17),(2,17),closed=True)
+        i.line((9,7),(8,13)).line((15,7),(14,13)).line((6,9),(18,9)).line((6,12),(18,12))
+    elif name == "TextChatCommand":
+        i.line((2,3),(22,3),(22,17),(10,17),(5,22),(5,17),(2,17),closed=True)
+        i.line((7,7),(11,10),(7,13)).line((14,13),(18,13))
+    elif name == "ChatWindowConfiguration":
+        i.rect(2,3,20,18,1).line((2,8),(22,8))
+        i.line((6,13),(18,13)).circle(10,13,2).line((6,18),(18,18)).circle(15,18,2)
+    elif name == "BubbleChatConfiguration":
+        i.line((2,3),(22,3),(22,17),(10,17),(5,22),(5,17),(2,17),closed=True)
+        i.line((6,10),(18,10)).circle(13,10,2.5)
+    else:
+        raise ValueError(name)
+    return i
+
+
+def cut_bar(i, x, y, w, h):
+    """A rectangle cut out of what is drawn: transparent in both exports."""
+    i.draw.rectangle(tuple(v * SCALE for v in (x, y, x + w, y + h)), fill=0)
+    i.svg.append(f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" fill="black"/>')
+    return i
+
+
+EDITOR_ADDITIONS = ("class.LocalizationService", "action.NewStamp", "action.StampVariant",
+                    "action.PlaceLinked", "action.ApplyOverrides", "action.SelectCopies",
+                    "action.LocalAxes", "action.WorldAxes", "action.Pivot", "action.SelectionCenter",
+                    "action.SimulationStep", "action.Console", "action.Stats", "action.WaterTools",
+                    "action.ThemeDark", "action.Snap", "action.GenerateTerrain", "action.TerrainMaterials")
+
+
+def editor_icon(group, name):
+    if f"{group}.{name}" not in EDITOR_ADDITIONS:
+        return None
+    i = Icon()
+    if name == "LocalizationService":
+        i.arc(10,10,8,90,360).line((2,10),(18,10)).ellipse_arc(10,10,3,8,90,360)
+        i.line((13,14),(22,14),(22,20),(18,20),(15,23),(15,20),(13,20),closed=True)
+    elif name in ("NewStamp", "StampVariant", "PlaceLinked"):
+        i.line((9,2),(16,6),(16,12),(9,16),(2,12),(2,6),closed=True)
+        i.line((2,6),(9,10),(16,6)).line((9,10),(9,16))
+        if name == "NewStamp": i.line((15,19),(23,19)).line((19,15),(19,23))
+        elif name == "StampVariant": i.line((19,14),(23,18),(19,22),(15,18),closed=True)
+        else: i.arc(17,18,3,40,320).arc(21,20,2,220,500)
+    elif name == "ApplyOverrides":
+        i.rect(3,3,12,12,1).line((8,21),(21,21),(21,8))
+        i.line((7,9),(9,11),(13,6))
+    elif name == "SelectCopies":
+        i.rect(3,3,8,8,1).rect(13,13,8,8,1)
+        i.line((15,3),(21,3),(21,9)).line((3,15),(3,21),(9,21))
+    elif name == "LocalAxes":
+        i.line((12,12),(12,3)).line((9,6),(12,3),(15,6))
+        i.line((12,12),(3,18)).line((3,13),(3,18),(8,18))
+        i.line((12,12),(21,18)).line((16,18),(21,18),(21,13))
+    elif name == "WorldAxes":
+        i.circle(12,12,9).line((12,3),(12,21)).line((3,12),(21,12))
+    elif name == "Pivot":
+        i.line((3,14),(3,3),(14,3)).circle(15,15,5)
+        i.line((15,7),(15,11)).line((15,19),(15,23)).line((7,15),(11,15)).line((19,15),(23,15))
+    elif name == "SelectionCenter":
+        for pts in (((2,7),(2,2),(7,2)),((17,2),(22,2),(22,7)),((2,17),(2,22),(7,22)),((17,22),(22,22),(22,17))): i.line(*pts)
+        i.line((12,8),(12,16)).line((8,12),(16,12))
+    elif name == "SimulationStep":
+        i.line((4,5),(15,12),(4,19),closed=True,fill=True).line((20,4),(20,20))
+    elif name == "Console":
+        i.rect(2,4,20,16,2).line((6,8),(10,12),(6,16)).line((13,16),(18,16))
+    elif name == "Stats":
+        i.line((3,3),(3,21),(22,21)).line((7,17),(7,13)).line((13,17),(13,8)).line((19,17),(19,4))
+    elif name == "WaterTools":
+        i.line((12,2),(5,11),(4,15),(6,19),(9,21),(15,21),(18,19),(20,15),(19,11),closed=True)
+        i.line((7,14),(10,15),(14,13),(17,14))
+    elif name == "ThemeDark":
+        i.arc(12,12,9,60,300).arc(16.5,12,7.794,270,90)
+    elif name == "Snap":
+        # A sparse grid and a diagonal arrow landing exactly on a grid point.
+        for x,y in ((4,5),(4,12),(4,19),(11,19),(18,19)):
+            i.circle(x,y,1.25,True)
+        i.line((21,2),(11,12)).line((11,6),(11,12),(17,12))
+    elif name == "GenerateTerrain":
+        i.line((2,21),(8,8),(14,21),(2,21),closed=True).line((12,17),(16,11),(22,21),(14,21))
+        i.line((16,3),(22,3)).line((19,1),(19,6))
+    elif name == "TerrainMaterials":
+        i.line((12,2),(22,7),(12,12),(2,7),closed=True)
+        i.line((2,12),(12,17),(22,12)).line((2,17),(12,22),(22,17))
+    return i
+
+
+def draw_icon(group, name):
+    editor = editor_icon(group, name)
+    if editor is not None:
+        return editor
+    planned = toolkit_icon(group, name)
+    if planned is not None:
+        return planned
+    i = Icon()
+    if group == "class" and name == "Swarm":
+        # Three agents travelling toward one target; not a team or a single walker.
+        for x,y in ((3,3),(3,15),(10,8)):
+            h = 8 if x == 10 else 6
+            i.line((x,y),(x+5,y+h/2),(x,y+h),closed=True)
+        i.circle(21,12,1.5,True)
+        return i
+    if group == "class" and name == "CryptoService":
+        # A protected key: one shield contour and a short, readable key inside.
+        i.line((12,2),(21,5),(20,14),(17,19),(12,22),(7,19),(4,14),(3,5),closed=True)
+        i.circle(9,11,2.3).line((11.3,11),(17,11)).line((16,11),(16,14))
+        return i
+    if group == "class" and name == "SoundEffect":
+        # A signal inside a processing stage, shared concept for audio effects.
+        i.line((6,3),(2,3),(2,21),(6,21)).line((18,3),(22,3),(22,21),(18,21))
+        i.line((6,12),(8,12),(10,7),(14,17),(16,12),(18,12))
+        return i
+    if group == "class" and name == "GraphicsService":
+        i.rect(2,3,20,14,2).line((12,17),(12,21)).line((8,21),(16,21))
+        i.line((6,7),(18,7)).circle(10,7,1.5)
+        i.line((6,12),(18,12)).circle(15,12,1.5)
+        return i
+    if group == "action" and name in ("WaterRiver", "WaterLake", "WaterPool", "WaterOcean"):
+        if name == "WaterRiver":
+            for offset in (-4,4):
+                i.line(*[(12+offset+3*math.sin(n*math.pi/20),2+n/2) for n in range(41)])
+        elif name == "WaterLake":
+            i.line(*[(12+(9+math.sin(a*3))*math.cos(a),12+(7+math.cos(a*2))*math.sin(a))
+                     for a in [n*2*math.pi/64 for n in range(64)]],closed=True)
+            i.line((7,12),(10,13),(14,11),(17,12))
+        elif name == "WaterPool":
+            i.rect(2,5,20,15,2).line((7,3),(7,11)).line((12,3),(12,11))
+            i.line((7,7),(12,7)).line((6,15),(9,16),(13,14),(18,15))
+        else:
+            i.line((3,6),(21,6))
+            for y in (12,19):
+                i.line(*[(2+n/2,y+1.8*math.sin(n*math.pi/10)) for n in range(41)])
+        return i
+    if group == "overlay":
+        i.circle(12,12,10,fill=True)
+        if name == "Stamp":
+            i.circle(12,12,4,hole=True)
+        # Where a script runs (ADR 0138 §4): cut into the same disc, so each
+        # reads at badge size. A server rack's two slots; a client's screen,
+        # its stand; both sides, the disc split down the middle.
+        if name == "SideServer":
+            cut_bar(i, 6.5, 7.5, 11, 3).circle(8.5, 9, 1, fill=True)
+            cut_bar(i, 6.5, 13.5, 11, 3).circle(8.5, 15, 1, fill=True)
+        elif name == "SideClient":
+            cut_bar(i, 5.5, 6, 13, 8.5)
+            cut_bar(i, 8.5, 16.5, 7, 2)
+        elif name == "SideShared":
+            cut_bar(i, 11, 2, 2, 20)
+        return i
+    if group == "action":
+        if name in ("Back","Forward","Up","Collapse","Expand"):
+            arrow(i, {"Back":"left","Forward":"right","Up":"up","Collapse":"up","Expand":"right"}[name])
+            if name == "Back": i.line((8,12),(21,12))
+            if name == "Forward": i.line((3,12),(16,12))
+            if name == "Collapse":
+                i = Icon().line((5,9),(12,16),(19,9))
+        elif name in ("Replace", "ReplaceAll"):
+            i.line((3,5),(11,5)).line((3,9),(8,9)).line((12,7),(21,7)).line((17,3),(21,7),(17,11))
+            i.line((10,17),(21,17)).line((10,21),(18,21))
+            if name == "ReplaceAll": i.line((3,13),(3,19),(6,19)).line((4,17),(6,19),(4,21))
+        elif name == "StepOver":
+            i.line((3,12),(3,8),(6,4),(15,4),(19,8),(19,12)).line((15,8),(19,12),(23,8)).circle(12,19,2,True)
+        elif name in ("StepInto", "StepOut"):
+            if name == "StepInto": i.line((12,3),(12,14)).line((7,9),(12,14),(17,9)).circle(12,20,2,True)
+            else: i.line((12,14),(12,3)).line((7,8),(12,3),(17,8)).circle(12,20,2,True)
+        elif name == "Revert":
+            i.arc(12,12,8,200,490).line((4,3),(4,9),(10,9)).line((9,15),(15,15))
+        elif name == "Inherit":
+            i.rect(3,3,7,6,1).rect(14,15,7,6,1).line((6,9),(6,18),(11,18)).line((8,15),(11,18),(8,21))
+        elif name == "Export":
+            # A tray, and what leaves it (ADR 0104 §4).
+            i.line((4,13),(4,20),(20,20),(20,13)).line((12,3),(12,15)).line((7,8),(12,3),(17,8))
+        elif name == "TargetDesktop":
+            # A monitor: the Windows target, drawn as the thing it runs on.
+            i.rect(2,3,20,13,2).line((12,16),(12,20)).line((7,21),(17,21))
+        elif name == "TargetTerminal":
+            # A terminal and its prompt: the Linux target.
+            i.rect(2,3,20,18,2).line((6,9),(10,12),(6,15)).line((12,16),(17,16))
+        elif name == "TargetPhone":
+            # A phone: the Android target.
+            i.rect(6,2,12,20,3).line((10,18),(14,18))
+        elif name == "Keyboard":
+            i.rect(2,5,20,14,2)
+            for x in (6,10,14,18):
+                i.circle(x,9,0.8,True).circle(x,12,0.8,True)
+            i.line((8,16),(16,16))
+        elif name == "ShapeBall":
+            # Curved surface contours distinguish a sphere from a flat circle.
+            i.circle(12,12,9).ellipse_arc(12,12,4,9)
+            i.ellipse_arc(12,12,9,3,0,180)
+        elif name == "ShapeCylinder":
+            i.ellipse_arc(12,6,8,3)
+            i.line((4,6),(4,18)).line((20,6),(20,18))
+            i.ellipse_arc(12,18,8,3,0,180)
+        elif name == "NewShader":
+            i.line((9,2),(16,6),(16,12),(9,16),(2,12),(2,6),closed=True)
+            i.line((7,6),(4,9),(7,12)).line((11,6),(14,9),(11,12))
+            i.line((15,19),(23,19)).line((19,15),(19,23))
+        elif name == "NewMaterial":
+            i.circle(9,10,7).line((4,14),(12,4)).line((7,16),(15,6)).line((14,18),(22,18)).line((18,14),(18,22))
+        elif name == "MaterialVariant":
+            i.circle(8,8,5).line((4,11),(11,4)).line((8,13),(8,20),(14,20)).circle(18,18,4).line((16,20),(20,16))
+        elif name == "Erase": i.line((3,14),(14,3),(22,11),(12,21),(9,21),closed=True).line((7,10),(16,18)).line((12,21),(22,21))
+        elif name == "View2D": i.rect(7,3,14,14,1).line((3,4),(3,21),(20,21)).line((1,7),(3,4),(5,7)).line((17,19),(20,21),(17,23))
+        elif name == "Import": i.line((3,14),(3,21),(21,21),(21,14)).line((12,2),(12,16)).line((7,11),(12,16),(17,11))
+        elif name == "NewFolder": i.line((3,6),(9,6),(12,9),(21,9),(21,20),(3,20),closed=True).line((8,14),(16,14)).line((12,10),(12,18))
+        elif name == "Tools":
+            # One continuous wrench contour, with an open jaw and a clear handle.
+            i.line((15,3),(12,3),(9,6),(9,10),(3,16),(2,19),(5,22),
+                   (8,21),(14,15),(18,15),(21,12),(21,9),(17,11),
+                   (13,7),(15,3),closed=True)
+        elif name == "Information": i.circle(12,12,10).circle(12,7,1.2,True).line((11,11),(12,11),(12,17)).line((10,17),(14,17))
+        elif name in ("PlaceBlock", "BreakBlock", "ReplaceBlock"):
+            i.line((3,7),(9,3),(15,7),(15,16),(9,20),(3,16),closed=True).line((3,7),(9,11),(15,7)).line((9,11),(9,20))
+            if name == "PlaceBlock": i.line((16,18),(22,18)).line((19,15),(19,21))
+            elif name == "BreakBlock": i.line((16,18),(22,18))
+            else: i.line((17,4),(22,8),(17,12)).line((22,8),(17,8))
+        elif name == "Select": i.line((5,3),(5,19),(10,15),(14,22),(18,20),(14,13),(21,12),closed=True,fill=True)
+        elif name in ("Raise", "Dig"):
+            i.line((3,20),(7,17),(12,19),(17,17),(21,20))
+            if name == "Raise": i.line((12,14),(12,3)).line((7,8),(12,3),(17,8))
+            else: i.line((12,3),(12,14)).line((7,9),(12,14),(17,9))
+        elif name == "Smooth": i.line((2,9),(6,6),(10,10),(14,5),(18,9),(22,7)).arc(12,22,8,210,330)
+        elif name == "Flatten": i.line((3,18),(21,18)).line((12,3),(12,13)).line((8,9),(12,13),(16,9))
+        elif name == "Eyedropper":
+            # A pipette with a separate broad rubber bulb and a tapered tip.
+            i.line((13,8),(4,17),(3,21),(7,20),(16,11),closed=True)
+            i.line((11,6),(18,13)).line((14,7),(18,3),(21,3),(22,6),(18,10),closed=True)
+        elif name == "Paint": i.line((10,13),(18,3),(22,7),(13,16),closed=True).line((10,13),(6,14),(5,19),(2,21),(9,21),(13,16),closed=True)
+        elif name == "Copy": page(i).line((2,7),(2,22),(16,22))
+        elif name == "Cut": i.circle(5,17,3).circle(19,17,3).line((7,15),(19,3)).line((17,15),(5,3))
+        elif name == "Paste": i.rect(4,5,16,17).rect(8,2,8,5,1).line((8,12),(16,12)).line((8,17),(14,17))
+        elif name == "Add": i.line((12,4),(12,20)).line((4,12),(20,12))
+        elif name == "Close": i.line((6,6),(18,18)).line((18,6),(6,18))
+        elif name == "Play": i.line((8,4),(20,12),(8,20),closed=True,fill=True)
+        elif name == "Pause": i.rect(6,5,3,14,0.6,True).rect(15,5,3,14,0.6,True)
+        elif name == "Stop": i.rect(5,5,14,14,2,True)
+        elif name == "Search": i.circle(10,10,6).line((14.5,14.5),(21,21))
+        elif name in ("Locked","Unlocked"):
+            i.rect(5,10,14,11).circle(12,15,1,True)
+            if name == "Locked": i.arc(12,8,4,180,360).line((8,8),(8,10)).line((16,8),(16,10))
+            else: i.arc(12,6,4,180,340).line((8,6),(8,10))
+        elif name in ("Visible","Hidden"):
+            i.line((2,12),(5,8),(9,6),(15,6),(19,8),(22,12),(19,16),(15,18),(9,18),(5,16),closed=True).circle(12,12,3)
+            if name == "Hidden": i.line((3,3),(21,21),width=2.4)
+        elif name in ("Undo","Redo"):
+            i.line((4,9),(14,9),(18,11),(20,15),(20,19)).line((8,4),(3,9),(8,14))
+            if name == "Redo":
+                return mirror(i)
+        elif name == "Rotate":
+            # One continuous turn around the object; arrowhead follows the tangent.
+            i.arc(12,12,8,0,270).line((8,1),(12,4),(8,7))
+            i.line((12,8.5),(15.5,12),(12,15.5),(8.5,12),closed=True)
+        elif name == "Refresh":
+            # Two open arcs with arrowheads attached to their endpoints.
+            i.arc(12,12,8,195,330).line((14,8),(19,8),(19,3))
+            i.arc(12,12,8,15,150).line((10,16),(5,16),(5,21))
+        elif name == "Move":
+            i.line((12,2),(12,22)).line((2,12),(22,12))
+            for pts in [((9,5),(12,2),(15,5)),((9,19),(12,22),(15,19)),((5,9),(2,12),(5,15)),((19,9),(22,12),(19,15))]: i.line(*pts)
+        elif name == "Scale": i.rect(3,13,8,8,1).line((11,13),(21,3)).line((14,3),(21,3),(21,10))
+        elif name == "Grid":
+            for x in (4,14):
+                for y in (4,14): i.rect(x,y,6,6,1)
+        elif name == "Settings":
+            i.circle(12,12,6).circle(12,12,2)
+            for a in range(0,360,45):
+                c,s = math.cos(math.radians(a)),math.sin(math.radians(a))
+                i.line((12+7*c,12+7*s),(12+10*c,12+10*s),width=2.8)
+        elif name == "Delete": i.line((4,6),(20,6)).line((9,3),(15,3)).line((6,6),(7,21),(17,21),(18,6)).line((10,10),(10,17)).line((14,10),(14,17))
+        elif name == "Duplicate": i.rect(8,8,13,13).line((16,4),(16,3),(3,3),(3,16),(4,16))
+        elif name == "New": page(i).line((9,14),(16,14)).line((12.5,10.5),(12.5,17.5))
+        elif name == "Open": i.line((3,18),(3,5),(9,5),(12,8),(20,8)).line((3,20),(7,11),(22,11),(18,20),closed=True)
+        elif name == "Save": i.line((4,3),(17,3),(21,7),(21,21),(4,21),closed=True).rect(8,13,9,8,0.5).line((8,3),(8,8),(16,8),(16,3))
+        elif name == "Rename": i.line((4,16),(16,4),(20,8),(8,20),(3,21),closed=True).line((13,7),(17,11)).line((13,21),(21,21))
+        else: raise ValueError(name)
+        return i
+    if group == "content":
+        if name == "Other": page(i).circle(12,15,1.2,True)
+        elif name == "FolderFilled":
+            # Exactly the empty folder contour, filled to indicate contents.
+            i.line((3,6),(9,6),(12,9),(21,9),(21,20),(3,20),closed=True,fill=True)
+        elif name == "Shader":
+            i.line((12,2),(22,7),(22,17),(12,22),(2,17),(2,7),closed=True)
+            i.line((9,8),(5,12),(9,16)).line((15,8),(19,12),(15,16))
+        elif name == "Font": i.line((3,20),(9,4),(15,20)).line((5,14),(13,14)).line((17,11),(21,11),(21,20)).arc(19,17,2,90,360)
+        elif name == "Audio": i.rect(3,3,18,18).line((7,10),(7,15)).line((12,7),(12,18)).line((17,10),(17,15))
+        elif name == "Scene": i.line((3,9),(21,9),(21,21),(3,21),closed=True).line((3,9),(2,4),(20,2),(21,6),(3,9)).line((8,3),(11,7)).line((15,2),(18,6)).line((10,13),(15,16),(10,19),closed=True,fill=True)
+        else: raise ValueError(name)
+        return i
+    if name == "Part2D": i.rect(6,3,15,15,1).line((2,7),(2,22),(17,22)).circle(13.5,10.5,2)
+    elif name == "Tilemap2D":
+        for x,y in ((3,3),(10,3),(3,10),(10,10),(17,10),(10,17),(17,17)): i.rect(x,y,5,5,0.5)
+    elif name == "SpringConstraint2D":
+        i.line((3,5),(3,19)).line((21,5),(21,19))
+        i.line((3,12),(6,12),(8,6),(11,18),(14,6),(17,18),(19,12),(21,12))
+    elif name == "SpriteAnimator":
+        i.line((2,5),(2,21),(18,21)).rect(6,2,16,15,1)
+        i.line((11,6),(18,9.5),(11,13),closed=True,fill=True)
+    elif name == "ServerScriptService":
+        i.rect(3,2,18,20,2).line((3,8),(21,8)).circle(7,5,1,True).line((12,5),(17,5))
+        i.line((9,12),(6,15),(9,18)).line((15,12),(18,15),(15,18))
+    elif name == "ClientScriptService":
+        i.rect(2,3,20,14,2).line((12,17),(12,22)).line((7,22),(17,22))
+        i.line((9,7),(6,10),(9,13)).line((15,7),(18,10),(15,13))
+    elif name == "GlobalScriptService":
+        # Globe with an open lower-right quadrant for a separate code mark.
+        i.arc(10,10,8,90,360).line((2,10),(18,10))
+        i.line(*[(10+3*math.cos(math.radians(a)),10+8*math.sin(math.radians(a)))
+                 for a in range(90,271,5)])
+        i.line(*[(10+3*math.cos(math.radians(a)),10+8*math.sin(math.radians(a)))
+                 for a in range(270,361,5)])
+        i.line((16,14),(13,17),(16,20)).line((20,14),(23,17),(20,20))
+    elif name == "SceneService":
+        # A stack of scene cards and one explicit transition arrow.
+        i.line((3,16),(3,3),(16,3)).rect(7,7,14,14,1)
+        i.line((10,14),(18,14)).line((15,11),(18,14),(15,17))
+    elif name == "CameraTexture":
+        # A lens on an image plane; the rear edge identifies the output surface.
+        i.rect(2,3,16,14,2).circle(10,10,4)
+        i.line((7,21),(22,21),(22,8))
+    elif name == "ViewportFrame":
+        i.rect(2,2,20,20,1).line((2,6),(22,6))
+        i.line((12,9),(18,12),(18,17),(12,20),(6,17),(6,12),closed=True)
+        i.line((6,12),(12,15),(18,12)).line((12,15),(12,20))
+    elif name == "SubWorld":
+        i.circle(12,12,10)
+        i.line((12,6),(18,9),(18,15),(12,18),(6,15),(6,9),closed=True)
+        i.line((6,9),(12,12),(18,9)).line((12,12),(12,18))
+    elif name == "Terrain": i.line((2,20),(7,8),(11,13),(16,3),(22,20),closed=True).line((13,9),(16,11),(18,9))
+    elif name == "VoxelService":
+        for x,y in ((3,3),(13,8),(3,13)): i.rect(x,y,8,8,1)
+    elif name == "NavigationService":
+        i.line((5,19),(5,10),(18,10),(18,3)).circle(5,19,3).circle(5,10,2,True).circle(18,10,2,True).line((14,6),(18,2),(22,6))
+    elif name == "NavigationArea":
+        i.line((12,3),(22,9),(12,16),(2,9),closed=True)
+        i.line((2,15),(12,22),(22,15)).line((7,6),(17,12)).line((7,12),(17,6))
+    elif name == "NavigationLink":
+        i.circle(4,18,2.5).circle(20,18,2.5)
+        i.arc(12,13,8,180,360).line((16,9),(20,13),(23,9))
+    elif name == "NavigationAgent":
+        i.circle(9,4,2).line((3,12),(7,8),(12,9),(15,13))
+        i.line((9,9),(8,15),(4,21)).line((8,15),(13,20))
+        i.line((16,5),(22,5)).line((19,2),(22,5),(19,8))
+    elif name == "NetworkService":
+        # Three connected endpoints, with wires ending at their boundaries.
+        i.line((12,7),(12,12),(5,17)).line((12,12),(19,17))
+        for x,y in ((12,4),(4,19),(20,19)): i.circle(x,y,2.5)
+    elif name == "AchievementService":
+        # A medal with two ribbons; distinct from the leaderboard's podium.
+        i.circle(12,9,6).circle(12,9,2,True)
+        i.line((7,13),(5,22),(10,19),(12,22),(14,19),(19,22),(17,13))
+    elif name == "CloudSaveService":
+        # Cloud outline with an arrow entering storage.
+        i.arc(7,11,4,90,250).arc(13,8,5,190,350).arc(18,12,4,260,450)
+        i.line((7,15),(8,15)).line((17,16),(18,16))
+        i.line((12,11),(12,20)).line((8,16),(12,20),(16,16))
+        i.line((5,19),(5,23),(19,23),(19,19))
+    elif name == "IdentityService":
+        # A profile on an identity card, without lettering.
+        i.rect(2,4,20,16).circle(8,10,2.5).arc(8,18,4,180,360)
+        i.line((15,9),(19,9)).line((15,13),(19,13))
+    elif name == "LeaderboardService":
+        i.line((2,21),(2,12),(8,12),(8,5),(15,5),(15,15),(22,15),(22,21),closed=True)
+    elif name == "SocialService":
+        # Two people facing a shared connection.
+        i.circle(5,6,3).circle(19,6,3)
+        i.arc(5,19,4,180,300).arc(19,19,4,240,360)
+        i.line((7,13),(12,18),(17,13)).line((9,21),(12,18),(15,21))
+    elif name == "StoreService":
+        i.line((4,9),(20,9),(19,22),(5,22),closed=True)
+        i.arc(12,8,4,180,360).line((8,8),(8,11)).line((16,8),(16,11))
+    elif name == "XboxService":
+        # Provider facade: a game controller, avoiding brand lettering.
+        i.line((7,6),(17,6),(20,9),(23,18),(21,21),(18,20),(15,16),(9,16),(6,20),(3,21),(1,18),(4,9),closed=True)
+        i.line((5,11),(11,11)).line((8,8),(8,14))
+        i.circle(17,10,1,True).circle(20,13,1,True)
+    elif name == "ParticleEmitter":
+        i.line((4,22),(9,15),(13,19),closed=True)
+        for x,y,r in ((6,9,1.4),(13,8,2),(20,4,2),(20,13,1.3),(12,2,1)): i.circle(x,y,r,True)
+    elif name == "Player": i.circle(12,7,4).arc(12,21,8,180,360).line((4,21),(20,21))
+    elif name == "Team":
+        i.line((6,21),(6,3)).line((6,4),(19,4),(15.5,8.5),(19,13),(6,13),closed=True)
+    elif name == "TeamService":
+        i.circle(8,8,3).arc(8,20,6,180,360).circle(16,8,3).arc(16,20,6,180,360).line((2,20),(22,20))
+    elif name == "UnreliableRemoteEvent":
+        # A RemoteEvent whose arrow is broken: sent once, and it may not arrive.
+        i.rect(2,6,6,12,1).rect(16,6,6,12,1).line((8,12),(9.5,12)).line((11.5,12),(13,12)).line((13,9),(16,12),(13,15))
+    elif name in ("RemoteEvent", "RemoteFunction"):
+        i.rect(2,6,6,12,1).rect(16,6,6,12,1).line((8,10),(16,10)).line((12,7),(16,10),(12,13))
+        if name == "RemoteFunction": i.line((16,16),(8,16)).line((11,13),(8,16),(11,19))
+    elif name in ("ReplicatedStorage", "ServerStorage"):
+        i.rect(3,4,18,7,1).rect(3,14,18,7,1).circle(6,7.5,1,True).circle(6,17.5,1,True)
+        if name == "ReplicatedStorage": i.line((11,7),(18,7)).line((15,5),(18,7),(15,9)).line((18,18),(11,18)).line((14,16),(11,18),(14,20))
+        else: i.line((11,7),(17,7)).line((11,18),(17,18))
+    elif name == "Decal": i.line((3,3),(21,3),(21,14),(14,21),(3,21),closed=True).line((14,21),(14,14),(21,14)).circle(8,8,2)
+    elif name == "BillboardGui": i.rect(2,3,20,13).line((12,16),(12,22)).line((8,22),(16,22)).line((7,8),(17,8)).line((7,12),(13,12))
+    elif name == "SurfaceGui": i.line((3,7),(18,2),(21,18),(6,22),closed=True).line((7,9),(15,6),(17,15),(9,18),closed=True)
+    elif name == "HingeConstraint": i.rect(3,3,7,18,1).rect(14,3,7,18,1).line((12,4),(12,20),width=2.6)
+    elif name == "BallSocketConstraint": i.line((2,20),(8,14)).circle(12,10,4).arc(12,10,8,0,180).line((18,16),(22,20))
+    elif name == "FixedConstraint": i.rect(2,6,7,12,1).rect(15,6,7,12,1).line((9,9),(15,9)).line((9,15),(15,15))
+    elif name == "Part": cube(i)
+    elif name == "MeshPart": cube(i).line((3,17),(12,13),(21,17)).line((12,3),(12,13))
+    elif name == "Instance": i.line((12,3),(21,12),(12,21),(3,12),closed=True).circle(12,12,2,True)
+    elif name == "Folder": i.line((3,6),(9,6),(12,9),(21,9),(21,20),(3,20),closed=True)
+    elif name == "Model": i.rect(8,3,8,6,1).rect(2,16,8,6,1).rect(14,16,8,6,1).line((12,9),(12,12),(6,12),(6,16)).line((12,12),(18,12),(18,16))
+    elif name == "Workspace": i.line((2,16),(12,21),(22,16),(12,11),closed=True).line((5,13),(5,6),(12,2),(19,6),(19,13)).line((5,6),(12,10),(19,6)).line((12,10),(12,17))
+    elif name == "Camera": i.rect(2,6,14,13).line((16,10),(22,6),(22,19),(16,15),closed=True).circle(9,12.5,3)
+    elif name in ("Script","ModuleScript"):
+        page(i)
+        if name == "Script": i.line((9,12),(16,12)).line((9,16),(14,16))
+        else: i.line((10,11),(8,14),(10,17)).line((15,11),(17,14),(15,17))
+    elif name == "ScriptService": i.line((7,5),(2,12),(7,19)).line((17,5),(22,12),(17,19)).line((14,3),(10,21))
+    elif name == "Frame": i.rect(3,4,18,16)
+    elif name == "ScreenGui": i.rect(2,3,20,14).line((12,17),(12,21)).line((7,21),(17,21))
+    elif name == "UIService": i.rect(2,3,20,18).line((2,8),(22,8)).line((9,8),(9,21))
+    elif name in ("ImageLabel","ImageButton"):
+        i.rect(3,4,18,16).circle(8,9,1.3,True).line((4,18),(10,12),(14,16),(18,12),(21,15))
+        if name == "ImageButton": i.line((16,17),(22,20),(20,21),(19,22),closed=True,fill=True)
+    elif name in ("TextLabel","TextButton","TextInput"):
+        if name == "TextLabel": text(i,5).line((7,20),(17,20))
+        elif name == "TextButton": i.rect(2,4,20,16); text(i,7)
+        else:
+            i.line((12,5),(3,5),(3,19),(12,19))
+            i.line((18,3),(18,21)).line((15,3),(21,3)).line((15,21),(21,21))
+            i.line((7,10),(11,10)).line((7,14),(10,14))
+    elif name == "ScrollFrame": i.rect(3,3,18,18).line((16,7),(16,17),width=2.6).line((7,8),(11,8)).line((7,12),(11,12)).line((7,16),(11,16))
+    elif name == "UICorner": i.line((3,21),(3,11)).arc(11,11,8,180,270).line((11,3),(21,3)).line((10,21),(10,14),(14,10),(21,10))
+    elif name == "UIPadding": i.rect(2,3,20,18).rect(7,8,10,8,1)
+    elif name == "UIGradient":
+        # A swatch transitions from continuous ink to sparse dots, not a chart.
+        i.rect(2,4,20,16,2)
+        i.line((6,8),(6,16)).line((10,8),(10,11)).line((10,15),(10,16))
+        for x,y in ((14,8),(14,12),(14,16),(18,8),(18,16)):
+            i.circle(x,y,0.7,True)
+    elif name == "UIStroke":
+        # An open contour and a pen touching its unfinished corner.
+        i.line((21,13),(21,19),(19,21),(5,21),(3,19),(3,5),(5,3),(12,3))
+        i.line((11,13),(12,9),(19,2),(22,5),(15,12),(11,13),closed=True)
+        i.line((17,4),(20,7))
+    elif name == "SaveService":
+        # Archive tray accepting a downward save arrow.
+        i.line((3,13),(3,21),(21,21),(21,13),(16,13),(14,16),(10,16),(8,13),closed=True)
+        i.line((12,2),(12,11)).line((8,7),(12,11),(16,7))
+    elif name == "SaveSlot":
+        i.rect(3,5,18,16,2).line((7,2),(17,2))
+        i.line((8,12),(16,12)).line((10,16),(14,16))
+    elif name == "FoliageLayer":
+        # Two shoots over a ground contour, distinct from a single leaf mesh.
+        i.line((2,20),(12,23),(22,20)).line((7,18),(7,10)).line((17,18),(17,6))
+        i.line((7,13),(3,10),(3,6),(7,7),(7,13),closed=True)
+        i.line((17,11),(21,7),(21,3),(17,5),(17,11),closed=True)
+    elif name == "FoliageMesh":
+        i.line((4,21),(10,15),(16,9))
+        i.line((6,17),(5,11),(8,6),(14,3),(21,3),(21,10),(18,16),(13,19),(6,17),closed=True)
+        i.line((11,14),(11,9)).line((11,14),(16,14))
+    elif name == "WaterPoint":
+        # A river spline passing through an editable control point.
+        i.line(*[(2+n/2,12+6*math.sin((n/2-10)*math.pi/20)) for n in range(41)])
+        i.circle(12,12,3)
+        i.circle(2,6,1.2,True).circle(22,18,1.2,True)
+    elif name == "WaterWave":
+        # One travelling wave, distinct from Water's three surface ripples.
+        i.line(*[(2+n/2,10-5*math.sin(n*math.pi/20)) for n in range(41)])
+        i.line((6,21),(19,21)).line((16,18),(19,21),(16,23))
+    elif name == "Water":
+        for y in (6,12,18):
+            i.line(*[(x, y + 1.5*math.sin((x-2)*math.pi/9)) for x in [2+n/4 for n in range(81)]])
+    elif name == "VideoPlayer":
+        i.rect(2,5,20,14,2).line((2,9),(5,9)).line((2,15),(5,15))
+        i.line((19,9),(22,9)).line((19,15),(22,15))
+        i.line((10,9),(15,12),(10,15),closed=True,fill=True)
+    elif name == "Actor":
+        # A container holding two independent parallel execution lanes.
+        i.line((7,3),(3,3),(3,21),(7,21)).line((17,3),(21,3),(21,21),(17,21))
+        i.line((9,6),(9,18)).line((15,6),(15,18))
+        i.line((7,9),(9,6),(11,9)).line((13,15),(15,18),(17,15))
+    elif name == "EditableImage":
+        i.line((21,10),(21,3),(3,3),(3,21),(11,21)).circle(8,8,1.3,True)
+        i.line((3,17),(8,12),(12,16))
+        i.line((13,21),(14,17),(20,11),(23,14),(17,20),(13,21),closed=True)
+    elif name == "AudioStream":
+        i.line((3,10),(3,14)).line((7,5),(7,19)).line((11,8),(11,16))
+        i.line((15,12),(22,12)).line((19,9),(22,12),(19,15))
+    elif name == "EditableMesh":
+        # A triangular surface with three editable vertex handles.
+        i.line((5,18),(12,4),(20,18),(5,18)).line((12,4),(12,13),(5,18)).line((12,13),(20,18))
+        for x,y in ((5,18),(12,4),(20,18)):
+            i.rect(x-2,y-2,4,4,0.5,fill=True)
+    elif name == "UIListLayout":
+        for y in (5,12,19): i.circle(4,y,1,True).line((9,y),(21,y))
+    elif name in ("Sound","AudioService"):
+        speaker(i).arc(12,13,6,-50,50)
+        if name == "AudioService": i.arc(12,13,10,-50,50)
+    elif name == "AudioGroup":
+        for x,y in ((5,9),(12,15),(19,7)):
+            i.line((x,3),(x,y-2)).line((x,y+2),(x,21)).circle(x,y,2)
+    elif name == "PointLight":
+        i.circle(12,12,4)
+        for a in range(0,360,45):
+            c,s=math.cos(math.radians(a)),math.sin(math.radians(a))
+            i.line((12+7*c,12+7*s),(12+10*c,12+10*s))
+    elif name == "Atmosphere":
+        i.arc(12,12,7,180,360).line((3,13),(21,13)).line((5,17),(19,17)).line((8,21),(16,21))
+    elif name == "Sky":
+        i.rect(2,3,20,18,2).circle(16,8,2)
+        i.line((3,16),(6,16)).arc(10,16,4,180,360).line((14,16),(21,16))
+    elif name == "BloomEffect":
+        i.line((12,3),(14.5,9.5),(21,12),(14.5,14.5),(12,21),(9.5,14.5),(3,12),(9.5,9.5),closed=True)
+        i.line((4,4),(6,6)).line((18,18),(20,20)).line((18,6),(20,4)).line((4,20),(6,18))
+    elif name == "ColorCorrectionEffect":
+        i.circle(12,12,9).line((12,3),(12,21))
+        i.line((15,5),(15,19)).line((18,7),(18,17))
+    elif name == "BlurEffect":
+        i.circle(12,12,4)
+        for y in (5,12,19):
+            i.line((2,y),(5,y)).line((19,y),(22,y))
+    elif name == "DepthOfFieldEffect":
+        i.line((3,8),(3,3),(8,3)).line((16,3),(21,3),(21,8))
+        i.line((3,16),(3,21),(8,21)).line((16,21),(21,21),(21,16)).circle(12,12,4)
+    elif name == "SunRaysEffect":
+        i.circle(6,6,3).line((11,11),(21,21)).line((12,6),(22,10)).line((6,12),(10,22))
+    elif name == "PostEffect":
+        i.rect(3,3,15,15,2).line((7,21),(21,21),(21,7))
+        i.line((6,12),(9,12),(11,7),(13,14),(15,10))
+    elif name == "Lighting": i.arc(12,9,6,145,395).line((7,13),(9,17),(15,17),(17,13)).line((9,21),(15,21))
+    elif name == "SpotLight": i.line((5,3),(14,7),(10,15),(2,11),closed=True).line((15,10),(22,12)).line((13,15),(19,20)).line((9,18),(10,22))
+    elif name == "Material": i.circle(12,12,9).line((5,18),(18,5)).line((10,20),(20,10)).line((15,20),(20,15))
+    elif name == "Attachment": i.circle(12,12,5).line((12,2),(12,7)).line((12,17),(12,22)).line((2,12),(7,12)).line((17,12),(22,12))
+    elif name == "Weld": i.rect(2,7,8,10).rect(14,7,8,10).line((8,12),(16,12),width=3)
+    elif name == "WeldConstraint": i.arc(8,9,5,45,310).arc(16,15,5,225,490).line((8,9),(16,15))
+    elif name == "PhysicsService": i.line((4,21),(20,21)).line((6,3),(18,3)).line((12,3),(12,9)).circle(12,14,5)
+    elif name in ("CharacterBody","Ragdoll"):
+        i.circle(12,4,2)
+        if name == "CharacterBody": i.line((4,10),(8,8),(16,8),(20,10)).line((12,8),(12,14),(7,21)).line((12,14),(17,21))
+        else: i.line((4,7),(9,10),(14,9),(20,5)).line((12,10),(14,15),(9,18),(7,22)).line((14,15),(19,17),(21,21))
+    elif name == "Bone":
+        # One continuous bone silhouette; lobes no longer erase each other.
+        i.line((8,4),(9,7),(17,15),(20,15),(22,17),(22,19),
+               (20,20),(19,22),(17,22),(15,20),(15,17),(7,9),
+               (4,8),(2,6),(2,4),(4,3),(5,2),(7,2),(8,4),closed=True)
+    elif name == "SpringBone":
+        # A chain of three joints hung from the first and swung to one side,
+        # with the arc it swings through under it (ADR 0194).
+        i.circle(6,4,2).line((7.2,5.6),(9.8,9.4)).circle(11,11,2).line((12.4,12.4),(16.6,16.6)).circle(18,18,2)
+        i.line((3,12),(4,16),(7,19),(11,21))
+    elif name == "SpringCollider":
+        # The capsule a chain is kept out of, and the chain's joint against it.
+        i.arc(10,8,5,180,360).arc(10,16,5,0,180).line((5,8),(5,16)).line((15,8),(15,16))
+        i.circle(20,12,2)
+    elif name == "Caption":
+        # What a sound says (ADR 0200): two lines of text under a bar, as a
+        # subtitle sits at the foot of a picture.
+        i.rect(3,4,18,10,2).line((5,18),(19,18)).line((8,21.2),(16,21.2))
+    elif name == "ReflectionProbe":
+        # What a room reflects (ADR 0202): a ball, with the room's window
+        # bent across it.
+        i.circle(12,12,8)
+        i.arc(12,12,5,200,290).line((14.5,9),(16,10.5))
+    elif name == "IrradianceVolume":
+        # Light that bounces (ADR 0203): a box, and the points inside it
+        # the light is worked out at.
+        i.rect(3,3,18,18,2)
+        for x in (8.5,15.5):
+            for y in (8.5,15.5):
+                i.circle(x,y,1.3)
+    elif name == "SequencePlayer":
+        # A timeline (ADR 0204): three tracks with their keys, and the
+        # playhead across them.
+        i.line((3,7),(21,7)).line((3,12),(21,12)).line((3,17),(21,17))
+        i.circle(6,7,1.5,True).circle(16,7,1.5,True).circle(18,12,1.5,True).circle(7,17,1.5,True).circle(15,17,1.5,True)
+        i.line((11,3),(11,21)).line((9,2.5),(13,2.5),(11,5),closed=True,fill=True)
+    elif name == "SequenceBinding":
+        # A name a sequence expects, tied to the thing it is here.
+        i.circle(6,12,3).line((9,12),(14,12)).line((12,10),(14,12),(12,14)).rect(14,7,8,10,1)
+    elif name == "LipSync":
+        # A mouth, open, and the sound that opens it (ADR 0200).
+        i.ellipse_arc(10,13,7,4.5).line((4.5,13),(15.5,13))
+        i.arc(17.5,6,3,-60,60).arc(17.5,6,6,-50,50)
+    elif name == "DialogueService":
+        # A line being said: a speech balloon with its tail, and words in it.
+        i.line((4,5),(20,5),(20,16),(11,16),(7,20),(7,16),(4,16),closed=True)
+        i.line((7.5,9),(16.5,9)).line((7.5,12),(13.5,12))
+    elif name == "IKControl":
+        # A limb of two bones bent to put its end on a target (ADR 0198): the
+        # shoulder, the elbow, and the hand on the filled mark it reaches for.
+        i.circle(4,19,2).line((5.2,17.4),(10.8,7.6)).circle(12,6,2).line((13.6,7.2),(18.2,12.4)).circle(20,14,2.4,True)
+    elif name == "FootPlacement":
+        # A leg whose foot is on a step of a stair (ADR 0198).
+        i.line((10,2),(12,9),(9,16)).line((9,16),(14.5,16))
+        i.line((2,22),(7,22),(7,18.5),(15,18.5),(15,14),(22,14))
+    elif name == "AnimationPlayer": i.rect(2,4,20,16).line((9,8),(16,12),(9,16),closed=True,fill=True).line((6,4),(6,20))
+    elif name == "TweenService": i.line((3,18),(7,18),(10,16),(14,7),(17,5),(21,5)).circle(3,18,2,True).circle(21,5,2,True)
+    elif name == "RunService": i.circle(12,13,8).line((9,2),(15,2)).line((12,2),(12,5)).line((10,9),(16,13),(10,17),closed=True,fill=True)
+    elif name == "HotReloadService": i.arc(12,12,9,15,290).line((11,2),(16,3),(12,6)).line((13,7),(8,13),(12,13),(11,18),(16,11),(12,11),closed=True,fill=True)
+    elif name == "DebugService": i.rect(7,7,10,13,4).line((9,7),(7,3)).line((15,7),(17,3)).line((12,10),(12,17))
+    elif name == "TagService": i.line((3,3),(12,3),(22,13),(13,22),(3,12),closed=True).circle(8,8,1.4,True)
+    elif name == "StreamingService":
+        for x,y in ((3,3),(14,3),(3,14)): i.rect(x,y,7,7,1)
+        i.line((14,18),(22,18)).line((18,14),(22,18),(18,22))
+    elif name == "InputService": i.rect(2,5,20,14).line((6,10),(10,10)).line((8,8),(8,12)).circle(17,10,1,True).line((8,16),(16,16))
+    elif name == "InputAction": i.line((13,2),(4,13),(11,13),(10,22),(20,10),(13,10),closed=True)
+    elif name == "InputBinding": i.line((3,5),(8,5),(8,19),(3,19)).line((21,5),(16,5),(16,19),(21,19)).line((5,12),(19,12)).line((12,9),(15,12),(12,15))
+    elif name == "InputContext": i.rect(3,3,18,18).line((8,8),(8,17),(11,14),(14,19),(17,17),(14,13),(18,12),closed=True,fill=True)
+    else: raise ValueError(name)
+    if name == "DebugService":
+        for y in (10,15,20): i.line((3,y),(7,y-1)).line((17,y-1),(21,y))
+    return i
+
+
+def mirror(i):
+    i.alpha = i.alpha.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    i.svg = ['<g transform="translate(24 0) scale(-1 1)">', *i.svg, '</g>']
+    return i
+
+
+def main():
+    theme = json.loads((THEME / "theme.json").read_text())
+    paths = sorted(set(theme["icons"].values()))
+    # **`--only Name,Name` draws those classes' icons and nothing else**: their
+    # SVG and PNG are written and no other file of the family is touched --
+    # not the other drawings, not the review sheets. For adding an icon while
+    # somebody else's changes to the family are still theirs to settle.
+    if "--only" in sys.argv:
+        wanted = {name.strip() for name in sys.argv[sys.argv.index("--only") + 1].split(",")}
+        drawn = [path for path in paths if path.split("/")[1][:-4] in wanted]
+        for path in drawn:
+            group, filename = path.split("/")
+            draw_icon(group, filename[:-4]).export(path)
+        missing = wanted - {path.split("/")[1][:-4] for path in drawn}
+        if missing:
+            raise SystemExit(f"Orbit: no icon id in theme.json for {sorted(missing)}")
+        print(f"Orbit: {len(drawn)} drawing(s) exported, the rest of the family untouched.")
+        return
+    images = {}
+    for path in paths:
+        group, filename = path.split("/")
+        images[path] = draw_icon(group, filename[:-4]).export(path)
+    preview(theme, images)
+    print(f"Orbit: {len(paths)} unique drawings, {len(theme['icons'])} IDs; SVG, PNG and review sheets exported.")
+
+
+def preview(theme, images):
+    # BOX matches the runtime atlas's coverage averaging; inspect actual UI sizes.
+    font = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", 12) if Path("C:/Windows/Fonts/segoeui.ttf").exists() else ImageFont.load_default()
+    for mode, bg in (("dark", "#191E28"),("light", "#F4F6FA")):
+        sheet = Image.new("RGB", (1200, 80 + math.ceil(len(images)/6)*94), bg)
+        d = ImageDraw.Draw(sheet)
+        fg = "#DCE3F1" if mode == "dark" else "#273247"
+        d.text((24,20), f"{BRAND_NAME.upper()} / ORBIT    {len(images)} icons    32 / 24 / 16 / 13 px    {mode.upper()}",font=font,fill=fg)
+        for n,(path,im) in enumerate(images.items()):
+            x,y=24+(n%6)*198,70+(n//6)*94
+            icon_id = next(k for k,v in theme["icons"].items() if v == path)
+            role = theme["roles"].get(icon_id, theme["defaultRole"])
+            color = theme["palette"][role][mode]
+            for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                alpha = im.getchannel("A").resize((size,size),Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43),path.split("/")[1][:-4],font=font,fill=fg)
+        sheet.save(ART / f"preview-{mode}.png")
+    # Planned ADR 0096 classes: keep a reproducible, native-size review together.
+    lighting = ("Atmosphere", "Sky", "BloomEffect", "ColorCorrectionEffect",
+                "BlurEffect", "DepthOfFieldEffect", "SunRaysEffect", "PostEffect")
+    sheet = Image.new("RGB", (960, 380))
+    d = ImageDraw.Draw(sheet)
+    for row, (mode, bg) in enumerate((("dark", "#191E28"), ("light", "#F4F6FA"))):
+        d.rectangle((0, row * 190, 960, (row + 1) * 190), fill=bg)
+        fg = "#DCE3F1" if mode == "dark" else "#273247"
+        for n, name in enumerate(lighting):
+            x, y = 20 + (n % 4) * 240, row * 190 + 14 + (n // 4) * 90
+            im = images[f"class/{name}.png"]
+            color = theme["palette"]["light"][mode]
+            for offset, size in ((0,32), (45,24), (82,16), (110,13)):
+                alpha = im.getchannel("A").resize((size,size), Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43), name, font=font, fill=fg)
+    sheet.save(ART / "lighting-review.png")
+    navigation = ("NavigationService", "NavigationArea", "NavigationLink", "NavigationAgent")
+    sheet = Image.new("RGB", (960, 220))
+    d = ImageDraw.Draw(sheet)
+    for row, (mode, bg) in enumerate((("dark", "#191E28"), ("light", "#F4F6FA"))):
+        d.rectangle((0, row * 110, 960, (row + 1) * 110), fill=bg)
+        fg = "#DCE3F1" if mode == "dark" else "#273247"
+        for n, name in enumerate(navigation):
+            x, y = 20 + n * 240, row * 110 + 18
+            im = images[f"class/{name}.png"]
+            color = theme["palette"]["motion"][mode]
+            for offset, size in ((0,32), (45,24), (82,16), (110,13)):
+                alpha = im.getchannel("A").resize((size,size), Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+48), name, font=font, fill=fg)
+    sheet.save(ART / "navigation-review.png")
+    teams = ("Player", "Team", "TeamService")
+    sheet = Image.new("RGB", (720, 220))
+    d = ImageDraw.Draw(sheet)
+    for row, (mode, bg) in enumerate((("dark", "#191E28"), ("light", "#F4F6FA"))):
+        d.rectangle((0, row * 110, 720, (row + 1) * 110), fill=bg)
+        fg = "#DCE3F1" if mode == "dark" else "#273247"
+        for n, name in enumerate(teams):
+            x, y = 20 + n * 240, row * 110 + 18
+            im = images[f"class/{name}.png"]
+            color = theme["palette"][theme["roles"].get(f"class.{name}", theme["defaultRole"])][mode]
+            for offset, size in ((0,32), (45,24), (82,16), (110,13)):
+                alpha = im.getchannel("A").resize((size,size), Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+48), name, font=font, fill=fg)
+    sheet.save(ART / "teams-review.png")
+    additions = ("class.SpringConstraint2D", "class.SpriteAnimator", "content.Shader", "action.NewShader",
+                 "class.ServerScriptService", "class.ClientScriptService", "class.GlobalScriptService")
+    sheet = Image.new("RGB", (1040, 380))
+    d = ImageDraw.Draw(sheet)
+    for row, (mode, bg) in enumerate((("dark", "#191E28"), ("light", "#F4F6FA"))):
+        d.rectangle((0, row * 190, 1040, (row + 1) * 190), fill=bg)
+        fg = "#DCE3F1" if mode == "dark" else "#273247"
+        for n, icon_id in enumerate(additions):
+            x, y = 20 + (n % 4) * 260, row * 190 + 14 + (n // 4) * 90
+            im = images[theme["icons"][icon_id]]
+            color = theme["palette"][theme["roles"][icon_id]][mode]
+            for offset, size in ((0,32), (45,24), (82,16), (110,13)):
+                alpha = im.getchannel("A").resize((size,size), Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43), icon_id.split(".")[1], font=font, fill=fg)
+    sheet.save(ART / "scripts-shaders-2d-review.png")
+    views = ("class.SceneService", "class.CameraTexture", "class.ViewportFrame", "class.SubWorld")
+    sheet = Image.new("RGB", (960, 220))
+    d = ImageDraw.Draw(sheet)
+    for row, (mode, bg) in enumerate((("dark", "#191E28"), ("light", "#F4F6FA"))):
+        d.rectangle((0, row * 110, 960, (row + 1) * 110), fill=bg)
+        fg = "#DCE3F1" if mode == "dark" else "#273247"
+        for n, icon_id in enumerate(views):
+            x, y = 20 + n * 240, row * 110 + 18
+            im = images[theme["icons"][icon_id]]
+            color = theme["palette"][theme["roles"][icon_id]][mode]
+            for offset, size in ((0,32), (45,24), (82,16), (110,13)):
+                alpha = im.getchannel("A").resize((size,size), Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+48), icon_id.split(".")[1], font=font, fill=fg)
+    sheet.save(ART / "scenes-views-review.png")
+    additions = ("UIGradient", "UIStroke", "SaveService", "SaveSlot",
+                 "FoliageLayer", "FoliageMesh", "Water", "VideoPlayer",
+                 "Actor", "EditableImage", "AudioStream", "EditableMesh")
+    sheet = Image.new("RGB", (960, 620))
+    d = ImageDraw.Draw(sheet)
+    for row, (mode, bg) in enumerate((("dark", "#191E28"), ("light", "#F4F6FA"))):
+        d.rectangle((0, row*310, 960, (row+1)*310), fill=bg)
+        fg = "#DCE3F1" if mode == "dark" else "#273247"
+        d.text((20,row*310+10), "ORBIT / 2026-09-27 / 32, 24, 16, 13 px", font=font, fill=fg)
+        for n, name in enumerate(additions):
+            x,y = 20+(n%4)*240, row*310+42+(n//4)*88
+            icon_id = f"class.{name}"
+            im = images[theme["icons"][icon_id]]
+            color = theme["palette"][theme["roles"][icon_id]][mode]
+            for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                alpha = im.getchannel("A").resize((size,size), Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43),name,font=font,fill=fg)
+    sheet.save(ART / "planned-ui-review.png")
+    sheet = Image.new("RGB", (480, 200))
+    d = ImageDraw.Draw(sheet)
+    for row, (mode, bg) in enumerate((("dark", "#191E28"), ("light", "#F4F6FA"))):
+        d.rectangle((0,row*100,480,(row+1)*100),fill=bg)
+        color = theme["palette"][theme["roles"]["action.Tools"]][mode]
+        d.text((20,row*100+12),"Tools / 64, 32, 24, 16, 13 px",font=font,fill=color)
+        for x,size in ((20,64),(120,32),(200,24),(280,16),(360,13)):
+            alpha = images[theme["icons"]["action.Tools"]].getchannel("A").resize((size,size),Image.Resampling.BOX)
+            sheet.paste(Image.new("RGB",(size,size),color),(x,row*100+94-size),alpha)
+    sheet.save(ART / "tools-review.png")
+    revised = ("class.Bone", "class.NetworkService", "class.CameraTexture", "class.SceneService",
+               "class.GlobalScriptService", "class.TextInput", "class.UIGradient", "action.Rotate")
+    sheet = Image.new("RGB", (960, 440))
+    d = ImageDraw.Draw(sheet)
+    for row, (mode, bg) in enumerate((("dark", "#191E28"), ("light", "#F4F6FA"))):
+        d.rectangle((0,row*220,960,(row+1)*220),fill=bg)
+        fg = "#DCE3F1" if mode == "dark" else "#273247"
+        d.text((20,row*220+10),"ORBIT / Readability review / 32, 24, 16, 13 px",font=font,fill=fg)
+        for n,icon_id in enumerate(revised):
+            x,y = 20+(n%4)*240,row*220+42+(n//4)*88
+            color = theme["palette"][theme["roles"].get(icon_id,theme["defaultRole"])][mode]
+            for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size),Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
+    sheet.save(ART / "readability-review.png")
+    additions = ("action.Keyboard", "action.ShapeBall", "action.ShapeCylinder",
+                 "action.ShapeBlock", "content.Folder", "content.FolderFilled")
+    sheet = Image.new("RGB", (900, 440))
+    d = ImageDraw.Draw(sheet)
+    for row, (mode, bg) in enumerate((("dark", "#1F1F1F"), ("light", "#FFFFFF"))):
+        d.rectangle((0,row*220,900,(row+1)*220),fill=bg)
+        fg = "#CCCCCC" if mode == "dark" else "#3B3B3B"
+        d.text((20,row*220+10),"ORBIT / Shapes, keyboard and folders / 32, 24, 16, 13 px",font=font,fill=fg)
+        for n,icon_id in enumerate(additions):
+            x,y = 20+(n%3)*300,row*220+42+(n//3)*88
+            color = theme["palette"][theme["roles"].get(icon_id,theme["defaultRole"])][mode]
+            for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size),Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
+    sheet.save(ART / "shapes-keyboard-folders-review.png")
+    for family, names in TOOLKIT.items():
+        rows = math.ceil(len(names)/4)
+        height = 42+rows*88
+        sheet = Image.new("RGB", (1040,height*2))
+        d = ImageDraw.Draw(sheet)
+        for row,(mode,bg) in enumerate((("dark","#1F1F1F"),("light","#FFFFFF"))):
+            d.rectangle((0,row*height,1040,(row+1)*height),fill=bg)
+            fg = "#CCCCCC" if mode == "dark" else "#3B3B3B"
+            d.text((20,row*height+10),f"ORBIT / {family} / 32, 24, 16, 13 px",font=font,fill=fg)
+            for n,name in enumerate(names):
+                icon_id = name if "." in name else f"class.{name}"
+                x,y = 20+(n%4)*260,row*height+42+(n//4)*88
+                color = theme["palette"][theme["roles"].get(icon_id,theme["defaultRole"])][mode]
+                for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                    alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size),Image.Resampling.BOX)
+                    sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+                d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
+        sheet.save(ART / f"toolkit-{family}-review.png")
+    (ART / "toolkit-review.html").write_text(
+        '<!doctype html><html lang="en"><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Ludwerk / New icons</title><style>'
+        'body{font:16px system-ui;background:#181818;color:#ccc;max-width:1040px;margin:40px auto;padding:20px}'
+        'img{max-width:100%;height:auto}section{margin:36px 0}a{color:#3794ff}</style>'
+        '<h1>Orbit / Toolkit</h1><p>50 IDs · 48 new drawings. Sizes: 32, 24, 16 and 13 px.</p>'
+        '<p>Art prepared for planned features; it does not mean the API is implemented.</p>'
+        + ''.join(f'<section><h2>{html.escape(family)}</h2><img src="toolkit-{family}-review.png" '
+                  f'alt="{html.escape(family)} icons in the light and dark themes"></section>' for family in TOOLKIT)
+        + '<p><a href="index.html">The whole set</a></p></html>',encoding="utf-8")
+    water = ("class.Water", "class.WaterPoint", "class.WaterWave", "action.Eyedropper")
+    sheet = Image.new("RGB",(1040,240))
+    d = ImageDraw.Draw(sheet)
+    for row,(mode,bg) in enumerate((("dark","#1F1F1F"),("light","#FFFFFF"))):
+        d.rectangle((0,row*120,1040,(row+1)*120),fill=bg)
+        fg = "#CCCCCC" if mode == "dark" else "#3B3B3B"
+        d.text((20,row*120+8),"ORBIT / Water and terrain / 32, 24, 16, 13 px",font=font,fill=fg)
+        for n,icon_id in enumerate(water):
+            x,y = 20+n*260,row*120+35
+            color = theme["palette"][theme["roles"].get(icon_id,theme["defaultRole"])][mode]
+            for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size),Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
+    sheet.save(ART / "water-terrain-review.png")
+    additions = ("class.GraphicsService", "action.WaterRiver", "action.WaterLake", "action.WaterPool", "action.WaterOcean")
+    sheet = Image.new("RGB",(1200,240))
+    d = ImageDraw.Draw(sheet)
+    for row,(mode,bg) in enumerate((("dark","#1F1F1F"),("light","#FFFFFF"))):
+        d.rectangle((0,row*120,1200,(row+1)*120),fill=bg)
+        fg = "#CCCCCC" if mode == "dark" else "#3B3B3B"
+        d.text((20,row*120+8),"ORBIT / Graphics and water tools / 32, 24, 16, 13 px",font=font,fill=fg)
+        for n,icon_id in enumerate(additions):
+            x,y = 20+n*240,row*120+35
+            color = theme["palette"][theme["roles"].get(icon_id,theme["defaultRole"])][mode]
+            for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size),Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
+    sheet.save(ART / "graphics-water-review.png")
+    additions = ("class.CryptoService", "class.SoundEffect", "class.AudioService", "class.EqualizerSoundEffect")
+    sheet = Image.new("RGB",(1040,240))
+    d = ImageDraw.Draw(sheet)
+    for row,(mode,bg) in enumerate((("dark","#1F1F1F"),("light","#FFFFFF"))):
+        d.rectangle((0,row*120,1040,(row+1)*120),fill=bg)
+        fg = "#CCCCCC" if mode == "dark" else "#3B3B3B"
+        d.text((20,row*120+8),"ORBIT / Crypto and sound effects / 32, 24, 16, 13 px",font=font,fill=fg)
+        for n,icon_id in enumerate(additions):
+            x,y = 20+n*260,row*120+35
+            color = theme["palette"][theme["roles"].get(icon_id,theme["defaultRole"])][mode]
+            for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size),Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
+    sheet.save(ART / "crypto-sound-review.png")
+    additions = (*EDITOR_ADDITIONS, "class.Water", "class.WaterPoint")
+    section_height = 42+math.ceil(len(additions)/4)*88
+    sheet = Image.new("RGB",(1040,section_height*2))
+    d = ImageDraw.Draw(sheet)
+    for row,(mode,bg) in enumerate((("dark","#1F1F1F"),("light","#FFFFFF"))):
+        d.rectangle((0,row*section_height,1040,(row+1)*section_height),fill=bg)
+        fg = "#CCCCCC" if mode == "dark" else "#3B3B3B"
+        d.text((20,row*section_height+8),"ORBIT / Editor, localization and Water / 32, 24, 16, 13 px",font=font,fill=fg)
+        for n,icon_id in enumerate(additions):
+            x,y = 20+(n%4)*260,row*section_height+35+(n//4)*88
+            color = theme["palette"][theme["roles"].get(icon_id,theme["defaultRole"])][mode]
+            for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size),Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
+    sheet.save(ART / "editor-localization-review.png")
+    additions = ("class.Swarm", "class.NavigationAgent", "class.Team", "class.NavigationService")
+    sheet = Image.new("RGB",(1040,240))
+    d = ImageDraw.Draw(sheet)
+    for row,(mode,bg) in enumerate((("dark","#1F1F1F"),("light","#FFFFFF"))):
+        d.rectangle((0,row*120,1040,(row+1)*120),fill=bg)
+        fg = "#CCCCCC" if mode == "dark" else "#3B3B3B"
+        d.text((20,row*120+8),"ORBIT / Swarm and navigation / 32, 24, 16, 13 px",font=font,fill=fg)
+        for n,icon_id in enumerate(additions):
+            x,y = 20+n*260,row*120+35
+            color = theme["palette"][theme["roles"].get(icon_id,theme["defaultRole"])][mode]
+            for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size),Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
+    sheet.save(ART / "swarm-review.png")
+    additions = ("action.Snap", "action.Rotate", "action.Move", "action.Scale")
+    sheet = Image.new("RGB",(1040,240))
+    d = ImageDraw.Draw(sheet)
+    for row,(mode,bg) in enumerate((("dark","#1F1F1F"),("light","#FFFFFF"))):
+        d.rectangle((0,row*120,1040,(row+1)*120),fill=bg)
+        fg = "#CCCCCC" if mode == "dark" else "#3B3B3B"
+        d.text((20,row*120+8),"ORBIT / Snap and rotation / 32, 24, 16, 13 px",font=font,fill=fg)
+        for n,icon_id in enumerate(additions):
+            x,y = 20+n*260,row*120+35
+            color = theme["palette"][theme["roles"].get(icon_id,theme["defaultRole"])][mode]
+            for offset,size in ((0,32),(45,24),(82,16),(110,13)):
+                alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size),Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB",(size,size),color),(x+offset,y+32-size),alpha)
+            d.text((x,y+43),icon_id.split(".")[1],font=font,fill=fg)
+    sheet.save(ART / "snap-rotation-review.png")
+    services = ("AchievementService", "CloudSaveService", "IdentityService", "LeaderboardService",
+                "SocialService", "StoreService", "XboxService")
+    sheet = Image.new("RGB", (1040, 480))
+    d = ImageDraw.Draw(sheet)
+    for row, (mode, bg) in enumerate((("dark", "#1F1F1F"), ("light", "#FFFFFF"))):
+        d.rectangle((0, row*240, 1040, (row+1)*240), fill=bg)
+        fg = "#CCCCCC" if mode == "dark" else "#3B3B3B"
+        d.text((20, row*240+8), "ORBIT / Platform services / 32, 24, 16, 13 px", font=font, fill=fg)
+        for n, name in enumerate(services):
+            x, y = 20+(n%4)*260, row*240+35+(n//4)*100
+            icon_id = "class."+name
+            color = theme["palette"][theme["roles"][icon_id]][mode]
+            for offset, size in ((0,32), (45,24), (82,16), (110,13)):
+                alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size), Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB", (size,size), color), (x+offset,y+32-size), alpha)
+            d.text((x,y+43), name, font=font, fill=fg)
+    sheet.save(ART / "services-review.png")
+    cards=[]
+    for path in images:
+        cards.append(f'<figure><div><img src="{path.replace(".png", ".svg")}" width="48"><img src="{path.replace(".png", ".svg")}" width="24"><img src="{path.replace(".png", ".svg")}" width="16"></div><figcaption>{html.escape(path[:-4])}</figcaption></figure>')
+    (ART / "index.html").write_text(f'<!doctype html><html lang="en"><meta charset="utf-8"><title>{html.escape(BRAND_NAME)} Orbit icons</title>'
+        '<style>body{font:14px system-ui;background:#191e28;color:#dce3f1;margin:40px}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:16px}figure{margin:0;padding:24px;background:#232a37;border-radius:12px}figure div{display:flex;gap:24px;align-items:center;height:60px}figcaption{margin-top:20px;font-size:12px}button{padding:10px;margin-bottom:24px}body.light{background:#f4f6fa;color:#273247}.light figure{background:white}.light img{filter:brightness(0.25)}</style>'
+        f'<h1>{html.escape(BRAND_NAME)} / Orbit</h1><p>Geometric icons with rounded strokes. 48, 24 and 16 pixels.</p>'
+        '<button onclick="document.body.classList.toggle(\'light\')">Light / dark</button><main>' + ''.join(cards) + '</main></html>',encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()

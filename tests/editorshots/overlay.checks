@@ -1,0 +1,3 @@
+# shot, then what must be so in it: `x,y=r,g,b` at fractions of the frame (imgprobe), within ten of each channel.
+# The overlay's own title bar, which is the one part of it that is not see-through: the panel is drawn.
+overlay 0.16875,0.08=49,49,49

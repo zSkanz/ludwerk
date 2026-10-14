@@ -1,0 +1,8 @@
+# Two first opens at once: opened by two hosts in the same moment by
+# `run_two_first_opens.cmake`, which gives it another project's content.
+
+[project]
+name = "First Open"
+id = "dev.ludwerk.first-open"
+version = "1.0.0"
+engine = "0.1"

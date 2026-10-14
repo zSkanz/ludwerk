@@ -1,0 +1,262 @@
+--!strict
+--[[
+	The manual's information architecture.
+
+	**The section list is the site's table of contents and it is authored, not
+	discovered.** A directory scan would put the pages in whatever order the
+	filesystem returns them, and the order of a manual is most of what a manual
+	is -- somebody reads "Your first world" before "Streaming a large world"
+	because this file says so. It is the same argument `api/defs/init.luau`
+	makes for listing its definition files by hand: adding a page is meant to be
+	a visible edit in a file people review.
+
+	**Shortcuts exist so that a page does not have to know how deep it sits.**
+	A manual page links to another with `manual:section/page`, to a member with
+	`api:Class.Member`, and to the few fixed destinations below by name. All
+	three are resolved at generation time and a target that does not exist fails
+	the run, so a page cannot go quietly stale against an engine that renamed
+	something.
+]]
+
+export type Page = {
+    --- File name without extension, under the section's directory, in both
+    --- `docs/manual/` and the emitted site.
+    Slug: string,
+    Title: string,
+}
+
+export type Section = {
+    Slug: string,
+    Title: string,
+    --- One line, shown on the section index and the landing page.
+    Summary: string,
+    Pages: { Page },
+}
+
+local Sections: { Section } = {
+    {
+        Slug = "get-started",
+        Title = "Get started",
+        Summary = "Install the toolchain, make a project, and get a world on the screen.",
+        Pages = {
+            { Slug = "introduction", Title = "Introduction" },
+            { Slug = "install", Title = "Install and toolchain" },
+            { Slug = "first-world", Title = "Your first world" },
+            { Slug = "project-anatomy", Title = "Anatomy of a project" },
+            { Slug = "cli", Title = "The ludwerk CLI" },
+            { Slug = "editor", Title = "The visual editor" },
+        },
+    },
+    {
+        Slug = "concepts",
+        Title = "Core concepts",
+        Summary = "The model every script is written against: the tree, the frame, signals and time.",
+        Pages = {
+            { Slug = "instance-tree", Title = "The Instance tree" },
+            { Slug = "services", Title = "Services" },
+            { Slug = "properties", Title = "Properties, attributes and tags" },
+            { Slug = "signals", Title = "Signals and connections" },
+            { Slug = "task", Title = "task, and asking for time" },
+            { Slug = "frame", Title = "The frame, phase by phase" },
+            { Slug = "determinism", Title = "Determinism" },
+            { Slug = "scripts", Title = "Scripts, modules and requires" },
+            { Slug = "datatypes", Title = "Datatypes and units" },
+            { Slug = "sandbox", Title = "What a script may do" },
+        },
+    },
+    {
+        Slug = "world",
+        Title = "Building a world",
+        Summary = "Parts, materials, transforms, meshes, prefabs, terrain, water, blocks, and the scene the game starts in.",
+        Pages = {
+            { Slug = "parts", Title = "Parts and solids" },
+            { Slug = "materials", Title = "Materials" },
+            { Slug = "transforms", Title = "Transforms, pivots and units" },
+            { Slug = "meshes", Title = "Meshes and models" },
+            { Slug = "prefabs", Title = "Prefabs" },
+            { Slug = "terrain", Title = "Terrain" },
+            { Slug = "wind", Title = "Wind" },
+            { Slug = "foliage", Title = "Foliage" },
+            { Slug = "water", Title = "Water" },
+            { Slug = "blocks", Title = "Block worlds" },
+            { Slug = "2d", Title = "2D games" },
+            { Slug = "navigation", Title = "Navigation" },
+            { Slug = "scenes", Title = "Scenes: the world as data" },
+        },
+    },
+    {
+        Slug = "rendering",
+        Title = "Rendering and lighting",
+        Summary = "The camera, the sun, the sky and the air, the lights, particles and decals, and the post effects.",
+        Pages = {
+            { Slug = "camera", Title = "The camera" },
+            { Slug = "lighting", Title = "Lighting and the sky" },
+            { Slug = "atmosphere-and-sky", Title = "Atmosphere, sky and clouds" },
+            { Slug = "shadows", Title = "Shadows" },
+            { Slug = "lights", Title = "Point and spot lights" },
+            { Slug = "indirect-light", Title = "Indirect light: what a room reflects and gives back" },
+            { Slug = "particles-and-decals", Title = "Particles and decals" },
+            { Slug = "effects", Title = "Highlights, beams and trails" },
+            { Slug = "post", Title = "Post effects" },
+            { Slug = "surface-shaders", Title = "Surface shaders" },
+            { Slug = "material-graphs", Title = "Material graphs" },
+            { Slug = "views", Title = "Views: cameras on screens" },
+            { Slug = "settings", Title = "Graphics and display settings" },
+            { Slug = "quality", Title = "Graphics quality settings" },
+        },
+    },
+    {
+        Slug = "physics",
+        Title = "Physics",
+        Summary = "Rigid bodies, collisions, queries, joints, movers, and a character that walks.",
+        Pages = {
+            { Slug = "bodies", Title = "Rigid bodies" },
+            { Slug = "collisions", Title = "Collisions and contact" },
+            { Slug = "queries", Title = "Raycasts and queries" },
+            { Slug = "joints", Title = "Welds and constraints" },
+            { Slug = "movers", Title = "Movers and powered joints" },
+            { Slug = "character", Title = "CharacterBody" },
+            { Slug = "ragdoll", Title = "Ragdolls" },
+        },
+    },
+    {
+        Slug = "input",
+        Title = "Input",
+        Summary = "The Input Action System: what the player did, not which key they pressed.",
+        Pages = {
+            { Slug = "actions", Title = "Actions, bindings and contexts" },
+            { Slug = "rebinding", Title = "Rebinding and prompts" },
+            { Slug = "interactions", Title = "Clicks and proximity prompts" },
+            { Slug = "raw", Title = "Raw input, and when to use it" },
+            { Slug = "vibration", Title = "Vibration" },
+        },
+    },
+    {
+        Slug = "ui",
+        Title = "User interface",
+        Summary = "The screen tree, the layout arithmetic, grids and pages, text, images, interaction and a gamepad.",
+        Pages = {
+            { Slug = "tree", Title = "The UI tree" },
+            { Slug = "layout", Title = "Layout with UDim2" },
+            { Slug = "layouts", Title = "Grids, pages and flex" },
+            { Slug = "adapting", Title = "Fitting any screen" },
+            { Slug = "text-and-images", Title = "Text and images" },
+            { Slug = "gradients-and-strokes", Title = "Gradients and strokes" },
+            { Slug = "interaction", Title = "Buttons and interaction" },
+            { Slug = "selection", Title = "A gamepad and the arrow keys" },
+            { Slug = "text-input", Title = "Text input" },
+            { Slug = "world-space", Title = "UI in the world" },
+        },
+    },
+    {
+        Slug = "audio",
+        Title = "Audio",
+        Summary = "Playing a sound, placing it in the world, mixing what comes out, and voices in many languages.",
+        Pages = {
+            { Slug = "sounds", Title = "Sounds" },
+            { Slug = "mixing", Title = "Groups, mixing and the listener" },
+            { Slug = "dubbing", Title = "Dubbing: voices, languages and subtitles" },
+        },
+    },
+    {
+        Slug = "animation",
+        Title = "Animation",
+        Summary = "Tweening a property, and playing a skinned mesh's clips.",
+        Pages = {
+            { Slug = "tweens", Title = "Tweens" },
+            { Slug = "skeletal", Title = "Skeletal animation" },
+            { Slug = "graphs", Title = "Animation graphs" },
+            { Slug = "graph-panel", Title = "Drawing an animation graph" },
+            { Slug = "retargeting", Title = "Retargeting: one clip on many bodies" },
+            { Slug = "reach-and-look", Title = "Reaching, looking and feet" },
+            { Slug = "secondary-motion", Title = "Capes, tails and hair" },
+            { Slug = "morph-targets", Title = "Faces and shape keys" },
+            { Slug = "wearing-and-holding", Title = "Wearing and holding" },
+            { Slug = "cinematics", Title = "Cinematics: a sequence, and what plays it" },
+        },
+    },
+    {
+        Slug = "assets",
+        Title = "Assets and streaming",
+        Summary = "Where content comes from, and how a world larger than memory is played.",
+        Pages = {
+            { Slug = "content", Title = "Content and asset URNs" },
+            { Slug = "pipeline", Title = "The asset pipeline" },
+            { Slug = "streaming", Title = "Streaming a large world" },
+            { Slug = "floating-origin", Title = "Floating origin" },
+        },
+    },
+    {
+        Slug = "guides",
+        Title = "Guides",
+        Summary = "Hot reload, testing, localization, the debug overlay, shipping, and multiplayer.",
+        Pages = {
+            { Slug = "hot-reload", Title = "Hot reload" },
+            { Slug = "testing", Title = "Testing" },
+            { Slug = "i18n", Title = "Localization" },
+            { Slug = "debug-overlay", Title = "The debug overlay" },
+            { Slug = "shipping", Title = "Shipping a game" },
+            { Slug = "platform-services", Title = "Platform services" },
+            { Slug = "multiplayer", Title = "Multiplayer" },
+            { Slug = "local-players", Title = "Several players at one screen" },
+            { Slug = "scenes", Title = "Scenes at run time" },
+            { Slug = "saves", Title = "Saving the game" },
+            { Slug = "backend", Title = "Talking to a backend" },
+        },
+    },
+    {
+        Slug = "why",
+        Title = "Why it works this way",
+        Summary = "The decisions a person will trip over, each with the reasoning that settled it.",
+        Pages = {
+            { Slug = "deferred-signals", Title = "Signals are deferred-only" },
+            { Slug = "fixed-tick", Title = "The tick is fixed" },
+            { Slug = "vector", Title = "Vector3 is the Luau vector" },
+            { Slug = "reaching-children", Title = "Reaching a child" },
+            { Slug = "world-is-data", Title = "The world is data, scripts are behaviour" },
+            { Slug = "casing", Title = "Objects are PascalCase, namespaces are camelCase" },
+            { Slug = "graphics-settings", Title = "Graphics settings belong to the player" },
+            { Slug = "input-model", Title = "There is one input model" },
+        },
+    },
+    {
+        Slug = "migrating",
+        Title = "Migrating a game",
+        Summary = "What transfers, what is spelled differently, and what is deliberately absent.",
+        Pages = {
+            { Slug = "migration", Title = "The migration guide" },
+            { Slug = "divergences", Title = "Every deliberate divergence" },
+            { Slug = "not-here", Title = "What is not here" },
+        },
+    },
+}
+
+--- Root-relative page path for a manual page.
+local function pagePath(section: string, slug: string): string
+    return `manual/{section}/{slug}.html`
+end
+
+local function sectionPath(section: string): string
+    return `manual/{section}/index.html`
+end
+
+--- Targets a manual page may link to with `[text](target)`, beyond another
+--- manual page and an `api:` reference. Keeps a hand-authored page from having
+--- to know how deep in the tree it sits.
+--- Every key carries a colon for the same reason `api:` and `manual:` do: the
+--- documentation gate resolves a Markdown link target as a path unless it holds
+--- one, so a bare `reference` would send the gate looking for a file of that
+--- name beside the page.
+local Shortcuts: { [string]: string } = {
+    ["site:reference"] = "reference/index.html",
+    ["site:hierarchy"] = "reference/hierarchy.html",
+    ["site:globals"] = "reference/globals.html",
+    ["site:home"] = "index.html",
+}
+
+return {
+    Sections = Sections,
+    Shortcuts = Shortcuts,
+    pagePath = pagePath,
+    sectionPath = sectionPath,
+}

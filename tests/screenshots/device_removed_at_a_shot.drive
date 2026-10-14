@@ -1,0 +1,6 @@
+# A picture asked for on the frame after the device is taken away
+# (`--remove-device=30`): the read that fails is the device's loss.
+wait 30
+shot taken
+wait 6
+quit

@@ -1,0 +1,50 @@
+# A material graph in the Graph panel (ADR 0211), on a copy of
+# examples/23-surfaces: the dissolve made again as nodes, opened by its name;
+# a link that cannot be made, tried; the list a node is added from, typed
+# into; and a line of an expression typed wrong, saved and compiled, so the
+# compiler's error is on its node. The docks are pulled back first, so the
+# canvas has room to be read. Coordinates are a 1600 by 900 frame's.
+wait 60
+drag 700 607 700 820
+wait 6
+drag 1247 300 1480 300
+wait 6
+key ctrl+p
+wait 8
+text dissolve-graph.surfacegraph
+wait 10
+key enter
+wait 20
+idle
+shot surface-open
+# Base's colour, three wide, into the surface's alpha, which is a number.
+drag 877 350 1049 437
+wait 4
+shot surface-refused
+# A right press where nothing is: the list, and two letters typed into it.
+rclick 500 700
+wait 6
+text no
+wait 6
+shot surface-list
+key escape
+wait 4
+# The expression chosen, its line typed over, the graph saved: `idle` waits
+# for the compiler, however long this machine's takes.
+click 800 481
+wait 4
+dbl 1380 314
+wait 4
+key ctrl+a
+wait 2
+text a * nothingCalledThis
+wait 4
+key enter
+wait 6
+click 600 720
+wait 4
+key ctrl+s
+idle
+wait 6
+shot surface-error
+quit

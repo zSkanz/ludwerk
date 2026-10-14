@@ -1,0 +1,44 @@
+# The project file (api-design.md §4).
+
+[project]
+name = "{{name}}"
+# Reverse-DNS, so two games with the same name are still two games.
+id = "dev.local.{{id}}"
+version = "0.1.0"
+# The world the project starts with, relative to `content/`. Its scripts are
+# in it too, inside the instances they belong to (ADR 0092).
+scene = "scenes/main.scene.json"
+# The game's own icon: ONE square PNG, 1024 px is best, and `ludwerk build`
+# makes every size each platform needs. Without it a built game wears the
+# engine's.
+# icon = "assets/icon.png"
+
+[window]
+title = "{{name}}"
+size = [1280, 720]
+
+[display]
+# How fast frames are made (ADR 0147). A frame waits for the display unless
+# vsync is off; max_frame_rate caps it, 0 for no cap; and a window nobody is
+# looking at is drawn background_frame_rate times a second, 0 for no throttle.
+# vsync = true
+# max_frame_rate = 0
+# background_frame_rate = 10
+
+[graphics]
+# The quality preset (ADR 0044): "low", "medium", "high" or "ultra". A key
+# below overrides the preset, and `ludwerk run --quality=...` overrides both.
+# Left unset, it is "high" on a desktop and "medium" on a phone, which runs a
+# level lower (ADR 0147); naming one here names it for every platform, and
+# `[graphics.android]` below names one for phones alone.
+# quality = "high"
+# render_scale = 1.0        # 0.5 to 1.0; the world renders at this fraction, the UI does not
+# shadow_distance = 120.0   # metres
+# bloom = true
+# ambient_occlusion = true
+
+# What a phone runs at, over `[graphics]` (ADR 0147). Unset, a phone is "medium"
+# and renders the world under a cap; the manual's quality page has the keys.
+# [graphics.android]
+# quality = "medium"
+# render_cap = 900

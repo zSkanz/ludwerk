@@ -1,0 +1,10 @@
+# The two-process sequence gate's game (ADR 0204, protocol 47): a server that
+# plays sequences and a joiner that sees them. `run_cutscene.cmake` copies it
+# and runs both ends.
+
+[project]
+name = "Netcode Cutscene"
+id = "dev.ludwerk.netcode-cutscene"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"

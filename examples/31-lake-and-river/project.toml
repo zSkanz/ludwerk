@@ -1,0 +1,14 @@
+# A lake and the river that feeds it (ADR 0118): two `Water`s over terrain, one
+# a box and one a ribbon along points, and logs the river carries down into
+# the lake -- floated and carried by the engine, not by the script.
+
+[project]
+name = "Ludwerk Lake and River"
+id = "dev.ludwerk.lake-and-river"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Lake and River"
+width = 1280
+height = 720

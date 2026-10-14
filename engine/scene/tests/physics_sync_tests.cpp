@@ -1,0 +1,2739 @@
+// The mirror, tested against a fake simulation.
+//
+// The point of a seam is that the thing above it can be tested without the
+// thing below, and this is that test: `FakePhysics` records what it was asked
+// to do and answers with whatever the case wants it to. What is under test is
+// the mirror's own logic -- when a body is created, when it is rebuilt rather
+// than adjusted, which direction a write crossed in, and how a contact becomes
+// a deferred fact -- none of which needs a solver, and all of which a solver
+// would make slower and less exact to assert.
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <doctest/doctest.h>
+#include <optional>
+#include <set>
+#include <string>
+#include <vector>
+
+#include "engine/jobs/jobs.h"
+#include "engine/scene/physics_sync.h"
+#include "engine/scene/world.h"
+#include "scene_fixture.h"
+
+using namespace engine;
+using namespace engine::scene;
+
+namespace {
+
+// Records every call and answers from state the test sets. Deliberately not a
+// mini-solver: a fake that simulated would be a second implementation to keep
+// correct, and the case that wants a solver is `engine/physics`'s own suite.
+class FakePhysics final : public physics::IPhysics3D
+{
+public:
+    struct Created
+    {
+        physics::BodyHandle handle;
+        physics::BodyDesc desc;
+        // **A COPY of the hull, because the span is not ours to keep.**
+        // `ShapeDesc::points` is documented as outliving the call and no
+        // longer, and the vector behind it belongs to the mirror -- which
+        // replaces it whenever a mesh loads. Two cases here used to read
+        // `desc.shape.points` after the fact, which happened to work only
+        // because nothing had replaced it yet.
+        std::vector<core::Vec3> points;
+        // The same, for a height field's samples and a mesh's triangles.
+        std::vector<float> heights;
+        core::usize indexCount = 0;
+    };
+
+    [[nodiscard]] physics::WorldHandle createWorld(const physics::WorldDesc&) override
+    {
+        return physics::WorldHandle{0, 1};
+    }
+    void destroyWorld(physics::WorldHandle) override { worldDestroyed = true; }
+    void setGravity(physics::WorldHandle, core::Vec3 value) override { gravity = value; }
+
+    // Recorded rather than acted on: what these cases assert is that the mirror
+    // pushes the origin down exactly once per change, which a real solver would
+    // hide behind a thousand body moves.
+    void setWorldOrigin(physics::WorldHandle, core::DVec3 value) override
+    {
+        origin = value;
+        originPushes += 1;
+    }
+
+    [[nodiscard]] core::DVec3 worldOrigin(physics::WorldHandle) const override { return origin; }
+
+    [[nodiscard]] physics::BodyHandle createBody(physics::WorldHandle, const physics::BodyDesc& desc) override
+    {
+        // **The span is not kept**, for the reason the update below gives: its
+        // documented lifetime is this call, and the vector behind it belongs to
+        // whoever is mirroring.
+        physics::BodyDesc kept = desc;
+        std::vector<core::Vec3> points(desc.shape.points.begin(), desc.shape.points.end());
+        std::vector<float> heights(desc.shape.heights.begin(), desc.shape.heights.end());
+        const core::usize indexCount = desc.shape.indices.size();
+        kept.shape.points = {};
+        kept.shape.heights = {};
+        kept.shape.indices = {};
+        if (refuseCreates) {
+            // The attempt is still recorded, because what a case wants to count
+            // is how many times the mirror ASKED.
+            created.push_back(Created{physics::BodyHandle{}, kept, std::move(points), std::move(heights), indexCount});
+            return {};
+        }
+        const physics::BodyHandle handle{nextBody++, 1};
+        created.push_back(Created{handle, kept, std::move(points), std::move(heights), indexCount});
+        live.push_back(handle);
+        calls.emplace_back("createBody", handle.index);
+        return handle;
+    }
+
+    // Set by a case that wants to see what the mirror does when the backend
+    // will not make a body -- a degenerate hull is the real one.
+    bool refuseCreates = false;
+
+    void destroyBody(physics::WorldHandle, physics::BodyHandle handle) override
+    {
+        destroyed.push_back(handle);
+        calls.emplace_back("destroyBody", handle.index);
+        live.erase(std::remove(live.begin(), live.end(), handle), live.end());
+    }
+    [[nodiscard]] core::u64 shapesBuilt(physics::WorldHandle) const override { return 0; }
+
+    // --- Constraints ----------------------------------------------------------
+    //
+    // Recorded, and recorded into `calls` as well as into their own list: the
+    // contract this mirror has to keep is an ORDER -- constraints retired before
+    // the bodies they hold -- and a per-kind list cannot show an interleaving.
+
+    struct MadeConstraint
+    {
+        physics::ConstraintHandle handle;
+        physics::ConstraintDesc desc;
+    };
+
+    [[nodiscard]] physics::ConstraintHandle createConstraint(physics::WorldHandle,
+                                                             const physics::ConstraintDesc& desc) override
+    {
+        const physics::ConstraintHandle handle{nextConstraint++, 1};
+        constraints.push_back(MadeConstraint{handle, desc});
+        liveConstraints.push_back(handle);
+        calls.emplace_back("createConstraint", handle.index);
+        return handle;
+    }
+
+    void destroyConstraint(physics::WorldHandle, physics::ConstraintHandle handle) override
+    {
+        constraintsDestroyed.push_back(handle);
+        calls.emplace_back("destroyConstraint", handle.index);
+        liveConstraints.erase(std::remove(liveConstraints.begin(), liveConstraints.end(), handle),
+                              liveConstraints.end());
+    }
+
+    void setConstraintEnabled(physics::WorldHandle, physics::ConstraintHandle handle, bool enabled) override
+    {
+        constraintEnables.emplace_back(handle, enabled);
+    }
+
+    void updateConstraint(physics::WorldHandle, physics::ConstraintHandle handle,
+                          const physics::ConstraintDesc& desc) override
+    {
+        constraintsUpdated.push_back(MadeConstraint{handle, desc});
+    }
+
+    [[nodiscard]] physics::ConstraintState constraintState(physics::WorldHandle,
+                                                           physics::ConstraintHandle) const override
+    {
+        return {};
+    }
+
+    void setBodyTransform(physics::WorldHandle, physics::BodyHandle handle, const core::CFrameD& transform) override
+    {
+        transforms.emplace_back(handle, transform);
+    }
+
+    void setBodyVelocity(physics::WorldHandle, physics::BodyHandle, core::Vec3, core::Vec3) override {}
+
+    void applyImpulse(physics::WorldHandle, physics::BodyHandle handle, core::Vec3 impulse) override
+    {
+        impulses.emplace_back(handle, impulse);
+    }
+
+    // **The span is not kept**, because the caller's contract says it may not
+    // outlive the call and this fake used to store the whole desc. A test that
+    // read `rebuilt.back().desc.shape.points` afterwards was reading a span into
+    // whatever the mirror had at the time.
+    bool updateBody(physics::WorldHandle, physics::BodyHandle handle, const physics::BodyDesc& desc) override
+    {
+        physics::BodyDesc kept = desc;
+        std::vector<core::Vec3> points(desc.shape.points.begin(), desc.shape.points.end());
+        kept.shape.points = {};
+        rebuilt.push_back(Created{handle, kept, std::move(points), {}, 0});
+        return !refuseUpdates;
+    }
+
+    // **Recorded and refused** (ADR 0066). The mirror has no caller for this
+    // yet -- terrain reaches it directly rather than through a `BasePart` -- so
+    // what this override is for is being present: `IPhysics3D` is the seam a
+    // second backend implements, and a fake that silently stopped compiling
+    // when it grew is the fake nobody updates.
+    bool updateHeightField(physics::WorldHandle, physics::BodyHandle handle, u32 x, u32 z, u32 sizeX, u32 sizeZ,
+                           std::span<const float> heights) override
+    {
+        heightEdits.push_back(HeightEdit{handle, x, z, sizeX, sizeZ, heights.size()});
+        return true;
+    }
+
+    struct HeightEdit
+    {
+        physics::BodyHandle body;
+        u32 x = 0;
+        u32 z = 0;
+        u32 sizeX = 0;
+        u32 sizeZ = 0;
+        core::usize samples = 0;
+    };
+    std::vector<HeightEdit> heightEdits;
+
+    // Set by a case that wants to see what the mirror does when the backend
+    // will not take a description -- a degenerate hull is the real one.
+    bool refuseUpdates = false;
+
+    void setBodyMaterial(physics::WorldHandle, physics::BodyHandle, f32 friction, f32 restitution) override
+    {
+        materials.emplace_back(friction, restitution);
+    }
+
+    void setBodyFlags(physics::WorldHandle, physics::BodyHandle, bool collidable, bool queryable) override
+    {
+        flags.emplace_back(collidable, queryable);
+    }
+
+    void setBodyGroup(physics::WorldHandle, physics::BodyHandle, physics::CollisionGroup group) override
+    {
+        groups.push_back(group);
+    }
+
+    [[nodiscard]] physics::BodyState bodyState(physics::WorldHandle, physics::BodyHandle) const override { return {}; }
+
+    void collectActiveBodies(physics::WorldHandle, std::vector<physics::ActiveBody>& out) const override
+    {
+        out.insert(out.end(), active.begin(), active.end());
+    }
+
+    void step(physics::WorldHandle, f32 dt) override
+    {
+        ++steps;
+        lastDt = dt;
+    }
+
+    [[nodiscard]] std::span<const physics::ContactEvent> drainContacts(physics::WorldHandle) override
+    {
+        return contacts;
+    }
+
+    [[nodiscard]] physics::StepTimings lastStepTimings(physics::WorldHandle) const override { return {}; }
+
+    [[nodiscard]] bool raycast(physics::WorldHandle, const physics::RayD&, const physics::QueryFilter&,
+                               physics::RayHit&) const override
+    {
+        return false;
+    }
+
+    [[nodiscard]] bool spherecast(physics::WorldHandle, const physics::RayD&, f32, const physics::QueryFilter&,
+                                  physics::RayHit&) const override
+    {
+        return false;
+    }
+
+    void overlapBox(physics::WorldHandle, const core::CFrameD&, core::Vec3, const physics::QueryFilter&,
+                    std::vector<u64>&) const override
+    {}
+
+    [[nodiscard]] physics::CharacterHandle createCharacter(physics::WorldHandle,
+                                                           const physics::CharacterDesc& desc) override
+    {
+        characters.push_back(desc);
+        return physics::CharacterHandle{nextCharacter++, 1};
+    }
+
+    void destroyCharacter(physics::WorldHandle, physics::CharacterHandle) override { ++charactersDestroyed; }
+
+    void moveCharacter(physics::WorldHandle, physics::CharacterHandle, core::Vec3 velocity, f32, bool) override
+    {
+        moves.push_back(velocity);
+    }
+
+    void setCharacterTransform(physics::WorldHandle, physics::CharacterHandle, const core::CFrameD& transform) override
+    {
+        characterTransforms.push_back(transform);
+    }
+    void nudgeCharacter(physics::WorldHandle, physics::CharacterHandle, const core::CFrameD&) override {}
+    void setCharacterStandIn(physics::WorldHandle, physics::CharacterHandle, const core::CFrameD* where) override
+    {
+        standIns.push_back(where != nullptr ? std::optional<core::CFrameD>(*where) : std::nullopt);
+    }
+    std::vector<std::optional<core::CFrameD>> standIns;
+
+    [[nodiscard]] physics::CharacterState characterState(physics::WorldHandle, physics::CharacterHandle) const override
+    {
+        return characterAnswer;
+    }
+
+    [[nodiscard]] physics::CollisionGroup registerCollisionGroup(physics::WorldHandle, std::string_view name) override
+    {
+        registeredGroups.emplace_back(name);
+        return static_cast<physics::CollisionGroup>(registeredGroups.size() - 1);
+    }
+
+    [[nodiscard]] physics::CollisionGroup findCollisionGroup(physics::WorldHandle, std::string_view) const override
+    {
+        return 0;
+    }
+
+    void setGroupsCollidable(physics::WorldHandle, physics::CollisionGroup, physics::CollisionGroup, bool) override {}
+
+    [[nodiscard]] bool groupsCollidable(physics::WorldHandle, physics::CollisionGroup,
+                                        physics::CollisionGroup) const override
+    {
+        return true;
+    }
+
+    void collectCollisionGroups(physics::WorldHandle, std::vector<std::string_view>&) const override {}
+
+    [[nodiscard]] bool saveState(physics::WorldHandle, std::vector<u8>&) const override { return false; }
+    [[nodiscard]] bool restoreState(physics::WorldHandle, std::span<const u8>) override { return false; }
+    [[nodiscard]] bool saveIsland(physics::WorldHandle, std::span<const physics::BodyHandle>,
+                                  std::span<const physics::CharacterHandle>, std::vector<u8>&) const override
+    {
+        return false;
+    }
+    [[nodiscard]] bool restoreIsland(physics::WorldHandle, std::span<const u8>) override { return false; }
+    void debugDraw(physics::WorldHandle, physics::IDebugDrawSink&) override {}
+
+    u32 nextBody = 1;
+    u32 nextCharacter = 1;
+    u32 nextConstraint = 1;
+    int steps = 0;
+    f32 lastDt = 0.0f;
+    bool worldDestroyed = false;
+    int charactersDestroyed = 0;
+    core::Vec3 gravity{0.0f, 0.0f, 0.0f};
+    core::DVec3 origin{};
+    int originPushes = 0;
+
+    std::vector<Created> created;
+    std::vector<Created> rebuilt;
+    std::vector<MadeConstraint> constraints;
+    std::vector<MadeConstraint> constraintsUpdated;
+    std::vector<physics::ConstraintHandle> constraintsDestroyed;
+    std::vector<physics::ConstraintHandle> liveConstraints;
+    std::vector<std::pair<physics::ConstraintHandle, bool>> constraintEnables;
+    // Every lifecycle call in the order it happened, which is the only way to
+    // assert an interleaving -- "constraints retired before bodies" is a claim
+    // about sequence and a per-kind list cannot make it.
+    std::vector<std::pair<std::string, u32>> calls;
+    std::vector<physics::BodyHandle> destroyed;
+    std::vector<physics::BodyHandle> live;
+    std::vector<std::pair<physics::BodyHandle, core::CFrameD>> transforms;
+    std::vector<std::pair<physics::BodyHandle, core::Vec3>> impulses;
+    std::vector<std::pair<f32, f32>> materials;
+    std::vector<std::pair<bool, bool>> flags;
+    std::vector<physics::CollisionGroup> groups;
+    std::vector<std::string> registeredGroups;
+    std::vector<physics::CharacterDesc> characters;
+    std::vector<core::Vec3> moves;
+
+    std::vector<physics::ActiveBody> active;
+    std::vector<physics::ContactEvent> contacts;
+    physics::CharacterState characterAnswer;
+    // Where a character was put by somebody other than its controller.
+    std::vector<core::CFrameD> characterTransforms;
+};
+
+// The scene fixture's hierarchy predates the physics components, and its own
+// storage hook attaches only `PartComponent`. Adding the rigid body here rather
+// than teaching the fixture keeps the fixture describing the kernel's surface it was
+// written for.
+struct Mirror
+{
+    testing::Fixture fixture;
+    FakePhysics backend;
+    core::InstanceId workspace;
+    PhysicsSync sync{fixture.world, backend};
+
+    Mirror()
+    {
+        workspace = fixture.folder("Workspace");
+        sync.setWorkspace(workspace);
+    }
+
+    [[nodiscard]] core::InstanceId part(std::string_view name, core::DVec3 at = {})
+    {
+        const core::InstanceId id = fixture.part(name);
+        PartComponent* component = fixture.world.parts().find(id);
+        component->cframe.position = at;
+        RigidBodyComponent body;
+        body.collisionGroup = fixture.world.collisionGroups().nameAt(CollisionGroups::kDefault);
+        fixture.world.rigidBodies().add(id, body);
+        REQUIRE(fixture.world.setParent(id, workspace) == std::nullopt);
+        return id;
+    }
+
+    [[nodiscard]] RigidBodyComponent& body(core::InstanceId id) { return *fixture.world.rigidBodies().find(id); }
+    [[nodiscard]] PartComponent& transform(core::InstanceId id) { return *fixture.world.parts().find(id); }
+
+    void step() { sync.step(1.0 / 60.0); }
+};
+
+} // namespace
+
+TEST_CASE("a part under Workspace becomes a body and a part outside it does not")
+{
+    Mirror mirror;
+    const core::InstanceId inside = mirror.part("Inside");
+
+    // Created with a rigid body but never parented: in the tree's terms it is
+    // not in the world, and the mirror's contract is that the tree decides.
+    const core::InstanceId outside = mirror.fixture.part("Outside");
+    mirror.fixture.world.rigidBodies().add(outside, RigidBodyComponent{});
+
+    mirror.step();
+
+    CHECK(mirror.backend.created.size() == 1);
+    CHECK(mirror.backend.created[0].desc.userData != 0);
+    CHECK(mirror.sync.instanceOf(mirror.backend.created[0].desc.userData) == inside);
+    CHECK(mirror.sync.bodyCount() == 1);
+}
+
+TEST_CASE("a part taken out of the world loses its body")
+{
+    Mirror mirror;
+    const core::InstanceId id = mirror.part("Crate");
+    mirror.step();
+    REQUIRE(mirror.backend.created.size() == 1);
+
+    REQUIRE(mirror.fixture.world.setParent(id, core::InstanceId{}) == std::nullopt);
+    mirror.step();
+
+    CHECK(mirror.backend.destroyed.size() == 1);
+    CHECK(mirror.sync.bodyCount() == 0);
+
+    SUBCASE("and gets a new one when it comes back")
+    {
+        REQUIRE(mirror.fixture.world.setParent(id, mirror.workspace) == std::nullopt);
+        mirror.step();
+        CHECK(mirror.backend.created.size() == 2);
+    }
+}
+
+TEST_CASE("a destroyed part loses its body")
+{
+    Mirror mirror;
+    const core::InstanceId id = mirror.part("Crate");
+    mirror.step();
+
+    REQUIRE(mirror.fixture.world.destroy(id));
+    mirror.fixture.world.retireDestroyed();
+    mirror.step();
+
+    CHECK(mirror.backend.destroyed.size() == 1);
+    CHECK(mirror.sync.bodyCount() == 0);
+}
+
+TEST_CASE("Anchored decides the motion type, and changing it rebuilds")
+{
+    Mirror mirror;
+    const core::InstanceId id = mirror.part("Floor");
+    mirror.body(id).anchored = true;
+    mirror.step();
+
+    REQUIRE(mirror.backend.created.size() == 1);
+    CHECK(mirror.backend.created[0].desc.motion == physics::MotionType::Static);
+
+    mirror.body(id).anchored = false;
+    mirror.step();
+
+    // A rebuild, not a setter: an anchored part is a different kind of body,
+    // not a very heavy one.
+    REQUIRE(mirror.backend.rebuilt.size() == 1);
+    CHECK(mirror.backend.rebuilt[0].desc.motion == physics::MotionType::Dynamic);
+    CHECK(mirror.backend.created.size() == 1);
+}
+
+TEST_CASE("friction and restitution are adjusted rather than rebuilt")
+{
+    Mirror mirror;
+    const core::InstanceId id = mirror.part("Ice");
+    mirror.step();
+
+    mirror.body(id).friction = 0.01f;
+    mirror.body(id).restitution = 0.9f;
+    mirror.step();
+
+    REQUIRE(mirror.backend.materials.size() == 1);
+    CHECK(mirror.backend.materials[0].first == doctest::Approx(0.01));
+    CHECK(mirror.backend.materials[0].second == doctest::Approx(0.9));
+    CHECK(mirror.backend.rebuilt.empty());
+}
+
+TEST_CASE("a script's CFrame write reaches the body and the mirror's own does not")
+{
+    Mirror mirror;
+    const core::InstanceId id = mirror.part("Crate");
+    mirror.step();
+    CHECK(mirror.backend.transforms.empty());
+
+    SUBCASE("a script write is pushed down")
+    {
+        mirror.transform(id).cframe.position = core::DVec3{5.0, 0.0, 0.0};
+        mirror.step();
+        REQUIRE(mirror.backend.transforms.size() == 1);
+        CHECK(mirror.backend.transforms[0].second.position.x == doctest::Approx(5.0));
+    }
+
+    SUBCASE("the mirror's own writeback is not pushed back down")
+    {
+        // This is the loop the `written` snapshot exists to break: the mirror
+        // writes a position into the component, and the next tick must not read
+        // it back as a script's teleport.
+        physics::ActiveBody moved;
+        moved.userData = mirror.sync.userDataOf(id);
+        moved.body = mirror.backend.created[0].handle;
+        moved.state.transform.position = core::DVec3{0.0, 3.0, 0.0};
+        moved.state.active = true;
+        mirror.backend.active.push_back(moved);
+
+        mirror.step();
+        CHECK(mirror.transform(id).cframe.position.y == doctest::Approx(3.0));
+
+        mirror.step();
+        CHECK(mirror.backend.transforms.empty());
+    }
+}
+
+TEST_CASE("ApplyImpulse is queued and drained exactly once")
+{
+    Mirror mirror;
+    const core::InstanceId id = mirror.part("Crate");
+    mirror.step();
+
+    mirror.body(id).pendingImpulse = core::Vec3{0.0f, 10.0f, 0.0f};
+    mirror.step();
+    REQUIRE(mirror.backend.impulses.size() == 1);
+    CHECK(mirror.backend.impulses[0].second.y == doctest::Approx(10.0));
+
+    // Drained: a second tick with nothing new applies nothing, which is the
+    // difference between an impulse and a force.
+    mirror.step();
+    CHECK(mirror.backend.impulses.size() == 1);
+    CHECK(mirror.body(id).pendingImpulse.y == doctest::Approx(0.0));
+}
+
+TEST_CASE("velocity and sleep state are written back")
+{
+    Mirror mirror;
+    const core::InstanceId id = mirror.part("Crate");
+    mirror.step();
+
+    physics::ActiveBody moving;
+    moving.userData = mirror.sync.userDataOf(id);
+    moving.body = mirror.backend.created[0].handle;
+    moving.state.linearVelocity = core::Vec3{1.0f, -2.0f, 0.0f};
+    moving.state.active = true;
+    mirror.backend.active.push_back(moving);
+    mirror.step();
+
+    CHECK(mirror.body(id).linearVelocity.y == doctest::Approx(-2.0));
+    CHECK(mirror.body(id).active);
+
+    // Gone from the active list means asleep, and a body that is asleep is not
+    // still moving at the speed it had when it stopped being reported.
+    mirror.backend.active.clear();
+    mirror.step();
+    CHECK_FALSE(mirror.body(id).active);
+    CHECK(mirror.body(id).linearVelocity.y == doctest::Approx(0.0));
+}
+
+TEST_CASE("a contact becomes two deferred facts, one for each part")
+{
+    Mirror mirror;
+    const core::InstanceId first = mirror.part("A");
+    const core::InstanceId second = mirror.part("B");
+    mirror.step();
+    // Drop whatever parenting enqueued: this case is about what the contact
+    // produces, not about what building the scene did.
+    [[maybe_unused]] const auto ignored = mirror.fixture.world.changes().take();
+
+    physics::ContactEvent event;
+    event.phase = physics::ContactPhase::Began;
+    event.firstUserData = mirror.sync.userDataOf(first);
+    event.secondUserData = mirror.sync.userDataOf(second);
+    mirror.backend.contacts.push_back(event);
+    mirror.step();
+
+    const std::span<const Change> changes = mirror.fixture.world.changes().take();
+    REQUIRE(changes.size() == 2);
+    CHECK(changes[0].kind == ChangeKind::InstanceEvent);
+    CHECK(changes[0].subject == first);
+    CHECK(changes[0].other == second);
+    CHECK(changes[1].subject == second);
+    CHECK(changes[1].other == first);
+    // Both name `Touched`, because a script connects to one side of the pair
+    // without knowing which side it is.
+    CHECK(mirror.fixture.world.atoms().text(changes[0].name) == "Touched");
+    CHECK(mirror.fixture.world.atoms().text(changes[1].name) == "Touched");
+}
+
+TEST_CASE("a contact naming a destroyed part produces nothing")
+{
+    Mirror mirror;
+    const core::InstanceId first = mirror.part("A");
+    const core::InstanceId second = mirror.part("B");
+    mirror.step();
+
+    physics::ContactEvent event;
+    event.phase = physics::ContactPhase::Ended;
+    event.firstUserData = mirror.sync.userDataOf(first);
+    event.secondUserData = mirror.sync.userDataOf(second);
+    mirror.backend.contacts.push_back(event);
+
+    REQUIRE(mirror.fixture.world.destroy(second));
+    mirror.fixture.world.retireDestroyed();
+    [[maybe_unused]] const auto ignored = mirror.fixture.world.changes().take();
+    mirror.step();
+
+    // The handle no longer resolves, so there is nothing to hand a handler.
+    CHECK(mirror.fixture.world.changes().size() == 0);
+}
+
+TEST_CASE("gravity comes from Workspace and reaches the simulation")
+{
+    Mirror mirror;
+    // The fixture's Workspace is a Folder, so give it the component the real
+    // one carries.
+    mirror.fixture.world.workspaces().add(mirror.workspace, WorkspaceComponent{});
+    mirror.fixture.world.workspaces().find(mirror.workspace)->gravity = core::Vec3{0.0f, -1.62f, 0.0f};
+    mirror.step();
+    CHECK(mirror.backend.gravity.y == doctest::Approx(-1.62));
+}
+
+TEST_CASE("the mirror does nothing at all without a Workspace")
+{
+    Mirror mirror;
+    const core::InstanceId id = mirror.part("Crate");
+    mirror.sync.setWorkspace(core::InstanceId{});
+    mirror.step();
+
+    // The rendering work's shape: an unresolved service id renders a plausible-looking
+    // nothing. Here it must be a visible nothing -- no bodies, no steps -- so a
+    // host that forgets to hand the id over fails a test rather than shipping a
+    // world where nothing falls.
+    CHECK(mirror.backend.created.empty());
+    CHECK(mirror.backend.steps == 0);
+    CHECK(id.valid());
+}
+
+TEST_CASE("the mirror pushes an origin change down exactly once")
+{
+    Mirror mirror;
+    (void)mirror.part("Crate", core::DVec3{0.0, 5.0, 0.0});
+    mirror.sync.step(1.0 / 60.0);
+
+    CHECK(mirror.sync.origin() == core::DVec3{});
+    CHECK(mirror.backend.originPushes == 0);
+    CHECK(mirror.sync.rebaseCount() == 0);
+
+    mirror.sync.setOrigin(core::DVec3{4096.0, 0.0, -4096.0});
+    CHECK(mirror.backend.origin == core::DVec3{4096.0, 0.0, -4096.0});
+    CHECK(mirror.backend.originPushes == 1);
+    CHECK(mirror.sync.rebaseCount() == 1);
+
+    // Setting the same origin again is not a rebase. Without this, a host that
+    // pushed the current origin every frame would move every body in the world
+    // every frame -- and the counter is what would say so.
+    mirror.sync.setOrigin(core::DVec3{4096.0, 0.0, -4096.0});
+    CHECK(mirror.backend.originPushes == 1);
+    CHECK(mirror.sync.rebaseCount() == 1);
+}
+
+TEST_CASE("a rebase does not make the mirror re-push every transform")
+{
+    Mirror mirror;
+    (void)mirror.part("Crate", core::DVec3{0.0, 5.0, 0.0});
+    mirror.sync.step(1.0 / 60.0);
+
+    const std::size_t before = mirror.backend.transforms.size();
+    mirror.sync.setOrigin(core::DVec3{4096.0, 0.0, 0.0});
+    mirror.sync.step(1.0 / 60.0);
+
+    // The mirror's record of what it last pushed is in ABSOLUTE coordinates, so
+    // a rebase leaves it valid. If it had been stored in the solver's space,
+    // every part in the world would look like a script write on the next tick
+    // and six thousand transforms would go back down for nothing.
+    CHECK(mirror.backend.transforms.size() == before);
+}
+
+TEST_CASE("the rebase policy is a box around the origin, not a sphere")
+{
+    Mirror mirror;
+
+    CHECK_FALSE(mirror.sync.shouldRebase(core::DVec3{}));
+    CHECK_FALSE(mirror.sync.shouldRebase(core::DVec3{3999.0, 0.0, 0.0}));
+    CHECK(mirror.sync.shouldRebase(core::DVec3{4001.0, 0.0, 0.0}));
+    CHECK(mirror.sync.shouldRebase(core::DVec3{0.0, 0.0, -4001.0}));
+
+    // A box rather than a sphere, so a focus travelling along one axis rebases
+    // at the same distance whichever axis it is. On a sphere the diagonal would
+    // reach 6.9 km before triggering.
+    CHECK_FALSE(mirror.sync.shouldRebase(core::DVec3{3999.0, 0.0, 3999.0}));
+
+    // And the tolerance follows the origin rather than the world's zero.
+    mirror.sync.setOrigin(core::DVec3{100000.0, 0.0, 0.0});
+    CHECK_FALSE(mirror.sync.shouldRebase(core::DVec3{100000.0, 0.0, 0.0}));
+    CHECK(mirror.sync.shouldRebase(core::DVec3{}));
+}
+
+// ---------------------------------------------------------------------------
+// `MeshPart.CollisionFidelity` (it stops being `Inert`).
+
+TEST_CASE("a MeshPart collides as its bounding box until its points arrive")
+{
+    // The state of every `MeshPart` in the frame before its file finishes
+    // loading. A body with no shape for one frame is a body that falls through
+    // the floor, so the box is the fallback rather than nothing.
+    Mirror mirror;
+    const core::InstanceId id = mirror.part("Rock");
+    MeshPartComponent mesh;
+    mesh.meshContent = mirror.fixture.world.atoms().intern("asset://models/rock.glb");
+    // `Hull`, not `Box`: the caller asked for the geometry.
+    mesh.collisionFidelity = 1;
+    mirror.fixture.world.meshParts().add(id, mesh);
+    mirror.step();
+
+    REQUIRE(mirror.backend.created.size() == 1);
+    CHECK(mirror.backend.created[0].desc.shape.type == physics::ShapeType::Box);
+}
+
+TEST_CASE("a MeshPart collides as a hull once its points have been handed over")
+{
+    Mirror mirror;
+    const core::NameAtom content = mirror.fixture.world.atoms().intern("asset://models/rock.glb");
+
+    // A tetrahedron: the fewest points a hull can be made of, which is also the
+    // threshold the mirror checks before it believes it has geometry.
+    mirror.sync.setCollisionPoints(content, {core::Vec3{0.0f, 0.0f, 0.0f}, core::Vec3{1.0f, 0.0f, 0.0f},
+                                             core::Vec3{0.0f, 1.0f, 0.0f}, core::Vec3{0.0f, 0.0f, 1.0f}});
+    CHECK(mirror.sync.collisionMeshCount() == 1);
+
+    const core::InstanceId id = mirror.part("Rock");
+    MeshPartComponent mesh;
+    mesh.meshContent = content;
+    mesh.collisionFidelity = 1;
+    mirror.fixture.world.meshParts().add(id, mesh);
+    mirror.step();
+
+    REQUIRE(mirror.backend.created.size() == 1);
+    CHECK(mirror.backend.created[0].desc.shape.type == physics::ShapeType::ConvexHull);
+    CHECK(mirror.backend.created[0].points.size() == 4);
+}
+
+TEST_CASE("a hull is scaled by Size over MeshSize, like the mesh on screen")
+{
+    // The collision shape and the drawn shape are the same shape or they are a
+    // lie. `MeshSize` is what the mesh measures as authored; `Size` is what the
+    // part is; the hull's points are in the mesh's own space, so the ratio is
+    // what carries one into the other.
+    Mirror mirror;
+    const core::NameAtom content = mirror.fixture.world.atoms().intern("asset://models/rock.glb");
+    mirror.sync.setCollisionPoints(content, {core::Vec3{0.0f, 0.0f, 0.0f}, core::Vec3{1.0f, 0.0f, 0.0f},
+                                             core::Vec3{0.0f, 1.0f, 0.0f}, core::Vec3{0.0f, 0.0f, 1.0f}});
+
+    const core::InstanceId id = mirror.part("Rock");
+    mirror.transform(id).size = core::Vec3{4.0f, 6.0f, 8.0f};
+    MeshPartComponent mesh;
+    mesh.meshContent = content;
+    mesh.collisionFidelity = 1;
+    mesh.meshSize = core::Vec3{2.0f, 2.0f, 4.0f};
+    mirror.fixture.world.meshParts().add(id, mesh);
+    mirror.step();
+
+    REQUIRE(mirror.backend.created.size() == 1);
+    const physics::ShapeDesc& shape = mirror.backend.created[0].desc.shape;
+    CHECK(shape.type == physics::ShapeType::ConvexHull);
+    // A factor rather than pre-scaled points: the points are SHARED across every
+    // part naming this file, and scaling them here would be a copy per body.
+    CHECK(mirror.backend.created[0].points.size() == 4);
+    CHECK(shape.pointScale.x == 2.0f);
+    CHECK(shape.pointScale.y == 3.0f);
+    CHECK(shape.pointScale.z == 2.0f);
+}
+
+TEST_CASE("a MeshPart nobody resized hands the backend an identity scale")
+{
+    // Both default to one, so every scene written before `MeshSize` existed
+    // builds exactly the hull it did then.
+    Mirror mirror;
+    const core::NameAtom content = mirror.fixture.world.atoms().intern("asset://models/rock.glb");
+    mirror.sync.setCollisionPoints(content, {core::Vec3{0.0f, 0.0f, 0.0f}, core::Vec3{1.0f, 0.0f, 0.0f},
+                                             core::Vec3{0.0f, 1.0f, 0.0f}, core::Vec3{0.0f, 0.0f, 1.0f}});
+
+    const core::InstanceId id = mirror.part("Rock");
+    MeshPartComponent mesh;
+    mesh.meshContent = content;
+    mesh.collisionFidelity = 1;
+    mirror.fixture.world.meshParts().add(id, mesh);
+    mirror.step();
+
+    REQUIRE(mirror.backend.created.size() == 1);
+    const physics::ShapeDesc& shape = mirror.backend.created[0].desc.shape;
+    CHECK(shape.pointScale.x == 1.0f);
+    CHECK(shape.pointScale.y == 1.0f);
+    CHECK(shape.pointScale.z == 1.0f);
+}
+
+TEST_CASE("CollisionFidelity Box is honoured exactly, points or no points")
+{
+    // The one fidelity that names a shape rather than an accuracy, and it means
+    // what it says: a caller who asked for the bounding box gets it even when
+    // the mesh's geometry is sitting right there.
+    //
+    // **This case said `Box` in its title and wrote 0**, which is
+    // `Default`. The test and the code held the same wrong belief about which
+    // item was which, so the suite agreed with the defect and went on agreeing
+    // -- which is how one constant produced two opposite faults and neither was
+    // caught by a test written specifically about it.
+    Mirror mirror;
+    const core::NameAtom content = mirror.fixture.world.atoms().intern("asset://models/rock.glb");
+    mirror.sync.setCollisionPoints(content, {core::Vec3{0.0f, 0.0f, 0.0f}, core::Vec3{1.0f, 0.0f, 0.0f},
+                                             core::Vec3{0.0f, 1.0f, 0.0f}, core::Vec3{0.0f, 0.0f, 1.0f}});
+
+    const core::InstanceId id = mirror.part("Rock");
+    MeshPartComponent mesh;
+    mesh.meshContent = content;
+    mesh.collisionFidelity = 2; // Enum.CollisionFidelity.Box
+    mirror.fixture.world.meshParts().add(id, mesh);
+    mirror.step();
+
+    REQUIRE(mirror.backend.created.size() == 1);
+    CHECK(mirror.backend.created[0].desc.shape.type == physics::ShapeType::Box);
+}
+
+TEST_CASE("a hull too degenerate to be one falls back to the box")
+{
+    // Three points is a triangle, not a solid. Jolt would refuse it and the body
+    // would have no shape at all -- which is the part falling through the world.
+    Mirror mirror;
+    const core::NameAtom content = mirror.fixture.world.atoms().intern("asset://models/flat.glb");
+    mirror.sync.setCollisionPoints(
+        content, {core::Vec3{0.0f, 0.0f, 0.0f}, core::Vec3{1.0f, 0.0f, 0.0f}, core::Vec3{0.0f, 1.0f, 0.0f}});
+
+    const core::InstanceId id = mirror.part("Flat");
+    MeshPartComponent mesh;
+    mesh.meshContent = content;
+    mesh.collisionFidelity = 1;
+    mirror.fixture.world.meshParts().add(id, mesh);
+    mirror.step();
+
+    REQUIRE(mirror.backend.created.size() == 1);
+    CHECK(mirror.backend.created[0].desc.shape.type == physics::ShapeType::Box);
+}
+
+// --- Attachment and Bone -----------------------------------------------------
+
+namespace {
+
+// A `SkeletonHost` that answers about one rig, so the mirror's bone path can be
+// exercised without a renderer, a mesh file or a GPU.
+class FakeSkeleton final : public SkeletonHost
+{
+public:
+    [[nodiscard]] u32 jointCount(core::InstanceId) const override { return 2; }
+
+    [[nodiscard]] i32 findJoint(core::InstanceId, std::string_view name) const override
+    {
+        ++lookups;
+        if (name == "Root")
+            return 0;
+        if (name == "Hand")
+            return 1;
+        return -1;
+    }
+
+    [[nodiscard]] i32 jointParent(core::InstanceId, u32 joint) const override { return joint == 0 ? -1 : 0; }
+
+    [[nodiscard]] std::string_view jointName(core::InstanceId, u32 joint) const override
+    {
+        return joint == 0 ? "Root" : "Hand";
+    }
+
+    [[nodiscard]] bool jointModel(core::InstanceId, u32 joint, core::CFrameD& out) const override
+    {
+        if (joint >= 2)
+            return false;
+        // The hand is two metres up the mesh's own Y, the root at its origin.
+        out = core::CFrameD{};
+        if (joint == 1)
+            out.position = core::DVec3{0.0, 2.0, 0.0};
+        return true;
+    }
+
+    void setJointOverride(core::InstanceId, u32, const core::CFrameD&) override {}
+    void clearJointOverrides(core::InstanceId) override {}
+    void commitOverrides() override { ++commits; }
+
+    mutable int lookups = 0;
+    int commits = 0;
+};
+
+} // namespace
+
+TEST_CASE("an attachment follows the part it is on")
+{
+    Mirror mirror;
+    const core::InstanceId part = mirror.part("Anchor", core::DVec3{10.0, 0.0, 0.0});
+
+    const core::InstanceId socket = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(socket, part) == std::nullopt);
+    mirror.fixture.world.attachments().find(socket)->cframe.position = core::DVec3{0.0, 1.0, 0.0};
+
+    mirror.step();
+
+    const AttachmentComponent* resolved = mirror.fixture.world.attachments().find(socket);
+    REQUIRE(resolved != nullptr);
+    CHECK(resolved->worldCFrame.position.x == doctest::Approx(10.0));
+    CHECK(resolved->worldCFrame.position.y == doctest::Approx(1.0));
+
+    // And it follows: move the part, step, and the socket is where the part put
+    // it rather than where it was.
+    mirror.transform(part).cframe.position = core::DVec3{20.0, 5.0, 0.0};
+    mirror.step();
+    CHECK(mirror.fixture.world.attachments().find(socket)->worldCFrame.position.x == doctest::Approx(20.0));
+    CHECK(mirror.fixture.world.attachments().find(socket)->worldCFrame.position.y == doctest::Approx(6.0));
+}
+
+TEST_CASE("an attachment on a WELDED part is not one frame behind it")
+{
+    // The reason attachment resolution is interleaved with weld resolution
+    // through the same memo rather than run as a pass after it.
+    Mirror mirror;
+    const core::InstanceId anchor = mirror.part("Anchor", core::DVec3{0.0, 0.0, 0.0});
+    const core::InstanceId driven = mirror.part("Driven", core::DVec3{0.0, 0.0, 0.0});
+
+    const core::InstanceId weld = mirror.fixture.world.create(mirror.fixture.schema.weldClass);
+    REQUIRE(mirror.fixture.world.setParent(weld, mirror.workspace) == std::nullopt);
+    WeldComponent& component = *mirror.fixture.world.welds().find(weld);
+    component.part0 = anchor;
+    component.part1 = driven;
+    component.c0.position = core::DVec3{5.0, 0.0, 0.0};
+
+    const core::InstanceId socket = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(socket, driven) == std::nullopt);
+
+    mirror.transform(anchor).cframe.position = core::DVec3{100.0, 0.0, 0.0};
+    mirror.step();
+
+    // The weld put the driven part at 105 this tick, and the socket is there --
+    // not at wherever the part was before the weld ran.
+    CHECK(mirror.transform(driven).cframe.position.x == doctest::Approx(105.0));
+    CHECK(mirror.fixture.world.attachments().find(socket)->worldCFrame.position.x == doctest::Approx(105.0));
+}
+
+TEST_CASE("a bone follows its joint, and an unknown one follows the part")
+{
+    Mirror mirror;
+    FakeSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const core::InstanceId character = mirror.part("Character", core::DVec3{0.0, 0.0, 50.0});
+    mirror.fixture.world.meshParts().add(character, MeshPartComponent{});
+
+    const core::InstanceId hand = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(hand, character) == std::nullopt);
+    mirror.fixture.world.attachments().find(hand)->jointName = mirror.fixture.world.atoms().intern("Hand");
+
+    const core::InstanceId nowhere = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(nowhere, character) == std::nullopt);
+    mirror.fixture.world.attachments().find(nowhere)->jointName = mirror.fixture.world.atoms().intern("Tail");
+
+    mirror.step();
+
+    // The hand joint is two up the mesh's own Y, and the mesh is at z = 50.
+    const AttachmentComponent* resolvedHand = mirror.fixture.world.attachments().find(hand);
+    CHECK(resolvedHand->jointIndex == 1);
+    CHECK(resolvedHand->worldCFrame.position.y == doctest::Approx(2.0));
+    CHECK(resolvedHand->worldCFrame.position.z == doctest::Approx(50.0));
+
+    // **A joint the rig does not have puts the bone on the character**, not at
+    // the world origin. The failure a renamed joint should produce is a sword in
+    // the wrong place, not a sword in another country.
+    const AttachmentComponent* resolvedNowhere = mirror.fixture.world.attachments().find(nowhere);
+    CHECK(resolvedNowhere->jointIndex == -1);
+    CHECK(resolvedNowhere->worldCFrame.position.z == doctest::Approx(50.0));
+    CHECK(resolvedNowhere->worldCFrame.position.y == doctest::Approx(0.0));
+}
+
+TEST_CASE("a bone resolves its joint name once and then holds the index")
+{
+    // A name is looked up against the rig; an index survives the rig reloading.
+    // Looking the name up every tick would be a string compare per bone per
+    // frame for an answer that does not change.
+    Mirror mirror;
+    FakeSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const core::InstanceId character = mirror.part("Character");
+    mirror.fixture.world.meshParts().add(character, MeshPartComponent{});
+    const core::InstanceId hand = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(hand, character) == std::nullopt);
+    mirror.fixture.world.attachments().find(hand)->jointName = mirror.fixture.world.atoms().intern("Hand");
+
+    mirror.step();
+    const int afterFirst = skeleton.lookups;
+    CHECK(afterFirst == 1);
+    mirror.step();
+    mirror.step();
+    CHECK(skeleton.lookups == afterFirst);
+}
+
+TEST_CASE("the pose is committed once per tick, after everything that moves a joint")
+{
+    Mirror mirror;
+    FakeSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    mirror.step();
+    CHECK(skeleton.commits == 1);
+    mirror.step();
+    CHECK(skeleton.commits == 2);
+}
+
+TEST_CASE("a sword welded to the hand of a welded character settles in one tick")
+{
+    // **The chain the anchor path exists for**, and the one that a naive
+    // implementation gets one frame wrong: the sword is welded to a bone, the
+    // bone is on a character, and the character is itself welded to a moving
+    // platform. All three have to settle in the tick the platform moved, not
+    // one behind it.
+    //
+    // The weld pool is walked in creation order, and the SWORD's weld is
+    // created first here on purpose -- so it is reached before the character's
+    // and has to pull that one forward itself.
+    Mirror mirror;
+    FakeSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const core::InstanceId platform = mirror.part("Platform");
+    const core::InstanceId character = mirror.part("Character");
+    mirror.fixture.world.meshParts().add(character, MeshPartComponent{});
+    const core::InstanceId sword = mirror.part("Sword");
+
+    const core::InstanceId hand = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(hand, character) == std::nullopt);
+    mirror.fixture.world.attachments().find(hand)->jointName = mirror.fixture.world.atoms().intern("Hand");
+
+    const core::InstanceId swordWeld = mirror.fixture.world.create(mirror.fixture.schema.weldClass);
+    REQUIRE(mirror.fixture.world.setParent(swordWeld, mirror.workspace) == std::nullopt);
+    WeldComponent& toHand = *mirror.fixture.world.welds().find(swordWeld);
+    toHand.part0 = hand;
+    toHand.part1 = sword;
+
+    const core::InstanceId characterWeld = mirror.fixture.world.create(mirror.fixture.schema.weldClass);
+    REQUIRE(mirror.fixture.world.setParent(characterWeld, mirror.workspace) == std::nullopt);
+    WeldComponent& toPlatform = *mirror.fixture.world.welds().find(characterWeld);
+    toPlatform.part0 = platform;
+    toPlatform.part1 = character;
+
+    mirror.transform(platform).cframe.position = core::DVec3{300.0, 0.0, 0.0};
+    mirror.step();
+
+    // One tick: the platform is at 300, the character went with it, and the
+    // sword is at the character's hand two metres up.
+    CHECK(mirror.transform(character).cframe.position.x == doctest::Approx(300.0));
+    CHECK(mirror.transform(sword).cframe.position.x == doctest::Approx(300.0));
+    CHECK(mirror.transform(sword).cframe.position.y == doctest::Approx(2.0));
+}
+
+TEST_CASE("a weld may be anchored to an attachment, and driven only by a part")
+{
+    // What welds a sword to a hand: the attachment is a `Bone`, the bone follows
+    // a joint, and the sword follows the bone.
+    Mirror mirror;
+    FakeSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const core::InstanceId character = mirror.part("Character", core::DVec3{7.0, 0.0, 0.0});
+    mirror.fixture.world.meshParts().add(character, MeshPartComponent{});
+    const core::InstanceId hand = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(hand, character) == std::nullopt);
+    mirror.fixture.world.attachments().find(hand)->jointName = mirror.fixture.world.atoms().intern("Hand");
+
+    const core::InstanceId sword = mirror.part("Sword");
+    const core::InstanceId weld = mirror.fixture.world.create(mirror.fixture.schema.weldClass);
+    REQUIRE(mirror.fixture.world.setParent(weld, mirror.workspace) == std::nullopt);
+    WeldComponent& component = *mirror.fixture.world.welds().find(weld);
+    component.part0 = hand;
+    component.part1 = sword;
+
+    mirror.step();
+
+    // The hand joint is two up the mesh's Y and the character is at x = 7, so
+    // that is where the sword is.
+    CHECK(mirror.transform(sword).cframe.position.x == doctest::Approx(7.0));
+    CHECK(mirror.transform(sword).cframe.position.y == doctest::Approx(2.0));
+}
+
+// --- Constraints --------------------------------------------------------------
+
+namespace {
+
+// A part with an attachment on it, which is the pair every constraint needs.
+struct Jointed
+{
+    core::InstanceId part;
+    core::InstanceId attachment;
+};
+
+[[nodiscard]] Jointed jointedPart(Mirror& mirror, std::string_view name, core::DVec3 at = {})
+{
+    Jointed out;
+    out.part = mirror.part(name, at);
+    out.attachment = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(out.attachment, out.part) == std::nullopt);
+    return out;
+}
+
+[[nodiscard]] core::InstanceId hinge(Mirror& mirror, const Jointed& a, const Jointed& b)
+{
+    const core::InstanceId id = mirror.fixture.world.create(mirror.fixture.schema.constraintClass);
+    REQUIRE(mirror.fixture.world.setParent(id, mirror.workspace) == std::nullopt);
+    ConstraintComponent& component = *mirror.fixture.world.constraints().find(id);
+    component.kind = static_cast<i32>(physics::ConstraintType::Hinge);
+    component.attachment0 = a.attachment;
+    component.attachment1 = b.attachment;
+    return id;
+}
+
+} // namespace
+
+TEST_CASE("a constraint reaches the backend once, with both bodies")
+{
+    Mirror mirror;
+    const Jointed frame = jointedPart(mirror, "Frame");
+    const Jointed door = jointedPart(mirror, "Door", core::DVec3{1.0, 0.0, 0.0});
+    (void)hinge(mirror, frame, door);
+
+    mirror.step();
+
+    REQUIRE(mirror.backend.constraints.size() == 1);
+    CHECK(mirror.backend.constraints[0].desc.type == physics::ConstraintType::Hinge);
+    // The two BODIES, through the parts the attachments sit on.
+    CHECK(mirror.backend.constraints[0].desc.first == mirror.backend.created[0].handle);
+    CHECK(mirror.backend.constraints[0].desc.second == mirror.backend.created[1].handle);
+
+    // And a second tick creates nothing: the mirror can tell a change from a
+    // no-op without a dirty flag on state the world hashes.
+    mirror.step();
+    CHECK(mirror.backend.constraints.size() == 1);
+}
+
+TEST_CASE("constraints are created after every body, in constraint pool order")
+{
+    // **The reason this is a second walk.** Folding it into the body walk would
+    // create a joint before the body at its other end existed; creating that
+    // body from here instead would put BODY creation order in the constraint
+    // pool's order, and two scenes differing only in the order somebody added
+    // joints would then simulate differently (R10).
+    Mirror mirror;
+    const Jointed a = jointedPart(mirror, "A");
+    const Jointed b = jointedPart(mirror, "B", core::DVec3{1.0, 0.0, 0.0});
+    const Jointed c = jointedPart(mirror, "C", core::DVec3{2.0, 0.0, 0.0});
+    (void)hinge(mirror, a, b);
+    (void)hinge(mirror, b, c);
+
+    mirror.step();
+
+    // Every body, then every constraint.
+    std::size_t lastBody = 0;
+    std::size_t firstConstraint = mirror.backend.calls.size();
+    for (std::size_t index = 0; index < mirror.backend.calls.size(); ++index) {
+        if (mirror.backend.calls[index].first == "createBody")
+            lastBody = index;
+        if (mirror.backend.calls[index].first == "createConstraint" && index < firstConstraint)
+            firstConstraint = index;
+    }
+    CHECK(mirror.backend.constraints.size() == 2);
+    CHECK(lastBody < firstConstraint);
+}
+
+TEST_CASE("a constraint is retired BEFORE the bodies it holds")
+{
+    // A joint holding a body that is gone is a dangling pointer inside the
+    // solver, and it is silent. The backend drops a body's joints itself, so a
+    // sweep that retired bodies first would destroy those joints twice from
+    // here.
+    Mirror mirror;
+    const Jointed a = jointedPart(mirror, "A");
+    const Jointed b = jointedPart(mirror, "B", core::DVec3{1.0, 0.0, 0.0});
+    (void)hinge(mirror, a, b);
+    mirror.step();
+    REQUIRE(mirror.backend.constraints.size() == 1);
+
+    mirror.backend.calls.clear();
+    // Both parts leave the world at once, which is what destroying a model does.
+    REQUIRE(mirror.fixture.world.setParent(a.part, core::InstanceId{}) == std::nullopt);
+    REQUIRE(mirror.fixture.world.setParent(b.part, core::InstanceId{}) == std::nullopt);
+    mirror.step();
+
+    std::size_t destroyedConstraint = mirror.backend.calls.size();
+    std::size_t firstDestroyedBody = mirror.backend.calls.size();
+    for (std::size_t index = 0; index < mirror.backend.calls.size(); ++index) {
+        if (mirror.backend.calls[index].first == "destroyConstraint" && index < destroyedConstraint)
+            destroyedConstraint = index;
+        if (mirror.backend.calls[index].first == "destroyBody" && index < firstDestroyedBody)
+            firstDestroyedBody = index;
+    }
+    CHECK(mirror.backend.constraintsDestroyed.size() == 1);
+    CHECK(destroyedConstraint < firstDestroyedBody);
+}
+
+TEST_CASE("an anchored part nothing can meet has no body, however often it moves")
+{
+    // A game drew its enemies from parts -- anchored, not colliding, not
+    // queried, not touched -- and moved six hundred of them a frame: each was
+    // still a body, a sensor made kinematic by the move, and the solver spent
+    // 15 ms a frame on them and overflowed its contact cache.
+    Mirror mirror;
+    std::vector<core::InstanceId> figures;
+    for (int index = 0; index < 2000; ++index) {
+        const core::InstanceId id = mirror.part("Figure", core::DVec3{static_cast<double>(index % 50), 0.0, 0.0});
+        RigidBodyComponent& body = mirror.body(id);
+        body.anchored = true;
+        body.canCollide = false;
+        body.canQuery = false;
+        body.canTouch = false;
+        figures.push_back(id);
+    }
+    for (int tick = 0; tick < 300; ++tick) {
+        for (const core::InstanceId id : figures)
+            mirror.transform(id).cframe.position.y = static_cast<double>(tick) * 0.01;
+        mirror.step();
+    }
+    CHECK(mirror.sync.bodyCount() == 0);
+    CHECK(mirror.backend.created.empty());
+    CHECK(mirror.backend.transforms.empty());
+
+    // The moment one of them can be touched, it is a body again.
+    mirror.body(figures.front()).canTouch = true;
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 1);
+    // And back: it goes.
+    mirror.body(figures.front()).canTouch = false;
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 0);
+    CHECK(mirror.backend.destroyed.size() == 1);
+
+    // The high-index visual never needed a mirror slot. Enabling queries must
+    // still allocate and create it, then remove it when made visual again.
+    mirror.body(figures.back()).canQuery = true;
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 1);
+    mirror.body(figures.back()).canQuery = false;
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 0);
+    CHECK(mirror.backend.destroyed.size() == 2);
+}
+
+TEST_CASE("an anchored part a joint holds keeps its body, colliding or not")
+{
+    Mirror mirror;
+    const Jointed a = jointedPart(mirror, "A");
+    const Jointed b = jointedPart(mirror, "B", core::DVec3{1.0, 0.0, 0.0});
+    RigidBodyComponent& held = mirror.body(a.part);
+    held.anchored = true;
+    held.canCollide = false;
+    held.canQuery = false;
+    held.canTouch = false;
+    const core::InstanceId id = mirror.fixture.world.create(mirror.fixture.schema.constraintClass);
+    REQUIRE(mirror.fixture.world.setParent(id, mirror.workspace) == std::nullopt);
+    mirror.fixture.world.constraints().find(id)->attachment0 = a.attachment;
+    mirror.fixture.world.constraints().find(id)->attachment1 = b.attachment;
+
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 2);
+    CHECK(mirror.backend.constraints.size() == 1);
+}
+
+TEST_CASE("a joint whose ends a script has not finished assigning is not built")
+{
+    // Not an error: it is what every script that sets two properties on two
+    // lines briefly produces.
+    Mirror mirror;
+    const Jointed a = jointedPart(mirror, "A");
+
+    const core::InstanceId id = mirror.fixture.world.create(mirror.fixture.schema.constraintClass);
+    REQUIRE(mirror.fixture.world.setParent(id, mirror.workspace) == std::nullopt);
+    mirror.fixture.world.constraints().find(id)->attachment0 = a.attachment;
+
+    mirror.step();
+    CHECK(mirror.backend.constraints.empty());
+
+    // And it builds the moment the other end arrives.
+    const Jointed b = jointedPart(mirror, "B", core::DVec3{1.0, 0.0, 0.0});
+    mirror.fixture.world.constraints().find(id)->attachment1 = b.attachment;
+    mirror.step();
+    CHECK(mirror.backend.constraints.size() == 1);
+}
+
+TEST_CASE("a joint whose two ends are on one part is refused")
+{
+    Mirror mirror;
+    const Jointed a = jointedPart(mirror, "A");
+    const core::InstanceId second = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(second, a.part) == std::nullopt);
+
+    const core::InstanceId id = mirror.fixture.world.create(mirror.fixture.schema.constraintClass);
+    REQUIRE(mirror.fixture.world.setParent(id, mirror.workspace) == std::nullopt);
+    ConstraintComponent& component = *mirror.fixture.world.constraints().find(id);
+    component.attachment0 = a.attachment;
+    component.attachment1 = second;
+
+    mirror.step();
+    // One body joined to itself divides by an infinite mass in the solver.
+    CHECK(mirror.backend.constraints.empty());
+}
+
+TEST_CASE("a limit change is an update rather than a rebuild")
+{
+    // Rebuilding would move the constraint to the end of the solve order, and a
+    // door whose limit somebody nudged would simulate differently afterwards.
+    Mirror mirror;
+    const Jointed frame = jointedPart(mirror, "Frame");
+    const Jointed door = jointedPart(mirror, "Door", core::DVec3{1.0, 0.0, 0.0});
+    const core::InstanceId id = hinge(mirror, frame, door);
+    mirror.step();
+    REQUIRE(mirror.backend.constraints.size() == 1);
+
+    ConstraintComponent& component = *mirror.fixture.world.constraints().find(id);
+    component.limitsEnabled = true;
+    component.limitLow = -1.0f;
+    component.limitHigh = 1.0f;
+    mirror.step();
+
+    CHECK(mirror.backend.constraints.size() == 1);
+    CHECK(mirror.backend.constraintsDestroyed.empty());
+    REQUIRE(mirror.backend.constraintsUpdated.size() == 1);
+    CHECK(mirror.backend.constraintsUpdated[0].desc.limitHigh == 1.0f);
+}
+
+TEST_CASE("changing what the joint IS rebuilds it")
+{
+    Mirror mirror;
+    const Jointed a = jointedPart(mirror, "A");
+    const Jointed b = jointedPart(mirror, "B", core::DVec3{1.0, 0.0, 0.0});
+    const core::InstanceId id = hinge(mirror, a, b);
+    mirror.step();
+    REQUIRE(mirror.backend.constraints.size() == 1);
+
+    // A ball socket that gains limits stops being a point joint and becomes a
+    // swing-twist -- a different solver joint, not a point joint with
+    // corrections bolted on.
+    mirror.fixture.world.constraints().find(id)->kind = static_cast<i32>(physics::ConstraintType::SwingTwist);
+    mirror.step();
+
+    CHECK(mirror.backend.constraints.size() == 2);
+    CHECK(mirror.backend.constraintsDestroyed.size() == 1);
+    CHECK(mirror.backend.constraints[1].desc.type == physics::ConstraintType::SwingTwist);
+}
+
+TEST_CASE("disabling a joint does not destroy it")
+{
+    Mirror mirror;
+    const Jointed a = jointedPart(mirror, "A");
+    const Jointed b = jointedPart(mirror, "B", core::DVec3{1.0, 0.0, 0.0});
+    const core::InstanceId id = hinge(mirror, a, b);
+    mirror.step();
+
+    mirror.fixture.world.constraints().find(id)->enabled = false;
+    mirror.step();
+
+    // Its place in the solve order is the one it was created with: a ragdoll
+    // that switched itself off and on would otherwise simulate differently.
+    CHECK(mirror.backend.constraintsDestroyed.empty());
+    REQUIRE(mirror.backend.constraintEnables.size() == 1);
+    CHECK_FALSE(mirror.backend.constraintEnables[0].second);
+}
+
+TEST_CASE("a constraint cannot reach a CharacterBody")
+{
+    // `CharacterVirtual` is swept rather than solved (the physics work's finding), so there
+    // is no body for a joint to hold.
+    Mirror mirror;
+    const Jointed a = jointedPart(mirror, "A");
+    const Jointed walker = jointedPart(mirror, "Walker", core::DVec3{1.0, 0.0, 0.0});
+    mirror.fixture.world.characterBodies().add(walker.part, CharacterBodyComponent{});
+
+    const core::InstanceId id = mirror.fixture.world.create(mirror.fixture.schema.constraintClass);
+    REQUIRE(mirror.fixture.world.setParent(id, mirror.workspace) == std::nullopt);
+    ConstraintComponent& component = *mirror.fixture.world.constraints().find(id);
+    component.attachment0 = a.attachment;
+    component.attachment1 = walker.attachment;
+
+    mirror.step();
+    CHECK(mirror.backend.constraints.empty());
+}
+
+TEST_CASE("the joint frames are in each body's own space")
+{
+    // Which is what the seam asks for, and what makes a floating-origin rebase
+    // cost nothing: the bodies move and the frames do not.
+    Mirror mirror;
+    const Jointed frame = jointedPart(mirror, "Frame", core::DVec3{100.0, 0.0, 0.0});
+    const Jointed door = jointedPart(mirror, "Door", core::DVec3{101.0, 0.0, 0.0});
+    mirror.fixture.world.attachments().find(frame.attachment)->cframe.position = core::DVec3{0.5, 0.0, 0.0};
+    mirror.fixture.world.attachments().find(door.attachment)->cframe.position = core::DVec3{-0.5, 0.0, 0.0};
+    (void)hinge(mirror, frame, door);
+
+    mirror.step();
+
+    REQUIRE(mirror.backend.constraints.size() == 1);
+    // Half a metre, not a hundred and a half: local, not world.
+    CHECK(mirror.backend.constraints[0].desc.firstFrame.position.x == doctest::Approx(0.5));
+    CHECK(mirror.backend.constraints[0].desc.secondFrame.position.x == doctest::Approx(-0.5));
+}
+
+// --- Ragdoll ------------------------------------------------------------------
+
+namespace {
+
+// A ragdoll parented to a mesh, with one limb: a part, and a bone on it naming
+// the joint that limb IS.
+struct Rag
+{
+    core::InstanceId meshPart;
+    core::InstanceId ragdoll;
+    core::InstanceId limb;
+    core::InstanceId bone;
+};
+
+[[nodiscard]] Rag ragdollOn(Mirror& mirror, core::DVec3 characterAt, core::DVec3 limbAt)
+{
+    Rag out;
+    out.meshPart = mirror.part("Character", characterAt);
+    mirror.fixture.world.meshParts().add(out.meshPart, MeshPartComponent{});
+
+    out.ragdoll = mirror.fixture.world.create(mirror.fixture.schema.ragdollClass);
+    REQUIRE(mirror.fixture.world.setParent(out.ragdoll, out.meshPart) == std::nullopt);
+
+    out.limb = mirror.part("Limb", limbAt);
+    REQUIRE(mirror.fixture.world.setParent(out.limb, out.ragdoll) == std::nullopt);
+
+    out.bone = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(out.bone, out.limb) == std::nullopt);
+    return out;
+}
+
+// Records the overrides it is handed, so a test can say WHICH joint was driven
+// and to where.
+class RecordingSkeleton final : public SkeletonHost
+{
+public:
+    [[nodiscard]] u32 jointCount(core::InstanceId) const override { return 2; }
+    [[nodiscard]] i32 findJoint(core::InstanceId, std::string_view name) const override
+    {
+        return name == "Hand" ? 1 : (name == "Root" ? 0 : -1);
+    }
+    [[nodiscard]] i32 jointParent(core::InstanceId, u32 joint) const override { return joint == 0 ? -1 : 0; }
+    [[nodiscard]] std::string_view jointName(core::InstanceId, u32 joint) const override
+    {
+        return joint == 0 ? "Root" : "Hand";
+    }
+    [[nodiscard]] bool jointModel(core::InstanceId, u32 joint, core::CFrameD& out) const override
+    {
+        if (joint >= 2)
+            return false;
+        out = core::CFrameD{};
+        if (joint == 1)
+            out.position = core::DVec3{0.0, 2.0, 0.0};
+        return true;
+    }
+
+    void setJointOverride(core::InstanceId meshPart, u32 joint, const core::CFrameD& model) override
+    {
+        overrides.push_back({meshPart, joint, model});
+    }
+    void clearJointOverrides(core::InstanceId) override {}
+    void commitOverrides() override
+    {
+        // What the commit SAW, kept after the clear. An empty `overrides` after
+        // a tick is what "nothing drove" and "the commit consumed them" BOTH
+        // look like, and no test can tell those apart without this.
+        committed = overrides;
+        ++commits;
+        overrides.clear();
+    }
+
+    struct Written
+    {
+        core::InstanceId meshPart;
+        u32 joint = 0;
+        core::CFrameD model;
+    };
+    std::vector<Written> overrides;
+    std::vector<Written> committed;
+    int commits = 0;
+};
+
+} // namespace
+
+TEST_CASE("a disabled ragdoll drives nothing")
+{
+    Mirror mirror;
+    RecordingSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const Rag rag = ragdollOn(mirror, {0.0, 0.0, 0.0}, {0.0, 5.0, 0.0});
+    mirror.fixture.world.attachments().find(rag.bone)->jointName = mirror.fixture.world.atoms().intern("Hand");
+
+    mirror.step();
+    // Off is a character animated by clips with some parts sitting there doing
+    // nothing, which is what it has to be -- a ragdoll that drove while disabled
+    // would make building one impossible to author.
+    CHECK(skeleton.committed.empty());
+}
+
+TEST_CASE("an enabled ragdoll writes where its limb ended up, in the mesh's own space")
+{
+    Mirror mirror;
+    RecordingSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    // The character at x = 100 and its limb three metres above it. What the pose
+    // wants is the limb relative to the CHARACTER, which is (0, 3, 0) -- not the
+    // world position, and not the character's.
+    const Rag rag = ragdollOn(mirror, {100.0, 0.0, 0.0}, {100.0, 3.0, 0.0});
+    mirror.fixture.world.attachments().find(rag.bone)->jointName = mirror.fixture.world.atoms().intern("Hand");
+    mirror.fixture.world.ragdolls().find(rag.ragdoll)->enabled = true;
+
+    mirror.step();
+
+    REQUIRE(skeleton.committed.size() == 1);
+    CHECK(skeleton.committed[0].meshPart == rag.meshPart);
+    CHECK(skeleton.committed[0].joint == 1);
+    CHECK(skeleton.committed[0].model.position.x == doctest::Approx(0.0));
+    CHECK(skeleton.committed[0].model.position.y == doctest::Approx(3.0));
+}
+
+TEST_CASE("a bone whose joint did not resolve drives nothing")
+{
+    // Better than driving joint zero: a limb whose joint an artist renamed
+    // should do nothing rather than fold the character in half at the root.
+    Mirror mirror;
+    RecordingSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const Rag rag = ragdollOn(mirror, {0.0, 0.0, 0.0}, {0.0, 5.0, 0.0});
+    mirror.fixture.world.attachments().find(rag.bone)->jointName = mirror.fixture.world.atoms().intern("Tail");
+    mirror.fixture.world.ragdolls().find(rag.ragdoll)->enabled = true;
+
+    mirror.step();
+    CHECK(skeleton.committed.empty());
+}
+
+TEST_CASE("a ragdoll drives only the bones under it")
+{
+    // It owns nothing, so what it drives is what is UNDER it -- which is what
+    // makes two ragdolls in one scene two characters rather than one confused
+    // one.
+    Mirror mirror;
+    RecordingSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const Rag rag = ragdollOn(mirror, {0.0, 0.0, 0.0}, {0.0, 3.0, 0.0});
+    mirror.fixture.world.attachments().find(rag.bone)->jointName = mirror.fixture.world.atoms().intern("Hand");
+    mirror.fixture.world.ragdolls().find(rag.ragdoll)->enabled = true;
+
+    // A bone on the character itself, outside the ragdoll. It resolves to a
+    // joint and must not be driven by it.
+    const core::InstanceId loose = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(loose, rag.meshPart) == std::nullopt);
+    mirror.fixture.world.attachments().find(loose)->jointName = mirror.fixture.world.atoms().intern("Root");
+
+    mirror.step();
+
+    REQUIRE(skeleton.committed.size() == 1);
+    CHECK(skeleton.committed[0].joint == 1);
+}
+
+TEST_CASE("a ragdoll drives every skinned mesh of its Model that has its joints, each in its own space")
+{
+    // A character in two meshes -- a body with the ragdoll, and a shirt
+    // wearing the same skeleton beside it in the Model. The shirt stayed in
+    // the air at the last pose it was played to while the body fell.
+    Mirror mirror;
+    RecordingSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const core::InstanceId character = mirror.fixture.model("Character");
+    REQUIRE(mirror.fixture.world.setParent(character, mirror.workspace) == std::nullopt);
+    const Rag rag = ragdollOn(mirror, {100.0, 0.0, 0.0}, {100.0, 3.0, 0.0});
+    REQUIRE(mirror.fixture.world.setParent(rag.meshPart, character) == std::nullopt);
+    mirror.fixture.world.attachments().find(rag.bone)->jointName = mirror.fixture.world.atoms().intern("Hand");
+    mirror.fixture.world.ragdolls().find(rag.ragdoll)->enabled = true;
+
+    // The shirt, a metre to the side of the body: its pose is in ITS space.
+    const core::InstanceId shirt = mirror.part("Shirt", core::DVec3{99.0, 0.0, 0.0});
+    mirror.fixture.world.meshParts().add(shirt, MeshPartComponent{});
+    REQUIRE(mirror.fixture.world.setParent(shirt, character) == std::nullopt);
+    // A plain part in the Model, and a mesh outside it: neither is driven.
+    const core::InstanceId prop = mirror.part("Hat", core::DVec3{100.0, 2.0, 0.0});
+    REQUIRE(mirror.fixture.world.setParent(prop, character) == std::nullopt);
+    const core::InstanceId stranger = mirror.part("Stranger", core::DVec3{0.0, 0.0, 0.0});
+    mirror.fixture.world.meshParts().add(stranger, MeshPartComponent{});
+
+    mirror.step();
+
+    REQUIRE(skeleton.committed.size() == 2);
+    CHECK(skeleton.committed[0].meshPart == rag.meshPart);
+    CHECK(skeleton.committed[0].model.position.x == doctest::Approx(0.0));
+    CHECK(skeleton.committed[1].meshPart == shirt);
+    CHECK(skeleton.committed[1].joint == 1);
+    CHECK(skeleton.committed[1].model.position.x == doctest::Approx(1.0));
+    CHECK(skeleton.committed[1].model.position.y == doctest::Approx(3.0));
+
+    SUBCASE("a mesh with a ragdoll of its own is that ragdoll's")
+    {
+        const core::InstanceId own = mirror.fixture.world.create(mirror.fixture.schema.ragdollClass);
+        REQUIRE(mirror.fixture.world.setParent(own, shirt) == std::nullopt);
+        mirror.fixture.world.ragdolls().find(own)->enabled = true;
+        mirror.step();
+        REQUIRE(skeleton.committed.size() == 1);
+        CHECK(skeleton.committed[0].meshPart == rag.meshPart);
+    }
+}
+
+TEST_CASE("the ragdoll drive runs before the pose is committed")
+{
+    // Which is what makes the joints nobody simulates ride along on the ones
+    // somebody does. Committed first, the overrides would land on a palette
+    // already built and take a frame to appear.
+    Mirror mirror;
+    RecordingSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const Rag rag = ragdollOn(mirror, {0.0, 0.0, 0.0}, {0.0, 3.0, 0.0});
+    mirror.fixture.world.attachments().find(rag.bone)->jointName = mirror.fixture.world.atoms().intern("Hand");
+    mirror.fixture.world.ragdolls().find(rag.ragdoll)->enabled = true;
+
+    mirror.step();
+    // The commit SAW the override, which is the whole claim -- an empty list on
+    // its own would equally mean nothing ever drove.
+    CHECK(skeleton.commits == 1);
+    REQUIRE(skeleton.committed.size() == 1);
+    CHECK(skeleton.overrides.empty());
+}
+
+TEST_CASE("Blend carries the driven joint part of the way, and 0 leaves the clip alone")
+{
+    // **A POSE blend, not a solver one.** The limb has fallen exactly as far at
+    // 0.5 as at 1 -- nothing here touches the simulation -- and what changes is
+    // only how far the drawn joint is carried towards it. That is what a stumble
+    // is, and ramping it is what stops going down being a one-frame snap.
+    Mirror mirror;
+    RecordingSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    // The animated `Hand` is at y = 2 in the mesh's space; the limb ends up at
+    // y = 4. Halfway between them is 3, and no other blend gives that number.
+    const Rag rag = ragdollOn(mirror, {0.0, 0.0, 0.0}, {0.0, 4.0, 0.0});
+    mirror.fixture.world.attachments().find(rag.bone)->jointName = mirror.fixture.world.atoms().intern("Hand");
+    RagdollComponent* ragdoll = mirror.fixture.world.ragdolls().find(rag.ragdoll);
+    ragdoll->enabled = true;
+    ragdoll->blend = 0.5f;
+
+    mirror.step();
+    REQUIRE(skeleton.committed.size() == 1);
+    CHECK(skeleton.committed[0].model.position.y == doctest::Approx(3.0));
+
+    // At zero the joint is written at the ANIMATION's own value rather than not
+    // written at all. Those are different: a joint that stopped being written
+    // would keep whatever the last tick left in the palette, so a ramp back to 0
+    // would freeze the character instead of handing it back to the clip.
+    ragdoll->blend = 0.0f;
+    mirror.step();
+    REQUIRE(skeleton.committed.size() == 1);
+    CHECK(skeleton.committed[0].model.position.y == doctest::Approx(2.0));
+}
+
+// --- The mirror with nothing ticking ---------------------------------
+
+TEST_CASE("mirror creates the bodies the tree describes and advances nothing")
+{
+    // **What an editor's collision view is drawn from.** A paused world never
+    // calls `step`, so the backend holds no bodies at all, and a wireframe of a
+    // world with no bodies in it is an empty picture that looks exactly like a
+    // working one.
+    Mirror mirror;
+    const core::InstanceId crate = mirror.part("Crate", {0.0, 4.0, 0.0});
+
+    mirror.sync.mirror();
+    CHECK(mirror.backend.live.size() == 1);
+    CHECK(mirror.backend.steps == 0);
+    // And the tree is untouched: a view that wrote back would move a part an
+    // author is in the middle of placing.
+    CHECK(mirror.transform(crate).cframe.position.y == doctest::Approx(4.0));
+}
+
+TEST_CASE("mirror retires what the tree no longer has")
+{
+    // Mark and sweep, exactly as a tick does it -- so an editor that deletes a
+    // part does not leave a collider drawn where it used to be.
+    Mirror mirror;
+    const core::InstanceId crate = mirror.part("Crate");
+    mirror.sync.mirror();
+    REQUIRE(mirror.backend.live.size() == 1);
+
+    mirror.fixture.world.destroy(crate);
+    mirror.sync.mirror();
+    CHECK(mirror.backend.live.empty());
+}
+
+TEST_CASE("mirror raises no contact, because nobody is playing")
+{
+    // The reason this is not `step(0)`. A zero-length step still runs the
+    // solver, the character controllers and the contact diff -- so it would fire
+    // `Touched` in the editor, which is a handler running in a world nobody has
+    // pressed play on.
+    Mirror mirror;
+    const core::InstanceId first = mirror.part("A");
+    const core::InstanceId second = mirror.part("B");
+    mirror.sync.mirror();
+    [[maybe_unused]] const auto ignored = mirror.fixture.world.changes().take();
+
+    physics::ContactEvent event;
+    event.phase = physics::ContactPhase::Began;
+    event.firstUserData = mirror.sync.userDataOf(first);
+    event.secondUserData = mirror.sync.userDataOf(second);
+    mirror.backend.contacts.push_back(event);
+
+    mirror.sync.mirror();
+    CHECK(mirror.fixture.world.changes().take().empty());
+}
+
+// --- What the mirror remembers about a refusal -------------------------------
+
+TEST_CASE("a body the backend refuses is asked for once, not once a tick")
+{
+    // **The retry storm.** A refusal used to zero the record, so the next tick
+    // saw an empty slot and asked again -- for ever, once per tick, burning a
+    // body generation each time and saying nothing at all. Nobody noticed
+    // because nothing in the engine refused a body until a hull could arrive
+    // late enough to be degenerate.
+    Mirror mirror;
+    mirror.backend.refuseCreates = true;
+    (void)mirror.part("Crate");
+
+    mirror.step();
+    REQUIRE(mirror.backend.created.size() == 1);
+    CHECK(mirror.sync.bodyCount() == 0);
+
+    for (int tick = 0; tick < 20; ++tick)
+        mirror.step();
+
+    // One attempt, twenty ticks later.
+    CHECK(mirror.backend.created.size() == 1);
+    CHECK(mirror.sync.bodyCount() == 0);
+}
+
+TEST_CASE("a refused body is asked for again when the description changes")
+{
+    // The other half, and the half that makes remembering safe rather than
+    // final: a hull whose points have since arrived, or a part somebody
+    // resized, is a different question and gets asked.
+    Mirror mirror;
+    mirror.backend.refuseCreates = true;
+    const core::InstanceId id = mirror.part("Crate");
+
+    mirror.step();
+    REQUIRE(mirror.backend.created.size() == 1);
+    mirror.step();
+    REQUIRE(mirror.backend.created.size() == 1);
+
+    mirror.backend.refuseCreates = false;
+    mirror.fixture.world.parts().find(id)->size = core::Vec3{2.0f, 2.0f, 2.0f};
+    mirror.step();
+
+    CHECK(mirror.backend.created.size() == 2);
+    CHECK(mirror.sync.bodyCount() == 1);
+}
+
+TEST_CASE("a record that remembers a refusal is not destroyed as though it held a body")
+{
+    // `retireUnseen` destroys anything with a generation and no `seen`. A
+    // refusal keeps this instance's generation and has no body, so without the
+    // `live` flag the sweep hands the backend a handle naming nothing and takes
+    // the count below zero.
+    Mirror mirror;
+    mirror.backend.refuseCreates = true;
+    const core::InstanceId id = mirror.part("Crate");
+    mirror.step();
+    REQUIRE(mirror.sync.bodyCount() == 0);
+
+    REQUIRE(mirror.fixture.world.setParent(id, core::InstanceId{}) == std::nullopt);
+    mirror.step();
+
+    CHECK(mirror.backend.destroyed.empty());
+    CHECK(mirror.sync.bodyCount() == 0);
+}
+
+TEST_CASE("a constraint on a part with no body is not made")
+{
+    // `bodyHandleOf` is private and reached through the constraint walk, which
+    // is the only caller and the one that matters: a record remembering a
+    // refusal carries this instance's generation with no body behind it, and a
+    // joint handed that handle would hold a dangling pointer inside the solver.
+    Mirror mirror;
+    mirror.backend.refuseCreates = true;
+    (void)mirror.part("Anchor");
+    (void)mirror.part("Hanging");
+    mirror.step();
+
+    CHECK(mirror.backend.constraints.empty());
+}
+
+TEST_CASE("a hull is rebuilt when the points behind it change")
+{
+    // **The one that async mesh loading depends on.** Two hulls with the same
+    // type and the same size are not the same hull if the geometry underneath
+    // them was replaced -- a mesh finishing its load, or a hot reload swapping
+    // one. `sameShape` compared type and size and nothing else, so the first
+    // hull a `MeshPart` got was the hull it kept for ever.
+    //
+    // The spans are deliberately not compared: comparing them would mean
+    // keeping one, and `ShapeDesc::points` may not outlive the create call.
+    Mirror mirror;
+    const core::InstanceId id = mirror.part("Rock");
+    MeshPartComponent rock;
+    rock.meshContent = mirror.fixture.world.atoms().intern("asset://models/rock.glb");
+    rock.collisionFidelity = 1;
+    mirror.fixture.world.meshParts().add(id, rock);
+
+    const std::vector<core::Vec3> first{{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};
+    mirror.sync.setCollisionPoints(mirror.fixture.world.atoms().intern("asset://models/rock.glb"), first);
+    mirror.step();
+    REQUIRE(mirror.backend.created.size() == 1);
+    CHECK(mirror.backend.created[0].desc.shape.type == physics::ShapeType::ConvexHull);
+    const core::usize rebuiltBefore = mirror.backend.rebuilt.size();
+
+    // The same COUNT and the same size, so nothing but the revision can tell
+    // these apart -- which is the case a span comparison would also have caught
+    // and a type-and-size comparison cannot.
+    const std::vector<core::Vec3> second{
+        {0.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f}, {0.0f, 2.0f, 0.0f}, {0.0f, 0.0f, 2.0f}};
+    mirror.sync.setCollisionPoints(mirror.fixture.world.atoms().intern("asset://models/rock.glb"), second);
+    mirror.step();
+
+    CHECK(mirror.backend.rebuilt.size() == rebuiltBefore + 1);
+
+    // And it settles: an unchanged cloud is not a reason to rebuild anything.
+    const core::usize after = mirror.backend.rebuilt.size();
+    mirror.step();
+    mirror.step();
+    CHECK(mirror.backend.rebuilt.size() == after);
+}
+
+TEST_CASE("a refused rebuild costs one attempt, and the body it had stays")
+{
+    // What the mirror does when the backend will not take a description.
+    //
+    // **The refusal is the fake's, and deliberately so.** The obvious real case
+    // would be a degenerate hull, but Jolt's `ConvexHullBuilder` accepts a
+    // coplanar quad and gives it a thickness -- so writing this against real
+    // geometry would be writing it against a refusal that does not happen. What
+    // is under test is the MIRROR's rule: a body the backend will not rebuild
+    // stays what it was, and the record keeps what was ASKED for, which is what
+    // stops it being asked again on every tick for ever.
+    Mirror mirror;
+    const core::InstanceId id = mirror.part("Slab");
+    MeshPartComponent slab;
+    slab.meshContent = mirror.fixture.world.atoms().intern("asset://models/slab.glb");
+    slab.collisionFidelity = 1;
+    mirror.fixture.world.meshParts().add(id, slab);
+    mirror.step();
+    REQUIRE(mirror.backend.created.size() == 1);
+
+    mirror.backend.refuseUpdates = true;
+    const std::vector<core::Vec3> flat{{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}};
+    mirror.sync.setCollisionPoints(mirror.fixture.world.atoms().intern("asset://models/slab.glb"), flat);
+    mirror.step();
+    const core::usize attempts = mirror.backend.rebuilt.size();
+    CHECK(attempts == 1);
+
+    for (int tick = 0; tick < 20; ++tick)
+        mirror.step();
+    CHECK(mirror.backend.rebuilt.size() == attempts);
+
+    // The body is still there. It is the old shape, which is the honest
+    // outcome: the alternative to a stale hull is no hull at all.
+    CHECK(mirror.sync.bodyCount() == 1);
+    CHECK(mirror.backend.destroyed.empty());
+    (void)id;
+}
+
+// --- Which shape a fidelity asks for ----------------------------
+//
+// **One constant, two defects, in opposite directions.** The mirror short-
+// circuited on item ZERO -- `Default`, whose whole meaning is "the engine
+// chooses" and whose documented choice is a hull -- so every `MeshPart` nobody
+// touched collided as its bounding box while the enum promised the geometry, and
+// the one person who explicitly asked for `Box` got a hull instead.
+//
+// Neither is visible in a screenshot and neither raises. What they produce is a
+// character walking on a box a metre outside a rock, or falling into a hull it
+// should have stood on.
+
+namespace {
+
+// A `MeshPart` with points loaded, so the hull branch has something to reach.
+[[nodiscard]] core::InstanceId meshWithPoints(Mirror& mirror, i32 fidelity)
+{
+    const core::InstanceId id = mirror.part("Rock");
+    MeshPartComponent mesh;
+    mesh.meshContent = mirror.fixture.world.atoms().intern("asset://models/rock.gltf");
+    mesh.collisionFidelity = fidelity;
+    mirror.fixture.world.meshParts().add(id, mesh);
+
+    // Four points is the minimum a hull needs, which is what the mirror checks.
+    const std::vector<core::Vec3> points{
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};
+    mirror.sync.setCollisionPoints(mesh.meshContent, points);
+    return id;
+}
+
+[[nodiscard]] physics::ShapeType shapeOfLast(const Mirror& mirror)
+{
+    REQUIRE_FALSE(mirror.backend.created.empty());
+    return mirror.backend.created.back().desc.shape.type;
+}
+
+} // namespace
+
+TEST_CASE("Default asks the engine to choose, and the engine chooses the hull")
+{
+    // The item's own doc: "The engine chooses. In this release that is `Hull`."
+    // A box here is the enum saying one thing and the solver doing another, for
+    // every mesh nobody ever set the property on -- which is nearly all of them.
+    Mirror mirror;
+    (void)meshWithPoints(mirror, 0);
+    mirror.step();
+    CHECK(shapeOfLast(mirror) == physics::ShapeType::ConvexHull);
+}
+
+TEST_CASE("Box asks for the bounding box and gets it")
+{
+    Mirror mirror;
+    (void)meshWithPoints(mirror, 2);
+    mirror.step();
+    CHECK(shapeOfLast(mirror) == physics::ShapeType::Box);
+}
+
+TEST_CASE("Hull asks for the hull and gets it")
+{
+    Mirror mirror;
+    (void)meshWithPoints(mirror, 1);
+    mirror.step();
+    CHECK(shapeOfLast(mirror) == physics::ShapeType::ConvexHull);
+}
+
+TEST_CASE("Precise asks for the triangles and gets the hull, which the enum says it will")
+{
+    // Not silent and not a lie: `Enum.CollisionFidelity.Precise` documents that
+    // this release collides against a hull and reads back `Precise`. A
+    // triangle-mesh collider is a different shape class with different rules --
+    // it cannot be dynamic -- and it is asset-pipeline work.
+    Mirror mirror;
+    const core::InstanceId rock = meshWithPoints(mirror, 3);
+    mirror.step();
+    CHECK(shapeOfLast(mirror) == physics::ShapeType::ConvexHull);
+    // And the property reads back what was written, which is the half that makes
+    // it honest rather than merely unimplemented.
+    CHECK(mirror.fixture.world.meshParts().find(rock)->collisionFidelity == 3);
+}
+
+TEST_CASE("a mesh whose points have not arrived falls back to the box, whatever it asked for")
+{
+    // The frame before a file finishes loading. A body with no shape for one
+    // frame is a body that falls through the floor.
+    Mirror mirror;
+    const core::InstanceId id = mirror.part("Rock");
+    MeshPartComponent mesh;
+    mesh.meshContent = mirror.fixture.world.atoms().intern("asset://models/absent.gltf");
+    mesh.collisionFidelity = 1;
+    mirror.fixture.world.meshParts().add(id, mesh);
+
+    mirror.step();
+    CHECK(shapeOfLast(mirror) == physics::ShapeType::Box);
+}
+
+// --- Terrain colliders (ADR 0082) ---------------------------------------------
+
+namespace {
+
+// A `Terrain` in the mirror's world: flat ground `height` high over x and z in
+// [-64, 64), at a metre voxel.
+[[nodiscard]] core::InstanceId terrainWith(Mirror& mirror, float height, float size = 128.0f)
+{
+    const core::InstanceId id = mirror.fixture.folder("Terrain");
+    TerrainComponent terrain;
+    terrain.field =
+        asset::TerrainField(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -64.0f, .maxHeight = 64.0f});
+    (void)asset::fillFlat(terrain.field, core::DVec3{0.0, 0.0, 0.0}, size, height, 1);
+    terrain.fieldRevision = 1;
+    mirror.fixture.world.terrains().add(id, terrain);
+    REQUIRE(mirror.fixture.world.setParent(id, mirror.workspace) == std::nullopt);
+    return id;
+}
+
+[[nodiscard]] core::usize meshesMade(const Mirror& mirror)
+{
+    core::usize count = 0;
+    for (const auto& made : mirror.backend.created)
+        count += made.desc.shape.type == physics::ShapeType::TriangleMesh ? 1u : 0u;
+    return count;
+}
+
+// Steps long enough for every collider in reach to have been built at the
+// budget. A fixed count: a tick that builds a chunk with no surface creates no
+// body, so "nothing new this tick" is not "nothing left to do".
+void settle(Mirror& mirror)
+{
+    for (int tick = 0; tick < 30; ++tick)
+        mirror.step();
+}
+
+} // namespace
+
+TEST_CASE("ground collides only near something that moves")
+{
+    // **Collision is built where it can be reached.** A chunk's collider is its
+    // surface meshed and handed over as triangles, a millisecond or two apiece;
+    // a world with nothing moving in it needs none.
+    Mirror mirror;
+    (void)terrainWith(mirror, 3.0f);
+    mirror.step();
+    CHECK(meshesMade(mirror) == 0);
+
+    // An anchored part does not move, so it does not count either.
+    const core::InstanceId post = mirror.part("Post", {4.0, 6.0, 4.0});
+    mirror.body(post).anchored = true;
+    mirror.step();
+    CHECK(meshesMade(mirror) == 0);
+
+    (void)mirror.part("Crate", {4.0, 6.0, 4.0});
+    settle(mirror);
+    CHECK(meshesMade(mirror) >= 1);
+    for (const auto& made : mirror.backend.created) {
+        if (made.desc.shape.type != physics::ShapeType::TriangleMesh)
+            continue;
+        // **Static however it was asked for** (ADR 0066), and never a skirt:
+        // every point is on the ground's surface.
+        CHECK(made.desc.motion == physics::MotionType::Static);
+        CHECK(made.indexCount >= 3);
+        for (const core::Vec3& point : made.points)
+            CHECK(static_cast<double>(point.y) == doctest::Approx(3.0).epsilon(0.01));
+    }
+
+    // Nothing written: nothing built.
+    const core::usize before = mirror.backend.created.size();
+    mirror.step();
+    CHECK(mirror.backend.created.size() == before);
+}
+
+TEST_CASE("the ground under something that moves gets its collider first")
+{
+    // **Found by dropping a crate on a streamed kilometre of ground**: the few
+    // collider builds a tick went in key order, and the crate's ground came
+    // round after it had fallen through the world. Nearest to a mover first.
+    Mirror mirror;
+    (void)terrainWith(mirror, 0.0f);
+    (void)mirror.part("Crate", {40.0, 4.0, -50.0});
+    mirror.step();
+    bool under = false;
+    for (const auto& made : mirror.backend.created) {
+        if (made.desc.shape.type != physics::ShapeType::TriangleMesh)
+            continue;
+        for (const core::Vec3& point : made.points) {
+            if (std::abs(point.x - 40.0f) < 1.0f && std::abs(point.z + 50.0f) < 1.0f)
+                under = true;
+        }
+    }
+    CHECK(under);
+}
+
+TEST_CASE("a dig rebuilds the collider under it and not the ones beside it")
+{
+    // Keyed on the chunk and the FACES of its neighbours -- what its mesh
+    // reads -- not on whole neighbours: a dig in the middle of one chunk used
+    // to send all twenty-six round it back to the backend.
+    // The ground at 10, so the dig is inside one chunk rather than on the face
+    // between two.
+    Mirror mirror;
+    const core::InstanceId terrain = terrainWith(mirror, 10.0f);
+    (void)mirror.part("Crate", {16.0, 14.0, 16.0});
+    settle(mirror);
+    const core::usize built = mirror.backend.created.size();
+    const core::usize destroyed = mirror.backend.destroyed.size();
+
+    TerrainComponent* component = mirror.fixture.world.terrains().find(terrain);
+    REQUIRE(component != nullptr);
+    (void)asset::fillBall(component->field, core::DVec3{16.0, 10.0, 16.0}, 3.0, 0);
+    component->fieldRevision += 1;
+    settle(mirror);
+    CHECK(mirror.backend.created.size() - built == 1);
+    CHECK(mirror.backend.destroyed.size() - destroyed == 1);
+}
+
+TEST_CASE("the colliders a tick rebuilds are the same built on the pool as one after another")
+{
+    // Terrain audit: a tick's rebuilds are meshed side by side now, and
+    // what that makes -- which bodies, in which order, of which triangles --
+    // must not depend on it (R10).
+    const auto run = [] {
+        Mirror mirror;
+        const core::InstanceId terrain = terrainWith(mirror, 10.0f);
+        TerrainComponent* component = mirror.fixture.world.terrains().find(terrain);
+        REQUIRE(component != nullptr);
+        (void)asset::fillBall(component->field, core::DVec3{20.0, 10.0, 12.0}, 7.0, 1);
+        component->fieldRevision += 1;
+        (void)mirror.part("Crate", {16.0, 14.0, 16.0});
+        (void)mirror.part("Barrel", {-20.0, 14.0, 30.0});
+        settle(mirror);
+        (void)asset::fillBall(component->field, core::DVec3{16.0, 10.0, 16.0}, 5.0, 0);
+        component->fieldRevision += 1;
+        settle(mirror);
+        std::vector<std::pair<std::vector<core::Vec3>, core::usize>> made;
+        for (const auto& body : mirror.backend.created)
+            made.emplace_back(body.points, body.indexCount);
+        return made;
+    };
+    jobs::shutdown();
+    const auto serial = run();
+    jobs::init(4);
+    const auto pooled = run();
+    jobs::shutdown();
+    REQUIRE(serial.size() > 4);
+    REQUIRE(serial.size() == pooled.size());
+    for (core::usize at = 0; at < serial.size(); ++at) {
+        CAPTURE(at);
+        CHECK(serial[at].second == pooled[at].second);
+        REQUIRE(serial[at].first.size() == pooled[at].first.size());
+        bool same = true;
+        for (core::usize point = 0; point < serial[at].first.size(); ++point) {
+            const core::Vec3 a = serial[at].first[point];
+            const core::Vec3 b = pooled[at].first[point];
+            same = same && a.x == b.x && a.y == b.y && a.z == b.z;
+        }
+        CHECK(same);
+    }
+}
+
+TEST_CASE("a cave is collided with from inside")
+{
+    Mirror mirror;
+    const core::InstanceId terrain = terrainWith(mirror, 10.0f);
+    TerrainComponent* component = mirror.fixture.world.terrains().find(terrain);
+    REQUIRE(component != nullptr);
+    (void)asset::fillBall(component->field, core::DVec3{16.0, -6.0, 16.0}, 4.0, 0);
+    component->fieldRevision += 1;
+    (void)mirror.part("Crate", {16.0, -6.0, 16.0});
+    settle(mirror);
+
+    // Its floor and its roof: points under the crate and over it.
+    bool floor = false;
+    bool roof = false;
+    for (const auto& made : mirror.backend.created) {
+        for (const core::Vec3& point : made.points) {
+            if (std::abs(point.x - 16.0f) > 1.0f || std::abs(point.z - 16.0f) > 1.0f)
+                continue;
+            floor = floor || (point.y < -9.0f && point.y > -11.0f);
+            roof = roof || (point.y > -3.0f && point.y < -1.0f);
+        }
+    }
+    CHECK(floor);
+    CHECK(roof);
+}
+
+TEST_CASE("a terrain that is cleared, or moved, takes its colliders with it")
+{
+    Mirror mirror;
+    const core::InstanceId terrain = terrainWith(mirror, 3.0f);
+    (void)mirror.part("Crate", {4.0, 6.0, 4.0});
+    settle(mirror);
+    REQUIRE(meshesMade(mirror) >= 1);
+
+    TerrainComponent* component = mirror.fixture.world.terrains().find(terrain);
+    REQUIRE(component != nullptr);
+    // Moved: moved where it now is, not remeshed.
+    const core::usize before = mirror.backend.created.size();
+    const core::usize movedBefore = mirror.backend.transforms.size();
+    component->origin = core::DVec3{0.0, 1.0, 0.0};
+    component->fieldRevision += 1;
+    settle(mirror);
+    CHECK(mirror.backend.created.size() == before);
+    REQUIRE(mirror.backend.transforms.size() > movedBefore);
+    CHECK(mirror.backend.transforms.back().second.position.y == doctest::Approx(1.0));
+
+    // Cleared: gone, because a collider for ground that is not there is a wall
+    // somebody walks into.
+    component->field = asset::TerrainField(component->field.settings());
+    component->fieldRevision += 1;
+    const core::usize destroyedBefore = mirror.backend.destroyed.size();
+    mirror.step();
+    CHECK(mirror.backend.destroyed.size() > destroyedBefore);
+}
+
+TEST_CASE("a tick with nothing moving does not leave the next one standing on colliders that are gone")
+{
+    // A game's only body anchored for a tick -- a character dead and waiting
+    // to respawn where it fell -- retired every terrain collider, and the pass
+    // after it, with the same boxes over the same ground, read as settled and
+    // built none: the character came back standing on nothing.
+    Mirror mirror;
+    (void)terrainWith(mirror, 3.0f);
+    const core::InstanceId crate = mirror.part("Crate", {4.0, 6.0, 4.0});
+    settle(mirror);
+    REQUIRE(meshesMade(mirror) >= 1);
+
+    mirror.body(crate).anchored = true;
+    const core::usize destroyed = mirror.backend.destroyed.size();
+    mirror.step();
+    REQUIRE(mirror.backend.destroyed.size() > destroyed);
+
+    mirror.body(crate).anchored = false;
+    const core::usize built = mirror.backend.created.size();
+    settle(mirror);
+    bool ground = false;
+    for (core::usize at = built; at < mirror.backend.created.size(); ++at)
+        ground = ground || mirror.backend.created[at].desc.shape.type == physics::ShapeType::TriangleMesh;
+    CHECK(ground);
+}
+
+TEST_CASE("an edit across more chunks than a tick rebuilds reaches every one of them")
+{
+    // Nearest first rebuilt the same four every tick of an edit across nine,
+    // and the others stayed as they were for as long as it went on.
+    Mirror mirror;
+    const core::InstanceId terrain = terrainWith(mirror, 10.0f);
+    // In the middle of a chunk, so the nine round it are in reach.
+    (void)mirror.part("Crate", {16.0, 14.0, 16.0});
+    settle(mirror);
+    TerrainComponent* component = mirror.fixture.world.terrains().find(terrain);
+    REQUIRE(component != nullptr);
+
+    // Every tick the ground under all nine changes: painted one material,
+    // then the other.
+    const core::usize before = mirror.backend.created.size();
+    for (int tick = 0; tick < 4; ++tick) {
+        (void)asset::paintBall(component->field, core::DVec3{16.0, 10.0, 16.0}, 50.0,
+                               static_cast<core::u8>(tick % 2 == 0 ? 2 : 3));
+        component->fieldRevision += 1;
+        mirror.step();
+    }
+    std::set<std::array<core::i32, 3>> rebuilt;
+    for (core::usize at = before; at < mirror.backend.created.size(); ++at) {
+        const auto& made = mirror.backend.created[at];
+        if (made.desc.shape.type != physics::ShapeType::TriangleMesh || made.points.empty())
+            continue;
+        // A chunk's collider is its own surface: the middle of its points is
+        // inside it.
+        core::Vec3 sum{};
+        for (const core::Vec3& point : made.points)
+            sum = sum + point;
+        const float n = static_cast<float>(made.points.size());
+        rebuilt.insert({static_cast<core::i32>(std::floor(sum.x / n / 32.0f)),
+                        static_cast<core::i32>(std::floor(sum.y / n / 32.0f)),
+                        static_cast<core::i32>(std::floor(sum.z / n / 32.0f))});
+    }
+    // All nine, in three ticks of four.
+    CHECK(rebuilt.size() >= 9);
+}
+
+TEST_CASE("two terrains in one place each get their colliders")
+{
+    Mirror mirror;
+    (void)terrainWith(mirror, 3.0f);
+    (void)terrainWith(mirror, 9.0f);
+    (void)mirror.part("Crate", {4.0, 12.0, 4.0});
+    settle(mirror);
+    bool low = false;
+    bool high = false;
+    for (const auto& made : mirror.backend.created) {
+        for (const core::Vec3& point : made.points) {
+            low = low || std::abs(point.y - 3.0f) < 0.05f;
+            high = high || std::abs(point.y - 9.0f) < 0.05f;
+        }
+    }
+    CHECK(low);
+    CHECK(high);
+    const core::usize before = mirror.backend.created.size();
+    mirror.step();
+    CHECK(mirror.backend.created.size() == before);
+}
+
+TEST_CASE("a block world collides near what moves, and nowhere else")
+{
+    // One static triangle mesh per chunk, built from the same greedy faces
+    // the renderer draws, and only for chunks within reach of a moving body.
+    Mirror mirror;
+    const core::InstanceId service = mirror.fixture.folder("VoxelService");
+    mirror.fixture.world.voxels().add(service, VoxelComponent{});
+    VoxelComponent* voxels = mirror.fixture.world.voxels().find(service);
+    REQUIRE(voxels != nullptr);
+    (void)voxels->grid.fill(0, 0, 0, 15, 3, 15, 1);
+    (void)voxels->grid.fill(2000, 0, 0, 2015, 3, 15, 1);
+
+    // Nothing moves yet: no collider anywhere.
+    mirror.step();
+    for (const auto& made : mirror.backend.created)
+        CHECK(made.desc.shape.type != physics::ShapeType::TriangleMesh);
+
+    // A crate falling onto the first chunk: that chunk, and only that one.
+    (void)mirror.part("Crate", {8.0, 10.0, 8.0});
+    mirror.step();
+    int meshes = 0;
+    for (const auto& made : mirror.backend.created) {
+        if (made.desc.shape.type == physics::ShapeType::TriangleMesh) {
+            ++meshes;
+            CHECK(made.desc.motion == physics::MotionType::Static);
+            CHECK(made.indexCount >= 3);
+        }
+    }
+    CHECK(meshes == 1);
+
+    // A tick with nothing written builds nothing more.
+    const core::usize before = mirror.backend.created.size();
+    mirror.step();
+    CHECK(mirror.backend.created.size() == before);
+}
+
+TEST_CASE("a world with no terrain mirrors exactly as it did before")
+{
+    // The claim every step of the terrain work has to keep: a project that never touches
+    // terrain pays nothing and behaves identically.
+    Mirror mirror;
+    const core::InstanceId part = mirror.part("Block", {0.0, 4.0, 0.0});
+    mirror.step();
+
+    REQUIRE(mirror.backend.created.size() == 1);
+    CHECK(mirror.backend.created.front().desc.shape.type == physics::ShapeType::Box);
+    CHECK(mirror.backend.heightEdits.empty());
+    (void)part;
+}
+
+// --- Fast bodies, and bodies in the ground ------------------------------
+
+TEST_CASE("the ground a fast body is about to cross is made the tick it is found missing")
+{
+    // Ground has a collider only near what moves, four chunks a tick -- and a
+    // log thrown from out of reach arrived before its ground had been made.
+    // Where four chunks meet, thirty metres up: nine columns of this ground are
+    // inside a tenth of a second of 600 m/s.
+    Mirror slow;
+    (void)terrainWith(slow, 10.0f);
+    (void)slow.part("Crate", {32.0, 30.0, 32.0});
+    slow.step();
+    // The tick's count, as it was.
+    CHECK(meshesMade(slow) <= 4);
+
+    Mirror fast;
+    (void)terrainWith(fast, 10.0f);
+    const core::InstanceId crate = fast.part("Crate", {32.0, 30.0, 32.0});
+    fast.body(crate).linearVelocity = core::Vec3{0.0f, -600.0f, 0.0f};
+    fast.step();
+    CHECK(meshesMade(fast) >= 9);
+}
+
+TEST_CASE("a loose body new ground has grown round is put on top of it")
+{
+    // A terrain's collider is a shell: a crate lying where the ground was
+    // raised over its middle had nothing to push it out, and fell out of the
+    // bottom of the world.
+    Mirror mirror;
+    const core::InstanceId terrain = terrainWith(mirror, 10.0f);
+    const core::InstanceId crate = mirror.part("Crate", {16.0, 10.5, 16.0});
+    const core::InstanceId post = mirror.part("Post", {20.0, 10.5, 16.0});
+    mirror.body(post).anchored = true;
+    settle(mirror);
+    // At rest on the ground, it is where it was put.
+    CHECK(mirror.fixture.world.parts().find(crate)->cframe.position.y == doctest::Approx(10.5));
+
+    TerrainComponent* component = mirror.fixture.world.terrains().find(terrain);
+    REQUIRE(component != nullptr);
+    (void)asset::fillFlat(component->field, core::DVec3{0.0, 0.0, 0.0}, 128.0f, 16.0f, 1);
+    component->fieldRevision += 1;
+    mirror.step();
+
+    // On the new ground: its middle half its height over sixteen.
+    const double lifted = mirror.fixture.world.parts().find(crate)->cframe.position.y;
+    CHECK(lifted >= 16.0);
+    CHECK(lifted <= 17.5);
+    // And told to the backend, as a part somebody moved is.
+    REQUIRE_FALSE(mirror.backend.transforms.empty());
+    CHECK(mirror.backend.transforms.back().second.position.y == doctest::Approx(lifted));
+    // What is anchored is where its author put it, ground or no ground.
+    CHECK(mirror.fixture.world.parts().find(post)->cframe.position.y == doctest::Approx(10.5));
+}
+
+TEST_CASE("a moving body whose middle is in the ground is put on top of it, and one merely touching is not")
+{
+    // A log that strikes end first comes round on that end and puts its other
+    // one through the shell: a sweep is of where a body goes, not of how it
+    // turns. The ground is solid all the same.
+    Mirror mirror;
+    (void)terrainWith(mirror, 10.0f);
+    const core::InstanceId sunk = mirror.part("Sunk", {16.0, 8.0, 16.0});
+    const core::InstanceId resting = mirror.part("Resting", {24.0, 10.4, 16.0});
+    mirror.body(sunk).linearVelocity = core::Vec3{0.0f, -30.0f, 0.0f};
+    mirror.body(resting).linearVelocity = core::Vec3{0.0f, -1.0f, 0.0f};
+    mirror.step();
+
+    const double lifted = mirror.fixture.world.parts().find(sunk)->cframe.position.y;
+    CHECK(lifted >= 10.0);
+    CHECK(lifted <= 11.5);
+    // It is not falling any more.
+    CHECK(mirror.body(sunk).linearVelocity.y >= 0.0f);
+    // A tenth of a metre into the ground with its middle in the air: the
+    // solver's, and left where it is.
+    CHECK(mirror.fixture.world.parts().find(resting)->cframe.position.y == doctest::Approx(10.4));
+}
+
+TEST_CASE("a character ground is raised round ends standing on it")
+{
+    // The common case of the same defect: a player standing where the ground
+    // is raised -- in Play, or in a match -- was inside it, and walked out of
+    // the bottom of the world.
+    Mirror mirror;
+    const core::InstanceId terrain = terrainWith(mirror, 10.0f);
+    const core::InstanceId walker = mirror.part("Walker", {16.0, 12.5, 16.0});
+    mirror.fixture.world.parts().find(walker)->size = core::Vec3{2.0f, 5.0f, 2.0f};
+    // Not anchored: an anchored character is not stepped.
+    mirror.fixture.world.characterBodies().add(walker, CharacterBodyComponent{});
+    // The controller says it stands where it was put: on the ground at ten.
+    mirror.backend.characterAnswer.transform.position = core::DVec3{16.0, 12.5, 16.0};
+    settle(mirror);
+    // Standing on its ground, nobody moves it.
+    CHECK(mirror.backend.characterTransforms.empty());
+
+    // Six metres of ground, under it and all round it.
+    TerrainComponent* component = mirror.fixture.world.terrains().find(terrain);
+    REQUIRE(component != nullptr);
+    (void)asset::fillFlat(component->field, core::DVec3{0.0, 0.0, 0.0}, 128.0f, 16.0f, 1);
+    component->fieldRevision += 1;
+    mirror.step();
+
+    // Put with its feet on the new ground: its middle half its height over
+    // sixteen.
+    REQUIRE_FALSE(mirror.backend.characterTransforms.empty());
+    const double standing = mirror.backend.characterTransforms.back().position.y;
+    CHECK(standing >= 18.5);
+    CHECK(standing <= 19.5);
+}
+
+TEST_CASE("a walk is WalkSpeed across the ground, up a slope and down it, and never more")
+{
+    // "Downhill I run very fast, uphill very slow": at thirty degrees a
+    // character walked at 4.4 of its 6 uphill and 6.9 along the slope down.
+    // And `Move(1, 0, 1)` walked at 8.49, `Move(5, 0, 0)` at thirty.
+    Mirror mirror;
+    const core::InstanceId walker = mirror.part("Walker", {0.0, 3.0, 0.0});
+    mirror.fixture.world.parts().find(walker)->size = core::Vec3{1.0f, 2.0f, 1.0f};
+    // Not anchored: an anchored character is not stepped.
+    mirror.fixture.world.characterBodies().add(walker, CharacterBodyComponent{});
+    mirror.backend.characterAnswer.transform.position = core::DVec3{0.0, 3.0, 0.0};
+    mirror.backend.characterAnswer.ground = physics::CharacterGround::Grounded;
+    mirror.backend.characterAnswer.groundNormal = core::Vec3{0.0f, 1.0f, 0.0f};
+    settle(mirror);
+
+    // What the controller hands the sweep for one command.
+    const auto walk = [&](core::Vec3 move, core::Vec3 groundNormal, bool grounded = true) {
+        CharacterBodyComponent* body = mirror.fixture.world.characterBodies().find(walker);
+        REQUIRE(body != nullptr);
+        body->walkSpeed = 6.0f;
+        body->moveDirection = move;
+        mirror.backend.characterAnswer.groundNormal = groundNormal;
+        mirror.backend.characterAnswer.ground =
+            grounded ? physics::CharacterGround::Grounded : physics::CharacterGround::Airborne;
+        mirror.backend.moves.clear();
+        mirror.step();
+        REQUIRE_FALSE(mirror.backend.moves.empty());
+        return mirror.backend.moves.back();
+    };
+    const auto flat = [](core::Vec3 velocity) {
+        return static_cast<double>(std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z));
+    };
+
+    // Flat ground: six across it, and nothing up or down.
+    const core::Vec3 level = walk(core::Vec3{0.0f, 0.0f, -1.0f}, core::Vec3{0.0f, 1.0f, 0.0f});
+    CHECK(flat(level) == doctest::Approx(6.0));
+    CHECK(static_cast<double>(level.y) == doctest::Approx(0.0));
+
+    // A slope rising towards -Z: its normal leans towards +Z.
+    for (const double degrees : {10.0, 20.0, 30.0}) {
+        CAPTURE(degrees);
+        const double radians = degrees * 3.14159265358979 / 180.0;
+        const core::Vec3 normal{0.0f, static_cast<f32>(std::cos(radians)), static_cast<f32>(std::sin(radians))};
+
+        const core::Vec3 up = walk(core::Vec3{0.0f, 0.0f, -1.0f}, normal);
+        // Six across the ground, and the rise that keeps it on the slope:
+        // along the ground, so the sweep has nothing to take away.
+        CHECK(flat(up) == doctest::Approx(6.0));
+        CHECK(static_cast<double>(up.y) == doctest::Approx(6.0 * std::tan(radians)));
+        CHECK(static_cast<double>(up.x * normal.x + up.y * normal.y + up.z * normal.z) == doctest::Approx(0.0));
+
+        const core::Vec3 down = walk(core::Vec3{0.0f, 0.0f, 1.0f}, normal);
+        CHECK(flat(down) == doctest::Approx(6.0));
+        CHECK(static_cast<double>(down.y) == doctest::Approx(-6.0 * std::tan(radians)));
+    }
+
+    // In the air the walk is flat and the fall is gravity's, as it was.
+    const core::Vec3 falling = walk(core::Vec3{0.0f, 0.0f, -1.0f}, core::Vec3{0.0f, 1.0f, 0.0f}, false);
+    CHECK(flat(falling) == doctest::Approx(6.0));
+    CHECK(falling.y < 0.0f);
+
+    // **A direction and a throttle**: never more than all of it.
+    CHECK(flat(walk(core::Vec3{1.0f, 0.0f, 1.0f}, core::Vec3{0.0f, 1.0f, 0.0f})) == doctest::Approx(6.0));
+    CHECK(flat(walk(core::Vec3{5.0f, 0.0f, 0.0f}, core::Vec3{0.0f, 1.0f, 0.0f})) == doctest::Approx(6.0));
+    // Less than all of it walks slower: an analog stick pushed a little.
+    CHECK(flat(walk(core::Vec3{0.3f, 0.0f, 0.0f}, core::Vec3{0.0f, 1.0f, 0.0f})) == doctest::Approx(1.8));
+}
+
+TEST_CASE("ADR 0163: on a replica, another player's character is met where its session expects it")
+{
+    Mirror mirror;
+    mirror.fixture.world.engineState().networkTopology = NetworkTopology::Replica;
+    const core::InstanceId other = mirror.part("Other", {4.0, 3.0, 0.0});
+    mirror.fixture.world.parts().find(other)->size = core::Vec3{1.0f, 2.0f, 1.0f};
+    mirror.fixture.world.characterBodies().add(other, CharacterBodyComponent{});
+    mirror.backend.characterAnswer.transform.position = core::DVec3{4.0, 3.0, 0.0};
+    mirror.step();
+    // Nobody has said where it is expected: an ordinary character.
+    CHECK(mirror.backend.standIns.empty());
+
+    // A metre and a half on from where it is drawn.
+    CharacterBodyComponent* remote = mirror.fixture.world.characterBodies().find(other);
+    REQUIRE(remote != nullptr);
+    remote->collisionLead = core::Vec3{1.5f, 0.0f, -0.5f};
+    remote->collisionLeadSet = true;
+    mirror.step();
+    REQUIRE_FALSE(mirror.backend.standIns.empty());
+    REQUIRE(mirror.backend.standIns.back().has_value());
+    CHECK(mirror.backend.standIns.back()->position.x == doctest::Approx(5.5));
+    CHECK(mirror.backend.standIns.back()->position.y == doctest::Approx(3.0));
+    CHECK(mirror.backend.standIns.back()->position.z == doctest::Approx(-0.5));
+
+    // And taken back when the session stops saying.
+    remote->collisionLeadSet = false;
+    mirror.step();
+    CHECK_FALSE(mirror.backend.standIns.back().has_value());
+    const std::size_t calls = mirror.backend.standIns.size();
+    mirror.step();
+    CHECK(mirror.backend.standIns.size() == calls);
+}
+
+TEST_CASE("another player's stand-in is kept where this machine's own character cannot be inside it")
+{
+    // **The report, in play**: a friend can walk INTO the host's character
+    // and then gets a rollback. Two processes showed three cases, all
+    // from where the other player's stand-in was put: inside the player's own
+    // character (pushed out of it, half a metre off, corrected every other
+    // frame), and guessed out of the way of a player following close (who
+    // then walked through a friend who had stopped, and was pulled back out).
+    // Two capsules of 0.9 touch at 0.92; the own character is at the origin.
+    const core::DVec3 own{0.0, 1.0, 0.0};
+    const f64 reach = 0.92;
+    const auto place = [&](core::DVec3 known, core::DVec3 expected) {
+        return PhysicsSync::standInPlace(known, expected, own, reach, true);
+    };
+    const auto gap = [&](const core::DVec3& at) { return std::sqrt(at.x * at.x + at.z * at.z); };
+
+    // **Coming at the player, and guessed on through him**: it stops touching
+    // him, on the side it came from -- as it does on the authority.
+    {
+        const core::DVec3 at = place({-3.0, 1.0, 0.0}, {0.4, 1.0, 0.0});
+        CHECK(at.x < 0.0);
+        CHECK(gap(at) == doctest::Approx(0.922).epsilon(0.001));
+        CHECK(at.y == doctest::Approx(1.0));
+    }
+    // Guessed to just short of him: where it is guessed.
+    {
+        const core::DVec3 at = place({-3.0, 1.0, 0.0}, {-1.5, 1.0, 0.0});
+        CHECK(at.x == doctest::Approx(-1.5));
+    }
+    // **Going away from the player**: where it was last known to be, not
+    // where it is guessed to have got to. A player behind it walks into that.
+    {
+        const core::DVec3 at = place({1.2, 1.0, 0.0}, {2.9, 1.0, 0.0});
+        CHECK(at.x == doctest::Approx(1.2));
+        CHECK(at.z == doctest::Approx(0.0));
+    }
+    // **Standing still, the player pressed against it**: it is where it is.
+    // It does not give way (a stand-in moved back from a player walking into
+    // it lets him creep through), and it is not moved further in.
+    {
+        const core::DVec3 at = place({0.92, 1.0, 0.0}, {0.92, 1.0, 0.0});
+        CHECK(at.x == doctest::Approx(0.92));
+        const core::DVec3 pressed = place({0.915, 1.0, 0.0}, {0.915, 1.0, 0.0});
+        CHECK(pressed.x == doctest::Approx(0.915));
+    }
+    // Stopped against the player and guessed further into him: where it was
+    // last known to be, touching.
+    {
+        const core::DVec3 at = place({-0.92, 1.0, 0.0}, {-0.3, 1.0, 0.0});
+        CHECK(at.x == doctest::Approx(-0.92));
+    }
+    // **Crossing in front of the player**: the nearest it may be.
+    {
+        const core::DVec3 at = place({-2.0, 1.0, 3.0}, {2.0, 1.0, 3.0});
+        CHECK(at.x == doctest::Approx(0.0));
+        CHECK(at.z == doctest::Approx(3.0));
+    }
+    // Across the ground only: its height is the guess's.
+    {
+        const core::DVec3 at = place({-3.0, 1.0, 0.0}, {0.4, 1.4, 0.0});
+        CHECK(at.y == doctest::Approx(1.4));
+    }
+    // One above the other shares no height with him: nothing is in the way.
+    {
+        const core::DVec3 at = PhysicsSync::standInPlace({-3.0, 6.0, 0.0}, {0.4, 6.0, 0.0}, own, reach, false);
+        CHECK(at.x == doctest::Approx(0.4));
+    }
+}
+
+TEST_CASE("ADR 0163: an authority's characters are met where they are")
+{
+    Mirror mirror;
+    const core::InstanceId walker = mirror.part("Walker", {0.0, 3.0, 0.0});
+    mirror.fixture.world.parts().find(walker)->size = core::Vec3{1.0f, 2.0f, 1.0f};
+    CharacterBodyComponent body;
+    // A stray word from nowhere: an authority has no session to say it.
+    body.collisionLead = core::Vec3{9.0f, 0.0f, 0.0f};
+    body.collisionLeadSet = true;
+    mirror.fixture.world.characterBodies().add(walker, body);
+    mirror.backend.characterAnswer.transform.position = core::DVec3{0.0, 3.0, 0.0};
+    mirror.step();
+    mirror.step();
+    CHECK(mirror.backend.standIns.empty());
+}
+
+// --- A mesh that wears another's pose (ADR 0201) -----------------------------------
+
+namespace {
+
+// A skeleton host that says who leads whom, and puts the hand two metres up.
+class LeadingSkeleton final : public SkeletonHost
+{
+public:
+    [[nodiscard]] u32 jointCount(core::InstanceId) const override { return 2; }
+    [[nodiscard]] i32 findJoint(core::InstanceId, std::string_view name) const override
+    {
+        return name == "Hand" ? 1 : (name == "Root" ? 0 : -1);
+    }
+    [[nodiscard]] i32 jointParent(core::InstanceId, u32 joint) const override { return joint == 0 ? -1 : 0; }
+    [[nodiscard]] std::string_view jointName(core::InstanceId, u32 joint) const override
+    {
+        return joint == 0 ? "Root" : "Hand";
+    }
+    [[nodiscard]] bool jointModel(core::InstanceId, u32 joint, core::CFrameD& out) const override
+    {
+        if (joint >= 2)
+            return false;
+        out = core::CFrameD{};
+        if (joint == 1)
+            out.position = core::DVec3{0.0, 2.0, 0.0};
+        return true;
+    }
+    void setJointOverride(core::InstanceId, u32, const core::CFrameD&) override {}
+    void clearJointOverrides(core::InstanceId) override {}
+    void commitOverrides() override {}
+    [[nodiscard]] core::InstanceId poseLeader(core::InstanceId meshPart) const override
+    {
+        return meshPart == follower ? leader : core::InstanceId{};
+    }
+
+    core::InstanceId follower;
+    core::InstanceId leader;
+};
+
+} // namespace
+
+TEST_CASE("ADR 0201: a mesh that wears another's pose has no body, and is a part again when it is taken off")
+{
+    // It is picture on its leader, drawn in the leader's place: nothing
+    // collides with it, touches it or finds it with a ray -- so a breastplate
+    // or a bow can never be what its wearer stands on, which is what a
+    // carried part was once taken for.
+    Mirror mirror;
+    LeadingSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const core::InstanceId body = mirror.part("Body", core::DVec3{0.0, 5.0, 0.0});
+    const core::InstanceId armour = mirror.part("Armour", core::DVec3{0.0, 5.0, 0.0});
+    mirror.fixture.world.meshParts().add(body, MeshPartComponent{});
+    mirror.fixture.world.meshParts().add(armour, MeshPartComponent{});
+    mirror.step();
+    REQUIRE(mirror.sync.bodyCount() == 2);
+
+    // Put on: colliding, queried and touched as it is written, and no body.
+    mirror.fixture.world.meshParts().find(armour)->poseFrom = body;
+    skeleton.follower = armour;
+    skeleton.leader = body;
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 1);
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 1);
+
+    // A name that leads to nobody -- a leader with no skeleton -- is a part.
+    skeleton.leader = core::InstanceId{};
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 2);
+    skeleton.leader = body;
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 1);
+
+    // Taken off: a part again, where its `CFrame` says.
+    mirror.fixture.world.meshParts().find(armour)->poseFrom = core::InstanceId{};
+    skeleton.follower = core::InstanceId{};
+    mirror.step();
+    CHECK(mirror.sync.bodyCount() == 2);
+}
+
+TEST_CASE("ADR 0201: a bone on a follower's joint is on the body that leads it, wherever the piece's own part is")
+{
+    Mirror mirror;
+    LeadingSkeleton skeleton;
+    mirror.sync.setSkeleton(&skeleton);
+
+    const core::InstanceId body = mirror.part("Body", core::DVec3{0.0, 0.0, 50.0});
+    // The gun's own part was left somewhere else altogether.
+    const core::InstanceId gun = mirror.part("Gun", core::DVec3{100.0, 0.0, 0.0});
+    mirror.fixture.world.meshParts().add(body, MeshPartComponent{});
+    mirror.fixture.world.meshParts().add(gun, MeshPartComponent{});
+    mirror.fixture.world.meshParts().find(gun)->poseFrom = body;
+    skeleton.follower = gun;
+    skeleton.leader = body;
+
+    const core::InstanceId muzzle = mirror.fixture.world.create(mirror.fixture.schema.attachmentClass);
+    REQUIRE(mirror.fixture.world.setParent(muzzle, gun) == std::nullopt);
+    mirror.fixture.world.attachments().find(muzzle)->jointName = mirror.fixture.world.atoms().intern("Hand");
+
+    mirror.step();
+    const AttachmentComponent* resolved = mirror.fixture.world.attachments().find(muzzle);
+    REQUIRE(resolved != nullptr);
+    // The joint's two metres up, from where the BODY is.
+    CHECK(resolved->worldCFrame.position.x == doctest::Approx(0.0));
+    CHECK(resolved->worldCFrame.position.y == doctest::Approx(2.0));
+    CHECK(resolved->worldCFrame.position.z == doctest::Approx(50.0));
+}

@@ -1,0 +1,18 @@
+# The cinematic example's project file: a sequence, lines and voices in two
+# languages and a model under `content/`, and words in two languages under
+# `i18n/`.
+
+[project]
+name = "Ludwerk Cinematic"
+id = "dev.ludwerk.cinematic"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"
+# The room, the two speakers and the `SequencePlayer` with its bindings are a
+# scene on disk, so the example opens in the editor with the player to
+# select and the Timeline to open on it; the script only plays it.
+scene = "scenes/meeting.scene.json"
+
+[window]
+title = "Ludwerk — Cinematic"
+size = [1600, 900]

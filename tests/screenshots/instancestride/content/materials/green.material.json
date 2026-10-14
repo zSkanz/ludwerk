@@ -1,0 +1,9 @@
+{
+  "format": "material",
+  "version": 1,
+  "parent": "",
+  "properties": {
+    "Color": [0.1, 0.8, 0.2],
+    "Roughness": 0.7
+  }
+}

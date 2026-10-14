@@ -1,0 +1,2297 @@
+#include "engine/render/render_world.h"
+
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <cmath>
+#include <cstddef>
+#include <cstdio>
+#include <cstring>
+#include <deque>
+#include <limits>
+#include <unordered_map>
+#include <vector>
+
+#include "engine/core/profile.h"
+#include "engine/render/lighting.h"
+#include "engine/render/shader_types.h"
+#include "engine/render/terrain_loader.h"
+#include "engine/render/voxel_loader.h"
+#include "engine/render/water_loader.h"
+#include "engine/scene/components.h"
+#include "engine/scene/water.h"
+#include "engine/scene/world.h"
+
+namespace engine::render {
+namespace {
+
+constexpr f32 kPi = 3.14159265358979323846f;
+constexpr f32 kDegreesToRadians = kPi / 180.0f;
+
+// Membership is immutable during extraction. Resolve each ancestor once, then
+// reuse its answer for siblings and for the other component pools. Generations
+// distinguish stale handles; the cache belongs to this extract, never a tick.
+class WorldMembership
+{
+public:
+    WorldMembership(const scene::World& world, core::InstanceId root) : world_(world), root_(root) {}
+
+    [[nodiscard]] bool contains(core::InstanceId id)
+    {
+        path_.clear();
+        bool inside = false;
+        for (auto cursor = id; cursor.valid();) {
+            if (cursor == root_) {
+                inside = true;
+                break;
+            }
+            if (cursor.index < entries_.size() && entries_[cursor.index].generation == cursor.generation) {
+                inside = entries_[cursor.index].inside;
+                break;
+            }
+            const auto parent = world_.parentOf(cursor);
+            // Invalid/stale and detached handles terminate without indexing
+            // scratch storage by an arbitrary caller-provided slot number.
+            if (!parent.valid())
+                break;
+            // Flat worlds need no membership storage at all.
+            if (parent == root_) {
+                inside = true;
+                break;
+            }
+            path_.push_back(cursor);
+            cursor = parent;
+        }
+        for (const auto member : path_) {
+            if (member.index >= entries_.size())
+                entries_.resize(static_cast<usize>(member.index) + 1);
+            entries_[member.index] = {member.generation, inside};
+        }
+        return inside;
+    }
+
+private:
+    struct Entry
+    {
+        u32 generation = 0;
+        bool inside = false;
+    };
+    const scene::World& world_;
+    core::InstanceId root_;
+    std::vector<Entry> entries_;
+    std::vector<core::InstanceId> path_;
+};
+
+// The generated mesh for a `Part`'s shape, or null before the loader has
+// uploaded them -- which is the first frame of any run, and is why the debug
+// wire box is still reachable.
+[[nodiscard]] const MeshLibrary::Entry* primitiveEntry(const scene::World& world, const MeshLibrary& meshes,
+                                                       core::i32 shape) noexcept
+{
+    const char* name = primitiveContent(shape);
+    if (name == nullptr)
+        return nullptr;
+    const MeshLibrary::Entry* entry = meshes.find(world.atoms().lookup(name));
+    return entry != nullptr && entry->mesh.valid() ? entry : nullptr;
+}
+
+// What one unit mesh has to be scaled by to become this part.
+//
+// **Not simply `Size`**, and the two exceptions are both about agreeing with the
+// collider rather than with the size box:
+//
+//   `Ball` -- the physics shape is a SPHERE of the largest half-extent
+//   (jolt_physics.cpp), so a non-uniform `Size` gives a ball that sticks out of
+//   its own box. Rendering an ellipsoid there would mean seeing one thing and
+//   colliding with another, which is the worse of the two wrongs.
+//
+//   `Capsule` -- the unit mesh is built at the character aspect (radius 0.5,
+//   total height 2), so Y is halved. Its caps still stretch away from
+//   `Size.y == 2 * max(Size.x, Size.z)`; primitives.h records why and what the
+//   fix would be.
+// **The shape a part is DRAWN as**: its own, except a `CharacterBody`, which
+// is the capsule the physics sweeps whatever its `Shape` says -- it has no
+// `Shape` of its own, so it read as the default block and a character was a
+// box on screen and a capsule in the world.
+[[nodiscard]] core::i32 drawnShape(const scene::World& world, core::InstanceId id,
+                                   const scene::PartComponent& part) noexcept
+{
+    constexpr core::i32 Capsule = 3;
+    return world.characterBodies().find(id) != nullptr ? Capsule : part.shape;
+}
+
+[[nodiscard]] Vec3 primitiveScale(core::i32 shape, Vec3 size) noexcept
+{
+    switch (shape) {
+    case 1: {
+        const f32 diameter = std::fmax(size.x, std::fmax(size.y, size.z));
+        return Vec3{diameter, diameter, diameter};
+    }
+    case 2: {
+        const f32 diameter = std::fmax(size.x, size.z);
+        return Vec3{diameter, size.y, diameter};
+    }
+    case 3: {
+        const f32 diameter = std::fmax(size.x, size.z);
+        return Vec3{diameter, size.y * 0.5f, diameter};
+    }
+    default:
+        return size;
+    }
+}
+
+} // namespace
+
+u64 drawSortKey(u32 pass, u32 pipeline, u32 material, u32 geometry, f32 depth) noexcept
+{
+    // 8 bits of pass, 8 of pipeline, 16 of material, 16 of mesh, 16 of depth.
+    // Most significant first, so a single integer compare orders a frame by the
+    // thing that costs most to change: the pass, then the pipeline, then the
+    // bind set, then the vertex buffers.
+    //
+    // The geometry field -- mesh and section together -- is what makes an
+    // instanced run contiguous (ADR 0043). Its cost is that the opaque pass no
+    // longer walks strictly front-to-back within one material, which was worth
+    // something for early-Z and is now worth nothing, because the depth prepass
+    // provides it exactly.
+    const u64 passBits = static_cast<u64>(pass & 0xFFu) << 56;
+    const u64 pipelineBits = static_cast<u64>(pipeline & 0xFFu) << 48;
+    const u64 materialBits = static_cast<u64>(material & 0xFFFFu) << 32;
+    const u64 geometryBits = static_cast<u64>(geometry & 0xFFFFu) << 16;
+
+    // Quantized deliberately. A sub-millimetre wobble in a camera position must
+    // not be able to reorder two draws, because the capture golden hashes the
+    // order -- and a gate that fails on the last bit of a float is a gate people
+    // switch off. One unit is a centimetre out to 655 metres, and saturates
+    // beyond, which is far past where ordering within a pass matters.
+    const f32 clamped = depth < 0.0f ? 0.0f : (depth > 655.0f ? 655.0f : depth);
+    const u64 depthBits = static_cast<u64>(clamped * 100.0f);
+
+    return passBits | pipelineBits | materialBits | geometryBits | (depthBits & 0xFFFFu);
+}
+
+const char* primitiveContent(core::i32 shape) noexcept
+{
+    // Indexed by `Enum.PartShape`'s own values, which enums.api.luau's header
+    // makes the contract.
+    switch (shape) {
+    case 0:
+        return "engine://primitive/block";
+    case 1:
+        return "engine://primitive/ball";
+    case 2:
+        return "engine://primitive/cylinder";
+    case 3:
+        return "engine://primitive/capsule";
+    case 4:
+        return "engine://primitive/wedge";
+    default:
+        return nullptr;
+    }
+}
+
+void TextureLibrary::set(core::NameAtom content, rhi::TextureHandle texture, core::u32 width, core::u32 height)
+{
+    const auto position =
+        std::lower_bound(entries_.begin(), entries_.end(), content,
+                         [](const Slot& slot, core::NameAtom value) { return slot.content.id < value.id; });
+    if (position != entries_.end() && position->content == content) {
+        position->texture = texture;
+        position->width = width;
+        position->height = height;
+        return;
+    }
+    entries_.insert(position, Slot{content, texture, width, height});
+}
+
+void TextureLibrary::setMean(core::NameAtom content, Color3 mean) noexcept
+{
+    const auto position =
+        std::lower_bound(entries_.begin(), entries_.end(), content,
+                         [](const Slot& slot, core::NameAtom value) { return slot.content.id < value.id; });
+    if (position != entries_.end() && position->content == content)
+        position->mean = mean;
+}
+
+Color3 TextureLibrary::meanOf(core::NameAtom content) const noexcept
+{
+    const auto position =
+        std::lower_bound(entries_.begin(), entries_.end(), content,
+                         [](const Slot& slot, core::NameAtom value) { return slot.content.id < value.id; });
+    if (position == entries_.end() || !(position->content == content))
+        return Color3{1.0f, 1.0f, 1.0f};
+    return position->mean;
+}
+
+core::Vec2 TextureLibrary::sizeOf(core::NameAtom content) const noexcept
+{
+    const auto position =
+        std::lower_bound(entries_.begin(), entries_.end(), content,
+                         [](const Slot& slot, core::NameAtom value) { return slot.content.id < value.id; });
+    if (position == entries_.end() || !(position->content == content))
+        return core::Vec2{0.0f, 0.0f};
+    return core::Vec2{static_cast<f32>(position->width), static_cast<f32>(position->height)};
+}
+
+void TextureLibrary::clear() noexcept
+{
+    entries_.clear();
+}
+
+rhi::TextureHandle TextureLibrary::take(core::NameAtom content) noexcept
+{
+    const auto position =
+        std::lower_bound(entries_.begin(), entries_.end(), content,
+                         [](const Slot& slot, core::NameAtom wanted) noexcept { return slot.content.id < wanted.id; });
+    if (position == entries_.end() || position->content != content)
+        return rhi::TextureHandle{};
+
+    const rhi::TextureHandle held = position->texture;
+    entries_.erase(position);
+    return held;
+}
+
+rhi::TextureHandle TextureLibrary::find(core::NameAtom content) const noexcept
+{
+    const auto position =
+        std::lower_bound(entries_.begin(), entries_.end(), content,
+                         [](const Slot& slot, core::NameAtom value) { return slot.content.id < value.id; });
+    return position != entries_.end() && position->content == content ? position->texture : rhi::TextureHandle{};
+}
+
+void MeshLibrary::set(core::NameAtom content, const Entry& entry)
+{
+    const auto position =
+        std::lower_bound(entries_.begin(), entries_.end(), content,
+                         [](const Slot& slot, core::NameAtom value) { return slot.content.id < value.id; });
+    if (position != entries_.end() && position->content == content) {
+        position->entry = entry;
+        return;
+    }
+    entries_.insert(position, Slot{content, entry});
+}
+
+void MeshLibrary::remove(core::NameAtom content)
+{
+    const auto position =
+        std::lower_bound(entries_.begin(), entries_.end(), content,
+                         [](const Slot& slot, core::NameAtom value) { return slot.content.id < value.id; });
+    if (position != entries_.end() && position->content == content)
+        entries_.erase(position);
+}
+
+void MeshLibrary::clear() noexcept
+{
+    entries_.clear();
+}
+
+const MeshLibrary::Entry* MeshLibrary::find(core::NameAtom content) const noexcept
+{
+    const auto position =
+        std::lower_bound(entries_.begin(), entries_.end(), content,
+                         [](const Slot& slot, core::NameAtom value) { return slot.content.id < value.id; });
+    if (position == entries_.end() || !(position->content == content))
+        return nullptr;
+    return &position->entry;
+}
+
+namespace {
+
+// The block an authored material describes (ADR 0090), with its alpha at one:
+// a part's see-through goes into the DRAW's alpha, which is where the blended
+// pass is decided -- the way `BasePart.Transparency` always did, and the way a
+// material's own `Transparency` did not, which kept a translucent material out
+// of the blended pass entirely.
+//
+// **Built every frame rather than cached across frames.** A material is a
+// handful of floats and four texture lookups, and a cache would need
+// invalidating on every file change and every clone write; the per-frame cache
+// in `extract` already makes it once per distinct material.
+//
+// The texture handles come from the library, keyed by the URN each map names --
+// interned by `MeshLoader::syncTextures`, which loads them. A map whose file has
+// not loaded yet is absent and the surface draws untextured until it arrives: a
+// surface that vanished while its texture loaded would be worse.
+[[nodiscard]] RenderMaterial blockOf(const scene::World& world, const asset::MaterialProperties& material,
+                                     const TextureLibrary* textures)
+{
+    RenderMaterial out;
+    out.uniforms.baseColor[0] = material.color.r;
+    out.uniforms.baseColor[1] = material.color.g;
+    out.uniforms.baseColor[2] = material.color.b;
+    out.uniforms.baseColor[3] = 1.0f;
+    out.uniforms.emissive[0] = material.emissive.r;
+    out.uniforms.emissive[1] = material.emissive.g;
+    out.uniforms.emissive[2] = material.emissive.b;
+    out.uniforms.metallicRoughnessNormalCutoff[0] = material.metalness;
+    out.uniforms.metallicRoughnessNormalCutoff[1] = material.roughness;
+    out.uniforms.metallicRoughnessNormalCutoff[2] = material.normalScale;
+    // Read only in `Mask`, and zero everywhere else so the shader's test is
+    // "cutoff > 0" rather than a second uniform saying which mode this is.
+    out.uniforms.metallicRoughnessNormalCutoff[3] =
+        material.alphaMode == static_cast<core::i32>(asset::MaterialAlphaMode::Mask) ? material.alphaCutoff : 0.0f;
+    // The texture's size on a primitive's faces, in metres (the shader's
+    // `EmissiveFactor.w`, which was unused); zero keeps the mesh's own UVs --
+    // and is what a material with no texture carries, having nothing to tile.
+    const bool textured = !material.colorMap.empty() || !material.normalMap.empty() ||
+                          !material.metallicRoughnessMap.empty() || !material.emissiveMap.empty();
+    out.uniforms.emissive[3] = textured ? std::max(material.tileSize, 0.0f) : 0.0f;
+
+    const auto mapOf = [&](const std::string& urn) -> rhi::TextureHandle {
+        if (textures == nullptr || urn.empty())
+            return rhi::TextureHandle{};
+        const core::NameAtom atom = world.atoms().lookup(urn);
+        return atom.valid() ? textures->find(atom) : rhi::TextureHandle{};
+    };
+    out.setMaps(mapOf(material.colorMap), mapOf(material.normalMap), mapOf(material.metallicRoughnessMap),
+                mapOf(material.emissiveMap));
+
+    // The surface shader and its values (ADR 0091), by name: the renderer
+    // holds the shader's layout and packs them. A texture that has not loaded
+    // yet travels as no texture, and reads as the shader's fallback.
+    out.surface = material.shader;
+    out.readsSceneColor = material.readsSceneColor;
+    out.masked = material.alphaMode == static_cast<core::i32>(asset::MaterialAlphaMode::Mask);
+    out.surfaceValues.reserve(material.shaderParameters.size());
+    for (const asset::ShaderParameter& parameter : material.shaderParameters) {
+        SurfaceValue value;
+        value.name = parameter.name;
+        value.value = parameter.value;
+        value.isTexture = parameter.isTexture();
+        if (value.isTexture)
+            value.texture = mapOf(parameter.texture);
+        out.surfaceValues.push_back(std::move(value));
+    }
+    return out;
+}
+
+// Canonical values, not addresses: an explicit override equal to the authored
+// value must still share its material. Negative zero compares as zero.
+[[nodiscard]] u64 surfaceValuesKey(std::span<const SurfaceValue> values) noexcept
+{
+    u64 hash = 1469598103934665603ull;
+    const auto mix = [&hash](const void* data, usize size) {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (usize index = 0; index < size; ++index) {
+            hash ^= bytes[index];
+            hash *= 1099511628211ull;
+        }
+    };
+    for (const auto& value : values) {
+        mix(value.name.data(), value.name.size());
+        for (const f32 channel : value.value) {
+            hash ^= std::bit_cast<u32>(channel + 0.0f);
+            hash *= 0xFF51AFD7ED558CCDull;
+            hash ^= hash >> 33;
+        }
+        mix(&value.texture.id, sizeof(value.texture.id));
+        mix(&value.isTexture, sizeof(value.isTexture));
+    }
+    return hash;
+}
+
+// What a part draws with, split the way the draw loops consume it.
+struct PartLook
+{
+    // True for the engine default material -- and, on a `MeshPart`, for the
+    // file's own materials, which is what a mesh wearing nothing draws. Either
+    // way the block is the built-in one, tinted by `tint`.
+    bool builtIn = true;
+    Color3 tint{1.0f, 1.0f, 1.0f};
+    // Into the draw's alpha, as `BasePart.Transparency` always went.
+    f32 transparency = 0.0f;
+    // Borrow the frame's immutable authored block. Deep-copy its strings and
+    // surface values only when publishing a distinct output material.
+    const RenderMaterial* source = nullptr;
+    std::vector<SurfaceValue> ownValues;
+    bool overridesSurface = false;
+    u64 authoredSurfaceKey = surfaceValuesKey({});
+    // What makes two looks one bind set: the material, and every value that
+    // reaches the block. Transparency does not -- it is the draw's.
+    core::NameAtom material;
+    u32 clone = 0;
+    Color3 color{1.0f, 1.0f, 1.0f};
+    Color3 emissive{0.0f, 0.0f, 0.0f};
+    f32 metalness = 0.0f;
+    f32 roughness = 0.0f;
+    f32 normalScale = 0.0f;
+    f32 alphaCutoff = 0.0f;
+
+    [[nodiscard]] std::span<const SurfaceValue> surfaceValues() const noexcept
+    {
+        if (overridesSurface)
+            return ownValues;
+        return source != nullptr ? std::span<const SurfaceValue>{source->surfaceValues}
+                                 : std::span<const SurfaceValue>{};
+    }
+
+    [[nodiscard]] RenderMaterial materialBlock() const
+    {
+        RenderMaterial block = source != nullptr ? *source : RenderMaterial{};
+        block.uniforms.baseColor[0] = color.r;
+        block.uniforms.baseColor[1] = color.g;
+        block.uniforms.baseColor[2] = color.b;
+        block.uniforms.emissive[0] = emissive.r;
+        block.uniforms.emissive[1] = emissive.g;
+        block.uniforms.emissive[2] = emissive.b;
+        block.uniforms.metallicRoughnessNormalCutoff[0] = metalness;
+        block.uniforms.metallicRoughnessNormalCutoff[1] = roughness;
+        block.uniforms.metallicRoughnessNormalCutoff[2] = normalScale;
+        if (block.masked)
+            block.uniforms.metallicRoughnessNormalCutoff[3] = alphaCutoff;
+        if (overridesSurface)
+            block.surfaceValues = ownValues;
+        return block;
+    }
+
+    [[nodiscard]] bool sameBlock(const PartLook& other) const noexcept
+    {
+        return material == other.material && clone == other.clone && color == other.color &&
+               emissive == other.emissive && metalness == other.metalness && roughness == other.roughness &&
+               normalScale == other.normalScale && alphaCutoff == other.alphaCutoff &&
+               ((!overridesSurface && !other.overridesSurface && source == other.source) ||
+                std::equal(surfaceValues().begin(), surfaceValues().end(), other.surfaceValues().begin(),
+                           other.surfaceValues().end()));
+    }
+
+    // **What `sameBlock` compares, as one number**: two looks
+    // `sameBlock` calls one hash alike, so a frame's looks can be found by it
+    // rather than by walking every one before -- which, with ten thousand
+    // parts in ten thousand colours, was fifty million comparisons a frame.
+    // A negative zero hashes as a zero, since it compares as one.
+    [[nodiscard]] u64 key() const noexcept
+    {
+        u64 hash = 1469598103934665603ull;
+        const auto mix = [&hash](const void* data, usize size) {
+            const auto* bytes = static_cast<const unsigned char*>(data);
+            for (usize at = 0; at < size; ++at) {
+                hash ^= bytes[at];
+                hash *= 1099511628211ull;
+            }
+        };
+        const auto number = [&hash](f32 value) {
+            const f32 plain = value + 0.0f;
+            // Equality uses floats, not their byte order. Mix each canonical
+            // word once rather than four byte-at-a-time FNV steps per value.
+            hash ^= std::bit_cast<u32>(plain);
+            hash *= 0xFF51AFD7ED558CCDull;
+            hash ^= hash >> 33;
+        };
+        mix(&builtIn, sizeof(builtIn));
+        mix(&material.id, sizeof(material.id));
+        mix(&clone, sizeof(clone));
+        for (const f32 channel : {color.r, color.g, color.b, emissive.r, emissive.g, emissive.b, metalness, roughness,
+                                  normalScale, alphaCutoff})
+            number(channel);
+        hash ^= overridesSurface ? surfaceValuesKey(ownValues) : authoredSurfaceKey;
+        hash *= 0xFF51AFD7ED558CCDull;
+        return hash;
+    }
+};
+
+// One authored material, resolved and made into a block once per frame.
+struct FrameMaterial
+{
+    core::NameAtom material;
+    u32 clone = 0;
+    asset::ResolvedMaterial resolved;
+    RenderMaterial block;
+    u64 surfaceKey = 0;
+};
+
+[[nodiscard]] PartLook lookOf(const scene::World& world, core::InstanceId id, const scene::PartComponent& part,
+                              const TextureLibrary* textures, std::deque<FrameMaterial>& frame,
+                              usize& lastFrameMaterial)
+{
+    PartLook look;
+    const asset::MaterialOverrides& overrides = part.materialParameters;
+    if (!part.material.valid()) {
+        // **The engine default, which declares `Color` and `Transparency`**
+        // and nothing else -- so this is `BasePart.Color` and
+        // `BasePart.Transparency` exactly as they were, and every plain part
+        // draws the pixels it drew before ADR 0090.
+        if (overrides.has(asset::MaterialField::Color))
+            look.tint = overrides.color;
+        if (overrides.has(asset::MaterialField::Transparency))
+            look.transparency = overrides.transparency;
+        // The default's third parameter: what a plain part glows with.
+        if (overrides.has(asset::MaterialField::Emissive))
+            look.emissive = overrides.emissive;
+        look.color = look.tint;
+        return look;
+    }
+
+    // **The entry the previous part matched is asked first.** Parts that wear
+    // one material tend to be made together and so sit together in the pool,
+    // and the entries are unique by (material, clone), so the first match the
+    // scan would find is this one whenever this one matches.
+    const FrameMaterial* found = nullptr;
+    if (lastFrameMaterial < frame.size() && frame[lastFrameMaterial].material == part.material &&
+        frame[lastFrameMaterial].clone == part.materialClone) {
+        found = &frame[lastFrameMaterial];
+    }
+    for (usize index = 0; found == nullptr && index < frame.size(); ++index) {
+        if (frame[index].material == part.material && frame[index].clone == part.materialClone) {
+            found = &frame[index];
+            lastFrameMaterial = index;
+        }
+    }
+    if (found == nullptr) {
+        FrameMaterial made;
+        made.material = part.material;
+        made.clone = part.materialClone;
+        made.resolved = world.resolveMaterial(part.material, part.materialClone);
+        made.block = blockOf(world, made.resolved.properties, textures);
+        made.surfaceKey = surfaceValuesKey(made.block.surfaceValues);
+        frame.push_back(std::move(made));
+        found = &frame.back();
+        lastFrameMaterial = frame.size() - 1;
+    }
+
+    const asset::MaterialProperties& base = found->resolved.properties;
+    const auto applied = static_cast<asset::MaterialFieldMask>(overrides.set & found->resolved.instanceParameters);
+    const auto wants = [applied](asset::MaterialField field) { return (applied & asset::fieldBit(field)) != 0; };
+
+    look.builtIn = false;
+    look.material = part.material;
+    look.clone = part.materialClone;
+    look.color = wants(asset::MaterialField::Color) ? overrides.color : base.color;
+    look.emissive = wants(asset::MaterialField::Emissive) ? overrides.emissive : base.emissive;
+    look.metalness = wants(asset::MaterialField::Metalness) ? overrides.metalness : base.metalness;
+    look.roughness = wants(asset::MaterialField::Roughness) ? overrides.roughness : base.roughness;
+    look.normalScale = wants(asset::MaterialField::NormalScale) ? overrides.normalScale : base.normalScale;
+    look.alphaCutoff = wants(asset::MaterialField::AlphaCutoff) ? overrides.alphaCutoff : base.alphaCutoff;
+    look.transparency = wants(asset::MaterialField::Transparency) ? overrides.transparency : base.transparency;
+
+    look.source = &found->block;
+    look.authoredSurfaceKey = found->surfaceKey;
+
+    // **The part's own surface shader parameters** (ADR 0091), where its
+    // material declares them. A part that sets one is a block of its own --
+    // `sameBlock` compares the values -- so it is drawn apart from the parts
+    // that do not, as a part with its own colour is.
+    if (const std::vector<asset::ShaderParameter>* own = world.partShaderParameters(id); own != nullptr) {
+        for (const asset::ShaderParameter& parameter : *own) {
+            if (parameter.isTexture() || !found->resolved.declaresShaderParameter(parameter.name))
+                continue;
+            if (!look.overridesSurface) {
+                look.ownValues = found->block.surfaceValues;
+                look.overridesSurface = true;
+            }
+            std::vector<SurfaceValue>& values = look.ownValues;
+            const auto at =
+                std::lower_bound(values.begin(), values.end(), parameter.name,
+                                 [](const SurfaceValue& value, const std::string& name) { return value.name < name; });
+            if (at != values.end() && at->name == parameter.name) {
+                at->value = parameter.value;
+                at->isTexture = false;
+                at->texture = {};
+            }
+            else {
+                values.insert(at, SurfaceValue{.name = parameter.name, .value = parameter.value});
+            }
+        }
+    }
+    return look;
+}
+
+// The built-in look's `Color`, multiplied into a block's base colour and
+// emissive. On the engine default -- white, emitting nothing -- that IS the
+// colour; on a `MeshPart` wearing nothing it tints the file's own materials,
+// which is what `BasePart.Color` always did to an unimported mesh (ADR 0090).
+//
+// Emissive is tinted too: a red lamp made from a white glowing file is what
+// somebody expects `Color` to do, and leaving emissive untinted would make the
+// lit part red and the glow white.
+// Whether two materials are one bind set but for the rgb of their base colour
+// -- the one value the instanced stream carries per instance.
+[[nodiscard]] bool sameFamily(const RenderMaterial& a, const RenderMaterial& b) noexcept
+{
+    const GpuMaterialUniforms& x = a.uniforms;
+    const GpuMaterialUniforms& y = b.uniforms;
+    for (int i = 0; i < 4; ++i) {
+        if (x.emissive[i] != y.emissive[i] ||
+            x.metallicRoughnessNormalCutoff[i] != y.metallicRoughnessNormalCutoff[i] ||
+            x.textureFlags[i] != y.textureFlags[i])
+            return false;
+    }
+    return x.baseColor[3] == y.baseColor[3] && a.baseColor == b.baseColor && a.normal == b.normal &&
+           a.metallicRoughness == b.metallicRoughness && a.emissive == b.emissive && a.surface == b.surface &&
+           a.surfaceValues == b.surfaceValues && a.readsSceneColor == b.readsSceneColor && a.masked == b.masked;
+}
+
+// The engine default's glow, over whatever the block had: a plain part's is
+// black until its `Emissive` is set, and a mesh wearing nothing adds it to
+// what its own file emits.
+void glowBy(RenderMaterial& material, const Color3& emissive)
+{
+    material.uniforms.emissive[0] += emissive.r;
+    material.uniforms.emissive[1] += emissive.g;
+    material.uniforms.emissive[2] += emissive.b;
+}
+
+void tintBy(RenderMaterial& material, const Color3& color)
+{
+    material.uniforms.baseColor[0] *= color.r;
+    material.uniforms.baseColor[1] *= color.g;
+    material.uniforms.baseColor[2] *= color.b;
+    material.uniforms.emissive[0] *= color.r;
+    material.uniforms.emissive[1] *= color.g;
+    material.uniforms.emissive[2] *= color.b;
+}
+
+} // namespace
+
+namespace {
+
+// See the call in `extract`. `projection` and `view` are column-major
+// (`m[column][row]`); `view` is rotation only, so a world point is taken
+// relative to `eye` first.
+void obliqueNearPlane(core::Mat4& projection, const core::Mat4& view, const core::CFrameD& plane, core::DVec3 eye)
+{
+    // The plane's normal is its look direction: `-m[2]`.
+    const f32 nx = -plane.rotation.m[2][0];
+    const f32 ny = -plane.rotation.m[2][1];
+    const f32 nz = -plane.rotation.m[2][2];
+    const auto px = static_cast<f32>(plane.position.x - eye.x);
+    const auto py = static_cast<f32>(plane.position.y - eye.y);
+    const auto pz = static_cast<f32>(plane.position.z - eye.z);
+    const auto rotate = [&view](f32 x, f32 y, f32 z, f32 out[3]) {
+        for (int row = 0; row < 3; ++row)
+            out[row] = view.m[0][row] * x + view.m[1][row] * y + view.m[2][row] * z;
+    };
+    f32 normal[3];
+    f32 point[3];
+    rotate(nx, ny, nz, normal);
+    rotate(px, py, pz, point);
+    const f32 clip[4]{normal[0], normal[1], normal[2],
+                      -(normal[0] * point[0] + normal[1] * point[1] + normal[2] * point[2])};
+    // The eye at the view's origin must be behind the plane.
+    if (!(clip[3] < 0.0f))
+        return;
+
+    // The far corner of the frustum on the plane's side, back into view space.
+    const core::Mat4 inverse = core::inverse(projection);
+    const f32 corner[4]{clip[0] > 0.0f ? 1.0f : (clip[0] < 0.0f ? -1.0f : 0.0f),
+                        clip[1] > 0.0f ? 1.0f : (clip[1] < 0.0f ? -1.0f : 0.0f), 1.0f, 1.0f};
+    f32 q[4];
+    for (int row = 0; row < 4; ++row) {
+        q[row] = inverse.m[0][row] * corner[0] + inverse.m[1][row] * corner[1] + inverse.m[2][row] * corner[2] +
+                 inverse.m[3][row] * corner[3];
+    }
+    const f32 dot = clip[0] * q[0] + clip[1] * q[1] + clip[2] * q[2] + clip[3] * q[3];
+    if (!(dot > 0.0f) || !std::isfinite(dot))
+        return;
+    for (int column = 0; column < 4; ++column)
+        projection.m[column][2] = clip[column] / dot;
+}
+
+} // namespace
+
+PartShape partShapeOf(const scene::World& world, const MeshLibrary& meshes, core::InstanceId id,
+                      const scene::PartComponent& part)
+{
+    PartShape shape;
+    const core::i32 drawn = drawnShape(world, id, part);
+    const char* name = primitiveContent(drawn);
+    if (name == nullptr)
+        return shape;
+    shape.content = world.atoms().lookup(name);
+    shape.entry = primitiveEntry(world, meshes, drawn);
+    shape.stretch = primitiveScale(drawn, part.size);
+    return shape;
+}
+
+PartSurface partSurfaceOf(const scene::World& world, const scene::PartComponent& part, const TextureLibrary* textures)
+{
+    // `lookOf`, without the block: the same three answers a draw is given.
+    PartSurface surface;
+    const asset::MaterialOverrides& overrides = part.materialParameters;
+    if (!part.material.valid()) {
+        if (overrides.has(asset::MaterialField::Color))
+            surface.color = overrides.color;
+        if (overrides.has(asset::MaterialField::Transparency))
+            surface.transparency = overrides.transparency;
+        if (overrides.has(asset::MaterialField::Emissive))
+            surface.emissive = overrides.emissive;
+        return surface;
+    }
+    const auto resolved = world.resolveMaterial(part.material, part.materialClone);
+    const asset::MaterialProperties& base = resolved.properties;
+    const auto applied = static_cast<asset::MaterialFieldMask>(overrides.set & resolved.instanceParameters);
+    const auto wants = [applied](asset::MaterialField field) { return (applied & asset::fieldBit(field)) != 0; };
+    surface.color = wants(asset::MaterialField::Color) ? overrides.color : base.color;
+    surface.emissive = wants(asset::MaterialField::Emissive) ? overrides.emissive : base.emissive;
+    surface.transparency = wants(asset::MaterialField::Transparency) ? overrides.transparency : base.transparency;
+    // Its picture's mean, where it wears one: the colour is a tint over it.
+    if (textures != nullptr && !base.colorMap.empty()) {
+        const core::NameAtom map = world.atoms().lookup(base.colorMap);
+        if (map.valid()) {
+            const Color3 mean = textures->meanOf(map);
+            surface.color = Color3{surface.color.r * mean.r, surface.color.g * mean.g, surface.color.b * mean.b};
+        }
+    }
+    return surface;
+}
+
+RenderMaterial materialBlockOf(const scene::World& world, core::NameAtom material, const TextureLibrary* textures)
+{
+    const asset::ResolvedMaterial resolved = world.resolveMaterial(material, 0);
+    return blockOf(world, resolved.properties, textures);
+}
+
+namespace {
+
+// An instance, as the key its draws' motion is found by again next frame.
+[[nodiscard]] u64 motionKeyOf(core::InstanceId id) noexcept
+{
+    return (static_cast<u64>(id.generation) << 32) | static_cast<u64>(id.index);
+}
+
+} // namespace
+
+bool spritesOnly(const RenderWorld& world) noexcept
+{
+    return !world.sprites.empty() && world.draws.empty() && world.terrains.empty() && world.foliageRuns.empty();
+}
+
+void jitterCamera(RenderCamera& camera, core::Vec2 jitter) noexcept
+{
+    if (!camera.valid || (jitter.x == 0.0f && jitter.y == 0.0f))
+        return;
+    // **In the projection's translation row**, which is where a sub-pixel
+    // offset belongs: it must move the whole frustum, not the geometry in it.
+    // Under a perspective projection w is -z, so the row scaled by depth
+    // carries it and with the sign that makes the picture move by `jitter`;
+    // under an orthographic one w is 1 and the constant row does.
+    const bool orthographic = camera.projection.m[3][3] == 1.0f;
+    Mat4 offset;
+    for (auto& column : offset.m) {
+        for (f32& value : column)
+            value = 0.0f;
+    }
+    const int row = orthographic ? 3 : 2;
+    const f32 sign = orthographic ? 1.0f : -1.0f;
+    offset.m[row][0] = sign * jitter.x;
+    offset.m[row][1] = sign * jitter.y;
+    const Mat4 moved = offset * camera.view;
+    for (int column = 0; column < 4; ++column) {
+        for (int at = 0; at < 4; ++at) {
+            camera.projection.m[column][at] += offset.m[column][at];
+            camera.viewProjection.m[column][at] += moved.m[column][at];
+            camera.skyViewProjection.m[column][at] += moved.m[column][at];
+        }
+    }
+    camera.jitter = jitter;
+    camera.frustum = core::frustumFromViewProjection(camera.viewProjection);
+}
+
+void extract(const scene::World& world, core::InstanceId root, core::InstanceId lightingHost, const MeshLibrary& meshes,
+             f32 viewportAspect, f32 shadowRadius, const AnimationSystem* animation, f32 alpha,
+             const TransformHistory* history, RenderWorld& out, const ViewOverride* view,
+             std::span<const core::InstanceId> outlined, const TextureLibrary* materials,
+             std::span<const TerrainNodeDraw> terrainNodes)
+{
+    DrawPoses poses;
+    poses.begin(world, history, alpha);
+    extract(world, root, lightingHost, meshes, viewportAspect, shadowRadius, animation, poses, out, view, outlined,
+            materials, terrainNodes);
+}
+
+void extract(const scene::World& world, core::InstanceId root, core::InstanceId lightingHost, const MeshLibrary& meshes,
+             f32 viewportAspect, f32 shadowRadius, const AnimationSystem* animation, const DrawPoses& poses,
+             RenderWorld& out, const ViewOverride* view, std::span<const core::InstanceId> outlined,
+             const TextureLibrary* materials, std::span<const TerrainNodeDraw> terrainNodes)
+{
+    const f32 alpha = poses.world() == &world ? poses.alpha() : 0.0f;
+    out.clear();
+    if (!root.valid())
+        return;
+    WorldMembership membership(world, root);
+    // What an extract spends, by what it is walking: the camera and what is
+    // highlighted, the lights, the meshes, the ground and what lies on it, the
+    // parts, and the order they are drawn in.
+    core::profile::Sections stretch;
+    ENG_PROFILE_NEXT(stretch, "extract.camera");
+
+    // Linear for a handful, which is the common case and the cheap answer: a
+    // search structure per frame would cost more on a list of four than the
+    // walk does. **Sorted once and searched past that**, because a selected
+    // model outlines every part inside it, and a castle of two thousand parts
+    // walked once per draw is four million comparisons a frame.
+    constexpr usize kLinearOutline = 16;
+    const auto byId = [](core::InstanceId a, core::InstanceId b) {
+        return a.index != b.index ? a.index < b.index : a.generation < b.generation;
+    };
+    static thread_local std::vector<core::InstanceId> sortedOutline;
+    sortedOutline.clear();
+    if (outlined.size() > kLinearOutline) {
+        sortedOutline.assign(outlined.begin(), outlined.end());
+        std::sort(sortedOutline.begin(), sortedOutline.end(), byId);
+    }
+    const auto isOutlined = [outlined, &byId](core::InstanceId id) {
+        if (outlined.size() > kLinearOutline)
+            return std::binary_search(sortedOutline.begin(), sortedOutline.end(), id, byId);
+        for (const core::InstanceId selected : outlined) {
+            if (selected == id)
+                return true;
+        }
+        return false;
+    };
+
+    // **What is highlighted** (ADR 0129): each enabled `Highlight` under the
+    // root and what it marks -- its `Adornee`, or its own parent -- sorted by
+    // what is marked, so a draw finds its highlight by walking up from its
+    // instance. A world with none pays one size check per draw.
+    struct Marked
+    {
+        core::InstanceId adornee;
+        u32 slot = 0;
+    };
+    static thread_local std::vector<Marked> marked;
+    static thread_local std::vector<RenderHighlight> everyHighlight;
+    marked.clear();
+    everyHighlight.clear();
+    world.highlights().forEach([&](core::InstanceId id, const scene::HighlightComponent& highlight) {
+        if (!highlight.enabled || world.destroyed(id) || !membership.contains(id))
+            return;
+        // A byte names it on a draw; past 255 in one world the rest are not
+        // marked, and are counted as dropped below.
+        if (everyHighlight.size() >= 255) {
+            ++out.highlightsDropped;
+            return;
+        }
+        const core::InstanceId adornee =
+            highlight.adornee.valid() && world.alive(highlight.adornee) && !world.destroyed(highlight.adornee)
+                ? highlight.adornee
+                : world.parentOf(id);
+        if (!adornee.valid())
+            return;
+        RenderHighlight drawn;
+        drawn.outline[0] = highlight.outlineColor.r;
+        drawn.outline[1] = highlight.outlineColor.g;
+        drawn.outline[2] = highlight.outlineColor.b;
+        drawn.outline[3] = std::clamp(1.0f - highlight.outlineTransparency, 0.0f, 1.0f);
+        drawn.fill[0] = highlight.fillColor.r;
+        drawn.fill[1] = highlight.fillColor.g;
+        drawn.fill[2] = highlight.fillColor.b;
+        drawn.fill[3] = std::clamp(1.0f - highlight.fillTransparency, 0.0f, 1.0f);
+        drawn.occluded = highlight.depthMode == 1;
+        marked.push_back(Marked{adornee, static_cast<u32>(everyHighlight.size())});
+        everyHighlight.push_back(drawn);
+    });
+    std::sort(marked.begin(), marked.end(),
+              [&byId](const Marked& a, const Marked& b) { return byId(a.adornee, b.adornee); });
+    // The nearest thing marked above a draw's instance wins: a highlight on a
+    // sword inside a highlighted character is the sword's.
+    const auto highlightOf = [&](core::InstanceId id) -> core::u8 {
+        if (marked.empty())
+            return 0;
+        for (core::InstanceId cursor = id; cursor.valid() && cursor != root; cursor = world.parentOf(cursor)) {
+            const auto at =
+                std::lower_bound(marked.begin(), marked.end(), cursor,
+                                 [&byId](const Marked& m, core::InstanceId v) { return byId(m.adornee, v); });
+            if (at != marked.end() && at->adornee == cursor)
+                return static_cast<core::u8>(at->slot + 1);
+        }
+        return 0;
+    };
+
+    // Where a thing is at the fractional time this frame is being drawn at
+    // (`draw_poses.h`, ADR 0134; `transform_history.h`). Every transform
+    // below goes through `poses`, so the whole frame -- camera, parts, meshes,
+    // the anchors lights hang off, and outside this function the world's UI,
+    // particles and pointer -- is evaluated at one time rather than at several.
+    // Poses resolved for another world (a sub-world's frame asking the main
+    // one's) are none: that world is drawn as its last tick left it.
+    DrawPoses still;
+    const DrawPoses& posed = poses.world() == &world ? poses : (still.begin(world, nullptr, 0.0f), still);
+
+    // --- The camera, and therefore the space everything else is expressed in --
+    //
+    // Resolved first because `origin` is the camera's position and every f32
+    // coordinate below is relative to it.
+    core::InstanceId cameraId;
+    if (const scene::WorkspaceComponent* workspace = world.workspaces().find(root); workspace != nullptr)
+        cameraId = workspace->currentCamera;
+
+    const bool cameraUsable = world.alive(cameraId) && !world.destroyed(cameraId);
+    const scene::CameraComponent* worldCamera = cameraUsable ? world.cameras().find(cameraId) : nullptr;
+
+    // An override is a camera the WORLD does not contain, so it is not
+    // interpolated and not looked up: there is no previous tick for a transform
+    // no tick ever wrote. That is correct rather than a shortcut -- an editor's
+    // camera moves on the render clock, so a frame drawn at `t + alpha` from it
+    // is already the camera's position at that instant.
+    scene::CameraComponent overrideCamera;
+    if (view != nullptr) {
+        // raw: an override is not the world's; it is drawn where it is given.
+        overrideCamera.cframe = view->cframe;
+        overrideCamera.fieldOfView = view->fieldOfView;
+        overrideCamera.nearPlane = view->nearPlane;
+        overrideCamera.farPlane = view->farPlane;
+        overrideCamera.projection = view->projection;
+        overrideCamera.orthographicSize = view->orthographicSize;
+        overrideCamera.clipPlane = view->clipPlane;
+        overrideCamera.clipPlaneOn = view->clipPlaneOn;
+    }
+    const scene::CameraComponent* camera = view != nullptr ? &overrideCamera : worldCamera;
+
+    if (camera != nullptr) {
+        // raw: with a view, `camera` is the override above, not the world's.
+        const CFrameD cameraFrame = view != nullptr ? camera->cframe : posed.camera(cameraId);
+        out.camera.valid = true;
+        out.camera.origin = cameraFrame.position;
+        out.camera.nearPlane = camera->nearPlane;
+        out.camera.farPlane = camera->farPlane;
+
+        // Rotation only. The camera's position is `origin` and has already been
+        // subtracted out of everything else, so leaving it in the view matrix
+        // would apply it twice -- which looks correct near the world origin and
+        // is catastrophically wrong a kilometre out, i.e. exactly where ADR 0014
+        // says the f64 path has to hold.
+        CFrameD orientation = cameraFrame;
+        orientation.position = DVec3{};
+        out.camera.view = core::toRenderMatrix(core::inverse(orientation), DVec3{});
+        const f32 aspect = viewportAspect > 0.0f ? viewportAspect : 1.0f;
+        // `Enum.CameraProjection`: 0 Perspective, 1 Orthographic (the 2D layer).
+        const bool orthographic = camera->projection == 1;
+        // **An orthographic camera sees its whole column**: from `FarPlane`
+        // behind where it stands to `FarPlane` in front. Nothing in its picture
+        // shrinks with distance, so where along its axis it stands is a detail
+        // -- and a top-down camera placed lower than the top of a ball or a
+        // tower must still show it. A near plane at the camera culled
+        // everything above it: first whatever lay wholly above (the shadow
+        // stayed, because the sun's pass does not use this camera), and, once
+        // depth was clipped for mirrors, the tops of what crossed it too.
+        out.camera.projection =
+            orthographic ? core::orthographic(camera->orthographicSize, aspect, -camera->farPlane, camera->farPlane)
+                         : core::perspective(camera->fieldOfView * kDegreesToRadians, aspect, camera->nearPlane,
+                                             camera->farPlane);
+        // **The oblique near plane** (ADR 0107; the technique is Lengyel's):
+        // the projection's depth row replaced by the clip plane in view space,
+        // scaled so the far plane still meets the frustum's far corner. What
+        // is behind the plane lands below zero depth and is clipped like
+        // anything nearer than the near plane. Only for a camera BEHIND its
+        // plane -- a mirror's, a portal's -- because one in front of it would
+        // have its whole view clipped away; that one draws as if there were
+        // no plane.
+        Mat4 unclipped = out.camera.projection;
+        if (camera->clipPlaneOn && !orthographic)
+            obliqueNearPlane(out.camera.projection, out.camera.view, camera->clipPlane, cameraFrame.position);
+
+        // Unjittered here: a temporal pass jitters the camera after
+        // extraction (`jitterCamera`), and nothing else does.
+        out.camera.viewProjection = out.camera.projection * out.camera.view;
+        out.camera.skyViewProjection = unclipped * out.camera.view;
+        out.camera.unjitteredViewProjection = out.camera.viewProjection;
+        out.camera.frustum = core::frustumFromViewProjection(out.camera.viewProjection);
+    }
+
+    const DVec3 origin = out.camera.origin;
+
+    // --- The environment ----------------------------------------------------
+
+    if (const scene::LightingComponent* lighting = world.lighting().find(lightingHost); lighting != nullptr) {
+        out.environment.sunDirection = sunDirection(lighting->clockTime, lighting->geographicLatitude);
+        out.environment.ambient = lighting->ambient;
+        out.environment.outdoorAmbient = lighting->outdoorAmbient;
+        out.environment.sunBrightness = lighting->brightness;
+        out.environment.fogColor = lighting->fogColor;
+        out.environment.fogStart = lighting->fogStart;
+        out.environment.fogEnd = lighting->fogEnd;
+        out.environment.exposureCompensation = lighting->exposureCompensation;
+        out.environment.exposureMin = lighting->exposureMin;
+        out.environment.exposureMax = lighting->exposureMax;
+        out.environment.environmentDiffuseScale = lighting->environmentDiffuseScale;
+        out.environment.environmentSpecularScale = lighting->environmentSpecularScale;
+        out.environment.shadowSoftness = lighting->shadowSoftness;
+        out.environment.globalShadows = lighting->globalShadows;
+        out.environment.autoExposure = lighting->autoExposure;
+        out.environment.simTime = world.engineState().simTime;
+    }
+    out.environment.surfaceTime =
+        world.engineState().simTime + static_cast<core::f64>(alpha) * world.engineState().fixedTimestep;
+    if (const scene::WorkspaceComponent* workspace = world.workspaces().find(root); workspace != nullptr) {
+        out.environment.wind = workspace->globalWind;
+        out.environment.windGusts = workspace->windGusts;
+        out.environment.windTurbulence = workspace->windTurbulence;
+    }
+
+    // The look (ADR 0096): `Lighting`'s children and the current camera's. The
+    // WORLD's camera, not an editor's view override -- a viewer's effects belong
+    // to the camera the game looks through, and a tool looking at the scene is
+    // looking at that.
+    resolveLook(world, lightingHost, cameraUsable ? cameraId : core::InstanceId{}, out.look);
+    if (out.look.sky.present && materials != nullptr) {
+        out.look.sky.sunImage = materials->find(out.look.sky.sunTexture);
+        out.look.sky.moonImage = materials->find(out.look.sky.moonTexture);
+    }
+
+    // --- Debug parts --------------------------------------------------------
+    //
+    // Still here, and not culled: the debug path is how anything is seen when
+    // the real one is not working, so a bug in the culler must not be able to
+    // hide it.
+    //
+    // A `MeshPart` whose mesh HAS loaded is the exception: the real geometry is
+    // on screen, and a box over it would be a second outline of the same thing
+    // in a different shape -- the box is the part's, and the mesh fills only as
+    // much of it as its own bounds reach. When the mesh has NOT loaded it is
+    // the opposite: the only sign the part exists at all, which is exactly what
+    // the debug path is for.
+    // **The five primitives' meshes, resolved once for the frame.** Asking
+    // `primitiveEntry` per part hashes the shape's name into the atom table and
+    // searches the library, twice a part across the two loops over the pool --
+    // ten thousand string lookups a frame for a city of five thousand parts, for
+    // an answer that has five possible values. Nothing below may call
+    // `primitiveEntry` directly.
+    constexpr core::i32 kPrimitiveShapes = 5;
+    std::array<const MeshLibrary::Entry*, kPrimitiveShapes> primitives{};
+    bool primitivesReady = true;
+    for (core::i32 shape = 0; shape < kPrimitiveShapes; ++shape) {
+        primitives[static_cast<usize>(shape)] = primitiveEntry(world, meshes, shape);
+        primitivesReady = primitivesReady && primitives[static_cast<usize>(shape)] != nullptr;
+    }
+    const auto primitiveOf = [&primitives](core::i32 shape) -> const MeshLibrary::Entry* {
+        return shape >= 0 && shape < kPrimitiveShapes ? primitives[static_cast<usize>(shape)] : nullptr;
+    };
+
+    ENG_PROFILE_NEXT(stretch, "extract.lights");
+    world.parts().forEach([&](core::InstanceId id, const scene::PartComponent& part) {
+        // **The common case leaves before any other lookup.** A plain part, with
+        // a camera to draw it through and every primitive uploaded, is drawn by
+        // the solid path below and never by this one -- which is where the
+        // branches further down would have sent it too, after an ancestry walk
+        // and three searches. The result is the same part skipped; only the
+        // order of the tests moved, and each of them only returns.
+        const scene::MeshPartComponent* mesh = world.meshParts().find(id);
+        if (mesh == nullptr && out.camera.valid && primitivesReady && part.shape >= 0 && part.shape < kPrimitiveShapes)
+            return;
+        if (!membership.contains(id))
+            return;
+        if (mesh != nullptr) {
+            const MeshLibrary::Entry* loaded = meshes.find(mesh->meshContent);
+            if (loaded != nullptr && loaded->mesh.valid())
+                return;
+        }
+        // A `Part` has a solid path now, so the wire box is what it falls
+        // back to rather than what it is. The path stays because it is still how
+        // anything is seen when the real one is not running -- and the guard is
+        // the camera, because a world with no camera is exactly the case the
+        // host draws with the debug path instead of with the renderer
+        // (`engine.cpp`'s `useRenderer`). Without that guard `examples/00-clear`
+        // went from three wire cubes to an empty screen.
+        else if (out.camera.valid && primitiveOf(drawnShape(world, id, part)) != nullptr) {
+            return;
+        }
+        // The debug path draws the surface's colour and see-through and
+        // nothing else, which is what a wire box can show of a material.
+        const asset::ResolvedMaterial surface = world.surfaceOf(part);
+        out.parts.push_back(RenderPart{
+            .cframe = posed.part(id),
+            .size = part.size,
+            .color = surface.properties.color,
+            .transparency = surface.properties.transparency,
+            .shape = drawnShape(world, id, part),
+        });
+    });
+
+    // --- Lights -------------------------------------------------------------
+
+    world.pointLights().forEach([&](core::InstanceId id, const scene::PointLightComponent& light) {
+        // **Before anything else, including the budget.** That is what makes
+        // `Enabled` different from a brightness of zero: a disabled light does
+        // not occupy a slot, so turning a room's lights off gives the rest of
+        // the scene the slots back.
+        if (!light.enabled)
+            return;
+        if (!membership.contains(id))
+            return;
+        // Where it shines from (`lightAnchorOf`): the part, interpolated, then
+        // the attachment's offset from it.
+        const std::optional<LightAnchor> anchored = lightAnchorOf(world, id);
+        if (!anchored.has_value())
+            return;
+        // raw: with no part to follow, a light hangs from a frame nothing simulates.
+        const CFrameD base = anchored->part.valid() ? posed.part(anchored->part) : anchored->partFrame;
+        const CFrameD anchor = base * anchored->offset;
+        out.lights.push_back(RenderLight{
+            .kind = LightKind::Point,
+            .position = core::toVec3(anchor.position - origin),
+            .direction = Vec3{0.0f, -1.0f, 0.0f},
+            .color = light.color,
+            .brightness = light.brightness,
+            .range = light.range,
+            // -1 admits every direction; 1 would be the narrowest cone
+            // expressible, which is the opposite of what a point light is.
+            .spotCosHalfAngle = -1.0f,
+            .shadows = light.shadows,
+        });
+    });
+
+    world.spotLights().forEach([&](core::InstanceId id, const scene::SpotLightComponent& light) {
+        if (!light.enabled)
+            return;
+        if (!membership.contains(id))
+            return;
+        // Where it shines from (`lightAnchorOf`): the part, interpolated, then
+        // the attachment's offset from it.
+        const std::optional<LightAnchor> anchored = lightAnchorOf(world, id);
+        if (!anchored.has_value())
+            return;
+        // raw: with no part to follow, a light hangs from a frame nothing simulates.
+        const CFrameD base = anchored->part.valid() ? posed.part(anchored->part) : anchored->partFrame;
+        const CFrameD anchor = base * anchored->offset;
+        // A spot points along its anchor's LookVector, which is -Z (ADR
+        // 0013's convention, stated in core/math.h).
+        const Vec3 forward = core::transformDirection(anchor, Vec3{0.0f, 0.0f, -1.0f});
+        out.lights.push_back(RenderLight{
+            .kind = LightKind::Spot,
+            .position = core::toVec3(anchor.position - origin),
+            .direction = core::normalize(forward),
+            .color = light.color,
+            .brightness = light.brightness,
+            .range = light.range,
+            .spotCosHalfAngle = std::cos(light.angle * 0.5f * kDegreesToRadians),
+            .shadows = light.shadows,
+        });
+    });
+
+    // --- Draws --------------------------------------------------------------
+
+    if (!out.camera.valid)
+        return;
+
+    // Frame-local material dedup. Declared here rather than inside the lambda
+    // because it spans every MeshPart.
+    struct ResolvedMaterial
+    {
+        core::NameAtom content;
+        u32 local = 0;
+        u32 slot = 0;
+        // The part's own contribution to the block. Two parts sharing a mesh
+        // and a section but tinted differently -- or wearing different
+        // materials -- are two bind sets, and collapsing them onto one slot
+        // would draw the second in the first one's colour. A file's own
+        // section, drawn by nothing wearing it, is the built-in look.
+        PartLook look;
+    };
+    std::vector<ResolvedMaterial> resolved;
+    // `resolved`'s entries by their key, for the lookup only: the vector keeps
+    // the order they were made in, which is what reaches the output (R10).
+    std::unordered_map<u64, std::vector<u32>> resolvedByKey;
+    const auto meshKey = [](core::NameAtom content, u32 local, const PartLook& look) {
+        return look.key() ^ (static_cast<u64>(content.id) * 0x9E3779B97F4A7C15ull) ^ (static_cast<u64>(local) << 1);
+    };
+    // The authored materials this frame draws, each resolved once.
+    // Stable addresses: PartLook borrows blocks until this extract completes.
+    std::deque<FrameMaterial> frameMaterials;
+    usize lastFrameMaterial = std::numeric_limits<usize>::max();
+    // Animation already shares immutable poses with identical inputs. Keep
+    // one palette per pose in this snapshot too; draw transforms and motion
+    // keys remain per instance. Never carry pointers across extracts or ticks.
+    std::unordered_map<const Pose*, u32> paletteOffsets;
+
+    // **Every material a part adds goes in through here**, which files it in
+    // its family: the first earlier material that is the same bind set
+    // but for its base colour, or itself. A linear scan over the families,
+    // which are few -- one per authored material and one for the built-in look
+    // -- however many colours there are.
+    std::vector<u32> familyHeads;
+    const auto addMaterial = [&out, &familyHeads](const RenderMaterial& material) {
+        for (auto index = static_cast<u32>(out.materialFamilies.size()); index < out.materials.size(); ++index)
+            out.materialFamilies.push_back(index);
+        const auto slot = static_cast<u32>(out.materials.size());
+        u32 family = slot;
+        for (const u32 head : familyHeads) {
+            if (sameFamily(out.materials[head], material)) {
+                family = head;
+                break;
+            }
+        }
+        if (family == slot)
+            familyHeads.push_back(slot);
+        out.materials.push_back(material);
+        out.materialFamilies.push_back(family);
+        return slot;
+    };
+
+    ENG_PROFILE_NEXT(stretch, "extract.meshes");
+    world.meshParts().forEach([&](core::InstanceId id, const scene::MeshPartComponent& meshPart) {
+        if (!membership.contains(id))
+            return;
+        const scene::PartComponent* part = world.parts().find(id);
+        if (part == nullptr)
+            return;
+
+        const MeshLibrary::Entry* entry = meshes.find(meshPart.meshContent);
+        // Skipped rather than substituted. A missing mesh that draws a
+        // placeholder cube is a missing mesh nobody notices.
+        if (entry == nullptr || !entry->mesh.valid())
+            return;
+
+        // `Size / MeshSize` is what makes `Size` mean the same thing on a
+        // `MeshPart` as it does on a `Part`. Both default to one, so a scene
+        // written before this existed produces exactly the matrix it did then --
+        // and the multiply is skipped outright when they match, which is every
+        // part nobody has resized.
+        //
+        // **A mesh that wears another's pose is drawn in that other's place**
+        // (ADR 0201): its joints are its leader's in the leader's own space,
+        // so it is the leader's part, and the leader's stretch, that put it
+        // in the world -- where its own part stands is not asked. A seam
+        // between a body and its armour cannot open by one being a frame
+        // behind the other.
+        core::InstanceId placed = id;
+        const scene::PartComponent* sized = part;
+        const scene::MeshPartComponent* shaped = &meshPart;
+        if (meshPart.poseFrom.valid() && animation != nullptr) {
+            const core::InstanceId leader = animation->leaderOf(id);
+            const scene::PartComponent* leaderPart = leader.valid() ? world.parts().find(leader) : nullptr;
+            const scene::MeshPartComponent* leaderMesh = leader.valid() ? world.meshParts().find(leader) : nullptr;
+            if (leaderPart != nullptr && leaderMesh != nullptr) {
+                placed = leader;
+                sized = leaderPart;
+                shaped = leaderMesh;
+            }
+        }
+        Mat4 transform = core::toRenderMatrix(posed.part(placed), origin);
+        const Vec3 stretch{sized->size.x / shaped->meshSize.x, sized->size.y / shaped->meshSize.y,
+                           sized->size.z / shaped->meshSize.z};
+        if (stretch.x != 1.0f || stretch.y != 1.0f || stretch.z != 1.0f)
+            transform = transform * core::scaling(stretch);
+        // Transformed by the SCALED matrix, so the cull box and the shadow
+        // cast-in test both describe what is actually drawn.
+        const AABB worldBounds = core::transformed(transform, entry->bounds);
+
+        // Culled against the whole mesh's bounds rather than a section's: the
+        // section bounds are in the library and this is the loop that would
+        // have to fetch them per section. Whole-mesh is conservative in the
+        // direction that never drops geometry, and a per-section test is the
+        // optimization to make when a profile says the draws it saves are
+        // worth the fetch.
+        const bool visible = core::intersects(out.camera.frustum, worldBounds);
+        const Vec3 centre = core::center(worldBounds);
+        const f32 distance = core::length(centre);
+        const f32 radius = 0.5f * core::length(core::size(worldBounds));
+        // Out of the picture, it is kept when it is close enough to cast into
+        // view. The first version dropped it, which deleted the shadow of
+        // everything behind the camera -- an image that looks right until you
+        // notice what is missing from it.
+        //
+        // **And left here when it is neither**, before its pose is copied and
+        // its look resolved: no section of it is drawn, in any pass. A horde
+        // is mostly this -- every body round a hero has a palette of some
+        // kilobytes, and the camera sees a slice of them.
+        if (!visible && distance > shadowRadius + radius) {
+            out.candidateDraws += entry->sectionCount;
+            out.culledDraws += entry->sectionCount;
+            return;
+        }
+
+        // **What the animation's update rate is decided from**: a rig
+        // the camera sees, or close enough to cast into the view, and how
+        // much of the picture's height its bounds cover.
+        if (animation != nullptr && animation->animates(id)) {
+            const f32 covered = distance > 1.0e-3f ? radius * out.camera.projection.m[1][1] / distance : 1.0f;
+            out.seenSkins.push_back(SeenSkin{id, covered});
+        }
+
+        // The palette, appended once per POSE rather than once per section: a
+        // character with four submeshes is one skeleton, and uploading its pose
+        // four times would be four times the bytes for one answer. Truncated at
+        // `kMaxSkinJoints` rather than refused -- a rig past the budget draws
+        // its first sixty-four joints posed and the rest in bind, which is
+        // visibly wrong in a way that says what happened.
+        u32 firstBone = 0;
+        u32 boneCount = 0;
+        if (animation != nullptr) {
+            // The pose it is DRAWN with: its own, or the copy a cape moved
+            // (`AnimationSystem::present`).
+            if (const Pose* pose = animation->drawnPose(id); pose != nullptr && !pose->palette.empty()) {
+                boneCount = static_cast<u32>(std::min<usize>(pose->palette.size(), kMaxSkinJoints));
+                const auto [palette, inserted] = paletteOffsets.try_emplace(pose, static_cast<u32>(out.bones.size()));
+                firstBone = palette->second;
+                if (inserted)
+                    out.bones.insert(out.bones.end(), pose->palette.begin(),
+                                     pose->palette.begin() + static_cast<std::ptrdiff_t>(boneCount));
+            }
+        }
+
+        // **The morph targets it is drawn with** (ADR 0196), once for the
+        // body: the file's own weights, moved by the clips playing on it and
+        // by what a script set. Decided from this frame's weights and nothing
+        // kept, so a body whose weights have all returned to nought has no
+        // row and is back in its run in this same frame.
+        u32 morph = NoMorph;
+        if (!entry->morphDefaults.empty()) {
+            std::span<const f32> weights = entry->morphDefaults;
+            if (animation != nullptr) {
+                // The same count unless the mesh was reloaded with other
+                // targets a frame ago; then the file's own, for that frame.
+                if (const std::span<const f32> own = animation->drawnMorphWeights(id); own.size() == weights.size())
+                    weights = own;
+            }
+            if (const MorphDraw moved = selectMorphs(weights); moved.count > 0) {
+                morph = static_cast<u32>(out.morphs.size());
+                out.morphs.push_back(moved);
+            }
+        }
+
+        // What the part itself says about its surface, resolved once for the
+        // whole mesh rather than once per section: `Material` is a property of
+        // the PART, and every section of it gets the same answer.
+        const PartLook look = lookOf(world, id, *part, materials, frameMaterials, lastFrameMaterial);
+        // The same for every section of it, and asked once.
+        const bool outlinedHere = isOutlined(id);
+        const core::u8 highlightHere = highlightOf(id);
+        const u64 motionKey = motionKeyOf(id);
+
+        for (u32 section = 0; section < entry->sectionCount; ++section) {
+            // Deduplicated across the frame by (content, local index, the
+            // part's material and its tint) so the sort key can group draws
+            // that share a bind set. A linear scan, because a scene has a
+            // handful of materials and an unordered container's iteration
+            // order must not reach observable output (R10).
+            u32 localMaterial = 0;
+            if (section < entry->sectionMaterial.size())
+                localMaterial = entry->sectionMaterial[section];
+
+            ++out.candidateDraws;
+            if (!visible)
+                ++out.culledDraws;
+
+            u32 materialSlot = 0;
+            bool found = false;
+            const u64 key = meshKey(meshPart.meshContent, localMaterial, look);
+            if (const auto bucket = resolvedByKey.find(key); bucket != resolvedByKey.end()) {
+                for (const u32 index : bucket->second) {
+                    if (resolved[index].content == meshPart.meshContent && resolved[index].local == localMaterial &&
+                        resolved[index].look.builtIn == look.builtIn && resolved[index].look.sameBlock(look)) {
+                        materialSlot = resolved[index].slot;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) {
+                materialSlot = static_cast<u32>(out.materials.size());
+                RenderMaterial block = localMaterial < entry->materials.size()
+                                           ? entry->materials[localMaterial]
+                                           // A section whose material the importer did not
+                                           // produce still draws, in the default: a mesh that
+                                           // vanishes because one primitive lacked a material
+                                           // is harder to diagnose than a white one.
+                                           : RenderMaterial{};
+                // A material the part wears REPLACES the file's block, for
+                // every section of it. A mesh wearing none keeps what its own
+                // file described, tinted by the default's `Color` -- which is
+                // what an unimported mesh has always looked like.
+                if (look.builtIn) {
+                    tintBy(block, look.tint);
+                    glowBy(block, look.emissive);
+                }
+                else {
+                    block = look.materialBlock();
+                }
+                // A mesh keeps the UVs its file gives it; tiling by size is a
+                // primitive's, whose faces have none worth keeping.
+                block.uniforms.emissive[3] = 0.0f;
+                (void)addMaterial(block);
+                resolved.push_back(ResolvedMaterial{meshPart.meshContent, localMaterial, materialSlot, look});
+                resolvedByKey[key].push_back(static_cast<u32>(resolved.size() - 1));
+            }
+
+            // The two sources of see-through, multiplied: the part's own
+            // `Transparency` and whatever alpha the material arrived with.
+            // The shader computes the same product, and it has to -- this is
+            // what the draw was sorted by.
+            const f32 own = (1.0f - look.transparency) * out.materials[materialSlot].uniforms.baseColor[3];
+            // Fully invisible draws nothing at all, in either pass. That is
+            // the debug path's existing rule (`submitWorld` skips a part at
+            // `transparency >= 1`), and consistency with it matters more
+            // here than the shadow question the roadmap left closed: a
+            // shadow cast by something nobody can see is a defect whoever
+            // sees it will report.
+            if (own <= 0.0f)
+                continue;
+            // **And what this machine leaves out of its own picture**
+            // (`BasePart.Fade`): the part's opacity less that much. It is
+            // drawn blended then, as anything see-through is, and it is still
+            // in the world -- thinned to nothing, it is a draw the camera's
+            // passes skip and the shadow maps do not.
+            const f32 opacity = own * (1.0f - std::clamp(part->fade, 0.0f, 1.0f));
+
+            const bool transparent = opacity < 1.0f;
+            // Back-to-front for the blended pass, and the inversion happens
+            // HERE rather than as a reversed walk in a backend -- that is
+            // the first renderer's third design constraint, and a reversed walk is work
+            // every future backend would repeat.
+            const f32 sortDepth = transparent ? kMaxSortDepth - distance : distance;
+            out.draws.push_back(DrawItem{
+                // Zero for a transparent draw: see `drawSortKey`.
+                // The opaque pass sorts by the material's FAMILY, so parts
+                // that differ only by colour stay adjacent and batch.
+                .sortKey = drawSortKey(transparent ? kTransparentPass : kOpaquePass,
+                                       boneCount > 0 ? kSkinnedPipeline : kStaticPipeline,
+                                       transparent ? materialSlot : out.familyOf(materialSlot),
+                                       transparent ? 0u : drawGeometryKey(entry->mesh.index, section), sortDepth),
+                .transform = transform,
+                .mesh = entry->mesh,
+                .section = section,
+                .material = materialSlot,
+                .alpha = opacity,
+                .transparent = transparent,
+                .boundsCenter = centre,
+                .boundsRadius = radius,
+                .inCameraFrustum = visible,
+                .firstBone = firstBone,
+                .boneCount = boneCount,
+                .outlined = outlinedHere,
+                .highlight = highlightHere,
+                .terrain = false,
+                .voxelBlock = false,
+            });
+            out.draws.back().motionKey = motionKey;
+            out.draws.back().castShadow = part->castShadow;
+            out.draws.back().receivesDecals = part->receivesDecals;
+            out.draws.back().fadedOnly = own >= 1.0f && transparent;
+            // Only the sections a target reaches: a character's body stays in
+            // its run while its face is drawn alone.
+            if (morph != NoMorph && section < entry->sectionMorphed.size() && entry->sectionMorphed[section] != 0)
+                out.draws.back().morph = morph;
+        }
+    });
+
+    // --- Terrain (ADR 0082) ---------------------------------------------------
+    //
+    ENG_PROFILE_NEXT(stretch, "extract.ground");
+    // **The ground is meshes**, one per node of each terrain's level-of-detail
+    // quadtree, which `TerrainLoader` built and chose for this camera and hands
+    // in as `terrainNodes`. This turns each into draws.
+    //
+    // **Terrain is not made of `MeshPart`s**, and the reason is mechanical:
+    // `attachPartComponents` adds a `RigidBodyComponent` to every `BasePart`
+    // with no condition, so generated parts would be phantom bodies in the
+    // broadphase and rows in the Explorer. So the meshes are filed under a URN
+    // of their own and this emits their draws directly.
+    for (const TerrainNodeDraw& node : terrainNodes) {
+        const scene::TerrainComponent* component = world.terrains().find(node.terrain);
+        if (component == nullptr || !membership.contains(node.terrain))
+            continue;
+        const scene::TerrainComponent& terrain = *component;
+        const core::NameAtom urn = node.urn;
+        {
+            const MeshLibrary::Entry* entry = meshes.find(urn);
+            // Skipped rather than substituted, exactly as a missing mesh is.
+            if (entry == nullptr || !entry->mesh.valid())
+                continue;
+
+            // **The mesher works in the field's own space**, so a node's only
+            // placement is the terrain's own origin -- plus the floating-origin
+            // rebase every other draw gets.
+            core::CFrameD placement;
+            placement.position = terrain.origin;
+            const Mat4 transform = core::toRenderMatrix(placement, origin);
+            const AABB worldBounds = core::transformed(transform, entry->bounds);
+            const bool visible = core::intersects(out.camera.frustum, worldBounds);
+            // One geomorph row for all of the node's sections.
+            const auto morphRow = static_cast<u32>(out.terrainMorphs.size());
+            out.terrainMorphs.push_back(node.morph);
+
+            for (u32 section = 0; section < entry->sectionCount; ++section) {
+                u32 localMaterial = 0;
+                if (section < entry->sectionMaterial.size())
+                    localMaterial = entry->sectionMaterial[section];
+
+                // Deduplicated across the frame by (urn, local index) so the
+                // sort key groups draws that share a bind set -- found by key,
+                // the vector keeping the order they were made in
+                // (R10). The entry's material slot, not its place in the
+                // list: the two agree today only because every material filed
+                // before this loop is filed with an entry here.
+                u32 materialSlot = 0;
+                bool found = false;
+                const u64 key = meshKey(urn, localMaterial, PartLook{});
+                if (const auto bucket = resolvedByKey.find(key); bucket != resolvedByKey.end()) {
+                    for (const u32 index : bucket->second) {
+                        if (resolved[index].content == urn && resolved[index].local == localMaterial &&
+                            resolved[index].look.builtIn && resolved[index].look.sameBlock(PartLook{})) {
+                            materialSlot = resolved[index].slot;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if (!found) {
+                    materialSlot = static_cast<u32>(out.materials.size());
+                    out.materials.push_back(localMaterial < entry->materials.size() ? entry->materials[localMaterial]
+                                                                                    : RenderMaterial{});
+                    resolved.push_back(ResolvedMaterial{urn, localMaterial, materialSlot, PartLook{}});
+                    resolvedByKey[key].push_back(static_cast<u32>(resolved.size() - 1));
+                }
+
+                const Vec3 centre = core::center(worldBounds);
+                const f32 depth = core::length(centre);
+                out.draws.push_back(DrawItem{
+                    .sortKey = drawSortKey(kOpaquePass, kStaticPipeline, materialSlot,
+                                           drawGeometryKey(entry->mesh.index, section), depth),
+                    .transform = transform,
+                    .mesh = entry->mesh,
+                    .section = section,
+                    .material = materialSlot,
+                    .alpha = 1.0f,
+                    .transparent = false,
+                    .boundsCenter = centre,
+                    .boundsRadius = 0.5f * core::length(core::size(worldBounds)),
+                    .inCameraFrustum = visible,
+                    .firstBone = 0,
+                    .boneCount = 0,
+                    // **Never outlined, selected or not.** The outline draws
+                    // through what is in front of it, and a node's skirts, when
+                    // it had them, were buried in the ground: outlined, they
+                    // showed through a dug crater as a tinted lid and a row of
+                    // boxes. A line round the whole world would say
+                    // nothing anyway.
+                    .outlined = false,
+                    .terrain = true,
+                    .voxelBlock = false,
+                    .cutout = false,
+                    .terrainId = node.terrain,
+                    .terrainLevel = node.level,
+                    .terrainMorph = morphRow,
+                });
+            }
+        }
+    }
+
+    // --- Water (ADR 0118) ------------------------------------------------------
+    //
+    // **Each water is its own material** on the engine's water surface, its
+    // waves in the parameters that surface reads -- the terms `surfaceOf`
+    // evaluates for the simulation, so the picture and the floating are one
+    // function -- and a set of tiles of the shared grid: rings round the camera
+    // for a sea, the box for a lake, the ribbon for a river.
+    {
+        const MeshLibrary::Entry* grid = nullptr;
+        if (const core::NameAtom urn = world.atoms().lookup(waterGridUrn()); urn.id != 0)
+            grid = meshes.find(urn);
+        world.waters().forEach([&](core::InstanceId id, const scene::WaterComponent& water) {
+            if (grid == nullptr || !membership.contains(id))
+                return;
+            const scene::WaterSurface surface = scene::surfaceOf(world, id);
+            RenderMaterial material;
+            material.surface = "water";
+            material.readsSceneColor = true;
+            for (core::usize at = 0; at < scene::MaxWaterWaves; ++at) {
+                const scene::WaveTerm term = at < surface.count ? surface.terms[at] : scene::WaveTerm{};
+                material.surfaceValues.push_back(
+                    SurfaceValue{"WaveA" + std::to_string(at),
+                                 {static_cast<f32>(term.k), static_cast<f32>(at < surface.count ? term.amplitude : 0.0),
+                                  static_cast<f32>(term.dirX), static_cast<f32>(term.dirZ)}});
+                material.surfaceValues.push_back(
+                    SurfaceValue{"WaveB" + std::to_string(at),
+                                 {static_cast<f32>(term.omega), static_cast<f32>(term.phase),
+                                  static_cast<f32>(term.steepness), 0.0f}});
+            }
+            material.surfaceValues.push_back(
+                SurfaceValue{"WaveCount", {static_cast<f32>(surface.count), 0.0f, 0.0f, 0.0f}});
+            const u32 materialSlot = static_cast<u32>(out.materials.size());
+            out.materials.push_back(std::move(material));
+
+            // One tile: `size` metres square, centred at `x`, `z`, on the still
+            // surface -- or the river's ribbon, in its own world coordinates.
+            const auto tile = [&](const MeshLibrary::Entry& entry, core::DVec3 at, Vec3 scale) {
+                const Mat4 transform = core::toRenderMatrixScaled(core::CFrameD{at, core::Mat3{}}, origin, scale);
+                // A river that descends is as tall as its drop; the grid is flat.
+                const Vec3 lo =
+                    core::toVec3(at - origin) +
+                    Vec3{entry.bounds.min.x * scale.x, entry.bounds.min.y - 2.0f, entry.bounds.min.z * scale.z};
+                const Vec3 hi =
+                    core::toVec3(at - origin) +
+                    Vec3{entry.bounds.max.x * scale.x, entry.bounds.max.y + 2.0f, entry.bounds.max.z * scale.z};
+                const core::AABB bounds{lo, hi};
+                const Vec3 centre = core::center(bounds);
+                const f32 depth = core::length(centre);
+                out.draws.push_back(DrawItem{
+                    .sortKey = drawSortKey(kTransparentPass, kStaticPipeline, materialSlot, 0u,
+                                           kMaxSortDepth - std::min(depth, kMaxSortDepth)),
+                    .transform = transform,
+                    .mesh = entry.mesh,
+                    .section = 0,
+                    .material = materialSlot,
+                    // A hair short of whole: it is drawn with the blended
+                    // surfaces, over what is under it, which it reads.
+                    .alpha = 0.999f,
+                    .transparent = true,
+                    .boundsCenter = centre,
+                    .boundsRadius = 0.5f * core::length(core::size(bounds)),
+                    .inCameraFrustum = core::intersects(out.camera.frustum, bounds),
+                    .firstBone = 0,
+                    .boneCount = 0,
+                    .outlined = false,
+                    .terrain = false,
+                    .voxelBlock = false,
+                });
+            };
+            const double level = water.surfaceLevel;
+            if (scene::waterIsPool(water.shape)) {
+                tile(*grid,
+                     core::DVec3{static_cast<double>(water.position.x), level, static_cast<double>(water.position.z)},
+                     Vec3{water.size.x, 1.0f, water.size.z});
+                return;
+            }
+            if (scene::waterIsRiver(water.shape) || water.shape == scene::water_shape::Lake) {
+                // A mesh of its own, in the world's coordinates: a river's
+                // ribbon along its course, a lake's surface inside its outline.
+                const core::NameAtom urn = world.atoms().lookup(waterRiverUrn(id));
+                if (const MeshLibrary::Entry* ribbon = urn.id != 0 ? meshes.find(urn) : nullptr; ribbon != nullptr)
+                    tile(*ribbon, core::DVec3{0.0, 0.0, 0.0}, Vec3{1.0f, 1.0f, 1.0f});
+                return;
+            }
+            // **The sea**: three rings, each three times the last across and
+            // as coarse, the finest under the camera -- each snapped to its
+            // own vertex spacing so a vertex lands where a vertex was and the
+            // surface does not slide under the waves it carries.
+            //
+            // All three snapped to the coarsest ring's spacing, which every
+            // finer spacing divides: the rings meet edge to edge, and each
+            // vertex still lands on its own ring's lattice.
+            const double coarsest = 96.0 * 9.0 / static_cast<double>(WaterGridQuads);
+            const double cx = std::floor(origin.x / coarsest) * coarsest;
+            const double cz = std::floor(origin.z / coarsest) * coarsest;
+            for (int ring = 0; ring < 3; ++ring) {
+                const double size = 96.0 * std::pow(3.0, ring);
+                for (int tz = -1; tz <= 1; ++tz) {
+                    for (int tx = -1; tx <= 1; ++tx) {
+                        if (ring > 0 && tx == 0 && tz == 0)
+                            continue;
+                        tile(*grid, core::DVec3{cx + tx * size, level, cz + tz * size},
+                             Vec3{static_cast<f32>(size), 1.0f, static_cast<f32>(size)});
+                    }
+                }
+            }
+        });
+    }
+
+    // --- The block world --------------------------------------------------
+    //
+    // `VoxelService` is a service, not a Workspace descendant, so it is found by
+    // its component rather than walked to. Chunks are meshed in the grid's own
+    // space, which sits at the world origin; the only placement is the
+    // floating-origin rebase every draw gets.
+    world.voxels().forEach([&](core::InstanceId, const scene::VoxelComponent& voxels) {
+        out.voxelColors.clear();
+        out.voxelBlockSize = voxels.blockSize;
+        out.voxelColors.reserve(voxels.types.size());
+        out.voxelTextures.clear();
+        for (const scene::VoxelBlockType& type : voxels.types) {
+            out.voxelColors.push_back(RenderWorld::VoxelColors{type.color, type.side, type.bottom,
+                                                               type.opacity == 2 ? 1.0f - type.transparency : 1.0f});
+            const auto handle = [materials](core::NameAtom urn) {
+                return materials != nullptr && urn.valid() ? materials->find(urn) : rhi::TextureHandle{};
+            };
+            out.voxelTextures.push_back(
+                RenderWorld::VoxelTextures{handle(type.texture), handle(type.sideTexture), handle(type.bottomTexture)});
+        }
+
+        u32 materialSlot = 0xFFFFFFFFu;
+        const Mat4 transform = core::toRenderMatrix(core::CFrameD{}, origin);
+        for (const asset::VoxelChunkKey key : voxels.grid.chunkKeys()) {
+            // The opaque faces; the cutout ones, which the depth prepass must not
+            // see -- it would write a leaf's holes as solid -- and the translucent
+            // ones, as a blended draw that sorts with every other transparent
+            // surface, back to front.
+            for (int kind = 0; kind < 3; ++kind) {
+                const bool cutout = kind == 1;
+                const bool translucent = kind == 2;
+                const core::NameAtom urn = world.atoms().lookup(translucent ? voxelTranslucentUrn(key)
+                                                                : cutout    ? voxelCutoutUrn(key)
+                                                                            : voxelChunkUrn(key));
+                if (!urn.valid())
+                    continue;
+                const MeshLibrary::Entry* entry = meshes.find(urn);
+                if (entry == nullptr || !entry->mesh.valid())
+                    continue;
+                if (materialSlot == 0xFFFFFFFFu) {
+                    materialSlot = static_cast<u32>(out.materials.size());
+                    out.materials.push_back(RenderMaterial{});
+                }
+                const AABB worldBounds = core::transformed(transform, entry->bounds);
+                const Vec3 centre = core::center(worldBounds);
+                out.draws.push_back(DrawItem{
+                    .sortKey = drawSortKey(translucent ? kTransparentPass : kOpaquePass, kStaticPipeline, materialSlot,
+                                           drawGeometryKey(entry->mesh.index, 0), core::length(centre)),
+                    .transform = transform,
+                    .mesh = entry->mesh,
+                    .section = 0,
+                    .material = materialSlot,
+                    .alpha = 1.0f,
+                    .transparent = translucent,
+                    .boundsCenter = centre,
+                    .boundsRadius = 0.5f * core::length(core::size(worldBounds)),
+                    .inCameraFrustum = core::intersects(out.camera.frustum, worldBounds),
+                    .firstBone = 0,
+                    .boneCount = 0,
+                    .outlined = false,
+                    .terrain = false,
+                    .voxelBlock = true,
+                    .cutout = cutout,
+                });
+            }
+        }
+    });
+
+    // --- Decals --------------------------------------------------------
+    //
+    // A box each, relative to the parent part when there is one so a mark on a
+    // moving crate moves with it. Skipped when fully transparent, and when the
+    // box is nowhere near the view -- the renderer draws every one it is given.
+    world.decals().forEach([&](core::InstanceId id, const scene::DecalComponent& decal) {
+        if (!membership.contains(id) || decal.transparency >= 1.0f)
+            return;
+        // A decal's own `CFrame` is its offset from its part, carried by the
+        // part as drawn; a decal on no part is placed by hand, never simulated.
+        CFrameD frame = decal.cframe; // raw: the offset, or a placement by hand.
+        if (world.parts().find(world.parentOf(id)) != nullptr)
+            frame = posed.part(world.parentOf(id)) * decal.cframe; // raw: the offset, as above.
+        RenderDecal drawn;
+        drawn.boxToWorld = core::toRenderMatrixScaled(frame, origin, decal.size);
+        const AABB bounds =
+            core::transformed(drawn.boxToWorld, AABB{Vec3{-0.5f, -0.5f, -0.5f}, Vec3{0.5f, 0.5f, 0.5f}});
+        if (!core::intersects(out.camera.frustum, bounds))
+            return;
+        drawn.worldToBox = core::inverse(drawn.boxToWorld);
+        drawn.texture =
+            materials != nullptr && decal.texture.valid() ? materials->find(decal.texture) : rhi::TextureHandle{};
+        drawn.color = decal.color;
+        drawn.opacity = 1.0f - decal.transparency;
+        drawn.axis = core::transformDirection(drawn.boxToWorld, Vec3{0.0f, 0.0f, 1.0f});
+        drawn.blendMode = decal.blendMode;
+        drawn.emissive = decal.emissive;
+        out.decals.push_back(drawn);
+    });
+
+    // --- Sprites (the 2D layer) ----------------------------------------------
+    //
+    // A `Part2D` is one sprite, and a tilemap one per painted tile in a block
+    // near the view. Both lie on the world's z = 0 plane. Culled by the camera's
+    // frustum -- a block at a time for a tilemap, so a level of a thousand
+    // blocks costs a thousand box tests and draws only what is on screen.
+    {
+        struct Keyed
+        {
+            core::i32 zIndex = 0;
+            // Tilemaps beneath parts at the same `ZIndex`: ground behind what
+            // stands on it.
+            bool part = false;
+            RenderSprite sprite;
+        };
+        std::vector<Keyed> keyed;
+        const f32 planeZ = static_cast<f32>(-origin.z);
+        const auto visible = [&](f64 x0, f64 y0, f64 x1, f64 y1) {
+            const AABB bounds{Vec3{static_cast<f32>(x0 - origin.x), static_cast<f32>(y0 - origin.y), planeZ - 0.01f},
+                              Vec3{static_cast<f32>(x1 - origin.x), static_cast<f32>(y1 - origin.y), planeZ + 0.01f}};
+            return core::intersects(out.camera.frustum, bounds);
+        };
+        const auto textureOf = [&](core::NameAtom image) {
+            return materials != nullptr && image.valid() ? materials->find(image) : rhi::TextureHandle{};
+        };
+
+        world.parts2d().forEach([&](core::InstanceId id, const scene::Part2DComponent& part) {
+            if (!membership.contains(id) || part.transparency >= 1.0f)
+                return;
+            // A circle is drawn as wide as its smaller side, as it collides.
+            core::Vec2 half{part.size.x * 0.5f, part.size.y * 0.5f};
+            if (part.shape == 1)
+                half = core::Vec2{std::min(half.x, half.y), std::min(half.x, half.y)};
+            const f64 hx = static_cast<f64>(half.x);
+            const f64 hy = static_cast<f64>(half.y);
+            const f64 reach = std::sqrt(hx * hx + hy * hy);
+            // Between ticks like everything else (ADR 0134): a 2D game at
+            // 120 Hz moved a tick at a time, every other frame the same.
+            const Pose2D pose = posed.part2d(id);
+            const f64 cx = pose.position.x;
+            const f64 cy = pose.position.y;
+            if (!visible(cx - reach, cy - reach, cx + reach, cy + reach))
+                return;
+
+            Keyed entry;
+            entry.zIndex = part.zIndex;
+            entry.part = true;
+            RenderSprite& sprite = entry.sprite;
+            sprite.rect[0] = static_cast<f32>(cx - hx - origin.x);
+            sprite.rect[1] = static_cast<f32>(cy - hy - origin.y);
+            sprite.rect[2] = static_cast<f32>(cx + hx - origin.x);
+            sprite.rect[3] = static_cast<f32>(cy + hy - origin.y);
+            sprite.z = planeZ;
+            const f32 angle = pose.rotation * kDegreesToRadians;
+            sprite.cosine = pose.rotation == 0.0f ? 1.0f : std::cos(angle);
+            sprite.sine = pose.rotation == 0.0f ? 0.0f : std::sin(angle);
+            sprite.shape = part.shape;
+            sprite.texture = textureOf(part.image);
+            // A pixel rectangle of the image, where one is set and the size of
+            // the image is known; otherwise all of it.
+            const core::Vec2 pixels = materials != nullptr ? materials->sizeOf(part.image) : core::Vec2{};
+            f32 left = 0.0f;
+            f32 top = 0.0f;
+            f32 right = 1.0f;
+            f32 bottom = 1.0f;
+            if (sprite.texture.valid() && pixels.x > 0.0f && pixels.y > 0.0f && part.imageRectSize.x > 0.0f &&
+                part.imageRectSize.y > 0.0f) {
+                left = part.imageRectOffset.x / pixels.x;
+                top = part.imageRectOffset.y / pixels.y;
+                right = (part.imageRectOffset.x + part.imageRectSize.x) / pixels.x;
+                bottom = (part.imageRectOffset.y + part.imageRectSize.y) / pixels.y;
+            }
+            sprite.uv[0] = part.flipX ? right : left;
+            sprite.uv[1] = part.flipY ? bottom : top;
+            sprite.uv[2] = part.flipX ? left : right;
+            sprite.uv[3] = part.flipY ? top : bottom;
+            sprite.color[0] = part.color.r;
+            sprite.color[1] = part.color.g;
+            sprite.color[2] = part.color.b;
+            sprite.color[3] = 1.0f - part.transparency;
+            sprite.nearest = part.filter == 1;
+            sprite.exact = part.exactColor;
+            keyed.push_back(entry);
+        });
+
+        world.tilemaps2d().forEach([&](core::InstanceId id, const scene::Tilemap2DComponent& tilemap) {
+            if (!membership.contains(id) || tilemap.chunks.empty())
+                return;
+            const rhi::TextureHandle texture = textureOf(tilemap.tileset);
+            const core::Vec2 pixels = materials != nullptr ? materials->sizeOf(tilemap.tileset) : core::Vec2{};
+            // Tiles per row of the tileset; zero draws every tile as its colour.
+            const core::i32 columns = texture.valid() && tilemap.tileSize.x > 0.0f && tilemap.tileSize.y > 0.0f
+                                          ? static_cast<core::i32>(pixels.x / tilemap.tileSize.x)
+                                          : 0;
+            // A hair inside each tile's rectangle, so a filter never reaches the
+            // neighbouring tile: half a texel for Linear, a hundredth for
+            // Nearest, where it only has to beat rounding.
+            const f32 inset = tilemap.filter == 1 ? 0.01f : 0.5f;
+            const f64 cell = static_cast<f64>(tilemap.cellSize);
+            const f64 baseX = static_cast<f64>(tilemap.position.x);
+            const f64 baseY = static_cast<f64>(tilemap.position.y);
+            const f64 span = static_cast<f64>(scene::TileChunkEdge) * cell;
+            for (const auto& [key, chunk] : tilemap.chunks) {
+                const f64 chunkX = baseX + static_cast<f64>(key.x) * span;
+                const f64 chunkY = baseY + static_cast<f64>(key.y) * span;
+                if (!visible(chunkX, chunkY, chunkX + span, chunkY + span))
+                    continue;
+                for (core::i32 ly = 0; ly < scene::TileChunkEdge; ++ly) {
+                    for (core::i32 lx = 0; lx < scene::TileChunkEdge; ++lx) {
+                        const core::u16 tile = chunk[static_cast<usize>(ly * scene::TileChunkEdge + lx)];
+                        if (tile == 0)
+                            continue;
+                        const core::i32 x = key.x * scene::TileChunkEdge + lx;
+                        const core::i32 y = key.y * scene::TileChunkEdge + ly;
+                        Keyed entry;
+                        entry.zIndex = tilemap.zIndex;
+                        RenderSprite& sprite = entry.sprite;
+                        // Each edge from the same expression its neighbour uses.
+                        sprite.rect[0] = static_cast<f32>(baseX + static_cast<f64>(x) * cell - origin.x);
+                        sprite.rect[1] = static_cast<f32>(baseY + static_cast<f64>(y) * cell - origin.y);
+                        sprite.rect[2] = static_cast<f32>(baseX + static_cast<f64>(x + 1) * cell - origin.x);
+                        sprite.rect[3] = static_cast<f32>(baseY + static_cast<f64>(y + 1) * cell - origin.y);
+                        sprite.z = planeZ;
+                        if (columns > 0) {
+                            const core::i32 index = static_cast<core::i32>(tile) - 1;
+                            const f32 column = static_cast<f32>(index % columns);
+                            const f32 row = static_cast<f32>(index / columns);
+                            sprite.uv[0] = (column * tilemap.tileSize.x + inset) / pixels.x;
+                            sprite.uv[1] = (row * tilemap.tileSize.y + inset) / pixels.y;
+                            sprite.uv[2] = ((column + 1.0f) * tilemap.tileSize.x - inset) / pixels.x;
+                            sprite.uv[3] = ((row + 1.0f) * tilemap.tileSize.y - inset) / pixels.y;
+                            sprite.texture = texture;
+                        }
+                        sprite.color[0] = tilemap.color.r;
+                        sprite.color[1] = tilemap.color.g;
+                        sprite.color[2] = tilemap.color.b;
+                        sprite.nearest = tilemap.filter == 1;
+                        sprite.exact = tilemap.exactColor;
+                        keyed.push_back(entry);
+                    }
+                }
+            }
+        });
+
+        // Stable, so what the sort leaves tied keeps the pools' order (R10).
+        std::stable_sort(keyed.begin(), keyed.end(), [](const Keyed& a, const Keyed& b) {
+            return a.zIndex != b.zIndex ? a.zIndex < b.zIndex : (!a.part && b.part);
+        });
+        out.sprites.reserve(keyed.size());
+        for (const Keyed& entry : keyed)
+            out.sprites.push_back(entry.sprite);
+    }
+
+    // --- Solid parts ---------------------------------------------------
+    //
+    // **The renderer changes not at all for this**, which is the answer the first renderer's
+    // "engine-generated geometry must be able to reach the renderer" constraint
+    // was written to get: these are ordinary `DrawItem`s naming ordinary
+    // `MeshHandle`s, and colour, `Transparency` and the blended pass come free
+    // because of it.
+    //
+    // The material is the part's own colour rather than a file's, deduplicated
+    // across the frame by that colour so the sort key still groups draws that
+    // share a bind set. A linear scan for the same reason the mesh loop uses
+    // one: a scene has a handful of distinct colours, and an unordered
+    // container's iteration order must not reach observable output (R10).
+    struct ResolvedPartMaterial
+    {
+        PartLook look;
+        u32 slot;
+    };
+    std::vector<ResolvedPartMaterial> partMaterials;
+    // By key, for the lookup only (the order is the vector's, R10).
+    std::unordered_map<u64, std::vector<usize>> partMaterialsByKey;
+    usize lastPartMaterial = std::numeric_limits<usize>::max();
+
+    ENG_PROFILE_NEXT(stretch, "extract.parts");
+    world.parts().forEach([&](core::InstanceId id, const scene::PartComponent& part) {
+        if (!membership.contains(id))
+            return;
+        // A `MeshPart` is a `BasePart` and is in this pool too; its geometry
+        // came from a file and the loop above already drew it.
+        if (world.meshParts().find(id) != nullptr)
+            return;
+
+        // Once per part: it is a pool search, and it was asked twice here.
+        const core::i32 shape = drawnShape(world, id, part);
+        const MeshLibrary::Entry* entry = primitiveOf(shape);
+        if (entry == nullptr)
+            return;
+
+        const PartLook look = lookOf(world, id, part, materials, frameMaterials, lastFrameMaterial);
+        const f32 own = 1.0f - look.transparency;
+        if (own <= 0.0f)
+            return;
+        // Less what this machine leaves out of its own picture (`BasePart.Fade`).
+        const f32 opacity = own * (1.0f - std::clamp(part.fade, 0.0f, 1.0f));
+
+        const Mat4 transform = core::toRenderMatrixScaled(posed.part(id), origin, primitiveScale(shape, part.size));
+        const AABB worldBounds = core::transformed(transform, entry->bounds);
+
+        ++out.candidateDraws;
+        const bool visible = core::intersects(out.camera.frustum, worldBounds);
+        if (!visible) {
+            ++out.culledDraws;
+            const Vec3 toCentre = core::center(worldBounds);
+            const f32 reach = shadowRadius + 0.5f * core::length(core::size(worldBounds));
+            if (core::length(toCentre) > reach)
+                return;
+        }
+
+        // Deduplicated by the look rather than by colour alone: two parts
+        // wearing one material with one set of overrides are one bind set, and
+        // two sharing a tint but not a material are not.
+        //
+        // The previous part's entry is asked first, for the reason `lookOf`
+        // gives: the entries are unique looks, so a hit there is the entry the
+        // scan would have found.
+        u32 materialSlot = 0;
+        bool found = false;
+        if (lastPartMaterial < partMaterials.size() && partMaterials[lastPartMaterial].look.builtIn == look.builtIn &&
+            partMaterials[lastPartMaterial].look.sameBlock(look)) {
+            materialSlot = partMaterials[lastPartMaterial].slot;
+            found = true;
+        }
+        const u64 key = look.key();
+        if (!found) {
+            if (const auto bucket = partMaterialsByKey.find(key); bucket != partMaterialsByKey.end()) {
+                for (const usize index : bucket->second) {
+                    if (partMaterials[index].look.builtIn == look.builtIn &&
+                        partMaterials[index].look.sameBlock(look)) {
+                        materialSlot = partMaterials[index].slot;
+                        lastPartMaterial = index;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!found) {
+            RenderMaterial material;
+            if (look.builtIn) {
+                material.uniforms.baseColor[0] = 1.0f;
+                material.uniforms.baseColor[1] = 1.0f;
+                material.uniforms.baseColor[2] = 1.0f;
+                material.uniforms.baseColor[3] = 1.0f;
+                // Dielectric and fairly rough, which is what an untextured
+                // building block looks like. `RenderMaterial`'s own defaults are
+                // metallic 1 and roughness 1, which is right for a glTF that
+                // forgot to say and wrong for a `Part` that has no way to.
+                material.uniforms.metallicRoughnessNormalCutoff[0] = 0.0f;
+                material.uniforms.metallicRoughnessNormalCutoff[1] = 0.7f;
+                // The default's `Color`, over its white: this IS the part's
+                // colour, which is what a plain part has always drawn as.
+                tintBy(material, look.tint);
+                glowBy(material, look.emissive);
+            }
+            else {
+                material = look.materialBlock();
+            }
+            materialSlot = addMaterial(material);
+            partMaterials.push_back(ResolvedPartMaterial{look, materialSlot});
+            partMaterialsByKey[key].push_back(partMaterials.size() - 1);
+            lastPartMaterial = partMaterials.size() - 1;
+        }
+
+        const bool transparent = opacity < 1.0f;
+        const f32 depth = core::length(core::center(worldBounds));
+        const f32 sortDepth = transparent ? kMaxSortDepth - depth : depth;
+        out.draws.push_back(DrawItem{
+            .sortKey = drawSortKey(transparent ? kTransparentPass : kOpaquePass, kStaticPipeline,
+                                   transparent ? materialSlot : out.familyOf(materialSlot),
+                                   transparent ? 0u : drawGeometryKey(entry->mesh.index, 0), sortDepth),
+            .transform = transform,
+            .mesh = entry->mesh,
+            .section = 0,
+            .material = materialSlot,
+            .alpha = opacity,
+            .transparent = transparent,
+            .boundsCenter = core::center(worldBounds),
+            .boundsRadius = 0.5f * core::length(core::size(worldBounds)),
+            .inCameraFrustum = visible,
+            .outlined = isOutlined(id),
+            .highlight = highlightOf(id),
+            .terrain = false,
+            .voxelBlock = false,
+        });
+        out.draws.back().motionKey = motionKeyOf(id);
+        out.draws.back().castShadow = part.castShadow;
+        out.draws.back().receivesDecals = part.receivesDecals;
+        out.draws.back().fadedOnly = own >= 1.0f && transparent;
+    });
+
+    // --- Ropes, rods and springs (ADR 0127) -----------------------------------
+    //
+    // **A rope a game shows is a thing in the world**: a thin cylinder from
+    // one attachment to the other, of the constraint's `Color` and
+    // `Thickness`, lit and shadowed like the parts it joins. Only the distance
+    // family, and only when `Visible`: a world with none of them walks an empty
+    // list of looks and adds nothing.
+    {
+        struct LineLook
+        {
+            Color3 color;
+            u32 slot = 0;
+        };
+        std::vector<LineLook> lineLooks;
+        const MeshLibrary::Entry* cylinder = primitiveOf(2);
+        const core::i32 distanceKind = scene::MoverKind::DistanceJoint;
+        const auto endOf = [&](core::InstanceId attachment, DVec3& at) {
+            const scene::AttachmentComponent* frame = world.attachments().find(attachment);
+            const core::InstanceId part = world.parentOf(attachment);
+            if (frame == nullptr || world.parts().find(part) == nullptr)
+                return false;
+            // raw: where an attachment sits ON its part is authored; the part is the poses'.
+            at = (posed.part(part) * frame->cframe).position;
+            return true;
+        };
+        world.constraints().forEach([&](core::InstanceId id, const scene::ConstraintComponent& line) {
+            if (!line.visible || line.kind != distanceKind || cylinder == nullptr || line.thickness <= 0.0f ||
+                !membership.contains(id))
+                return;
+            DVec3 from;
+            DVec3 to;
+            if (!endOf(line.attachment0, from) || !endOf(line.attachment1, to))
+                return;
+            const Vec3 span = core::toVec3(to - from);
+            const f32 length = core::length(span);
+            if (length < 1.0e-4f)
+                return;
+
+            // The cylinder's own axis is Y: turned onto the line, about any
+            // side that is not along it.
+            const Vec3 up = span * (1.0f / length);
+            const Vec3 pick = std::fabs(up.y) < 0.99f ? Vec3{0.0f, 1.0f, 0.0f} : Vec3{1.0f, 0.0f, 0.0f};
+            const Vec3 right = core::normalize(core::cross(up, pick));
+            const Vec3 back = core::cross(right, up);
+            CFrameD frame;
+            frame.position = DVec3{(from.x + to.x) * 0.5, (from.y + to.y) * 0.5, (from.z + to.z) * 0.5};
+            frame.rotation.m[0][0] = right.x, frame.rotation.m[0][1] = right.y, frame.rotation.m[0][2] = right.z;
+            frame.rotation.m[1][0] = up.x, frame.rotation.m[1][1] = up.y, frame.rotation.m[1][2] = up.z;
+            frame.rotation.m[2][0] = back.x, frame.rotation.m[2][1] = back.y, frame.rotation.m[2][2] = back.z;
+
+            const Mat4 transform =
+                core::toRenderMatrixScaled(frame, origin, Vec3{line.thickness, length, line.thickness});
+            const AABB worldBounds = core::transformed(transform, cylinder->bounds);
+            ++out.candidateDraws;
+            const bool visible = core::intersects(out.camera.frustum, worldBounds);
+            if (!visible) {
+                ++out.culledDraws;
+                if (core::length(core::center(worldBounds)) >
+                    shadowRadius + 0.5f * core::length(core::size(worldBounds)))
+                    return;
+            }
+
+            u32 slot = 0;
+            bool found = false;
+            for (const LineLook& look : lineLooks) {
+                if (look.color == line.color) {
+                    slot = look.slot;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                RenderMaterial material;
+                material.uniforms.baseColor[0] = 1.0f;
+                material.uniforms.baseColor[1] = 1.0f;
+                material.uniforms.baseColor[2] = 1.0f;
+                material.uniforms.baseColor[3] = 1.0f;
+                material.uniforms.metallicRoughnessNormalCutoff[0] = 0.0f;
+                material.uniforms.metallicRoughnessNormalCutoff[1] = 0.8f;
+                tintBy(material, line.color);
+                slot = addMaterial(material);
+                lineLooks.push_back(LineLook{line.color, slot});
+            }
+
+            out.draws.push_back(DrawItem{
+                .sortKey =
+                    drawSortKey(kOpaquePass, kStaticPipeline, out.familyOf(slot),
+                                drawGeometryKey(cylinder->mesh.index, 0), core::length(core::center(worldBounds))),
+                .transform = transform,
+                .mesh = cylinder->mesh,
+                .section = 0,
+                .material = slot,
+                .alpha = 1.0f,
+                .transparent = false,
+                .boundsCenter = core::center(worldBounds),
+                .boundsRadius = 0.5f * core::length(core::size(worldBounds)),
+                .inCameraFrustum = visible,
+                .outlined = isOutlined(id),
+                .highlight = highlightOf(id),
+                .terrain = false,
+                .voxelBlock = false,
+            });
+            out.draws.back().motionKey = motionKeyOf(id);
+        });
+    }
+
+    // `stable_sort`, and the stability is the contract: two draws with equal
+    // keys keep their extraction order, which is the pool's dense order and
+    // therefore a pure function of the operation sequence. `std::sort` is a
+    // quicksort and would order them by whatever the partition happened to do
+    // (R10) -- the same trap the api-dump generator hit on the same day.
+    //
+    ENG_PROFILE_NEXT(stretch, "extract.sort");
+    // **Sorted as (key, index) pairs and permuted once**, which is the same
+    // order: the index breaks every tie exactly the way stability does. What
+    // changed is what moves. A `DrawItem` is over a hundred bytes and a merge
+    // sort moves each one about log2(n) times; a pair is sixteen, and each item
+    // is then copied exactly once, into the buffer the previous frame left.
+    // **The highlights that are drawn** (ADR 0129): the ones something on
+    // screen carries, the nearest first, and no more than the budget. A draw
+    // of one that was left out is not marked at all.
+    if (!everyHighlight.empty()) {
+        struct Seen
+        {
+            f32 nearest = std::numeric_limits<f32>::max();
+            u32 slot = 0;
+        };
+        std::vector<Seen> seen(everyHighlight.size());
+        for (usize slot = 0; slot < seen.size(); ++slot)
+            seen[slot].slot = static_cast<u32>(slot);
+        for (const DrawItem& draw : out.draws) {
+            if (draw.highlight == 0 || !draw.inCameraFrustum)
+                continue;
+            Seen& entry = seen[draw.highlight - 1u];
+            entry.nearest = std::min(entry.nearest, core::length(draw.boundsCenter));
+        }
+        std::erase_if(seen, [](const Seen& entry) { return entry.nearest == std::numeric_limits<f32>::max(); });
+        std::stable_sort(seen.begin(), seen.end(), [](const Seen& a, const Seen& b) { return a.nearest < b.nearest; });
+        const usize budget = std::min<usize>(out.maxHighlights, 255);
+        if (seen.size() > budget) {
+            out.highlightsDropped += static_cast<u32>(seen.size() - budget);
+            seen.resize(budget);
+        }
+        std::vector<core::u8> place(everyHighlight.size(), 0);
+        for (usize index = 0; index < seen.size(); ++index) {
+            place[seen[index].slot] = static_cast<core::u8>(index + 1);
+            out.highlights.push_back(everyHighlight[seen[index].slot]);
+        }
+        for (DrawItem& draw : out.draws) {
+            if (draw.highlight != 0)
+                draw.highlight = place[draw.highlight - 1u];
+        }
+    }
+
+    out.sortScratch.resize(out.draws.size());
+    for (usize index = 0; index < out.draws.size(); ++index)
+        out.sortScratch[index] = RenderWorld::SortEntry{out.draws[index].sortKey, static_cast<u32>(index)};
+    std::sort(out.sortScratch.begin(), out.sortScratch.end(),
+              [](const RenderWorld::SortEntry& a, const RenderWorld::SortEntry& b) {
+                  return a.key != b.key ? a.key < b.key : a.index < b.index;
+              });
+    out.drawScratch.clear();
+    out.drawScratch.reserve(out.draws.size());
+    for (const RenderWorld::SortEntry& entry : out.sortScratch)
+        out.drawScratch.push_back(out.draws[entry.index]);
+    out.draws.swap(out.drawScratch);
+}
+
+rhi::Rect decalCoverage(std::span<const RenderDecal> decals, const Mat4& viewProjection, u32 width, u32 height)
+{
+    const rhi::Rect whole{0, 0, static_cast<core::i32>(width), static_cast<core::i32>(height)};
+    if (decals.empty() || width == 0 || height == 0)
+        return {};
+    f32 low[2]{std::numeric_limits<f32>::max(), std::numeric_limits<f32>::max()};
+    f32 high[2]{std::numeric_limits<f32>::lowest(), std::numeric_limits<f32>::lowest()};
+    for (const RenderDecal& decal : decals) {
+        const Mat4 toClip = viewProjection * decal.boxToWorld;
+        for (u32 corner = 0; corner < 8; ++corner) {
+            const f32 x = (corner & 1u) != 0 ? 0.5f : -0.5f;
+            const f32 y = (corner & 2u) != 0 ? 0.5f : -0.5f;
+            const f32 z = (corner & 4u) != 0 ? 0.5f : -0.5f;
+            const auto row = [&](int at) {
+                return toClip.m[0][at] * x + toClip.m[1][at] * y + toClip.m[2][at] * z + toClip.m[3][at];
+            };
+            const f32 w = row(3);
+            // At the camera's plane or behind it: the box's outline on the
+            // screen is not the hull of its corners any more.
+            if (!(w > 1.0e-4f))
+                return whole;
+            const f32 screen[2]{(row(0) / w * 0.5f + 0.5f) * static_cast<f32>(width),
+                                (0.5f - row(1) / w * 0.5f) * static_cast<f32>(height)};
+            for (int axis = 0; axis < 2; ++axis) {
+                if (!std::isfinite(screen[axis]))
+                    return whole;
+                low[axis] = std::min(low[axis], screen[axis]);
+                high[axis] = std::max(high[axis], screen[axis]);
+            }
+        }
+    }
+    // A pixel of slack each way: a box's edge is rasterised by the GPU's
+    // rules, and this is arithmetic beside them.
+    const f32 limit[2]{static_cast<f32>(width), static_cast<f32>(height)};
+    core::i32 from[2];
+    core::i32 to[2];
+    for (int axis = 0; axis < 2; ++axis) {
+        from[axis] = static_cast<core::i32>(std::clamp(std::floor(low[axis]) - 1.0f, 0.0f, limit[axis]));
+        to[axis] = static_cast<core::i32>(std::clamp(std::ceil(high[axis]) + 1.0f, 0.0f, limit[axis]));
+    }
+    if (to[0] <= from[0] || to[1] <= from[1])
+        return {};
+    return {from[0], from[1], to[0] - from[0], to[1] - from[1]};
+}
+
+f32 decalReach(std::span<const RenderDecal> decals)
+{
+    f32 furthest = 0.0f;
+    for (const RenderDecal& decal : decals) {
+        for (u32 corner = 0; corner < 8; ++corner) {
+            // The box is camera-relative: a corner's length is its distance.
+            const Vec3 at = core::transformPoint(decal.boxToWorld, Vec3{(corner & 1u) != 0 ? 0.5f : -0.5f,
+                                                                        (corner & 2u) != 0 ? 0.5f : -0.5f,
+                                                                        (corner & 4u) != 0 ? 0.5f : -0.5f});
+            furthest = std::max(furthest, std::sqrt(at.x * at.x + at.y * at.y + at.z * at.z));
+        }
+    }
+    return furthest;
+}
+
+} // namespace engine::render

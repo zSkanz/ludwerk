@@ -1,0 +1,2744 @@
+// Class-specific state, stored as POD components (architecture.md §4).
+//
+// Every field here backs a property the IDL declares, and the generated
+// accessors are the only things that read or write them. They are plain structs
+// with no invariants of their own on purpose: `World::snapshot` is a per-pool
+// copy, and a component with a constructor, a pointer or a heap allocation
+// would make that a traversal instead (ADR 0016).
+//
+// A class arrives with the milestone that gives it behaviour, and so does its
+// component.
+//
+// **Why the render module's components live in `scene`'s header.**
+// `World` holds one `ComponentPool<T>` member per component type and has no
+// extension point for a higher module to add its own. A component is data with
+// no invariants, so the alternative -- a type-erased pool registry keyed by type
+// id -- would rework the ECS core to buy an indirection on every access, and it
+// would buy it for exactly the reason architecture.md §2 rule 3 already
+// tolerates: `scene` never *includes* `render`, and it does not here either. It
+// stores five more POD structs and interprets none of them.
+//
+// The cost is that this file grows with every module that owns classes, and the
+// day that becomes the problem -- physics with the physics work is the next candidate -- the
+// type-erased registry is the answer. Recorded so that day is a decision rather
+// than a discovery.
+//
+// The physics work came and did not spend it. `RigidBodyComponent` and
+// `CharacterBodyComponent` are scene's own, not the physics module's: physics
+// sits at L2, BELOW scene, so it could not register a class into the scene
+// registry even if it wanted to. What crosses the seam is a body handle held by
+// the glue, and neither module holds one of the other's types. The registry is
+// still the answer for the day a module ABOVE scene brings a third batch.
+#pragma once
+
+#include <algorithm>
+#include <array>
+#include <limits>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include "engine/asset/material.h"
+#include "engine/asset/terrain.h"
+#include "engine/asset/terrain_layers.h"
+#include "engine/asset/terrain_rules.h"
+#include "engine/asset/voxel.h"
+#include "engine/core/id.h"
+#include "engine/core/math.h"
+#include "engine/core/name_atom.h"
+#include "engine/core/sequence.h"
+#include "engine/core/types.h"
+#include "engine/scene/types.h"
+
+namespace engine::asset {
+class TerrainCellSource;
+}
+
+namespace engine::scene {
+
+// `BasePart`'s structural half. The physics half --
+// Anchored, CanCollide, Friction and the rest -- arrives in the physics work with a
+// simulation that can mean something by it.
+//
+// `Position` and `Orientation` are NOT stored: they are views of `cframe`,
+// derived on read and folded back on write, because storing them alongside
+// would create two sources of truth that a `.prefab.luau` could set to
+// contradict each other.
+struct PartComponent
+{
+    core::CFrameD cframe;
+    core::Vec3 size{1.0f, 1.0f, 1.0f};
+
+    // `BasePart.Material` (ADR 0090): the material asset this part wears, as its
+    // URN interned, or invalid for the engine default. **A part has no colour of
+    // its own**; its look is this material's, changed only where
+    // `materialParameters` overrides what the material declares.
+    //
+    // A URN rather than an instance, which is what it was for one release: an
+    // instance reference means something only inside one world, and a surface
+    // is not a thing in any world. Interned so the component stays trivially
+    // copyable and `World::snapshot` a per-pool copy.
+    core::NameAtom material;
+    // Nonzero when the part wears a runtime CLONE of that asset: the clone's id
+    // in `World::materialClones`.
+    u32 materialClone = 0;
+    // `BasePart.MaterialParameters`: what this part overrides. An override the
+    // current material does not declare is kept here and ignored when drawn.
+    asset::MaterialOverrides materialParameters;
+    // `Enum.PartShape`'s value. Stored as the raw item value rather than as an
+    // enum class so that the generated accessor needs no per-enum C++ type.
+    i32 shape = 0;
+    // `BasePart.CastShadow`: whether the part is drawn into the shadow maps --
+    // the sun's and the lamps'. On for everything until a game says otherwise.
+    bool castShadow = true;
+    // `BasePart.ReceivesDecals`: whether a decal paints it. On until a game
+    // says otherwise.
+    bool receivesDecals = true;
+    // `BasePart.Fade`: how much of the part this machine leaves out of its
+    // own picture, 0 to 1. This machine's alone: never on the wire, never in
+    // a file, never in the world's hash.
+    f32 fade = 0.0f;
+};
+
+// `MeshPart`'s geometry. The renderer resolves the URN to a loaded mesh and
+// keeps that mapping on its own side, because a `MeshHandle` is a GPU resource
+// and `scene` has no business holding one.
+struct MeshPartComponent
+{
+    // `asset://models/x.glb` or another Content URN, interned rather than held
+    // as a string: this header's opening contract is that a component is
+    // trivially copyable, because `World::snapshot` is a per-pool memcpy and a
+    // heap allocation would make it a traversal (ADR 0016). Interning also
+    // matches how `Instance.Name` is stored.
+    //
+    // Kept as the script wrote it rather than resolved, so reading the property
+    // back gives what was written even when the file failed to load.
+    core::NameAtom meshContent;
+
+    // `Enum.CollisionFidelity`'s value, stored raw. Read by the physics mirror
+    // rather than by the renderer, which is why it sits with the geometry it
+    // approximates rather than with the rigid body that uses it.
+    i32 collisionFidelity = 0;
+
+    // What the mesh measures at `Size == meshSize`, so that `Size` means the
+    // same thing on a `MeshPart` as it does on a `Part`: the renderer and the
+    // physics hull both scale by `size / meshSize`.
+    //
+    // **Authored, not derived.** The mesh's real bounds are known only where
+    // something loaded it, and the world hash is required to be a pure function
+    // of the operation sequence -- a derived divisor would make a headless run
+    // and a rendered run disagree about the same scene. The import writes this
+    // from the compiled bounds; until then it is one, and a part whose `Size` is
+    // also one draws exactly as it did before this field existed.
+    core::Vec3 meshSize{1.0f, 1.0f, 1.0f};
+
+    // **The mesh whose pose this one wears** (`PoseFrom`, ADR 0201), or none.
+    // Simulation, like the pose it decides: a `Bone` on a joint of a follower
+    // is read by the tick.
+    core::InstanceId poseFrom;
+};
+
+// `BasePart`'s physical half. Separate from `PartComponent` rather than
+// folded into it because the two have different readers: `render::extract`
+// walks every part every frame and wants the transform and the look, and the
+// physics mirror walks the bodies and wants this. One pool each keeps each
+// walk over the fields it uses.
+//
+// Attached by the same hook as `PartComponent` -- a `BasePart` has both or
+// neither -- and holding no handle of any kind. The mapping from an instance to
+// a simulation body lives in the glue above both modules, because `scene` (L3)
+// must not learn what a body is and `physics` (L2) must not learn what an
+// instance is.
+struct RigidBodyComponent
+{
+    // Written by the SCRIPT and read by the mirror.
+    bool anchored = false;
+    bool canCollide = true;
+    // **Gates the PAIR rather than one side.** A part with this off is silent
+    // and so is whatever touches it, because a signal naming a part that said
+    // not to report touches would be that part reporting one on somebody else's
+    // handler. Contacts are still solved; what stops is the queueing.
+    bool canTouch = true;
+    bool canQuery = true;
+    // The group's name, interned. Resolved to a simulation group by the glue,
+    // which is the only party that knows the group table exists.
+    core::NameAtom collisionGroup;
+    f32 friction = 0.3f;
+    f32 restitution = 0.0f;
+    f32 density = 1.0f;
+    // The share of a speed lost in a second with nothing touching it.
+    f32 linearDamping = 0.05f;
+    f32 angularDamping = 0.05f;
+    // `ContactDetails`: whether `Collided` is queued for this part.
+    bool contactDetails = false;
+    // Written by REPLICATION: the authority sent this part. On a
+    // replica only what the authority sends is the authority's to move; a
+    // part this machine's own scripts made -- debris, a shell, a projectile
+    // only it sees -- is simulated here.
+    bool fromAuthority = false;
+
+    // Written by the MIRROR when the body is made or reshaped: what it weighs,
+    // as the solver worked it out from the shape and the density.
+    f32 mass = 0.0f;
+    // **A script wrote a velocity** (ADR 0127): the two below are then what
+    // it wrote, and the mirror hands them to the solver at the start of the
+    // next tick instead of reading them from it.
+    bool velocityWritten = false;
+
+    // Written by the MIRROR and read by scripts. Read-only in the API for the
+    // reason the property's Doc gives: an assignment would be an impulse with
+    // the mass divided out, and `ApplyImpulse` is that operation named.
+    core::Vec3 linearVelocity{0.0f, 0.0f, 0.0f};
+    core::Vec3 angularVelocity{0.0f, 0.0f, 0.0f};
+
+    // **Whose machine simulates it** (ADR 0099): a player's user id, or 0 for
+    // the authority. The authority keeps every owner; a replica learns only
+    // the parts that are its own, and holds 0 for the rest.
+    u32 networkOwner = 0;
+
+    // **Simulated on this replica, near its character** (ADR 0133): written
+    // by the replication module on a replica only. A predicted part is a
+    // dynamic body here, corrected with the character rather than drawn
+    // between snapshots. Never replicated, never hashed: the authority's is
+    // always false.
+    bool predicted = false;
+
+    // `ApplyImpulse` accumulates here and the mirror drains it at the start of
+    // the next tick. A queue rather than an immediate call because a script may
+    // run at any point in the frame and the solver may not be interrupted --
+    // and because summing impulses is exactly what applying them one after
+    // another would do anyway.
+    core::Vec3 pendingImpulse{0.0f, 0.0f, 0.0f};
+    // **And a twist** (ADR 0118): `ApplyAngularImpulse`, and the turning half
+    // of `ApplyImpulseAtPosition` and of the water's push at a point.
+    core::Vec3 pendingAngularImpulse{0.0f, 0.0f, 0.0f};
+    // `BasePart.Buoyant`: whether a `Water` holds it up.
+    bool buoyant = true;
+
+    // Whether the simulation is still moving this body, written by the mirror.
+    // Not a property -- nothing in api-design.md exposes it -- and hashed
+    // anyway, because two runs that agree on every position while disagreeing
+    // about which bodies are asleep are one nudge away from disagreeing on
+    // everything (architecture.md §9: the hash covers physics state).
+    bool active = false;
+};
+
+// `CharacterBody`'s own state. The three tuning numbers a script sets, the
+// two facts the controller reports, and the command for the next tick.
+//
+// The command is stored rather than dispatched because `Move` and `Jump` are
+// called from script code that may run at any point in the frame, and the
+// controller may only be advanced inside the sim tick. It is simulation state
+// like any other and hashes with the rest of the world.
+struct CharacterBodyComponent
+{
+    f32 walkSpeed = 16.0f;
+    f32 jumpSpeed = 8.0f;
+    f32 maxSlopeAngle = 46.0f;
+    f32 autoStepHeight = 0.5f;
+
+    // Reported by the controller after each tick.
+    bool grounded = false;
+    // `Enum.CharacterState`'s value, stored raw for the same reason
+    // `PartComponent::shape` is.
+    i32 state = 1;
+    // What the character was standing on last tick, so `Landed` can name it and
+    // so the transition can be detected without a second flag.
+    core::InstanceId groundPart;
+
+    // **The attributes its predicted steps write**, by name, sorted by
+    // atom: what a replica remembers each tick and puts back before stepping
+    // again, and what the authority sends it beside the character's state.
+    std::vector<core::NameAtom> predictedAttributes;
+
+    // The command for the next tick. Cleared by the mirror once consumed, so a
+    // character told nothing stops -- which is what `Move`'s Doc promises.
+    core::Vec3 moveDirection{0.0f, 0.0f, 0.0f};
+    bool jumpRequested = false;
+    // Carried across ticks because a controller owns its own vertical velocity:
+    // gravity integrates here rather than in the solver, since a
+    // `CharacterVirtual` is not a body the solver knows about.
+    f32 verticalVelocity = 0.0f;
+
+    // --- A character that is pushed, floats, swims and flies ----------
+
+    // How much of the world's gravity it feels: 1 all of it, 0 none.
+    f32 gravityScale = 1.0f;
+    // What `Move` is scaled by in a fluid and in the air, as `walkSpeed` is on
+    // the ground.
+    f32 swimSpeed = 10.0f;
+    f32 flySpeed = 16.0f;
+    // Asked for by the game: no weight, and `Move` in three dimensions.
+    bool flying = false;
+    // **What an impulse or a written velocity gave it** that is not its walk:
+    // a knock sideways, a launch. Added to the walk each tick and faded --
+    // quickly on the ground, as friction would, slowly in the air. Horizontal
+    // while it walks or falls, where the vertical part is `verticalVelocity`'s;
+    // all three axes while it swims or flies.
+    core::Vec3 push{0.0f, 0.0f, 0.0f};
+    // What the last step moved it as: 0 on foot or falling, 2 swimming,
+    // 3 flying -- `Enum.CharacterState`'s values, which `state` then reports.
+    i32 mode = 0;
+
+    // **Where the authority is expected to have it, less where it is drawn**
+    // (ADR 0163). A replica draws another player's character a little in the
+    // past and steps its own ahead of the authority: what its own character
+    // collides with is this character this far from where it is drawn. Set by
+    // a replica's session for a character somebody else plays; unset
+    // everywhere else, and no part of the world's hash -- it is one machine's
+    // guess, and the authority has none.
+    core::Vec3 collisionLead{0.0f, 0.0f, 0.0f};
+    bool collisionLeadSet = false;
+    // **And where it was last KNOWN to be**, the same way: the place its
+    // newest snapshot put it, less the drawn one (ADR 0163, amended). Between
+    // this and the expected place is everywhere it may be now -- it kept
+    // going, or it stopped -- and this machine's own character is kept out of
+    // all of it (`PhysicsSync::standInPlace`).
+    core::Vec3 collisionKnown{0.0f, 0.0f, 0.0f};
+};
+
+// `Weld` and `WeldConstraint` (added to the milestone deliberately).
+//
+// One component for both, because the two differ in where the offset comes from
+// and in nothing else: a `Weld` is told it and a `WeldConstraint` reads it off
+// the world when it becomes active. Sharing the storage is what keeps the
+// resolver from having to walk two pools in a defined order relative to each
+// other, which is a source of non-determinism that would exist for no reason.
+//
+// **A transform weld, and the roadmap says why it has to be one:** a
+// `CharacterVirtual` is not a body in the physics system, a solver constraint
+// joins bodies, so a constraint could never reach a character. The driven part
+// stops being independently simulated and follows its anchor; the solver is not
+// involved.
+// `Attachment` and `Bone`, in one pool.
+//
+// **One component for two classes**, exactly as one `WeldComponent` serves
+// `Weld` and `WeldConstraint` -- and for the same reason: two pools would need a
+// defined resolution order relative to each other, which is a determinism
+// problem invented for nothing.
+//
+// An attachment is a named place ON something: on a part, for a socket a weld or
+// a constraint can hold; on a mesh part's joint, for a sword in a hand. It has
+// no body, is not simulated, and costs one entry in a `forEach` that a world
+// with none never runs.
+struct AttachmentComponent
+{
+    // Where it sits relative to whatever it is parented to. Authored.
+    core::CFrameD cframe;
+
+    // Where that lands in the world. **Derived, recomputed every tick**, and
+    // never written by a script: a world transform that could be assigned would
+    // be a second source of truth about the same place.
+    core::CFrameD worldCFrame;
+
+    // `Bone` only: the joint in the parent `MeshPart`'s skeleton this follows.
+    // Empty on a plain `Attachment`, which follows its parent part instead.
+    core::NameAtom jointName;
+
+    // Where that name resolved to, or -1. Derived, and re-resolved when the rig
+    // reloads -- an index survives a file change where a pointer would not.
+    //
+    // **-1 falls back to the parent part's own transform**, not to the origin. A
+    // bone whose joint an artist renamed puts a sword at the character's feet if
+    // it resolves to zero and on the character if it resolves to nothing.
+    i32 jointIndex = -1;
+
+    // `Bone` only: a local-space offset applied on TOP of the animated pose.
+    // This is the writable half of procedural animation -- inverse kinematics, a
+    // look-at, a recoil -- and it is the identity for a bone nobody drives.
+    core::CFrameD transform;
+};
+
+// `BallSocketConstraint`, `HingeConstraint` and `FixedConstraint`, in one pool.
+//
+// **A constraint takes two `Attachment`s, not two parts**, and that is what
+// makes the joint frame authorable: where a door hinges is a place on the door
+// and a place on the frame, and both are things you can see and move in the
+// editor. Two parts and a pair of offset `CFrame`s would be the same numbers
+// with nowhere to put them.
+//
+// A `Weld` is not one of these. A weld DRIVES its second part from its first
+// every tick and the solver is never asked; a constraint hands both bodies to
+// the solver and lets it work out where they end up. Welding a MeshPart to a
+// character keeps them together whatever the solver thinks; a hinge lets a door
+// swing under its own weight.
+struct ConstraintComponent
+{
+    core::InstanceId attachment0;
+    core::InstanceId attachment1;
+
+    // `physics::ConstraintType`'s value, stored raw for the reason
+    // `PartComponent` stores a shape that way: the generated accessor then needs
+    // no per-enum C++ type. Set by the class's own hook, not by a property --
+    // a `HingeConstraint` that could become a slider is two classes wearing one
+    // name.
+    i32 kind = 0;
+
+    bool enabled = true;
+
+    // Hinge: the range about the joint's own X axis, in radians. `low > high` is
+    // unlimited, which is the default.
+    f32 limitLow = 1.0f;
+    f32 limitHigh = -1.0f;
+
+    // Ball socket: the half-angle of the swing cone and the twist range. Past
+    // these it stops being a free ball joint and becomes the swing-twist a
+    // shoulder is.
+    f32 swingLimit = 3.14159265f;
+    f32 twistLimit = 3.14159265f;
+    bool limitsEnabled = false;
+
+    // Whether the two bodies still collide with each other. **False is what a
+    // ragdoll needs**: an upper arm and a lower arm overlap at the elbow by
+    // construction, and left colliding they shove each other apart every step.
+    bool collideConnected = true;
+
+    // --- ADR 0127: what a joint does of itself --------------------------------
+
+    // The distance family, which is one solver joint (`kind` Distance) and
+    // three classes: 0 a rope, 1 a rod, 2 a spring.
+    i32 flavor = 0;
+
+    // `Enum.ActuatorType`: 0 None, 1 Motor, 2 Servo. A hinge's is about its
+    // X, a prismatic's along it, and a ball socket's (Servo only) is a pose.
+    i32 actuatorType = 0;
+    // Motor: radians a second for a hinge, metres a second for a rail.
+    f32 motorVelocity = 0.0f;
+    f32 motorMaxForce = 10000.0f;
+    f32 motorMaxAcceleration = 100000.0f;
+    // Servo: DEGREES for a hinge, as authored, and metres for a rail.
+    f32 servoTarget = 0.0f;
+    f32 servoSpeed = 100000.0f;
+    f32 servoMaxForce = 10000.0f;
+    f32 responsiveness = 45.0f;
+    // A spring's two terms: a servo's (above zero, in place of the
+    // responsiveness), and a `SpringConstraint`'s own.
+    f32 stiffness = 0.0f;
+    f32 damping = 0.0f;
+    // Ball socket, Servo: `Attachment1`'s orientation in `Attachment0`'s.
+    core::Mat3 targetOrientation;
+
+    // Rope and rod: `Length`. Spring: `FreeLength`. **A rope's winch writes
+    // this**, so how much rope is out is a property like any other -- in the
+    // hash, in a snapshot, and readable.
+    f32 length = 5.0f;
+    // Spring: its hard stops, when `limitsEnabled`.
+    f32 minLength = 0.0f;
+    f32 maxLength = 5.0f;
+    bool winchEnabled = false;
+    f32 winchTarget = 5.0f;
+    f32 winchSpeed = 1.0f;
+    f32 winchForce = 10000.0f;
+
+    // Past either, the joint gives: disabled, and `Broken` fires. Zero never.
+    f32 breakForce = 0.0f;
+    f32 breakTorque = 0.0f;
+    // What it carried over the last tick, in newtons and newton-metres.
+    // Written by the mirror, read by `GetForce` and `GetTorque`.
+    f32 lastForce = 0.0f;
+    f32 lastTorque = 0.0f;
+    // What its own motor used over the last tick, apart from what it bore:
+    // `GetMotorForce` and `GetMotorTorque`. A mover that is a motor in the
+    // solver has these and nothing above.
+    f32 lastMotorForce = 0.0f;
+    f32 lastMotorTorque = 0.0f;
+
+    bool visible = false;
+    core::Color3 color{0.6f, 0.6f, 0.6f};
+    f32 thickness = 0.1f;
+};
+
+// What `ConstraintComponent::kind` holds for a class that is not a solver
+// joint: a mover (ADR 0127), evaluated by the mirror as forces before each
+// step. Past every `physics::ConstraintType`, so one field says which.
+namespace MoverKind {
+// The distance family's solver joint, for a module that draws a rope and may
+// not name the physics seam: `physics::ConstraintType::Distance`, and the
+// mirror asserts that it still is.
+inline constexpr i32 DistanceJoint = 5;
+inline constexpr i32 LinearVelocity = 16;
+inline constexpr i32 AngularVelocity = 17;
+inline constexpr i32 AlignPosition = 18;
+inline constexpr i32 AlignOrientation = 19;
+inline constexpr i32 VectorForce = 20;
+inline constexpr i32 Torque = 21;
+} // namespace MoverKind
+
+// A mover's own numbers, beside the `ConstraintComponent` every mover also
+// has (its two ends and whether it is on). One pool for the six, as the
+// joints share one: which fields a class reads is its class.
+struct MoverComponent
+{
+    // `LinearVelocity`: `Enum.VelocityConstraintMode` (0 Line, 1 Plane,
+    // 2 Vector). `AlignPosition` and `AlignOrientation`: 0 OneAttachment,
+    // 1 TwoAttachment.
+    i32 mode = 0;
+    // `Enum.ActuatorRelativeTo`: 0 Attachment0, 1 Attachment1, 2 World.
+    i32 relativeTo = 2;
+    // The velocity, the spin, the force or the torque.
+    core::Vec3 vector{0.0f, 0.0f, 0.0f};
+    core::Vec3 lineDirection{1.0f, 0.0f, 0.0f};
+    f32 lineVelocity = 0.0f;
+    core::Vec3 primaryTangentAxis{1.0f, 0.0f, 0.0f};
+    core::Vec3 secondaryTangentAxis{0.0f, 0.0f, 1.0f};
+    core::Vec2 planeVelocity{0.0f, 0.0f};
+    // `AlignPosition.Position` and `AlignOrientation.CFrame`'s rotation.
+    core::DVec3 position;
+    core::Mat3 orientation;
+    f32 maxForce = 10000.0f;
+    f32 maxTorque = 10000.0f;
+    f32 maxVelocity = 100000.0f;
+    f32 maxAngularVelocity = 100000.0f;
+    f32 responsiveness = 10.0f;
+    f32 stiffness = 0.0f;
+    f32 damping = 0.0f;
+    bool rigidityEnabled = false;
+    bool applyAtCenterOfMass = false;
+    // What it does to one body it does, reversed, to the other (amendment A2).
+    bool reactionEnabled = false;
+};
+
+// `NoCollisionConstraint`: two parts that pass through each other.
+struct NoCollisionComponent
+{
+    core::InstanceId part0;
+    core::InstanceId part1;
+    bool enabled = true;
+};
+
+// `Ragdoll`: the switch that makes a character's pose come from the simulation
+// instead of from a clip.
+//
+// **It owns nothing.** A ragdoll is parts, `Bone`s and constraints -- all of
+// which are real instances somebody can see, select and move -- and this is the
+// one flag that says "drive the pose from them". That is deliberate: a class
+// that owned its own hidden bodies would be a second owner of things the mirror
+// creates by mark-and-sweep from the tree, and two owners of one body is the
+// mirror rule broken.
+//
+// How the pose is found: every `Bone` under this ragdoll that names a joint, on
+// a part. The part is where the simulation put that limb; the bone says which
+// joint it is. Nothing else has to be declared.
+struct RagdollComponent
+{
+    // Off is a character animated by clips with a set of parts sitting there
+    // doing nothing. On is a character whose every named joint comes from where
+    // its part ended up.
+    bool enabled = false;
+
+    // How much of each driven joint comes from the simulation, 0 to 1. A POSE
+    // blend: the limbs fall exactly as hard at 0.5 as at 1, and what changes is
+    // only how far the drawn joint is carried towards them. Ramping it is what
+    // makes going down and getting up something other than a one-frame snap.
+    f32 blend = 1.0f;
+};
+
+// **A chain of joints that trails behind its body** (ADR 0194): what the
+// instance says, and nothing of the motion -- where each joint is this frame
+// is the renderer's, per machine, and never state.
+struct SpringBoneComponent
+{
+    bool enabled = true;
+    // The joint the chain hangs from; its descendants are what moves.
+    core::NameAtom rootJoint;
+    // And, or instead, every joint whose name this matches (`*` for any run
+    // of characters): each the top of a chain of its own.
+    core::NameAtom jointPattern;
+    f32 stiffness = 0.25f;
+    f32 damping = 0.2f;
+    f32 gravityScale = 1.0f;
+    f32 inertia = 1.0f;
+    // Degrees from the animated direction.
+    f32 limitAngle = 70.0f;
+    f32 radius = 0.05f;
+    f32 windInfluence = 1.0f;
+};
+
+// A ball or capsule on a joint that the chains of the same mesh keep out of.
+struct SpringColliderComponent
+{
+    core::NameAtom jointName;
+    f32 radius = 0.25f;
+    // Along the joint's own up, from `offset`; nought is a ball.
+    f32 length = 0.0f;
+    core::Vec3 offset{0.0f, 0.0f, 0.0f};
+};
+
+struct WeldComponent
+{
+    // The anchor and the driven part. Either may be invalid while a script is
+    // still assigning them, which is not an error -- it is what every script
+    // that sets two properties on two lines briefly produces.
+    core::InstanceId part0;
+    core::InstanceId part1;
+
+    // `Part0.CFrame * c0 == Part1.CFrame * c1`, which is the one sentence that
+    // says where both offsets go.
+    core::CFrameD c0;
+    core::CFrameD c1;
+
+    bool enabled = true;
+
+    // A `WeldConstraint` captures `c1` when it becomes active and a `Weld` never
+    // does. One flag rather than two components.
+    bool captures = false;
+    // Whether the capture has happened, so that enabling a constraint twice
+    // does not re-capture a transform the weld itself produced.
+    bool captured = false;
+};
+
+// `Camera`. Everything here is what a projection matrix needs and nothing more:
+// the viewport is the renderer's, not the camera's.
+struct CameraComponent
+{
+    core::CFrameD cframe;
+    // **Where a render phase put it** (ADR 0136): drawn exactly as written,
+    // and made the simulated `cframe` when the next tick starts. Not a
+    // property: the hash and the simulation never read it.
+    core::CFrameD presented;
+    // Drawn from `presented` rather than between ticks, until a simulation
+    // phase writes `cframe`.
+    bool presenting = false;
+    // Written since the last tick started: the next one takes it.
+    bool presentedSinceTick = false;
+    // Degrees, vertical. Stored as authored so a read gives back the write.
+    f32 fieldOfView = 70.0f;
+    f32 nearPlane = 0.1f;
+    f32 farPlane = 5000.0f;
+    // `Enum.CameraProjection`: 0 Perspective, 1 Orthographic (the 2D layer).
+    i32 projection = 0;
+    // Half the view's height in metres, for an orthographic camera.
+    f32 orthographicSize = 10.0f;
+    // **An oblique near plane** (ADR 0107): nothing behind this plane -- the
+    // side its look direction faces away from -- is drawn, while `clipPlaneOn`.
+    core::CFrameD clipPlane{};
+    bool clipPlaneOn = false;
+};
+
+struct PointLightComponent
+{
+    // Where it is: in the world when nothing holds it, relative to the part or
+    // attachment above it otherwise (ADR 0095).
+    core::CFrameD cframe;
+    core::Color3 color{1.0f, 1.0f, 1.0f};
+    f32 brightness = 1.0f;
+    f32 range = 16.0f;
+    // Skipped before the renderer counts it against the light budget, which is
+    // what makes this different from a brightness of zero.
+    bool enabled = true;
+    // Whether it asks for shadows: six tiles of the local shadow atlas, given
+    // to the lights nearest and largest on screen when more ask than fit.
+    bool shadows = false;
+};
+
+// `ParticleEmitter`. Everything a script can set, and one counter.
+//
+// **The particles themselves are not here.** They are a picture, not the
+// world: what a spark does after it leaves the emitter decides nothing a
+// script can observe, so they live in `render::ParticleSystem` and are
+// simulated on the render clock. What IS world state is how the emitter is
+// configured and how many bursts a script asked for -- the second as a running
+// total, so the renderer spawns the difference since it last looked and never
+// has to write back into the world to say it did.
+struct ParticleEmitterComponent
+{
+    bool enabled = true;
+    // Particles a second, continuously, while enabled.
+    f32 rate = 20.0f;
+    // Seconds each particle lives.
+    f32 lifetime = 2.0f;
+    // Metres a second at birth, along the emitter's up direction within
+    // `spreadAngle` degrees of it.
+    f32 speed = 4.0f;
+    f32 spreadAngle = 15.0f;
+    // Metres a second squared, in world space: `(0, -9.81, 0)` is gravity.
+    core::Vec3 acceleration{0.0f, 0.0f, 0.0f};
+    // The fraction of velocity lost per second, so smoke slows and sparks do not.
+    f32 drag = 0.0f;
+    // Start and end of life, interpolated linearly over it.
+    core::Color3 color{1.0f, 1.0f, 1.0f};
+    core::Color3 colorEnd{1.0f, 1.0f, 1.0f};
+    f32 size = 0.5f;
+    f32 sizeEnd = 0.5f;
+    f32 transparency = 0.0f;
+    f32 transparencyEnd = 1.0f;
+    // 0 is an ordinary blended particle, 1 adds its light to what is behind it
+    // -- fire and sparks -- and anything between is both.
+    f32 lightEmission = 0.0f;
+    // A multiplier on the colour, unclamped: above one is what makes a spark
+    // bloom.
+    f32 brightness = 1.0f;
+    // `Enum.ParticleShape`: 0 Soft, 1 Disc, 2 Square.
+    i32 shape = 0;
+    // Whether the workspace's wind carries the particles (ADR 0115).
+    bool windAffectsDrift = false;
+    // Every particle `Emit` has asked for since the emitter existed.
+    u64 emitted = 0;
+
+    // **A picture, and its frames** (ADR 0160): none draws `shape`. A grid of
+    // `flipbookColumns` by `flipbookRows` frames, read left to right and top
+    // to bottom; `Enum.ParticleFlipbookMode` 0 Loop at `flipbookFramerate`,
+    // 1 OverLife -- every frame once across a particle's life -- 2 Random, one
+    // still frame each.
+    core::NameAtom texture;
+    i32 flipbookRows = 1;
+    i32 flipbookColumns = 1;
+    f32 flipbookFramerate = 12.0f;
+    i32 flipbookMode = 0;
+    // Degrees at birth, give or take `rotationSpread`, and degrees a second,
+    // give or take `rotationSpeedSpread`.
+    f32 rotation = 0.0f;
+    f32 rotationSpread = 0.0f;
+    f32 rotationSpeed = 0.0f;
+    f32 rotationSpeedSpread = 0.0f;
+    // **Over a particle's life**, multiplying what the start and end values
+    // make of it: a colour, a size, and a transparency combined as two layers
+    // of see-through are.
+    core::ColorSequence colorOverLife;
+    core::NumberSequence sizeOverLife{{core::NumberKeypoint{0.0f, 1.0f, 0.0f}, core::NumberKeypoint{1.0f, 1.0f, 0.0f}}};
+    core::NumberSequence transparencyOverLife;
+
+    // **What a particle meets** (ADR 0160): `Enum.ParticleCollision` 0 None,
+    // 1 SceneDepth -- what is drawn, or on the CPU the parts a ray finds --
+    // 2 Terrain, the ground whether or not it is in view, 3 Both. And what it
+    // does about it: `Enum.ParticleCollisionResponse` 0 Bounce, 1 Stick, 2 Kill.
+    i32 collision = 0;
+    i32 collisionResponse = 0;
+    // How much of its speed into a surface comes back out of it, and how much
+    // of its speed along one a touch takes away, each 0 to 1.
+    f32 bounce = 0.5f;
+    f32 friction = 0.2f;
+    // How far from its middle it touches, in metres; 0 is half its size.
+    f32 collisionRadius = 0.0f;
+    // `Enum.ParticleSimulation`: 0 on the CPU, 1 on the GPU where it can be.
+    i32 simulation = 0;
+};
+
+// `Decal`: an image projected onto whatever is inside a box.
+struct DecalComponent
+{
+    // Where the box is. Relative to the parent `BasePart` when it has one, so a
+    // decal on a moving crate moves with it; in the world otherwise. The image
+    // lies in the box's X and Y and is projected along its Z.
+    core::CFrameD cframe;
+    // The box, in metres: width, height, and how deep it reaches.
+    core::Vec3 size{2.0f, 2.0f, 1.0f};
+    // The image, by content URN; none paints a solid colour.
+    core::NameAtom texture;
+    // Multiplies the image.
+    core::Color3 color{1.0f, 1.0f, 1.0f};
+    f32 transparency = 0.0f;
+    // `Enum.DecalBlendMode` (ADR 0160): 0 Multiply, which darkens and tints;
+    // 1 Alpha, the image laid over the surface and lit as it is; 2 Additive,
+    // the image's light added. And how brightly it glows, over and above.
+    i32 blendMode = 0;
+    f32 emissive = 0.0f;
+};
+
+// --- ADR 0129: Highlight, Beam and Trail ----------------------------------------
+//
+// **Pictures, not the world.** Each is how something is DRAWN -- a mark over
+// a shape, a band between two points, the ribbon two points leave -- so what
+// is here is only what a script can set: the renderer reads it on the frame
+// and keeps whatever it needs to draw it (a trail's pieces) on its own side.
+// None of it is in the world hash, and none of it is simulated.
+// `AnimationPlayer`: how often its meshes are posed.
+struct AnimationPlayerComponent
+{
+    // `Enum.AnimationCullingMode`: 0 Automatic, 1 AlwaysAnimate.
+    i32 cullingMode = 0;
+    // The animation graph it plays (ADR 0197), or none.
+    core::NameAtom graph;
+    // `Enum.Retargeting` (ADR 0199): 0 Automatic, 1 ByName.
+    i32 retargeting = 0;
+    // **What its graph is doing, as one number** (ADR 0197): each layer's
+    // states with their times and weights, and the parameters. No property
+    // reads it; the animation system's state is its own, and this is what of
+    // it the world's hash sees. Written by the host after each sample.
+    core::u64 graphDigest = 0;
+};
+
+// **A limb that reaches, a head that looks** (ADR 0198): what the instance
+// says. Where the joints end up is the renderer's, each frame, each machine's
+// own, and never state.
+struct IKControlComponent
+{
+    // `Enum.IKControlType`: 0 TwoBone, 1 LookAt.
+    i32 type = 0;
+    core::NameAtom endJoint;
+    core::InstanceId target;
+    core::CFrameD targetOffset;
+    core::InstanceId pole;
+    bool alignRotation = false;
+    i32 chainLength = 2;
+    // Degrees from straight ahead.
+    f32 maxAngle = 70.0f;
+    f32 weight = 1.0f;
+    bool enabled = true;
+    // Seconds.
+    f32 smoothing = 0.1f;
+};
+
+// A mouth moved by what is said (ADR 0200): the shape keys of the mesh it is
+// on, driven by the voice a machine is playing under `source` -- by the line's
+// viseme track when the language heard has one, by the sound's frequency
+// bands when it has none, by its loudness alone at the least. Picture: what
+// it does to a face is each machine's own and never the tick's.
+struct LipSyncComponent
+{
+    // Whose voice it is: the instance the lines are said under. None is the
+    // mesh's own parent, which is the character for a face under one.
+    core::InstanceId source;
+    // `Enum.LipSyncMode`: 0 `Auto`, 1 `Bands`, 2 `Loudness`.
+    i32 mode = 0;
+    // The file that says what a viseme, a band and loudness do to this face.
+    // Empty is the one beside the model: `hero.glb`, `hero.face.json`.
+    core::NameAtom map;
+    // The seconds a weight takes to reach where it is going.
+    f32 smoothing = 0.06f;
+    f32 weight = 1.0f;
+    bool enabled = true;
+};
+
+// What a room reflects (ADR 0202): six pictures from a place inside the box
+// of the part it is under, kept as the sky's reflection is. Picture: nothing
+// of it reaches a tick.
+struct ReflectionProbeComponent
+{
+    // Where the pictures are taken from, from the box's middle, in its space.
+    core::Vec3 offset{0.0f, 0.0f, 0.0f};
+    f32 blend = 1.0f;
+    f32 intensity = 1.0f;
+    i32 priority = 0;
+    bool enabled = true;
+    bool boxProjection = true;
+    bool dynamic = false;
+    // How many times `Refresh` was called on this machine: what is drawn is
+    // out of date while it differs from the number its pictures were taken
+    // at. Never saved, sent or hashed.
+    u32 refreshes = 0;
+    // Its pictures are taken, as it was last asked for: written by whatever
+    // takes them (`IsReady`, `Completed`). This machine's own.
+    bool ready = false;
+};
+
+// Light that bounces (ADR 0203): the box of the part it is under, sampled a
+// `spacing` apart. Picture, as a probe is.
+struct IrradianceVolumeComponent
+{
+    f32 spacing = 2.0f;
+    f32 blend = 1.0f;
+    f32 intensity = 1.0f;
+    i32 bounces = 1;
+    // `Enum.IrradianceMode`: everything, or what bounces alone.
+    i32 mode = 0;
+    core::Color3 tint{1.0f, 1.0f, 1.0f};
+    // Carried with the camera (ADR 0206), as so many levels round it.
+    bool followsCamera = false;
+    i32 levels = 1;
+    // **Its light, kept in a file** (ADR 0207): a content name, or none.
+    core::NameAtom baked;
+    bool enabled = true;
+    bool dynamic = false;
+    u32 refreshes = 0;
+    // How much of its light is worked out on this machine, 0 to 1, written by
+    // whatever works it out (`GetProgress`). One where nothing does.
+    f32 progress = 1.0f;
+    // Worked out, as it was last asked for (`IsReady`, `Completed`): written by
+    // whatever works it out. This machine's own.
+    bool ready = false;
+};
+
+// Two feet and the hips on the ground under them (ADR 0198).
+struct FootPlacementComponent
+{
+    core::NameAtom leftFoot;
+    core::NameAtom rightFoot;
+    core::NameAtom hips;
+    f32 footHeight = 0.1f;
+    f32 stepHeight = 0.4f;
+    bool alignToSlope = true;
+    f32 weight = 1.0f;
+    bool enabled = true;
+};
+
+// **A sequence being played** (ADR 0204): the file, where its time is, and
+// what a script asked of it since the last tick. What its tracks are doing --
+// the clips begun, the sounds made, the characters carried -- is the host's,
+// as an animation track's state is; this is what a property reads, what the
+// hash sees and what travels.
+struct SequencePlayerComponent
+{
+    core::NameAtom sequence;
+    // Seconds, on the simulation's clock.
+    f64 timePosition = 0.0;
+    // Written by the host when the file is read: 0 until then.
+    f32 length = 0.0f;
+    f32 speed = 1.0f;
+    bool playing = false;
+    bool looped = false;
+    bool takesCamera = true;
+    // `Enum.SequenceControl`: 0 Keep, 1 Suspend.
+    i32 controls = 0;
+
+    // **What was asked, counted** -- by a method, or by a write of
+    // `TimePosition` -- and done by the host in the tick, in this order:
+    // a stop, a seek, a skip. Counters and not flags, so the host tells a
+    // second ask from one it has not got to; each is a function of the
+    // script's own calls.
+    u32 seeks = 0;
+    u32 stops = 0;
+    u32 skips = 0;
+    // How many of each the host has done.
+    u32 seeksDone = 0;
+    u32 stopsDone = 0;
+    u32 skipsDone = 0;
+
+    // **What travels of its time** (protocol 47): where it was and at which of
+    // the authority's ticks when it last began, was paused, was sought or
+    // changed speed. Nothing a tick: a replica reads where it is off the two
+    // and the authority's tick as it knows it, and one that joins late
+    // reads the present the same way.
+    f32 anchorTime = 0.0f;
+    u32 anchorTick = 0;
+    // On a replica: an anchor arrived and has not been read.
+    bool anchored = false;
+
+    // **Held by its file** (a `hold` track's key): its time stands at the key
+    // until `Release`. Travels, so a replica says `Held` as the authority
+    // does (protocol 49).
+    bool held = false;
+    // A moment `SkipToNext` asked to be skipped to, in seconds; below nought
+    // is none. Done by the host in the tick, on the machine that decides.
+    f32 skipTo = -1.0f;
+};
+
+// One of the instances a sequence plays on (ADR 0204): the name is the
+// instance's own `Name`.
+struct SequenceBindingComponent
+{
+    core::InstanceId target;
+};
+
+struct HighlightComponent
+{
+    core::InstanceId adornee;
+    core::Color3 fillColor{1.0f, 0.2f, 0.2f};
+    f32 fillTransparency = 0.5f;
+    core::Color3 outlineColor{1.0f, 1.0f, 1.0f};
+    f32 outlineTransparency = 0.0f;
+    i32 depthMode = 0;
+    bool enabled = true;
+};
+
+struct BeamComponent
+{
+    core::InstanceId attachment0;
+    core::InstanceId attachment1;
+    core::ColorSequence color;
+    core::NumberSequence transparency;
+    f32 width0 = 1.0f;
+    f32 width1 = 1.0f;
+    f32 curveSize0 = 0.0f;
+    f32 curveSize1 = 0.0f;
+    i32 segments = 10;
+    core::NameAtom texture;
+    f32 textureLength = 1.0f;
+    i32 textureMode = 0;
+    f32 textureSpeed = 0.0f;
+    bool faceCamera = true;
+    f32 lightEmission = 0.0f;
+    f32 lightInfluence = 1.0f;
+    f32 zOffset = 0.0f;
+    bool enabled = true;
+};
+
+struct TrailComponent
+{
+    core::InstanceId attachment0;
+    core::InstanceId attachment1;
+    f32 lifetime = 2.0f;
+    f32 minLength = 0.1f;
+    f32 maxLength = 0.0f;
+    core::ColorSequence color;
+    core::NumberSequence transparency;
+    // The whole distance between the ends, for a piece's whole life.
+    core::NumberSequence widthScale{{core::NumberKeypoint{0.0f, 1.0f, 0.0f}, core::NumberKeypoint{1.0f, 1.0f, 0.0f}}};
+    core::NameAtom texture;
+    f32 textureLength = 1.0f;
+    i32 textureMode = 0;
+    bool faceCamera = false;
+    f32 lightEmission = 0.0f;
+    f32 lightInfluence = 1.0f;
+    bool enabled = true;
+    // How many times `Clear` was called: a running total the renderer compares
+    // with the one it last saw, so dropping a trail writes nothing back.
+    u32 cleared = 0;
+};
+
+// `ViewportFrame` (ADR 0107): a UI element drawing the instances inside it,
+// by its own light. Its rectangle is the `UIObjectComponent` every element has.
+struct ViewportFrameComponent
+{
+    // A `Camera` inside the frame; invalid frames the contents automatically.
+    core::InstanceId currentCamera;
+    core::Color3 ambient{140.0f / 255.0f, 140.0f / 255.0f, 150.0f / 255.0f};
+    core::Color3 lightColor{1.0f, 1.0f, 1.0f};
+    core::Vec3 lightDirection{-1.0f, -1.0f, -1.0f};
+};
+
+// `CameraTexture` (ADR 0107): a camera drawing into a `view://` texture.
+// Rendering only -- the app's view host reads this and nothing in the
+// simulation does.
+struct CameraTextureComponent
+{
+    // The `Camera` it draws from; invalid draws nothing.
+    core::InstanceId camera;
+    // The name after `view://`.
+    core::NameAtom viewName;
+    // Pixels, as authored; the host caps it at the project's limit.
+    core::Vec2 resolution{512.0f, 288.0f};
+    bool enabled = true;
+    // Draw on one frame in this many.
+    u32 updateInterval = 1;
+    // `Enum.ViewQuality`: 0 Full, 1 Simple.
+    i32 quality = 1;
+};
+
+// `SubWorld` (ADR 0107 §3): a scene running beside this one. The world it runs
+// is the app's (`WorldHost`); this is what a script set on the instance.
+struct SubWorldComponent
+{
+    // The scene file, content-relative.
+    core::NameAtom scene;
+    // The name after `view://`; empty draws nothing.
+    core::NameAtom viewName;
+    core::Vec2 resolution{512.0f, 288.0f};
+    u32 updateInterval = 1;
+    // `Enum.ViewQuality`: 0 Full, 1 Simple.
+    i32 quality = 1;
+    // False pauses its ticks.
+    bool running = true;
+};
+
+struct SpotLightComponent
+{
+    // As on `PointLightComponent` (ADR 0095).
+    core::CFrameD cframe;
+    core::Color3 color{1.0f, 1.0f, 1.0f};
+    f32 brightness = 1.0f;
+    f32 range = 16.0f;
+    // Full cone width in degrees.
+    f32 angle = 45.0f;
+    // As on `PointLightComponent`: skipped before the budget is counted.
+    bool enabled = true;
+    bool shadows = false;
+};
+
+// The `Lighting` service's own state. `SunDirection` is deliberately absent: it
+// is derived from `clockTime` and `geographicLatitude` on read, so there is one
+// source of truth and a replay cannot drift from the run it replays (R10).
+struct LightingComponent
+{
+    // Hours, 0 to 24, wrapping.
+    f32 clockTime = 12.0f;
+    f32 geographicLatitude = 0.0f;
+    // Enclosed spaces, and open ones (ADR 0084). Equal by default, so a world
+    // that sets neither is lit the same inside and out.
+    core::Color3 ambient{0.15f, 0.16f, 0.2f};
+    core::Color3 outdoorAmbient{0.15f, 0.16f, 0.2f};
+    f32 brightness = 2.0f;
+    core::Color3 fogColor{0.6f, 0.7f, 0.85f};
+    f32 fogStart = 200.0f;
+    // Equal to or below `fogStart` means no fog at all, which is how fog is
+    // turned off without a second flag to keep in sync.
+    f32 fogEnd = 0.0f;
+    // EV stops on top of the automatic exposure. Zero means "whatever
+    // the frame measured"; the unit is the photographer's, so +1 is twice the
+    // light. Unbounded on purpose -- an exposure a scene deliberately blows out
+    // is a look, not an error.
+    f32 exposureCompensation = 0.0f;
+    // **How far the automatic exposure may go**, in the same EV stops:
+    // the most it darkens a bright picture and the most it brightens a dark
+    // one. The defaults are the limits the engine always had -- the meter
+    // accepts an average between 0.15 and 3 against a key of 0.45, so log2 of
+    // 0.15 and of 3 -- written to the bit so that no picture moves.
+    f32 exposureMin = -2.7369655f;
+    f32 exposureMax = 1.5849625f;
+    // ADR 0096's five, whose defaults are the picture before they existed:
+    // how much the sky lights and reflects, as multiples of what it does; how
+    // soft a sun shadow's edge is, 0 to 1 (0.2 is the filter the engine
+    // shipped); whether the sun casts at all; and whether this world meters
+    // its exposure (the machine's `auto_exposure` still wins).
+    f32 environmentDiffuseScale = 1.0f;
+    f32 environmentSpecularScale = 1.0f;
+    f32 shadowSoftness = 0.2f;
+    bool globalShadows = true;
+    bool autoExposure = true;
+};
+
+// --- The look of a world (ADR 0096) -------------------------------------------
+//
+// Where one of these sits decides whose it is -- directly under `Lighting`, the
+// world's; directly under the current camera, its viewer's -- and that is
+// resolved at extraction (`render::resolveLook`), never stored here: a
+// component that cached "am I active" would be wrong the tick after a reparent.
+
+// `PostEffect`'s own state, beside each effect class's numbers.
+struct PostEffectComponent
+{
+    bool enabled = true;
+};
+
+// `BloomEffect`. The defaults are the engine's own bloom exactly, so inserting
+// one changes nothing until a number is changed.
+struct BloomEffectComponent
+{
+    // A multiple of the engine's own strength.
+    f32 intensity = 1.0f;
+    // How far the glow reaches; 24 is the engine's own reach.
+    f32 size = 24.0f;
+    // After exposure, as the chain has always applied it.
+    f32 threshold = 1.1f;
+};
+
+struct ColorCorrectionEffectComponent
+{
+    // Each -1 to 1, zero changing nothing.
+    f32 brightness = 0.0f;
+    f32 contrast = 0.0f;
+    f32 saturation = 0.0f;
+    core::Color3 tintColor{1.0f, 1.0f, 1.0f};
+};
+
+struct BlurEffectComponent
+{
+    // Pixels of a 1080-line picture.
+    f32 size = 24.0f;
+};
+
+struct DepthOfFieldEffectComponent
+{
+    // Metres.
+    f32 focusDistance = 25.0f;
+    f32 inFocusRadius = 10.0f;
+    // 0 to 1.
+    f32 nearIntensity = 0.5f;
+    f32 farIntensity = 0.5f;
+};
+
+struct SunRaysEffectComponent
+{
+    // 0 to 1, both.
+    f32 intensity = 0.25f;
+    f32 spread = 0.5f;
+};
+
+// `FoliageLayer` (ADR 0116): where foliage grows over a terrain, and how
+// thickly. Visual only: no system but the renderer's foliage reads it, and it
+// is neither replicated nor hashed.
+struct FoliageMaterial
+{
+    core::u8 material = 0;
+    f32 density = 1.0f;
+    [[nodiscard]] bool operator==(const FoliageMaterial&) const noexcept = default;
+};
+
+// One chunk column of a layer's painted density: `ChunkEdge` squared bytes,
+// x fastest.
+struct FoliageMaskColumn
+{
+    core::i32 x = 0;
+    core::i32 z = 0;
+    std::vector<core::u8> density;
+    [[nodiscard]] bool operator==(const FoliageMaskColumn&) const = default;
+};
+
+struct FoliageLayerComponent
+{
+    bool enabled = true;
+    f32 density = 2.0f;
+    f32 slopeMin = 0.0f;
+    f32 slopeMax = 35.0f;
+    f32 heightMin = -10000.0f;
+    f32 heightMax = 10000.0f;
+    f32 clumping = 0.0f;
+    f32 minSpacing = 0.25f;
+    f32 drawDistance = 120.0f;
+    f32 fadeDistance = 20.0f;
+    f32 seed = 0.0f;
+    // Whether a decal paints what it grows (ADR 0185).
+    bool receivesDecals = true;
+    // The materials it grows on, each with a multiplier; empty is every
+    // material at 1 (`FoliageLayer:SetMaterials`).
+    std::vector<FoliageMaterial> materials;
+    // **The density painted by hand** (ADR 0116 §3): a byte per terrain
+    // column, 255 where the rules alone decide and 0 where nothing grows,
+    // kept only for the chunk columns a brush has touched -- a column with no
+    // entry is all 255. Saved with the scene.
+    std::vector<FoliageMaskColumn> mask;
+};
+
+// `FoliageMesh`: one mesh a layer grows.
+struct FoliageMeshComponent
+{
+    core::NameAtom mesh;
+    // A material asset's path, or none for the mesh's own. Never a runtime
+    // clone: every instance of a mesh shares one material.
+    core::NameAtom material;
+    f32 weight = 1.0f;
+    f32 scaleMin = 0.8f;
+    f32 scaleMax = 1.2f;
+    bool randomRotation = true;
+    f32 alignToNormal = 0.0f;
+    f32 sink = 0.05f;
+    f32 windResponse = 1.0f;
+    f32 stiffness = 1.0f;
+    bool castShadow = true;
+};
+
+// ADR 0126: what makes a part or a model something a player clicks.
+struct ClickDetectorComponent
+{
+    f64 maxActivationDistance = 32.0;
+    // Atoms, as every string the wire carries is.
+    core::NameAtom cursorIcon;
+};
+
+// ADR 0118: water -- a sea, a lake or a river -- whose surface is its
+// `WaterWave` children, read by the simulation and the picture alike.
+struct WaterComponent
+{
+    // `Enum.WaterShape`: 0 Ocean, 1 Box, 2 Spline, 3 Lake, 4 River, 5 Pool
+    // (`scene::water_shape`). Box is Pool's older name; Spline is a river
+    // level at `surfaceLevel`.
+    i32 shape = 0;
+    f64 surfaceLevel = 0.0;
+    core::Vec3 position{};
+    core::Vec3 size{64.0f, 8.0f, 64.0f};
+    f64 density = 1.0;
+    f64 viscosity = 1.0;
+    core::Vec3 current{};
+    f64 flowSpeed = 0.0;
+    // How wide the bank `carveWaterBed` cuts is, in metres.
+    f64 bankWidth = 2.0;
+};
+
+// One wave of a `Water`.
+struct WaterWaveComponent
+{
+    f64 wavelength = 40.0;
+    f64 amplitude = 0.5;
+    // Degrees about the vertical, 0 along +X.
+    f64 direction = 0.0;
+    f64 steepness = 0.0;
+    // Radians.
+    f64 phase = 0.0;
+};
+
+// A point a river runs through, or a lake's outline passes (ADR 0146).
+struct WaterPointComponent
+{
+    core::Vec3 position{};
+    // A river's width and depth here; zero is the water's own.
+    f64 width = 0.0;
+    f64 depth = 0.0;
+    // A corner here, where the curve would round it.
+    bool sharp = false;
+};
+
+struct AtmosphereComponent
+{
+    // 0 to 1: how thick the air is at the height of `offset`.
+    f32 density = 0.35f;
+    // Metres.
+    f32 offset = 0.0f;
+    core::Color3 color{196.0f / 255.0f, 210.0f / 255.0f, 230.0f / 255.0f};
+    // 0 to 1: how quickly it thins with height.
+    f32 decay = 0.1f;
+    // 0 to 10, both.
+    f32 glare = 0.0f;
+    f32 haze = 0.0f;
+};
+
+struct SkyComponent
+{
+    // Six images by content URN; all six empty is the engine's own sky.
+    core::NameAtom skyboxBack;
+    core::NameAtom skyboxDown;
+    core::NameAtom skyboxFront;
+    core::NameAtom skyboxLeft;
+    core::NameAtom skyboxRight;
+    core::NameAtom skyboxUp;
+    // Degrees about X, Y and Z.
+    core::Vec3 skyboxOrientation{0.0f, 0.0f, 0.0f};
+    core::NameAtom sunTexture;
+    core::NameAtom moonTexture;
+    // Degrees across.
+    f32 sunAngularSize = 2.3f;
+    f32 moonAngularSize = 2.0f;
+    f32 starCount = 3000.0f;
+    bool celestialBodiesShown = true;
+    // 0 to 1, both.
+    f32 cloudCover = 0.0f;
+    f32 cloudDensity = 0.5f;
+    core::Color3 cloudColor{1.0f, 1.0f, 1.0f};
+};
+
+// `Workspace`'s own state. One field, and it is a reference rather than a
+// camera: the camera is an ordinary instance under the tree, and this says which
+// one the renderer looks through.
+struct WorkspaceComponent
+{
+    core::InstanceId currentCamera;
+    // SI and signed, so the default points down (api-design.md §2.1).
+    core::Vec3 gravity{0.0f, -9.81f, 0.0f};
+    // The wind (ADR 0115): direction and speed, and how gusty and turbulent.
+    // Visual only; `scene/wind.h` is the function of them.
+    core::Vec3 globalWind{0.0f, 0.0f, 0.0f};
+    f32 windGusts = 0.0f;
+    f32 windTurbulence = 0.0f;
+    // **How the window is shared between the players at this machine** (ADR
+    // 0205). Picture: this machine's own, in no hash and on no wire.
+    // `Enum.ScreenSplit`: 0 None, 1 Columns, 2 Rows, 3 Grid, 4 Dynamic.
+    i32 screenSplit = 0;
+    // `Dynamic`: how far apart the two pictures are, and the way from the
+    // first player to the second on the screen, in degrees.
+    f32 splitBlend = 0.0f;
+    f32 splitAngle = 0.0f;
+    // Pixels of a window 1,080 high.
+    f32 splitLineThickness = 4.0f;
+    core::Color3 splitLineColor{0.0f, 0.0f, 0.0f};
+};
+
+// `Terrain`'s own state: the field, and the reservation that bounds it.
+//
+// **The field lives in `asset` and is held here by value** rather than being
+// re-declared. `TerrainField` is two sorted vectors of `shared_ptr<const T>`, so
+// a copy of this component copies pointers and bumps refcounts -- which is what
+// makes `World::snapshot`, and therefore the editor's sixty-four-deep undo
+// stack, affordable over a sculpted world.
+//
+// **Neither `field` nor `fieldRevision` has a property**, deliberately. The
+// field IS the terrain -- megabytes of samples that no inspector row could show
+// and no `scene::Value` could carry -- and it is read by the mesher and the
+// collider builder through this pool rather than through an accessor. Both are
+// in `inertcheck`'s `StorageOnly` list with that argument written down.
+struct TerrainComponent
+{
+    asset::TerrainField field;
+    // **The cells the ground is made of, for drawing** (ADR 0144): set by the
+    // streamer for a terrain saved as cells, so the renderer draws the whole of
+    // it, reading from disk what is not resident. Null for a terrain whose
+    // field is the whole ground. Shared by the world's snapshots, as a file on
+    // disk is.
+    std::shared_ptr<const asset::TerrainCellSource> cellSource;
+    // **The ground as the package ships it**, as far as it is loaded (ADR
+    // 0135): the scene's field when the scene was read, and each streamed
+    // cell's as it arrives or leaves. Its chunks are SHARED with `field`'s
+    // until an edit clones one, so a chunk of `field` that is not the same
+    // chunk here is one the game changed -- what the ground's replication
+    // sends a machine that loaded the same scene.
+    asset::TerrainField shipped;
+
+    // **Where the field's own origin sits in the world.**
+    //
+    // A terrain is an instance and an instance can be moved, which is what was
+    // asked for and is the right answer: two terrains in one world, an
+    // island placed beside another, ground shifted after the fact.
+    //
+    // **A position and not a `CFrame`.** A grid of voxels could be turned, but
+    // every consumer -- the mesher's draw transform, the colliders, the
+    // brush's raycast -- would then carry a rotation for something nobody has
+    // asked for, so a terrain translates and does not turn.
+    //
+    // f64 because it is a world coordinate (R9), and every consumer -- the
+    // mesher's draw transform, the chunk colliders, the brush's raycast, the
+    // script's `HeightAt` -- offsets by it rather than baking it into the field.
+    // Baking would make moving a terrain a rewrite of every voxel.
+    core::DVec3 origin;
+
+    // **Bumped on every write to `field`**, and read by `PhysicsSync` to decide
+    // whether a tile's collider is still current -- the same trick
+    // `ShapeDesc::pointsRevision` uses, and for the same reason: comparing the
+    // contents would mean keeping a copy of them.
+    core::u64 fieldRevision = 0;
+    // **How many of those were ground coming in or going out as it is on
+    // disk** (ADR 0150): a cell streamed in where the field held none of it,
+    // a cell let go untouched. The rest are edits. What the ground is drawn
+    // from is the same before and after one of these, so the renderer, which
+    // names every node by its cells, has nothing to check again -- and on a
+    // world being flown over these are most frames.
+    core::u64 streamedRevisions = 0;
+
+    // How wide one streamed cell is, in metres. Not settable from a script: it
+    // is the streaming grid's own spacing, and a terrain that disagreed with it
+    // would load and unload on different boundaries from everything else.
+    f32 cellSize = 64.0f;
+
+    // **The world's floor and ceiling**: no voxel is written outside them, and
+    // the verbs that lay ground rather than add to it fill from the floor up.
+    // Mirrored into the field's settings, where the brushes read them.
+    f32 minHeight = -256.0f;
+    f32 maxHeight = 256.0f;
+
+    // **Where the ground lives when it is not in the scene** (ADR 0087): the
+    // cell index of a terrain saved as a folder of cells, relative to the
+    // project's `content/`, or empty for one whose field the scene carries.
+    //
+    // With one, `field` holds what is resident -- the cells around whoever is
+    // looking, and every cell edited since it was last saved -- and the rest is
+    // on disk, streamed in the editor exactly as a game streams it. Not a
+    // property: it is where the scene's ground is stored, which a script has
+    // no business moving, and not simulation state, so the world hash leaves
+    // it out as it leaves out a mesh's file name.
+    std::string cellIndex;
+
+    // **What each material byte means** (ADR 0113): byte `n` is
+    // `layers[n - 1]`, a material URN. **A new terrain has none**
+    // (materials nobody can open in Content should not come with
+    // the ground): its ground draws plain until a material is added, and the
+    // first one added is what it was laid with. A scene without a list is one
+    // written before this, and reads the engine's eight. At most 255.
+    std::vector<std::string> layers;
+    // Bumped by every change to `layers`, so the renderer rebuilds its arrays
+    // only when they are stale.
+    core::u64 layersRevision = 0;
+
+    // **What the ground is drawn as, by slope and height** (ADR 0113 §2), in
+    // the order they paint. A new terrain has none, having no rock to paint
+    // with; a scene without a list reads the old slope rock. At most 16.
+    std::vector<asset::TerrainRule> rules;
+};
+
+// --- The 2D layer ------------------------------------------------------------
+
+// `Part2D`: a sprite and a body in one, on the XY plane.
+struct Part2DComponent
+{
+    core::Vec2 position{0.0f, 0.0f};
+    // Degrees, counter-clockwise, as authored.
+    f32 rotation = 0.0f;
+    core::Vec2 size{1.0f, 1.0f};
+    // `Enum.Shape2D`: 0 Box, 1 Circle, 2 Capsule.
+    i32 shape = 0;
+    core::Color3 color{1.0f, 1.0f, 1.0f};
+    f32 transparency = 0.0f;
+    i32 zIndex = 0;
+    bool flipX = false;
+    bool flipY = false;
+    core::NameAtom image;
+    // Pixels; a zero size draws the whole image.
+    core::Vec2 imageRectOffset{0.0f, 0.0f};
+    core::Vec2 imageRectSize{0.0f, 0.0f};
+    // `Enum.TextureFilter`: 0 Linear, 1 Nearest.
+    i32 filter = 0;
+    // Drawn in the colours it was painted in, past the scene's exposure, tone
+    // curve, grade and bloom (ADR 0153). Off, it is one more lit thing.
+    bool exactColor = true;
+    bool anchored = false;
+    bool canCollide = true;
+    bool sensor = false;
+    f32 density = 1.0f;
+    f32 friction = 0.3f;
+    f32 elasticity = 0.0f;
+    bool fixedRotation = false;
+    f32 gravityScale = 1.0f;
+    core::Vec2 velocity{0.0f, 0.0f};
+    // Degrees per second, as authored.
+    f32 angularVelocity = 0.0f;
+    core::NameAtom collisionGroup;
+    // What `ApplyImpulse` asked for since the last tick, applied at the start
+    // of the next -- as a `BasePart`'s is.
+    core::Vec2 pendingImpulse{0.0f, 0.0f};
+};
+
+// One 16 by 16 block of a tilemap's cells.
+inline constexpr i32 TileChunkEdge = 16;
+struct TileChunkKey
+{
+    i32 x = 0;
+    i32 y = 0;
+    [[nodiscard]] constexpr auto operator<=>(const TileChunkKey&) const noexcept = default;
+};
+using TileChunk = std::array<core::u16, static_cast<core::usize>(TileChunkEdge* TileChunkEdge)>;
+
+// `Tilemap2D`: a grid of tiles from one tileset.
+//
+// **Sparse by blocks**, in a sorted map (R10: its order reaches the physics
+// bodies and the draw order). A block that goes empty is dropped, so a map
+// is as large as what is painted, not as the rectangle it spans.
+struct Tilemap2DComponent
+{
+    core::Vec2 position{0.0f, 0.0f};
+    f32 cellSize = 1.0f;
+    core::NameAtom tileset;
+    core::Vec2 tileSize{16.0f, 16.0f};
+    i32 zIndex = 0;
+    core::Color3 color{1.0f, 1.0f, 1.0f};
+    // `Enum.TextureFilter`, Nearest by default: tiles are pixel art.
+    i32 filter = 1;
+    // As a `Part2D`'s (ADR 0153).
+    bool exactColor = true;
+    bool collides = true;
+    f32 friction = 0.3f;
+    core::NameAtom collisionGroup;
+    std::map<TileChunkKey, TileChunk> chunks;
+    // Bumped on every change of a cell, and read by whatever rebuilds from
+    // them -- the colliders and the drawing -- the way `fieldRevision` is.
+    core::u64 revision = 0;
+
+    [[nodiscard]] static constexpr i32 floorDivide(i32 value, i32 by) noexcept
+    {
+        return value >= 0 ? value / by : -((-value + by - 1) / by);
+    }
+
+    [[nodiscard]] core::u16 cell(i32 x, i32 y) const noexcept
+    {
+        const TileChunkKey key{floorDivide(x, TileChunkEdge), floorDivide(y, TileChunkEdge)};
+        const auto found = chunks.find(key);
+        if (found == chunks.end())
+            return 0;
+        const i32 lx = x - key.x * TileChunkEdge;
+        const i32 ly = y - key.y * TileChunkEdge;
+        return found->second[static_cast<core::usize>(ly * TileChunkEdge + lx)];
+    }
+
+    // Answers whether the cell changed.
+    bool setCell(i32 x, i32 y, core::u16 tile)
+    {
+        const TileChunkKey key{floorDivide(x, TileChunkEdge), floorDivide(y, TileChunkEdge)};
+        auto found = chunks.find(key);
+        if (found == chunks.end()) {
+            if (tile == 0)
+                return false;
+            found = chunks.emplace(key, TileChunk{}).first;
+        }
+        const i32 lx = x - key.x * TileChunkEdge;
+        const i32 ly = y - key.y * TileChunkEdge;
+        core::u16& at = found->second[static_cast<core::usize>(ly * TileChunkEdge + lx)];
+        if (at == tile)
+            return false;
+        at = tile;
+        if (tile == 0) {
+            bool empty = true;
+            for (const core::u16 other : found->second)
+                empty = empty && other == 0;
+            if (empty)
+                chunks.erase(found);
+        }
+        revision += 1;
+        return true;
+    }
+};
+
+// `Constraint2D` and its three classes (ADR 0102): a joint between two
+// `Part2D`s. One component for the three, as `ConstraintComponent` is for the
+// 3D ones, with the kind stamped by the class's own hook.
+struct Constraint2DComponent
+{
+    core::InstanceId part0;
+    core::InstanceId part1;
+    // Part-local metres from each part's middle.
+    core::Vec2 anchor0{0.0f, 0.0f};
+    core::Vec2 anchor1{0.0f, 0.0f};
+    // `physics::Joint2DType`'s value: 0 Hinge, 1 Spring, 2 Weld.
+    i32 kind = 2;
+    bool enabled = true;
+    bool collideConnected = false;
+
+    // Hinge. Degrees and degrees per second, as authored; the mirror converts.
+    bool limitsEnabled = false;
+    f32 lowerAngle = -90.0f;
+    f32 upperAngle = 90.0f;
+    bool motorEnabled = false;
+    f32 motorSpeed = 0.0f;
+    f32 motorMaxTorque = 0.0f;
+
+    // Spring. Metres, hertz and a damping ratio.
+    f32 length = 2.0f;
+    f32 stiffness = 4.0f;
+    f32 damping = 0.5f;
+    f32 minLength = 0.0f;
+    f32 maxLength = 1000.0f;
+};
+
+// `SpriteAnimator` (ADR 0102): frames of its parent sprite's sheet, played on
+// the simulation clock.
+struct SpriteAnimatorComponent
+{
+    // Pixels.
+    core::Vec2 frameSize{16.0f, 16.0f};
+    core::Vec2 sheetOffset{0.0f, 0.0f};
+    i32 columns = 1;
+    i32 firstFrame = 0;
+    i32 frameCount = 1;
+    f32 framesPerSecond = 8.0f;
+    bool looped = true;
+    bool playing = false;
+    // The frame it is on, from 0 at `firstFrame`, and how far into it: the
+    // clock is a phase in frames rather than seconds, so a change of speed
+    // mid-animation does not jump.
+    i32 frame = 0;
+    f64 phase = 0.0;
+    // Stopped at the end of a non-looped run: the next `Playing = true` starts
+    // over rather than resuming on the last frame.
+    bool finished = false;
+};
+
+// `NavigationService`'s agent (ADR 0089): the one body size its walkable mesh
+// is built for. The mesh itself is not state -- it is built from the world
+// where queries ask, and a restored world rebuilds it -- so this is all of the
+// service a world holds.
+struct NavigationComponent
+{
+    f32 agentRadius = 0.5f;
+    f32 agentHeight = 2.0f;
+    f32 agentMaxClimb = 0.5f;
+    // Degrees.
+    f32 agentMaxSlope = 45.0f;
+};
+
+// A `NavigationArea` (ADR 0098): the label the ground inside its part's box
+// is priced by. The box is the part's; this is only the name.
+struct NavigationAreaComponent
+{
+    std::string label = "Area";
+};
+
+// A `NavigationLink` (ADR 0098): two world points the walkable ground does not
+// join, and what crossing between them is called.
+struct NavigationLinkComponent
+{
+    core::DVec3 from{};
+    core::DVec3 to{};
+    bool bidirectional = true;
+    std::string label = "Jump";
+};
+
+// A `NavigationAgent` (ADR 0098): where its part is walking, and how. The
+// crowd that moves it is the host's and is rebuilt from these, so nothing
+// else about it is state.
+// One agent of a `Swarm` (ADR 0156): a row the swarm keeps, not an instance.
+struct SwarmAgent
+{
+    core::InstanceId body;
+    core::DVec3 position;
+    f32 verticalSpeed = 0.0f;
+    // A knock-back along the ground, dying away.
+    f32 pushX = 0.0f;
+    f32 pushZ = 0.0f;
+    f32 radius = 0.5f;
+    f32 height = 1.0f;
+    f32 speed = 4.0f;
+    f32 floatHeight = 1.0f;
+    bool floats = false;
+    bool climbs = true;
+    bool alive = false;
+    // The ground under it as last found, and where: found again when it has
+    // moved, because a ray a tick for every agent is the cost of the crowd.
+    f64 ground = 0.0;
+    f64 groundX = 1.0e30;
+    f64 groundZ = 1.0e30;
+
+    // **What a replica draws it from** (ADR 0162).
+    //
+    // `SetAgentTag`: a number that means what the game says -- a kind, flags.
+    u16 tag = 0;
+    // Which agent this row is, counted up by the swarm for every one added: a
+    // number is used again when an agent is removed, and this is what tells
+    // the one that has it now from the one that had it before.
+    u32 born = 0;
+    // The way it faces -- at its target -- and how fast the last step walked
+    // it that way, and the tick that step was: where it is at any tick since
+    // is its position carried along that.
+    f32 yaw = 0.0f;
+    f32 walk = 0.0f;
+    u64 stepped = 0;
+    // The way it faces along the ground, as a direction: what `yaw` is the
+    // angle of, kept so that carrying an agent forward is two multiplies and
+    // not a sine and a cosine -- for every agent, every tick, for every
+    // replica.
+    f32 faceX = 0.0f;
+    f32 faceZ = -1.0f;
+
+    // On a replica, the last it was told: where it was, at which of the
+    // authority's ticks, and how far above the ground. Its position is that,
+    // carried forward, with what is left of the last correction.
+    core::DVec3 told;
+    f64 toldTick = 0.0;
+    f32 lift = 0.0f;
+    core::Vec3 ease{};
+    // The height its lift is measured from where no terrain covers it: the
+    // floor the authority said. A replica never looks for the ground with a
+    // ray -- its world is not the authority's in what a ray finds.
+    f64 floor = 0.0;
+    // Whether the ground it holds is a terrain's, rather than that floor.
+    bool onTerrain = false;
+};
+
+// What became of an agent, for the scripts that draw it (ADR 0162): a swarm
+// keeps these until the script layer has fired them.
+struct SwarmEvent
+{
+    enum class Kind : u8
+    {
+        Added,
+        Removed,
+        TagChanged,
+    };
+    Kind kind = Kind::Added;
+    // `Enum.SwarmAgentRemoval`, for a removal.
+    u8 reason = 0;
+    u16 tag = 0;
+    u32 agent = 0;
+    // Added: its size. Removed: where it was last.
+    f32 radius = 0.0f;
+    f32 height = 0.0f;
+    core::DVec3 position;
+};
+
+// An agent the authority removed, kept a tick for the replication that tells
+// the replicas: by then its row is another agent's, or nobody's.
+struct SwarmRemoved
+{
+    u32 slot = 0;
+    u32 born = 0;
+    u16 tag = 0;
+    u64 tick = 0;
+    core::DVec3 position;
+};
+
+// `Enum.SwarmAgentRemoval`'s values.
+inline constexpr u8 SwarmRemovalRemoved = 0;
+inline constexpr u8 SwarmRemovalOutOfReach = 1;
+
+struct SwarmObstacle
+{
+    f64 x = 0.0;
+    f64 z = 0.0;
+    f32 radius = 0.0f;
+};
+
+// **A swarm's cells, by key**: one number a cell that holds something. A table
+// of its own and not a map from the library -- a step asks it nine times an
+// agent, and builds it again once a step, and a node a cell was most of what
+// that cost. Open addressing over a power of two: a key's place is its hash,
+// or the next free one after it.
+struct SwarmCells
+{
+    static constexpr i64 Free = std::numeric_limits<i64>::min();
+
+    std::vector<i64> keys;
+    std::vector<u32> values;
+    u32 mask = 0;
+
+    // Emptied and sized for `count` keys, at half full or less.
+    void reset(usize count)
+    {
+        usize size = 16;
+        while (size < count * 2)
+            size *= 2;
+        keys.assign(size, Free);
+        values.assign(size, 0u);
+        mask = static_cast<u32>(size - 1);
+    }
+    [[nodiscard]] u32 slotOf(i64 key) const noexcept
+    {
+        return static_cast<u32>((static_cast<u64>(key) * 0x9E3779B97F4A7C15ull) >> 32) & mask;
+    }
+    // The value under `key`, or 0: no cell holds a zero.
+    [[nodiscard]] u32 find(i64 key) const noexcept
+    {
+        if (keys.empty())
+            return 0;
+        for (u32 at = slotOf(key);; at = (at + 1) & mask) {
+            if (keys[at] == key)
+                return values[at];
+            if (keys[at] == Free)
+                return 0;
+        }
+    }
+    // The value under `key` to write, made 0 when the key is new.
+    [[nodiscard]] u32& at(i64 key) noexcept
+    {
+        for (u32 place = slotOf(key);; place = (place + 1) & mask) {
+            if (keys[place] == key)
+                return values[place];
+            if (keys[place] == Free) {
+                keys[place] = key;
+                return values[place];
+            }
+        }
+    }
+};
+
+// `Swarm` (ADR 0156): its settings, its agents as rows, and its obstacles.
+struct SwarmComponent
+{
+    core::DVec3 target{};
+    // **Every player at once** (ADR 0156, amended): each agent walks at the
+    // nearest of these, and thinks as often as that one is near. Empty, every
+    // agent walks at `target`, as it always did.
+    std::vector<core::DVec3> targets;
+    bool enabled = true;
+    f32 cellSize = 1.5f;
+    u32 maxNeighbours = 14;
+    f32 gravity = 30.0f;
+    f32 climbSpeed = 6.0f;
+    // `Swarm.PileHeight`: how high over the ground the crowd may pile on
+    // itself, in metres; 0 for no limit.
+    f32 pileHeight = 0.0f;
+    f32 stopDistance = 0.55f;
+    f32 nearDistance = 24.0f;
+    f32 farDistance = 48.0f;
+
+    // **A swarm that replicates itself** (ADR 0162): its agents reach every
+    // replica within this many metres of that player's focus.
+    bool replicates = false;
+    f32 replicationRadius = 80.0f;
+    // On a replica: this swarm is the authority's. It is not stepped here --
+    // its agents are carried forward from what arrives -- and a script may
+    // not change it.
+    bool mirrored = false;
+    // The authority's tick as this replica has it: the newest a message said,
+    // and the clock that follows it.
+    f64 mirrorNewest = 0.0;
+    f64 mirrorClock = 0.0;
+    bool mirrorClockSet = false;
+    // Whether a message arrived since the clock was last set against it.
+    bool mirrorHeard = false;
+    // How many messages of comings and goings this replica has taken in: a
+    // message of positions says how many had been sent before it, and one
+    // that is ahead names agents this replica has not been told of yet.
+    u16 mirrorMembership = 0;
+    // How many agents were ever added: the next one's `born`.
+    u32 births = 0;
+
+    std::vector<SwarmAgent> agents;
+    // Slots of removed agents, the next agent's first.
+    std::vector<u32> free;
+    std::vector<SwarmObstacle> obstacles;
+    // What the script layer has yet to fire, in the order it happened.
+    std::vector<SwarmEvent> events;
+    // What the replication has yet to tell the replicas went.
+    std::vector<SwarmRemoved> removed;
+
+    // **The agents by cell**, as the last step left them: the first agent in a
+    // cell and the next in the same one. What the step's neighbours and a
+    // script's `QueryRadius` both read; built again when an agent was added,
+    // removed or placed since.
+    SwarmCells grid;
+    std::vector<u32> gridNext;
+    f32 gridCell = 0.0f;
+    bool gridValid = false;
+
+    // **The obstacles by cell**, kept from one step to the next: each in every
+    // cell its circle touches, as (first, count) into `obstacleRows`, in the
+    // order the obstacles are. Made again when the obstacles are other than
+    // the ones it was made from (`obstacleDigest`) -- a map's trees and rocks
+    // are the same from one tick to the next, and filing four hundred of them
+    // again every tick was a quarter of a step.
+    SwarmCells obstacleCells;
+    std::vector<u32> obstacleRows;
+    u64 obstacleDigest = 0;
+
+    // **The terrain's column tops this swarm has asked for**, kept until the
+    // ground changes (`groundDigest`: each terrain's place and revision). An
+    // agent asks the ground's height every other tick, a height is the tops
+    // of five columns, and each top is a walk down a column of voxels -- a
+    // third of a step, for answers that were the same a tick ago. A cell's
+    // value is one more than its place in `groundTops`; a top of NaN is "no
+    // ground in this column".
+    SwarmCells groundCells;
+    std::vector<f32> groundTops;
+    u64 groundDigest = 0;
+};
+
+struct NavigationAgentComponent
+{
+    core::DVec3 target{};
+    bool active = false;
+    f32 maxSpeed = 8.0f;
+    std::string agentType;
+};
+
+// A registered block type (`VoxelService`). Its id is its position in the
+// registry plus one, which is registration order -- a pure function of the
+// script that registered it.
+struct VoxelBlockType
+{
+    core::NameAtom name;
+    // The top face, and every face of a block registered with one colour.
+    core::Color3 color{1.0f, 1.0f, 1.0f};
+    core::Color3 side{1.0f, 1.0f, 1.0f};
+    core::Color3 bottom{1.0f, 1.0f, 1.0f};
+    // Images, by content URN, for the same three faces; empty for none. The
+    // colours tint them, so a white block shows its image as drawn.
+    core::NameAtom texture;
+    core::NameAtom sideTexture;
+    core::NameAtom bottomTexture;
+    // `Enum.BlockOpacity`: 0 Opaque, 1 Cutout, 2 Translucent.
+    i32 opacity = 0;
+    // How much a translucent block lets through, 0 to 1, where it has no image
+    // alpha of its own to say.
+    f32 transparency = 0.5f;
+    // **A fluid, when above zero**: how many blocks it spreads sideways from a
+    // source, 1 to `asset::MaxFluidReach` (`engine/scene/voxel_fluid.h`).
+    core::u8 fluidReach = 0;
+    // And how often it moves, in simulation ticks per step -- five is a
+    // quarter-second of water at sixty hertz, and a slower fluid is a larger
+    // number.
+    u32 fluidTicks = 5;
+};
+
+// One thing a player did this tick: an input action's name and its value.
+//
+// **In the currency `InputActionComponent` uses**, so `Player:GetIntent`
+// answers exactly what `InputAction:GetState` answered on the machine where the
+// key was pressed -- and a game reads its own player and a remote one through
+// the same call.
+struct PlayerIntent
+{
+    core::NameAtom action;
+    // `Enum.InputActionType`: 0 Bool, 1 Direction1D, 2 Direction2D,
+    // 3 Direction3D, 4 ViewportPosition.
+    i32 type = 0;
+    core::Vec3 axis;
+    bool pressed = false;
+    // **Which of the sending machine's players it is** (ADR 0205, protocol
+    // 48), on its way through an authority's queue: 0 the machine's first, 1
+    // to 3 a guest's seat. Nothing reads it once the intent is a player's.
+    u8 seat = 0;
+};
+
+// `Player`: somebody taking part in this world, local or not.
+struct PlayerComponent
+{
+    // The authority's number for them: 1 for whoever sits at a solo or hosting
+    // machine, 2 and up for replicas in the order they joined, and 0 on a
+    // replica until the authority's welcome names it.
+    u32 userId = 0;
+    // Whether this player is the one at this machine, whose intents are this
+    // machine's own input actions, copied each tick.
+    bool local = false;
+    // This tick's intents, in the order the sending machine's actions are.
+    std::vector<PlayerIntent> intents;
+    // **Whose tick they are**: the tick of the machine that made them --
+    // a replica's own tick for its player, on the replica and on the
+    // authority alike, so a predicted step numbers a player's ticks the same
+    // on both ends.
+    u64 intentTick = 0;
+    // `Player.Character`: the part that is them, on this machine.
+    core::InstanceId character;
+    // `Player.ReplicationFocus` (ADR 0162): the part what they are sent is
+    // measured from, in place of their character. The authority's.
+    core::InstanceId replicationFocus;
+    // `Player.Camera` (ADR 0205): what a local player looks through, when the
+    // window is shared between this machine's players. This machine's own.
+    core::InstanceId camera;
+    // `Player.GamepadId`: the controller that navigates this player's
+    // interfaces; 0 is none said.
+    u32 gamepadId = 0;
+};
+
+// **The blocks the fluid step is due to look at**, by position, with the tick
+// each is due. Ordered, so the step visits them the same way on every machine
+// (R10). Also indexed by the tick they fall due: a pond settling
+// for a hundred ticks holds thousands of wakes due later, and finding the few
+// due now walked every one of them, every tick.
+class FluidWakes
+{
+public:
+    using Position = std::array<core::i32, 3>;
+
+    // Asks for `at` to be looked at by `due`, keeping the earlier of two asks.
+    void schedule(const Position& at, core::u64 due)
+    {
+        const auto [entry, inserted] = m_byPosition.emplace(at, due);
+        if (inserted) {
+            m_byDue.emplace(due, at);
+            return;
+        }
+        if (due >= entry->second)
+            return;
+        m_byDue.erase({entry->second, at});
+        entry->second = due;
+        m_byDue.emplace(due, at);
+    }
+
+    // Removes and returns what is due by `tick`, at most `budget` of them --
+    // the ones that have waited longest, and among those the lowest positions
+    // -- in position order; the rest stay due.
+    //
+    // **It costs the budget, not the queue**. It copied everything due
+    // into a vector, sorted that, kept the first `budget` and threw the rest
+    // away, every tick: with two million positions waiting that was the whole
+    // of a 50 to 170 ms tick, for as long as the backlog took to drain at
+    // 8192 a tick. The index is already in the order wanted -- due tick, then
+    // position, the same on every machine (R10) -- so the first `budget` of
+    // it are simply taken. Oldest first is also the fairer rule: by position
+    // alone, water beside the player waited behind every block of the
+    // backlog at lower coordinates.
+    //
+    // `looked`, when given, is how many entries of the index this read: what
+    // the test of that cost counts. It was a clock, and a clock on a busy
+    // machine once said this took four times as long out of four times the
+    // queue -- in one run of eighty-six.
+    [[nodiscard]] std::vector<Position> takeDue(core::u64 tick, std::size_t budget, std::size_t* looked = nullptr)
+    {
+        std::vector<Position> due;
+        auto entry = m_byDue.begin();
+        while (entry != m_byDue.end() && entry->first <= tick && due.size() < budget) {
+            if (looked != nullptr)
+                ++*looked;
+            due.push_back(entry->second);
+            m_byPosition.erase(entry->second);
+            entry = m_byDue.erase(entry);
+        }
+        std::sort(due.begin(), due.end());
+        return due;
+    }
+
+    void clear() noexcept
+    {
+        m_byPosition.clear();
+        m_byDue.clear();
+    }
+    [[nodiscard]] bool empty() const noexcept { return m_byPosition.empty(); }
+    [[nodiscard]] std::size_t size() const noexcept { return m_byPosition.size(); }
+    [[nodiscard]] auto begin() const noexcept { return m_byPosition.begin(); }
+    [[nodiscard]] auto end() const noexcept { return m_byPosition.end(); }
+    [[nodiscard]] bool operator==(const FluidWakes& other) const { return m_byPosition == other.m_byPosition; }
+
+private:
+    std::map<Position, core::u64> m_byPosition;
+    std::set<std::pair<core::u64, Position>> m_byDue;
+};
+
+// The block world `VoxelService` owns. **Not the terrain** -- see
+// `engine/asset/voxel.h`. One per `VoxelService`, which is one per DataModel.
+struct VoxelComponent
+{
+    asset::VoxelGrid grid;
+    // The blocks as the package ships them, as `TerrainComponent::shipped` is
+    // the ground (ADR 0135).
+    asset::VoxelGrid shipped;
+    f32 blockSize = 1.0f;
+    std::vector<VoxelBlockType> types;
+    // **Bumped on every write to `grid`**, the same trick the terrain uses: the
+    // renderer and the physics mirror compare it before doing any work.
+    core::u64 revision = 0;
+    // The blocks the fluid step is due to look at (`FluidWakes`), copied with
+    // the component, so a world restored from a snapshot resumes its water
+    // where it was.
+    FluidWakes fluidWakes;
+    // **What a fluid becomes where it touches another** (`SetFluidReaction`):
+    // `from` touching `touching` turns into `result` -- lava meeting water is
+    // stone, and the water stays water. Sorted by (`from`, `touching`), one
+    // entry per pair.
+    struct FluidReaction
+    {
+        asset::BlockId from = asset::AirBlock;
+        asset::BlockId touching = asset::AirBlock;
+        asset::BlockId result = asset::AirBlock;
+    };
+    std::vector<FluidReaction> fluidReactions;
+};
+
+// `PVInstance`'s own state, and therefore attached to every `BasePart`, `Model`
+// and `Camera` in the world.
+//
+// One field, and it is what gives `PivotTo` a meaning `CFrame = target` does not
+// already have. Without it the pivot is always the object's centre, `PivotTo` is
+// an assignment under a longer name, and nothing can hinge about an edge.
+//
+// **It is not a centre of mass.** Jolt has its own notion of where a body turns
+// about, and joining the two would make hinging a door change its dynamics --
+// which is a defect that would take a milestone to notice. The physics work must keep them
+// apart.
+struct PVComponent
+{
+    core::CFrameD pivotOffset;
+};
+
+struct ModelComponent
+{
+    core::InstanceId primaryPart;
+
+    // `Enum.StreamingMode`'s value, stored raw for the reason `PartComponent`
+    // stores a shape that way: the generated accessor then needs no per-enum
+    // C++ type. Read by the partitioner and by nothing on a frame path -- it
+    // decides what a cell holds, once, when the world is written down.
+    i32 streamingMode = 0;
+
+    // `Model.Scale`. **Absolute and already applied**: the number here is what
+    // the property reads back, and every part under the model is ALREADY at
+    // this size. Writing the property fans the ratio out over the subtree once;
+    // nothing re-reads this field per frame, and nothing multiplies by it.
+    //
+    // That is what makes a scaled model cost nothing to draw, and it is also
+    // why a descendant added afterwards is not scaled -- the fan-out already
+    // happened. Stated on the property's own Doc, because it is the one thing
+    // about `Scale` that surprises people.
+    f32 scale = 1.0f;
+};
+
+struct ScriptComponent
+{
+    bool enabled = true;
+    // `Enum.RunContext` (ADR 0138): where a `Script` runs outside the script
+    // services. `Shared`, 2, by default -- every machine, once each. A
+    // `ModuleScript` carries it unread.
+    i32 runContext = 2;
+
+    // **The Luau this instance carries.** Data on the instance rather than a
+    // path to a file, which is what makes a script an ordinary thing: created
+    // like any other instance, copied, put inside a prefab, and saved inside
+    // whatever holds it.
+    //
+    // A `std::string` in a component, like `TextLabel`'s text and `Sound`'s
+    // asset before it: a snapshot copies pools by value, so the deep copy is
+    // the correct one and there is no memcpy path to break.
+    std::string source;
+};
+
+// --- Input --------------------------------------------------------------
+//
+// The three Input Action System classes' storage. It lives here for the same
+// reason the render module's does: `scene` (L3) owns the pools, `input` (L4)
+// owns the meaning, and scene never interprets a byte of it. See the note above
+// the render components for why this is not a type-erased registry.
+
+// `InputContext`. A group of actions that are live together, and the unit
+// resolution walks.
+struct InputContextComponent
+{
+    // Zero keeps aggregate gamepad input. Positive ids isolate a local seat;
+    // keyboard and pointer bindings keep their normal meaning.
+    core::u32 gamepadId = 0;
+    // Invalid means the primary local player, preserving existing games.
+    core::InstanceId player;
+    // Resolution order, highest first. It orders FALLTHROUGH only; the clock is
+    // `rate` (ADR 0039), and conflating the two would change an action's
+    // determinism class whenever somebody re-tuned a number.
+    f32 priority = 0.0f;
+    // `Enum.InputRate`: 0 Simulation, 1 Render.
+    i32 rate = 0;
+    bool enabled = true;
+    bool sink = false;
+};
+
+// `InputAction`. Its resolved value lives here rather than in `input`'s own
+// storage so that a snapshot of the world carries it: an action's state is
+// simulation state, and a replay that restored the tree without it would resume
+// with every key released.
+struct InputActionComponent
+{
+    // The value as of the last dispatch. One field per shape rather than a
+    // variant: the whole struct is 20 bytes either way, and a POD component is
+    // what makes the pool memcpy-able.
+    core::Vec3 axis;
+    // `Enum.InputActionType`: 0 Bool, 1 Direction1D, 2 Direction2D,
+    // 3 Direction3D, 4 ViewportPosition.
+    i32 type = 0;
+    bool enabled = true;
+    bool pressed = false;
+};
+
+// `InputBinding`. Every field is `Enum.KeyCode`'s value except the three at the
+// end; `0` is `Unknown`, which is why the enum carries that item at all -- an
+// unbound binding is expressible without a nullable property (ADR 0039).
+struct InputBindingComponent
+{
+    i32 keyCode = 0;
+    i32 up = 0;
+    i32 down = 0;
+    i32 left = 0;
+    i32 right = 0;
+    // What this binding's value is multiplied by before it reaches the action.
+    f32 scale = 1.0f;
+    // A localization key is the intended value (§6), which is why this is a
+    // string rather than a `TextKey`: the catalog is resolved when a prompt
+    // draws, not when a binding is built.
+    std::string displayName;
+    // An `asset://` URI, empty for none.
+    std::string image;
+};
+
+// --- UI -----------------------------------------------------------------
+//
+// The same arrangement again: `scene` (L3) owns the pools, `ui` (L5) owns the
+// meaning. This is the third module to store here and the first at L5, which is
+// worth noticing -- the pattern is now the rule rather than the exception, and
+// the type-erased registry architecture.md §4 said would be "a problem to solve
+// when the first renderer brings the first one" has still not paid for itself: thirteen classes
+// cost nine structs and nine pool members, and a registry would cost an
+// indirection on every property read in the engine.
+
+// `ScreenGui`. One screen-space tree, and the unit of layout: the dirty flag
+// that decides whether the solver runs at all lives here.
+struct ScreenGuiComponent
+{
+    f32 displayOrder = 0.0f;
+    bool enabled = true;
+    bool screenInsets = true;
+    // **The height this tree was drawn for**, or zero for pixels. With
+    // one set, every offset and text size under it is in units of a window
+    // that tall, and the engine scales the tree to the window it has: a
+    // layout made for a 720-line monitor is the same share of a phone's 1440.
+    f32 referenceHeight = 0.0f;
+    // Goes with the game to the next scene rather than with this one (ADR
+    // 0106): a loading screen that stays up while the scene changes.
+    bool keepOnSceneLoad = false;
+    // **Whose interface it is** (ADR 0205): a local player, or none for
+    // everybody's. With one, it is laid out in that player's view, navigated
+    // by that player's controller, and `selected` is what that controller has
+    // chosen in it. This machine's own.
+    core::InstanceId player;
+    core::InstanceId selected;
+    // What `selected` was when its events last fired.
+    core::InstanceId selectedAnnounced;
+    // Where in the window it was last laid out: a view that moves or changes
+    // size lays its player's interface out again.
+    core::Rect region{};
+    // **A script of the game's -- one in `GlobalScriptService` -- put it in
+    // `UIService`**. Such a script outlives the scene and such a screen
+    // does not, unless it is kept; the host says so, by name, when the scene
+    // takes it. Never saved, never hashed: it is about who asked.
+    bool parentedByGlobal = false;
+    // Set by any layout-affecting write anywhere beneath this tree, cleared by
+    // the layout that answers it. NOT a property: no script can read it, and a
+    // script that could would be reading the engine's opinion of its own work.
+    bool layoutDirty = true;
+};
+
+// `BillboardGui`: a tree hung in the world, facing the camera. Laid out
+// every frame it is drawn rather than on a dirty flag -- its canvas can change
+// size with distance, and a name tag is a handful of elements.
+struct BillboardGuiComponent
+{
+    bool enabled = true;
+    core::InstanceId adornee;
+    // Scale in metres, offset in pixels (the property's doc says why).
+    core::UDim2 size{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 50.0f}};
+    core::Vec3 worldOffset{};
+    bool alwaysOnTop = false;
+    f32 maxDistance = 0.0f;
+    f32 brightness = 1.0f;
+};
+
+// `SurfaceGui`: a tree drawn onto one face of a part.
+struct SurfaceGuiComponent
+{
+    bool enabled = true;
+    core::InstanceId adornee;
+    // `Enum.Face`: Front, Back, Top, Bottom, Right, Left.
+    i32 face = 0;
+    f32 pixelsPerMetre = 50.0f;
+    bool alwaysOnTop = false;
+    f32 brightness = 1.0f;
+};
+
+// `UIObject`, and therefore attached to every element on screen.
+//
+// The two `absolute*` fields are OUTPUTS of the solver rather than state a
+// script owns, which is why their properties are read-only. They live here
+// rather than in a parallel array because the layout writes them and the draw
+// list reads them, and a second structure indexed the same way would be a
+// second thing to keep in step.
+struct UIObjectComponent
+{
+    core::UDim2 position;
+    core::UDim2 size;
+    core::Vec2 anchorPoint;
+    core::Color3 backgroundColor{1.0f, 1.0f, 1.0f};
+    core::Vec2 absolutePosition;
+    core::Vec2 absoluteSize;
+    // **How many pixels one of this element's units is**: its
+    // `ScreenGui`'s scale, written by the layout that placed it, and one
+    // everywhere else. What is measured in units and read at drawing time --
+    // a text size, a corner's radius, a stroke -- is multiplied by it. Not a
+    // property.
+    f32 unitScale = 1.0f;
+    f32 rotation = 0.0f;
+    f32 backgroundTransparency = 0.0f;
+    f32 zIndex = 0.0f;
+    f32 layoutOrder = 0.0f;
+    // `Enum.AutomaticSize`: 0 None, 1 X, 2 Y, 3 XY.
+    i32 automaticSize = 0;
+    bool visible = true;
+    bool clipsDescendants = false;
+    // **`Active`: whether it takes the pointer**. -1 until somebody
+    // writes it, which means "as what it is does": a button, a text input and
+    // a scroll frame do, a label does not, and a frame does when it draws a
+    // background. 0 and 1 are a script's or the editor's own word, and win.
+    core::i8 active = -1;
+    // **`Selectable`** (ADR 0128), the same way: -1 is "as what it is" -- a
+    // button and a text input are, nothing else is.
+    core::i8 selectable = -1;
+    // Where the selection goes from here; invalid is "the nearest that way".
+    core::InstanceId nextSelectionUp;
+    core::InstanceId nextSelectionDown;
+    core::InstanceId nextSelectionLeft;
+    core::InstanceId nextSelectionRight;
+    core::InstanceId selectionImageObject;
+};
+
+struct TextLabelComponent
+{
+    std::string text;
+    // An `asset://` URI to a TrueType file. Empty is the engine's own default
+    // face -- Inter, staged beside the binary -- and so is the literal name
+    // `Inter`. The built-in vector face is what is left when even that file is
+    // absent; it is not what an empty `Font` asks for.
+    std::string font;
+    core::Color3 textColor{0.0f, 0.0f, 0.0f};
+    // `TextLabel.TextTransparency`: the words' own see-through, apart from the
+    // box's. Stored as written; drawing clamps it to 0..1.
+    f32 textTransparency = 0.0f;
+    f32 textSize = 14.0f;
+    // `Enum.HorizontalAlignment` / `Enum.VerticalAlignment`.
+    i32 horizontalAlignment = 1;
+    i32 verticalAlignment = 1;
+    bool textWrapped = false;
+    bool textScaled = false;
+    // `TextLabel.RichText`: read `text` as markup.
+    bool richText = false;
+    // `Enum.TextOverflow` (ADR 0168): what is done with text its box does not
+    // hold -- 0 shown past it, 1 cut at it, 2 cut short and ended "...".
+    i32 textOverflow = 0;
+};
+
+struct TextInputComponent
+{
+    std::string placeholderText;
+
+    // **Where the next character goes**, as a BYTE offset into `Text`.
+    //
+    // This field was here once with nothing moving it, and it was taken out for
+    // that reason -- a field naming a feature nobody had written is the lie
+    // `Inert` exists to make impossible, and `inertcheck` found it. The comment
+    // that replaced it said a real caret would arrive with the code that moves
+    // it. This is that code: `ui::interaction` moves it on every arrow, home,
+    // end, insertion and deletion, and `ui::draw` puts a bar there.
+    //
+    // **Bytes and not code points**, which is the same choice `ScriptDocument`
+    // makes and for the same reason: the text is UTF-8, every offset that
+    // reaches a renderer or a substring is a byte offset, and converting at each
+    // boundary is where the off-by-ones live. Movement steps whole code points
+    // so a caret never lands inside one.
+    //
+    // Clamped into the text on every use rather than trusted: `Text` is a
+    // property a script may assign at any moment, and a caret left past the end
+    // of a string somebody just shortened is a crash rather than a wrong
+    // picture.
+    u32 caret = 0;
+    // The selection's other end (ADR 0139), equal to `caret` when nothing is
+    // selected. Bytes, on a character boundary, as `caret` is.
+    u32 anchor = 0;
+
+    bool focused = false;
+
+    // --- The properties (ADR 0139 §2) -----------------------------------------
+    core::Color3 placeholderColor{178.0f / 255.0f, 178.0f / 255.0f, 178.0f / 255.0f};
+    bool multiLine = false;
+    bool editable = true;
+    bool masked = false;
+    bool clearTextOnFocus = false;
+    bool selectAllOnFocus = false;
+    bool releaseFocusOnSubmit = true;
+    bool revertOnEscape = false;
+    u32 maxLength = 0;
+    std::string maskCharacter = "\xE2\x80\xA2";
+    // `Enum.TextInputKeyboard`.
+    i32 keyboardType = 0;
+
+    // --- What the interaction and the drawing share ----------------------------
+    //
+    // **A script wrote `Text`** since the interaction last looked: its editing
+    // session -- the undo history above all -- starts again, since what it
+    // would undo to is not the player's.
+    bool textReplaced = false;
+    // An input method's text being composed at the caret, and its cursor in
+    // bytes of it; empty when nothing is being composed.
+    std::string composition;
+    u32 compositionCursor = 0;
+    // How far the text is scrolled to keep the caret in view, in pixels.
+    core::Vec2 scroll;
+    // The caret's blink: drawn or not this frame.
+    bool caretVisible = true;
+    // A script's `CaptureFocus` (1) or `ReleaseFocus` (-1), taken at the next
+    // frame by the interaction, which is what owns focus.
+    core::i8 focusRequest = 0;
+    bool releaseSubmitted = false;
+};
+
+struct ImageLabelComponent
+{
+    std::string image;
+    core::Rect sliceCenter;
+    // The part of the picture shown, in source pixels; a zero size is all of
+    // it, and a negative one reads it mirrored.
+    core::Vec2 imageRectOffset;
+    core::Vec2 imageRectSize;
+    core::Color3 imageColor{1.0f, 1.0f, 1.0f};
+    // `ImageTransparency`: the picture's own, apart from the background's.
+    f32 imageTransparency = 0.0f;
+    // `Enum.ScaleType`: 0 Stretch, 1 Slice, 2 Tile.
+    i32 scaleType = 0;
+};
+
+struct ScrollFrameComponent
+{
+    core::UDim2 canvasSize;
+    core::Vec2 canvasPosition;
+    f32 scrollBarThickness = 12.0f;
+    core::Color3 scrollBarImageColor{0.5f, 0.5f, 0.5f};
+    f32 scrollBarImageTransparency = 0.0f;
+    bool scrollingEnabled = true;
+    // `Enum.ScrollingDirection`: the axes' bits, 1 X, 2 Y, 3 XY.
+    i32 scrollingDirection = 3;
+    // `Enum.ElasticBehavior`: 0 WhenScrollable, 1 Always, 2 Never.
+    i32 elasticBehavior = 0;
+    // `Enum.AutomaticSize`: 0 None, 1 X, 2 Y, 3 XY.
+    i32 automaticCanvasSize = 0;
+
+    // What the last layout found, in pixels: the canvas it laid the children
+    // on (never smaller than the frame) and the frame. What the bar, the
+    // hand and a script all read, so the three agree on how far it scrolls.
+    core::Vec2 absoluteCanvasSize;
+    core::Vec2 absoluteWindowSize;
+    // How far past either end a hand has pulled the canvas, in its units:
+    // drawn, never reported -- `canvasPosition` stays on the canvas. Springs
+    // back to nothing when nothing holds it.
+    core::Vec2 overscroll;
+    core::Vec2 overscrollVelocity;
+    // A fling's speed, in its units a second: what the canvas keeps doing
+    // after the finger that threw it has lifted.
+    core::Vec2 flingVelocity;
+    // A finger is on it, scrolling: nothing springs back and nothing glides.
+    bool held = false;
+};
+
+struct UIListLayoutComponent
+{
+    core::UDim padding;
+    // `Enum.FillDirection`: 0 Horizontal, 1 Vertical.
+    i32 fillDirection = 1;
+    i32 horizontalAlignment = 0;
+    i32 verticalAlignment = 0;
+    // `Enum.SortOrder`: 0 Name, 1 LayoutOrder.
+    i32 sortOrder = 1;
+    bool wraps = false;
+    // Flex (ADR 0128). `Enum.UIFlexAlignment`: 0 None, 1 Fill, 2 SpaceAround,
+    // 3 SpaceBetween, 4 SpaceEvenly. `Enum.ItemLineAlignment`: 0 Automatic,
+    // 1 Start, 2 Center, 3 End, 4 Stretch.
+    i32 horizontalFlex = 0;
+    i32 verticalFlex = 0;
+    i32 itemLineAlignment = 0;
+    // The layout's output: how much room the children take, in pixels.
+    core::Vec2 absoluteContentSize;
+};
+
+struct UIPaddingComponent
+{
+    core::UDim paddingTop;
+    core::UDim paddingBottom;
+    core::UDim paddingLeft;
+    core::UDim paddingRight;
+};
+
+// `UIGridLayout` (ADR 0128): equal cells in lines. `absoluteContentSize` is the
+// layout's output, as `UIObjectComponent`'s rectangle is.
+struct UIGridLayoutComponent
+{
+    core::UDim2 cellSize{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    core::UDim2 cellPadding{core::UDim{0.0f, 5.0f}, core::UDim{0.0f, 5.0f}};
+    // `Enum.FillDirection`.
+    i32 fillDirection = 0;
+    i32 fillDirectionMaxCells = 0;
+    // `Enum.StartCorner`.
+    i32 startCorner = 0;
+    // `Enum.SortOrder`.
+    i32 sortOrder = 1;
+    // `Enum.HorizontalAlignment`.
+    i32 horizontalAlignment = 0;
+    // `Enum.VerticalAlignment`.
+    i32 verticalAlignment = 0;
+    core::Vec2 absoluteContentSize;
+};
+
+// `UIPageLayout` (ADR 0128): pages side by side, one shown.
+struct UIPageLayoutComponent
+{
+    bool animated = true;
+    bool circular = false;
+    // `Enum.EasingStyle`.
+    i32 easingStyle = 2;
+    // `Enum.EasingDirection`.
+    i32 easingDirection = 1;
+    f32 tweenTime = 0.3f;
+    core::UDim padding;
+    // `Enum.FillDirection`.
+    i32 fillDirection = 0;
+    // `Enum.SortOrder`.
+    i32 sortOrder = 1;
+    // `Enum.HorizontalAlignment`.
+    i32 horizontalAlignment = 1;
+    // `Enum.VerticalAlignment`.
+    i32 verticalAlignment = 1;
+    bool scrollWheelInputEnabled = true;
+    bool touchInputEnabled = true;
+    bool gamepadInputEnabled = true;
+    core::InstanceId currentPage;
+
+    // --- Where the pages are, which no property says ---------------------------
+    //
+    // `index` is the page shown, among the children in the layout's order.
+    // `position` is where the view is, in pages: 1.5 is half way from the
+    // second to the third. A turn slides it from `slideFrom` to `slideTo` over
+    // `tweenTime`, and `slideTo` may be one past the last page when the pages
+    // go round. Written by `ui::turnPage` and `ui::advance`.
+    i32 index = 0;
+    f32 position = 0.0f;
+    f32 slideFrom = 0.0f;
+    f32 slideTo = 0.0f;
+    f32 slideElapsed = 0.0f;
+    bool sliding = false;
+};
+
+// `UIFlexItem` (ADR 0128): how its parent takes or gives room in a list.
+struct UIFlexItemComponent
+{
+    // `Enum.UIFlexMode`.
+    i32 flexMode = 0;
+    f32 growRatio = 1.0f;
+    f32 shrinkRatio = 1.0f;
+    // `Enum.ItemLineAlignment`.
+    i32 itemLineAlignment = 0;
+};
+
+// `UIScale` (ADR 0128): its parent and everything in it, multiplied.
+struct UIScaleComponent
+{
+    f32 scale = 1.0f;
+};
+
+// `UIAspectRatioConstraint` (ADR 0128): its parent kept one shape.
+struct UIAspectRatioConstraintComponent
+{
+    f32 aspectRatio = 1.0f;
+    // `Enum.AspectType`.
+    i32 aspectType = 0;
+    // `Enum.DominantAxis`.
+    i32 dominantAxis = 0;
+};
+
+// `UISizeConstraint` (ADR 0128): its parent kept between two sizes. A
+// `maxSize` axis of zero is no limit.
+struct UISizeConstraintComponent
+{
+    core::Vec2 minSize;
+    core::Vec2 maxSize;
+};
+
+// `UITextSizeConstraint` (ADR 0128): scaled text kept between two sizes.
+struct UITextSizeConstraintComponent
+{
+    f32 minTextSize = 1.0f;
+    f32 maxTextSize = 100.0f;
+};
+
+// `UIDragDetector` (ADR 0128): its parent dragged by a pointer. The last two
+// are the interaction's output.
+struct UIDragDetectorComponent
+{
+    bool enabled = true;
+    // `Enum.UIDragDetectorDragStyle`.
+    i32 dragStyle = 0;
+    // `Enum.UIDragDetectorResponseStyle`.
+    i32 responseStyle = 0;
+    core::Vec2 dragAxis{1.0f, 0.0f};
+    core::InstanceId boundingUI;
+    core::UDim2 minDragTranslation;
+    core::UDim2 maxDragTranslation;
+    f32 minDragAngle = 0.0f;
+    f32 maxDragAngle = 0.0f;
+    core::UDim2 dragUDim2;
+    f32 dragRotation = 0.0f;
+};
+
+// `CanvasGroup` (ADR 0128): a frame whose descendants are drawn as one picture.
+struct CanvasGroupComponent
+{
+    f32 groupTransparency = 0.0f;
+    core::Color3 groupColor{1.0f, 1.0f, 1.0f};
+};
+
+struct UICornerComponent
+{
+    core::UDim cornerRadius{0.0f, 8.0f};
+};
+
+// `UIGradient` (ADR 0110). Read by the draw list and nothing else: it changes
+// the drawing, never the layout, so a write marks nothing dirty -- the draw
+// list is built every frame.
+struct UIGradientComponent
+{
+    core::ColorSequence color;
+    core::NumberSequence transparency;
+    core::Vec2 offset{};
+    // Degrees, clockwise.
+    f32 rotation = 0.0f;
+    bool enabled = true;
+    // `Enum.GradientType`: 0 Linear, 1 Radial, 2 Conical.
+    i32 type = 0;
+    // `Enum.GradientTileMode`: 0 Clamp, 1 Repeat, 2 Mirror.
+    i32 tileMode = 0;
+    f32 scale = 1.0f;
+};
+
+// `UIStroke` (ADR 0110), read by the draw list and, on text, by the glyph
+// store's stroked glyphs.
+struct UIStrokeComponent
+{
+    core::Color3 color{0.0f, 0.0f, 0.0f};
+    f32 thickness = 1.0f;
+    f32 transparency = 0.0f;
+    bool enabled = true;
+    // `Enum.ApplyStrokeMode`: 0 Contextual, 1 Border.
+    i32 applyStrokeMode = 0;
+    // `Enum.LineJoinMode`: 0 Round, 1 Bevel, 2 Miter.
+    i32 lineJoinMode = 0;
+    // `Enum.StrokeSizingMode`: 0 FixedSize, 1 ScaledSize.
+    i32 strokeSizingMode = 0;
+    // `Enum.BorderStrokePosition`: 0 Outer, 1 Center, 2 Inner.
+    i32 borderStrokePosition = 0;
+    core::UDim borderOffset{};
+    f32 zIndex = 1.0f;
+};
+
+// --- Audio --------------------------------------------------------------
+
+struct AudioGroupComponent
+{
+    f32 volume = 1.0f;
+};
+
+// A sound effect (ADR 0131): which of the nine it is, whether it is on, where
+// it stands among its parent's, and its numbers -- one struct for all of them,
+// as the movers share one, because which fields a class reads is its class.
+// Read by the mixer on the frame and by nothing in the simulation.
+struct SoundEffectComponent
+{
+    // 1 Reverb, 2 Echo, 3 Equalizer, 4 LowPass, 5 HighPass, 6 Distortion,
+    // 7 Compressor, 8 Chorus, 9 PitchShift. Set when the class is made.
+    i32 kind = 0;
+    bool enabled = true;
+    f32 priority = 0.0f;
+    f32 roomSize = 0.5f;
+    f32 damping = 0.5f;
+    f32 wetLevel = 0.3f;
+    f32 dryLevel = 1.0f;
+    f32 width = 1.0f;
+    f32 delay = 0.3f;
+    f32 feedback = 0.4f;
+    f32 lowGain = 0.0f;
+    f32 midGain = 0.0f;
+    f32 highGain = 0.0f;
+    f32 midLow = 400.0f;
+    f32 midHigh = 4000.0f;
+    f32 cutoff = 2000.0f;
+    f32 resonance = 0.707f;
+    f32 level = 0.5f;
+    f32 threshold = -20.0f;
+    f32 ratio = 4.0f;
+    f32 attack = 0.01f;
+    f32 release = 0.1f;
+    f32 makeupGain = 0.0f;
+    f32 rate = 0.5f;
+    f32 depth = 0.5f;
+    f32 mix = 0.5f;
+    f32 octave = 1.25f;
+};
+
+// `Sound`. The timeline is the SIMULATION's: every field
+// here is advanced by the tick and read by the mixer, never the other way round.
+// A field the mixer wrote would be the wall clock entering the world.
+struct SoundComponent
+{
+    // An `asset://` URI, kept as the script wrote it. `audio` resolves it
+    // against the content mounts and decodes the file into the mixer's own
+    // format, cached under this string; a URI that resolves to nothing is
+    // audibly a placeholder tone rather than silence, and its timeline is then
+    // measured against the placeholder's length rather than a real one.
+    //
+    // **The first ask decodes the whole file on the calling thread**, and that
+    // is still open: the render frame reaches it, and so does the sim
+    // tick, through the clip length `timePosition` is compared against. The
+    // tick's half cannot simply become asynchronous -- it advances
+    // `TimePosition` and clears `Playing` on the tick that fires `Ended`, and
+    // the world hash covers both, so a length that depended on when a decode
+    // finished would be a world hash that depended on disk speed (R10).
+    std::string content;
+    core::InstanceId group;
+    // Seconds. f64 because it is compared against `simTime`-shaped quantities
+    // and a 32-bit second drifts visibly over a long track.
+    f64 timePosition = 0.0;
+    // `Content`'s length in seconds, which `audio` writes (`AudioSystem::
+    // clipDuration`) and nothing else can: 0 until it has been asked for. It
+    // is a pure function of the file's bytes, so a replay agrees on it (R10).
+    f64 timeLength = 0.0;
+    f32 volume = 0.5f;
+    f32 playbackSpeed = 1.0f;
+    f32 rollOffMinDistance = 8.0f;
+    f32 rollOffMaxDistance = 80.0f;
+    bool playing = false;
+    bool looped = false;
+    // `TimePosition` was written since the sound last started, so the next
+    // `Play` starts there instead of at 0.
+    bool seeked = false;
+    // Whether `Loaded` has been raised. One shot: the event is a past-tense fact
+    // and a sound is loaded once.
+    bool loadedFired = false;
+    // `Enum.SoundCategory` (ADR 0200): 0 Effects, 1 Music, 2 Voice. Which of
+    // the player's volumes turns it, and whether music lowers under it.
+    i32 category = 0;
+    // **How many times it has been started from the beginning**: raised by
+    // `Play`, never by `Resume`. What the mixer reads to tell a sound started
+    // again -- and so asked for in the voice language now in force -- from one
+    // that is going on in the language it started in. Not a property, and a
+    // function of the script's own calls.
+    u32 plays = 0;
+    // **A sound nobody keeps** (`AudioService:PlayLocal`, `DialogueService:
+    // Say`): destroyed `SoundLinger` ticks after it ends, once whatever hears
+    // its `Ended` has heard it. `endedFor` counts those ticks, and is -1 while
+    // it has not ended.
+    bool ownsItself = false;
+    i32 endedFor = -1;
+};
+
+// How many ticks a sound that owns itself outlives its end: its `Ended` is
+// raised on the tick it ends and heard at that tick's drains, and a handler
+// that reads the sound a tick later still finds it.
+inline constexpr i32 SoundLinger = 2;
+
+// **What a sound says** (ADR 0200): two catalog keys, the speaker's colour,
+// and how long it shows when nothing was recorded. A child of the `Sound`.
+// The keys are atoms: they travel as names do, and a match's authority reads
+// the world without growing its names.
+struct CaptionComponent
+{
+    core::NameAtom text;
+    core::NameAtom speaker;
+    core::Color3 color{1.0f, 1.0f, 1.0f};
+    // Seconds; 0 is a reading time for the text.
+    f32 seconds = 0.0f;
+};
+
+} // namespace engine::scene

@@ -1,0 +1,772 @@
+// The metallic-roughness BRDF and the light, shadow and fog terms built on it.
+//
+// Split out of `engine_pbr.hlsli` so that file stays what `shader_types.h` says
+// it is -- the second copy of the uniform bytes -- while the maths that reads
+// them lives somewhere a change cannot silently move an offset.
+//
+// **The shading space is camera-relative with the eye at the origin.** Nothing
+// here takes a camera position because the frozen contract has no field for
+// one: `GpuLight::PositionRange` is documented camera-relative, so the vertex
+// stage's `Model` must be too, and the view vector is therefore `-position`.
+// Fog distance is `length(position)` for the same reason.
+//
+// Everything is linear-light. sRGB decode happens on the way in, through the
+// texture format (`Rgba8UnormSrgb` for base colour and emissive), and sRGB
+// encode happens once at the very end in `tonemap.hlsl` -- never here.
+#ifndef ENG_BRDF_HLSLI
+#define ENG_BRDF_HLSLI
+
+#include "engine_pbr.hlsli"
+
+static const float EnginePi = 3.14159265358979323846f;
+
+// Dielectrics reflect about 4% at normal incidence. glTF fixes this rather than
+// exposing it, so a material cannot change it and neither can we.
+static const float EngineDielectricF0 = 0.04f;
+
+// Keeps the reciprocals below off the divide-by-zero edge. Small enough that no
+// visible term moves, large enough that a half-precision backend survives.
+static const float EngineEpsilon = 1e-4f;
+
+// A perfectly smooth surface is a delta lobe no punctual light can ever hit, so
+// roughness is clamped rather than allowed to reach zero. Below roughly 0.045
+// GGX highlights start aliasing into single-pixel fireflies.
+static const float EngineMinRoughness = 0.045f;
+
+// The surface, resolved once, so every light reads the same numbers.
+struct Surface
+{
+    // Camera-relative, the space the lights are in.
+    float3 Position;
+    float3 Normal;
+    // From the surface towards the eye.
+    float3 View;
+    // Base colour with the metallic lobe already removed.
+    float3 DiffuseColor;
+    // Reflectance at normal incidence.
+    float3 SpecularF0;
+    // Roughness squared, GGX's own parameter.
+    float Alpha;
+    float NoV;
+};
+
+Surface makeSurface(float3 position, float3 normal, float3 baseColor, float metallic, float roughness)
+{
+    Surface surface;
+    surface.Position = position;
+    surface.Normal = normal;
+    // The eye is the origin of this space, so the view vector is the position
+    // negated. A fragment exactly at the eye would normalize to a NaN, and a
+    // fragment exactly at the eye is behind the near plane and never shaded.
+    surface.View = normalize(-position);
+
+    const float clampedRoughness = max(roughness, EngineMinRoughness);
+    surface.DiffuseColor = baseColor * (1.0f - metallic);
+    surface.SpecularF0 = lerp(float3(EngineDielectricF0, EngineDielectricF0, EngineDielectricF0), baseColor, metallic);
+    surface.Alpha = clampedRoughness * clampedRoughness;
+    surface.NoV = saturate(dot(normal, surface.View)) + EngineEpsilon;
+    return surface;
+}
+
+// How much of the filter kernel's normal variance is believed, and how far the
+// widening is ever allowed to go. Filament's published defaults, and they are a
+// STARTING POINT rather than a derivation -- the variance is a fudge for the
+// fact that a pixel's normal distribution is not really a Gaussian, and the
+// threshold exists because the estimate blows up on a silhouette, where the
+// derivative of the normal is meaningless rather than large.
+static const float EngineSpecularAaVariance = 0.15f;
+static const float EngineSpecularAaThreshold = 0.2f;
+
+// Geometric specular antialiasing: the roughness this PIXEL sees, rather than
+// the roughness the surface has.
+//
+// The lighting work gave the engine a specular reflection of an environment, and a specular
+// lobe narrower than the pixel it lands in is a highlight with nowhere stable to
+// sit -- the camera moves half a pixel, the lobe falls on a different sample,
+// and a curved metal crawls. **Anti-aliasing the image cannot reach it**:
+// `fxaa.hlsl` looks for a contrast step along an EDGE, and this is a point
+// flickering in the middle of a smooth surface, with no edge under it.
+//
+// So the lobe is widened instead, by exactly the normal variation the pixel
+// covers. Kaplanyan 2016 ("Stable Specular Highlights"), Tokuyoshi 2017, and
+// Tokuyoshi and Kaplanyan 2019 ("Improved Geometric Specular Antialiasing"), in
+// the screen-space derivative form Filament ships. The normals inside a pixel
+// are treated as a Gaussian, GGX's own lobe is another, and convolving two
+// Gaussians adds their variances -- which is all the arithmetic below is.
+//
+// **The GEOMETRIC normal, deliberately, and not the mapped one.** A normal map
+// has the same failure at distance for a different reason -- a mip level
+// averages normals and the average is shorter than one, which is the very
+// information Toksvig's factor recovers -- and recovering it needs the map's own
+// mip chain rather than this pixel's derivatives. That is an asset-pipeline
+// decision and it is out of scope here, named rather than implied.
+//
+// **Raising roughness globally would also stop the crawl**, and it is the wrong
+// fix: it stops the reflection too. The point is to widen only where the normal
+// varies within the pixel, which on a flat wall is nowhere.
+float antiAliasedAlpha(float alpha, float3 geometricNormal)
+{
+    const float3 du = ddx(geometricNormal);
+    const float3 dv = ddy(geometricNormal);
+    const float variance = EngineSpecularAaVariance * (dot(du, du) + dot(dv, dv));
+    const float kernelAlpha = min(2.0f * variance, EngineSpecularAaThreshold);
+    // The variances compose in alpha SQUARED, which is where the two Gaussians
+    // actually add. Filament writes these same three lines around a round trip
+    // through perceptual roughness; the round trip is two square roots that
+    // cancel, so this skips it and stays in the parameter GGX is evaluated in.
+    return sqrt(saturate(alpha * alpha + kernelAlpha));
+}
+
+// Trowbridge-Reitz / GGX. The squared denominator is what gives the long tail
+// that separates a GGX highlight from a Blinn-Phong one.
+float distributionGgx(float noh, float alpha)
+{
+    const float a2 = alpha * alpha;
+    const float d = noh * noh * (a2 - 1.0f) + 1.0f;
+    return a2 / max(EnginePi * d * d, EngineEpsilon);
+}
+
+// Height-correlated Smith, already divided by the 4*NoL*NoV that the
+// Cook-Torrance denominator would otherwise carry -- so specular is `D * V * F`
+// with no fourth factor, and the division that most often produces a NaN never
+// happens at all.
+float visibilitySmithGgxCorrelated(float nov, float nol, float alpha)
+{
+    const float a2 = alpha * alpha;
+    const float lambdaV = nol * sqrt(nov * nov * (1.0f - a2) + a2);
+    const float lambdaL = nov * sqrt(nol * nol * (1.0f - a2) + a2);
+    return 0.5f / max(lambdaV + lambdaL, EngineEpsilon);
+}
+
+float3 fresnelSchlick(float3 f0, float voh)
+{
+    const float f = pow(1.0f - voh, 5.0f);
+    return f0 + (float3(1.0f, 1.0f, 1.0f) - f0) * f;
+}
+
+// One light's contribution, given the direction towards it and the radiance
+// arriving from it. Cook-Torrance specular plus Lambert diffuse, with the two
+// lobes split by the same Fresnel term so a grazing surface never gains energy.
+float3 shadeDirect(Surface surface, float3 lightDirection, float3 radiance)
+{
+    const float nol = saturate(dot(surface.Normal, lightDirection));
+    if (nol <= 0.0f)
+    {
+        return float3(0.0f, 0.0f, 0.0f);
+    }
+
+    const float3 halfVector = normalize(lightDirection + surface.View);
+    const float noh = saturate(dot(surface.Normal, halfVector));
+    const float voh = saturate(dot(surface.View, halfVector));
+
+    const float d = distributionGgx(noh, surface.Alpha);
+    const float v = visibilitySmithGgxCorrelated(surface.NoV, nol, surface.Alpha);
+    const float3 f = fresnelSchlick(surface.SpecularF0, voh);
+
+    const float3 specular = d * v * f;
+    const float3 diffuse = (float3(1.0f, 1.0f, 1.0f) - f) * surface.DiffuseColor / EnginePi;
+    return (diffuse + specular) * radiance * nol;
+}
+
+// A point or spot light, including its distance and cone falloff.
+// --- Local shadows: a spot or a point occluding itself -----------------------
+//
+// **The half `PointLight.Shadows` and `SpotLight.Shadows` were missing for three
+// milestones.** `render::shadow.h` owns the atlas layout and the projections.
+//
+// Only the part that touches no texture is here. The LOOKUP lives in
+// `engine_forward.hlsli`, and not by preference: this file is included BEFORE the
+// texture declarations are, so a sampler named here does not exist yet. The same
+// boundary the sun's cascade sampling sits on.
+
+// Which of the six faces a direction belongs to, in `render::CubeFace` order:
+// +X, -X, +Y, -Y, +Z, -Z. The dominant axis, which is exactly how a cube map
+// samples and is why the face projections are ninety degrees.
+uint localShadowFace(float3 direction)
+{
+    const float3 magnitude = abs(direction);
+    if (magnitude.x >= magnitude.y && magnitude.x >= magnitude.z)
+        return direction.x >= 0.0f ? 0u : 1u;
+    if (magnitude.y >= magnitude.z)
+        return direction.y >= 0.0f ? 2u : 3u;
+    return direction.z >= 0.0f ? 4u : 5u;
+}
+
+float3 evaluatePunctualLight(Surface surface, GpuLight light, float shadow)
+{
+    const float3 toLight = light.PositionRange.xyz - surface.Position;
+    const float distanceSquared = max(dot(toLight, toLight), EngineEpsilon);
+    const float3 lightDirection = toLight * rsqrt(distanceSquared);
+
+    // **`Brightness` is the light's strength at its source, and `Range` shapes
+    // the whole curve**: 1 / (1 + 25 (d / range)^2), the falloff engines made
+    // for authoring use, which is about an eighth of the strength at half the
+    // range. Physical inverse square made a lamp of Brightness 1 light a metre
+    // around itself and nothing else -- reported as "the PointLight does not
+    // work". Windowed as before, so it reaches exactly zero at its range and
+    // the bounding volume the culler uses stays true.
+    const float range = max(light.PositionRange.w, EngineEpsilon);
+    const float ratio = distanceSquared / (range * range);
+    const float window = saturate(1.0f - ratio * ratio);
+    const float attenuation = window * window / (1.0f + 25.0f * ratio);
+
+    // `shader_types.h` stores 1.0 in w for a point light and calls it the value
+    // that makes the cone test pass everywhere. It is the opposite: cos(half
+    // angle) == 1 is the NARROWEST cone there is, and -1 is the one that admits
+    // every direction. Remapped with a select rather than a branch, so a point
+    // light behaves the way the contract intends and a spot light pays nothing.
+    // The day `GpuLight` stores -1 for a point light, this line becomes a no-op.
+    const float cosOuter = light.DirectionCosAngle.w >= 1.0f ? -1.0f : light.DirectionCosAngle.w;
+    // One angle has to serve as both cone edges, so the inner edge is a fixed
+    // fraction of it: a hard cone boundary aliases badly at any resolution.
+    const float cosInner = lerp(cosOuter, 1.0f, 0.1f);
+    const float cosTheta = dot(light.DirectionCosAngle.xyz, -lightDirection);
+    // **A light that shines every way has no edge to soften**. The
+    // inner edge above is a tenth of the way from the outer one to straight
+    // ahead, which for a cone as wide as there is -- a point light's -- is a
+    // fade over the thirty-seven degrees round straight BEHIND it: every
+    // `PointLight` left a dark disc on the ceiling above itself, black at its
+    // middle.
+    const float cone =
+        cosOuter <= -1.0f ? 1.0f : saturate((cosTheta - cosOuter) / max(cosInner - cosOuter, EngineEpsilon));
+
+    // `shadow` is 1 for every light that casts nothing, which is what makes a
+    // scene with no casting local light pay nothing for this.
+    return shadeDirect(surface, lightDirection, light.Color.rgb * (attenuation * cone * shadow));
+}
+
+// --- Image-based lighting ----------------------------------------------------
+//
+// The split-sum approximation (Karis 2013), and the reason the first renderer's ambient looked
+// like the early 2010s: a prefiltered environment indexed by roughness, times a
+// two-term BRDF table indexed by (N·V, roughness). What it buys is that a metal
+// reflects something, and what it costs is Karis's own assumption -- view equals
+// normal equals reflection -- which is what makes the environment pre-integrable
+// at all and which shows up as reflections that do not stretch with view angle.
+//
+// The environment is an OCTAHEDRAL 2D texture rather than a cubemap, because the
+// frozen RHI (ADR 0037) has no cube texture type. `engine/render/src/
+// environment.cpp` bakes it, and the mapping below is that file's
+// `octahedralUv` written a second time; the two have to agree exactly or a
+// reflection lands in the wrong direction.
+
+// Unit direction to the [0, 1] square, y-up.
+float2 octahedralUv(float3 direction)
+{
+    const float3 d = normalize(direction);
+    const float norm = abs(d.x) + abs(d.y) + abs(d.z);
+    const float3 n = d / max(norm, 1e-6f);
+
+    float2 f = float2(n.x, n.z);
+    if (n.y < 0.0f)
+    {
+        f = float2((1.0f - abs(n.z)) * (n.x >= 0.0f ? 1.0f : -1.0f),
+                   (1.0f - abs(n.x)) * (n.z >= 0.0f ? 1.0f : -1.0f));
+    }
+    return f * 0.5f + 0.5f;
+}
+
+// Irradiance from nine spherical-harmonic coefficients. They arrive
+// cosine-convolved and already divided by pi (environment.h), so the result
+// multiplies straight by a diffuse albedo -- there is no further 1/pi here and
+// adding one is the classic way an SH ambient ends up a third too dark.
+float3 evaluateIrradiance(float4 coefficients[9], float3 n)
+{
+    float3 result = coefficients[0].rgb * 0.282095f;
+    result += coefficients[1].rgb * (0.488603f * n.y);
+    result += coefficients[2].rgb * (0.488603f * n.z);
+    result += coefficients[3].rgb * (0.488603f * n.x);
+    result += coefficients[4].rgb * (1.092548f * n.x * n.y);
+    result += coefficients[5].rgb * (1.092548f * n.y * n.z);
+    result += coefficients[6].rgb * (0.315392f * (3.0f * n.z * n.z - 1.0f));
+    result += coefficients[7].rgb * (1.092548f * n.x * n.z);
+    result += coefficients[8].rgb * (0.546274f * (n.x * n.x - n.y * n.y));
+    // An SH reconstruction can ring below zero where the source has a sharp
+    // feature -- and the sun's disc is exactly that. Negative irradiance is not
+    // a dim surface, it is a black hole in an otherwise lit wall.
+    return max(result, float3(0.0f, 0.0f, 0.0f));
+}
+
+// Both lobes of the environment. `occlusion` multiplies this and nothing else:
+// a surface's occlusion of the ENVIRONMENT says nothing about whether the sun
+// reaches it, and the sun has a shadow map that answers exactly that.
+//
+// The map is the first layer of an array (ADR 0202): the sky's, with a room's
+// own in the layers after it.
+float3 evaluateEnvironment(Surface surface, Texture2DArray environmentMap, SamplerState environmentSampler,
+                           Texture2D brdfLut, SamplerState brdfSampler, float4 irradiance[9], float mipCount,
+                           float intensity, float occlusion)
+{
+    const float3 diffuse = surface.DiffuseColor * evaluateIrradiance(irradiance, surface.Normal);
+
+    // `Alpha` is roughness squared, and the mip chain is indexed by the
+    // perceptual roughness the material authored -- taking the square root back
+    // out is what keeps the chain's steps even.
+    const float roughness = sqrt(surface.Alpha);
+    const float3 reflection = reflect(-surface.View, surface.Normal);
+    const float3 prefiltered = environmentMap
+                                   .SampleLevel(environmentSampler, float3(octahedralUv(reflection), 0.0f),
+                                                roughness * (mipCount - 1.0f))
+                                   .rgb;
+
+    // The table supplies the Fresnel scale in R and the bias in G, which is the
+    // second half of the split sum. SampleLevel because the table has one mip
+    // and its derivatives are meaningless across a screen.
+    const float2 ab = brdfLut.SampleLevel(brdfSampler, float2(surface.NoV, roughness), 0.0f).rg;
+    const float3 specular = prefiltered * (surface.SpecularF0 * ab.x + ab.yyy);
+
+    return (diffuse + specular) * (intensity * occlusion);
+}
+
+// --- Cascaded shadows --------------------------------------------------------
+//
+// Four cascades in one 2x2 atlas (shadow.h says why an atlas rather than an
+// array), a filter radius constant in WORLD space, a normal-offset bias, and a
+// blend band rather than a switch at a plane. The roadmap names the last two as
+// the tells of a first cascaded implementation, so they are requirements here
+// rather than polish.
+//
+// **`Gather` is the comparison sampler.** ADR 0038 asks for one "so a tap
+// degrades instead of switching", and the property that matters is the
+// degradation: `SampleCmp` returns 0.25 rather than flipping 0 to 1 because it
+// bilinearly weights four binary comparisons. `Gather` returns those same four
+// texels in one texture operation, and the four comparisons and two lerps below
+// are six ALU instructions. So the frozen `SamplerDesc` gains no compare state
+// and the result is the same arithmetic (ADR 0043).
+
+// A per-pixel angle in [0, 2pi), from the pixel's own coordinates and nothing
+// else.
+//
+// Jimenez's interleaved gradient noise, which is the standard cheap choice for
+// exactly this job: it decorrelates NEIGHBOURING pixels while staying perfectly
+// stable in time, because it is a function of the pixel position alone. A
+// kernel rotated by it turns the one artifact a wide fixed grid produces --
+// concentric bands, where every pixel in a region samples the same five rings --
+// into fine noise that the eye reads as a soft edge.
+//
+// Stability in time is the property that matters here and is why this is not a
+// random number: a dither that changed per frame would trade a shadow that
+// steps for a shadow that boils.
+float shadowKernelAngle(float2 pixel)
+{
+    const float noise = frac(52.9829189f * frac(dot(pixel, float2(0.06711056f, 0.00583715f))));
+    return noise * 6.28318530718f;
+}
+
+// One tap: hardware-PCF's own answer, computed rather than sampled.
+float shadowTapPcf(Texture2D<float> atlas, SamplerState pointSampler, float2 uv, float reference, float2 atlasSize)
+{
+    // Gather returns the 2x2 neighbourhood in counter-clockwise order starting
+    // at the lower left: (-,+), (+,+), (+,-), (-,-) relative to the sample.
+    const float4 depths = atlas.Gather(pointSampler, uv);
+    const float4 lit = step(reference, depths);
+
+    // The same bilinear weights the texture unit would have used, from where the
+    // sample falls inside its texel.
+    const float2 texel = uv * atlasSize - 0.5f;
+    const float2 fraction = frac(texel);
+
+    const float bottom = lerp(lit.w, lit.z, fraction.x);
+    const float top = lerp(lit.x, lit.y, fraction.x);
+    return lerp(bottom, top, 1.0f - fraction.y);
+}
+
+// **Vogel's disc, as sixteen points**: point i at radius sqrt(i + 0.5), a
+// golden angle on from the one before -- even coverage with no rings for the
+// eye to find. Divided by sqrt(n) the first n of them are a disc of n points
+// and radius one, so one table serves every count.
+//
+// Constants, because they were computed per tap: a square root, a sine and a
+// cosine for each of sixteen, at every lit fragment of every frame, to arrive
+// at numbers that never change. What does change is the angle the whole disc
+// is turned by, which is one sine and one cosine a fragment.
+static const float2 EngineShadowDisc[16] = {
+    float2(0.70710678f, 0.00000000f),   float2(-0.90308875f, 0.82730327f), float2(0.13823221f, -1.57508471f),
+    float2(1.13828488f, 1.48469106f),   float2(-2.08889275f, -0.36949572f), float2(1.97878157f, -1.25873886f),
+    float2(-0.66186371f, 2.46210000f),  float2(-1.26224587f, -2.43037762f), float2(2.73856864f, 1.00012088f),
+    float2(-2.84902435f, 1.17603583f),  float2(1.37341800f, -2.93491448f),  float2(1.01492095f, 3.23572796f),
+    float2(-3.05898356f, -1.77274351f), float2(3.58853594f, -0.78892955f),  float2(-2.19002763f, 3.11508892f),
+    float2(-0.50594708f, -3.90435879f),
+};
+
+// A cascade whose far plane is past this was never drawn into: the renderer
+// puts the planes of the cascades the settings leave out at a distance no
+// frame holds (`kUnreachableDistance`).
+static const float EngineShadowNoCascade = 1.0e8f;
+
+// The receiver-slope part of the cascade bias, in texels of the cascade, and
+// the steepest slope it follows: past about eighty degrees the bias would grow
+// without bound, and a surface lit that edge-on is barely lit at all.
+static const float EngineShadowSlopeTexels = 2.0f;
+static const float EngineShadowMostSlope = 4.0f;
+
+// **The depth a cascade's taps are compared against**.
+//
+// The shadow pass culls front faces, so what a texel holds is the far side of
+// whatever is nearest the sun there. Two receivers ask opposite things of the
+// depth they are compared at:
+//
+//   - **A lit face of a thin mesh**, whose own far side is a hand behind it:
+//     across a texel or two of a coarse cascade the face rises past that far
+//     side, and compared where it stands it shadows itself. It wants
+//     the comparison moved TOWARDS the light, by its slope over two texels.
+//   - **A face under something that touches it** -- a wall under its
+//     ceiling, the ground under a crate: moved towards the light it comes out
+//     from under what casts on it. That was a band of full sun along the top
+//     of every wall that stands in a ceiling's shadow, as tall as the bias is
+//     long: at `Low` and on a phone, where no contact shadow hides it, every
+//     room had it. And the filter reads to the side of the receiver, where a
+//     point at the receiver's own depth is already above the caster's face:
+//     it wants the comparison moved AWAY from the light, by its slope over
+//     the filter's radius.
+//
+// What tells them apart is what the map holds in the four texels round the
+// lookup, asked two ways, and **a receiver is under a caster only where both
+// say so**:
+//
+//   - in front of the receiver's own DEPTH in two or more of the four. A lit
+//     slab has its far side behind it in all four, or in front in one where
+//     a coarse texel reaches round its slope. Alone, this called a cloth a
+//     caster of itself: a sheet has no far side, the map holds the sheet, and
+//     across a texel of its slope that is in front in two. The cloth
+//     speckled, differently in every frame -- which no count over a still
+//     picture saw, and a count of pixels that pop from one frame to the next
+//     did.
+//   - in front of the receiver's own PLANE in two or more: where the plane is
+//     at each texel, from the mesh's own normal and the light. A sheet's own
+//     surface is in front of its plane in none, at any slope. Alone, this
+//     called a slab's own side a caster, past the edge of its top.
+//
+// Otherwise the receiver is in the clear and is compared towards the light,
+// as it always was. One read of four texels, beside the taps.
+//
+// Measured (39-interior with contact shadows off, the slab of an earlier defect, a cloth
+// and a room with a walker in it, a picture a frame): the band under the
+// ceiling, 21 rows of 720 at `Low` and 10 at `Ultra`, is a dotted line a pixel
+// wide; the slab self-shadows in none of its 36 cases, and one a centimetre
+// thick as it did; nothing pops more from frame to frame than it did.
+
+// **The mesh's own normal at a pixel**, before any normal map: the plane the
+// surface lies in, for `shadowReference`. A normal map tilts the normal a
+// surface is LIT by, and a plane made from that is one the surface is not
+// in -- its own depths in the map would stand in front of it. Said by the
+// stage that has it; left at nought, the lookup falls back on the normal it
+// was handed (the ground's, which is its own surface's).
+//
+// The interpolated one, and not the face's own from how the position changes
+// across the screen: that was built and measured, and the derivatives cost
+// the lit pass a quarter of a millisecond at `Low` and two thirds at `High`
+// on an integrated GPU at 1920 by 1080, for a cloth that pops no less.
+static float3 EngineGeometricNormal = float3(0.0f, 0.0f, 0.0f);
+
+// **Whether a receiver under a caster is told from one in the clear at all.**
+// Said by the stage that lights a surface, from the frame's settings; left
+// as it is, a lookup is the released one. And never for a mesh that BENDS --
+// a skinned one (`ENG_SHADOW_BENDS`, said by the skinned shaders): where a
+// cloth folds, the normal carried across a triangle is not the plane the
+// triangle lies in, and the rule left a faint speckle on the fold that moved
+// with it. A thing that bends does not meet a ceiling along a joint; it
+// keeps the bias it had, to the pixel. (Shape keys on a mesh with no
+// skeleton take the rule: such a mesh is drawn as the same mesh made with
+// that shape, and `morph_landing` holds the two to one picture.)
+static bool EngineShadowUnderCasters = false;
+
+float shadowReference(Texture2D<float> atlas, SamplerState pointSampler, float2 centre, float2 lowest, float2 highest,
+                      float depth, float texelWorld, float depthRange, float radiusTexels, float nol, uint cascade,
+                      float3 normal, float2 atlasSize)
+{
+    // The residual depth bias is stated in METRES and converted here, because a
+    // constant in depth units means a different distance in every cascade.
+    const float flat = depth - ShadowParams.w / depthRange;
+    // **A slope term in TEXELS of the cascade, and not in metres**: two
+    // texels of the receiver's slope is a centimetre or two near the eye and
+    // enough where the texels are wide.
+    const float slope = min(sqrt(saturate(1.0f - nol * nol)) / max(nol, 0.05f), EngineShadowMostSlope);
+    const float perTexel = texelWorld * slope / depthRange;
+#ifdef ENG_SHADOW_BENDS
+    return flat - perTexel * EngineShadowSlopeTexels;
+#else
+    if (!EngineShadowUnderCasters)
+    {
+        return flat - perTexel * EngineShadowSlopeTexels;
+    }
+
+    // The four are read inside the cascade's own tile, like every tap: at a
+    // tile's edge that is to one side of the lookup, and the plane is asked
+    // where they are.
+    const float2 read = clamp(centre, lowest, highest);
+    const float2 moved = (read - centre) * atlasSize;
+    // **Which four, said here and not left to the sampler.** A gather takes
+    // the four texels round its point, and at a point that stands on a
+    // texel's centre line which four is a matter of the last bit: this
+    // arithmetic would say one row and the hardware read the next, and the
+    // plane be asked a texel away from the depths it is compared with. Read
+    // at the corner the four share, they are the four this arithmetic says.
+    const float2 corner = floor(read * atlasSize - 0.5f);
+    const float2 within = read * atlasSize - 0.5f - corner;
+    const float4 around = atlas.Gather(pointSampler, (corner + 1.0f) / atlasSize);
+    // In the clear by its depth: nearly every lit pixel, which goes no
+    // further. The plane is asked only of what the depth calls under a
+    // caster -- measured on an integrated GPU, asking it of every pixel cost
+    // the lit pass a tenth more at `Low`.
+    const float behindDepth = dot(step(flat, around), float4(1.0f, 1.0f, 1.0f, 1.0f));
+    [branch]
+    if (behindDepth > 2.5f)
+    {
+        return flat - perTexel * EngineShadowSlopeTexels;
+    }
+    // And under one beyond any doubt: all four in front by more than the
+    // plane could lean across them. Everything deep in a shadow -- most of a
+    // room -- goes no further either.
+    const float reach = 2.0f + max(abs(moved.x), abs(moved.y));
+    const float deep = flat - 2.0f * reach * texelWorld / (max(nol, 0.05f) * depthRange);
+    [branch]
+    if (max(max(around.x, around.y), max(around.z, around.w)) < deep)
+    {
+        return flat + perTexel * radiusTexels;
+    }
+
+    // **Where the receiver's plane is at each of the four texels.** A texel
+    // to the side of the lookup is a step across the light, and along the
+    // plane that step is a depth: the surface's lean that way, over how
+    // squarely the light meets it. As steep as the plane is, and through the
+    // receiver's own depth with no allowance: a sheet's surface is ON its
+    // plane, and the allowance was the width of a line of sun along a joint.
+    const float3 along = normalize(CascadeViewProjection[cascade][0].xyz);
+    // A texture's V runs down where the cascade's Y runs up.
+    const float3 down = -normalize(CascadeViewProjection[cascade][1].xyz);
+    const float3 own = dot(EngineGeometricNormal, EngineGeometricNormal) > 0.5f ? EngineGeometricNormal : normal;
+    const float ownNol = dot(own, normalize(SunDirectionBrightness.xyz));
+    const float2 lean = float2(dot(own, along), dot(own, down)) * (texelWorld / (max(ownNol, 0.05f) * depthRange));
+    // Gather's order: (-,+), (+,+), (+,-), (-,-) round the sample.
+    const float4 across = moved.x + float4(-within.x, 1.0f - within.x, 1.0f - within.x, -within.x);
+    const float4 downward = moved.y + float4(1.0f - within.y, 1.0f - within.y, -within.y, -within.y);
+    const float4 plane = depth + across * lean.x + downward * lean.y;
+    const float behindPlane = dot(step(plane, around), float4(1.0f, 1.0f, 1.0f, 1.0f));
+    const float clear = saturate(behindPlane - 2.0f);
+    return flat - perTexel * EngineShadowSlopeTexels * clear + perTexel * radiusTexels * (1.0f - clear);
+#endif
+}
+
+// One cascade. Returns 1 where the sun reaches.
+//
+// **Rewritten after the Godot study (2026-09-22), for three defects a person
+// saw at once:** shadows soft and faint everywhere, lifted off the base of the
+// thing casting them, and gone altogether on thin casters at a distance. All
+// three came from one number: a filter that could never be narrower than six
+// texels of whatever cascade it was in. Six texels of the last cascade is most
+// of a metre, which erases a fence post; and the normal offset was scaled by
+// that filter, so it pushed every shadow half a filter away from its caster.
+//
+// What replaced it is what the reference renderers do:
+//   - the penumbra is a WORLD size (`ShadowParams.x`), so it is the same width
+//     in every cascade, floored at a texel and a half so an edge is never a
+//     single hard step;
+//   - sixteen taps on a Vogel disk, turned per pixel by interleaved gradient
+//     noise -- a disc rather than a square, and a third of the taps the 7x7 grid
+//     took, each still a bilinear four-texel comparison;
+//   - a normal offset of one and a half TEXELS, applied only sideways to the
+//     light, so it moves the lookup off the receiver's own texel without moving
+//     the shadow towards or away from its caster.
+float sampleCascade(Texture2D<float> atlas, SamplerState pointSampler, uint cascade, float3 position, float3 normal,
+                    float nol, float2 atlasSize, float2 pixel)
+{
+    const float texelWorld = CascadeTexelWorld[cascade];
+    const float depthRange = max(CascadeDepthRange[cascade], 1e-3f);
+
+    // The kernel's reach in texels: the authored world penumbra over this
+    // cascade's texel, never under a texel and a half and never over six.
+    const float radiusTexels = clamp(ShadowParams.x / max(texelWorld, 1e-6f), 1.5f, 6.0f);
+
+    // Normal offset, sideways to the light only (the reference renderers' form):
+    // the part of the normal that points along the light would move the lookup
+    // towards or away from the caster, which is peter-panning; the part across
+    // it moves the lookup off the texel the receiver itself wrote. Scaled by how
+    // grazing the light is, so a face-on receiver is not moved at all.
+    const float3 toLight = normalize(SunDirectionBrightness.xyz);
+    float3 offset = normal * ((1.0f - saturate(nol)) * ShadowParams.y * texelWorld);
+    offset -= toLight * dot(toLight, offset);
+
+    const float4 lightClip = mul(CascadeViewProjection[cascade], float4(position + offset, 1.0f));
+    const float3 ndc = lightClip.xyz / lightClip.w;
+    if (any(abs(ndc.xy) > 1.0f) || ndc.z < 0.0f || ndc.z > 1.0f)
+    {
+        // Outside the cascade there is no information and the honest answer is
+        // "lit". Returning 0 is how a scene gains a hard black edge exactly
+        // where a fitted box stops.
+        return 1.0f;
+    }
+
+    // NDC +Y is up and a texture's V runs down. This holds on every backend
+    // because SDL_GPU flips the Vulkan viewport to match D3D
+    // (SDL_gpu_vulkan.c:7503-7505), and depth is [0, 1].
+    const float2 local = ndc.xy * float2(0.5f, -0.5f) + float2(0.5f, 0.5f);
+
+    // **A slope term in TEXELS of the cascade, and not in metres**. A
+    // slope bias in metres cures acne on a surface that has no far side to
+    // store -- terrain -- and lifts every mesh's shadow off its base, because a
+    // closed mesh needs little: the shadow pass culls its front faces,
+    // so what is stored is its far side. But a THIN mesh's far side is a hand
+    // away -- a slab, the cap along a wall -- and a lit top the sun meets at a
+    // low angle rises past it across one texel of a far cascade. The constant
+    // was a cascade-0 number: the coarse cascades darkened such a top and the
+    // near one did not, a patch of different shading that slid with the camera
+    // as the splits did. The terrain still carries its own push, on the caster
+    // side. Which way the term goes is `shadowReference`'s to say.
+
+    // One texel of this cascade, in atlas uv: the tile is half the atlas.
+    const float2 texelUv = 1.0f / atlasSize;
+    const float2 radiusUv = radiusTexels * texelUv;
+
+    // The tile: cascade 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right.
+    const float2 tile = float2(float(cascade & 1u), float(cascade >> 1u)) * 0.5f;
+    // A tap that walks off its tile reads the NEIGHBOURING cascade's depth,
+    // which is a bright seam along the split. Clamped to the tile, inset by the
+    // disc's reach and the bilinear tap's own half texel.
+    const float2 inset = radiusUv + texelUv;
+    const float2 lowest = tile + inset;
+    const float2 highest = tile + float2(0.5f, 0.5f) - inset;
+    const float2 centre = tile + local * 0.5f;
+    const float reference = shadowReference(atlas, pointSampler, centre, lowest, highest, ndc.z, texelWorld, depthRange,
+                                            radiusTexels, nol, cascade, normal, atlasSize);
+
+    // **How many taps is the level's to say** (ADR 0172): `EnvironmentParams.w`
+    // -- four at Low, eight at Medium, and zero for the sixteen of High and
+    // above. The first n points of the disc, turned by one angle for the pixel.
+    //
+    // The three counts the levels use are each a loop the compiler unrolls,
+    // with the disc's points folded into the code: measured, a loop it cannot
+    // unroll costs sixteen taps six per cent more than the taps themselves.
+    // Any other count is a measurement's (`[debug] shadow_taps`, ADR 0171),
+    // and takes the loop.
+    // Each a real branch: flattened, a fragment would take all twenty-eight
+    // taps and keep the answer of one set.
+    const int asked = int(EnvironmentParams.w);
+    // **Turned only as far as the disc is sparse**. The turn is there
+    // to break up what a kernel with gaps in it draws -- the same few steps
+    // at every pixel of a wide penumbra. But each tap is a bilinear
+    // comparison two texels across, and where the taps stand closer than
+    // that the disc has no gaps: unturned it is a smooth ramp, and turned it
+    // is the same ramp with every pixel's answer a little off its
+    // neighbour's -- a fringe of hairs a pixel wide along every shadow's
+    // edge, still for ever, which only a temporal pass was hiding. Sixteen
+    // taps are never that sparse (seven texels a tap at the widest kernel);
+    // eight and four are at their widest, and are turned by that much.
+    const int taps = asked <= 0 || asked >= 16 ? 16 : asked;
+    const float texelsATap = 3.14159265f * radiusTexels * radiusTexels / float(taps);
+    const float sparse = saturate((texelsATap - 10.0f) / 10.0f);
+    float turnSin = 0.0f;
+    float turnCos = 0.0f;
+    sincos(shadowKernelAngle(pixel) * sparse, turnSin, turnCos);
+
+#define ENGINE_SHADOW_TAP(index, count) \
+    { \
+        const float2 tap = EngineShadowDisc[index]; \
+        const float2 turned = float2(tap.x * turnCos - tap.y * turnSin, tap.x * turnSin + tap.y * turnCos); \
+        const float2 uv = clamp(centre + turned * (radiusUv * rsqrt(float(count))), lowest, highest); \
+        lit += shadowTapPcf(atlas, pointSampler, uv, reference, atlasSize); \
+    }
+
+    float lit = 0.0f;
+    [branch]
+    if (asked == 4)
+    {
+        [unroll]
+        for (int i = 0; i < 4; ++i)
+            ENGINE_SHADOW_TAP(i, 4)
+        return lit * 0.25f;
+    }
+    [branch]
+    if (asked == 8)
+    {
+        [unroll]
+        for (int i = 0; i < 8; ++i)
+            ENGINE_SHADOW_TAP(i, 8)
+        return lit * 0.125f;
+    }
+    [branch]
+    if (asked <= 0 || asked >= 16)
+    {
+        [unroll]
+        for (int i = 0; i < 16; ++i)
+            ENGINE_SHADOW_TAP(i, 16)
+        return lit * 0.0625f;
+    }
+    [loop]
+    for (int i = 0; i < asked; ++i)
+        ENGINE_SHADOW_TAP(i, asked)
+    return lit / float(asked);
+#undef ENGINE_SHADOW_TAP
+}
+
+// How much of the sun reaches this fragment: 1 lit, 0 fully occluded.
+//
+// `viewDepth` is the fragment's distance along the camera's forward axis, which
+// is what the splits are stated in. It arrives as an interpolant rather than
+// being derived from `SV_Position`, because deriving it would need the
+// projection this stage is not given.
+float sampleSunShadow(Texture2D<float> atlas, SamplerState pointSampler, float3 position, float3 normal, float nol,
+                      float viewDepth, float2 pixel)
+{
+    uint width = 0;
+    uint height = 0;
+    atlas.GetDimensions(width, height);
+    const float2 atlasSize = float2(float(max(width, 1u)), float(max(height, 1u)));
+
+    // The first cascade that reaches this fragment. A loop rather than a chain
+    // of selects so the count is a constant one place.
+    uint cascade = 3u;
+    [unroll]
+    for (uint i = 0u; i < 4u; ++i)
+    {
+        if (viewDepth <= CascadeFar[i])
+        {
+            cascade = i;
+            break;
+        }
+    }
+
+    // **A cascade nobody drew into has nothing to look up**: its
+    // tile is cleared, and sixteen taps of a cleared tile are sixteen ways of
+    // reading "lit". A fragment past the last cascade the settings draw, and
+    // every fragment of a frame with no sun shadow at all, stops here.
+    if (CascadeFar[cascade] > EngineShadowNoCascade)
+    {
+        return 1.0f;
+    }
+
+    const float lit = sampleCascade(atlas, pointSampler, cascade, position, normal, nol, atlasSize, pixel);
+
+    // Blend over a BAND rather than switching at a plane, which the roadmap
+    // names as the second tell of a first cascaded implementation. A hard
+    // handover is visible for the same reason a filter that changes width is:
+    // two adjacent patches of one surface shaded by two different maps.
+    const float near = cascade == 0u ? 0.0f : CascadeFar[cascade - 1u];
+    const float far = CascadeFar[cascade];
+    const float band = max((far - near) * ShadowParams.z, 1e-4f);
+    const float blend = saturate((viewDepth - (far - band)) / band);
+    if (blend <= 0.0f || cascade >= 3u)
+    {
+        return lit;
+    }
+
+    // Into a cascade that was not drawn, the blend is a fade to lit: what the
+    // end of the shadow distance looks like, at no lookup.
+    float next = 1.0f;
+    if (CascadeFar[cascade + 1u] <= EngineShadowNoCascade)
+    {
+        next = sampleCascade(atlas, pointSampler, cascade + 1u, position, normal, nol, atlasSize, pixel);
+    }
+    return lerp(lit, next, blend);
+}
+
+// Linear fog towards `fogColor`. `fogRange.z` is 1/(end - start) precomputed on
+// the CPU and is zero when fog is off, which zeroes the factor without this
+// function ever knowing that fog can be off at all.
+float3 applyFog(float3 color, float3 fogColor, float4 fogRange, float viewDistance)
+{
+    const float factor = saturate((viewDistance - fogRange.x) * fogRange.z);
+    return lerp(color, fogColor, factor);
+}
+
+#endif // ENG_BRDF_HLSLI

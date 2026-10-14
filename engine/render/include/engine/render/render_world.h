@@ -1,0 +1,1344 @@
+// The POD snapshot rendering reads (ADR 0027, architecture.md §4).
+//
+// Rendering never walks the ECS. It walks this, and the difference is the whole
+// point: extraction happens once per frame at a known moment, so the renderer
+// cannot observe a half-mutated world, cannot keep an `InstanceId` alive past
+// its retirement, and can be handed to another thread the day one exists.
+//
+// It is a snapshot rather than a view for the same reason `scene`'s change queue
+// carries POD facts: the two sides have different lifetimes and the seam is what
+// keeps that from mattering.
+//
+// **Everything here is in camera-relative f32 space.** `CFrameD` carries f64
+// because an open world needs it (ADR 0014), and a renderer does not: subtract
+// the camera's position first and every coordinate the GPU sees is small.
+// `origin` records what was subtracted. Deciding this at extraction rather than
+// after four releases of matrices was decided with the first renderer, and it is what
+// makes the floating origin with the streaming work a change to one function.
+#pragma once
+
+#include <array>
+#include <span>
+#include <string>
+#include <vector>
+
+#include "engine/asset/terrain_rules.h"
+#include "engine/core/id.h"
+#include "engine/core/math.h"
+#include "engine/core/name_atom.h"
+#include "engine/core/types.h"
+#include "engine/render/animation.h"
+#include "engine/render/draw_poses.h"
+#include "engine/render/look.h"
+#include "engine/render/mesh_cache.h"
+#include "engine/render/shader_types.h"
+#include "engine/render/transform_history.h"
+#include "engine/render/ui_gradient.h"
+#include "engine/rhi/types.h"
+
+namespace engine::scene {
+class World;
+struct PartComponent;
+} // namespace engine::scene
+
+namespace engine::render {
+
+using core::AABB;
+using core::CFrameD;
+using core::Color3;
+using core::DVec3;
+using core::f32;
+using core::Frustum;
+using core::Mat4;
+using core::u32;
+using core::u64;
+using core::usize;
+using core::Vec3;
+
+// One drawable part from the debug path. Deliberately not an `InstanceId`:
+// nothing downstream may resolve one, because by the time a frame is drawn the
+// instance behind it may have been destroyed and retired.
+struct RenderPart
+{
+    CFrameD cframe;
+    Vec3 size{1.0f, 1.0f, 1.0f};
+    Color3 color{1.0f, 1.0f, 1.0f};
+    f32 transparency = 0.0f;
+    // `Enum.PartShape`'s stored value.
+    core::i32 shape = 0;
+};
+
+// The view the frame is rendered from, already resolved into matrices.
+//
+// `valid` is false when `Workspace.CurrentCamera` is nil or names something that
+// has been destroyed. The renderer draws nothing then, which is the documented
+// behaviour: a view nobody asked for is harder to debug than a black frame.
+struct RenderCamera
+{
+    bool valid = false;
+    // The f64 world position every f32 coordinate in this snapshot is relative
+    // to. It is the camera's own position, so the camera sits at the origin of
+    // the space the GPU works in.
+    DVec3 origin;
+    Mat4 view;
+    Mat4 projection;
+    Mat4 viewProjection;
+    // **The view-projection without an oblique near plane** (ADR 0107): the
+    // same as `viewProjection` unless the camera has a `ClipPlane`. What turns
+    // a screen position back into a direction -- the sky, the air -- uses
+    // this, because an oblique far plane has points at infinity in it.
+    Mat4 skyViewProjection;
+    // **The view-projection without the jitter** (ADR 0158): what a motion
+    // vector is measured in, so a still camera moves nothing. The same as
+    // `viewProjection` on every frame that is not jittered.
+    Mat4 unjitteredViewProjection;
+    // In the same camera-relative space, so culling needs no conversion.
+    Frustum frustum;
+    f32 nearPlane = 0.1f;
+    f32 farPlane = 5000.0f;
+    // A sub-pixel offset folded into the projection, in NDC units: what the
+    // picture moves by. Zero on every frame but a temporal pass's (ADR 0158),
+    // which `jitterCamera` sets.
+    //
+    // **A jitterable projection is a renderer OUTPUT, not private state of an
+    // anti-aliasing pass** (roadmap, the lighting work's second design constraint, a deliberate
+    // choice of 2026-08-21). Temporal anti-aliasing and every temporal upscaler
+    // need exactly two things -- a per-pixel motion vector and this -- and
+    // declaring them here rather than inside whichever pass first wants them is
+    // what makes that later work days instead of a milestone.
+    //
+    // The other half shipped with its consumer (ADR 0158): a velocity target
+    // written only on a frame with the temporal pass, from the depth for what
+    // stands still and by a pass of its own for what moves -- never a second
+    // target on every forward draw.
+    core::Vec2 jitter;
+};
+
+// **Moves the picture by `jitter`, in NDC units** (ADR 0158): folded into the
+// projection and every matrix made from it, after extraction, by the host
+// that asked the renderer where this frame's sample lies.
+void jitterCamera(RenderCamera& camera, core::Vec2 jitter) noexcept;
+
+enum class LightKind : core::u8
+{
+    Point,
+    Spot,
+};
+
+struct RenderLight
+{
+    LightKind kind = LightKind::Point;
+    // Camera-relative.
+    Vec3 position;
+    // Spot only; the direction the cone points, unit length.
+    Vec3 direction{0.0f, -1.0f, 0.0f};
+    Color3 color{1.0f, 1.0f, 1.0f};
+    f32 brightness = 1.0f;
+    f32 range = 16.0f;
+    // Cosine of the HALF angle, precomputed because a shader compares against a
+    // dot product and would otherwise take a cosine per fragment per light.
+    //
+    // **-1 for a point light, not 1.** This comment said 1 and called it "the
+    // value that makes the cone test pass everywhere", which is exactly
+    // backwards: cos(halfAngle) == 1 is the NARROWEST cone expressible, and -1
+    // is the one that admits every direction. The renderer already wrote -1;
+    // only the contract was wrong, which is the worse way round -- a shader
+    // author reading it would have implemented the opposite.
+    f32 spotCosHalfAngle = -1.0f;
+    bool shadows = false;
+};
+
+// `Lighting`'s state, resolved. The sun is here rather than in the light list
+// because there is exactly one of it and it is the only shadow caster in v1.
+struct RenderEnvironment
+{
+    // Points from the world towards the sun, so shading dots it against a
+    // normal without negating.
+    Vec3 sunDirection{0.0f, 1.0f, 0.0f};
+    // Enclosed spaces, and open ones: `Lighting.Ambient` and
+    // `Lighting.OutdoorAmbient` (ADR 0084).
+    Color3 ambient{0.15f, 0.16f, 0.2f};
+    Color3 outdoorAmbient{0.15f, 0.16f, 0.2f};
+    f32 sunBrightness = 2.0f;
+    Color3 fogColor{0.6f, 0.7f, 0.85f};
+    f32 fogStart = 200.0f;
+    // At or below `fogStart` means no fog, which is how it is switched off.
+    f32 fogEnd = 0.0f;
+    // EV stops on top of the automatic exposure. Zero means "whatever the
+    // frame measured", positive is brighter, and the unit is the one a person
+    // who has used a camera already knows. `Lighting.ExposureCompensation`.
+    f32 exposureCompensation = 0.0f;
+    // `Lighting.ExposureMin` and `ExposureMax`: the automatic
+    // exposure's limits, in EV stops.
+    f32 exposureMin = -2.7369655f;
+    f32 exposureMax = 1.5849625f;
+    // ADR 0096: `Lighting`'s five, as the renderer applies them. Defaults
+    // reproduce the picture before they existed, to the bit.
+    f32 environmentDiffuseScale = 1.0f;
+    f32 environmentSpecularScale = 1.0f;
+    // `ShadowSoftness`, 0 to 1.
+    f32 shadowSoftness = 0.2f;
+    bool globalShadows = true;
+    bool autoExposure = true;
+    // **A view with no world behind it** (ADR 0107, `ViewportFrame`): no sky
+    // is drawn, and what nothing covers is left clear, so the picture shows
+    // only its instances over whatever the UI has behind it.
+    bool transparentBackground = false;
+    // Multiplies the sun's colour: a view that lights its instances its own
+    // way (`ViewportFrame.LightColor`). White is the world's own light.
+    Color3 lightTint{1.0f, 1.0f, 1.0f};
+    // The game's own clock, `RunService.SimTime`, for what drifts with it --
+    // the clouds (ADR 0096). Never a wall clock (R10): a paused game's clouds
+    // stand still and a replay's move the same way.
+    core::f64 simTime = 0.0;
+    // The same clock interpolated to the frame being drawn -- `simTime` plus
+    // the tick fraction the transforms are drawn at -- which is what a surface
+    // shader's `Time` is (ADR 0091), so a GPU wave and a Luau wave agree.
+    core::f64 surfaceTime = 0.0;
+    // The workspace's wind (ADR 0115): direction and speed, gusts, turbulence.
+    core::Vec3 wind{};
+    core::f32 windGusts = 0.0f;
+    core::f32 windTurbulence = 0.0f;
+};
+
+// One value a surface shader reads (ADR 0091), by the name it declares: a
+// number or vector, or a texture. Built-in fields travel under their own names
+// (`Color`, `Roughness`, `ColorMap`...), which is how a shader that names one
+// gets it.
+struct SurfaceValue
+{
+    std::string name;
+    std::array<f32, 4> value{};
+    rhi::TextureHandle texture{};
+    bool isTexture = false;
+
+    [[nodiscard]] bool operator==(const SurfaceValue&) const noexcept = default;
+};
+
+// A material, resolved into what the GPU binds.
+//
+// Copied INTO the snapshot rather than pointed at, which is ADR 0027's rule
+// working: the renderer must not be able to follow a pointer into a library
+// that something reloaded between extraction and submission. Sixty-four bytes
+// and four handles per distinct material in the frame is a cheap price for that.
+struct RenderMaterial
+{
+    GpuMaterialUniforms uniforms;
+    rhi::TextureHandle baseColor{};
+    rhi::TextureHandle normal{};
+    rhi::TextureHandle metallicRoughness{};
+    rhi::TextureHandle emissive{};
+
+    // **The surface shader it names** (ADR 0091), or empty for the built-in
+    // surface; and every value that shader may read, by name. The renderer
+    // packs them into the shader's block, since only it holds the shader's
+    // layout.
+    std::string surface;
+    std::vector<SurfaceValue> surfaceValues;
+    // The material asks for the scene's colour behind it (a blended surface).
+    bool readsSceneColor = false;
+    // Its `AlphaMode` is Mask: a surface shader that cuts itself, which its
+    // depth-only passes cannot do.
+    bool masked = false;
+
+    // The four maps, and the four flags that say they are there.
+    //
+    // **One verb, because they are one fact stated twice**. The shader
+    // never branches on whether a map is bound -- every slot always has a
+    // texture, a 1x1 stand-in when the material has none -- so `textureFlags`
+    // is what decides whether the sample is used at all: it multiplies the
+    // difference between "the map" and "the factor". A handle set without its
+    // flag is therefore a texture that is bound, sampled, and then multiplied
+    // by zero, which draws EXACTLY like a material whose map was never set.
+    //
+    // That is not hypothetical. `materialOf` assigned the four handles and left
+    // the flags at their zero default, so every `Material` instance in this
+    // engine ignored every map it was given -- reported as a preview sphere
+    // that would not take a diffuse. The glTF path a few lines away had always
+    // written both, which is why meshes from files looked right and made the
+    // difference impossible to see from the symptom.
+    void setMaps(rhi::TextureHandle base, rhi::TextureHandle normalMap, rhi::TextureHandle metallicRoughnessMap,
+                 rhi::TextureHandle emissiveMap) noexcept
+    {
+        baseColor = base;
+        normal = normalMap;
+        metallicRoughness = metallicRoughnessMap;
+        emissive = emissiveMap;
+        uniforms.textureFlags[0] = baseColor.valid() ? 1.0f : 0.0f;
+        uniforms.textureFlags[1] = normal.valid() ? 1.0f : 0.0f;
+        uniforms.textureFlags[2] = metallicRoughness.valid() ? 1.0f : 0.0f;
+        uniforms.textureFlags[3] = emissive.valid() ? 1.0f : 0.0f;
+    }
+};
+
+// `DrawItem::terrainMorph` for a draw with no geomorph.
+inline constexpr core::u32 NoTerrainMorph = 0xFFFFFFFFu;
+// A draw no morph target moves (ADR 0196): nearly every draw there is.
+inline constexpr core::u32 NoMorph = 0xFFFFFFFFu;
+
+// One draw: a mesh section with a transform and a material.
+//
+// `sortKey` is computed here and never in a backend. That is the roadmap's third
+// design constraint: `RenderWorld` is a POD snapshot, so grouping by pipeline
+// and material at extraction is inherited by every backend, while doing it
+// inside `rhi_sdlgpu` would be work bgfx has to repeat.
+struct DrawItem
+{
+    // Pass, then pipeline, then material, then quantized depth -- most
+    // significant first, so one integer compare orders a frame.
+    u64 sortKey = 0;
+    Mat4 transform;
+    MeshHandle mesh;
+    // Index into the mesh's sections.
+    u32 section = 0;
+    // Index into `RenderWorld::materials`, deduplicated across the frame so the
+    // sort key groups draws that share a bind set.
+    u32 material = 0;
+    // `1 - BasePart.Transparency` times the material's own base-colour alpha.
+    // The product, because both are real sources of see-through and honouring
+    // one leaves the other rendering wrong.
+    f32 alpha = 1.0f;
+    // Whether this draw belongs to the blended pass. Derived from `alpha` and
+    // stored rather than recomputed, because the sort key was built from it and
+    // a submission that re-derived the answer could disagree with the order it
+    // is walking.
+    bool transparent = false;
+    // `BasePart.CastShadow`: false for a part its game asked to cast none.
+    // True for everything that is not a part -- the ground, the blocks, a rope.
+    bool castShadow = true;
+    // `BasePart.ReceivesDecals`: false for a part no decal paints. True for
+    // everything that is not a part: the ground always receives.
+    bool receivesDecals = true;
+    // **See-through on this machine alone** (`BasePart.Fade`): the draw is
+    // blended because this machine thinned it, not because the part is
+    // see-through -- so it casts the shadow it would have cast.
+    bool fadedOnly = false;
+    // The draw's world bounds as a sphere, in the snapshot's camera-relative
+    // space. A sphere rather than the box it came from, because every consumer
+    // is a distance test: the shadow pass rejects a caster against a cascade's
+    // own sphere, which is what keeps four cascades from costing four times the
+    // submission. Conservative in the direction that never drops geometry.
+    Vec3 boundsCenter;
+    f32 boundsRadius = 0.0f;
+    // Whether the camera can see it. False items are still in the list because
+    // **a caster outside the view still casts into it**: dropping them from the
+    // snapshot removed the shadows of everything behind the camera, which is a
+    // correct-looking image with the wrong shadows in it. The shadow pass draws
+    // every item; the forward pass draws only these.
+    bool inCameraFrustum = true;
+    // Where this draw's joint palette starts in `RenderWorld::bones`, and how
+    // many matrices it has. Zero count is the common case and means "not
+    // skinned": the draw goes through the static pipeline and binds one vertex
+    // buffer, exactly as it did before skinning existed.
+    u32 firstBone = 0;
+    u32 boneCount = 0;
+    // Whether the tool that is looking at this world has this draw SELECTED.
+    //
+    // The one thing in this struct that is not a property of the world, and it
+    // is here rather than as a second list for the reason the sort key is here:
+    // the outline pass walks the same draws in the same order as every other
+    // pass, and a parallel list of instance ids would have to be searched per
+    // draw by a renderer that deliberately does not know what an instance is.
+    // False on every frame a game renders, so a packaged build's draw list is
+    // the one it always was.
+    bool outlined = false;
+    // Which `Highlight` marks this draw (ADR 0129), as one more than its place
+    // in `RenderWorld::highlights`; zero for none, which is every draw in a
+    // world with no highlight in it.
+    core::u8 highlight = 0;
+    // A terrain mesh (ADR 0082): drawn with the terrain's own forward shader,
+    // which takes its material and the sky it sees per vertex.
+    bool terrain = false;
+    // A chunk of the block world: drawn with the block shader, which takes
+    // its colour per vertex from the registry and its shading from the
+    // per-corner occlusion the mesher baked.
+    bool voxelBlock = false;
+    // Faces with holes from their image's alpha -- a block world's leaves.
+    // Kept out of the depth prepass, which has no image to test and would
+    // write the holes as solid.
+    bool cutout = false;
+    // Which terrain a terrain draw belongs to, so its layers are the ones
+    // bound (ADR 0113): the `RenderTerrain` with this id.
+    core::InstanceId terrainId{};
+    // The level of detail of a terrain draw's node, for the debug view of
+    // levels. Zero for everything else.
+    core::u8 terrainLevel = 0;
+    // A terrain draw's geomorph: its row in `RenderWorld::terrainMorphs`, or
+    // `NoTerrainMorph`.
+    u32 terrainMorph = NoTerrainMorph;
+    // **The morph targets this draw is moved by** (ADR 0196): its row in
+    // `RenderWorld::morphs`, or `NoMorph` -- for a mesh with no targets, for a
+    // section none of them reaches, and for a body whose weights are all at
+    // nought this frame. A draw with a row is drawn on its own, through the
+    // morph pipelines; one without is as it always was, in its run.
+    u32 morph = NoMorph;
+    // **Which thing this draw is, for its motion** (ADR 0158): the instance,
+    // packed, for a part a frame can find again in the next; zero for what
+    // never moves on its own -- the ground, the blocks, the water -- whose
+    // motion is the camera's.
+    u64 motionKey = 0;
+};
+
+// **What casts into the sun's map**: what is drawn solid. A see-through
+// surface -- a pane of glass, water, a part faded by `Transparency` -- cast a
+// shadow as dark as a wall's, because the shadow pass took every draw; a part
+// hidden at full transparency draws nothing and so casts nothing, and one
+// nearly hidden should not darken the ground like a block either. What blends
+// casts none, which is the default of the engines this follows; a coloured
+// shadow through glass is a feature of its own.
+//
+// **And what its game switched off** (`BasePart.CastShadow`): a muzzle flash,
+// a blade's trail, a ring on the ground -- solid, lit, and not a thing that
+// has a shadow.
+//
+// **And not what one machine thinned for itself** (`BasePart.Fade`): a tree
+// hidden from a camera has not left the world, and its shadow stays.
+[[nodiscard]] constexpr bool castsShadow(const DrawItem& draw) noexcept
+{
+    return (!draw.transparent || draw.fadedOnly) && draw.castShadow;
+}
+
+// One terrain, as the renderer needs it beyond its meshes: the palette its
+// shader reads (ADR 0082). Filled by `TerrainLoader::appendRenderTerrains`.
+struct RenderTerrainLayer
+{
+    f32 flat[4]{};
+    f32 tint[4]{};
+    f32 surface[4]{};
+    // `GpuTerrainLayer::tiling`.
+    f32 tiling[4]{0.0f, 1.0f, 0.0f, 0.0f};
+    // `GpuTerrainLayer::emissive`: the material's `Emissive`.
+    f32 emissive[4]{};
+    // Colour, normal, metallic-roughness and height maps; invalid for a map
+    // the material does not name, which the renderer fills with a neutral one
+    // (a missing height is level ground, and no occlusion).
+    std::array<rhi::TextureHandle, 4> maps{};
+    // A map named but not loaded yet: the arrays wait for it.
+    bool waiting = false;
+};
+
+struct RenderTerrain
+{
+    core::InstanceId id;
+    // The terrain's origin in world space.
+    DVec3 origin;
+    // One per layer, material id 1 first (ADR 0113).
+    std::vector<RenderTerrainLayer> layers;
+    // The rules, as the shader reads them, in the order they paint.
+    std::vector<asset::TerrainRuleShape> rules;
+};
+
+// **One mesh a foliage layer grows, as the frame draws it** (ADR 0116): the
+// cull fills its list of visible instances, and each of its sections is one
+// indirect draw of that list.
+struct RenderFoliageBucket
+{
+    MeshHandle mesh;
+    // The most instances its list holds this frame: every resident instance of
+    // the mesh. The cull never writes past it.
+    u32 capacity = 0;
+    // `materials` indices, one per section of the mesh's first level.
+    std::vector<u32> sectionMaterials;
+    // The mesh's height, for the sway: a vertex bends by how far up it is.
+    f32 meshMinY = 0.0f;
+    f32 meshHeight = 1.0f;
+    // How far the mesh reaches from its origin, for the frustum test.
+    f32 radius = 1.0f;
+    f32 windResponse = 1.0f;
+    f32 stiffness = 1.0f;
+    bool castShadow = true;
+    // Its layer's `ReceivesDecals` (ADR 0185): whether a decal paints it.
+    bool receivesDecals = true;
+};
+
+// One run of instances the cull reads: a tile's instances of one mesh.
+struct RenderFoliageRun
+{
+    rhi::BufferHandle instances;
+    u32 first = 0;
+    u32 count = 0;
+    u32 bucket = 0;
+    // Where the tile's instances are measured from, in the world: the
+    // terrain's origin. The cull makes it camera-relative.
+    DVec3 origin;
+    f32 drawDistance = 120.0f;
+    f32 fadeDistance = 20.0f;
+    f32 scaleMin = 0.8f;
+    f32 scaleMax = 1.2f;
+    f32 sink = 0.05f;
+    f32 alignToNormal = 0.0f;
+    bool randomRotation = true;
+};
+
+// One node of a terrain's level-of-detail quadtree to draw this frame: the
+// terrain it belongs to and the URN its mesh is filed under in `MeshLibrary`.
+// Chosen by `TerrainLoader`, which knows where the camera is and which meshes
+// are ready; turned into draws by `extract`.
+// **A terrain node's geomorph** (ADR 0140), as the terrain shaders read it:
+// nine rows of `(start, end, level, 0)` -- the node's own, then the node drawn
+// beside each of its sides and corners (low x, high x, low z, high z; then low
+// x and low z, high x and low z, low x and high z, high x and high z), with a
+// level of -1 where what is drawn there is finer, or nothing. From `start`
+// metres from the camera a vertex slides towards its parent's, and at `end` it
+// is there; both zero, it never slides. A vertex on a seam is drawn by every
+// node there, and takes the smallest range of those of its level, so each
+// draws it in the same place.
+struct TerrainMorph
+{
+    std::array<core::f32, 36> rows{};
+
+    void set(usize row, core::f32 start, core::f32 end, core::f32 level) noexcept
+    {
+        rows[row * 4] = start;
+        rows[row * 4 + 1] = end;
+        rows[row * 4 + 2] = level;
+        rows[row * 4 + 3] = 0.0f;
+    }
+};
+
+struct TerrainNodeDraw
+{
+    core::InstanceId terrain;
+    core::NameAtom urn;
+    // The node's level of detail, 0 the finest.
+    core::u8 level = 0;
+    TerrainMorph morph{};
+};
+
+// One decal as drawn: its box, in camera-relative space, and what it paints.
+struct RenderDecal
+{
+    // The unit box (-0.5 to 0.5) into camera-relative world space, and back.
+    Mat4 boxToWorld;
+    Mat4 worldToBox;
+    // Invalid for none, or for an image that has not loaded yet -- which then
+    // paints its colour alone rather than nothing.
+    rhi::TextureHandle texture;
+    Color3 color{1.0f, 1.0f, 1.0f};
+    // 1 - transparency.
+    f32 opacity = 1.0f;
+    // The projection axis in camera-relative world space.
+    Vec3 axis{0.0f, 0.0f, 1.0f};
+    // `Enum.DecalBlendMode`, and its glow (ADR 0160).
+    core::i32 blendMode = 0;
+    f32 emissive = 0.0f;
+};
+
+// **The rectangle of the picture a frame's decals can reach** (ADR 0185), in
+// the pixels of a `width` by `height` target: every pixel any of their boxes
+// covers is inside it, so a mask that is read only under a decal is drawn only
+// there. The whole target when a box crosses the camera's own plane -- a
+// corner behind the camera projects to nowhere -- and empty when no box is in
+// the picture at all.
+[[nodiscard]] rhi::Rect decalCoverage(std::span<const RenderDecal> decals, const Mat4& viewProjection, u32 width,
+                                      u32 height);
+
+// **How far from the camera the frame's decals reach**: the farthest corner of
+// any of their boxes, in metres. Nothing further than this is under a decal,
+// so a mask leaves it out -- and a mark is usually at a hero's feet, with a
+// field of grass behind it to the horizon. 0 when there is no decal.
+[[nodiscard]] f32 decalReach(std::span<const RenderDecal> decals);
+
+// One `Highlight` as drawn (ADR 0129): the colours over the shape and round
+// it, premultiplied by nothing -- the alpha is how much of each shows.
+struct RenderHighlight
+{
+    f32 outline[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    f32 fill[4] = {1.0f, 0.2f, 0.2f, 0.5f};
+    // Only where the shape itself is seen, rather than through what is in
+    // front of it.
+    bool occluded = false;
+};
+
+// One corner of a ribbon (ADR 0129): a beam's or a trail's.
+struct RenderRibbonVertex
+{
+    // Camera-relative, and half the ribbon's width there: what it fades over
+    // where it meets a surface, as a particle does.
+    Vec3 position;
+    f32 halfWidth = 0.0f;
+    // Linear colour, and opacity.
+    f32 color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    // Along the ribbon and across it.
+    f32 u = 0.0f;
+    f32 v = 0.0f;
+    f32 emission = 0.0f;
+    f32 lightInfluence = 1.0f;
+};
+
+static_assert(sizeof(RenderRibbonVertex) == 48, "RenderRibbonVertex is a vertex stride; see ribbon.hlsl");
+
+// A run of ribbon vertices drawn with one texture.
+struct RenderRibbonRun
+{
+    // Invalid for none, or for an image that has not loaded yet -- which
+    // draws the ribbon's colour alone.
+    rhi::TextureHandle texture;
+    u32 firstVertex = 0;
+    u32 vertexCount = 0;
+};
+
+// One particle as drawn: a camera-facing square of `size` metres at `position`.
+struct RenderParticle
+{
+    Vec3 position;
+    f32 size = 0.0f;
+    // Linear colour times brightness, and opacity in the fourth.
+    f32 color[4]{1.0f, 1.0f, 1.0f, 1.0f};
+    // 0 blends over what is behind, 1 adds to it.
+    f32 emission = 0.0f;
+    // `Enum.ParticleShape`.
+    core::i32 shape = 0;
+    // From the camera, for the back-to-front sort.
+    f32 distance = 0.0f;
+    // **Its picture** (ADR 0160): invalid draws `shape`. The frame of a
+    // flipbook it shows, as left, top, right, bottom in texture space.
+    rhi::TextureHandle texture;
+    f32 uv[4]{0.0f, 0.0f, 1.0f, 1.0f};
+    // Radians, turned in the plane facing the camera.
+    f32 rotation = 0.0f;
+};
+
+// **An emitter simulated on the GPU, as this frame asks it** (ADR 0160): no
+// particles -- they live in a buffer the renderer keeps -- only what the
+// compute shader needs to give birth to this frame's and step the rest, and
+// what the draw needs to shade them.
+struct RenderGpuEmitter
+{
+    core::InstanceId id;
+    // Which update of the particle system this is: an emitter is stepped once
+    // for each, however many views draw it.
+    core::u64 serial = 0;
+    // Where particles are born, in the world, and the box they are born in.
+    core::CFrameD frame;
+    Vec3 extent;
+    // How many are born this frame, and how many the buffer must hold.
+    core::u32 spawn = 0;
+    core::u32 capacity = 0;
+    core::u32 seed = 0;
+    // Seconds this step covers.
+    f32 step = 0.0f;
+    f32 speed = 0.0f;
+    // Radians, here and for the turn below.
+    f32 spread = 0.0f;
+    f32 lifetime = 0.0f;
+    f32 drag = 0.0f;
+    Vec3 acceleration;
+    Vec3 wind;
+    f32 rotation = 0.0f;
+    f32 rotationSpread = 0.0f;
+    f32 spin = 0.0f;
+    f32 spinSpread = 0.0f;
+    // `Enum.ParticleCollision` and `Enum.ParticleCollisionResponse`.
+    core::i32 collision = 0;
+    core::i32 response = 0;
+    f32 bounce = 0.0f;
+    f32 friction = 0.0f;
+    f32 radius = 0.0f;
+    f32 restSpeed = 0.0f;
+    // How it is drawn: as a CPU particle is.
+    f32 emission = 0.0f;
+    core::i32 shape = 0;
+    rhi::TextureHandle texture;
+    core::u32 columns = 1;
+    core::u32 rows = 1;
+    core::i32 flipbookMode = 0;
+    f32 framerate = 0.0f;
+    // Its colour and opacity, and its size, at sixteen places along its life:
+    // the start and end values and the curves over life, already multiplied.
+    f32 colorOverLife[16][4]{};
+    f32 sizeOverLife[16]{};
+};
+
+// **The ground's heights round the camera** (ADR 0160), for particles on the
+// GPU that collide with the terrain: a square of `side` metres from `corner`
+// (x and z), `cells` heights a side in world metres, row after row along +z.
+// Remade as the camera moves; `revision` says when.
+struct RenderParticleGround
+{
+    DVec3 corner;
+    f32 side = 0.0f;
+    core::u32 cells = 0;
+    core::u32 revision = 0;
+    std::vector<f32> heights;
+};
+
+// One sprite as drawn (the 2D layer): a `Part2D`, or one tile of a `Tilemap2D`.
+//
+// **Its rectangle as two corners, not a centre and a size**, so two tiles that
+// share an edge compute it from the same expression and meet exactly -- a
+// centre plus a half-width is a hairline seam between every pair of tiles on
+// some GPU at some zoom.
+struct RenderSprite
+{
+    // Camera-relative, on the plane: low x and y, then high x and y.
+    f32 rect[4]{0.0f, 0.0f, 0.0f, 0.0f};
+    // The plane's depth, camera-relative.
+    f32 z = 0.0f;
+    // About the rectangle's middle, as a cosine and a sine: exactly (1, 0) for
+    // a tile, which the shader takes as "place the corners as given".
+    f32 cosine = 1.0f;
+    f32 sine = 0.0f;
+    // `Enum.Shape2D`: the outline it is drawn as.
+    core::i32 shape = 0;
+    // The image's corners in texture space: left, top, right, bottom. Swapped
+    // for a flipped sprite.
+    f32 uv[4]{0.0f, 0.0f, 1.0f, 1.0f};
+    // The authored colour, still sRGB -- the shader decodes it -- and opacity.
+    f32 color[4]{1.0f, 1.0f, 1.0f, 1.0f};
+    // Invalid draws the colour alone.
+    rhi::TextureHandle texture;
+    bool nearest = false;
+    // Its colours reach the screen as authored (ADR 0153): the resolve passes
+    // these pixels through instead of exposing and tone-mapping them.
+    bool exact = true;
+};
+
+// One corner of a world-space UI quad, as `ui_world.hlsl` reads it: the
+// host has already placed it in the world, camera-relative like every f32
+// position here, and the rest travels as a screen UI vertex's does.
+struct WorldUiVertex
+{
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+    f32 z = 0.0f;
+    core::u8 r = 255;
+    core::u8 g = 255;
+    core::u8 b = 255;
+    core::u8 a = 255;
+    // The rounded-corner frame, in canvas pixels (`UiVertex` says why).
+    f32 localX = 0.0f;
+    f32 localY = 0.0f;
+    f32 halfX = 0.0f;
+    f32 halfY = 0.0f;
+    f32 radius = 0.0f;
+    f32 u = 0.0f;
+    f32 v = 0.0f;
+    // A gradient and a stroke (ADR 0110), as the screen's vertex carries them.
+    UiVertexAppearance look;
+};
+
+static_assert(sizeof(WorldUiVertex) == 96, "the ui_world vertex layout is an ABI decision the shader shares");
+
+// A stretch of world UI vertices drawn with one texture, one brightness and one
+// depth rule. In back-to-front order of the trees they came from.
+struct WorldUiRun
+{
+    core::u32 firstVertex = 0;
+    core::u32 vertexCount = 0;
+    // Invalid for none: the renderer's white pixel.
+    rhi::TextureHandle texture;
+    f32 brightness = 1.0f;
+    // Drawn after everything else in the world and never hidden.
+    bool alwaysOnTop = false;
+};
+
+// One reflection probe a frame may read (ADR 0202): its box, and whose map.
+struct RenderReflectionProbe
+{
+    // Whose map: what `IRenderer::storeReflectionProbe` was given.
+    core::u64 key = 0;
+    // Camera-relative world into the box's own space, in metres.
+    Mat4 worldToBox;
+    Vec3 halfSize{1.0f, 1.0f, 1.0f};
+    // Where its pictures were taken from, in the box's space.
+    Vec3 capture;
+    f32 blend = 1.0f;
+    f32 intensity = 1.0f;
+    // How much of its share it takes, nought to one: what brings a map in
+    // over a moment when it arrives while the world is watched.
+    f32 presence = 1.0f;
+    core::i32 priority = 0;
+    bool boxProjection = true;
+};
+
+// The most samples along one side of an irradiance volume, and in all (ADR
+// 0203): a slice is a tile of this many texels a side.
+inline constexpr u32 kIrradianceVolumeSide = 32;
+inline constexpr u32 kIrradianceVolumeSamples = 4096;
+// How far off a surface, along its normal, the point is that says which
+// volume the surface reads: the dark side of a wall steps into the dark room.
+inline constexpr f32 kIrradianceVolumeStep = 0.25f;
+
+// One irradiance volume a frame may read (ADR 0203).
+struct RenderIrradianceVolume
+{
+    core::u64 key = 0;
+    // Changes when `samples` does, and then they are taken again.
+    u32 revision = 0;
+    Mat4 worldToBox;
+    Vec3 halfSize{1.0f, 1.0f, 1.0f};
+    f32 blend = 1.0f;
+    f32 intensity = 1.0f;
+    // A colour its light is multiplied by, beside the intensity.
+    core::Color3 tint{1.0f, 1.0f, 1.0f};
+    // Its light is ADDED to the sky's and the flat ambient, which light the
+    // surface as they do outside it (`Enum.IrradianceMode.BounceOnly`). Off,
+    // it takes their place.
+    bool added = false;
+    // **How it is weighed against its neighbours** (ADR 0206). Nought: a
+    // room, whole to its faces. More: a tile of a room too large for one
+    // volume, and the metres from a face over which it gives way to the tile
+    // beside it. Less: a level round the camera, and the metres over which
+    // it gives way to the wider level -- levels are listed finest first.
+    f32 margin = 0.0f;
+    // As a probe's: nought to one.
+    f32 presence = 1.0f;
+    // Samples along each side of the box, each at the middle of its cell.
+    // **None, and it is one colour for the whole of its box** (ADR 0207):
+    // `flat`, the mean of a light that was worked out somewhere else and
+    // kept. No texture holds it and none is read for it -- what a machine
+    // that works no volume out draws a baked one as.
+    u32 counts[3] = {1, 1, 1};
+    core::Color3 flat{0.0f, 0.0f, 0.0f};
+    // Twelve numbers a sample, x fastest, then y, then z: the light from
+    // every side as a colour, then what is added to it a unit of the
+    // surface's normal along x, y and z -- irradiance over pi, as the sky's
+    // nine coefficients are. Whoever fills this keeps it until the frame is
+    // drawn.
+    std::span<const f32> samples;
+};
+
+struct RenderWorld
+{
+    RenderCamera camera;
+    RenderEnvironment environment;
+    // Atmosphere, a sky and the post effects (ADR 0096): `RenderLook{}` for a
+    // world with none of them, which is the picture it always drew.
+    RenderLook look;
+    std::vector<RenderPart> parts;
+    std::vector<RenderLight> lights;
+    std::vector<RenderMaterial> materials;
+    // **Which materials are one bind set but for their base colour**: by
+    // material index, the index of the first material of its family -- equal
+    // for two materials whose textures and every uniform but the base colour's
+    // rgb agree. The opaque sort key groups by it and the instancer batches by
+    // it, with each instance's colour in its own stream. Shorter than
+    // `materials` where a path added materials without families: those are
+    // each their own (`familyOf`).
+    std::vector<u32> materialFamilies;
+    std::vector<DrawItem> draws;
+
+    // **Scratch for `extract`'s sort, not part of the snapshot.** Kept here so
+    // its capacity survives from one frame to the next, as every vector above
+    // does; nothing reads it after `extract` returns, and `clear` leaves it.
+    struct SortEntry
+    {
+        u64 key = 0;
+        u32 index = 0;
+    };
+    std::vector<SortEntry> sortScratch;
+    std::vector<DrawItem> drawScratch;
+    // Every skinned draw's palette, concatenated. One vector rather than one per
+    // draw because it is uploaded per draw anyway and a vector of vectors would
+    // be a heap allocation per character per frame.
+    std::vector<Mat4> bones;
+    // Every body with a morph target above nought, once: which targets, and
+    // how far (`DrawItem::morph`).
+    std::vector<MorphDraw> morphs;
+    // Every skinned mesh the camera or a shadow reached, and how big it is on
+    // the picture: what the animation's update rate is decided from.
+    std::vector<SeenSkin> seenSkins;
+    // Every terrain draw's geomorph (`DrawItem::terrainMorph`), for the same
+    // reason.
+    std::vector<TerrainMorph> terrainMorphs;
+    // The GPU terrains, drawn by node rather than by `DrawItem`. **One with
+    // no ground yet is here too**: a streamed terrain
+    // before its first cell has its pipelines and its layers' arrays made
+    // while the world loads, not in the first frame its ground is drawn --
+    // 16 ms in the middle of play.
+    std::vector<RenderTerrain> terrains;
+    // **This frame's foliage** (ADR 0116), appended by `FoliageSystem::append`:
+    // the runs of instances the cull reads and the meshes it fills.
+    std::vector<RenderFoliageRun> foliageRuns;
+    std::vector<RenderFoliageBucket> foliageBuckets;
+    // `[render] foliage_density` and `foliage_shadow_distance`, as the system
+    // that appended the runs was set.
+    f32 foliageDensity = 1.0f;
+    f32 foliageShadowDistance = 30.0f;
+    // The block world's registry colours, by id minus one (id 0 is air): top,
+    // sides and bottom. What the block shader turns a vertex's block id into.
+    struct VoxelColors
+    {
+        Color3 top;
+        Color3 side;
+        Color3 bottom;
+        // What a translucent block's pixels are drawn at where its image does
+        // not say: 1 minus its transparency. 1 for everything else.
+        f32 alpha = 1.0f;
+    };
+    std::vector<VoxelColors> voxelColors;
+    // The same types' images, as uploaded textures -- invalid where a type has
+    // none or it has not loaded yet, which draws the colour alone.
+    struct VoxelTextures
+    {
+        rhi::TextureHandle top;
+        rhi::TextureHandle side;
+        rhi::TextureHandle bottom;
+    };
+    std::vector<VoxelTextures> voxelTextures;
+    // This frame's particles, camera-relative and back to front --
+    // appended by `ParticleSystem::append` after the extract, because they are
+    // simulated on the frame and are not in the world the extract reads.
+    std::vector<RenderParticle> particles;
+    // The emitters simulated on the GPU (ADR 0160), and the ground they may
+    // collide with -- the particle system's own, or null for none.
+    std::vector<RenderGpuEmitter> gpuEmitters;
+    const RenderParticleGround* particleGround = nullptr;
+    // This frame's beams and trails (ADR 0129), as triangles: appended by
+    // `RibbonSystem::append` after the extract, back to front, in runs of one
+    // texture.
+    std::vector<RenderRibbonVertex> ribbonVertices;
+    std::vector<RenderRibbonRun> ribbonRuns;
+    // This frame's highlights (ADR 0129), nearest first; a draw's `highlight`
+    // is one more than its place here.
+    std::vector<RenderHighlight> highlights;
+    // How many were left out because there were more than `maxHighlights`.
+    u32 highlightsDropped = 0;
+    // The most drawn in a frame: the project's `[render] max_highlights`.
+    // **Not reset by `clear`** -- it is a setting the host gives once, not
+    // something the extract finds.
+    u32 maxHighlights = 32;
+    // This frame's decals, in pool order.
+    std::vector<RenderDecal> decals;
+    // The reflection probes and irradiance volumes in view (ADRs 0202, 0203),
+    // nearest first, placed by the host after extraction: it is what takes a
+    // probe's pictures and works a volume's light out.
+    std::vector<RenderReflectionProbe> reflectionProbes;
+    std::vector<RenderIrradianceVolume> irradianceVolumes;
+    // **A picture for a reflection probe** (ADR 0202): the frame as it is lit,
+    // linear, into an `Rgba16Float` target -- none of the passes that are a
+    // camera's own (the look, exposure, bloom, the tone curve, anti-aliasing).
+    bool capture = false;
+    // This frame's sprites (the 2D layer), in the order they are drawn: by
+    // `ZIndex`, a tilemap beneath a part at the same one, and otherwise in the
+    // order they were made. Only those near the view.
+    std::vector<RenderSprite> sprites;
+    // This frame's world-space UI, placed by the host after extraction:
+    // the UI module owns the layout and the draw list, and the renderer only
+    // draws what it is handed.
+    std::vector<WorldUiVertex> worldUiVertices;
+    std::vector<WorldUiRun> worldUiRuns;
+    // The frame's UI gradient table (ADR 0110), which a world UI vertex's
+    // gradient row indexes. The host's, and the same one the screen's UI reads.
+    rhi::TextureHandle worldUiGradients{};
+    // The block world's block size, which the block shader needs to name the
+    // block a fragment belongs to.
+    f32 voxelBlockSize = 1.0f;
+
+    // Counters the perf table records beside frame time, because the roadmap
+    // asks for the *why* next to the *what*. `culled` is the interesting one: a
+    // frame where it is zero is a frame the culler did not help.
+    u32 candidateDraws = 0;
+    // Not in the camera's frustum. They are still drawn into the shadow map, so
+    // this is "how many the forward pass skipped" rather than "how many were
+    // discarded".
+    u32 culledDraws = 0;
+
+    [[nodiscard]] u32 familyOf(u32 material) const noexcept
+    {
+        return material < materialFamilies.size() ? materialFamilies[material] : material;
+    }
+
+    void clear() noexcept
+    {
+        camera = RenderCamera{};
+        environment = RenderEnvironment{};
+        look = RenderLook{};
+        parts.clear();
+        lights.clear();
+        materials.clear();
+        materialFamilies.clear();
+        draws.clear();
+        bones.clear();
+        morphs.clear();
+        seenSkins.clear();
+        terrainMorphs.clear();
+        terrains.clear();
+        foliageRuns.clear();
+        foliageBuckets.clear();
+        gpuEmitters.clear();
+        particleGround = nullptr;
+        foliageDensity = 1.0f;
+        foliageShadowDistance = 30.0f;
+        voxelColors.clear();
+        voxelTextures.clear();
+        particles.clear();
+        ribbonVertices.clear();
+        ribbonRuns.clear();
+        highlights.clear();
+        highlightsDropped = 0;
+        decals.clear();
+        reflectionProbes.clear();
+        irradianceVolumes.clear();
+        capture = false;
+        sprites.clear();
+        worldUiVertices.clear();
+        worldUiRuns.clear();
+        voxelBlockSize = 1.0f;
+        candidateDraws = 0;
+        culledDraws = 0;
+    }
+};
+
+// **A picture of sprites alone** (ADR 0158, the 2D layer): sprites and not one
+// 3D surface -- no mesh, no terrain, no foliage. Such a frame is drawn at the
+// target's own resolution whatever the render scale says, upscales nothing
+// and takes no temporal pass, as a 2D renderer in the engines that scale only
+// their 3D does: a phone's three-quarter scale would soften every sprite of a
+// 2D game and buy nothing. Particles, decals and world UI do not make a frame
+// 3D -- they are drawn over the sprites or over nothing.
+[[nodiscard]] bool spritesOnly(const RenderWorld& world) noexcept;
+
+// Builds `sortKey`. Exposed because it is the ordering contract and a test
+// asserts on it directly rather than on a sorted list, which would only prove
+// that *something* was consistent.
+//
+// `depth` is the distance from the camera in metres; it is quantized to 16 bits
+// so that a sub-millimetre wobble in a camera position cannot reorder two draws
+// and change a golden command stream.
+// `geometry` is what makes an instanced run CONTIGUOUS, and it is why this
+// gained a parameter with the lighting work. Build it with `drawGeometryKey`: it is the mesh
+// AND the section, because a mesh with two sections and one material used to
+// interleave its two halves by depth -- which chopped every run into pieces of
+// one and made the instanced path draw nothing at all. That was measured rather
+// than reasoned: the horde scene reported 15,390 draws for 4,002 visible
+// objects, and the two sections of its enemy were why.
+//
+// **It is zero for a transparent draw**, deliberately. Grouping by geometry
+// above depth would destroy the back-to-front order the blended pass IS, so the
+// transparent pass sorts exactly as it did and is never instanced.
+[[nodiscard]] u64 drawSortKey(u32 pass, u32 pipeline, u32 material, u32 geometry, f32 depth) noexcept;
+
+// Mesh and section packed into the sixteen bits `drawSortKey` has for them:
+// twelve of mesh and four of section. Four thousand distinct meshes in one frame
+// and sixteen sections in one mesh; past either, two draws share a key and their
+// runs are merely shorter, which costs performance and never correctness.
+[[nodiscard]] constexpr u32 drawGeometryKey(u32 meshIndex, u32 section) noexcept
+{
+    return ((meshIndex & 0xFFFu) << 4) | (section & 0xFu);
+}
+
+// The two passes a draw can belong to, and the values `drawSortKey`'s `pass`
+// argument takes. Opaque first because a `u64` compare orders the frame and the
+// opaque pass must fill depth before anything blends against it.
+inline constexpr u32 kOpaquePass = 0;
+inline constexpr u32 kTransparentPass = 1;
+
+// The values `drawSortKey`'s `pipeline` argument takes. A skinned draw binds a
+// second vertex buffer and a 4 KB uniform block, so grouping them is worth a
+// field that was already there and unused.
+inline constexpr u32 kStaticPipeline = 0;
+inline constexpr u32 kSkinnedPipeline = 1;
+
+// The largest depth `drawSortKey` can distinguish, in metres. Exposed because
+// the transparent pass sorts back-to-front and does it by subtracting from this
+// -- an inversion at extraction rather than a reversed walk at submission, so
+// "walk the list in order" stays true in every backend.
+inline constexpr f32 kMaxSortDepth = 655.0f;
+
+// The reserved content URN a generated primitive is registered under, for one of
+// `Enum.PartShape`'s values. A scheme of its own rather than `asset://`, which
+// is the project's: nothing a game ships can collide with these, and a URN in a
+// log says immediately that the geometry came from arithmetic.
+//
+// Null for a value outside the enum, which is what makes the caller fall back to
+// the debug wire box rather than to a lookup of an empty string.
+[[nodiscard]] const char* primitiveContent(core::i32 shape) noexcept;
+
+// The mesh a `MeshPart` renders, and where the renderer keeps that mapping.
+//
+// `extract` needs to turn a `MeshPart`'s content URN into geometry, and it must
+// not do that by loading anything: extraction runs inside a frame and a file
+// read is not a frame's work. So resolution is a lookup, and whatever populates
+// this does so at the FrameStart safe point like every other mutation.
+// The textures a `Material` instance's maps name, by content URN.
+//
+// **A texture library and not a material one**, which is what it was for one
+// release. A material is an instance now: its numbers live in a component and
+// its block is built from them each frame, so the only thing left to cache is
+// the expensive half -- the decoded, uploaded image behind a URN. Two materials
+// naming one image share one upload, which is the whole point of keying on the
+// name.
+class TextureLibrary
+{
+public:
+    // With its size in pixels where the loader knows it, which a sprite's
+    // pixel rectangle and a tileset's tiles are measured against.
+    void set(core::NameAtom content, rhi::TextureHandle texture, core::u32 width = 0, core::u32 height = 0);
+    void clear() noexcept;
+    // **A picture's mean colour, as light** (ADR 0203): what a surface that
+    // wears it gives back to light that bounces. White for a picture nobody
+    // said it of, and for a name that is not here.
+    void setMean(core::NameAtom content, Color3 mean) noexcept;
+    [[nodiscard]] Color3 meanOf(core::NameAtom content) const noexcept;
+
+    // Removes one entry and HANDS BACK what it held, so the caller can destroy
+    // it. An invalid handle for a URN that was not loaded.
+    //
+    // **Returned rather than destroyed here**, because this class has no device
+    // and should not acquire one: it is a map from a name to a handle, and a
+    // map that owns GPU lifetime is a second place to look when a texture
+    // outlives its frame. The loader knows the device and destroys it there.
+    [[nodiscard]] rhi::TextureHandle take(core::NameAtom content) noexcept;
+
+    // An invalid handle for a URN nothing has loaded, which is the ordinary
+    // state of a map whose file has not been read yet. A surface in that state
+    // draws untextured rather than not at all: one that vanished while its
+    // texture loaded would be worse.
+    [[nodiscard]] rhi::TextureHandle find(core::NameAtom content) const noexcept;
+    // Width and height in pixels, or zero for one not loaded or loaded with no
+    // size given.
+    [[nodiscard]] core::Vec2 sizeOf(core::NameAtom content) const noexcept;
+    [[nodiscard]] usize size() const noexcept { return entries_.size(); }
+
+    // Every name it holds, in atom order: for whoever has to decide which of
+    // them the world still wants (`MeshLoader::sweep`).
+    template <typename Fn>
+    void forEachName(Fn&& fn) const
+    {
+        for (const auto& entry : entries_)
+            fn(entry.content);
+    }
+
+private:
+    // Sorted by atom, like `MeshLibrary`, and for the same reason: R10 forbids
+    // an unordered container's iteration reaching observable output.
+    struct Slot
+    {
+        core::NameAtom content;
+        rhi::TextureHandle texture;
+        core::u32 width = 0;
+        core::u32 height = 0;
+        Color3 mean{1.0f, 1.0f, 1.0f};
+    };
+    std::vector<Slot> entries_;
+};
+
+class MeshLibrary
+{
+public:
+    struct Entry
+    {
+        MeshHandle mesh;
+        AABB bounds;
+        u32 sectionCount = 0;
+        // `sectionMaterial[i]` indexes `materials`. Two vectors rather than one
+        // material per section, because a file whose four primitives share one
+        // material should upload one material.
+        std::vector<u32> sectionMaterial;
+        std::vector<RenderMaterial> materials;
+
+        // The mesh's vertex POSITIONS, for whoever needs a collision hull
+        // (`MeshPart.CollisionFidelity`). Empty for a primitive and for a mesh
+        // whose file failed.
+        //
+        // Kept here rather than decoded a second time by the physics mirror: the
+        // decode already happened, the positions are twelve bytes a vertex, and
+        // a second decode of a fifty-thousand-vertex mesh to answer a question
+        // the first one already answered is the kind of cost nobody notices
+        // until a world has a hundred of them.
+        std::vector<Vec3> positions;
+
+        // **What a ray of the light bake meets** (ADR 0203): the mesh's own
+        // triangles -- level zero's indices over `positions` -- which is its
+        // shape, where its collision is a hull round it. And a section, what
+        // light that lands on it does: the colour it gives back (its
+        // material's base colour times the mean of its picture), what it
+        // gives off, and whether it lets light through. Nothing draws by
+        // these; a mesh nobody bakes round pays their memory and no more.
+        std::vector<u32> triangles;
+        struct Bounce
+        {
+            u32 firstIndex = 0;
+            u32 indexCount = 0;
+            Color3 albedo{1.0f, 1.0f, 1.0f};
+            Color3 emissive{0.0f, 0.0f, 0.0f};
+            bool clear = false;
+        };
+        std::vector<Bounce> bounces;
+
+        // The mesh's morph targets (ADR 0196), in the file's order: what each
+        // is called and the weight the file gives it at rest. Empty for
+        // nearly every mesh, and for one whose table the card does not have.
+        std::vector<std::string> morphNames;
+        std::vector<f32> morphDefaults;
+        // Parallel to the sections: whether any target moves a vertex of it.
+        // A section none reaches is drawn as it always was, in its run -- a
+        // character's body beside its face.
+        std::vector<core::u8> sectionMorphed;
+    };
+
+    void set(core::NameAtom content, const Entry& entry);
+    void remove(core::NameAtom content);
+    void clear() noexcept;
+
+    // Null for a URN nothing has loaded, which is the ordinary state of a
+    // `MeshPart` whose file has not been read yet. `extract` skips it rather
+    // than substituting a placeholder: a missing mesh that draws a cube is a
+    // missing mesh nobody notices.
+    [[nodiscard]] const Entry* find(core::NameAtom content) const noexcept;
+    [[nodiscard]] usize size() const noexcept { return entries_.size(); }
+
+    // Every entry, in atom order. For a caller that has to mirror this into
+    // something else -- the physics mirror's collision points -- and that
+    // therefore needs the whole set rather than one lookup.
+    template <typename Fn>
+    void forEach(Fn&& fn) const
+    {
+        for (const auto& entry : entries_)
+            fn(entry.content, entry.entry);
+    }
+
+private:
+    // A flat vector, kept sorted by atom, rather than a hash map: it holds one
+    // entry per distinct mesh in the world, it is read once per MeshPart per
+    // frame, and R10 forbids an unordered container's iteration reaching
+    // observable output -- which a debug listing of loaded meshes would.
+    struct Slot
+    {
+        core::NameAtom content;
+        Entry entry;
+    };
+    std::vector<Slot> entries_;
+};
+
+// A view the CALLER supplies, instead of the one the world names.
+//
+// **An editor's viewport is not the game's view**, in this engine for the same
+// reason it is not in Unity or Unreal: a scene view that borrowed the game's
+// camera would have to take it away from the game to be usable, and handing it
+// back is a negotiation nobody wins. Sharing one camera between a tool and the
+// thing it edits produces exactly one symptom -- two authors writing one
+// transform on alternate frames -- and no arbitration fixes it, because the
+// disagreement is the design.
+//
+// So the editor owns a camera the world does not contain, and the renderer is
+// TOLD which view to draw rather than asked to find one. Null -- the default,
+// and what every game, every golden and every headless run passes -- means
+// `Workspace.CurrentCamera`, unchanged.
+struct ViewOverride
+{
+    core::CFrameD cframe;
+    // Degrees, vertical, matching `Camera.FieldOfView`.
+    f32 fieldOfView = 70.0f;
+    f32 nearPlane = 0.1f;
+    f32 farPlane = 5000.0f;
+    // `Enum.CameraProjection`, and half the view's height for an orthographic
+    // one: the editor's 2D view is this lens on its own camera.
+    core::i32 projection = 0;
+    f32 orthographicSize = 10.0f;
+    // `Camera.ClipPlane` (ADR 0107), when `clipPlaneOn`.
+    core::CFrameD clipPlane{};
+    bool clipPlaneOn = false;
+};
+
+// **A material asset as the renderer binds it**, resolved and with its maps
+// looked up -- what a part wearing it draws with, before its own parameters.
+// For what wears a material without being a part: a `FoliageMesh` (ADR 0116).
+// **What a part is to light that lands on it** (ADR 0203): the colour it is
+// drawn in, what it gives off, and how much of what is behind it shows --
+// its material's, where the part overrides none of them. With `textures`,
+// the colour is the material's times the mean of its picture: a brick wall
+// gives back brick.
+struct PartSurface
+{
+    Color3 color{1.0f, 1.0f, 1.0f};
+    Color3 emissive{0.0f, 0.0f, 0.0f};
+    f32 transparency = 0.0f;
+};
+[[nodiscard]] PartSurface partSurfaceOf(const scene::World& world, const scene::PartComponent& part,
+                                        const TextureLibrary* textures = nullptr);
+
+// **The mesh a plain part is drawn as, and how it is stretched** (ADR 0203):
+// what the light bake asks a part by when the physics world has no body of
+// it to ask -- a part with its queries off casts a shadow in the picture, and
+// so it does there. Nothing while the primitives are not made yet.
+struct PartShape
+{
+    core::NameAtom content;
+    const MeshLibrary::Entry* entry = nullptr;
+    Vec3 stretch{1.0f, 1.0f, 1.0f};
+};
+[[nodiscard]] PartShape partShapeOf(const scene::World& world, const MeshLibrary& meshes, core::InstanceId id,
+                                    const scene::PartComponent& part);
+
+[[nodiscard]] RenderMaterial materialBlockOf(const scene::World& world, core::NameAtom material,
+                                             const TextureLibrary* textures);
+
+// Fills `out` from the world.
+//
+// `root` is `Workspace`: whatever is parented under it is in the world and
+// whatever is not, is not (api-design.md §2.1). Passed in rather than looked up,
+// because `render` has no business knowing what a service is. `lightingHost` is
+// the `Lighting` service instance, for the same reason.
+//
+// Order is a pure function of the operation sequence: parts and lights come out
+// in the pools' dense order, and draws are sorted by `sortKey` with the
+// extraction index as a stable tie-break. Two runs of the same world produce the
+// same command stream, which is what makes a capture golden a gate rather than a
+// coin flip (R10).
+void extract(const scene::World& world, core::InstanceId root, core::InstanceId lightingHost, const MeshLibrary& meshes,
+             f32 viewportAspect,
+             // Metres. Geometry further than this from the camera is dropped entirely --
+             // it can neither be seen nor cast into view, because the shadow map only
+             // covers a bounded region around the camera. The renderer owns the number
+             // and passes it, rather than `extract` guessing at a constant that lives in
+             // the pass list.
+             f32 shadowRadius,
+             // The poses skinned draws are in, or null in a build that does not
+             // animate -- a capture harness, a screenshot tool. Null means every
+             // skinned mesh comes out in bind pose, which is what an unanimated
+             // one should look like.
+             const AnimationSystem* animation,
+             // Where this frame sits between the last tick and the next, and
+             // where everything was at the tick before it (`transform_history.h`).
+             // Zero and null draw the world exactly as the last tick left
+             // it, which is what every headless run does -- a golden has to be
+             // the tick, not a point between two of them.
+             //
+             // **The camera is interpolated with everything else**, because what
+             // has to be consistent is the TIME the frame is drawn at: a world
+             // evaluated at `t + alpha` seen from a camera at `t` slides forward
+             // and snaps back once a tick, which is the artifact this exists to
+             // remove rather than a smaller version of it.
+             f32 alpha, const TransformHistory* history, RenderWorld& out,
+             // The view to draw from, or null for the world's own camera. See
+             // `ViewOverride`.
+             const ViewOverride* view = nullptr,
+             // The instances a TOOL has selected, if any. Every draw belonging
+             // to one of them comes out with `outlined` set, and the renderer
+             // draws a silhouette around the union of them.
+             //
+             // A span rather than a set, and searched linearly, because an
+             // editor selection is a handful of instances and the alternative
+             // is a hash lookup per draw in a list that can be tens of
+             // thousands long. Empty -- which is every frame a game renders --
+             // costs one compare per draw.
+             std::span<const core::InstanceId> outlined = {},
+             // The textures the scene's materials name, or null in a build that
+             // does not load them -- a capture harness, a test. Null draws every
+             // material's numbers with no maps, which is a surface that has not
+             // finished loading rather than one that is wrong.
+             //
+             // **A material REPLACES rather than merges.** The instance answers
+             // with the whole block, for every section of the part; a merge would
+             // need per-field "is set" bits on a struct whose virtue is being
+             // flat, and "which half of this material is mine" is not a question
+             // anybody wants to answer while looking at a wrong-coloured wall.
+             const TextureLibrary* textures = nullptr,
+             // The terrain nodes to draw, as `TerrainLoader::draws` chose them
+             // for this world. Empty draws no terrain, which is what a harness
+             // with no loader gets.
+             std::span<const TerrainNodeDraw> terrainNodes = {});
+
+// **The same, with every pose from `poses`** (ADR 0134): what a frame that
+// draws more than the world -- its UI, particles, views and pointer -- passes,
+// so that all of it and the world are drawn at one place each. The overload
+// above resolves its own from `alpha` and `history`.
+void extract(const scene::World& world, core::InstanceId root, core::InstanceId lightingHost, const MeshLibrary& meshes,
+             f32 viewportAspect, f32 shadowRadius, const AnimationSystem* animation, const DrawPoses& poses,
+             RenderWorld& out, const ViewOverride* view = nullptr, std::span<const core::InstanceId> outlined = {},
+             const TextureLibrary* textures = nullptr, std::span<const TerrainNodeDraw> terrainNodes = {});
+
+} // namespace engine::render

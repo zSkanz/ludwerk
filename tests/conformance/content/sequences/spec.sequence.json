@@ -1,0 +1,18 @@
+{
+  "format": "sequence",
+  "version": 1,
+  "bindings": ["Lamp", "Guide"],
+  "tracks": [
+    { "type": "camera", "keys": [
+        { "time": 0, "position": [0, 5, 10], "lookAt": [0, 0, 0], "cut": true } ] },
+    { "type": "property", "target": "Lamp/Light", "property": "Brightness", "keys": [
+        { "time": 0.1, "value": 0 },
+        { "time": 0.3, "value": 3 } ] },
+    { "type": "line", "keys": [
+        { "time": 0.3, "line": "spec.written", "at": "Guide" } ] },
+    { "type": "event", "keys": [
+        { "time": 0, "name": "Begin" },
+        { "time": 0.2, "name": "Half", "data": [1, 2, 3] },
+        { "time": 0.4, "name": "End", "data": "warm" } ] }
+  ]
+}

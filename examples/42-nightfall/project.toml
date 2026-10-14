@@ -1,0 +1,14 @@
+# Nightfall in a courtyard: light that bounces in the open, under a sun that
+# sets and a torch that flickers, and a sequence that keys the hour, holds
+# for a decision and is skipped a shot at a time. Built by its script.
+
+[project]
+name = "Ludwerk Nightfall"
+id = "dev.ludwerk.nightfall"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"
+
+[window]
+title = "Ludwerk — Nightfall"
+size = [1600, 900]

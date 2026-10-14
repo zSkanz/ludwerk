@@ -1,0 +1,17 @@
+# Indirect light (ADRs 0202, 0203): a bright room and a dark room that share a
+# thin wall. What a floor reflects is the room, and the dark room is lit by
+# what comes through its door -- and by nothing that comes through its wall.
+#
+# No scene file: the house is built by the script, which is how most worlds in
+# this engine are made, and is the case the bounced light has to work for.
+
+[project]
+name = "Ludwerk Interior"
+id = "dev.ludwerk.interior"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Interior"
+width = 1280
+height = 720

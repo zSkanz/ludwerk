@@ -1,0 +1,320 @@
+// **The wire and the world hash describe the same state.**
+//
+// Two hand-kept lists name the simulation state that is not a property: the
+// wire schema's `Component` fields, which a replica is sent, and the block
+// `world_hash.cpp` hashes by hand. Nothing compared them. A field added to the
+// wire and not to the hash is state two runs can disagree on with the hash
+// saying they agree -- the one thing the hash exists to catch.
+//
+// So this does not compare names, which would be a third list. It changes
+// every such field, through the same `applyField` a replica uses, and requires
+// the world hash to move. Here rather than in the replication module because
+// only here is every module's class registered: `Decal` and `Lighting` are the
+// renderer's, and their properties are what the hash walks.
+#include <cstring>
+#include <doctest/doctest.h>
+#include <span>
+#include <string>
+
+#include "../../audio/generated/class_descriptors.gen.h"
+#include "../../input/generated/class_descriptors.gen.h"
+#include "../../render/generated/class_descriptors.gen.h"
+#include "../../replication/generated/wire_schema.gen.h"
+#include "../../scene/generated/class_descriptors.gen.h"
+#include "../../ui/generated/class_descriptors.gen.h"
+#include "engine/core/i18n.h"
+#include "engine/replication/extract.h"
+#include "engine/replication/field.h"
+#include "engine/scene/class_registry.h"
+#include "engine/scene/enum_registry.h"
+#include "engine/scene/world.h"
+
+using namespace engine;
+namespace wire = engine::replication::generated;
+
+namespace {
+
+// Two values of an encoding, of which at least one differs from any value.
+void candidates(core::AtomTable& atoms, wire::Encoding encoding, replication::FieldValue& a, replication::FieldValue& b)
+{
+    switch (encoding) {
+    case wire::Encoding::Bool:
+        replication::setBool(a, true);
+        replication::setBool(b, false);
+        return;
+    case wire::Encoding::U8:
+        replication::setU8(a, 1);
+        replication::setU8(b, 2);
+        return;
+    case wire::Encoding::U16:
+        replication::setU16(a, 1);
+        replication::setU16(b, 2);
+        return;
+    case wire::Encoding::U32:
+        replication::setU32(a, 1);
+        replication::setU32(b, 2);
+        return;
+    case wire::Encoding::I32:
+        replication::setI32(a, 1);
+        replication::setI32(b, 2);
+        return;
+    case wire::Encoding::F32:
+        replication::setF32(a, 0.375f);
+        replication::setF32(b, 0.625f);
+        return;
+    case wire::Encoding::F64:
+        replication::setF64(a, 0.375);
+        replication::setF64(b, 0.625);
+        return;
+    case wire::Encoding::Position:
+        replication::setPosition(a, core::DVec3{3.0, 4.0, 5.0});
+        replication::setPosition(b, core::DVec3{6.0, 7.0, 8.0});
+        return;
+    case wire::Encoding::CFrameD: {
+        // Each turned as well, and not alike: a joint's pose is the rotation
+        // half alone, and its default is no turn at all.
+        core::CFrameD frame;
+        frame.position = core::DVec3{3.0, 4.0, 5.0};
+        frame.rotation.m[1][1] = 0.0f;
+        frame.rotation.m[1][2] = 1.0f;
+        frame.rotation.m[2][1] = -1.0f;
+        frame.rotation.m[2][2] = 0.0f;
+        replication::setCFrame(a, frame);
+        frame = core::CFrameD{};
+        frame.position = core::DVec3{6.0, 7.0, 8.0};
+        frame.rotation.m[0][0] = 0.0f;
+        frame.rotation.m[0][1] = 1.0f;
+        frame.rotation.m[1][0] = -1.0f;
+        frame.rotation.m[1][1] = 0.0f;
+        replication::setCFrame(b, frame);
+        return;
+    }
+    case wire::Encoding::NameAtom:
+        replication::setU32(a, atoms.intern("wire-hash-a").id);
+        replication::setU32(b, atoms.intern("wire-hash-b").id);
+        return;
+    case wire::Encoding::InstanceRef:
+        // A reference names another instance, which the sweep makes and
+        // passes as this machine's own, never through here
+        // if that changes.
+        replication::setNetId(a, replication::NetId{});
+        replication::setNetId(b, replication::NetId{});
+        return;
+    case wire::Encoding::MaterialOverrides:
+    case wire::Encoding::MaterialValues: {
+        // A mask selecting `Color` (bit 0), then the colour: two different
+        // tints, which is a value a replica would be sent.
+        const auto fill = [](replication::FieldValue& out, float red) {
+            out.raw.fill(0);
+            const core::u16 set = 1;
+            std::memcpy(out.raw.data(), &set, sizeof(set));
+            const float colour[3]{red, 0.5f, 0.25f};
+            std::memcpy(out.raw.data() + 4, colour, sizeof(colour));
+        };
+        fill(a, 0.25f);
+        fill(b, 0.75f);
+        return;
+    }
+    default:
+        // Vector3, Color3 and the rest are three floats.
+        replication::setVec3(a, core::Vec3{0.25f, 0.5f, 0.75f});
+        replication::setVec3(b, core::Vec3{0.75f, 0.5f, 0.25f});
+        return;
+    }
+}
+
+} // namespace
+
+TEST_CASE("every replicated field that is not a property is state the world hash covers")
+{
+    core::AtomTable atoms;
+    scene::ClassRegistry classes;
+    scene::EnumRegistry enums;
+    scene::generated::registerEnums(enums, atoms);
+    scene::generated::registerClasses(classes, atoms);
+    engine::render::generated::registerClasses(classes, atoms);
+    engine::ui::generated::registerClasses(classes, atoms);
+    engine::audio::generated::registerClasses(classes, atoms);
+    engine::input::generated::registerClasses(classes, atoms);
+    scene::World world(classes, enums, atoms, 7u);
+
+    std::size_t checked = 0;
+    // What a joint's ends name: any instance at all, for the hash to see change.
+    const core::InstanceId referent = world.create(classes.findId(atoms.intern("Folder")));
+    REQUIRE(referent.valid());
+    for (const wire::ClassDesc& desc : wire::Classes) {
+        const scene::ClassId declared = classes.findId(atoms.intern(desc.name));
+        CAPTURE(std::string(desc.name));
+        REQUIRE_MESSAGE(declared != scene::InvalidClass, "the wire names a class no module registers");
+        // An abstract class is reached through the first concrete one that is
+        // one, and whose schema is this one (a `Part` for `BasePart`).
+        scene::ClassId classId = scene::InvalidClass;
+        for (scene::ClassId at = 1; at < static_cast<scene::ClassId>(classes.classCount()); ++at) {
+            const scene::ClassDescriptor* candidate = classes.find(at);
+            if (candidate != nullptr && !scene::hasFlag(candidate->flags, scene::ClassFlags::Abstract) &&
+                classes.isA(at, declared)) {
+                const core::InstanceId probe = world.create(at);
+                const bool same = probe.valid() && replication::schemaFor(world, probe) == &desc;
+                if (probe.valid())
+                    world.destroy(probe);
+                if (same) {
+                    classId = at;
+                    break;
+                }
+            }
+        }
+        // **An abstract class every concrete one extends on the wire** has no
+        // instance of its own schema: `BasePart`, since `Part` and `MeshPart`
+        // each carry something more. Its fields are theirs by `Extends`, and
+        // are checked there.
+        const scene::ClassDescriptor* declaredClass = classes.find(declared);
+        if (classId == scene::InvalidClass && declaredClass != nullptr &&
+            scene::hasFlag(declaredClass->flags, scene::ClassFlags::Abstract))
+            continue;
+        REQUIRE_MESSAGE(classId != scene::InvalidClass, "no class the engine can create carries this schema");
+        const core::InstanceId id = world.create(classId);
+        REQUIRE(id.valid());
+        // A part needs its body for `Anchored` and `CanCollide`, which the
+        // physics mirror adds to a real one.
+        if (world.parts().find(id) != nullptr && world.rigidBodies().find(id) == nullptr)
+            world.rigidBodies().add(id, scene::RigidBodyComponent{});
+
+        replication::FieldSet fields;
+        REQUIRE(replication::extractFields(world, id, desc, fields));
+        // The fields: the cells past them are their sequences' (protocol 44).
+        for (core::usize index = 0; index < replication::fieldCount(desc); ++index) {
+            const wire::FieldDesc* field = replication::fieldAt(desc, index);
+            REQUIRE(field != nullptr);
+            if (field->source != wire::Source::Component)
+                continue;
+            // **Presentation is exempt** (ADR 0115): the wind travels so every
+            // player draws the same one, and stays out of the hash so a world
+            // that never sets it hashes as it always did. The IDL says which --
+            // a property marked `Presentation` is generated as `hostFact`.
+            bool presentation = false;
+            bool property = false;
+            for (scene::ClassId at = classId; at != scene::InvalidClass && !presentation;) {
+                const scene::ClassDescriptor* descriptor = classes.find(at);
+                if (descriptor == nullptr)
+                    break;
+                for (const scene::PropertyDesc& each : descriptor->properties) {
+                    if (atoms.text(each.name) != field->name)
+                        continue;
+                    property = true;
+                    if (each.hostFact)
+                        presentation = true;
+                }
+                at = descriptor->super;
+            }
+            // **And so is what a picture counts** (ADR 0129, protocol 44): a
+            // field that is no property, on a class whose every property is
+            // presentation -- a `Trail`'s `Cleared`, which says when to drop a
+            // ribbon that was never in the hash. An emitter's `Emitted` is
+            // not this: an emitter's properties are state, and so is its count.
+            if (!property) {
+                const scene::ClassDescriptor* own = classes.find(classId);
+                const std::span<const scene::PropertyDesc> owned =
+                    own != nullptr ? own->properties : std::span<const scene::PropertyDesc>{};
+                presentation = !owned.empty();
+                for (const scene::PropertyDesc& each : owned)
+                    presentation = presentation && each.hostFact;
+            }
+            if (presentation)
+                continue;
+            CAPTURE(std::string(field->name));
+            // **A sequence is more than a cell** (protocol 44): one of two,
+            // whichever the instance does not hold, written whole as a
+            // replica writes it.
+            if (replication::isSequence(field->encoding)) {
+                const replication::CellRange range = replication::furtherCells(desc, index);
+                replication::FieldSet other = fields;
+                const auto write = [&](float value) {
+                    const std::span<replication::FieldValue> further =
+                        std::span<replication::FieldValue>(other).subspan(range.first, range.count);
+                    if (field->encoding == wire::Encoding::ColorSequence) {
+                        replication::setColorSequence(
+                            other[index], further,
+                            core::ColorSequence{{core::ColorKeypoint{0.0f, core::Color3{value, 0.5f, 0.25f}},
+                                                 core::ColorKeypoint{1.0f, core::Color3{0.25f, value, 0.5f}}}});
+                    }
+                    else {
+                        replication::setNumberSequence(
+                            other[index], further,
+                            core::NumberSequence{{core::NumberKeypoint{0.0f, value, 0.0f},
+                                                  core::NumberKeypoint{1.0f, 1.0f - value, 0.0f}}});
+                    }
+                };
+                write(0.375f);
+                if (replication::sameField(desc, index, other, fields))
+                    write(0.625f);
+                const core::u64 before = world.worldHash();
+                REQUIRE(replication::applySequence(world, id, desc, index, other));
+                CHECK_MESSAGE(world.worldHash() != before,
+                              "a replica is sent this, and the world hash does not see it change");
+                ++checked;
+                continue;
+            }
+            replication::FieldValue a;
+            replication::FieldValue b;
+            // **A reference is this machine's instance** by the time it is
+            // written: none, or one that exists.
+            if (field->encoding == wire::Encoding::InstanceRef) {
+                replication::setInstance(a, core::InstanceId{});
+                replication::setInstance(b, referent);
+            }
+            else {
+                candidates(atoms, field->encoding, a, b);
+            }
+            const replication::FieldValue changed = a == fields[index] ? b : a;
+            if (changed == fields[index])
+                continue;
+
+            const core::u64 before = world.worldHash();
+            const core::u16 wireId = replication::wireIdAt(desc, index);
+            REQUIRE(replication::applyField(world, id, desc, replication::FieldDelta{wireId, changed}));
+            CHECK_MESSAGE(world.worldHash() != before,
+                          "a replica is sent this, and the world hash does not see it change");
+            ++checked;
+        }
+        // Not written back: `Emitted` is a running total a replica only moves
+        // forward, so a fresh instance per class is the clean slate.
+        world.destroy(id);
+        // Retired, which also sweeps the material copy a part adopted: the
+        // next class must start from a world with none, or applying the same
+        // copy's values again would change nothing.
+        world.retireDestroyed();
+    }
+    // Every class the wire carries with state of its own was reached.
+    CHECK(checked > 30);
+}
+
+TEST_CASE("foliage is outside the world hash: its rules can change and the simulation cannot tell")
+{
+    // ADR 0116: foliage is drawn and never simulated, so no machine's hash may
+    // depend on it -- a player who turned a meadow's density down is still in
+    // the same world as one who did not.
+    core::AtomTable atoms;
+    scene::ClassRegistry classes;
+    scene::EnumRegistry enums;
+    scene::generated::registerEnums(enums, atoms);
+    scene::generated::registerClasses(classes, atoms);
+    engine::render::generated::registerClasses(classes, atoms);
+    scene::World world(classes, enums, atoms, 7u);
+
+    const core::InstanceId layer = world.create(classes.findId(atoms.intern("FoliageLayer")));
+    const core::InstanceId mesh = world.create(classes.findId(atoms.intern("FoliageMesh")));
+    REQUIRE(layer.valid());
+    REQUIRE(mesh.valid());
+    REQUIRE_FALSE(world.setParent(mesh, layer).has_value());
+
+    const core::u64 before = world.worldHash();
+    for (const char* name : {"Density", "SlopeMax", "HeightMin", "Clumping", "DrawDistance", "Seed"})
+        CHECK(world.setProperty(layer, atoms.intern(name), scene::Value{0.5}) == scene::World::SetResult::Changed);
+    CHECK(world.setProperty(layer, atoms.intern("Enabled"), scene::Value{false}) == scene::World::SetResult::Changed);
+    for (const char* name : {"Weight", "ScaleMax", "WindResponse", "Stiffness"})
+        CHECK(world.setProperty(mesh, atoms.intern(name), scene::Value{0.5}) == scene::World::SetResult::Changed);
+    CHECK(world.setProperty(mesh, atoms.intern("Mesh"), scene::Value{std::string("asset://models/grass.gltf")}) ==
+          scene::World::SetResult::Changed);
+    world.foliageLayers().find(layer)->materials.push_back(scene::FoliageMaterial{2, 0.5f});
+    CHECK(world.worldHash() == before);
+}

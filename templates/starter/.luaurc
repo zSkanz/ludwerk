@@ -1,0 +1,10 @@
+{
+    "languageMode": "strict",
+    "lint": { "*": true },
+    "lintErrors": true,
+    "typeErrors": true,
+    "aliases": {
+        "std": ".engine/types/std",
+        "engine": ".engine/types/engine"
+    }
+}

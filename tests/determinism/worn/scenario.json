@@ -1,0 +1,7 @@
+{
+  "name": "worn",
+  "script": ".",
+  "seed": 20261012,
+  "ticks": 600,
+  "checkpointEvery": 30
+}

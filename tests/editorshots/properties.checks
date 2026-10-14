@@ -1,0 +1,8 @@
+# shot, then what must be so in it: `x,y=r,g,b` at fractions of the frame (imgprobe), within ten of each channel.
+# A colour in a row too narrow for three numbers is the colour, as wide as the row: white, and
+# under it what the mesh gives off, which is nothing.
+mesh-properties 0.93781,0.25722=255,255,255 0.95031,0.28722=0,0,0
+# A slider a shape key, the first and the fourth: the section is there while editing, and open.
+shape-keys-and-rig 0.88219,0.67611=0,120,212 0.88219,0.74944=0,120,212
+# The picker's own search field, where the grid's name column was.
+map-picker 0.93781,0.25056=48,48,48

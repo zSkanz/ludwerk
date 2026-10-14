@@ -1,0 +1,787 @@
+// The cut-over, end to end (the compiled-assets work).
+//
+// **The claim under test is that a loose `.gltf` no longer feeds the runtime**,
+// and the sharp way to assert it is from the other side: compile a project, then
+// DELETE the source files, and require that everything still draws. A test that
+// only checked "the mesh loaded" would pass on a build where the loose reader
+// was still there, because the loose reader loaded meshes perfectly well -- that
+// was the problem with it.
+//
+// This is also where `import_matches_build` lives, the last of the compiled-assets work's declared
+// verification. The editor's import and a command-line build go through one
+// function by construction (`assetc::importOne`), which is a structural argument
+// rather than an asserted fact -- so it is asserted here, per URN and per blob.
+#include "engine/app/content_import.h"
+#include "engine/asset/content.h"
+#include "engine/asset/material.h"
+#include "engine/core/i18n.h"
+#include "engine/platform/file.h"
+#include "engine/render/mesh_cache.h"
+#include "engine/render/mesh_loader.h"
+#include "engine/rhi/backends.h"
+#include "engine/scene/class_registry.h"
+#include "engine/scene/components.h"
+#include "engine/scene/enum_registry.h"
+#include "engine/scene/world.h"
+#include "project_fixture.h"
+
+#if ENG_DEBUG_UI
+#include "engine/assetc/compiler.h"
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <doctest/doctest.h>
+#include <filesystem>
+#include <fstream>
+#include <optional>
+#include <span>
+#include <string>
+#include <system_error>
+#include <thread>
+#include <vector>
+
+using namespace engine;
+
+namespace {
+
+// The REAL catalog, not a fixture -- so a key this path raises and en.json does
+// not carry is a failure here rather than a `[i18n:missing:...]` line nobody
+// reads. `render.err.mesh_not_compiled` is new with the cut-over and is raised
+// by the third case below.
+void seedRealCatalog()
+{
+    const auto result = core::engineCatalog().loadFromFile(ENG_TEST_CATALOG);
+    REQUIRE_MESSAGE(result.ok, result.diagnostic);
+}
+
+// A scratch project: `content/models/quad.gltf` and `content/textures/base.png`,
+// copied from `asset`'s own fixtures so this needs no checked-in binary of its
+// own and no generator that could disagree with the real files.
+struct Project
+{
+    std::filesystem::path root;
+
+    Project()
+    {
+        std::error_code ec;
+        root = std::filesystem::temp_directory_path(ec) / "engine-content-import-tests";
+        std::filesystem::remove_all(root, ec);
+        std::filesystem::create_directories(root / "content" / "models", ec);
+        std::filesystem::create_directories(root / "content" / "textures", ec);
+        std::filesystem::copy_file(ENG_TEST_MESH, mesh(), std::filesystem::copy_options::overwrite_existing, ec);
+        std::filesystem::copy_file(ENG_TEST_IMAGE, image(), std::filesystem::copy_options::overwrite_existing, ec);
+    }
+
+    ~Project()
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+    }
+
+    Project(const Project&) = delete;
+    Project& operator=(const Project&) = delete;
+
+    [[nodiscard]] std::filesystem::path content() const { return root / "content"; }
+    [[nodiscard]] std::filesystem::path mesh() const { return content() / "models" / "quad.gltf"; }
+    [[nodiscard]] std::filesystem::path image() const { return content() / "textures" / "base.png"; }
+
+    // **What makes this test what it is.** Everything the compiler read is
+    // removed, so anything that still resolves came out of the store.
+    void deleteSources() const
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(content(), ec);
+    }
+};
+
+struct Registries
+{
+    core::AtomTable atoms;
+    scene::ClassRegistry classes;
+    scene::EnumRegistry enums;
+    scene::ClassId meshPartClass = scene::InvalidClass;
+    scene::ClassId workspaceClass = scene::InvalidClass;
+
+    Registries()
+    {
+        meshPartClass = classes.registerClass({
+            .name = atoms.intern("MeshPart"),
+            .defaultName = atoms.intern("MeshPart"),
+        });
+        workspaceClass = classes.registerClass({
+            .name = atoms.intern("Workspace"),
+            .defaultName = atoms.intern("Workspace"),
+        });
+    }
+};
+
+} // namespace
+
+TEST_CASE("a project compiles when it is opened, and then needs none of its sources")
+{
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+
+    const Project project;
+    REQUIRE(std::filesystem::exists(project.mesh()));
+    REQUIRE(std::filesystem::exists(project.image()));
+
+    asset::ContentMounts mounts;
+    const app::ContentImportReport report = app::openProjectContent(project.root, project.content(), mounts);
+
+    // **It did work**, rather than finding a cache from a previous run: the
+    // scratch tree is new, so every source is a miss.
+    CHECK(report.failed.empty());
+    CHECK(report.cacheMisses > 0);
+    CHECK(report.meshes > 0);
+
+    // Two mounts: the source tree, and the store above it.
+    CHECK(mounts.mountCount() == 2);
+
+    const asset::ResolvedContent mesh = mounts.resolve("asset://models/quad.gltf");
+    REQUIRE(mesh.found());
+    // `Source::Pack`, which is what a store resolves as -- so the loader takes
+    // its compiled branch and there is no second answer for it to prefer.
+    CHECK(mesh.source == asset::ResolvedContent::Source::Pack);
+    CHECK(mesh.kind == asset::AssetKind::Mesh);
+
+    const asset::ResolvedContent image = mounts.resolve("asset://textures/base.png");
+    REQUIRE(image.found());
+    CHECK(image.source == asset::ResolvedContent::Source::Pack);
+    CHECK(image.kind == asset::AssetKind::Texture);
+
+    // **And now the sources go away.** A store holds its blobs as files it owns,
+    // so what resolves after this came out of the store and could have come from
+    // nowhere else.
+    project.deleteSources();
+
+    asset::ContentMounts afterwards;
+    (void)app::openProjectContent(project.root, project.content(), afterwards);
+    // One mount, not two: there is no content directory left to mount, and the
+    // store still stands.
+    CHECK(afterwards.mountCount() == 1);
+    CHECK(afterwards.resolve("asset://models/quad.gltf").found());
+    CHECK(afterwards.resolve("asset://textures/base.png").found());
+}
+
+TEST_CASE("opening a project again reads none of its unchanged sources, and says what it compiles")
+{
+    // Every open asked the compiler about every source -- read it, hash it,
+    // find it cached, write the store's index again -- and a project of two
+    // hundred sources spent 3.8 s on that before its first frame, with nothing
+    // to compile. And a first open said nothing while it compiled for minutes.
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+    const Project project;
+
+    std::vector<std::string> told;
+    const app::ImportProgress progress = [&told](core::usize done, core::usize total, std::string_view name) {
+        if (done < total && (told.empty() || told.back() != name))
+            told.emplace_back(name);
+    };
+
+    asset::ContentMounts first;
+    const app::ContentImportReport compiled = app::openProjectContent(project.root, project.content(), first, progress);
+    CHECK(compiled.failed.empty());
+    CHECK(compiled.compiled.size() == 2);
+    // Each source named before it compiled.
+    CHECK(told == std::vector<std::string>{"models/quad.gltf", "textures/base.png"});
+    CHECK(std::filesystem::is_regular_file(app::importSourcesPath(project.root)));
+
+    // **Again, nothing changed: nothing compiled, nothing asked about**, and
+    // the store still answers.
+    told.clear();
+    asset::ContentMounts second;
+    const app::ContentImportReport again = app::openProjectContent(project.root, project.content(), second, progress);
+    CHECK(again.compiled.empty());
+    CHECK(again.cacheHits == 0);
+    CHECK(again.cacheMisses == 0);
+    CHECK(told.empty());
+    CHECK(second.resolve("asset://models/quad.gltf").found());
+    CHECK(second.resolve("asset://textures/base.png").found());
+
+    // **A source that changed is compiled again**, and only it.
+    {
+        std::error_code ec;
+        const auto when = std::filesystem::last_write_time(project.image(), ec);
+        REQUIRE_FALSE(ec);
+        std::filesystem::last_write_time(project.image(), when + std::chrono::seconds(5), ec);
+        REQUIRE_FALSE(ec);
+    }
+    asset::ContentMounts third;
+    const app::ContentImportReport changed = app::openProjectContent(project.root, project.content(), third);
+    CHECK(changed.compiled == std::vector<std::string>{"textures/base.png"});
+}
+
+TEST_CASE("a material that names no image differently leaves every source compiled")
+{
+    // The stamps were good for as long as no material file's size or time
+    // moved: one material saved -- a new colour -- or merely touched, and
+    // every source of the project went back to the compiler. A project of 662
+    // sources took 114 seconds to open with nothing to compile.
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+    const Project project;
+    const std::filesystem::path material = project.content() / "materials" / "wall.material.json";
+    const auto write = [&material](std::string_view properties) {
+        std::error_code ec;
+        std::filesystem::create_directories(material.parent_path(), ec);
+        const std::string text = std::string(R"({"format":"material","version":1,"parent":"","properties":{)") +
+                                 std::string(properties) + "}}";
+        REQUIRE(platform::writeTextFile(material, text));
+    };
+    write(R"("Color":[0.8,0.1,0.1],"ColorMap":"asset://textures/base.png")");
+
+    asset::ContentMounts first;
+    const app::ContentImportReport compiled = app::openProjectContent(project.root, project.content(), first);
+    CHECK(compiled.failed.empty());
+    CHECK(compiled.compiled.size() == 2);
+
+    // **Another colour, and the image still its colour map**: nothing to do.
+    write(R"("Color":[0.1,0.1,0.9],"Roughness":0.35,"ColorMap":"asset://textures/base.png")");
+    asset::ContentMounts second;
+    const app::ContentImportReport recoloured = app::openProjectContent(project.root, project.content(), second);
+    CHECK(recoloured.compiled.empty());
+    CHECK(recoloured.cacheHits == 0);
+    CHECK(recoloured.cacheMisses == 0);
+    CHECK(second.resolve("asset://textures/base.png").found());
+
+    // **The image claimed as numbers instead**: its bytes are other bytes
+    // now, and it is compiled again -- for real, not from the cache.
+    write(R"("Color":[0.1,0.1,0.9],"NormalMap":"asset://textures/base.png")");
+    asset::ContentMounts third;
+    const app::ContentImportReport reclaimed = app::openProjectContent(project.root, project.content(), third);
+    CHECK(reclaimed.failed.empty());
+    CHECK(std::find(reclaimed.compiled.begin(), reclaimed.compiled.end(), "textures/base.png") !=
+          reclaimed.compiled.end());
+    CHECK(reclaimed.cacheMisses >= 1);
+}
+
+TEST_CASE("a model is compiled again when a file it reads beside itself changes")
+{
+    // A glTF's stamp and its cache key were its own bytes. The image it names
+    // beside it could be repainted and the model went on being drawn with the
+    // old one: skipped by the stamp, and answered from the cache had it not
+    // been. Found by a test scene that changes only that image, the day a
+    // compiled store was left in its folder.
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+    const Project project;
+    const std::filesystem::path cards = std::filesystem::path(ENG_TEST_CARD_DIR);
+    const std::filesystem::path model = project.content() / "models" / "card.gltf";
+    const std::filesystem::path beside = project.content() / "models" / "card.png";
+    const auto put = [&](const char* variant) {
+        std::error_code ec;
+        std::filesystem::copy_file(cards / "variants" / variant, beside,
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        REQUIRE_FALSE(ec);
+    };
+    {
+        std::error_code ec;
+        std::filesystem::copy_file(cards / "content" / "models" / "card.gltf", model,
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        REQUIRE_FALSE(ec);
+    }
+    put("solid.png");
+
+    asset::ContentMounts first;
+    const app::ContentImportReport compiled = app::openProjectContent(project.root, project.content(), first);
+    CHECK(compiled.failed.empty());
+    REQUIRE(first.resolve("asset://models/card.gltf").found());
+
+    asset::ContentMounts second;
+    CHECK(app::openProjectContent(project.root, project.content(), second).compiled.empty());
+
+    // **The image beside it, another image**: the model is compiled again, for
+    // real, and what it compiled to is something else.
+    put("holes.png");
+    asset::ContentMounts third;
+    const app::ContentImportReport repainted = app::openProjectContent(project.root, project.content(), third);
+    CHECK(repainted.failed.empty());
+    CHECK(std::find(repainted.compiled.begin(), repainted.compiled.end(), "models/card.gltf") !=
+          repainted.compiled.end());
+    CHECK(repainted.cacheMisses >= 1);
+
+    // **And back**: the first image again is the first answer again, from the
+    // cache this time -- the key is the bytes, not the day.
+    put("solid.png");
+    asset::ContentMounts fourth;
+    const app::ContentImportReport restored = app::openProjectContent(project.root, project.content(), fourth);
+    CHECK(std::find(restored.compiled.begin(), restored.compiled.end(), "models/card.gltf") != restored.compiled.end());
+    CHECK(restored.cacheHits >= 1);
+}
+
+TEST_CASE("sources compiled in batches are the sources compiled one at a time")
+{
+    // Forty copies of one image under forty names -- more than a batch -- and
+    // the mesh: every one compiled, every one named before it was, every one
+    // in the store, and the open after it with nothing left to do.
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+    const Project project;
+    for (int copy = 0; copy < 40; ++copy) {
+        std::error_code ec;
+        std::filesystem::copy_file(project.image(),
+                                   project.content() / "textures" / ("copy" + std::to_string(copy) + ".png"),
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        REQUIRE_FALSE(ec);
+    }
+
+    std::vector<std::string> told;
+    const app::ImportProgress progress = [&told](core::usize done, core::usize total, std::string_view name) {
+        if (done < total && std::find(told.begin(), told.end(), name) == told.end())
+            told.emplace_back(name);
+    };
+    asset::ContentMounts first;
+    const app::ContentImportReport compiled = app::openProjectContent(project.root, project.content(), first, progress);
+    CHECK(compiled.failed.empty());
+    CHECK(compiled.compiled.size() == 42);
+    CHECK(told.size() == 42);
+    CHECK(compiled.meshes == 1);
+    for (int copy = 0; copy < 40; ++copy)
+        CHECK(first.resolve("asset://textures/copy" + std::to_string(copy) + ".png").found());
+    CHECK(first.resolve("asset://models/quad.gltf").found());
+
+    asset::ContentMounts second;
+    const app::ContentImportReport again = app::openProjectContent(project.root, project.content(), second);
+    CHECK(again.compiled.empty());
+}
+
+TEST_CASE("a source the store has lost is compiled again, whatever the stamps remember")
+{
+    // Two processes opened one project at once -- two lanes of the gate, on
+    // one example -- and each merged what it compiled into the store's index
+    // from the index it had read: the second to write left out what the first
+    // had added. Both had stamped both sources as compiled. From then on the
+    // project opened with a mesh that "has no compiled form" and was never
+    // compiled again: the stamp said it was done.
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+    const Project project;
+    asset::ContentMounts first;
+    REQUIRE(app::openProjectContent(project.root, project.content(), first).compiled.size() == 2);
+
+    // The index as the process that lost the race left it: nothing of the
+    // mesh in it, the texture still there.
+    const std::filesystem::path index = project.root / ".engine" / "import" / "index.json";
+    std::string text;
+    REQUIRE(engine::platform::readTextFile(index, text));
+    const std::size_t entry = text.find("{\"urn\":\"asset://models/quad.gltf\"");
+    REQUIRE(entry != std::string::npos);
+    const std::size_t end = text.find('}', entry);
+    REQUIRE(end != std::string::npos);
+    // The entry and the comma that joined it to the next.
+    std::size_t stop = end + 1;
+    if (stop < text.size() && text[stop] == ',')
+        ++stop;
+    text.erase(entry, stop - entry);
+    {
+        std::ofstream out(index, std::ios::binary | std::ios::trunc);
+        out << text;
+    }
+
+    // Opened again: the mesh is compiled again, and only the mesh.
+    asset::ContentMounts second;
+    const app::ContentImportReport again = app::openProjectContent(project.root, project.content(), second);
+    CHECK(again.failed.empty());
+    CHECK(again.compiled == std::vector<std::string>{"models/quad.gltf"});
+    CHECK(second.resolve("asset://models/quad.gltf").found());
+    CHECK(second.resolve("asset://textures/base.png").found());
+
+    // And once more: nothing to do.
+    asset::ContentMounts third;
+    CHECK(app::openProjectContent(project.root, project.content(), third).compiled.empty());
+}
+
+TEST_CASE("an import with no window says what it compiles while it does, every few seconds")
+{
+    // A first open headless compiled for a minute and a half without a word,
+    // and a slow import looked like a stopped process.
+    seedRealCatalog();
+    engine::app::testing::Captured log;
+    app::ImportLog quiet(5'000'000'000ull);
+    const core::u64 second = 1'000'000'000ull;
+    quiet.report(0, 200, "models/a.glb", 10 * second);
+    CHECK(log.contains("200 source file(s)"));
+    const auto progress = [&log] {
+        int count = 0;
+        for (const std::string& line : log.lines)
+            count += line.find("Compiling the project's content") != std::string::npos ? 1 : 0;
+        return count;
+    };
+    // Not again within the interval; again once it has passed, with where it is.
+    quiet.report(1, 200, "models/b.glb", 12 * second);
+    CHECK(progress() == 0);
+    quiet.report(40, 200, "textures/wall.png", 16 * second);
+    CHECK(progress() == 1);
+    CHECK(log.contains("40 of 200 done. Now compiling textures/wall.png"));
+    // Done is said by the totals, not by this.
+    quiet.report(200, 200, "", 99 * second);
+    CHECK(progress() == 1);
+}
+
+TEST_CASE("the loader draws a compiled mesh and a compiled map, with no source file left")
+{
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+
+    const Project project;
+    asset::ContentMounts mounts;
+    const app::ContentImportReport report = app::openProjectContent(project.root, project.content(), mounts);
+    REQUIRE(report.failed.empty());
+
+    // **The whole point of the case.** From here on there is no `.gltf` and no
+    // `.png` anywhere on disk, so a loader that still had a loose reader would
+    // load nothing and this would fail.
+    project.deleteSources();
+
+    Registries registries;
+    scene::World world(registries.classes, registries.enums, registries.atoms, 1234u);
+    const core::InstanceId workspace = world.create(registries.workspaceClass);
+
+    const core::InstanceId part = world.create(registries.meshPartClass);
+    world.parts().add(part, scene::PartComponent{});
+    scene::MeshPartComponent meshPart;
+    meshPart.meshContent = registries.atoms.intern("asset://models/quad.gltf");
+    world.meshParts().add(part, meshPart);
+    (void)world.setParent(part, workspace);
+
+    // The part wears a material that names the map (ADR 0090); the loader
+    // loads the maps of what the parts wear.
+    asset::MaterialLibrary materials;
+    asset::MaterialAsset base;
+    base.properties.colorMap = "asset://textures/base.png";
+    base.written = asset::AllMaterialFields;
+    materials.put("asset://materials/base.material.json", base);
+    world.setMaterialLibrary(&materials);
+    world.parts().find(part)->material = registries.atoms.intern("asset://materials/base.material.json");
+
+    rhi::DeviceResult device = rhi::createNullDevice({.backend = rhi::BackendId::Null});
+    REQUIRE(device != nullptr);
+    rhi::ICmdList* cmd = device->beginFrame();
+    REQUIRE(cmd != nullptr);
+
+    render::MeshCache cache;
+    render::MeshLibrary library;
+    render::TextureLibrary textures;
+    render::MeshLoader loader;
+    loader.setContentMounts(&mounts);
+    loader.setDeferredTextures(false);
+
+    CHECK(loader.sync(*device, *cmd, world, workspace, cache, library) == 1u);
+    CHECK(library.find(meshPart.meshContent) != nullptr);
+
+    // **The map came out of the store, transcoded rather than decoded**, which
+    // is the branch that makes "BC7 and mips reach editor content" true. It was
+    // being produced before this and read by nobody: `syncTextures` went to the
+    // raw PNG beside it every time.
+    CHECK(loader.syncTextures(*device, *cmd, world, textures) == 1u);
+    CHECK(textures.find(registries.atoms.intern("asset://textures/base.png")).valid());
+
+    loader.destroy(*device);
+    cache.destroy(*device);
+}
+
+TEST_CASE("a compiled map is transcoded off the frame that asks for it")
+{
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+
+    const Project project;
+    asset::ContentMounts mounts;
+    const app::ContentImportReport report = app::openProjectContent(project.root, project.content(), mounts);
+    REQUIRE(report.failed.empty());
+
+    Registries registries;
+    scene::World world(registries.classes, registries.enums, registries.atoms, 1234u);
+    const core::InstanceId workspace = world.create(registries.workspaceClass);
+    const core::InstanceId part = world.create(registries.meshPartClass);
+    world.parts().add(part, scene::PartComponent{});
+    (void)world.setParent(part, workspace);
+
+    asset::MaterialLibrary materials;
+    asset::MaterialAsset base;
+    base.properties.colorMap = "asset://textures/base.png";
+    base.written = asset::AllMaterialFields;
+    materials.put("asset://materials/base.material.json", base);
+    world.setMaterialLibrary(&materials);
+    world.parts().find(part)->material = registries.atoms.intern("asset://materials/base.material.json");
+
+    rhi::DeviceResult device = rhi::createNullDevice({.backend = rhi::BackendId::Null});
+    REQUIRE(device != nullptr);
+    rhi::ICmdList* cmd = device->beginFrame();
+    REQUIRE(cmd != nullptr);
+
+    render::TextureLibrary textures;
+    render::MeshLoader loader;
+    loader.setContentMounts(&mounts);
+    // As a window's loader is: what can wait for a later frame does.
+    loader.setDeferredTextures(true);
+
+    // The frame that first draws with the map pays for none of it -- a
+    // transcode is ten milliseconds and more of a frame, and was done here --
+    // and the map is on its way.
+    const core::NameAtom map = registries.atoms.intern("asset://textures/base.png");
+    CHECK(loader.syncTextures(*device, *cmd, world, textures) == 0u);
+    CHECK_FALSE(textures.find(map).valid());
+    CHECK(loader.texturesInFlight() == 1u);
+
+    // A frame or a few later it is there, once, and nothing is left in flight.
+    core::u32 loaded = 0;
+    for (int frame = 0; frame < 20000 && !textures.find(map).valid(); ++frame) {
+        loaded += loader.syncTextures(*device, *cmd, world, textures);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(textures.find(map).valid());
+    CHECK(loaded == 1u);
+    CHECK(loader.texturesInFlight() == 0u);
+    CHECK(loader.syncTextures(*device, *cmd, world, textures) == 0u);
+
+    loader.destroy(*device);
+}
+
+TEST_CASE("a mesh with no compiled form draws nothing, rather than parsing a source file")
+{
+    seedRealCatalog();
+
+    const Project project;
+
+    // Mounted WITHOUT compiling: the source tree is there and the store is not,
+    // which is precisely the state the loose feed used to serve.
+    asset::ContentMounts mounts;
+    mounts.mountDirectory(project.content());
+    REQUIRE(mounts.resolve("asset://models/quad.gltf").found());
+    // Found, and found as a LOOSE file -- so this is not a test about a missing
+    // asset. The file is right there, and the runtime declines to read it.
+    CHECK(mounts.resolve("asset://models/quad.gltf").source == asset::ResolvedContent::Source::Loose);
+
+    Registries registries;
+    scene::World world(registries.classes, registries.enums, registries.atoms, 1234u);
+    const core::InstanceId workspace = world.create(registries.workspaceClass);
+    const core::InstanceId part = world.create(registries.meshPartClass);
+    world.parts().add(part, scene::PartComponent{});
+    scene::MeshPartComponent meshPart;
+    meshPart.meshContent = registries.atoms.intern("asset://models/quad.gltf");
+    world.meshParts().add(part, meshPart);
+    (void)world.setParent(part, workspace);
+
+    rhi::DeviceResult device = rhi::createNullDevice({.backend = rhi::BackendId::Null});
+    REQUIRE(device != nullptr);
+    rhi::ICmdList* cmd = device->beginFrame();
+    REQUIRE(cmd != nullptr);
+
+    render::MeshCache cache;
+    render::MeshLibrary library;
+    render::MeshLoader loader;
+    loader.setContentMounts(&mounts);
+
+    CHECK(loader.sync(*device, *cmd, world, workspace, cache, library) == 0u);
+    CHECK(library.find(meshPart.meshContent) == nullptr);
+
+    // And it is remembered, so the refusal costs one attempt rather than one
+    // per frame for ever.
+    CHECK(loader.sync(*device, *cmd, world, workspace, cache, library) == 0u);
+
+    loader.destroy(*device);
+    cache.destroy(*device);
+}
+
+#if ENG_DEBUG_UI
+
+TEST_CASE("import_matches_build: the editor's import and a command-line build agree, blob for blob")
+{
+    // The compiled-assets work's declared verification, and the reason it is worth asserting even
+    // though `importOne` makes it structural: two entry points that agree by
+    // inspection stop agreeing the first time one of them is changed.
+    seedRealCatalog();
+
+    const Project project;
+
+    asset::ContentMounts mounts;
+    const app::ContentImportReport report = app::openProjectContent(project.root, project.content(), mounts);
+    REQUIRE(report.failed.empty());
+
+    assetc::CompileOptions options;
+    options.inputRoot = project.content();
+    // No cache: the command-line side must produce these bytes from the sources,
+    // not read back what the import just wrote.
+    const assetc::CompileResult built = assetc::compile(options);
+    REQUIRE_MESSAGE(built.ok, built.diagnostic);
+    REQUIRE_FALSE(built.entries.empty());
+
+    // **Per URN and per blob.** The manifest says which hash a URN has; the
+    // store answers with the bytes under that hash. Both have to match, because
+    // a matching hash over bytes nobody stored is a store that fails at first
+    // use.
+    for (const assetc::ManifestEntry& entry : built.entries) {
+        const asset::ResolvedContent found = mounts.resolve(entry.urn);
+        INFO("urn: ", entry.urn);
+        REQUIRE(found.found());
+        CHECK(found.source == asset::ResolvedContent::Source::Pack);
+        CHECK(found.hash == entry.hash);
+        CHECK(found.kind == entry.kind);
+
+        const std::span<const std::byte> blob = mounts.blob(entry.hash);
+        CHECK_FALSE(blob.empty());
+        CHECK(blob.size() == entry.storedBytes);
+    }
+}
+
+#endif
+
+// --- The materials of an imported model (ADR 0090) ----------------------------
+
+TEST_CASE("an imported model's materials become assets its pieces can wear, and a re-import keeps edits")
+{
+    std::error_code ec;
+    const std::filesystem::path content =
+        std::filesystem::temp_directory_path(ec) / "engine-import-materials" / "content";
+    std::filesystem::remove_all(content.parent_path(), ec);
+    std::filesystem::create_directories(content / "models", ec);
+    const std::filesystem::path data = std::filesystem::path(ENG_TEST_MESH).parent_path();
+    std::filesystem::copy_file(data / "textured.gltf", content / "models" / "textured.gltf",
+                               std::filesystem::copy_options::overwrite_existing, ec);
+    std::filesystem::copy_file(data / "checker.png", content / "models" / "checker.png",
+                               std::filesystem::copy_options::overwrite_existing, ec);
+
+    const app::ModelMaterials first = app::writeModelMaterials(content, "models/textured.gltf");
+    // `Plain` samples `checker.png` beside the model and is written; `Bumpy`
+    // glows with a data URI, which no material can name, and is left in the
+    // mesh.
+    REQUIRE(first.written.size() == 1);
+    CHECK(first.written[0] == "materials/textured/plain.material.json");
+    std::string text;
+    REQUIRE(platform::readTextFile(content / first.written[0], text));
+    const std::optional<asset::MaterialAsset> plain = asset::readMaterialAsset(text);
+    REQUIRE(plain.has_value());
+    CHECK(plain->properties.colorMap == "asset://models/checker.png");
+    // glTF's own defaults where the file says nothing.
+    CHECK(plain->properties.metalness == 1.0f);
+    CHECK(plain->properties.roughness == 1.0f);
+
+    // Some submesh wears it and some keeps the file's own.
+    CHECK(std::find(first.bySubmesh.begin(), first.bySubmesh.end(), first.written[0]) != first.bySubmesh.end());
+    CHECK(std::find(first.bySubmesh.begin(), first.bySubmesh.end(), std::string{}) != first.bySubmesh.end());
+
+    // Somebody edits it; a re-import leaves it alone.
+    REQUIRE(platform::writeTextFile(content / first.written[0], "edited"));
+    const app::ModelMaterials second = app::writeModelMaterials(content, "models/textured.gltf");
+    CHECK(second.written.empty());
+    REQUIRE(platform::readTextFile(content / first.written[0], text));
+    CHECK(text == "edited");
+    std::filesystem::remove_all(content.parent_path(), ec);
+}
+
+TEST_CASE("a project being compiled by another process is waited for, and then not compiled twice")
+{
+    // Two processes that opened one never-opened project at the same moment
+    // each compiled it into the same store. The second now waits for the
+    // first. Another process's hold on a project is a lock on a file, and a
+    // lock held by another handle in this process keeps this one out the
+    // same way -- so "another process is compiling" is said here by holding
+    // that lock.
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+    const Project project;
+    const std::filesystem::path lock = project.root / ".engine" / "import" / "compiling.lock";
+    REQUIRE(platform::createDirectories(lock.parent_path()));
+    platform::FileLock other;
+    REQUIRE(other.tryLock(lock) == platform::FileLock::Taken::Yes);
+
+    // The window goes on being answered while it waits: the same callback a
+    // compile calls, with nothing done of nothing.
+    std::atomic<int> waits{0};
+    std::atomic<int> named{0};
+    const app::ImportProgress progress = [&](core::usize done, core::usize total, std::string_view) {
+        if (total == 0)
+            waits.fetch_add(1);
+        else if (done < total)
+            named.fetch_add(1);
+    };
+    std::atomic<bool> finished{false};
+    app::ContentImportReport report;
+    asset::ContentMounts mounts;
+    std::thread opening([&] {
+        report = app::openProjectContent(project.root, project.content(), mounts, progress);
+        finished.store(true);
+    });
+
+    // While the other holds it, nothing is compiled and nothing is written.
+    // (Where nothing waits -- as nothing did -- it has finished instead.)
+    while (waits.load() < 3 && !finished.load())
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    CHECK(waits.load() >= 3);
+    CHECK_FALSE(finished.load());
+    CHECK(named.load() == 0);
+    std::error_code ec;
+    CHECK_FALSE(std::filesystem::exists(app::importIndexPath(project.root), ec));
+
+    // Let go -- as the system lets go for a process that ended -- it has its
+    // turn, and the project is whole.
+    other.unlock();
+    opening.join();
+    CHECK(report.failed.empty());
+    CHECK(report.compiled.size() == 2);
+    CHECK(mounts.resolve("asset://models/quad.gltf").found());
+    CHECK(mounts.resolve("asset://textures/base.png").found());
+
+    // And one that waited for a project that IS compiled by then compiles
+    // nothing: it reads what the other left.
+    REQUIRE(other.tryLock(lock) == platform::FileLock::Taken::Yes);
+    finished.store(false);
+    waits.store(0);
+    app::ContentImportReport again;
+    asset::ContentMounts second;
+    std::thread reopening([&] {
+        again = app::openProjectContent(project.root, project.content(), second, progress);
+        finished.store(true);
+    });
+    while (waits.load() < 3 && !finished.load())
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    other.unlock();
+    reopening.join();
+    CHECK(again.compiled.empty());
+    CHECK(again.cacheMisses == 0);
+    CHECK(second.resolve("asset://models/quad.gltf").found());
+
+    // The lock is the turn's, not the project's: it is there to take again.
+    CHECK(other.tryLock(lock) == platform::FileLock::Taken::Yes);
+}

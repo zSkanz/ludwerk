@@ -1,0 +1,464 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "Workspace",
+  "name": "Workspace",
+  "properties": {
+   "CurrentCamera": "Workspace.MainCamera"
+  },
+  "children": [
+   {
+    "class": "Camera",
+    "name": "MainCamera",
+    "properties": {
+     "CFrame": [
+      0.0,
+      2.6,
+      7.5,
+      1.0,
+      0.0,
+      -0.0,
+      -0.0,
+      0.9894149142837049,
+      -0.14511418742827673,
+      0.0,
+      0.14511418742827673,
+      0.9894149142837049
+     ],
+     "FieldOfView": 50.0
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Floor",
+    "properties": {
+     "CFrame": [
+      0.0,
+      -0.5,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      14.0,
+      1.0,
+      14.0
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.36,
+       0.3,
+       0.26
+      ]
+     }
+    }
+   },
+   {
+    "class": "Part",
+    "name": "WallLeft",
+    "properties": {
+     "CFrame": [
+      -3.8,
+      1.75,
+      -3.1,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      6.4,
+      3.5,
+      0.2
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.62,
+       0.6,
+       0.56
+      ]
+     }
+    }
+   },
+   {
+    "class": "Part",
+    "name": "WallRight",
+    "properties": {
+     "CFrame": [
+      3.8,
+      1.75,
+      -3.1,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      6.4,
+      3.5,
+      0.2
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.62,
+       0.6,
+       0.56
+      ]
+     }
+    }
+   },
+   {
+    "class": "Part",
+    "name": "WallOver",
+    "properties": {
+     "CFrame": [
+      0.0,
+      2.85,
+      -3.1,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      1.2,
+      1.3,
+      0.2
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.62,
+       0.6,
+       0.56
+      ]
+     }
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Door",
+    "properties": {
+     "CFrame": [
+      0.0,
+      1.1,
+      -3.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      1.2,
+      2.2,
+      0.08
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.42,
+       0.26,
+       0.16
+      ]
+     }
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Lamp",
+    "properties": {
+     "CFrame": [
+      0.0,
+      2.9,
+      0.4,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.3,
+      0.3,
+      0.3
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       1.0,
+       0.86,
+       0.6
+      ]
+     },
+     "Shape": "Ball"
+    },
+    "children": [
+     {
+      "class": "PointLight",
+      "name": "Light",
+      "properties": {
+       "Brightness": 0.5,
+       "Range": 14.0,
+       "Color": [
+        1.0,
+        0.72,
+        0.42
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "class": "Model",
+    "name": "Anna",
+    "properties": {},
+    "children": [
+     {
+      "class": "Part",
+      "name": "Stand",
+      "properties": {
+       "CFrame": [
+        -1.0,
+        0.5,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+       ],
+       "Size": [
+        0.9,
+        1.0,
+        0.6
+       ],
+       "Anchored": true
+      }
+     },
+     {
+      "class": "MeshPart",
+      "name": "Bust",
+      "properties": {
+       "MeshContent": "asset://models/head.gltf",
+       "CFrame": [
+        -1.0,
+        1.0,
+        0.0,
+        0.2873478855663454,
+        0.0,
+        -0.9578262852211514,
+        0.0,
+        1.0,
+        0.0,
+        0.9578262852211514,
+        0.0,
+        0.2873478855663454
+       ],
+       "Anchored": true
+      },
+      "children": [
+       {
+        "class": "AnimationPlayer",
+        "name": "Animation",
+        "properties": {}
+       },
+       {
+        "class": "LipSync",
+        "name": "Mouth",
+        "properties": {
+         "Mode": "Auto"
+        }
+       },
+       {
+        "class": "Attachment",
+        "name": "Face",
+        "properties": {
+         "CFrame": [
+          0.0,
+          0.82,
+          0.1,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "class": "Model",
+    "name": "Bruno",
+    "properties": {},
+    "children": [
+     {
+      "class": "Part",
+      "name": "Stand",
+      "properties": {
+       "CFrame": [
+        1.0,
+        0.5,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+       ],
+       "Size": [
+        0.9,
+        1.0,
+        0.6
+       ],
+       "Anchored": true
+      }
+     },
+     {
+      "class": "MeshPart",
+      "name": "Bust",
+      "properties": {
+       "MeshContent": "asset://models/head.gltf",
+       "CFrame": [
+        1.0,
+        1.0,
+        0.0,
+        0.2873478855663454,
+        0.0,
+        0.9578262852211514,
+        0.0,
+        1.0,
+        0.0,
+        -0.9578262852211514,
+        0.0,
+        0.2873478855663454
+       ],
+       "Anchored": true
+      },
+      "children": [
+       {
+        "class": "AnimationPlayer",
+        "name": "Animation",
+        "properties": {}
+       },
+       {
+        "class": "LipSync",
+        "name": "Mouth",
+        "properties": {
+         "Mode": "Auto"
+        }
+       },
+       {
+        "class": "Attachment",
+        "name": "Face",
+        "properties": {
+         "CFrame": [
+          0.0,
+          0.82,
+          0.1,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "class": "SequencePlayer",
+    "name": "Meeting",
+    "properties": {
+     "Sequence": "asset://sequences/meeting.sequence.json",
+     "Controls": "Suspend"
+    },
+    "children": [
+     {
+      "class": "SequenceBinding",
+      "name": "Anna",
+      "properties": {
+       "Target": "Workspace.Anna"
+      }
+     },
+     {
+      "class": "SequenceBinding",
+      "name": "Bruno",
+      "properties": {
+       "Target": "Workspace.Bruno"
+      }
+     },
+     {
+      "class": "SequenceBinding",
+      "name": "Lamp",
+      "properties": {
+       "Target": "Workspace.Lamp"
+      }
+     },
+     {
+      "class": "SequenceBinding",
+      "name": "Door",
+      "properties": {
+       "Target": "Workspace.Door"
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

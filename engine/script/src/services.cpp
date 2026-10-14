@@ -1,0 +1,4164 @@
+#include "engine/script/services.h"
+
+#include <lua.h>
+#include <lualib.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstring>
+#include <limits>
+#include <memory>
+#include <span>
+#include <string>
+#include <vector>
+
+#include "class_descriptors.gen.h"
+#include "engine/asset/terrain.h"
+#include "engine/asset/voxel_mesher.h"
+#include "engine/core/content_path.h"
+#include "engine/core/profile.h"
+#include "engine/core/run_record.h"
+#include "engine/input/input.h"
+#include "engine/net/local_address.h"
+#include "engine/platform/event.h"
+#include "engine/platform/window.h"
+#include "engine/scene/players.h"
+#include "engine/scene/voxel_fluid.h"
+#include "engine/scene/wind.h"
+#include "engine/scene/world.h"
+#include "engine/script/content_provider.h"
+#include "engine/script/crypto_service.h"
+#include "engine/script/datatypes.h"
+#include "engine/script/instance_binding.h"
+#include "engine/script/json_module.h"
+#include "engine/script/modules.h"
+#include "engine/script/optional_service.h"
+#include "engine/script/platform_services.h"
+#include "engine/script/remote.h"
+#include "engine/script/save_service.h"
+#include "engine/script/scenes.h"
+#include "engine/script/signals.h"
+#include "engine/script/tweens.h"
+
+namespace engine::script {
+namespace {
+
+using scene::ClassId;
+using scene::World;
+
+[[nodiscard]] ServiceState& services(lua_State* L) noexcept
+{
+    return *context(L).services;
+}
+
+[[nodiscard]] World& world(lua_State* L) noexcept
+{
+    return *context(L).world;
+}
+
+// --- Service lookup ----------------------------------------------------------
+
+[[nodiscard]] core::InstanceId findServiceOfClass(lua_State* L, ClassId serviceClass)
+{
+    const core::InstanceId root = services(L).dataModel;
+    if (!root.valid() || serviceClass == scene::InvalidClass)
+        return {};
+    return world(L).findFirstChildOfClass(root, serviceClass);
+}
+
+// Singletons: every later call returns the same instance, and it is an ordinary
+// child of `game` once created (api-design.md §2.1).
+[[nodiscard]] core::InstanceId getServiceOfClass(lua_State* L, ClassId serviceClass)
+{
+    if (const core::InstanceId existing = findServiceOfClass(L, serviceClass); existing.valid())
+        return existing;
+
+    World& w = world(L);
+    const core::InstanceId created = w.create(serviceClass);
+    if (!created.valid())
+        return {};
+    (void)w.setParent(created, services(L).dataModel);
+    flushSceneChanges(L);
+    return created;
+}
+
+[[nodiscard]] core::InstanceId serviceByName(lua_State* L, std::string_view name)
+{
+    const World& w = world(L);
+    const ClassId classId = w.classes().findId(w.atoms().lookup(name));
+    const scene::ClassDescriptor* descriptor = w.classes().find(classId);
+    if (descriptor == nullptr || !hasFlag(descriptor->flags, scene::ClassFlags::Service))
+        return {};
+    return findServiceOfClass(L, classId);
+}
+
+[[nodiscard]] ClassId checkServiceClass(lua_State* L, int index)
+{
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, index, &length);
+    const std::string_view name{text, length};
+
+    const World& w = world(L);
+    const ClassId classId = w.classes().findId(w.atoms().lookup(name));
+    const scene::ClassDescriptor* descriptor = w.classes().find(classId);
+    if (descriptor == nullptr || !hasFlag(descriptor->flags, scene::ClassFlags::Service)) {
+        // Retired rather than unknown (ADR 0105): the name was real, and the
+        // error says where its code lives now.
+        if (name == "ScriptService")
+            raise(L, ENG_TR("scene.err.script_service_retired"));
+        const core::I18nArg args[] = {{"className", name}};
+        raise(L, ENG_TR("scene.err.unknown_service"), args);
+    }
+    return classId;
+}
+
+// --- DataModel ---------------------------------------------------------------
+
+int dataModelGetService(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const auto service = checkServiceClass(L, 2);
+    const auto* descriptor = world(L).classes().find(service);
+    warnOptionalIntegration(L, descriptor->integration, world(L).atoms().text(descriptor->name));
+    pushInstance(L, getServiceOfClass(L, service));
+    return 1;
+}
+
+int dataModelFindService(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    // Creates nothing, so it answers whether a service is in use rather than
+    // forcing it into existence -- which is the whole difference from
+    // `GetService`. An unknown *name* is nil here rather than a raise: asking
+    // whether something exists is not the same as asking for it.
+    pushInstance(L, serviceByName(L, std::string_view{text, length}));
+    return 1;
+}
+
+int dataModelBindToClose(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+
+    lua_pushvalue(L, 2);
+    services(L).closeHandlers.push_back(OwnedHandler{lua_ref(L, -1), scriptOfThread(L)});
+    lua_pop(L, 1);
+    return 0;
+}
+
+int dataModelShutdown(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    // A flag rather than an exit: nothing in the VM can end a process, and a
+    // script that could would take the close handlers down with it.
+    services(L).shutdown = true;
+    return 0;
+}
+
+// --- RunService --------------------------------------------------------------
+
+int runServicePause(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    // Idempotent: pausing a paused world is a no-op, not an error.
+    world(L).engineState().paused = true;
+    return 0;
+}
+
+int runServiceResume(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    world(L).engineState().paused = false;
+    return 0;
+}
+
+int runServiceIsPaused(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    // Since `Pause` and `Resume` are both idempotent, this is how code tells the
+    // two states apart rather than by watching a call fail.
+    lua_pushboolean(L, world(L).engineState().paused);
+    return 1;
+}
+
+// **How the run before this one ended, and where its report is** (ADR 0187):
+// what a shipped game asks at its start, to tell its player that the last
+// session did not end well and which file to send. A fact about this machine,
+// never about the world -- nothing of it is replicated or hashed -- and
+// nothing is uploaded or shown by the engine.
+int runServiceGetLastRun(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::LastRun& last = core::lastRun();
+    lua_createtable(L, 0, 5);
+    pushEnumItem(L, scene::EnumValue{scene::generated::RunOutcomeEnumId, static_cast<core::i32>(last.outcome)});
+    lua_setfield(L, -2, "Outcome");
+    lua_pushinteger(L, static_cast<int>(last.scriptErrors));
+    lua_setfield(L, -2, "ScriptErrors");
+    if (!last.firstScriptError.empty()) {
+        lua_pushlstring(L, last.firstScriptError.data(), last.firstScriptError.size());
+        lua_setfield(L, -2, "FirstScriptError");
+    }
+    if (!last.report.empty()) {
+        const std::string report = last.report.generic_string();
+        lua_pushlstring(L, report.data(), report.size());
+        lua_setfield(L, -2, "Report");
+    }
+    if (!last.dump.empty()) {
+        const std::string dump = last.dump.generic_string();
+        lua_pushlstring(L, dump.data(), dump.size());
+        lua_setfield(L, -2, "Dump");
+    }
+    return 1;
+}
+
+// **Rollback's three calls** (ADR 0101). The simulation is saved as a buffer
+// so a game keeps as many as it likes and the collector frees the ones it
+// drops; nothing here holds one.
+int runServiceSaveSimulation(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::PhysicsSync* physics = services(L).physics;
+    std::vector<u8> bytes;
+    if (physics == nullptr || !physics->saveSimulation(bytes))
+        raise(L, ENG_TR("script.err.simulation_unavailable"));
+    void* out = lua_newbuffer(L, bytes.size());
+    if (!bytes.empty())
+        std::memcpy(out, bytes.data(), bytes.size());
+    return 1;
+}
+
+int runServiceRestoreSimulation(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const void* data = luaL_checkbuffer(L, 2, &length);
+    scene::PhysicsSync* physics = services(L).physics;
+    const bool restored =
+        physics != nullptr && physics->restoreSimulation(std::span<const u8>{static_cast<const u8*>(data), length});
+    lua_pushboolean(L, restored ? 1 : 0);
+    return 1;
+}
+
+int runServiceStepSimulation(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    if (scene::PhysicsSync* physics = services(L).physics; physics != nullptr)
+        physics->stepQuietly(world(L).engineState().fixedTimestep);
+    return 0;
+}
+
+// --- TagService --------------------------------------------------------------
+
+int tagServiceGetTagged(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+
+    std::vector<core::InstanceId> tagged;
+    // `lookup` rather than `intern`: a query for a tag nothing carries is a
+    // normal answer, and interning would let a loop over random strings grow
+    // the atom table without bound.
+    world(L).collectTagged(world(L).atoms().lookup(std::string_view{text, length}), tagged);
+
+    lua_createtable(L, static_cast<int>(tagged.size()), 0);
+    for (usize index = 0; index < tagged.size(); ++index) {
+        pushInstance(L, tagged[index]);
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
+int tagServiceGetAllTags(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+
+    // Tags currently carried by at least one instance, not every name ever seen.
+    scene::TagSet tags;
+    world(L).collectAllTags(tags);
+
+    lua_createtable(L, static_cast<int>(tags.size()), 0);
+    for (usize index = 0; index < tags.size(); ++index) {
+        const std::string_view text = world(L).atoms().text(tags[index]);
+        lua_pushlstring(L, text.data(), text.size());
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
+[[nodiscard]] core::NameAtom checkTagName(lua_State* L, int index)
+{
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, index, &length);
+    if (length == 0) {
+        const core::I18nArg args[] = {{"name", std::string_view{""}}};
+        raise(L, ENG_TR("scene.err.invalid_name"), args);
+    }
+    // Interned, unlike the query above: a signal for a tag nothing carries yet
+    // is a reasonable thing to hold, so the name has to have an atom.
+    return world(L).atoms().intern(std::string_view{text, length});
+}
+
+int tagServiceGetInstanceAddedSignal(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    pushTagSignal(L, self, SignalKind::TagAdded, checkTagName(L, 2));
+    return 1;
+}
+
+int tagServiceGetInstanceRemovedSignal(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    pushTagSignal(L, self, SignalKind::TagRemoved, checkTagName(L, 2));
+    return 1;
+}
+
+// --- DebugService ------------------------------------------------------------
+
+[[nodiscard]] core::Color3 optionalColor(lua_State* L, int index)
+{
+    if (lua_isnoneornil(L, index))
+        return core::Color3{1.0f, 1.0f, 1.0f};
+    return checkColor3(L, index);
+}
+
+int debugServiceDrawLine(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::Vec3 a = checkVector3(L, 2);
+    const core::Vec3 b = checkVector3(L, 3);
+    const core::Color3 color = optionalColor(L, 4);
+
+    // Arguments are checked BEFORE the sink is consulted, so a headless run
+    // still rejects a bad call. A no-op that also skipped validation would make
+    // headless the one place a typo survives.
+    const GizmoSink& sink = services(L).gizmos;
+    if (sink.line != nullptr)
+        sink.line(sink.user, a, b, color);
+    return 0;
+}
+
+int debugServiceDrawBox(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::CFrameD frame = checkCFrame(L, 2);
+    const core::Vec3 size = checkVector3(L, 3);
+    const core::Color3 color = optionalColor(L, 4);
+
+    const GizmoSink& sink = services(L).gizmos;
+    if (sink.box != nullptr)
+        sink.box(sink.user, frame, size, color);
+    return 0;
+}
+
+int debugServiceDrawSphere(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::Vec3 position = checkVector3(L, 2);
+    const auto radius = static_cast<f32>(luaL_checknumber(L, 3));
+    const core::Color3 color = optionalColor(L, 4);
+
+    const GizmoSink& sink = services(L).gizmos;
+    if (sink.sphere != nullptr)
+        sink.sphere(sink.user, position, radius, color);
+    return 0;
+}
+
+int debugServiceCaptureProfile(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    lua_pushboolean(L, core::profile::requestCapture(luaL_checknumber(L, 2), luaL_optnumber(L, 3, 0.0)));
+    return 1;
+}
+
+int debugServiceGetProfileReport(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const auto* capture = core::profile::captured();
+    if (capture == nullptr) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 3);
+    lua_pushnumber(L, static_cast<f64>(capture->frames));
+    lua_setfield(L, -2, "frames");
+    lua_pushnumber(L, capture->seconds);
+    lua_setfield(L, -2, "seconds");
+    lua_createtable(L, static_cast<int>(capture->scopes.size()), 0);
+    int index = 0;
+    for (const auto& row : capture->scopes) {
+        lua_createtable(L, 0, 9);
+        lua_pushlstring(L, row.name.data(), row.name.size());
+        lua_setfield(L, -2, "name");
+        const auto number = [L](const char* name, f64 value) {
+            lua_pushnumber(L, value);
+            lua_setfield(L, -2, name);
+        };
+        number("depth", row.depth);
+        number("meanMs", row.meanMs);
+        number("bestMs", row.bestMs);
+        number("medianMs", row.medianMs);
+        number("p95Ms", row.p95Ms);
+        number("p99Ms", row.p99Ms);
+        number("worstMs", row.worstMs);
+        number("selfMedianMs", row.selfMedianMs);
+        lua_rawseti(L, -2, ++index);
+    }
+    lua_setfield(L, -2, "scopes");
+    return 1;
+}
+
+int debugServiceGetStat(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const std::string_view name{text, length};
+
+    // Answered from the world rather than published per frame, because it is
+    // exact at any moment and a per-frame copy could only be stale.
+    if (name == "InstanceCount") {
+        lua_pushnumber(L, static_cast<f64>(world(L).instanceCount()));
+        return 1;
+    }
+
+    // The engine's own counters, checked BEFORE the custom table so a game
+    // cannot shadow one: `GetStat("FPS")` reads the engine's number or nothing.
+    const FrameStats& frame = services(L).frameStats;
+    if (name == "FPS") {
+        lua_pushnumber(L, frame.fps);
+        return 1;
+    }
+    if (name == "FrameTimeMs") {
+        lua_pushnumber(L, frame.frameTimeMs);
+        return 1;
+    }
+    if (name == "DrawCalls") {
+        lua_pushnumber(L, frame.drawCalls);
+        return 1;
+    }
+    if (name == "PhysicsBodies") {
+        // Zero until the physics work, and zero is the truthful answer: there is no physics
+        // world, so nothing is in it. A raise would say the stat does not
+        // exist, which is a different and false claim.
+        lua_pushnumber(L, frame.physicsBodies);
+        return 1;
+    }
+    if (name == "LuaMemoryKB") {
+        lua_pushnumber(L, frame.luaMemoryKb);
+        return 1;
+    }
+    if (name == "AudioUnderruns") {
+        // Zero on a headless run because there is no device to starve, and that
+        // is the truthful answer rather than a missing one -- the same reasoning
+        // `PhysicsBodies` carries above.
+        lua_pushnumber(L, frame.audioUnderruns);
+        return 1;
+    }
+    if (name == "AudioVoices") {
+        lua_pushnumber(L, frame.audioVoices);
+        return 1;
+    }
+    if (name == "AudioClipsLoaded") {
+        lua_pushnumber(L, frame.audioClipsLoaded);
+        return 1;
+    }
+    if (name == "AudioClipsMissing") {
+        // The number that answers "is this the real sound or the placeholder
+        // tone", which a person listening on laptop speakers often cannot.
+        lua_pushnumber(L, frame.audioClipsMissing);
+        return 1;
+    }
+    if (name == "AudioClipsStreamed") {
+        // Of `AudioClipsLoaded`, the ones long enough that the file stays
+        // encoded and plays through a decoder rather than being held whole.
+        lua_pushnumber(L, frame.audioClipsStreamed);
+        return 1;
+    }
+    if (name == "VisibleObjects") {
+        // Not the same number as `DrawCalls` since the lighting work, and the difference is
+        // the point: a run of objects sharing a mesh and a material is one call.
+        lua_pushnumber(L, frame.visibleObjects);
+        return 1;
+    }
+    if (name == "InstancedDraws") {
+        lua_pushnumber(L, frame.instancedDraws);
+        return 1;
+    }
+    if (name == "MeshLodDraws") {
+        // Zero on a scene whose meshes have one level, which is the truthful
+        // answer and not a missing one -- the same reasoning `PhysicsBodies`
+        // carries above.
+        lua_pushnumber(L, frame.meshLodDraws);
+        return 1;
+    }
+
+    const core::NameAtom atom = world(L).atoms().lookup(name);
+    for (const auto& [key, value] : services(L).stats.entries) {
+        if (key == atom) {
+            lua_pushnumber(L, value);
+            return 1;
+        }
+    }
+
+    // A name nothing has published raises rather than answering zero: a
+    // misspelt stat is a bug in the caller, and a debug surface that answers
+    // zero hides that bug in the one place people are already confused.
+    const core::I18nArg args[] = {{"name", name}};
+    raise(L, ENG_TR("scene.err.unknown_stat"), args);
+}
+
+int debugServiceSetCustomStat(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::NameAtom name = checkTagName(L, 2);
+    const f64 value = luaL_checknumber(L, 3);
+
+    StatTable& stats = services(L).stats;
+    for (auto& entry : stats.entries) {
+        if (entry.first == name) {
+            entry.second = value;
+            return 0;
+        }
+    }
+    stats.entries.emplace_back(name, value);
+    return 0;
+}
+
+// The built-in panels, api-design.md §2.1. A closed list rather than a free
+// namespace, because an unknown panel raises and there has to be something to
+// compare against.
+constexpr std::string_view Panels[] = {"Stats", "Scene", "Log", "Streaming", "Physics", "Terrain"};
+
+[[nodiscard]] core::NameAtom checkPanelName(lua_State* L, int index)
+{
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, index, &length);
+    const std::string_view name{text, length};
+
+    for (const std::string_view panel : Panels) {
+        if (panel == name)
+            return world(L).atoms().intern(name);
+    }
+
+    const core::I18nArg args[] = {{"name", name}};
+    raise(L, ENG_TR("scene.err.unknown_stat"), args);
+}
+
+int debugServiceShowPanel(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::NameAtom name = checkPanelName(L, 2);
+
+    std::vector<core::NameAtom>& open = services(L).openPanels;
+    if (std::find(open.begin(), open.end(), name) == open.end())
+        open.push_back(name);
+    return 0;
+}
+
+int debugServiceHidePanel(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::NameAtom name = checkPanelName(L, 2);
+
+    std::vector<core::NameAtom>& open = services(L).openPanels;
+    const auto found = std::find(open.begin(), open.end(), name);
+    if (found != open.end())
+        open.erase(found);
+    return 0;
+}
+
+// --- WaitForChild ------------------------------------------------------------
+
+// Deadlines are whole ticks, exactly as `task.wait`'s are: the timeout is
+// SimClock seconds like every other timer, and a float compared against a float
+// is what makes a replay diverge.
+[[nodiscard]] u64 timeoutTicks(f64 seconds, f64 timestep) noexcept
+{
+    if (!(timestep > 0.0) || !(seconds > 0.0))
+        return 1;
+    constexpr f64 tolerance = 1e-9;
+    const f64 raw = std::ceil(seconds / timestep - tolerance);
+    return raw > 1.0 ? static_cast<u64>(raw) : 1u;
+}
+
+int instanceWaitForChild(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    World& w = world(L);
+
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const std::string_view name{text, length};
+
+    // Interned rather than looked up: the awaited name may not exist anywhere
+    // yet, and it has to be comparable when it does.
+    const core::NameAtom atom = w.atoms().intern(name);
+
+    // A matching child already present returns immediately without yielding.
+    // The contract is about the state, not about the event that produced it.
+    if (const core::InstanceId found = w.findFirstChild(self, atom); found.valid()) {
+        pushInstance(L, found);
+        return 1;
+    }
+
+    requireYieldable(L, "WaitForChild");
+    ChildWaiter waiter;
+    waiter.parent = self;
+    waiter.name = atom;
+    waiter.scheduledTick = w.engineState().tick;
+    if (!lua_isnoneornil(L, 3)) {
+        waiter.hasTimeout = true;
+        waiter.deadlineTick =
+            waiter.scheduledTick + timeoutTicks(luaL_checknumber(L, 3), w.engineState().fixedTimestep);
+    }
+
+    lua_pushthread(L);
+    waiter.threadRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+
+    services(L).childWaiters.push_back(waiter);
+    return lua_yield(L, 0);
+}
+
+// --- StreamingService ---------------------------------------------------
+//
+// A focus is an INSTANCE rather than a position, so the world streams around
+// something that moves without a script pushing coordinates every frame. The
+// host reads the set once per frame and asks each entry where it is.
+
+int streamingAddFocus(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::InstanceId focus = checkInstance(L, 2);
+
+    World& w = world(L);
+    // An instance with no position cannot anchor a world, and accepting one
+    // would silently stream around the origin -- which looks like "streaming is
+    // broken" rather than like "that was the wrong instance".
+    if (w.parts().find(focus) == nullptr && w.cameras().find(focus) == nullptr)
+        raise(L, ENG_TR("scene.err.streaming_focus_unlocatable"));
+
+    std::vector<core::InstanceId>& foci = w.streamingFoci();
+    const auto at = std::lower_bound(foci.begin(), foci.end(), focus,
+                                     [](core::InstanceId a, core::InstanceId b) { return a.index < b.index; });
+    // Sorted and deduplicated: adding the same focus twice would double its
+    // weight in nothing at all, but it would also make removal ambiguous.
+    if (at == foci.end() || at->index != focus.index)
+        foci.insert(at, focus);
+    return 0;
+}
+
+int streamingRemoveFocus(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::InstanceId focus = checkInstance(L, 2);
+
+    std::vector<core::InstanceId>& foci = world(L).streamingFoci();
+    const auto at = std::lower_bound(foci.begin(), foci.end(), focus,
+                                     [](core::InstanceId a, core::InstanceId b) { return a.index < b.index; });
+    if (at != foci.end() && at->index == focus.index)
+        foci.erase(at);
+    return 0;
+}
+
+int streamingLoadAreaAsync(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::Vec3 position = checkVector3(L, 2);
+    const f64 radius = luaL_checknumber(L, 3);
+    if (!(radius > 0.0))
+        raise(L, ENG_TR("scene.err.number_positive"));
+
+    requireYieldable(L, "LoadAreaAsync");
+    ServiceState& state = services(L);
+    ServiceState::AreaWaiter waiter;
+    waiter.position = core::toDVec3(position);
+    waiter.radius = radius;
+    waiter.scheduledTick = world(L).engineState().tick;
+
+    lua_pushthread(L);
+    waiter.threadRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+
+    // Always parks, even when the area is already resident: whether it is is a
+    // question only the host can answer, and answering it here would need this
+    // module to know what a chunk is. The host resumes it on the very next
+    // pump, so an already-loaded area costs one frame rather than a wait.
+    state.areaWaiters.push_back(waiter);
+    return lua_yield(L, 0);
+}
+
+// --- Terrain: is it drawn as it will be (ADR 0159) ---------------------------
+
+[[nodiscard]] bool meshedNow(lua_State* L, core::InstanceId terrain, core::DVec3 position, f64 radius)
+{
+    const ServiceState& state = services(L);
+    return !state.meshed || state.meshed(terrain, position, radius);
+}
+
+int terrainIsMeshed(lua_State* L)
+{
+    const core::InstanceId terrain = checkInstance(L, 1);
+    const core::Vec3 position = checkVector3(L, 2);
+    const f64 radius = luaL_checknumber(L, 3);
+    if (!(radius > 0.0))
+        raise(L, ENG_TR("scene.err.number_positive"));
+    lua_pushboolean(L, meshedNow(L, terrain, core::toDVec3(position), radius) ? 1 : 0);
+    return 1;
+}
+
+int terrainWaitForMeshAsync(lua_State* L)
+{
+    const core::InstanceId terrain = checkInstance(L, 1);
+    const core::Vec3 position = checkVector3(L, 2);
+    const f64 radius = luaL_checknumber(L, 3);
+    if (!(radius > 0.0))
+        raise(L, ENG_TR("scene.err.number_positive"));
+    // Thirty seconds unless it says: a wait that never ends is worse than one
+    // that answers no.
+    const f64 timeout = luaL_optnumber(L, 4, 30.0);
+    if (!(timeout >= 0.0))
+        raise(L, ENG_TR("scene.err.number_positive"));
+    requireYieldable(L, "WaitForMeshAsync");
+    const scene::EngineState& engine = world(L).engineState();
+    ServiceState::MeshWaiter waiter;
+    waiter.terrain = terrain;
+    waiter.position = core::toDVec3(position);
+    waiter.radius = radius;
+    const f64 step = engine.fixedTimestep > 0.0 ? engine.fixedTimestep : 1.0 / 60.0;
+    waiter.deadlineTick = engine.tick + static_cast<u64>(std::ceil(timeout / step));
+    lua_pushthread(L);
+    waiter.threadRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+    // Parked even when the ground is meshed already, as `LoadAreaAsync` is:
+    // answered at the end of this frame, never inside the call.
+    services(L).meshWaiters.push_back(waiter);
+    return lua_yield(L, 0);
+}
+
+// --- SceneService: the loading curtain (ADR 0159) ------------------------------
+
+int sceneServiceHoldLoading(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    world(L).engineState().loadingHolds += 1;
+    return 0;
+}
+
+int sceneServiceReleaseLoading(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    scene::EngineState& engine = world(L).engineState();
+    if (engine.loadingHolds > 0)
+        engine.loadingHolds -= 1;
+    return 0;
+}
+
+// --- Registration ------------------------------------------------------------
+
+// --- HotReloadService --------------------------------------------------------
+
+int hotReloadSaveState(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    // Present but nil is a legal value to save -- it is how a script clears a
+    // key -- so this checks that the argument exists rather than what it is.
+    luaL_checkany(L, 3);
+
+    std::string reason;
+    std::optional<BagValue> value = toBagValue(L, 3, reason);
+    if (!value.has_value()) {
+        // Raising rather than dropping. A reload that quietly loses state is
+        // worse than one that says which value it could not keep, because the
+        // first is discovered a save later and blamed on the reload.
+        const core::I18nArg args[] = {{"key", std::string_view{text, length}}, {"reason", std::string_view{reason}}};
+        raise(L, ENG_TR("script.err.unsavable_state"), args);
+    }
+
+    services(L).reload->save(std::string_view{text, length}, std::move(*value));
+    return 0;
+}
+
+int hotReloadLoadState(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+
+    const BagValue* stored = services(L).reload->load(std::string_view{text, length});
+    if (stored == nullptr) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    pushBagValue(L, *stored);
+    return 1;
+}
+
+int hotReloadIsReload(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    lua_pushboolean(L, services(L).reload->isReload() ? 1 : 0);
+    return 1;
+}
+
+// --- PhysicsService -----------------------------------------------------
+//
+// The group table is world state (`scene::CollisionGroups`) rather than the
+// backend's, so these are ordinary scene writes: the mirror pushes the table
+// down at the next tick, and a script reading it back gets what it wrote
+// whether or not a backend exists.
+
+int physicsRegisterCollisionGroup(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+
+    World& w = world(L);
+    const core::NameAtom name = w.atoms().intern(std::string_view{text, length});
+    if (w.collisionGroups().add(name) == scene::CollisionGroups::kInvalid)
+        raise(L, ENG_TR("scene.err.collision_groups_full"));
+    w.collisionGroups().bumpRevision();
+    return 0;
+}
+
+int physicsCollisionGroupSetCollidable(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t firstLength = 0;
+    const char* first = luaL_checklstring(L, 2, &firstLength);
+    size_t secondLength = 0;
+    const char* second = luaL_checklstring(L, 3, &secondLength);
+    luaL_checktype(L, 4, LUA_TBOOLEAN);
+    const bool collidable = lua_toboolean(L, 4) != 0;
+
+    World& w = world(L);
+    const u16 a = w.collisionGroups().find(w.atoms().lookup(std::string_view{first, firstLength}));
+    const u16 b = w.collisionGroups().find(w.atoms().lookup(std::string_view{second, secondLength}));
+    if (a == scene::CollisionGroups::kInvalid || b == scene::CollisionGroups::kInvalid)
+        raise(L, ENG_TR("scene.err.unknown_collision_group"));
+
+    w.collisionGroups().setCollidable(a, b, collidable);
+    w.collisionGroups().bumpRevision();
+    return 0;
+}
+
+int physicsGetRegisteredCollisionGroups(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    World& w = world(L);
+    const scene::CollisionGroups& groups = w.collisionGroups();
+
+    // A fresh array every call, in registration order. Fresh so a caller may
+    // sort it; ordered because R10 forbids a container's own order reaching a
+    // script.
+    lua_createtable(L, static_cast<int>(groups.count()), 0);
+    for (u32 index = 0; index < groups.count(); ++index) {
+        const std::string_view name = w.atoms().text(groups.nameAt(static_cast<u16>(index)));
+        lua_pushlstring(L, name.data(), name.size());
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
+// --- Workspace queries --------------------------------------------------
+//
+// Every one of them reads the same physics world the tick steps. A build with
+// no physics backend answers "nothing", which is the same answer an empty world
+// gives -- a query is a question about the world, and a world with no bodies in
+// it has an honest empty answer rather than an error.
+//
+// The filter crosses the seam as a list of opaque user-data values, because that
+// is the only identity `physics` has. Descendants are expanded here: filtering a
+// Model means filtering its parts, and the module below has no tree to walk.
+
+[[nodiscard]] physics::QueryFilter buildFilter(lua_State* L, int index, std::vector<u64>& storage)
+{
+    physics::QueryFilter filter;
+    if (lua_isnoneornil(L, index))
+        return filter;
+
+    const RaycastQuery params = checkRaycastParams(L, index);
+    filter.mode = params.mode == 1 ? physics::QueryFilter::Mode::Include : physics::QueryFilter::Mode::Exclude;
+
+    World& w = world(L);
+    const scene::PhysicsSync& sync = *services(L).physics;
+
+    std::vector<core::InstanceId> descendants;
+    for (const core::InstanceId id : params.filter) {
+        if (!w.alive(id))
+            continue;
+        storage.push_back(sync.userDataOf(id));
+        // "Descendants of a named instance are covered too, so filtering a Model
+        // filters its parts" -- the property's own Doc.
+        descendants.clear();
+        w.collectDescendants(id, descendants);
+        for (const core::InstanceId descendant : descendants)
+            storage.push_back(sync.userDataOf(descendant));
+    }
+    filter.userData = storage;
+
+    if (!params.collisionGroup.empty()) {
+        const u16 group = w.collisionGroups().find(w.atoms().lookup(params.collisionGroup));
+        if (group == scene::CollisionGroups::kInvalid)
+            raise(L, ENG_TR("scene.err.unknown_collision_group"));
+        filter.filterGroup = true;
+        filter.group = static_cast<physics::CollisionGroup>(group);
+    }
+    return filter;
+}
+
+// **The nearest terrain surface along a ray, asked of the voxels themselves**
+// (ADR 0082). A terrain only has colliders near things that move, so a ray far
+// from every body would pass through ground that has none; the field answers
+// everywhere. Honours the instance filter: an excluded terrain is not hit, and
+// an include list that does not name it leaves it out.
+struct TerrainRayHit
+{
+    core::InstanceId terrain;
+    core::DVec3 position;
+    core::Vec3 normal;
+    f64 distance = std::numeric_limits<f64>::max();
+    // **What is drawn there** (ADR 0113 §2): the voxel's layer, or the one a
+    // rule paints over it -- what `RaycastResult.Material` reports (ADR 0117).
+    core::NameAtom material;
+};
+
+[[nodiscard]] TerrainRayHit raycastTerrains(lua_State* L, core::InstanceId workspace, core::Vec3 origin,
+                                            core::Vec3 direction, const physics::QueryFilter& filter)
+{
+    TerrainRayHit best;
+    const f64 reach = static_cast<f64>(core::length(direction));
+    if (!(reach > 0.0))
+        return best;
+    World& w = world(L);
+    const scene::PhysicsSync* sync = services(L).physics;
+    w.terrains().forEach([&](core::InstanceId id, const scene::TerrainComponent& terrain) {
+        if (terrain.field.empty() || !w.isAncestorOf(workspace, id))
+            return;
+        if (sync != nullptr) {
+            const u64 mine = sync->userDataOf(id);
+            const bool named = std::find(filter.userData.begin(), filter.userData.end(), mine) != filter.userData.end();
+            if (filter.mode == physics::QueryFilter::Mode::Include ? !named : named)
+                return;
+        }
+        const core::DVec3 local{static_cast<f64>(origin.x) - terrain.origin.x,
+                                static_cast<f64>(origin.y) - terrain.origin.y,
+                                static_cast<f64>(origin.z) - terrain.origin.z};
+        const std::optional<asset::TerrainHit> hit = asset::raycastField(terrain.field, local, direction, reach);
+        if (!hit.has_value() || hit->distance >= best.distance)
+            return;
+        best.terrain = id;
+        best.position = core::DVec3{hit->position.x + terrain.origin.x, hit->position.y + terrain.origin.y,
+                                    hit->position.z + terrain.origin.z};
+        best.normal = hit->normal;
+        best.distance = hit->distance;
+        const std::string_view layer = scene::terrainLayerAt(terrain, *hit);
+        best.material = layer.empty() ? core::NameAtom{} : w.atoms().intern(layer);
+    });
+    return best;
+}
+
+// **The wind at a point now** (ADR 0115): the renderer's own function, at
+// `RunService.SimTime`, so what a script reads is what is drawn there.
+int workspaceGetWindAt(lua_State* L)
+{
+    const core::InstanceId workspace = checkInstance(L, 1);
+    const core::Vec3 position = checkVector3(L, 2);
+    World& w = world(L);
+    const scene::WorkspaceComponent* component = w.workspaces().find(workspace);
+    if (component == nullptr) {
+        pushVector3(L, core::Vec3{});
+        return 1;
+    }
+    const scene::WindSettings wind{component->globalWind, component->windGusts, component->windTurbulence};
+    pushVector3(L, scene::windAt(wind, position, static_cast<f32>(w.engineState().simTime)));
+    return 1;
+}
+
+// **The ground along a ray, loaded first** where it is on disk:
+// a ray over a cell not loaded went through ground a player could see.
+// A kilometre of it at a time, so a long ray loads what a load can hold rather
+// than nothing.
+void groundAlongRay(lua_State* L, core::Vec3 origin, core::Vec3 direction)
+{
+    const World& w = world(L);
+    const double across =
+        std::max(std::abs(static_cast<double>(direction.x)), std::abs(static_cast<double>(direction.z)));
+    if (!std::isfinite(across))
+        return;
+    const int pieces = std::clamp(static_cast<int>(std::ceil(across / 1024.0)), 1, 64);
+    for (int piece = 0; piece < pieces; ++piece) {
+        const double t0 = static_cast<double>(piece) / pieces;
+        const double t1 = static_cast<double>(piece + 1) / pieces;
+        const double ax = static_cast<double>(origin.x) + static_cast<double>(direction.x) * t0;
+        const double az = static_cast<double>(origin.z) + static_cast<double>(direction.z) * t0;
+        const double bx = static_cast<double>(origin.x) + static_cast<double>(direction.x) * t1;
+        const double bz = static_cast<double>(origin.z) + static_cast<double>(direction.z) * t1;
+        if (!w.loadGround(core::DVec3{std::min(ax, bx), 0.0, std::min(az, bz)},
+                          core::DVec3{std::max(ax, bx), 0.0, std::max(az, bz)}))
+            return;
+    }
+}
+
+// **A ray does not stop at what is no longer there**. An instance
+// destroyed this tick keeps its body until the simulation's next step takes it
+// away, and a ray met it: a hit with no `Instance`, typed as one that has, for
+// as many ticks as a round's end took to clear its fighters. So a hit on a body
+// nothing owns any more is not a hit: the body is left out and the query asked
+// again, for what is behind it.
+template <class Cast>
+[[nodiscard]] bool castPastTheGone(const scene::PhysicsSync& sync, physics::QueryFilter& filter,
+                                   std::vector<u64>& storage, physics::RayHit& hit, Cast&& cast)
+{
+    // A heap of them in one ray's way is a round ending; past this many the
+    // ray answers that it found nothing.
+    constexpr int MostGone = 256;
+    for (int gone = 0; gone < MostGone; ++gone) {
+        if (!cast(filter, hit))
+            return false;
+        if (sync.instanceOf(hit.userData).valid())
+            return true;
+        if (filter.mode == physics::QueryFilter::Mode::Include) {
+            // Named, and gone: taken off the list. A list with nothing left
+            // on it includes nothing.
+            const auto named = std::find(storage.begin(), storage.end(), hit.userData);
+            if (named == storage.end())
+                return false;
+            storage.erase(named);
+            if (storage.empty())
+                return false;
+        }
+        else {
+            storage.push_back(hit.userData);
+        }
+        filter.userData = storage;
+    }
+    return false;
+}
+
+int workspaceRaycast(lua_State* L)
+{
+    const core::InstanceId workspace = checkInstance(L, 1);
+    const core::Vec3 origin = checkVector3(L, 2);
+    const core::Vec3 direction = checkVector3(L, 3);
+    groundAlongRay(L, origin, direction);
+
+    scene::PhysicsSync* sync = services(L).physics;
+    if (sync == nullptr) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    sync->syncForQuery();
+    std::vector<u64> storage;
+    physics::QueryFilter filter = buildFilter(L, 4, storage);
+
+    physics::RayD ray;
+    ray.origin = core::toDVec3(origin);
+    ray.direction = direction;
+
+    physics::RayHit hit;
+    const bool bodyHit =
+        castPastTheGone(*sync, filter, storage, hit, [&](const physics::QueryFilter& asked, physics::RayHit& out) {
+            return sync->backend().raycast(sync->worldHandle(), ray, asked, out);
+        });
+    const TerrainRayHit ground = raycastTerrains(L, workspace, origin, direction, filter);
+    // Whichever is nearer. A terrain's own collider, where it has one, and
+    // the field agree to within the mesh; the body wins a tie so a part lying
+    // on the ground is what a ray at it meets.
+    if (ground.terrain.valid() && (!bodyHit || ground.distance < static_cast<f64>(hit.distance))) {
+        pushRaycastResult(L, ground.terrain, ground.position, ground.normal, static_cast<f32>(ground.distance),
+                          ground.material);
+        return 1;
+    }
+    if (!bodyHit) {
+        lua_pushnil(L);
+        return 1;
+    }
+    // **What it is made of** (ADR 0117): a part's material, and -- where the
+    // body met was the terrain's own collider -- what the field says is drawn
+    // on the ground the same ray met.
+    const core::InstanceId met = sync->instanceOf(hit.userData);
+    core::NameAtom material;
+    core::u32 clone = 0;
+    if (const scene::PartComponent* part = world(L).parts().find(met); part != nullptr) {
+        material = part->material;
+        clone = part->materialClone;
+    }
+    else if (met == ground.terrain) {
+        material = ground.material;
+    }
+    pushRaycastResult(L, met, hit.position, hit.normal, hit.distance, material, clone);
+    return 1;
+}
+
+// **The plane's ray** (the 2D layer). The same `RaycastParams` as the 3D one,
+// read the same way: the filter names instances and their descendants, and the
+// group is the one the ray collides as.
+int workspaceRaycast2D(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::Vec2 origin = checkVector2(L, 2);
+    const core::Vec2 direction = checkVector2(L, 3);
+
+    const scene::PhysicsSync2D* sync = services(L).physics2d;
+    if (sync == nullptr) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    physics::Raycast2DFilter filter;
+    std::vector<u64> storage;
+    if (!lua_isnoneornil(L, 4)) {
+        const RaycastQuery params = checkRaycastParams(L, 4);
+        filter.include = params.mode == 1;
+        World& w = world(L);
+        std::vector<core::InstanceId> descendants;
+        for (const core::InstanceId id : params.filter) {
+            if (!w.alive(id))
+                continue;
+            storage.push_back(scene::PhysicsSync2D::userDataOf(id));
+            descendants.clear();
+            w.collectDescendants(id, descendants);
+            for (const core::InstanceId descendant : descendants)
+                storage.push_back(scene::PhysicsSync2D::userDataOf(descendant));
+        }
+        filter.userData = storage;
+        if (!params.collisionGroup.empty()) {
+            const u16 group = w.collisionGroups().find(w.atoms().lookup(params.collisionGroup));
+            if (group == scene::CollisionGroups::kInvalid)
+                raise(L, ENG_TR("scene.err.unknown_collision_group"));
+            if (group < physics::kMaxCollisionGroups2D)
+                filter.group = static_cast<physics::CollisionGroup2D>(group);
+        }
+    }
+
+    const std::optional<scene::PhysicsSync2D::Hit> hit = sync->raycast(origin, direction, filter);
+    if (!hit.has_value()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    pushRaycastResult2D(L, hit->instance, hit->position, hit->normal, hit->distance);
+    return 1;
+}
+
+// --- NavigationService (ADR 0089) ---------------------------------------------
+//
+// Every query hands the service's agent to the navigation first: the agent is
+// scene state a script sets, and the mesh is built for it -- a different one
+// throws the old mesh away, which is the property's documented cost.
+
+[[nodiscard]] nav::INavigation* navigationFor(lua_State* L, core::InstanceId service)
+{
+    nav::INavigation* navigation = services(L).navigation;
+    if (navigation == nullptr)
+        return nullptr;
+    if (const scene::NavigationComponent* agent = world(L).navigation().find(service); agent != nullptr) {
+        navigation->setAgent(
+            nav::NavAgent{agent->agentRadius, agent->agentHeight, agent->agentMaxClimb, agent->agentMaxSlope});
+    }
+    return navigation;
+}
+
+int navigationFindPath(lua_State* L)
+{
+    const core::InstanceId service = checkInstance(L, 1);
+    const core::Vec3 from = checkVector3(L, 2);
+    const core::Vec3 to = checkVector3(L, 3);
+    // Which agent type, as `DefineAgent` named it; empty is the service's own.
+    const std::string_view agent = luaL_optstring(L, 4, "");
+    nav::INavigation* navigation = navigationFor(L, service);
+    const std::optional<nav::NavPath> path =
+        navigation != nullptr ? navigation->findPath(core::toDVec3(from), core::toDVec3(to), agent) : std::nullopt;
+    if (!path.has_value()) {
+        lua_pushnil(L);
+        lua_pushboolean(L, 0);
+        lua_createtable(L, 0, 0);
+        return 3;
+    }
+    // A fresh array every call, so a caller may keep it and change it.
+    lua_createtable(L, static_cast<int>(path->points.size()), 0);
+    for (usize at = 0; at < path->points.size(); ++at) {
+        pushVector3(L, core::toVec3(path->points[at]));
+        lua_rawseti(L, -2, static_cast<int>(at) + 1);
+    }
+    lua_pushboolean(L, path->complete ? 1 : 0);
+    // **Beside the waypoints, what crossing from each is** (ADR 0098): a
+    // link's label, or "" for walking -- one entry per waypoint, never a hole.
+    lua_createtable(L, static_cast<int>(path->points.size()), 0);
+    for (usize at = 0; at < path->points.size(); ++at) {
+        const std::string& label = at < path->labels.size() ? path->labels[at] : std::string();
+        lua_pushlstring(L, label.data(), label.size());
+        lua_rawseti(L, -2, static_cast<int>(at) + 1);
+    }
+    return 3;
+}
+
+int navigationDefineAgent(lua_State* L)
+{
+    const core::InstanceId service = checkInstance(L, 1);
+    const std::string_view name = luaL_checkstring(L, 2);
+    nav::NavAgent agent;
+    agent.radius = static_cast<f32>(luaL_checknumber(L, 3));
+    agent.height = static_cast<f32>(luaL_checknumber(L, 4));
+    agent.maxClimb = static_cast<f32>(luaL_optnumber(L, 5, 0.5));
+    agent.maxSlope = static_cast<f32>(luaL_optnumber(L, 6, 45.0));
+    // The same rules the service's own agent properties keep.
+    if (!(agent.radius > 0.0f) || !(agent.height > 0.0f) || !(agent.maxClimb >= 0.0f) ||
+        !(agent.maxSlope >= 0.0f && agent.maxSlope <= 89.0f))
+        raise(L, ENG_TR("script.err.nav_agent_size"));
+    if (nav::INavigation* navigation = navigationFor(L, service); navigation != nullptr)
+        navigation->defineAgent(name, agent);
+    return 0;
+}
+
+int navigationSetAreaCost(lua_State* L)
+{
+    const core::InstanceId service = checkInstance(L, 1);
+    const std::string_view label = luaL_checkstring(L, 2);
+    const auto cost = static_cast<f32>(luaL_checknumber(L, 3));
+    // Infinity forbids; anything else below zero is nothing a path can mean.
+    if (!(cost >= 0.0f))
+        raise(L, ENG_TR("script.err.nav_area_cost"));
+    if (nav::INavigation* navigation = navigationFor(L, service); navigation != nullptr)
+        navigation->setAreaCost(label, cost);
+    return 0;
+}
+
+int navigationFindPath2D(lua_State* L)
+{
+    const core::InstanceId service = checkInstance(L, 1);
+    const core::Vec2 from = checkVector2(L, 2);
+    const core::Vec2 to = checkVector2(L, 3);
+    nav::INavigation* navigation = navigationFor(L, service);
+    const std::optional<nav::NavPath2D> path = navigation != nullptr ? navigation->findPath2D(from, to) : std::nullopt;
+    if (!path.has_value()) {
+        lua_pushnil(L);
+        lua_pushboolean(L, 0);
+        return 2;
+    }
+    lua_createtable(L, static_cast<int>(path->points.size()), 0);
+    for (usize at = 0; at < path->points.size(); ++at) {
+        pushVector2(L, path->points[at]);
+        lua_rawseti(L, -2, static_cast<int>(at) + 1);
+    }
+    lua_pushboolean(L, path->complete ? 1 : 0);
+    return 2;
+}
+
+int navigationNearestPoint(lua_State* L)
+{
+    const core::InstanceId service = checkInstance(L, 1);
+    const core::Vec3 point = checkVector3(L, 2);
+    const auto reach = static_cast<f32>(luaL_optnumber(L, 3, 4.0));
+    nav::INavigation* navigation = navigationFor(L, service);
+    const std::optional<core::DVec3> found =
+        navigation != nullptr ? navigation->nearestPoint(core::toDVec3(point), reach) : std::nullopt;
+    if (!found.has_value())
+        lua_pushnil(L);
+    else
+        pushVector3(L, core::toVec3(*found));
+    return 1;
+}
+
+int navigationRaycast(lua_State* L)
+{
+    const core::InstanceId service = checkInstance(L, 1);
+    const core::Vec3 from = checkVector3(L, 2);
+    const core::Vec3 to = checkVector3(L, 3);
+    nav::INavigation* navigation = navigationFor(L, service);
+    const std::optional<core::DVec3> stop =
+        navigation != nullptr ? navigation->raycast(core::toDVec3(from), core::toDVec3(to)) : std::nullopt;
+    if (!stop.has_value())
+        lua_pushnil(L);
+    else
+        pushVector3(L, core::toVec3(*stop));
+    return 1;
+}
+
+int navigationBuildRegion(lua_State* L)
+{
+    const core::InstanceId service = checkInstance(L, 1);
+    const core::Vec3 minimum = checkVector3(L, 2);
+    const core::Vec3 maximum = checkVector3(L, 3);
+    nav::INavigation* navigation = navigationFor(L, service);
+    const usize built =
+        navigation != nullptr ? navigation->buildRegion(core::toDVec3(minimum), core::toDVec3(maximum)) : 0;
+    lua_pushnumber(L, static_cast<double>(built));
+    return 1;
+}
+
+int workspaceSpherecast(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::Vec3 origin = checkVector3(L, 2);
+    const auto radius = static_cast<f32>(luaL_checknumber(L, 3));
+    const core::Vec3 direction = checkVector3(L, 4);
+
+    scene::PhysicsSync* sync = services(L).physics;
+    if (sync == nullptr) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    sync->syncForQuery();
+    std::vector<u64> storage;
+    physics::QueryFilter filter = buildFilter(L, 5, storage);
+
+    physics::RayD ray;
+    ray.origin = core::toDVec3(origin);
+    ray.direction = direction;
+
+    physics::RayHit hit;
+    if (!castPastTheGone(*sync, filter, storage, hit, [&](const physics::QueryFilter& asked, physics::RayHit& out) {
+            return sync->backend().spherecast(sync->worldHandle(), ray, radius, asked, out);
+        })) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const core::InstanceId met = sync->instanceOf(hit.userData);
+    core::NameAtom material;
+    core::u32 clone = 0;
+    if (const scene::PartComponent* part = world(L).parts().find(met); part != nullptr) {
+        material = part->material;
+        clone = part->materialClone;
+    }
+    pushRaycastResult(L, met, hit.position, hit.normal, hit.distance, material, clone);
+    return 1;
+}
+
+int workspaceGetBodiesInBox(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::CFrameD& frame = checkCFrame(L, 2);
+    const core::Vec3 size = checkVector3(L, 3);
+
+    scene::PhysicsSync* sync = services(L).physics;
+    if (sync == nullptr) {
+        lua_createtable(L, 0, 0);
+        return 1;
+    }
+
+    std::vector<u64> storage;
+    const physics::QueryFilter filter = buildFilter(L, 4, storage);
+
+    std::vector<u64> hits;
+    sync->syncForQuery();
+    sync->backend().overlapBox(sync->worldHandle(), frame, size, filter, hits);
+
+    // Built after the query rather than during it, because a hit that names an
+    // instance the world has since retired is a hit with nothing to hand back.
+    lua_createtable(L, static_cast<int>(hits.size()), 0);
+    int written = 0;
+    for (const u64 userData : hits) {
+        const core::InstanceId id = sync->instanceOf(userData);
+        if (!id.valid())
+            continue;
+        pushInstance(L, id);
+        lua_rawseti(L, -2, ++written);
+    }
+    return 1;
+}
+
+// The same for a ball (ADR 0127).
+int workspaceGetBodiesInSphere(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::Vec3 center = checkVector3(L, 2);
+    const double radius = luaL_checknumber(L, 3);
+    if (!std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(center.z) || !std::isfinite(radius) ||
+        radius < 0.0)
+        raise(L, ENG_TR("script.err.not_finite"));
+
+    scene::PhysicsSync* sync = services(L).physics;
+    if (sync == nullptr) {
+        lua_createtable(L, 0, 0);
+        return 1;
+    }
+
+    std::vector<u64> storage;
+    const physics::QueryFilter filter = buildFilter(L, 4, storage);
+
+    std::vector<u64> hits;
+    sync->syncForQuery();
+    sync->backend().overlapSphere(sync->worldHandle(), core::toDVec3(center), static_cast<f32>(radius), filter, hits);
+
+    lua_createtable(L, static_cast<int>(hits.size()), 0);
+    int written = 0;
+    for (const u64 userData : hits) {
+        const core::InstanceId id = sync->instanceOf(userData);
+        if (!id.valid())
+            continue;
+        pushInstance(L, id);
+        lua_rawseti(L, -2, ++written);
+    }
+    return 1;
+}
+
+// --- InputService and InputAction ---------------------------------------
+
+int inputActionGetState(lua_State* L)
+{
+    const core::InstanceId id = checkInstance(L, 1);
+    const World& w = world(L);
+    const scene::InputActionComponent* action = w.inputActions().find(id);
+    if (action == nullptr) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    // The value as of the last dispatch, in the currency the action's own type
+    // names. A snapshot: two calls inside one tick agree, which is what makes a
+    // recorded input stream able to answer with no hardware attached.
+    switch (static_cast<input::ActionType>(action->type)) {
+    case input::ActionType::Bool:
+        lua_pushboolean(L, action->pressed ? 1 : 0);
+        return 1;
+    case input::ActionType::Direction1D:
+        lua_pushnumber(L, static_cast<f64>(action->axis.x));
+        return 1;
+    case input::ActionType::Direction2D:
+    case input::ActionType::ViewportPosition:
+        pushVector2(L, core::Vec2{action->axis.x, action->axis.y});
+        return 1;
+    case input::ActionType::Direction3D:
+        // Declared and not driveable in v1: no binding in api-design.md §2.4's
+        // list names three axes. The zero vector rather than an error, because
+        // the item exists so that code written today keeps meaning the same
+        // thing when it does become driveable.
+        pushVector3(L, action->axis);
+        return 1;
+    }
+
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+// --- ParticleEmitter ------------------------------------------------------
+
+// Adds to the emitter's running total rather than spawning anything: the
+// particles are the renderer's, and it spawns the difference the next frame it
+// looks. That keeps a burst a fact about the world -- hashed, saved, replicated
+// -- and the particles a picture of it.
+int particleEmitterEmit(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const double requested = luaL_checknumber(L, 2);
+    scene::ParticleEmitterComponent* emitter = world(L).particleEmitters().find(self);
+    if (emitter == nullptr || !std::isfinite(requested))
+        return 0;
+    // A thousand a call is more than any one effect needs and few enough that a
+    // loop calling it every tick cannot bury the frame.
+    const auto count = static_cast<core::u64>(std::clamp(std::floor(requested), 0.0, 1000.0));
+    emitter->emitted += count;
+    return 0;
+}
+
+// `ReflectionProbe:Refresh()` and `IrradianceVolume:Refresh()` (ADRs 0202,
+// 0203): a running total, as a burst is -- whatever takes the pictures or
+// works the light out compares it with the one it last saw. This machine's
+// own: a refresh asked for here is not asked for anywhere else.
+int reflectionProbeRefresh(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    if (scene::ReflectionProbeComponent* probe = world(L).reflectionProbes().find(self); probe != nullptr) {
+        probe->refreshes += 1;
+        // Not ready from this line on, where anything will take it again.
+        probe->ready = false;
+    }
+    return 0;
+}
+
+// `IsReady` (ADRs 0202, 0203): the machine's own word where it takes probes
+// and works volumes out, and yes where it does neither -- a server, a run
+// with nothing drawn -- because nothing more will be done there.
+int reflectionProbeIsReady(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const scene::World& scene = world(L);
+    const scene::ReflectionProbeComponent* probe = scene.reflectionProbes().find(self);
+    lua_pushboolean(L, probe == nullptr || !scene.engineState().probesTaken || probe->ready ? 1 : 0);
+    return 1;
+}
+
+int irradianceVolumeIsReady(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const scene::World& scene = world(L);
+    const scene::IrradianceVolumeComponent* volume = scene.irradianceVolumes().find(self);
+    lua_pushboolean(L, volume == nullptr || !scene.engineState().volumesWorked || volume->ready ? 1 : 0);
+    return 1;
+}
+
+int irradianceVolumeRefresh(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    if (scene::IrradianceVolumeComponent* volume = world(L).irradianceVolumes().find(self); volume != nullptr) {
+        volume->refreshes += 1;
+        // Not ready from this line on, where anything will work it out
+        // again: a script that refreshes and then waits is not told "ready"
+        // by the light of before.
+        volume->ready = false;
+        if (world(L).engineState().volumesWorked)
+            volume->progress = 0.0f;
+    }
+    return 0;
+}
+
+int irradianceVolumeGetProgress(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const scene::World& scene = world(L);
+    const scene::IrradianceVolumeComponent* volume = scene.irradianceVolumes().find(self);
+    // One where nothing works it out. Where something does, a volume made
+    // this frame has not been looked at yet, and is at nought.
+    double progress = 1.0;
+    if (volume != nullptr && scene.engineState().volumesWorked)
+        progress = volume->ready ? 1.0 : std::min(static_cast<double>(volume->progress), 0.999);
+    lua_pushnumber(L, progress);
+    return 1;
+}
+
+// `SequencePlayer`'s four verbs (ADR 0204). `Play` and `Pause` are a flag the
+// tick reads; a stop and a skip are counted, because what each leaves behind
+// -- clips faded, sounds ended, events fired -- is the host's to do, in the
+// tick, where a replay does it too.
+int sequencePlayerPlay(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    if (scene::SequencePlayerComponent* player = world(L).sequencePlayers().find(self); player != nullptr) {
+        // At its end, from the start again; anywhere else, from where it is.
+        if (!player->playing && player->length > 0.0f && player->timePosition >= static_cast<f64>(player->length)) {
+            player->timePosition = 0.0;
+            player->seeks += 1;
+        }
+        player->playing = true;
+        // And let go, if its file held it.
+        player->held = false;
+        // From here and from now: what travels of "playing" is whole.
+        scene::anchorSequence(world(L), self, *player);
+    }
+    return 0;
+}
+
+// `Release` (ADR 0204): on from a hold of the file's, and nothing otherwise.
+int sequencePlayerRelease(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    if (scene::SequencePlayerComponent* player = world(L).sequencePlayers().find(self);
+        player != nullptr && player->held) {
+        player->held = false;
+        player->playing = true;
+        scene::anchorSequence(world(L), self, *player);
+    }
+    return 0;
+}
+
+int sequencePlayerGetMarkers(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const World& w = world(L);
+    std::vector<scene::SequenceMarker> markers;
+    if (const scene::SequencePlayerComponent* player = w.sequencePlayers().find(self); player != nullptr) {
+        if (scene::SequenceFiles* files = w.sequenceFiles(); files != nullptr)
+            files->sequenceMarkers(w, player->sequence, markers);
+    }
+    lua_createtable(L, static_cast<int>(markers.size()), 0);
+    int at = 0;
+    for (const scene::SequenceMarker& marker : markers) {
+        lua_createtable(L, 0, 2);
+        lua_pushlstring(L, marker.name.data(), marker.name.size());
+        lua_setfield(L, -2, "Name");
+        lua_pushnumber(L, static_cast<double>(marker.time));
+        lua_setfield(L, -2, "Time");
+        lua_rawseti(L, -2, ++at);
+    }
+    return 1;
+}
+
+// `PlayFrom(marker)`: a seek to the marker, and played.
+int sequencePlayerPlayFrom(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const std::string_view name{text, length};
+    World& w = world(L);
+    scene::SequencePlayerComponent* player = w.sequencePlayers().find(self);
+    bool found = false;
+    if (player != nullptr) {
+        std::vector<scene::SequenceMarker> markers;
+        if (scene::SequenceFiles* files = w.sequenceFiles(); files != nullptr)
+            files->sequenceMarkers(w, player->sequence, markers);
+        for (const scene::SequenceMarker& marker : markers) {
+            if (marker.name != name)
+                continue;
+            player->timePosition = static_cast<double>(marker.time);
+            player->seeks += 1;
+            player->playing = true;
+            player->held = false;
+            scene::anchorSequence(w, self, *player);
+            found = true;
+            break;
+        }
+    }
+    lua_pushboolean(L, found ? 1 : 0);
+    return 1;
+}
+
+// `SkipToNext()`: the next marker after where it is, asked of the host --
+// which lands the world there in the tick, as a skip lands it at the end.
+int sequencePlayerSkipToNext(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    World& w = world(L);
+    scene::SequencePlayerComponent* player = w.sequencePlayers().find(self);
+    bool found = false;
+    if (player != nullptr) {
+        std::vector<scene::SequenceMarker> markers;
+        if (scene::SequenceFiles* files = w.sequenceFiles(); files != nullptr)
+            files->sequenceMarkers(w, player->sequence, markers);
+        // After where it is, or after where it was already asked to skip to:
+        // two calls in one tick skip two shots.
+        const double from = std::max(player->timePosition, static_cast<double>(player->skipTo));
+        for (const scene::SequenceMarker& marker : markers) {
+            if (static_cast<double>(marker.time) <= from + 1.0e-4)
+                continue;
+            player->skipTo = marker.time;
+            found = true;
+            break;
+        }
+    }
+    lua_pushboolean(L, found ? 1 : 0);
+    return 1;
+}
+
+// `LoadSequence(sequence)` (ADR 0204): a sequence written as a table -- the
+// shape a `*.sequence.json` file has -- and played by this player from now.
+// What is wrong with it is said as it is said of a file, with where.
+int sequencePlayerLoadSequence(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    World& w = world(L);
+    const std::string text = serializeJsonValue(L, 2);
+    std::string where;
+    scene::SequenceFiles* files = w.sequenceFiles();
+    if (files == nullptr || !files->loadSequence(w, self, text, where)) {
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"where", std::string_view{where}}};
+        raise(L, ENG_TR("script.err.sequence_table"), args);
+    }
+    return 0;
+}
+
+int sequencePlayerPause(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    if (scene::SequencePlayerComponent* player = world(L).sequencePlayers().find(self); player != nullptr) {
+        player->playing = false;
+        // Held where it is, said with the hold.
+        scene::anchorSequence(world(L), self, *player);
+    }
+    return 0;
+}
+
+int sequencePlayerStop(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    if (scene::SequencePlayerComponent* player = world(L).sequencePlayers().find(self); player != nullptr) {
+        player->playing = false;
+        player->stops += 1;
+        // Stopped is at nought, and says so with the ask.
+        scene::anchorSequenceStopped(world(L), self, *player);
+    }
+    return 0;
+}
+
+int sequencePlayerSkip(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    if (scene::SequencePlayerComponent* player = world(L).sequencePlayers().find(self); player != nullptr)
+        player->skips += 1;
+    return 0;
+}
+
+// `Trail:Clear()` (ADR 0129): a running total the renderer compares with the
+// one it last saw, as a burst is -- the ribbon is the renderer's, and nothing
+// is written back to say it went.
+int trailClear(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    if (scene::TrailComponent* trail = world(L).trails().find(self); trail != nullptr)
+        ++trail->cleared;
+    return 0;
+}
+
+// --- NetworkService and Player -------------------------------------------
+
+int networkServiceAddLocalPlayer(lua_State* L)
+{
+    const auto self = checkInstance(L, 1);
+    auto& w = world(L);
+    auto& state = w.engineState();
+    // **Wherever somebody is at this machine** (ADR 0205, protocol 48):
+    // offline, hosting, or joined to somebody's match -- where the authority
+    // is asked for a seat, and the guest has its number when it answers. Not
+    // on a dedicated server, which has nobody at it; and four a machine.
+    std::vector<core::InstanceId> seated;
+    scene::localPlayers(w, seated);
+    if (state.networkTopology == scene::NetworkTopology::Dedicated || seated.empty() || seated.size() >= 4 ||
+        state.nextLocalPlayerId == 0 || state.pendingNetwork.has_value()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const auto player = scene::createPlayer(w, self, state.nextLocalPlayerId++, true);
+    pushInstance(L, player);
+    return 1;
+}
+
+int networkServiceRemoveLocalPlayer(lua_State* L)
+{
+    const auto self = checkInstance(L, 1);
+    const auto player = checkInstance(L, 2);
+    auto& w = world(L);
+    const auto* who = w.players().find(player);
+    const bool allowed = who != nullptr && who->local && player != scene::localPlayerOf(w) && !w.destroyed(player) &&
+                         std::find(w.engineState().leavingPlayers.begin(), w.engineState().leavingPlayers.end(),
+                                   player) == w.engineState().leavingPlayers.end();
+    if (allowed)
+        scene::removePlayer(w, self, player);
+    lua_pushboolean(L, allowed);
+    return 1;
+}
+
+int networkServiceGetLocalPlayers(lua_State* L)
+{
+    const auto self = checkInstance(L, 1);
+    const auto& w = world(L);
+    lua_newtable(L);
+    int index = 1;
+    for (auto child = w.firstChild(self); child.valid(); child = w.nextSibling(child)) {
+        const auto* who = w.players().find(child);
+        if (who != nullptr && who->local && !w.destroyed(child) &&
+            std::find(w.engineState().leavingPlayers.begin(), w.engineState().leavingPlayers.end(), child) ==
+                w.engineState().leavingPlayers.end()) {
+            pushInstance(L, child);
+            lua_rawseti(L, -2, index++);
+        }
+    }
+    return 1;
+}
+
+int networkServiceGetPlayers(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const World& w = world(L);
+    std::vector<core::InstanceId> players;
+    // Child order is join order: the engine parents each player as it arrives.
+    for (core::InstanceId child = w.firstChild(self); child.valid(); child = w.nextSibling(child)) {
+        if (w.players().find(child) != nullptr && !w.destroyed(child))
+            players.push_back(child);
+    }
+    lua_createtable(L, static_cast<int>(players.size()), 0);
+    for (usize index = 0; index < players.size(); ++index) {
+        pushInstance(L, players[index]);
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
+// **This machine's addresses on its networks**, best first. Asked of
+// the system each call: an interface comes and goes, and a host shows this
+// once, on a menu.
+int networkServiceGetLocalAddresses(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const std::vector<std::string> addresses = net::localAddresses();
+    lua_createtable(L, static_cast<int>(addresses.size()), 0);
+    for (usize index = 0; index < addresses.size(); ++index) {
+        lua_pushlstring(L, addresses[index].data(), addresses[index].size());
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
+// **How the connection is doing**, as the
+// host wrote it this frame.
+int networkServiceGetStats(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::EngineState::NetworkStats& stats = world(L).engineState().networkStats;
+    lua_createtable(L, 0, 28);
+    const auto field = [L](const char* name, double value) {
+        lua_pushnumber(L, value);
+        lua_setfield(L, -2, name);
+    };
+    field("Ping", stats.pingMs);
+    field("Jitter", stats.jitterMs);
+    field("Loss", stats.lossPercent);
+    field("SnapshotsPerSecond", stats.snapshotsPerSecond);
+    field("CorrectionsPerSecond", stats.correctionsPerSecond);
+    field("LastCorrection", stats.lastCorrectionMetres);
+    field("InputBufferDepth", static_cast<double>(stats.inputBufferDepth));
+    field("InputStarvations", static_cast<double>(stats.inputStarvations));
+    field("InputReanchors", static_cast<double>(stats.inputReanchors));
+    field("Corrections", static_cast<double>(stats.corrections));
+    field("InterpolationDelay", stats.interpolationDelayMs);
+    field("PredictedParts", static_cast<double>(stats.predictedParts));
+    field("ResimulationsPerSecond", stats.resimulationsPerSecond);
+    field("ResimulatedTicksPerSecond", stats.resimulatedTicksPerSecond);
+    field("ResimulationTime", stats.resimulationMs);
+    field("UnreliableSent", static_cast<double>(stats.unreliableSent));
+    field("UnreliableReceived", static_cast<double>(stats.unreliableReceived));
+    field("UnreliableDropped", static_cast<double>(stats.unreliableDropped));
+    field("BytesSent", static_cast<double>(stats.bytesSent));
+    field("BytesReceived", static_cast<double>(stats.bytesReceived));
+    field("SwarmBytes", static_cast<double>(stats.swarmBytes));
+    field("SnapshotBytes", static_cast<double>(stats.snapshotBytes));
+    field("AttributeBytes", static_cast<double>(stats.attributeBytes));
+    field("RemoteBytes", static_cast<double>(stats.remoteBytes));
+    field("UnreliableBytes", static_cast<double>(stats.unreliableBytes));
+    field("InputBytes", static_cast<double>(stats.inputBytes));
+    // How the other end was reached (ADR 0178).
+    static constexpr std::array<const char*, 4> Paths{"", "lan", "direct", "relayed"};
+    lua_pushstring(L, Paths[std::min<usize>(stats.path, Paths.size() - 1)]);
+    lua_setfield(L, -2, "Path");
+    // **A player at this machine** (ADR 0208): the three numbers above are the
+    // machine's, and with two people at one screen the question is which of
+    // them. One entry for each whose character this machine predicts, its
+    // first player's before its guests'.
+    lua_createtable(L, static_cast<int>(stats.localPlayers.size()), 0);
+    int listed = 0;
+    for (const auto& player : stats.localPlayers) {
+        if (!player.predicted)
+            continue;
+        lua_createtable(L, 0, 4);
+        field("UserId", static_cast<double>(player.userId));
+        field("Corrections", static_cast<double>(player.corrections));
+        field("CorrectionsPerSecond", player.correctionsPerSecond);
+        field("LastCorrection", player.lastCorrectionMetres);
+        lua_rawseti(L, -2, ++listed);
+    }
+    lua_setfield(L, -2, "LocalPlayers");
+    return 1;
+}
+
+// --- SceneService (ADR 0106) -------------------------------------------------
+
+// Fires one of `SceneService`'s two events with the scene's path. Deferred like
+// every signal, so a `SceneLoading` handler runs at the next drain -- which is
+// before the safe point the change waits for.
+void fireSceneEvent(lua_State* L, std::string_view eventName, std::string_view path)
+{
+    World& w = world(L);
+    const ClassId sceneServiceClass = w.classes().findId(w.atoms().lookup("SceneService"));
+    const core::InstanceId service = findServiceOfClass(L, sceneServiceClass);
+    if (!service.valid())
+        return;
+    const scene::EventDesc* descriptor = w.classes().findEvent(sceneServiceClass, w.atoms().intern(eventName));
+    if (descriptor == nullptr)
+        return;
+    lua_pushlstring(L, path.data(), path.size());
+    fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L), 1);
+    lua_pop(L, 1);
+}
+
+int sceneServiceLoadScene(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const std::string path{text, length};
+    World& w = world(L);
+
+    // **The scene is the authority's** in a match: two machines in two scenes
+    // cannot share one world.
+    if (w.engineState().networkTopology == scene::NetworkTopology::Replica)
+        raise(L, ENG_TR("scene.err.scene_is_the_servers"));
+    if (path.empty()) {
+        const core::I18nArg args[] = {{"path", std::string_view{path}}};
+        raise(L, ENG_TR("scene.err.scene_path_empty"), args);
+    }
+    if (!core::safeRelativePath(path).has_value()) {
+        const core::I18nArg args[] = {{"path", std::string_view{path}}};
+        raise(L, ENG_TR("scene.err.scene_path_invalid"), args);
+    }
+
+    // Plain values, encoded now -- at the call, where a mistake is reported --
+    // and never an instance: the old scene's are gone by the time the new one
+    // reads them.
+    std::vector<core::u8> data;
+    if (lua_gettop(L) >= 3 && !lua_isnil(L, 3)) {
+        std::vector<core::InstanceId> refs;
+        encodeRemoteArguments(L, 3, 1, data, refs);
+        if (!refs.empty())
+            raise(L, ENG_TR("scene.err.load_data_instance"));
+    }
+    // One change at a time: a load being prepared gives way to this one.
+    cancelSceneLoad(L);
+    w.engineState().pendingSceneLoad = scene::EngineState::PendingSceneLoad{path, std::move(data)};
+    fireSceneEvent(L, "SceneLoading", path);
+    return 0;
+}
+
+int sceneServiceGetLoadData(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const std::vector<core::u8>& data = world(L).engineState().sceneLoadData;
+    if (data.empty() || decodeRemoteArguments(L, data, {}) != 1) {
+        lua_pushnil(L);
+        return 1;
+    }
+    return 1;
+}
+
+// --- SubWorld (ADR 0107 §3) ------------------------------------------------------
+
+// What the methods ask for is written down here and carried out by the host at
+// the end of the tick: a world boots, and a message crosses, between ticks.
+int subWorldLoad(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    scene::EngineState& state = world(L).engineState();
+    if (state.subWorld)
+        raise(L, ENG_TR("scene.err.sub_world_nested"));
+    // A `SubWorld` destroyed this tick is gone from the count now, not when
+    // the host next looks.
+    const World& w = world(L);
+    std::erase_if(state.subWorldsWanted, [&w](core::InstanceId id) { return !w.alive(id) || w.destroyed(id); });
+    if (std::find(state.subWorldsWanted.begin(), state.subWorldsWanted.end(), self) != state.subWorldsWanted.end())
+        return 0;
+    if (state.subWorldsWanted.size() >= state.maxSubWorlds) {
+        const core::I18nArg args[] = {{"limit", static_cast<core::i64>(state.maxSubWorlds)}};
+        raise(L, ENG_TR("scene.err.sub_world_limit"), args);
+    }
+    state.subWorldsWanted.push_back(self);
+    return 0;
+}
+
+int subWorldUnload(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    std::erase(world(L).engineState().subWorldsWanted, self);
+    return 0;
+}
+
+int subWorldIsLoaded(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const std::vector<core::InstanceId>& loaded = world(L).engineState().subWorldsLoaded;
+    lua_pushboolean(L, std::find(loaded.begin(), loaded.end(), self) != loaded.end() ? 1 : 0);
+    return 1;
+}
+
+int subWorldSetInputState(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    size_t length = 0;
+    const char* action = luaL_checklstring(L, 2, &length);
+    scene::EngineState::SubWorldInput input{.subWorld = self, .action = std::string(action, length)};
+    if (lua_isboolean(L, 3)) {
+        input.pressed = lua_toboolean(L, 3) != 0;
+        input.value = core::Vec3{input.pressed ? 1.0f : 0.0f, 0.0f, 0.0f};
+    }
+    else if (lua_isnumber(L, 3)) {
+        const auto amount = static_cast<f32>(lua_tonumber(L, 3));
+        input.value = core::Vec3{amount, 0.0f, 0.0f};
+        input.pressed = amount != 0.0f;
+    }
+    else if (const float* v = lua_tovector(L, 3); v != nullptr) {
+        input.value = core::Vec3{v[0], v[1], v[2]};
+        input.pressed = v[0] != 0.0f || v[1] != 0.0f || v[2] != 0.0f;
+    }
+    else {
+        // Anything else must be a `Vector2`, and says so if it is not.
+        const core::Vec2 v2 = checkVector2(L, 3);
+        input.value = core::Vec3{v2.x, v2.y, 0.0f};
+        input.pressed = v2.x != 0.0f || v2.y != 0.0f;
+    }
+    world(L).engineState().subWorldInputs.push_back(std::move(input));
+    return 0;
+}
+
+// Plain values, encoded at the call, where a mistake is reported: the two
+// worlds have no instance in common.
+std::vector<core::u8> encodeCrossing(lua_State* L)
+{
+    std::vector<core::u8> payload;
+    std::vector<core::InstanceId> refs;
+    encodeRemoteArguments(L, 2, lua_gettop(L) - 1, payload, refs);
+    if (!refs.empty())
+        raise(L, ENG_TR("scene.err.sub_world_instance"));
+    return payload;
+}
+
+int subWorldSend(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    std::vector<core::u8> payload = encodeCrossing(L);
+    scene::EngineState& state = world(L).engineState();
+    if (std::find(state.subWorldsWanted.begin(), state.subWorldsWanted.end(), self) == state.subWorldsWanted.end())
+        return 0;
+    state.subWorldOutbox.push_back(scene::EngineState::SubWorldMessage{self, std::move(payload)});
+    return 0;
+}
+
+int sceneServiceSendToHost(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    scene::EngineState& state = world(L).engineState();
+    if (!state.subWorld)
+        raise(L, ENG_TR("scene.err.no_host_world"));
+    state.hostOutbox.push_back(encodeCrossing(L));
+    return 0;
+}
+
+int sceneServiceIsSubWorld(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    lua_pushboolean(L, world(L).engineState().subWorld ? 1 : 0);
+    return 1;
+}
+
+// --- NetworkService at run time (ADR 0106) -------------------------------------
+
+// A dedicated server is one for its whole run: `--serve` is the only way in,
+// and nothing a script does takes it out.
+void refuseOnDedicated(lua_State* L)
+{
+    if (world(L).engineState().networkTopology == scene::NetworkTopology::Dedicated)
+        raise(L, ENG_TR("scene.err.network_dedicated"));
+}
+
+// `{ Relay = "host:port", Direct = false }`, the last argument of `Host` and
+// `Join` (ADR 0178): the relay a call names over `[network] relay`, and
+// whether a join tries a path each to the other before the relay carries it.
+struct RelayOptions
+{
+    std::string relay;
+    bool direct = true;
+};
+
+RelayOptions relayOptions(lua_State* L, int index)
+{
+    RelayOptions options;
+    options.relay = world(L).engineState().defaultRelay;
+    if (lua_gettop(L) < index || lua_isnil(L, index))
+        return options;
+    luaL_checktype(L, index, LUA_TTABLE);
+    lua_getfield(L, index, "Relay");
+    if (!lua_isnil(L, -1)) {
+        if (lua_type(L, -1) != LUA_TSTRING)
+            raise(L, ENG_TR("scene.err.network_relay_option"));
+        size_t length = 0;
+        const char* text = lua_tolstring(L, -1, &length);
+        options.relay.assign(text, length);
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, index, "Direct");
+    if (!lua_isnil(L, -1)) {
+        if (!lua_isboolean(L, -1))
+            raise(L, ENG_TR("scene.err.network_relay_option"));
+        options.direct = lua_toboolean(L, -1) != 0;
+    }
+    lua_pop(L, 1);
+    return options;
+}
+
+int networkServiceJoin(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    refuseOnDedicated(L);
+    scene::EngineState& state = world(L).engineState();
+    std::string address;
+    if (lua_gettop(L) >= 2 && !lua_isnil(L, 2)) {
+        size_t length = 0;
+        const char* text = luaL_checklstring(L, 2, &length);
+        address.assign(text, length);
+    }
+    else {
+        address = state.defaultServer;
+    }
+    if (address.empty())
+        raise(L, ENG_TR("scene.err.network_no_address"));
+    RelayOptions options = relayOptions(L, 3);
+    state.pendingNetwork = scene::EngineState::NetworkRequest{.kind = scene::EngineState::NetworkRequest::Kind::Join,
+                                                              .address = std::move(address),
+                                                              .port = 0,
+                                                              .relay = std::move(options.relay),
+                                                              .relayDirect = options.direct};
+    return 0;
+}
+
+// `NetworkService:PingRelayAsync(relay?, timeout?)` (ADR 0178, amended): what
+// a game with relays in several regions asks of each before it hosts or
+// joins. Yields; the answer is a table, or nil where the relay did not answer
+// in the time allowed.
+int networkServicePingRelay(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    scene::EngineState& state = world(L).engineState();
+    std::string relay = state.defaultRelay;
+    if (lua_gettop(L) >= 2 && !lua_isnil(L, 2)) {
+        size_t length = 0;
+        const char* text = luaL_checklstring(L, 2, &length);
+        relay.assign(text, length);
+    }
+    if (relay.empty())
+        raise(L, ENG_TR("scene.err.network_no_relay"));
+    // Seconds at the boundary, as every duration a script writes is.
+    f64 timeout = 1.5;
+    if (lua_gettop(L) >= 3 && !lua_isnil(L, 3)) {
+        timeout = luaL_checknumber(L, 3);
+        if (!(timeout > 0.0))
+            raise(L, ENG_TR("scene.err.number_positive"));
+    }
+    requireYieldable(L, "PingRelayAsync");
+    ServiceState& services = *context(L).services;
+    if (services.relayPinger == nullptr)
+        services.relayPinger = std::make_unique<net::RelayPinger>();
+    const net::RelayPingTicket ticket =
+        services.relayPinger->submit(relay, static_cast<u32>(std::min(timeout, 60.0) * 1000.0));
+    // No socket to be had: no answer, said the way a silent relay is -- and
+    // still by yielding, so the call is one thing to its caller.
+    ServiceState::RelayPingWaiter waiter;
+    waiter.ticket = ticket;
+    lua_pushthread(L);
+    waiter.threadRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+    services.relayPingWaiters.push_back(waiter);
+    return lua_yield(L, 0);
+}
+
+int networkServiceHost(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    refuseOnDedicated(L);
+    u16 port = 7777;
+    if (lua_gettop(L) >= 2 && !lua_isnil(L, 2)) {
+        const double requested = luaL_checknumber(L, 2);
+        if (!(requested >= 1.0 && requested <= 65535.0) || requested != std::floor(requested))
+            raise(L, ENG_TR("scene.err.network_bad_port"));
+        port = static_cast<u16>(requested);
+    }
+    RelayOptions options = relayOptions(L, 3);
+    world(L).engineState().pendingNetwork =
+        scene::EngineState::NetworkRequest{.kind = scene::EngineState::NetworkRequest::Kind::Host,
+                                           .address = {},
+                                           .port = port,
+                                           .relay = std::move(options.relay),
+                                           .relayDirect = true};
+    return 0;
+}
+
+int networkServiceDisconnect(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    refuseOnDedicated(L);
+    world(L).engineState().pendingNetwork =
+        scene::EngineState::NetworkRequest{.kind = scene::EngineState::NetworkRequest::Kind::Disconnect,
+                                           .address = {},
+                                           .port = 0,
+                                           .relay = {},
+                                           .relayDirect = true};
+    return 0;
+}
+
+// `Player:Kick(reason?)` (ADR 0167): asked here, done by the session at the
+// frame's safe point -- a player is not taken out of the world under the
+// script that is looping over the players.
+int playerKick(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    World& w = world(L);
+    scene::EngineState& state = w.engineState();
+    const scene::PlayerComponent* player = w.players().find(self);
+    if (state.networkTopology == scene::NetworkTopology::Replica)
+        raise(L, ENG_TR("scene.err.network_kick_authority"));
+    if (player == nullptr || self == scene::localPlayerOf(w))
+        raise(L, ENG_TR("scene.err.network_kick_self"));
+    std::string reason;
+    if (lua_gettop(L) >= 2 && !lua_isnil(L, 2)) {
+        size_t length = 0;
+        const char* text = luaL_checklstring(L, 2, &length);
+        reason.assign(text, std::min<size_t>(length, 512));
+    }
+    state.pendingRemovals.emplace_back(player->userId, std::move(reason));
+    return 0;
+}
+
+int playerGetIntent(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    World& w = world(L);
+    const scene::PlayerComponent* player = w.players().find(self);
+    // **Interned here, by the code that reads it**: the session
+    // only looks a peer's action names up, so a server whose own scripts name
+    // an action is what makes a peer's intent for it arrive.
+    const core::NameAtom name = w.atoms().intern(std::string_view{text, length});
+    if (player != nullptr && name.id != 0) {
+        for (const scene::PlayerIntent& intent : player->intents) {
+            if (!(intent.action == name))
+                continue;
+            pushIntentValue(L, intent);
+            return 1;
+        }
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+int inputActionGetPreferredBinding(lua_State* L)
+{
+    const core::InstanceId id = checkInstance(L, 1);
+    World& w = world(L);
+
+    // Without an argument, the family the player last used -- so a prompt
+    // follows the pad the moment somebody picks one up.
+    auto wanted = static_cast<input::DeviceType>(w.engineState().lastInputDeviceType);
+    if (!lua_isnoneornil(L, 2)) {
+        const scene::EnumValue item = checkEnumItem(L, 2);
+        const scene::EnumDescriptor* descriptor = w.enums().find(item.enumId);
+        if (descriptor == nullptr || w.atoms().text(descriptor->name) != "InputDeviceType")
+            luaL_argerror(L, 2, "Enum.InputDeviceType");
+        wanted = static_cast<input::DeviceType>(item.value);
+    }
+
+    // Child order, which is the order the bindings were created and therefore
+    // the same on every run (R10). "First match" is a promise a prompt relies
+    // on: the glyph must not change between two frames nothing touched.
+    for (core::InstanceId bindingId = w.firstChild(id); bindingId.valid(); bindingId = w.nextSibling(bindingId)) {
+        const scene::InputBindingComponent* binding = w.inputBindings().find(bindingId);
+        if (binding == nullptr)
+            continue;
+        if (input::deviceOf(binding->keyCode) == wanted) {
+            pushInstance(L, bindingId);
+            return 1;
+        }
+    }
+
+    lua_pushnil(L);
+    return 1;
+}
+
+int inputServiceGetPointerPosition(lua_State* L)
+{
+    pushVector2(L, world(L).engineState().pointerPosition);
+    return 1;
+}
+
+int inputServiceSetVirtualState(lua_State* L)
+{
+    const scene::EnumValue item = checkEnumItem(L, 2);
+    if (item.enumId != scene::generated::KeyCodeEnumId)
+        luaL_argerror(L, 2, "Enum.KeyCode");
+    if (!input::isVirtual(item.value)) {
+        // Writing to `Space` would be a script pretending to be a keyboard, and
+        // nothing downstream could then tell the two apart. The sixteen
+        // channels the engine set aside are the seam, and this is the line
+        // that keeps it one-way.
+        luaL_argerror(L, 2, "Enum.KeyCode.Virtual1..Virtual16");
+    }
+
+    const auto value = static_cast<f32>(luaL_checknumber(L, 3));
+    if (input::InputSystem* devices = services(L).input; devices != nullptr)
+        devices->setVirtualState(item.value, value);
+    return 0;
+}
+
+// The most a script may put on the clipboard: a code, a seed, a link, a
+// paragraph -- not a megabyte handed to every program on the machine.
+constexpr std::size_t kClipboardMost = 64u * 1024u;
+
+int inputServiceSetClipboard(lua_State* L)
+{
+    std::size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    // Cut at a character's boundary: half a UTF-8 sequence is not text.
+    if (length > kClipboardMost) {
+        length = kClipboardMost;
+        while (length > 0 && (static_cast<unsigned char>(text[length]) & 0xC0u) == 0x80u)
+            --length;
+    }
+    services(L).clipboard = std::string(text, length);
+    return 0;
+}
+
+int inputServiceGetGamepads(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const auto* devices = services(L).input;
+    lua_newtable(L);
+    if (devices != nullptr) {
+        int index = 1;
+        for (const auto& pad : devices->snapshot().gamepads) {
+            if (pad.id == 0)
+                continue;
+            lua_pushnumber(L, static_cast<double>(pad.id));
+            lua_rawseti(L, -2, index++);
+        }
+    }
+    return 1;
+}
+
+int inputServiceIsGamepadKeyDown(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const double id = luaL_checknumber(L, 2);
+    if (!std::isfinite(id) || id <= 0 || id > static_cast<double>(std::numeric_limits<core::u32>::max()) ||
+        std::floor(id) != id)
+        luaL_argerror(L, 2, "positive controller instance id");
+    const scene::EnumValue item = checkEnumItem(L, 3);
+    if (item.enumId != scene::generated::KeyCodeEnumId)
+        luaL_argerror(L, 3, "Enum.KeyCode");
+    const auto* devices = services(L).input;
+    lua_pushboolean(L, devices != nullptr && devices->isGamepadKeyDown(static_cast<core::u32>(id), item.value));
+    return 1;
+}
+
+int inputServiceIsKeyDown(lua_State* L)
+{
+    const scene::EnumValue item = checkEnumItem(L, 2);
+    if (item.enumId != scene::generated::KeyCodeEnumId)
+        luaL_argerror(L, 2, "Enum.KeyCode");
+
+    // Null in a world the host has not handed a device to -- a bare
+    // `ScriptRuntime` in a test. Nothing is down in a world with no devices,
+    // which is the same answer an unfocused window gives.
+    const input::InputSystem* devices = services(L).input;
+    lua_pushboolean(L, devices != nullptr && devices->isKeyDown(item.value));
+    return 1;
+}
+
+// --- HapticService (ADR 0131 section 2) ---------------------------------------
+//
+// Straight to the platform: what shakes is a fact about this machine's hands
+// and nothing the simulation holds. A run with no device answers false and
+// does nothing, which is what a server and a test are.
+
+// Whether an input type is one that can vibrate, and which: a gamepad, or the
+// device itself (touch). Anything else is neither.
+[[nodiscard]] bool hapticDevice(lua_State* L, int index, bool& gamepad)
+{
+    const scene::EnumValue item = checkEnumItem(L, index);
+    if (item.enumId != scene::generated::UserInputTypeEnumId)
+        luaL_argerror(L, index, "Enum.UserInputType");
+    const scene::EnumItemDesc* described = world(L).enums().findValue(item.enumId, item.value);
+    const std::string_view name = described != nullptr ? world(L).atoms().text(described->name) : std::string_view{};
+    gamepad = name == "Gamepad";
+    return gamepad || name == "Touch";
+}
+
+[[nodiscard]] platform::VibrationMotor checkVibrationMotor(lua_State* L, int index)
+{
+    const scene::EnumValue item = checkEnumItem(L, index);
+    if (item.enumId != scene::generated::VibrationMotorEnumId)
+        luaL_argerror(L, index, "Enum.VibrationMotor");
+    return static_cast<platform::VibrationMotor>(std::clamp(item.value, 0, 5));
+}
+
+int hapticServiceIsVibrationSupported(lua_State* L)
+{
+    bool gamepad = false;
+    lua_pushboolean(L, hapticDevice(L, 2, gamepad) && platform::vibrationSupported(gamepad));
+    return 1;
+}
+
+int hapticServiceIsMotorSupported(lua_State* L)
+{
+    bool gamepad = false;
+    const bool known = hapticDevice(L, 2, gamepad);
+    const platform::VibrationMotor motor = checkVibrationMotor(L, 3);
+    lua_pushboolean(L, known && platform::vibrationMotorSupported(gamepad, motor));
+    return 1;
+}
+
+int hapticServiceSetMotor(lua_State* L)
+{
+    bool gamepad = false;
+    const bool known = hapticDevice(L, 2, gamepad);
+    const platform::VibrationMotor motor = checkVibrationMotor(L, 3);
+    const double value = luaL_checknumber(L, 4);
+    if (!std::isfinite(value) || value < 0.0 || value > 1.0)
+        luaL_argerror(L, 4, "a number from 0 to 1");
+    // Only a gamepad has motors by name; the rest is ignored, so a game need
+    // not ask what it is running on first.
+    if (known && gamepad)
+        platform::setVibrationMotor(motor, static_cast<f32>(value));
+    return 0;
+}
+
+int hapticServiceVibrate(lua_State* L)
+{
+    const double strength = luaL_checknumber(L, 2);
+    const double seconds = luaL_checknumber(L, 3);
+    if (!std::isfinite(strength) || strength < 0.0 || strength > 1.0)
+        luaL_argerror(L, 2, "a number from 0 to 1");
+    if (!std::isfinite(seconds) || seconds < 0.0 || seconds > 5.0)
+        luaL_argerror(L, 3, "a number of seconds from 0 to 5");
+    platform::vibrateDevice(static_cast<f32>(strength), static_cast<f32>(seconds));
+    return 0;
+}
+
+// --- LocalizationService (ADR 0154) -------------------------------------------
+
+int localizationServiceGetLocales(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const World& w = world(L);
+    const std::vector<std::string> locales =
+        w.localization() != nullptr ? w.localization()->locales() : std::vector<std::string>{w.engineState().locale};
+    lua_createtable(L, static_cast<int>(locales.size()), 0);
+    for (usize index = 0; index < locales.size(); ++index) {
+        lua_pushlstring(L, locales[index].data(), locales[index].size());
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
+int localizationServiceTranslate(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t keyLength = 0;
+    const char* keyText = luaL_checklstring(L, 2, &keyLength);
+    const std::string_view key{keyText, keyLength};
+
+    // The arguments: a name to a string, a number or a boolean. Names and
+    // values are copied out of the VM before anything is formatted.
+    std::vector<std::string> names;
+    std::vector<core::I18nArg> arguments;
+    if (!lua_isnoneornil(L, 3)) {
+        luaL_checktype(L, 3, LUA_TTABLE);
+        struct Given
+        {
+            std::string name;
+            int type = LUA_TNIL;
+            std::string text;
+            double number = 0.0;
+        };
+        std::vector<Given> given;
+        lua_pushnil(L);
+        while (lua_next(L, 3) != 0) {
+            if (lua_type(L, -2) == LUA_TSTRING) {
+                Given entry;
+                size_t length = 0;
+                const char* name = lua_tolstring(L, -2, &length);
+                entry.name.assign(name, length);
+                entry.type = lua_type(L, -1);
+                if (entry.type == LUA_TSTRING) {
+                    const char* text = lua_tolstring(L, -1, &length);
+                    entry.text.assign(text, length);
+                }
+                else if (entry.type == LUA_TNUMBER) {
+                    entry.number = lua_tonumber(L, -1);
+                }
+                else if (entry.type == LUA_TBOOLEAN) {
+                    entry.text = lua_toboolean(L, -1) != 0 ? "true" : "false";
+                }
+                if (entry.type == LUA_TSTRING || entry.type == LUA_TNUMBER || entry.type == LUA_TBOOLEAN)
+                    given.push_back(std::move(entry));
+            }
+            lua_pop(L, 1);
+        }
+        // In the order of their names: a table's own order is the VM's, and
+        // two arguments must not depend on it (R10).
+        std::sort(given.begin(), given.end(), [](const Given& a, const Given& b) { return a.name < b.name; });
+        names.reserve(given.size());
+        for (const Given& entry : given)
+            names.push_back(entry.name);
+        arguments.reserve(given.size());
+        for (usize index = 0; index < given.size(); ++index) {
+            const Given& entry = given[index];
+            if (entry.type != LUA_TNUMBER)
+                arguments.emplace_back(names[index], std::string_view{entry.text});
+            else if (entry.number == std::floor(entry.number) && std::fabs(entry.number) < 9.0e15)
+                arguments.emplace_back(names[index], static_cast<core::i64>(entry.number));
+            else
+                arguments.emplace_back(names[index], entry.number);
+        }
+    }
+
+    const World& w = world(L);
+    // A machine with no player reads the default locale: a server may still
+    // need the words for a reason it sends.
+    const scene::Localization* localization = w.localization();
+    const std::string& locale = !w.engineState().graphicsDisplay && localization != nullptr
+                                    ? localization->defaultLocale()
+                                    : w.engineState().locale;
+    std::optional<std::string> text;
+    if (localization != nullptr) {
+        text = localization->translate(locale, key, arguments);
+    }
+    else if (const core::TextKey hashed{core::hashTextKey(key)}; core::engineCatalog().contains(hashed)) {
+        text = core::engineCatalog().format(hashed, arguments);
+    }
+    if (!text.has_value()) {
+        // The key itself, and one line to say so: a missing translation must
+        // not stop a game, and must not hide either.
+        ServiceState& state = services(L);
+        if (std::find(state.missingTranslations.begin(), state.missingTranslations.end(), key) ==
+            state.missingTranslations.end()) {
+            state.missingTranslations.emplace_back(key);
+            const std::array<core::I18nArg, 2> args{core::I18nArg{"key", key}, core::I18nArg{"locale", locale}};
+            core::log(core::LogLevel::Warn, ENG_TR("script.warn.translation_missing"), args);
+        }
+        lua_pushlstring(L, key.data(), key.size());
+        return 1;
+    }
+    lua_pushlstring(L, text->data(), text->size());
+    return 1;
+}
+
+// --- GraphicsService (ADR 0147) -----------------------------------------------
+//
+// The settings are `scene::GraphicsModel`'s, in the world's engine state: a
+// property is one of them, and these are the ones that are more than one.
+
+[[nodiscard]] scene::GraphicsModel& graphicsModel(lua_State* L)
+{
+    return world(L).engineState().graphics;
+}
+
+// A write, on a machine with a display to apply it to.
+void requireDisplay(lua_State* L)
+{
+    if (!world(L).engineState().graphicsDisplay)
+        raise(L, ENG_TR("script.err.graphics_no_display"));
+}
+
+[[nodiscard]] core::i32 checkEnumOf(lua_State* L, int index, scene::EnumId enumId, const char* name)
+{
+    const scene::EnumValue item = checkEnumItem(L, index);
+    if (item.enumId != enumId)
+        luaL_argerror(L, index, name);
+    return item.value;
+}
+
+[[nodiscard]] scene::GraphicsSetting checkGraphicsSetting(lua_State* L, int index)
+{
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, index, &length);
+    const std::string_view name{text, length};
+    // `Resolution` is two numbers in the model and one property to a script.
+    if (name == "Resolution")
+        return scene::GraphicsSetting::ResolutionWidth;
+    const std::optional<scene::GraphicsSetting> setting = scene::graphicsSettingNamed(name);
+    if (!setting.has_value() || *setting == scene::GraphicsSetting::ResolutionWidth ||
+        *setting == scene::GraphicsSetting::ResolutionHeight) {
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"name", name}};
+        raise(L, ENG_TR("script.err.graphics_unknown_setting"), args);
+    }
+    return *setting;
+}
+
+int graphicsServiceApplyPreset(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::i32 level = checkEnumOf(L, 2, scene::generated::GraphicsQualityEnumId, "Enum.GraphicsQuality");
+    if (level == scene::kQualityCustom)
+        luaL_argerror(L, 2, "a level other than Custom");
+    requireDisplay(L);
+    graphicsModel(L).applyPreset(level);
+    return 0;
+}
+
+int graphicsServiceResetToDefaults(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    requireDisplay(L);
+    graphicsModel(L).resetToDefaults();
+    return 0;
+}
+
+int graphicsServiceGetSource(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::GraphicsSetting setting = checkGraphicsSetting(L, 2);
+    pushEnumItem(L, scene::EnumValue{scene::generated::SettingSourceEnumId,
+                                     static_cast<core::i32>(graphicsModel(L).source(setting))});
+    return 1;
+}
+
+int graphicsServiceIsApplied(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    lua_pushboolean(L, scene::graphicsSettingInfo(checkGraphicsSetting(L, 2)).applied ? 1 : 0);
+    return 1;
+}
+
+[[nodiscard]] scene::GraphicsGroup checkGraphicsGroup(lua_State* L, int index)
+{
+    const core::i32 value = checkEnumOf(L, index, scene::generated::GraphicsGroupEnumId, "Enum.GraphicsGroup");
+    return static_cast<scene::GraphicsGroup>(
+        std::clamp(value, 0, static_cast<core::i32>(scene::GraphicsGroup::Count) - 1));
+}
+
+int graphicsServiceGetGroupLevel(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const std::optional<core::i32> level = graphicsModel(L).groupLevel(checkGraphicsGroup(L, 2));
+    if (level.has_value())
+        pushEnumItem(L, scene::EnumValue{scene::generated::GraphicsLevelEnumId, *level});
+    else
+        lua_pushnil(L);
+    return 1;
+}
+
+int graphicsServiceSetGroupLevel(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::GraphicsGroup group = checkGraphicsGroup(L, 2);
+    const core::i32 level = checkEnumOf(L, 3, scene::generated::GraphicsLevelEnumId, "Enum.GraphicsLevel");
+    requireDisplay(L);
+    graphicsModel(L).setGroupLevel(group, level);
+    return 0;
+}
+
+int graphicsServiceGetSupportedResolutions(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::f64 monitor = graphicsModel(L).effective(scene::GraphicsSetting::Monitor);
+    const std::vector<platform::DisplayMode> modes = platform::displayModes(static_cast<usize>(monitor));
+    lua_createtable(L, static_cast<int>(modes.size()), 0);
+    for (usize index = 0; index < modes.size(); ++index) {
+        pushVector2(L, core::Vec2{static_cast<f32>(modes[index].width), static_cast<f32>(modes[index].height)});
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
+int graphicsServiceGetMonitors(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const std::vector<platform::DisplayInfo> found = platform::displays();
+    lua_createtable(L, static_cast<int>(found.size()), 0);
+    for (usize index = 0; index < found.size(); ++index) {
+        lua_createtable(L, 0, 3);
+        lua_pushlstring(L, found[index].name.data(), found[index].name.size());
+        lua_setfield(L, -2, "Name");
+        pushVector2(L, core::Vec2{static_cast<f32>(found[index].width), static_cast<f32>(found[index].height)});
+        lua_setfield(L, -2, "Size");
+        lua_pushnumber(L, static_cast<double>(found[index].refreshRate));
+        lua_setfield(L, -2, "RefreshRate");
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
+int graphicsServiceGetRefreshRate(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    // The display the settings name: the one the window is on, once applied.
+    const std::vector<platform::DisplayInfo> found = platform::displays();
+    const auto monitor = static_cast<usize>(graphicsModel(L).effective(scene::GraphicsSetting::Monitor));
+    lua_pushnumber(L, monitor < found.size() ? static_cast<double>(found[monitor].refreshRate) : 0.0);
+    return 1;
+}
+
+// Both park the caller and ask the host: the player's file is the host's.
+int graphicsServiceFileAsync(lua_State* L, bool load)
+{
+    (void)checkInstance(L, 1);
+    requireYieldable(L, load ? "LoadAsync" : "SaveAsync");
+    scene::GraphicsModel& model = graphicsModel(L);
+    (load ? model.loadRequested : model.saveRequested) = true;
+
+    ServiceState::GraphicsWaiter waiter;
+    waiter.load = load;
+    lua_pushthread(L);
+    waiter.threadRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+    services(L).graphicsWaiters.push_back(waiter);
+    return lua_yield(L, 0);
+}
+
+int graphicsServiceSaveAsync(lua_State* L)
+{
+    return graphicsServiceFileAsync(L, false);
+}
+
+int graphicsServiceLoadAsync(lua_State* L)
+{
+    return graphicsServiceFileAsync(L, true);
+}
+
+// --- Sound and AudioService ---------------------------------------------
+
+int soundPlay(lua_State* L)
+{
+    const core::InstanceId id = checkInstance(L, 1);
+    if (scene::SoundComponent* sound = world(L).sounds().find(id); sound != nullptr) {
+        // **From the start, or from where a script last put `TimePosition`** --
+        // and again from there when it is already playing. `Resume` is what
+        // carries on from where `Pause` left it. A `Play` that resumed instead
+        // was a `Play` that did nothing to a sound paused at its end.
+        if (!sound->seeked)
+            sound->timePosition = 0.0;
+        sound->seeked = false;
+        sound->playing = true;
+        // Counted, so what hears it knows a new start from a sound going on:
+        // a language changed since the last one is heard from this one.
+        sound->plays += 1;
+    }
+    return 0;
+}
+
+int soundResume(lua_State* L)
+{
+    const core::InstanceId id = checkInstance(L, 1);
+    if (scene::SoundComponent* sound = world(L).sounds().find(id); sound != nullptr) {
+        sound->seeked = false;
+        sound->playing = true;
+    }
+    return 0;
+}
+
+int soundPause(lua_State* L)
+{
+    const core::InstanceId id = checkInstance(L, 1);
+    if (scene::SoundComponent* sound = world(L).sounds().find(id); sound != nullptr)
+        sound->playing = false;
+    return 0;
+}
+
+int soundStop(lua_State* L)
+{
+    const core::InstanceId id = checkInstance(L, 1);
+    if (scene::SoundComponent* sound = world(L).sounds().find(id); sound != nullptr) {
+        sound->playing = false;
+        // Rewound, which is the whole difference from `Pause`. `Ended` is NOT
+        // raised: it is a past-tense fact about reaching the end, and code that
+        // awards something when a jingle finishes must not be fooled by one that
+        // was cut off.
+        sound->timePosition = 0.0;
+        sound->seeked = false;
+    }
+    return 0;
+}
+
+int audioServicePlayLocal(lua_State* L)
+{
+    World& w = world(L);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+
+    const scene::ClassId soundClass = w.classes().findId(w.atoms().intern("Sound"));
+    if (soundClass == scene::InvalidClass) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const core::InstanceId id = w.create(soundClass);
+    if (scene::SoundComponent* sound = w.sounds().find(id); sound != nullptr) {
+        sound->content = std::string(text, length);
+        // Interned as the property's setter does (protocol 44): a sound's
+        // file travels as a name, and a name is made where the text arrives.
+        (void)w.atoms().intern(std::string_view{text, length});
+        sound->playing = true;
+        sound->plays += 1;
+        // **Gone when it has been played**: it was left a child of
+        // the service for ever, and a click a frame was a leak of instances.
+        sound->ownsItself = true;
+    }
+
+    // Parented to the service, which is what makes it 2D: positional is "parented
+    // to a BasePart" and nothing else. It is a real instance in the tree rather
+    // than a hidden voice, so a script can still turn it down on the tick it
+    // starts -- and `AudioService`'s doc says keeping it past `Ended` is holding
+    // a destroyed instance.
+    (void)w.setParent(id, checkInstance(L, 1));
+    pushInstance(L, id);
+    return 1;
+}
+
+// --- Dubbing (ADR 0200) ---------------------------------------------------------
+
+void pushNames(lua_State* L, std::span<const std::string> names)
+{
+    lua_createtable(L, static_cast<int>(names.size()), 0);
+    for (usize index = 0; index < names.size(); ++index) {
+        lua_pushlstring(L, names[index].data(), names[index].size());
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+}
+
+// The languages this machine can PLAY, the default first: what a voice menu
+// lists. A world no host set up for voices has one, the one it is in.
+int localizationServiceGetVoiceLocales(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::EngineState& state = world(L).engineState();
+    if (state.voiceLocales.empty()) {
+        const std::string only[] = {state.voiceLocale};
+        pushNames(L, only);
+        return 1;
+    }
+    pushNames(L, state.voiceLocales);
+    return 1;
+}
+
+// The system's own preferred languages, in its order, narrowed to nothing.
+int localizationServiceGetSystemLocales(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    pushNames(L, world(L).engineState().systemLocales);
+    return 1;
+}
+
+int pushBands(lua_State* L, const std::array<f32, 3>& bands)
+{
+    lua_pushnumber(L, static_cast<double>(bands[0]));
+    lua_pushnumber(L, static_cast<double>(bands[1]));
+    lua_pushnumber(L, static_cast<double>(bands[2]));
+    return 3;
+}
+
+int soundGetBands(lua_State* L)
+{
+    const core::InstanceId id = checkInstance(L, 1);
+    World& w = world(L);
+    scene::SoundMeter* meter = w.soundMeter();
+    return pushBands(L, meter != nullptr ? meter->bands(w, id) : std::array<f32, 3>{0.0f, 0.0f, 0.0f});
+}
+
+int audioServiceGetBands(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::EnumValue category = checkEnumItem(L, 2);
+    World& w = world(L);
+    scene::SoundMeter* meter = w.soundMeter();
+    const bool known = category.enumId == scene::generated::SoundCategoryEnumId;
+    return pushBands(L, meter != nullptr && known ? meter->categoryBands(w, category.value)
+                                                  : std::array<f32, 3>{0.0f, 0.0f, 0.0f});
+}
+
+// **One call says a line** (ADR 0200): a voice with its caption, made from the
+// line's entry, played, and gone when it has been said. On a server it is an
+// instance like any other, so it travels -- and each player hears the line in
+// their own voice language and reads it in their own text language, because
+// a name is resolved where it is played.
+int dialogueServiceSay(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    World& w = world(L);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const std::string_view id{text, length};
+    const core::InstanceId at = lua_isnoneornil(L, 3) ? core::InstanceId{} : checkInstance(L, 3);
+
+    const scene::DialogueLines* lines = w.dialogue();
+    const scene::DialogueLine* line = lines != nullptr ? lines->find(id) : nullptr;
+    if (line == nullptr) {
+        const core::I18nArg args[] = {{"line", id}};
+        raise(L, ENG_TR("script.err.dialogue_line_unknown"), args);
+    }
+
+    const scene::ClassId soundClass = w.classes().findId(w.atoms().intern("Sound"));
+    const scene::ClassId captionClass = w.classes().findId(w.atoms().intern("Caption"));
+    const core::InstanceId sound = w.create(soundClass);
+    const core::InstanceId caption = w.create(captionClass);
+    scene::SoundComponent* voice = w.sounds().find(sound);
+    scene::CaptionComponent* said = w.captions().find(caption);
+    if (voice == nullptr || said == nullptr) {
+        lua_pushnil(L);
+        return 1;
+    }
+    voice->content = line->sound;
+    (void)w.atoms().intern(line->sound);
+    voice->category = 2;
+    voice->ownsItself = true;
+    voice->plays += 1;
+    voice->playing = true;
+    said->text = w.atoms().intern(line->text);
+    said->speaker = line->speaker.empty() ? core::NameAtom{} : w.atoms().intern(line->speaker);
+    said->color = line->color;
+    said->seconds = line->seconds;
+
+    // What a client-side script makes is this machine's alone (ADR 0186).
+    if (threadMakesLocal(L)) {
+        w.setLocal(sound);
+        w.setLocal(caption);
+    }
+    (void)w.setParent(caption, sound);
+    core::InstanceId parent = at;
+    if (!parent.valid())
+        parent = findServiceOfClass(L, w.classes().findId(w.atoms().intern("Workspace")));
+    (void)w.setParent(sound, parent);
+    pushInstance(L, sound);
+    return 1;
+}
+
+int dialogueServiceGetCaptions(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const World& w = world(L);
+    const std::vector<core::InstanceId>& current = w.engineState().captions;
+    lua_createtable(L, static_cast<int>(current.size()), 0);
+    int at = 0;
+    for (const core::InstanceId caption : current) {
+        if (!w.alive(caption))
+            continue;
+        pushInstance(L, caption);
+        lua_rawseti(L, -2, ++at);
+    }
+    return 1;
+}
+
+// The bare language of a locale: `pt` of `pt-BR`.
+[[nodiscard]] std::string_view languageOf(std::string_view locale) noexcept
+{
+    const usize dash = locale.find('-');
+    return dash == std::string_view::npos ? locale : locale.substr(0, dash);
+}
+
+// Whether a caption is shown as the player's `Subtitles` says. `Auto` shows
+// one when what is heard is not in the language being read: another voice
+// language, a line that fell back to the default language, or a line with no
+// recording at all.
+int dialogueServiceShowsCaption(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::InstanceId caption = checkInstance(L, 2);
+    World& w = world(L);
+    const scene::EngineState& state = w.engineState();
+    bool shows = state.playerSound.subtitles == 1;
+    if (state.playerSound.subtitles == 0) {
+        const core::InstanceId sound = w.parentOf(caption);
+        scene::SoundMeter* meter = w.soundMeter();
+        const std::optional<std::string> spoken =
+            meter != nullptr ? meter->spokenIn(w, sound) : std::optional<std::string>{state.voiceLocale};
+        if (!spoken.has_value()) {
+            shows = true;
+        }
+        else {
+            const std::string_view fallback =
+                w.localization() != nullptr ? std::string_view{w.localization()->defaultLocale()} : state.locale;
+            const std::string_view heard = spoken->empty() ? fallback : std::string_view{*spoken};
+            shows = languageOf(heard) != languageOf(state.locale);
+        }
+    }
+    lua_pushboolean(L, shows ? 1 : 0);
+    return 1;
+}
+
+// --- VoxelService ---------------------------------------------------------
+//
+// A block world: integer block coordinates in, block ids out. Every write bumps
+// `revision`, which is the one signal the renderer and the physics mirror read.
+
+scene::VoxelComponent& voxelsOf(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    scene::VoxelComponent* voxels = world(L).voxels().find(self);
+    if (voxels == nullptr) {
+        const core::I18nArg args[] = {{"className", std::string_view{"VoxelService"}}};
+        raise(L, ENG_TR("scene.err.unknown_service"), args);
+    }
+    return *voxels;
+}
+
+// A block coordinate from a `vector`: each component rounded DOWN, so `(0.9,
+// 0, 0)` is block 0 and `(-0.1, 0, 0)` is block -1 -- the same rule
+// `WorldToBlock` uses, which is what makes the two agree.
+struct BlockCoord
+{
+    core::i32 x = 0;
+    core::i32 y = 0;
+    core::i32 z = 0;
+};
+
+// **The block world's cells under a box, read first where they are not loaded
+// yet**: a block placed in a cell still on disk made a
+// chunk of only that block, which shadowed the cell's own when it came in.
+void blocksFirst(lua_State* L, const scene::VoxelComponent& voxels, core::i32 x0, core::i32 z0, core::i32 x1,
+                 core::i32 z1)
+{
+    const auto size = static_cast<double>(voxels.blockSize);
+    if (!world(L).loadGround(core::DVec3{static_cast<double>(std::min(x0, x1)) * size, 0.0,
+                                         static_cast<double>(std::min(z0, z1)) * size},
+                             core::DVec3{static_cast<double>(std::max(x0, x1) + 1) * size, 0.0,
+                                         static_cast<double>(std::max(z0, z1) + 1) * size})) {
+        const core::I18nArg args[] = {{"limit", static_cast<core::i64>(World::MaxGroundCells)}};
+        raise(L, ENG_TR("scene.err.terrain_ground_too_wide"), args);
+    }
+}
+
+BlockCoord checkBlockCoord(lua_State* L, int index)
+{
+    const core::Vec3 v = checkVector3(L, index);
+    // **Clamped before the cast**: a float past an `i32`, or
+    // a NaN, is undefined behaviour to convert, and a block past the grid's
+    // reach is one it never holds.
+    if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z))
+        luaL_argerror(L, index, "a finite position");
+    static constexpr double Reach = static_cast<double>(asset::MaxVoxelChunkKey) * asset::VoxelChunkEdge;
+    const auto clamp = [](float value) {
+        return static_cast<core::i32>(std::clamp(std::floor(static_cast<double>(value)), -Reach, Reach));
+    };
+    return BlockCoord{clamp(v.x), clamp(v.y), clamp(v.z)};
+}
+
+asset::BlockId checkBlockId(lua_State* L, int index, const scene::VoxelComponent& voxels)
+{
+    const lua_Integer id = luaL_checkinteger(L, index);
+    if (id < 0 || static_cast<core::u64>(id) > voxels.types.size()) {
+        const core::I18nArg args[] = {{"id", static_cast<core::i64>(id)},
+                                      {"count", static_cast<core::i64>(voxels.types.size())}};
+        raise(L, ENG_TR("scene.err.voxel_unknown_block"), args);
+    }
+    return static_cast<asset::BlockId>(id);
+}
+
+int voxelSetBlockTextures(lua_State* L)
+{
+    scene::VoxelComponent& voxels = voxelsOf(L);
+    const asset::BlockId id = checkBlockId(L, 2, voxels);
+    if (id == asset::AirBlock) {
+        const core::I18nArg args[] = {{"id", static_cast<core::i64>(id)},
+                                      {"count", static_cast<core::i64>(voxels.types.size())}};
+        raise(L, ENG_TR("scene.err.voxel_unknown_block"), args);
+    }
+    World& w = world(L);
+    const auto image = [&](int index, core::NameAtom fallback) {
+        if (lua_isnoneornil(L, index))
+            return fallback;
+        usize length = 0;
+        const char* text = luaL_checklstring(L, index, &length);
+        return length == 0 ? core::NameAtom{} : w.atoms().intern(std::string_view{text, length});
+    };
+    const core::NameAtom top = image(3, core::NameAtom{});
+    const core::NameAtom side = image(4, top);
+    const core::NameAtom bottom = image(5, side);
+    scene::VoxelBlockType& type = voxels.types[id - 1u];
+    if (!(type.texture == top) || !(type.sideTexture == side) || !(type.bottomTexture == bottom)) {
+        type.texture = top;
+        type.sideTexture = side;
+        type.bottomTexture = bottom;
+        voxels.revision += 1;
+    }
+    return 0;
+}
+
+int voxelSetBlockOpacity(lua_State* L)
+{
+    scene::VoxelComponent& voxels = voxelsOf(L);
+    const asset::BlockId id = checkBlockId(L, 2, voxels);
+    if (id == asset::AirBlock) {
+        const core::I18nArg args[] = {{"id", static_cast<core::i64>(id)},
+                                      {"count", static_cast<core::i64>(voxels.types.size())}};
+        raise(L, ENG_TR("scene.err.voxel_unknown_block"), args);
+    }
+    const scene::EnumValue opacity = checkEnumItem(L, 3);
+    if (opacity.enumId != scene::generated::BlockOpacityEnumId)
+        luaL_argerror(L, 3, "Enum.BlockOpacity");
+    const double transparency = luaL_optnumber(L, 4, 0.5);
+    scene::VoxelBlockType& type = voxels.types[id - 1u];
+    type.opacity = opacity.value;
+    type.transparency = static_cast<f32>(std::clamp(std::isfinite(transparency) ? transparency : 0.5, 0.0, 1.0));
+    voxels.revision += 1;
+    return 0;
+}
+
+int voxelRegisterBlock(lua_State* L)
+{
+    scene::VoxelComponent& voxels = voxelsOf(L);
+    usize length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const core::Color3 color = checkColor3(L, 3);
+    const core::Color3 side = lua_isnoneornil(L, 4) ? color : checkColor3(L, 4);
+    const core::Color3 bottom = lua_isnoneornil(L, 5) ? side : checkColor3(L, 5);
+    const core::NameAtom name = world(L).atoms().intern(std::string_view{text, length});
+    for (usize at = 0; at < voxels.types.size(); ++at) {
+        if (voxels.types[at].name == name) {
+            scene::VoxelBlockType& type = voxels.types[at];
+            if (!(type.color == color) || !(type.side == side) || !(type.bottom == bottom)) {
+                type.color = color;
+                type.side = side;
+                type.bottom = bottom;
+                voxels.revision += 1;
+            }
+            lua_pushinteger(L, static_cast<int>(at + 1));
+            return 1;
+        }
+    }
+    // Four thousand and ninety-five types is the id's range -- the rest of a
+    // stored id is the block's state (`asset::BlockTypeMask`) -- and refusing
+    // past it is kinder than wrapping an id onto somebody else's block.
+    if (voxels.types.size() >= asset::MaxBlockType) {
+        const core::I18nArg args[] = {{"id", static_cast<core::i64>(voxels.types.size() + 1)},
+                                      {"count", static_cast<core::i64>(voxels.types.size())}};
+        raise(L, ENG_TR("scene.err.voxel_unknown_block"), args);
+    }
+    voxels.types.push_back(scene::VoxelBlockType{name, color, side, bottom, {}, {}, {}, 0, 0.5f});
+    voxels.revision += 1;
+    lua_pushinteger(L, static_cast<int>(voxels.types.size()));
+    return 1;
+}
+
+int voxelGetBlockId(lua_State* L)
+{
+    const scene::VoxelComponent& voxels = voxelsOf(L);
+    usize length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const core::NameAtom name = world(L).atoms().lookup(std::string_view{text, length});
+    for (usize at = 0; at < voxels.types.size(); ++at) {
+        if (name.valid() && voxels.types[at].name == name) {
+            lua_pushinteger(L, static_cast<int>(at + 1));
+            return 1;
+        }
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+int voxelSetBlockFluid(lua_State* L)
+{
+    scene::VoxelComponent& voxels = voxelsOf(L);
+    const asset::BlockId id = checkBlockId(L, 2, voxels);
+    if (id == asset::AirBlock) {
+        const core::I18nArg args[] = {{"id", static_cast<core::i64>(id)},
+                                      {"count", static_cast<core::i64>(voxels.types.size())}};
+        raise(L, ENG_TR("scene.err.voxel_unknown_block"), args);
+    }
+    const lua_Integer reach = luaL_checkinteger(L, 3);
+    const lua_Integer ticks = luaL_optinteger(L, 4, 5);
+    if (reach < 0 || reach > static_cast<lua_Integer>(asset::MaxFluidReach)) {
+        const core::I18nArg args[] = {{"reach", static_cast<core::i64>(reach)},
+                                      {"max", static_cast<core::i64>(asset::MaxFluidReach)}};
+        raise(L, ENG_TR("scene.err.voxel_fluid_reach"), args);
+    }
+    if (ticks < 1 || ticks > 65535) {
+        const core::I18nArg args[] = {{"ticks", static_cast<core::i64>(ticks)}};
+        raise(L, ENG_TR("scene.err.voxel_fluid_ticks"), args);
+    }
+    scene::VoxelBlockType& type = voxels.types[id - 1u];
+    type.fluidReach = static_cast<core::u8>(reach);
+    type.fluidTicks = static_cast<core::u32>(ticks);
+    voxels.revision += 1;
+    // A type that just became a fluid has blocks that should start moving.
+    scene::wakeAllFluids(voxels);
+    return 0;
+}
+
+int voxelSetFluidReaction(lua_State* L)
+{
+    scene::VoxelComponent& voxels = voxelsOf(L);
+    const asset::BlockId from = checkBlockId(L, 2, voxels);
+    const asset::BlockId touching = checkBlockId(L, 3, voxels);
+    const asset::BlockId result = checkBlockId(L, 4, voxels);
+    // Both sides have to be fluids: a reaction is what moving fluid does, and
+    // one on a solid would never be looked at.
+    if (!scene::isFluidType(voxels, from) || !scene::isFluidType(voxels, touching)) {
+        const core::I18nArg args[] = {{"from", static_cast<core::i64>(from)},
+                                      {"touching", static_cast<core::i64>(touching)}};
+        raise(L, ENG_TR("scene.err.voxel_reaction_not_fluid"), args);
+    }
+    scene::setFluidReaction(voxels, from, touching, result);
+    // Fluids already touching are due to react.
+    scene::wakeAllFluids(voxels);
+    return 0;
+}
+
+int voxelSetBlock(lua_State* L)
+{
+    scene::VoxelComponent& voxels = voxelsOf(L);
+    const BlockCoord at = checkBlockCoord(L, 2);
+    const asset::BlockId id = checkBlockId(L, 3, voxels);
+    blocksFirst(L, voxels, at.x, at.z, at.x, at.z);
+    const bool changed = voxels.grid.set(at.x, at.y, at.z, id);
+    if (changed) {
+        voxels.revision += 1;
+        scene::wakeFluids(voxels, at.x, at.y, at.z);
+    }
+    lua_pushboolean(L, changed ? 1 : 0);
+    return 1;
+}
+
+int voxelGetBlock(lua_State* L)
+{
+    const scene::VoxelComponent& voxels = voxelsOf(L);
+    const BlockCoord at = checkBlockCoord(L, 2);
+    // The TYPE: a fluid's level is a state of its block, not a different block.
+    lua_pushinteger(L, static_cast<int>(asset::blockTypeOf(voxels.grid.get(at.x, at.y, at.z))));
+    return 1;
+}
+
+int voxelGetFluidDepth(lua_State* L)
+{
+    const scene::VoxelComponent& voxels = voxelsOf(L);
+    const BlockCoord at = checkBlockCoord(L, 2);
+    const asset::BlockId id = voxels.grid.get(at.x, at.y, at.z);
+    const asset::BlockId type = asset::blockTypeOf(id);
+    if (id == asset::AirBlock || !scene::isFluidType(voxels, type)) {
+        lua_pushnumber(L, 0.0);
+        return 1;
+    }
+    const asset::BlockId above = voxels.grid.get(at.x, at.y + 1, at.z);
+    lua_pushnumber(L, static_cast<double>(asset::fluidSurface(id, above, voxels.types[type - 1u].fluidReach)));
+    return 1;
+}
+
+int voxelFillBlocks(lua_State* L)
+{
+    scene::VoxelComponent& voxels = voxelsOf(L);
+    const BlockCoord from = checkBlockCoord(L, 2);
+    const BlockCoord to = checkBlockCoord(L, 3);
+    const asset::BlockId id = checkBlockId(L, 4, voxels);
+    // **Refused past a bound, as a terrain brush is**: one
+    // call filled a million chunks, eight gigabytes, or walked 10^18 empty
+    // ones clearing a box of air.
+    const auto side = [](core::i32 a, core::i32 b) {
+        return static_cast<core::u64>(std::abs(static_cast<core::i64>(b) - static_cast<core::i64>(a))) + 1;
+    };
+    const core::u64 sx = side(from.x, to.x);
+    const core::u64 sy = side(from.y, to.y);
+    const core::u64 sz = side(from.z, to.z);
+    if (sx > asset::MaxFillBlocks || sy > asset::MaxFillBlocks || sz > asset::MaxFillBlocks ||
+        sx * sy > asset::MaxFillBlocks || sx * sy * sz > asset::MaxFillBlocks) {
+        const core::I18nArg args[] = {{"limit", static_cast<core::i64>(asset::MaxFillBlocks)}};
+        raise(L, ENG_TR("scene.err.voxel_fill_too_large"), args);
+    }
+    blocksFirst(L, voxels, from.x, from.z, to.x, to.z);
+    const core::u32 changed = voxels.grid.fill(from.x, from.y, from.z, to.x, to.y, to.z, id);
+    if (changed > 0) {
+        voxels.revision += 1;
+        scene::wakeFluidsInBox(voxels, from.x, from.y, from.z, to.x, to.y, to.z);
+    }
+    lua_pushinteger(L, static_cast<int>(changed));
+    return 1;
+}
+
+int voxelClear(lua_State* L)
+{
+    scene::VoxelComponent& voxels = voxelsOf(L);
+    if (voxels.grid.chunkCount() > 0) {
+        voxels.grid.clear();
+        voxels.revision += 1;
+    }
+    voxels.fluidWakes.clear();
+    return 0;
+}
+
+int voxelWorldToBlock(lua_State* L)
+{
+    const scene::VoxelComponent& voxels = voxelsOf(L);
+    const core::Vec3 position = checkVector3(L, 2);
+    const f32 size = voxels.blockSize;
+    pushVector3(
+        L, core::Vec3{std::floor(position.x / size), std::floor(position.y / size), std::floor(position.z / size)});
+    return 1;
+}
+
+int voxelBlockToWorld(lua_State* L)
+{
+    const scene::VoxelComponent& voxels = voxelsOf(L);
+    const BlockCoord at = checkBlockCoord(L, 2);
+    const f32 size = voxels.blockSize;
+    pushVector3(L, core::Vec3{(static_cast<f32>(at.x) + 0.5f) * size, (static_cast<f32>(at.y) + 0.5f) * size,
+                              (static_cast<f32>(at.z) + 0.5f) * size});
+    return 1;
+}
+
+// Amanatides and Woo's traversal: step from block to block along the ray,
+// always into whichever neighbour the ray reaches first, so no block it passes
+// through is skipped and none it misses is visited.
+int voxelRaycast(lua_State* L)
+{
+    const scene::VoxelComponent& voxels = voxelsOf(L);
+    const core::Vec3 origin = checkVector3(L, 2);
+    const core::Vec3 direction = checkVector3(L, 3);
+    // A fluid is passed through: a pickaxe swung at a lake bed hits the bed.
+    // (An array rather than a `std::vector<bool>`, which packs its bits and
+    // cannot be viewed as a span.)
+    const core::usize count = voxels.types.size() + 1;
+    const std::unique_ptr<bool[]> passable = std::make_unique<bool[]>(count);
+    for (core::usize type = 0; type < voxels.types.size(); ++type)
+        passable[type + 1] = voxels.types[type].fluidReach > 0;
+    // The direction's length is the reach, as `Workspace:Raycast` has it.
+    const std::optional<asset::VoxelHit> hit = asset::raycastVoxels(
+        voxels.grid, voxels.blockSize,
+        core::DVec3{static_cast<f64>(origin.x), static_cast<f64>(origin.y), static_cast<f64>(origin.z)}, direction,
+        static_cast<f64>(core::length(direction)), std::span<const bool>{passable.get(), count});
+    if (!hit.has_value()) {
+        lua_pushnil(L);
+        lua_pushnil(L);
+        return 2;
+    }
+    pushVector3(L, core::Vec3{static_cast<f32>(hit->block[0]), static_cast<f32>(hit->block[1]),
+                              static_cast<f32>(hit->block[2])});
+    pushVector3(
+        L, core::Vec3{static_cast<f32>(hit->face[0]), static_cast<f32>(hit->face[1]), static_cast<f32>(hit->face[2])});
+    return 2;
+}
+
+// The field that has the keyboard, or nil (ADR 0139). At most one: focus is
+// only ever moved by the interface, one field at a time.
+int uiServiceGetFocusedTextInput(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    core::InstanceId focused;
+    world(L).textInputs().forEach([&focused](core::InstanceId id, const scene::TextInputComponent& field) {
+        if (field.focused)
+            focused = id;
+    });
+    if (focused.valid())
+        pushInstance(L, focused);
+    else
+        lua_pushnil(L);
+    return 1;
+}
+
+// `WaitForChild` is here rather than in `instance_binding.cpp` because it parks
+// on a tree state and only the resumption phase this file owns can wake it.
+constexpr InstanceMethodBinding ServiceMethods[] = {
+    {"Instance", "WaitForChild", instanceWaitForChild},
+
+    {"DataModel", "GetService", dataModelGetService},
+    {"DataModel", "FindService", dataModelFindService},
+    {"DataModel", "BindToClose", dataModelBindToClose},
+    {"DataModel", "SendMessage", dataModelSendMessage},
+    {"DataModel", "BindToMessage", dataModelBindToMessage},
+    {"DataModel", "Shutdown", dataModelShutdown},
+
+    {"UIService", "GetFocusedTextInput", uiServiceGetFocusedTextInput},
+    {"RunService", "Pause", runServicePause},
+    {"RunService", "BindToRenderStep", runServiceBindToRenderStep},
+    {"RunService", "BindToIntent", runServiceBindToIntent},
+    {"RunService", "UnbindFromIntent", runServiceUnbindFromIntent},
+    {"RunService", "BindToPredictedStep", runServiceBindToPredictedStep},
+    {"RunService", "UnbindFromPredictedStep", runServiceUnbindFromPredictedStep},
+    {"RunService", "UnbindFromRenderStep", runServiceUnbindFromRenderStep},
+    {"RunService", "Resume", runServiceResume},
+    {"RunService", "IsPaused", runServiceIsPaused},
+    {"RunService", "GetLastRun", runServiceGetLastRun},
+    {"RunService", "SaveSimulation", runServiceSaveSimulation},
+    {"RunService", "RestoreSimulation", runServiceRestoreSimulation},
+    {"RunService", "StepSimulation", runServiceStepSimulation},
+
+    {"StreamingService", "AddFocus", streamingAddFocus},
+    {"StreamingService", "RemoveFocus", streamingRemoveFocus},
+    {"StreamingService", "LoadAreaAsync", streamingLoadAreaAsync},
+    {"Terrain", "IsMeshed", terrainIsMeshed},
+    {"Terrain", "WaitForMeshAsync", terrainWaitForMeshAsync},
+    {"SceneService", "HoldLoading", sceneServiceHoldLoading},
+    {"SceneService", "ReleaseLoading", sceneServiceReleaseLoading},
+
+    {"NetworkService", "Join", networkServiceJoin},
+    {"NetworkService", "PingRelayAsync", networkServicePingRelay},
+    {"NetworkService", "Host", networkServiceHost},
+    {"NetworkService", "Disconnect", networkServiceDisconnect},
+
+    {"SceneService", "LoadScene", sceneServiceLoadScene},
+    {"SceneService", "LoadSceneAsync", sceneServiceLoadSceneAsync},
+    {"ContentProvider", "PreloadAsync", contentProviderPreloadAsync},
+    {"ContentProvider", "Keep", contentProviderKeep},
+    {"ContentProvider", "Release", contentProviderRelease},
+    {"SceneService", "GetLoadData", sceneServiceGetLoadData},
+    {"SceneService", "SendToHost", sceneServiceSendToHost},
+    {"SceneService", "IsSubWorld", sceneServiceIsSubWorld},
+    {"SubWorld", "Load", subWorldLoad},
+    {"SubWorld", "Unload", subWorldUnload},
+    {"SubWorld", "IsLoaded", subWorldIsLoaded},
+    {"SubWorld", "SetInputState", subWorldSetInputState},
+    {"SubWorld", "Send", subWorldSend},
+
+    {"TagService", "GetTagged", tagServiceGetTagged},
+    {"TagService", "GetAllTags", tagServiceGetAllTags},
+    {"TagService", "GetInstanceAddedSignal", tagServiceGetInstanceAddedSignal},
+    {"TagService", "GetInstanceRemovedSignal", tagServiceGetInstanceRemovedSignal},
+
+    {"DebugService", "DrawLine", debugServiceDrawLine},
+    {"DebugService", "DrawBox", debugServiceDrawBox},
+    {"DebugService", "DrawSphere", debugServiceDrawSphere},
+    {"DebugService", "GetStat", debugServiceGetStat},
+    {"DebugService", "CaptureProfile", debugServiceCaptureProfile},
+    {"DebugService", "GetProfileReport", debugServiceGetProfileReport},
+    {"DebugService", "SetCustomStat", debugServiceSetCustomStat},
+    {"DebugService", "ShowPanel", debugServiceShowPanel},
+    {"DebugService", "HidePanel", debugServiceHidePanel},
+    {"HotReloadService", "SaveState", hotReloadSaveState},
+    {"HotReloadService", "LoadState", hotReloadLoadState},
+    {"HotReloadService", "IsReload", hotReloadIsReload},
+
+    {"InputAction", "GetState", inputActionGetState},
+    {"NetworkService", "GetPlayers", networkServiceGetPlayers},
+    {"NetworkService", "GetLocalPlayers", networkServiceGetLocalPlayers},
+    {"NetworkService", "AddLocalPlayer", networkServiceAddLocalPlayer},
+    {"NetworkService", "RemoveLocalPlayer", networkServiceRemoveLocalPlayer},
+    {"NetworkService", "GetStats", networkServiceGetStats},
+    {"NetworkService", "GetLocalAddresses", networkServiceGetLocalAddresses},
+    {"SaveService", "GetSlotAsync", saveServiceGetSlotAsync},
+    {"SaveService", "ListSlots", saveServiceListSlots},
+    {"SaveService", "DeleteSlot", saveServiceDeleteSlot},
+    {"CryptoService", "RandomBytes", cryptoServiceRandomBytes},
+    {"CryptoService", "RandomInteger", cryptoServiceRandomInteger},
+    {"CryptoService", "UniqueId", cryptoServiceUniqueId},
+    {"CryptoService", "Sha256", cryptoServiceSha256},
+    {"CryptoService", "HmacSha256", cryptoServiceHmacSha256},
+    {"CryptoService", "SecureEquals", cryptoServiceSecureEquals},
+    {"CryptoService", "HashPasswordAsync", cryptoServiceHashPasswordAsync},
+    {"CryptoService", "VerifyPasswordAsync", cryptoServiceVerifyPasswordAsync},
+    {"Player", "GetIntent", playerGetIntent},
+    {"Player", "Kick", playerKick},
+    {"ParticleEmitter", "Emit", particleEmitterEmit},
+    {"Trail", "Clear", trailClear},
+    {"ReflectionProbe", "Refresh", reflectionProbeRefresh},
+    {"ReflectionProbe", "IsReady", reflectionProbeIsReady},
+    {"IrradianceVolume", "IsReady", irradianceVolumeIsReady},
+    {"IrradianceVolume", "Refresh", irradianceVolumeRefresh},
+    {"IrradianceVolume", "GetProgress", irradianceVolumeGetProgress},
+    {"SequencePlayer", "Play", sequencePlayerPlay},
+    {"SequencePlayer", "Pause", sequencePlayerPause},
+    {"SequencePlayer", "Stop", sequencePlayerStop},
+    {"SequencePlayer", "Skip", sequencePlayerSkip},
+    {"SequencePlayer", "Release", sequencePlayerRelease},
+    {"SequencePlayer", "GetMarkers", sequencePlayerGetMarkers},
+    {"SequencePlayer", "PlayFrom", sequencePlayerPlayFrom},
+    {"SequencePlayer", "SkipToNext", sequencePlayerSkipToNext},
+    {"SequencePlayer", "LoadSequence", sequencePlayerLoadSequence},
+    {"SequencePlayer", "BindCamera", sequencePlayerBindCamera},
+    {"SequencePlayer", "UnbindCamera", sequencePlayerUnbindCamera},
+    {"InputAction", "GetPreferredBinding", inputActionGetPreferredBinding},
+    {"HapticService", "IsVibrationSupported", hapticServiceIsVibrationSupported},
+    {"HapticService", "IsMotorSupported", hapticServiceIsMotorSupported},
+    {"HapticService", "SetMotor", hapticServiceSetMotor},
+    {"HapticService", "Vibrate", hapticServiceVibrate},
+    {"LocalizationService", "GetLocales", localizationServiceGetLocales},
+    {"LocalizationService", "GetVoiceLocales", localizationServiceGetVoiceLocales},
+    {"LocalizationService", "GetSystemLocales", localizationServiceGetSystemLocales},
+    {"DialogueService", "Say", dialogueServiceSay},
+    {"DialogueService", "GetCaptions", dialogueServiceGetCaptions},
+    {"DialogueService", "ShowsCaption", dialogueServiceShowsCaption},
+    {"LocalizationService", "Translate", localizationServiceTranslate},
+    {"GraphicsService", "ApplyPreset", graphicsServiceApplyPreset},
+    {"GraphicsService", "ResetToDefaults", graphicsServiceResetToDefaults},
+    {"GraphicsService", "GetSource", graphicsServiceGetSource},
+    {"GraphicsService", "IsApplied", graphicsServiceIsApplied},
+    {"GraphicsService", "GetGroupLevel", graphicsServiceGetGroupLevel},
+    {"GraphicsService", "SetGroupLevel", graphicsServiceSetGroupLevel},
+    {"GraphicsService", "GetSupportedResolutions", graphicsServiceGetSupportedResolutions},
+    {"GraphicsService", "GetMonitors", graphicsServiceGetMonitors},
+    {"GraphicsService", "GetRefreshRate", graphicsServiceGetRefreshRate},
+    {"GraphicsService", "SaveAsync", graphicsServiceSaveAsync},
+    {"GraphicsService", "LoadAsync", graphicsServiceLoadAsync},
+    {"InputService", "GetPointerPosition", inputServiceGetPointerPosition},
+    {"InputService", "IsKeyDown", inputServiceIsKeyDown},
+    {"InputService", "GetGamepads", inputServiceGetGamepads},
+    {"InputService", "IsGamepadKeyDown", inputServiceIsGamepadKeyDown},
+    {"InputService", "SetVirtualState", inputServiceSetVirtualState},
+    {"InputService", "SetClipboard", inputServiceSetClipboard},
+
+    {"AnimationPlayer", "LoadAnimation", animationPlayerLoadAnimation},
+    {"AnimationPlayer", "SetParameter", animationPlayerSetParameter},
+    {"AnimationPlayer", "GetParameter", animationPlayerGetParameter},
+    {"AnimationPlayer", "ClearParameter", animationPlayerClearParameter},
+    {"AnimationPlayer", "GetState", animationPlayerGetState},
+
+    {"TweenService", "Create", tweenServiceCreate},
+    {"TweenService", "GetValue", tweenServiceGetValue},
+
+    {"Sound", "Play", soundPlay},
+    {"Sound", "Resume", soundResume},
+    {"Sound", "Pause", soundPause},
+    {"Sound", "Stop", soundStop},
+    {"AudioService", "PlayLocal", audioServicePlayLocal},
+    {"AudioService", "GetBands", audioServiceGetBands},
+    {"Sound", "GetBands", soundGetBands},
+
+    {"Workspace", "GetWindAt", workspaceGetWindAt},
+    {"Workspace", "Raycast", workspaceRaycast},
+    {"Workspace", "Raycast2D", workspaceRaycast2D},
+    {"NavigationService", "FindPath", navigationFindPath},
+    {"NavigationService", "DefineAgent", navigationDefineAgent},
+    {"NavigationService", "SetAreaCost", navigationSetAreaCost},
+    {"NavigationService", "FindPath2D", navigationFindPath2D},
+    {"NavigationService", "NearestPoint", navigationNearestPoint},
+    {"NavigationService", "Raycast", navigationRaycast},
+    {"NavigationService", "BuildRegion", navigationBuildRegion},
+    {"Workspace", "Spherecast", workspaceSpherecast},
+    {"Workspace", "GetBodiesInBox", workspaceGetBodiesInBox},
+    {"Workspace", "GetBodiesInSphere", workspaceGetBodiesInSphere},
+
+    {"PhysicsService", "RegisterCollisionGroup", physicsRegisterCollisionGroup},
+    {"PhysicsService", "CollisionGroupSetCollidable", physicsCollisionGroupSetCollidable},
+    {"PhysicsService", "GetRegisteredCollisionGroups", physicsGetRegisteredCollisionGroups},
+
+    {"VoxelService", "RegisterBlock", voxelRegisterBlock},
+    {"VoxelService", "GetBlockId", voxelGetBlockId},
+    {"VoxelService", "SetBlockTextures", voxelSetBlockTextures},
+    {"VoxelService", "SetBlockOpacity", voxelSetBlockOpacity},
+    {"VoxelService", "SetBlockFluid", voxelSetBlockFluid},
+    {"VoxelService", "SetFluidReaction", voxelSetFluidReaction},
+    {"VoxelService", "GetFluidDepth", voxelGetFluidDepth},
+    {"VoxelService", "SetBlock", voxelSetBlock},
+    {"VoxelService", "GetBlock", voxelGetBlock},
+    {"VoxelService", "FillBlocks", voxelFillBlocks},
+    {"VoxelService", "Clear", voxelClear},
+    {"VoxelService", "WorldToBlock", voxelWorldToBlock},
+    {"VoxelService", "BlockToWorld", voxelBlockToWorld},
+    {"VoxelService", "Raycast", voxelRaycast},
+};
+
+} // namespace
+
+void registerServices(lua_State* L, core::InstanceId adopt)
+{
+    VmContext& ctx = context(L);
+    ServiceState& state = *ctx.services;
+    World& w = *ctx.world;
+    core::AtomTable& atoms = w.atoms();
+
+    state.messageOut = atoms.intern("MessageOut");
+    state.instanceStreamedOut = atoms.intern("InstanceStreamedOut");
+    state.areaLoaded = atoms.intern("AreaLoaded");
+    state.loaded = atoms.intern("Loaded");
+    state.runServiceClass = w.classes().findId(atoms.intern("RunService"));
+    state.tagServiceClass = w.classes().findId(atoms.intern("TagService"));
+    state.debugServiceClass = w.classes().findId(atoms.intern("DebugService"));
+    state.streamingServiceClass = w.classes().findId(atoms.intern("StreamingService"));
+    state.hotReloadServiceClass = w.classes().findId(atoms.intern("HotReloadService"));
+    state.preReload = atoms.intern("PreReload");
+    state.postReload = atoms.intern("PostReload");
+
+    bindInstanceMethods(L, ServiceMethods);
+    bindInstanceMethods(L, optionalServiceMethods());
+    bindInstanceMethods(L, platformServiceMethods());
+    bindInstanceMethods(L, remoteMethodBindings());
+
+    // **Adopted when there is one, created when there is not.** A `DataModel` is
+    // the one instance a VM makes that outlives the VM: everything else under it
+    // is found by `getServiceOfClass`, which has always been find-or-create, so
+    // this line was the only thing standing between a world and a second runtime
+    // bound to it.
+    state.dataModel = w.alive(adopt) ? adopt : w.create(w.classes().findId(atoms.intern("DataModel")));
+
+    // **Every service exists from boot**, and the paragraphs this replaced are
+    // the argument for it. There were five of them: `Workspace` and
+    // `ScriptService` because a script reaches one through a global and the
+    // other is the mount point; `Lighting` because the renderer reads the
+    // environment every frame whether or not anybody asked; `UIService` because
+    // the frame lays out every `ScreenGui` under it; `AudioService` because the
+    // mixer reads `MasterVolume`. That is not five decisions. It is one decision
+    // found five times, each time after something had already read a service
+    // nobody had created -- and the first renderer spent four milestones lighting every scene
+    // with struct defaults because `Lighting` had not had its turn yet.
+    //
+    // **The editor is what turns it from a convenience into a rule.** A tree
+    // whose shape depends on whether a script has called `GetService` is a tree
+    // that changes when you press play, which is what was reported: `RunService`
+    // and `HotReloadService` appearing in the Explorer on play and vanishing on
+    // stop. Scripts do not run until play now (ADR 0058), so a project nobody
+    // has played would show none of them at all -- and "the world you are
+    // editing is the world" cannot survive half its services being invisible.
+    //
+    // **`GlobalScriptService`, then `Workspace`, then `Lighting`, then every
+    // other service by name.** The global one first because it is the one that
+    // is not the scene's (ADR 0105): everything below it is what a scene
+    // change replaces, and it is what stays.
+    //
+    // The order is what the Explorer shows, so it is a decision about reading
+    // rather than about construction -- which is why it is not registration
+    // order. Registration order is a fact about which module was compiled in and
+    // in what sequence its file was generated, and a person scanning a panel has
+    // no way to know any of that.
+    //
+    // The two at the front are the two a scene IS: the world, and how it is lit.
+    // They are also the two an editor opens into, and the only ones somebody
+    // reaches for by position rather than by name. Past those, twelve names is a
+    // list you scan alphabetically, so it is sorted alphabetically -- and a
+    // service added next year lands where its name puts it without anybody
+    // deciding where.
+    //
+    // Sorted rather than listed, because a list written by hand is a list that
+    // goes stale, and this order is also the CREATION order and therefore part
+    // of the world (R10): a comparison on names is the same on every machine,
+    // where registration order is only the same by luck.
+    //
+    // `DataModel` is not among them: it carries `NotCreatable` rather than
+    // `Service`, because it is the services' parent rather than one of them.
+    const ClassId globalScriptsClass = w.classes().findId(atoms.intern("GlobalScriptService"));
+    const ClassId workspaceClass = w.classes().findId(atoms.intern("Workspace"));
+    const ClassId lightingClass = w.classes().findId(atoms.intern("Lighting"));
+
+    std::vector<ClassId> serviceClasses;
+    for (ClassId id = 1; id < static_cast<ClassId>(w.classes().classCount()); ++id) {
+        const scene::ClassDescriptor* descriptor = w.classes().find(id);
+        if (descriptor != nullptr && hasFlag(descriptor->flags, scene::ClassFlags::Service))
+            serviceClasses.push_back(id);
+    }
+
+    const auto rank = [&](ClassId id) {
+        if (id == globalScriptsClass)
+            return 0;
+        if (id == workspaceClass)
+            return 1;
+        if (id == lightingClass)
+            return 2;
+        return 3;
+    };
+    std::sort(serviceClasses.begin(), serviceClasses.end(), [&](ClassId a, ClassId b) {
+        if (rank(a) != rank(b))
+            return rank(a) < rank(b);
+        const scene::ClassDescriptor* left = w.classes().find(a);
+        const scene::ClassDescriptor* right = w.classes().find(b);
+        if (left == nullptr || right == nullptr)
+            return left != nullptr;
+        return atoms.text(left->name) < atoms.text(right->name);
+    });
+
+    core::InstanceId workspace;
+    core::InstanceId globalScripts;
+    for (const ClassId id : serviceClasses) {
+        const auto* descriptor = w.classes().find(id);
+        if (descriptor->lazyService)
+            continue;
+        if (!descriptor->integration.empty()) {
+            const auto& enabled = w.engineState().enabledIntegrations;
+            if (std::find(enabled.begin(), enabled.end(), descriptor->integration) == enabled.end())
+                continue;
+        }
+        const core::InstanceId created = getServiceOfClass(L, id);
+        if (id == workspaceClass)
+            workspace = created;
+        if (id == globalScriptsClass)
+            globalScripts = created;
+    }
+
+    // **The global service's three folders, made once and fixed** (ADR 0105).
+    // Found before made: a world adopted from a previous runtime (a stop, a
+    // reload) already has them, and a second `Server` would be two places code
+    // could hide.
+    if (globalScripts.valid()) {
+        const ClassId folderClass = w.classes().findId(atoms.intern("Folder"));
+        for (const char* folderName : {"Server", "Client", "Shared"}) {
+            const core::NameAtom atom = atoms.intern(folderName);
+            core::InstanceId folder = w.findFirstChild(globalScripts, atom);
+            if (!folder.valid()) {
+                folder = w.create(folderClass);
+                w.setName(folder, atom);
+                (void)w.setParent(folder, globalScripts);
+            }
+            w.setFixed(folder, true);
+        }
+    }
+
+    // Whatever the boot tree raised is consumed rather than queued: nothing can
+    // have connected yet, and a fire nobody could have subscribed to is a fire
+    // with no observer.
+    (void)w.changes().take();
+
+    pushInstance(L, state.dataModel);
+    lua_setglobal(L, "game");
+    pushInstance(L, workspace);
+    lua_setglobal(L, "workspace");
+}
+
+void publishFrameStats(lua_State* L, const FrameStats& stats)
+{
+    services(L).frameStats = stats;
+}
+
+void publishMessage(lua_State* L, core::LogLevel level, std::string_view text)
+{
+    ServiceState& state = services(L);
+    const core::InstanceId debug = findServiceOfClass(L, state.debugServiceClass);
+    if (!debug.valid())
+        return;
+
+    const scene::EventDesc* descriptor = world(L).classes().findEvent(world(L).classOf(debug), state.messageOut);
+    if (descriptor == nullptr)
+        return;
+
+    // `print` and `warn` each produce exactly one deferred fire carrying the
+    // text verbatim, at `Info` and `Warning` (api-design.md §2.1).
+    const i32 logLevel = static_cast<i32>(level);
+    lua_pushlstring(L, text.data(), text.size());
+    pushEnumItem(L, scene::EnumValue{scene::generated::LogLevelEnumId, logLevel});
+    fireEngineMessage(L, debug, descriptor->slot, lua_gettop(L) - 1, 2);
+    lua_pop(L, 2);
+}
+
+void fireSceneLoaded(lua_State* L, std::string_view path)
+{
+    fireSceneEvent(L, "SceneLoaded", path);
+}
+
+void fireSceneLoadFailed(lua_State* L, std::string_view path, std::string_view message)
+{
+    World& w = world(L);
+    const ClassId sceneServiceClass = w.classes().findId(w.atoms().lookup("SceneService"));
+    const core::InstanceId service = findServiceOfClass(L, sceneServiceClass);
+    if (!service.valid())
+        return;
+    const scene::EventDesc* descriptor = w.classes().findEvent(sceneServiceClass, w.atoms().intern("SceneLoadFailed"));
+    if (descriptor == nullptr)
+        return;
+    lua_pushlstring(L, path.data(), path.size());
+    lua_pushlstring(L, message.data(), message.size());
+    fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L) - 1, 2);
+    lua_pop(L, 2);
+}
+
+void fireSceneLoading(lua_State* L, std::string_view path)
+{
+    fireSceneEvent(L, "SceneLoading", path);
+}
+
+void fireSubWorldMessages(lua_State* L)
+{
+    World& w = world(L);
+    scene::EngineState& state = w.engineState();
+
+    // From the sub-worlds this world runs, as each `SubWorld`'s `Received`.
+    std::vector<scene::EngineState::SubWorldMessage> inbox;
+    inbox.swap(state.subWorldInbox);
+    if (!inbox.empty()) {
+        const core::NameAtom received = w.atoms().intern("Received");
+        for (const scene::EngineState::SubWorldMessage& message : inbox) {
+            if (!w.alive(message.subWorld))
+                continue;
+            const scene::EventDesc* event = w.classes().findEvent(w.classOf(message.subWorld), received);
+            if (event == nullptr)
+                continue;
+            const int top = lua_gettop(L);
+            const int decoded = decodeRemoteArguments(L, message.payload, {});
+            if (decoded >= 0)
+                fireInstanceEvent(L, message.subWorld, event->slot, top + 1, decoded);
+            lua_settop(L, top);
+        }
+    }
+
+    // From the world that runs this one, as `SceneService.HostMessageReceived`.
+    std::vector<std::vector<core::u8>> fromHost;
+    fromHost.swap(state.hostInbox);
+    if (fromHost.empty())
+        return;
+    const scene::ClassId sceneServiceClass = w.classes().findId(w.atoms().lookup("SceneService"));
+    const core::InstanceId service = findServiceOfClass(L, sceneServiceClass);
+    const scene::EventDesc* event =
+        service.valid() ? w.classes().findEvent(sceneServiceClass, w.atoms().intern("HostMessageReceived")) : nullptr;
+    if (event == nullptr)
+        return;
+    for (const std::vector<core::u8>& payload : fromHost) {
+        const int top = lua_gettop(L);
+        const int decoded = decodeRemoteArguments(L, payload, {});
+        if (decoded >= 0)
+            fireInstanceEvent(L, service, event->slot, top + 1, decoded);
+        lua_settop(L, top);
+    }
+}
+
+void fireNetworkEvent(lua_State* L, std::string_view eventName, std::optional<std::string_view> reason)
+{
+    World& w = world(L);
+    const ClassId networkClass = w.classes().findId(w.atoms().lookup("NetworkService"));
+    const core::InstanceId service = findServiceOfClass(L, networkClass);
+    if (!service.valid())
+        return;
+    const scene::EventDesc* descriptor = w.classes().findEvent(networkClass, w.atoms().intern(eventName));
+    if (descriptor == nullptr)
+        return;
+    if (reason.has_value()) {
+        lua_pushlstring(L, reason->data(), reason->size());
+        fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L), 1);
+        lua_pop(L, 1);
+    }
+    else {
+        fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L) + 1, 0);
+    }
+}
+
+void fireStreamedOut(lua_State* L, core::InstanceId instance)
+{
+    const core::InstanceId service = findServiceOfClass(L, services(L).streamingServiceClass);
+    if (!service.valid())
+        return;
+
+    const scene::EventDesc* descriptor =
+        world(L).classes().findEvent(world(L).classOf(service), services(L).instanceStreamedOut);
+    if (descriptor == nullptr)
+        return;
+
+    pushInstance(L, instance);
+    fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L), 1);
+    lua_pop(L, 1);
+}
+
+void fireAreaLoaded(lua_State* L, core::Vec3 position, f64 radius)
+{
+    const core::InstanceId service = findServiceOfClass(L, services(L).streamingServiceClass);
+    if (!service.valid())
+        return;
+
+    const scene::EventDesc* descriptor =
+        world(L).classes().findEvent(world(L).classOf(service), services(L).areaLoaded);
+    if (descriptor == nullptr)
+        return;
+
+    pushVector3(L, position);
+    lua_pushnumber(L, radius);
+    fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L) - 1, 2);
+    lua_pop(L, 2);
+}
+
+void resumeGraphicsWaiters(lua_State* L, bool load, bool done)
+{
+    ServiceState& state = services(L);
+    // Collected first: a resumed coroutine may ask again, and would push onto
+    // the vector being walked.
+    std::vector<ServiceState::GraphicsWaiter> ready;
+    for (usize index = 0; index < state.graphicsWaiters.size();) {
+        if (state.graphicsWaiters[index].load != load) {
+            ++index;
+            continue;
+        }
+        ready.push_back(state.graphicsWaiters[index]);
+        state.graphicsWaiters.erase(state.graphicsWaiters.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+    for (const ServiceState::GraphicsWaiter& waiter : ready) {
+        lua_getref(L, waiter.threadRef);
+        lua_State* co = lua_tothread(L, -1);
+        if (co != nullptr) {
+            lua_pushboolean(co, done ? 1 : 0);
+            (void)resumeScheduled(L, co, 1);
+        }
+        lua_pop(L, 1);
+        (void)lua_unref(L, waiter.threadRef);
+    }
+}
+
+void setTerrainMeshed(lua_State* L, std::function<bool(core::InstanceId, core::DVec3, f64)> meshed)
+{
+    services(L).meshed = std::move(meshed);
+}
+
+void resumeMeshWaiters(lua_State* L)
+{
+    ServiceState& state = services(L);
+    if (state.meshWaiters.empty())
+        return;
+    const u64 tick = world(L).engineState().tick;
+    // Collected first, for the reason `resumeAreaWaiters` gives.
+    std::vector<std::pair<ServiceState::MeshWaiter, bool>> ready;
+    for (usize index = 0; index < state.meshWaiters.size();) {
+        const ServiceState::MeshWaiter& waiter = state.meshWaiters[index];
+        const bool meshed =
+            world(L).alive(waiter.terrain) && meshedNow(L, waiter.terrain, waiter.position, waiter.radius);
+        if (!meshed && tick < waiter.deadlineTick && world(L).alive(waiter.terrain)) {
+            ++index;
+            continue;
+        }
+        ready.emplace_back(waiter, meshed);
+        state.meshWaiters.erase(state.meshWaiters.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+    for (const auto& [waiter, meshed] : ready) {
+        lua_getref(L, waiter.threadRef);
+        lua_State* co = lua_tothread(L, -1);
+        if (co != nullptr) {
+            lua_pushboolean(co, meshed ? 1 : 0);
+            (void)resumeScheduled(L, co, 1);
+        }
+        lua_pop(L, 1);
+        (void)lua_unref(L, waiter.threadRef);
+    }
+}
+
+void resumeAreaWaiters(lua_State* L, const std::function<bool(core::DVec3, f64)>& resident)
+{
+    ServiceState& state = services(L);
+    if (state.areaWaiters.empty())
+        return;
+
+    // Collected first, for the reason `resumeChildWaiters` gives: a resumed
+    // coroutine may park another waiter, and the vector it would push onto is
+    // the one being walked.
+    std::vector<ServiceState::AreaWaiter> ready;
+    for (usize index = 0; index < state.areaWaiters.size();) {
+        const ServiceState::AreaWaiter& waiter = state.areaWaiters[index];
+        if (!resident(waiter.position, waiter.radius)) {
+            ++index;
+            continue;
+        }
+        ready.push_back(waiter);
+        state.areaWaiters.erase(state.areaWaiters.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+
+    for (const ServiceState::AreaWaiter& waiter : ready) {
+        // The signal fires whether or not the coroutine survives the resume:
+        // `AreaLoaded` is a fact about the world rather than a reply to the
+        // caller, and a script that connected to it did not necessarily call
+        // `LoadAreaAsync`.
+        fireAreaLoaded(L, core::toVec3(waiter.position), waiter.radius);
+
+        lua_getref(L, waiter.threadRef);
+        lua_State* co = lua_tothread(L, -1);
+        if (co == nullptr) {
+            lua_pop(L, 1);
+            (void)lua_unref(L, waiter.threadRef);
+            continue;
+        }
+        (void)resumeScheduled(L, co, 0);
+        lua_pop(L, 1);
+        // Whatever the thread did: one that parks again took its
+        // own reference where it waits.
+        (void)lua_unref(L, waiter.threadRef);
+    }
+}
+
+void fireRunServiceEvent(lua_State* L, core::NameAtom event, f64 delta)
+{
+    const core::InstanceId runService = findServiceOfClass(L, services(L).runServiceClass);
+    if (!runService.valid())
+        return;
+
+    const scene::EventDesc* descriptor = world(L).classes().findEvent(world(L).classOf(runService), event);
+    if (descriptor == nullptr)
+        return;
+
+    lua_pushnumber(L, delta);
+    fireInstanceEvent(L, runService, descriptor->slot, lua_gettop(L), 1);
+    lua_pop(L, 1);
+}
+
+void fireHotReloadEvent(lua_State* L, bool before)
+{
+    ServiceState& state = services(L);
+    const core::InstanceId service = findServiceOfClass(L, state.hotReloadServiceClass);
+    // No instance means no script ever asked for the service, so nothing can
+    // have connected to it. Not an error, and not worth a log line every save.
+    if (!service.valid())
+        return;
+
+    const core::NameAtom event = before ? state.preReload : state.postReload;
+    const scene::EventDesc* descriptor = world(L).classes().findEvent(world(L).classOf(service), event);
+    if (descriptor == nullptr)
+        return;
+
+    fireInstanceEvent(L, service, descriptor->slot, 0, 0);
+}
+
+void setReloadState(lua_State* L, ReloadState* state)
+{
+    if (state != nullptr)
+        services(L).reload = state;
+}
+
+void fireDataModelLoaded(lua_State* L)
+{
+    ServiceState& state = services(L);
+    if (!state.dataModel.valid())
+        return;
+
+    const scene::EventDesc* descriptor = world(L).classes().findEvent(world(L).classOf(state.dataModel), state.loaded);
+    if (descriptor == nullptr)
+        return;
+    fireInstanceEvent(L, state.dataModel, descriptor->slot, 0, 0);
+}
+
+void resumeRelayPings(lua_State* L)
+{
+    ServiceState& state = *context(L).services;
+    if (state.relayPingWaiters.empty())
+        return;
+    // Collected first: a resumed thread may ask again, and the list it would
+    // add to is the one being walked.
+    struct Ready
+    {
+        int threadRef = -1;
+        net::RelayPingResult result;
+    };
+    std::vector<Ready> ready;
+    for (usize index = 0; index < state.relayPingWaiters.size();) {
+        net::RelayPingResult result;
+        const net::RelayPingTicket ticket = state.relayPingWaiters[index].ticket;
+        // A ticket that is none is an ask no socket could be made for.
+        if (ticket.valid() && (state.relayPinger == nullptr || !state.relayPinger->take(ticket, result))) {
+            ++index;
+            continue;
+        }
+        ready.push_back({state.relayPingWaiters[index].threadRef, result});
+        state.relayPingWaiters.erase(state.relayPingWaiters.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+    for (const Ready& entry : ready) {
+        lua_getref(L, entry.threadRef);
+        lua_State* co = lua_tothread(L, -1);
+        if (co == nullptr) {
+            lua_pop(L, 1);
+            (void)lua_unref(L, entry.threadRef);
+            continue;
+        }
+        if (!entry.result.answered) {
+            lua_pushnil(co);
+        }
+        else {
+            lua_createtable(co, 0, 5);
+            lua_pushnumber(co, entry.result.pingMs);
+            lua_setfield(co, -2, "Ping");
+            lua_pushnumber(co, static_cast<double>(entry.result.matches));
+            lua_setfield(co, -2, "Matches");
+            lua_pushnumber(co, static_cast<double>(entry.result.relayed));
+            lua_setfield(co, -2, "Relayed");
+            lua_pushnumber(co, static_cast<double>(entry.result.bytesPerSecond));
+            lua_setfield(co, -2, "BytesPerSecond");
+            lua_pushnumber(co, static_cast<double>(entry.result.uptimeSeconds));
+            lua_setfield(co, -2, "Uptime");
+        }
+        (void)resumeScheduled(L, co, 1);
+        lua_pop(L, 1);
+        (void)lua_unref(L, entry.threadRef);
+    }
+}
+
+void resumeChildWaiters(lua_State* L)
+{
+    ServiceState& state = services(L);
+    World& w = world(L);
+    const u64 tick = w.engineState().tick;
+    const f64 timestep = w.engineState().fixedTimestep;
+
+    // Collected first, because a resumed coroutine may park another waiter and
+    // the vector it would push onto is the one being walked.
+    std::vector<ChildWaiter> ready;
+    for (usize index = 0; index < state.childWaiters.size();) {
+        ChildWaiter& waiter = state.childWaiters[index];
+        const bool satisfied = w.findFirstChild(waiter.parent, waiter.name).valid();
+        const bool expired = waiter.hasTimeout && tick >= waiter.deadlineTick;
+
+        if (!satisfied && !expired) {
+            // Five sim-seconds, once, and then it keeps waiting. The timeout
+            // form never warns however long its timeout: you said how long you
+            // were prepared to wait.
+            if (!waiter.hasTimeout && !waiter.warned &&
+                static_cast<f64>(tick - waiter.scheduledTick) * timestep >= 5.0) {
+                waiter.warned = true;
+                const core::I18nArg args[] = {
+                    {"name", w.atoms().text(waiter.name)},
+                    {"parent", w.atoms().text(w.name(waiter.parent))},
+                };
+                const std::string message = core::formatKeyPrefixed(ENG_TR("scene.warn.wait_for_child"), args);
+                core::logText(core::LogLevel::Warn, message);
+                publishMessage(L, core::LogLevel::Warn, message);
+            }
+            ++index;
+            continue;
+        }
+
+        ready.push_back(waiter);
+        state.childWaiters.erase(state.childWaiters.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+
+    for (const ChildWaiter& waiter : ready) {
+        lua_getref(L, waiter.threadRef);
+        lua_State* co = lua_tothread(L, -1);
+        if (co == nullptr) {
+            lua_pop(L, 1);
+            (void)lua_unref(L, waiter.threadRef);
+            continue;
+        }
+
+        // Expiry returns nil -- no error, no warning.
+        pushInstance(L, w.findFirstChild(waiter.parent, waiter.name));
+        lua_xmove(L, co, 1);
+        (void)resumeScheduled(L, co, 1);
+        lua_pop(L, 1);
+        // Whatever the thread did: one that parks again took its
+        // own reference where it waits.
+        (void)lua_unref(L, waiter.threadRef);
+    }
+}
+
+bool shutdownRequested(lua_State* L)
+{
+    return services(L).shutdown;
+}
+
+std::optional<std::string> takeClipboardText(lua_State* L)
+{
+    return std::exchange(services(L).clipboard, std::nullopt);
+}
+
+void runCloseHandlers(lua_State* L)
+{
+    ServiceState& state = services(L);
+    // Copied, because a handler may register another and the vector it would
+    // push onto is the one being walked. A callback registered during shutdown
+    // does not run for this shutdown, which is the same rule a fire follows.
+    const std::vector<OwnedHandler> handlers = state.closeHandlers;
+    state.closeHandlers.clear();
+
+    for (const OwnedHandler& handler : handlers) {
+        const int ref = handler.functionRef;
+        // Its own coroutine, like a signal handler: a close handler must be
+        // allowed to yield, and one that errors must not stop the others.
+        lua_State* co = lua_newthread(L);
+        lua_getref(L, ref);
+        lua_xmove(L, co, 1);
+        const bool finished = resumeScheduled(L, co, 0);
+        if (!finished) {
+            // Parked, which is the case an earlier defect was about: before this, a handler
+            // that yielded was cut off at the next drain rather than waited
+            // for, and `architecture.md` §app promises a capped grace period.
+            // Kept referenced so the host can ask whether it is still running.
+            lua_pushvalue(L, -1);
+            state.closePending.push_back(lua_ref(L, -1));
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        (void)lua_unref(L, ref);
+    }
+}
+
+bool panelOpen(lua_State* L, std::string_view name)
+{
+    const core::NameAtom atom = world(L).atoms().lookup(name);
+    if (!atom.valid())
+        return false;
+    const std::vector<core::NameAtom>& open = services(L).openPanels;
+    return std::find(open.begin(), open.end(), atom) != open.end();
+}
+
+bool closeHandlersPending(lua_State* L)
+{
+    ServiceState& state = services(L);
+
+    // Compacted as it goes, so a long grace period does not re-check threads
+    // that finished on its first pass.
+    std::vector<int> stillRunning;
+    for (const int ref : state.closePending) {
+        lua_getref(L, ref);
+        lua_State* co = lua_tothread(L, -1);
+        const int status = co == nullptr ? LUA_COFIN : lua_costatus(L, co);
+        lua_pop(L, 1);
+
+        if (status == LUA_COSUS || status == LUA_CONOR) {
+            stillRunning.push_back(ref);
+        }
+        else {
+            (void)lua_unref(L, ref);
+        }
+    }
+    state.closePending.swap(stillRunning);
+    return !state.closePending.empty();
+}
+
+void abandonCloseHandlers(lua_State* L)
+{
+    ServiceState& state = services(L);
+    for (const int ref : state.closePending)
+        (void)lua_unref(L, ref);
+    state.closePending.clear();
+}
+
+} // namespace engine::script

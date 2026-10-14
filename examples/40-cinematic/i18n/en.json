@@ -1,0 +1,13 @@
+{
+  "speaker.anna": "Anna",
+  "speaker.bruno": "Bruno",
+  "meeting.anna_1": "You came. I was about to put the lamp out.",
+  "meeting.bruno_1": "Leave it on. I brought the key to that door.",
+  "meeting.anna_2": "Then open it, and let us see.",
+  "hud.playing": "Space or A: skip   P: pause",
+  "hud.paused": "Paused.   P: carry on   Space or A: skip",
+  "hud.over": "Enter or Start: play it again",
+  "hud.skipped": "Skipped: the lamp is up and the door is open, as at the end.   Enter or Start: play it again",
+  "hud.voice": "V: voice {voice}   T: text {text}",
+  "hud.event": "The sequence said: {name}"
+}

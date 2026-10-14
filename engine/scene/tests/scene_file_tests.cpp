@@ -1,0 +1,1675 @@
+// The scene format, which is what ADR 0047 decided a project's authored world
+// lives in.
+//
+// **The world hash is NOT the oracle here, and that is worth saying because it
+// is the oracle for the snapshot beside it.** The hash includes every
+// `InstanceId`, and ids are minted at runtime — so a world that went through a
+// file and came back is a different world by that measure however perfectly it
+// round-tripped. The oracle for a FILE is the file: write, read into a fresh
+// world, write again, and require the two texts to be identical. A serializer
+// that loses something produces a shorter second text; one that invents
+// something produces a longer one.
+#include <algorithm>
+#include <doctest/doctest.h>
+#include <engine/asset/terrain.h>
+#include <engine/asset/terrain_cell.h>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+
+#include "engine/scene/components.h"
+#include "engine/scene/scene_file.h"
+#include "engine/scene/world.h"
+#include "scene_fixture.h"
+
+using namespace engine;
+using engine::scene::SceneIoReport;
+using engine::scene::testing::Fixture;
+
+namespace {
+// The fixture has no Workspace class, and a scene is rooted at one. Attaching
+// the component rather than teaching the fixture a class keeps this file from
+// editing a header three other suites share.
+core::InstanceId makeWorkspace(Fixture& fixture)
+{
+    const core::InstanceId id = fixture.world.create(fixture.schema.folderClass);
+    fixture.world.setName(id, fixture.atom("Workspace"));
+    fixture.world.workspaces().add(id, scene::WorkspaceComponent{});
+    return id;
+}
+
+core::InstanceId partUnder(Fixture& fixture, core::InstanceId parent, std::string_view name, core::DVec3 position)
+{
+    const core::InstanceId id = fixture.world.create(fixture.schema.partClass);
+    fixture.world.setName(id, fixture.atom(name));
+    (void)fixture.world.setParent(id, parent);
+
+    scene::PartComponent part;
+    part.cframe.position = position;
+    part.size = {2.0f, 4.0f, 6.0f};
+    asset::MaterialProperties tint;
+    tint.color = {0.25f, 0.5f, 0.75f};
+    (void)asset::setOverride(part.materialParameters, asset::MaterialField::Color, tint);
+    fixture.world.parts().add(id, part);
+    return id;
+}
+} // namespace
+
+TEST_CASE("a scene written, read and written again is the same bytes")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId tower = partUnder(fixture, workspace, "Tower", {10.0, 0.0, -5.0});
+    (void)partUnder(fixture, tower, "Door", {0.0, 1.0, 0.0});
+    (void)partUnder(fixture, workspace, "Ground", {0.0, -1.0, 0.0});
+
+    SceneIoReport wrote;
+    const std::string first = scene::writeScene(fixture.world, &wrote);
+    CHECK(wrote.instances >= 4);
+
+    Fixture reloaded;
+    (void)makeWorkspace(reloaded);
+    const std::optional<core::EngineError> error = scene::readScene(reloaded.world, first);
+    REQUIRE_FALSE(error.has_value());
+
+    const std::string second = scene::writeScene(reloaded.world);
+    CHECK(first == second);
+}
+
+TEST_CASE("hierarchy and sibling order survive the round trip")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    (void)partUnder(fixture, workspace, "First", {});
+    (void)partUnder(fixture, workspace, "Second", {});
+    (void)partUnder(fixture, workspace, "Third", {});
+
+    const std::string text = scene::writeScene(fixture.world);
+
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+
+    std::vector<std::string> names;
+    for (core::InstanceId child = reloaded.world.firstChild(target); child.valid();
+         child = reloaded.world.nextSibling(child))
+        names.emplace_back(reloaded.world.atoms().text(reloaded.world.name(child)));
+
+    REQUIRE(names.size() == 3);
+    CHECK(names[0] == "First");
+    CHECK(names[1] == "Second");
+    CHECK(names[2] == "Third");
+}
+
+TEST_CASE("a scene saved under a property's old name loads, and is written back under the name of today")
+{
+    // The fixture's `Shape` was once `Form` (the IDL's `Aliases`). A game's
+    // scenes are files nobody rewrites when the engine renames a member: the
+    // old name has to load, and the next save is where it stops being written.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId ball = partUnder(fixture, workspace, "Ball", {});
+    REQUIRE(fixture.world.setProperty(ball, fixture.schema.shapeProperty, scene::Value{2.0}) ==
+            scene::World::SetResult::Changed);
+
+    std::string text = scene::writeScene(fixture.world);
+    const std::size_t at = text.find("\"Shape\"");
+    REQUIRE(at != std::string::npos);
+    text.replace(at, 7, "\"Form\"");
+    REQUIRE(text.find("\"Shape\"") == std::string::npos);
+
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+    const core::InstanceId child = reloaded.world.firstChild(target);
+    REQUIRE(child.valid());
+    CHECK(reloaded.world.getProperty(child, reloaded.schema.shapeProperty) == scene::Value{2.0});
+
+    const std::string again = scene::writeScene(reloaded.world);
+    CHECK(again.find("\"Shape\"") != std::string::npos);
+    CHECK(again.find("\"Form\"") == std::string::npos);
+}
+
+TEST_CASE("properties survive, and a f64 position is not narrowed on the way")
+{
+    // Far enough out that an f32 round trip would visibly lose it, which is the
+    // whole reason `CFrameD` exists (ADR 0014).
+    const core::DVec3 far{4321.5, 12.25, -8765.75};
+
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    (void)partUnder(fixture, workspace, "Distant", far);
+
+    const std::string text = scene::writeScene(fixture.world);
+
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+
+    const core::InstanceId child = reloaded.world.firstChild(target);
+    REQUIRE(child.valid());
+    const scene::PartComponent* part = reloaded.world.parts().find(child);
+    REQUIRE(part != nullptr);
+    CHECK(part->cframe.position.x == doctest::Approx(far.x));
+    CHECK(part->cframe.position.z == doctest::Approx(far.z));
+    CHECK(part->size.y == doctest::Approx(4.0));
+}
+
+TEST_CASE("attributes and tags survive")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId part = partUnder(fixture, workspace, "Marked", {});
+    (void)fixture.world.setAttribute(part, fixture.atom("Owner"), scene::Value{std::string("level-design")});
+    (void)fixture.world.setAttribute(part, fixture.atom("Weight"), scene::Value{core::f64{2.5}});
+    (void)fixture.world.addTag(part, fixture.atom("Breakable"));
+
+    const std::string text = scene::writeScene(fixture.world);
+
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+
+    const core::InstanceId child = reloaded.world.firstChild(target);
+    REQUIRE(child.valid());
+    CHECK(std::get<std::string>(reloaded.world.getAttribute(child, reloaded.atom("Owner"))) == "level-design");
+    CHECK(std::get<core::f64>(reloaded.world.getAttribute(child, reloaded.atom("Weight"))) == doctest::Approx(2.5));
+    CHECK(reloaded.world.hasTag(child, reloaded.atom("Breakable")));
+}
+
+TEST_CASE("an attribute of every kind comes back as that kind")
+{
+    // A Color3 and a Vector3 are both three numbers: written untyped, a colour
+    // came back as a vector, and a CFrame, a Vector2, a UDim, a UDim2 or a Rect
+    // did not come back at all.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId part = partUnder(fixture, workspace, "Kinds", {});
+    core::CFrameD frame;
+    frame.position = core::DVec3{1.0, 2.0, 3.0};
+    const std::pair<const char*, scene::Value> kinds[] = {
+        {"Colour", scene::Value{core::Color3{0.25f, 0.5f, 0.75f}}},
+        {"Frame", scene::Value{frame}},
+        {"Plane", scene::Value{core::Vec2{4.0f, 5.0f}}},
+        {"Offset", scene::Value{core::UDim{0.5f, 8.0f}}},
+        {"Box", scene::Value{core::UDim2{core::UDim{0.1f, 1.0f}, core::UDim{0.2f, 2.0f}}}},
+        {"Area", scene::Value{core::Rect{core::Vec2{1.0f, 2.0f}, core::Vec2{3.0f, 4.0f}}}},
+        {"Point", scene::Value{core::Vec3{7.0f, 8.0f, 9.0f}}},
+    };
+    for (const auto& [name, value] : kinds)
+        REQUIRE(fixture.world.setAttribute(part, fixture.atom(name), value));
+
+    const std::string text = scene::writeScene(fixture.world);
+
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    SceneIoReport read;
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text, &read).has_value());
+    CHECK(read.refusedProperties == 0);
+    const core::InstanceId child = reloaded.world.firstChild(target);
+    REQUIRE(child.valid());
+    for (const auto& [name, value] : kinds) {
+        INFO(name);
+        CHECK(reloaded.world.getAttribute(child, reloaded.atom(name)) == value);
+    }
+}
+
+TEST_CASE("a sequence attribute survives, every stop of it (ADR 0110)")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId part = partUnder(fixture, workspace, "Graded", {});
+    const core::ColorSequence colours{{{0.0f, core::Color3{1.0f, 0.0f, 0.0f}},
+                                       {0.25f, core::Color3{0.0f, 1.0f, 0.0f}},
+                                       {0.25f, core::Color3{0.0f, 0.0f, 1.0f}},
+                                       {1.0f, core::Color3{1.0f, 1.0f, 1.0f}}}};
+    const core::NumberSequence fade{{{0.0f, 0.0f, 0.5f}, {1.0f, 1.0f, 0.0f}}};
+    REQUIRE(fixture.world.setAttribute(part, fixture.atom("Colours"), scene::Value{colours}));
+    REQUIRE(fixture.world.setAttribute(part, fixture.atom("Fade"), scene::Value{fade}));
+
+    const std::string text = scene::writeScene(fixture.world);
+
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+    const core::InstanceId child = reloaded.world.firstChild(target);
+    REQUIRE(child.valid());
+    CHECK(std::get<core::ColorSequence>(reloaded.world.getAttribute(child, reloaded.atom("Colours"))) == colours);
+    CHECK(std::get<core::NumberSequence>(reloaded.world.getAttribute(child, reloaded.atom("Fade"))) == fade);
+}
+
+TEST_CASE("a reference inside the scene resolves, including a forward one")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+
+    // The model is written FIRST and points at a part written after it, which
+    // is the case a single-pass loader gets wrong.
+    const core::InstanceId model = fixture.world.create(fixture.schema.modelClass);
+    fixture.world.setName(model, fixture.atom("Tower"));
+    (void)fixture.world.setParent(model, workspace);
+    const core::InstanceId base = partUnder(fixture, model, "Base", {});
+    (void)fixture.world.setProperty(model, fixture.schema.primaryPartProperty, scene::Value{base});
+
+    const std::string text = scene::writeScene(fixture.world);
+
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+
+    const core::InstanceId loadedModel = reloaded.world.firstChild(target);
+    REQUIRE(loadedModel.valid());
+    const std::optional<scene::Value> primary =
+        reloaded.world.getProperty(loadedModel, reloaded.schema.primaryPartProperty);
+    REQUIRE(primary.has_value());
+    const core::InstanceId referenced = std::get<core::InstanceId>(*primary);
+    REQUIRE(referenced.valid());
+    CHECK(reloaded.world.atoms().text(reloaded.world.name(referenced)) == "Base");
+}
+
+TEST_CASE("a reference to something outside the scene is dropped and counted, not guessed")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId model = fixture.world.create(fixture.schema.modelClass);
+    fixture.world.setName(model, fixture.atom("Tower"));
+    (void)fixture.world.setParent(model, workspace);
+
+    // Outside `Workspace` entirely, so no path from the scene's root names it.
+    const core::InstanceId orphan = fixture.world.create(fixture.schema.partClass);
+    fixture.world.setName(orphan, fixture.atom("Elsewhere"));
+    (void)fixture.world.setProperty(model, fixture.schema.primaryPartProperty, scene::Value{orphan});
+
+    SceneIoReport report;
+    const std::string text = scene::writeScene(fixture.world, &report);
+
+    CHECK(report.droppedReferences >= 1);
+    CHECK(text.find("Elsewhere") == std::string::npos);
+}
+
+TEST_CASE("a property a class does not have is counted and NAMED, each once, the first few")
+{
+    // A property a class does not have -- `"Transparency": 1` on a body, in
+    // the report this came from -- loaded with nothing said: counted, and the
+    // count shown to nobody. A file written by hand or by a tool had a
+    // misspelt property that did nothing, in silence.
+    Fixture fixture;
+    (void)makeWorkspace(fixture);
+    const std::string text = R"json({
+  "format": "scene",
+  "version": 2,
+  "root": {"class": "Workspace", "name": "Workspace", "children": [
+    {"class": "Part", "name": "A", "properties": {"Sparkle": 1, "Glow": true}},
+    {"class": "Part", "name": "B", "properties": {"Sparkle": 0.5}}
+  ]}
+})json";
+    SceneIoReport report;
+    REQUIRE_FALSE(scene::readScene(fixture.world, text, &report).has_value());
+    // Three were refused; two names, each said once.
+    CHECK(report.refusedProperties == 3);
+    CHECK(report.refusedNames == "Part.Sparkle, Part.Glow");
+    // The rest of the scene is there.
+    CHECK(report.instances >= 2);
+
+    // A scene with nothing wrong names nothing.
+    Fixture clean;
+    (void)makeWorkspace(clean);
+    SceneIoReport fine;
+    REQUIRE_FALSE(scene::readScene(clean.world,
+                                   R"({"format":"scene","version":2,"root":{"class":"Workspace","name":"Workspace",)"
+                                   R"("children":[{"class":"Part","name":"A"}]}})",
+                                   &fine)
+                      .has_value());
+    CHECK(fine.refusedProperties == 0);
+    CHECK(fine.refusedNames.empty());
+}
+
+TEST_CASE("a class this build does not have takes its subtree with it, and says so")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+
+    const std::string text = R"({"format":"scene","version":1,"root":{"class":"Folder","name":"Workspace","children":[)"
+                             R"({"class":"HoverBike","name":"Bike","children":[{"class":"Part","name":"Wheel"}]},)"
+                             R"({"class":"Part","name":"Kept"}]}})";
+
+    SceneIoReport report;
+    REQUIRE_FALSE(scene::readScene(fixture.world, text, &report).has_value());
+
+    CHECK(report.unknownClasses == 1);
+
+    // The wheel is gone with the bike. A `Part` standing in for a class nobody
+    // recognises would be a lie shaped like a recovery.
+    std::vector<std::string> names;
+    for (core::InstanceId child = fixture.world.firstChild(workspace); child.valid();
+         child = fixture.world.nextSibling(child))
+        names.emplace_back(fixture.world.atoms().text(fixture.world.name(child)));
+    REQUIRE(names.size() == 1);
+    CHECK(names[0] == "Kept");
+}
+
+TEST_CASE("loading replaces rather than merges, so loading twice is loading once")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    (void)partUnder(fixture, workspace, "Only", {});
+
+    const std::string text = scene::writeScene(fixture.world);
+
+    REQUIRE_FALSE(scene::readScene(fixture.world, text).has_value());
+    REQUIRE_FALSE(scene::readScene(fixture.world, text).has_value());
+
+    CHECK(fixture.world.childCount(workspace) == 1);
+}
+
+TEST_CASE("a malformed file is refused rather than half applied")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    (void)partUnder(fixture, workspace, "Existing", {});
+
+    CHECK(scene::readScene(fixture.world, "{not json").has_value());
+    CHECK(scene::readScene(fixture.world, R"({"format":"something-else","version":1})").has_value());
+    CHECK(scene::readScene(fixture.world, R"({"format":"scene","version":99})").has_value());
+
+    // Untouched: a refusal that had already destroyed the world would be worse
+    // than a load that failed.
+    CHECK(fixture.world.childCount(workspace) == 1);
+}
+
+TEST_CASE("the scene's root applies to the Workspace that already exists")
+{
+    // `Workspace.CurrentCamera` is the property this case is really about: a
+    // scene that restored every part and not the camera would load into a world
+    // nothing can see. The fixture has no Workspace class, so the same
+    // asymmetry is checked through a property the fixture does have.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId part = partUnder(fixture, workspace, "Anything", {});
+    (void)fixture.world.setAttribute(workspace, fixture.atom("SceneName"), scene::Value{std::string("home")});
+    (void)fixture.world.addTag(workspace, fixture.atom("Authored"));
+
+    const std::string text = scene::writeScene(fixture.world);
+    CHECK(part.valid());
+
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+
+    CHECK(std::get<std::string>(reloaded.world.getAttribute(target, reloaded.atom("SceneName"))) == "home");
+    CHECK(reloaded.world.hasTag(target, reloaded.atom("Authored")));
+}
+
+TEST_CASE("what a system made is not in the scene, and neither is what is under it")
+{
+    // The case that forced this: a save taken while the flagship was streaming
+    // wrote 40 chunk folders and 1.4 MB of terrain into a file meant to describe
+    // a project. A streamed part is as real to a tick as an authored one -- the
+    // world hash counts it and must -- but nobody wrote it down, so a scene does
+    // not record it.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    (void)partUnder(fixture, workspace, "Authored", {});
+
+    const core::InstanceId chunk = fixture.world.create(fixture.schema.folderClass);
+    fixture.world.setName(chunk, fixture.atom("Chunk_0_0_0"));
+    (void)fixture.world.setParent(chunk, workspace);
+    fixture.world.setGenerated(chunk, true);
+    (void)partUnder(fixture, chunk, "Terrain", {});
+
+    SceneIoReport report;
+    const std::string text = scene::writeScene(fixture.world, &report);
+
+    CHECK(text.find("Authored") != std::string::npos);
+    CHECK(text.find("Chunk_0_0_0") == std::string::npos);
+    // The whole subtree, not just the folder. Marking every part inside a chunk
+    // would be the same statement a thousand times.
+    CHECK(text.find("Terrain") == std::string::npos);
+}
+
+TEST_CASE("a reference to something a system made is dropped rather than dangling")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+
+    const core::InstanceId chunk = fixture.world.create(fixture.schema.folderClass);
+    fixture.world.setName(chunk, fixture.atom("Chunk_0_0_0"));
+    (void)fixture.world.setParent(chunk, workspace);
+    fixture.world.setGenerated(chunk, true);
+    const core::InstanceId terrain = partUnder(fixture, chunk, "Terrain", {});
+
+    const core::InstanceId model = fixture.world.create(fixture.schema.modelClass);
+    fixture.world.setName(model, fixture.atom("Marker"));
+    (void)fixture.world.setParent(model, workspace);
+    (void)fixture.world.setProperty(model, fixture.schema.primaryPartProperty, scene::Value{terrain});
+
+    SceneIoReport report;
+    const std::string text = scene::writeScene(fixture.world, &report);
+
+    // A path collected for something the file will not contain is a reference
+    // that resolves to nothing on load, which is worse than a counted null.
+    CHECK(report.droppedReferences >= 1);
+    CHECK(text.find("Terrain") == std::string::npos);
+}
+
+// --- Stamps (ADR 0049) -------------------------------------------------------
+//
+// A stamp file is a scene of one subtree, and these are the four claims that
+// makes: a stamp round-trips like a scene does; a scene holds a MARK rather than
+// a copy; the mark is what makes changing the stamp change every instance of it;
+// and a scene that names a stamp nobody can supply still opens.
+
+TEST_CASE("a stamp is a scene of one subtree, and it round-trips")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId post = partUnder(fixture, workspace, "Post", core::DVec3{1.0, 2.0, 3.0});
+    (void)partUnder(fixture, post, "Lantern", core::DVec3{1.0, 5.0, 3.0});
+
+    SceneIoReport wrote;
+    const std::string text = scene::writeStamp(fixture.world, post, &wrote);
+    CHECK(wrote.instances == 2);
+
+    Fixture other;
+    const core::InstanceId otherWorkspace = makeWorkspace(other);
+    SceneIoReport read;
+    const core::InstanceId placed = scene::readStamp(other.world, text, otherWorkspace, "lantern-post", &read);
+    REQUIRE(placed.valid());
+
+    CHECK(other.world.parentOf(placed) == otherWorkspace);
+    CHECK(other.world.atoms().text(other.world.name(placed)) == "Post");
+    CHECK(other.world.childCount(placed) == 1);
+    // **The mark is on the root and nowhere else.** Its children are the
+    // stamp's contents, not instances of it.
+    CHECK(other.world.atoms().text(other.world.stampOf(placed)) == "lantern-post");
+    CHECK_FALSE(other.world.stampOf(other.world.firstChild(placed)).valid());
+    // And "am I inside one" answers for the whole subtree, which is the
+    // question the break rule actually asks.
+    CHECK(other.world.stampRootOf(other.world.firstChild(placed)) == placed);
+    CHECK_FALSE(other.world.stampRootOf(otherWorkspace).valid());
+
+    // The file is the oracle, as it is for a scene: write it again out of the
+    // world it came back into and require the same bytes.
+    SceneIoReport again;
+    CHECK(scene::writeStamp(other.world, placed, &again) == text);
+}
+
+TEST_CASE("a scene holds a stamped instance as a mark, a name and where it is")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId post = partUnder(fixture, workspace, "Post", core::DVec3{1.0, 2.0, 3.0});
+    (void)partUnder(fixture, post, "Lantern", core::DVec3{1.0, 5.0, 3.0});
+
+    const std::string stampText = scene::writeStamp(fixture.world, post);
+    fixture.world.setStamp(post, fixture.atom("lantern-post"));
+
+    // **A save needs the stamp to write a mark instead of a copy** (ADR 0051):
+    // "what differs from the source" is a question about two trees, so the
+    // source has to be built. Without a library every stamped instance is
+    // written IN FULL and counted, which loses nothing and is what a caller
+    // with no content root can honestly do.
+    const auto source = [&stampText](std::string_view wanted) -> std::optional<std::string> {
+        return wanted == "lantern-post" ? std::optional<std::string>(stampText) : std::nullopt;
+    };
+    scene::StampLibrary library(fixture.world, source);
+
+    SceneIoReport wrote;
+    const std::string sceneText = scene::writeScene(fixture.world, &wrote, &library);
+    // The workspace and the post. **Not the lantern**: it belongs to the stamp
+    // file, and writing it again would be the full copy that makes the whole
+    // idea worthless.
+    CHECK(wrote.instances == 2);
+    CHECK(sceneText.find("Lantern") == std::string::npos);
+    CHECK(sceneText.find("lantern-post") != std::string::npos);
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    SceneIoReport read;
+    // The same source both ways: a save reads a stamp to diff against it and a
+    // load reads it to build from it, and a project where those two disagreed
+    // would be one where saving changed what loading produced.
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, &read, source).has_value());
+    CHECK(read.stamped == 1);
+    CHECK(read.missingStamps == 0);
+
+    // Found by walking rather than by remembering an id, because a load builds
+    // a new world and the ids are not the old ones.
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Post")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    // The lantern came back, and it came from the STAMP rather than from the
+    // scene -- which is the whole mechanism.
+    CHECK(other.world.childCount(placed) == 1);
+    CHECK(other.world.atoms().text(other.world.stampOf(placed)) == "lantern-post");
+}
+
+TEST_CASE("changing a stamp changes every unbroken instance of it")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId post = partUnder(fixture, workspace, "Post", core::DVec3{});
+    (void)partUnder(fixture, post, "Lantern", core::DVec3{});
+
+    const std::string oneChild = scene::writeStamp(fixture.world, post);
+    fixture.world.setStamp(post, fixture.atom("lantern-post"));
+    const auto source = [&oneChild](std::string_view) -> std::optional<std::string> { return oneChild; };
+    scene::StampLibrary library(fixture.world, source);
+    const std::string sceneText = scene::writeScene(fixture.world, nullptr, &library);
+
+    // The same stamp, with a second child. Nothing about the SCENE changed.
+    (void)partUnder(fixture, post, "Bulb", core::DVec3{});
+    const std::string twoChildren = scene::writeStamp(fixture.world, post);
+    REQUIRE(oneChild != twoChildren);
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    const auto twoSource = [&twoChildren](std::string_view) -> std::optional<std::string> { return twoChildren; };
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, nullptr, twoSource).has_value());
+
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Post")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    // Two, from a scene file that never mentioned either of them.
+    CHECK(other.world.childCount(placed) == 2);
+}
+
+TEST_CASE("a scene names a stamp by the name Instance.stamp takes")
+{
+    // `"stamp": "barril"` in a hand-written scene was a missing stamp, where
+    // `Instance.stamp("barril")` finds `stamps/barril.stamp.json`: the code
+    // normalised the name and the reader did not.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId barrel = partUnder(fixture, workspace, "Barrel", core::DVec3{});
+    (void)partUnder(fixture, barrel, "Lid", core::DVec3{});
+    const std::string stampText = scene::writeStamp(fixture.world, barrel);
+    const auto source = [&stampText](std::string_view wanted) -> std::optional<std::string> {
+        return wanted == "stamps/barril.stamp.json" ? std::optional<std::string>(stampText) : std::nullopt;
+    };
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    SceneIoReport read;
+    const std::string sceneText =
+        R"({"format":"scene","version":2,"root":{"class":"Workspace","name":"Workspace","children":[)"
+        R"({"stamp":"barril","name":"Barril1"}]}})";
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, &read, source).has_value());
+    CHECK(read.missingStamps == 0);
+    CHECK(read.stamped == 1);
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Barril1")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    // Marked with the file's own name, so the next save writes that.
+    CHECK(other.world.atoms().text(other.world.stampOf(placed)) == "stamps/barril.stamp.json");
+}
+
+TEST_CASE("a scene naming a stamp nobody can supply still opens, and says how many")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId post = partUnder(fixture, workspace, "Post", core::DVec3{});
+    (void)partUnder(fixture, workspace, "Ground", core::DVec3{});
+    const std::string stampText = scene::writeStamp(fixture.world, post);
+    fixture.world.setStamp(post, fixture.atom("lantern-post"));
+    const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, source);
+    const std::string sceneText = scene::writeScene(fixture.world, nullptr, &library);
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    SceneIoReport read;
+    // No source at all, which is what an older build or a deleted file looks
+    // like. Counted rather than fatal, exactly as an unknown class is.
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, &read).has_value());
+    CHECK(read.missingStamps == 1);
+    CHECK(read.stamped == 0);
+
+    // And the rest of the scene arrived: one missing stamp is not a broken file.
+    core::u32 found = 0;
+    other.world.parts().forEach([&](core::InstanceId, const scene::PartComponent&) { ++found; });
+    CHECK(found == 1);
+}
+
+TEST_CASE("an instance keeps its stamp through an edit, and the edit is an override")
+{
+    // **The model asked for, in one test.** An instance of a stamp
+    // INHERITS from it: change the file and every instance changes with it,
+    // except where an instance has said otherwise. What it has said otherwise
+    // is the only thing about it the scene records.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId post = partUnder(fixture, workspace, "Post", core::DVec3{});
+    const core::InstanceId lantern = partUnder(fixture, post, "Lantern", core::DVec3{});
+
+    const std::string stampText = scene::writeStamp(fixture.world, post);
+    fixture.world.setStamp(post, fixture.atom("lantern-post"));
+
+    // One parameter of this one, changed. Not the stamp's -- this instance's.
+    // `Transparency` because it is one the fixture's `BasePart` declares: an
+    // override is only an override if the DESCRIPTOR knows the property, which
+    // is the same rule the rest of the serializer follows.
+    scene::PartComponent* body = fixture.world.parts().find(lantern);
+    REQUIRE(body != nullptr);
+    scene::testing::setTransparencyOf(*body, 0.5f);
+
+    const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, source);
+
+    SceneIoReport wrote;
+    const std::string sceneText = scene::writeScene(fixture.world, &wrote, &library);
+    // **Still a mark**, and one override rather than a copy of the subtree.
+    CHECK(wrote.stamped == 1);
+    CHECK(wrote.unlinkedStamps == 0);
+    CHECK(wrote.overrides >= 1);
+    CHECK(sceneText.find("overrides") != std::string::npos);
+    // Keyed by the lantern's sid (ADR 0155 §2), not by its name: a rename in
+    // the stamp keeps the override.
+    CHECK(sceneText.find("Lantern") == std::string::npos);
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    SceneIoReport read;
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, &read, source).has_value());
+    CHECK(read.stamped == 1);
+    CHECK(read.overrides >= 1);
+
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Post")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    // The link survived the edit, which is the reversal: it used to break.
+    CHECK(other.world.atoms().text(other.world.stampOf(placed)) == "lantern-post");
+    // And the override came back, on the child it was made on.
+    const core::InstanceId placedLantern = other.world.firstChild(placed);
+    REQUIRE(placedLantern.valid());
+    const scene::PartComponent* restored = other.world.parts().find(placedLantern);
+    REQUIRE(restored != nullptr);
+    CHECK(static_cast<double>(scene::testing::transparencyOf(*restored)) == doctest::Approx(0.5));
+}
+
+TEST_CASE("changing the stamp changes every instance, except where one has its own")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId post = partUnder(fixture, workspace, "Post", core::DVec3{});
+    const core::InstanceId lantern = partUnder(fixture, post, "Lantern", core::DVec3{});
+
+    const std::string stampText = scene::writeStamp(fixture.world, post);
+    fixture.world.setStamp(post, fixture.atom("lantern-post"));
+
+    scene::PartComponent* body = fixture.world.parts().find(lantern);
+    REQUIRE(body != nullptr);
+    scene::testing::setTransparencyOf(*body, 0.5f);
+
+    const auto original = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, original);
+    const std::string sceneText = scene::writeScene(fixture.world, nullptr, &library);
+
+    // **The source moves on**: the lantern in the FILE grows and turns blue.
+    Fixture edited;
+    (void)makeWorkspace(edited);
+    SceneIoReport ignored;
+    const core::InstanceId reopened = scene::readStamp(edited.world, stampText, core::InstanceId{}, "x", &ignored);
+    REQUIRE(reopened.valid());
+    scene::PartComponent* sourceLantern = edited.world.parts().find(edited.world.firstChild(reopened));
+    REQUIRE(sourceLantern != nullptr);
+    sourceLantern->size = {9.0f, 9.0f, 9.0f};
+    scene::testing::setTransparencyOf(*sourceLantern, 0.0f);
+    const std::string changedStamp = scene::writeStamp(edited.world, reopened);
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    const auto changed = [&changedStamp](std::string_view) -> std::optional<std::string> { return changedStamp; };
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, nullptr, changed).has_value());
+
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Post")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    const scene::PartComponent* restored = other.world.parts().find(other.world.firstChild(placed));
+    REQUIRE(restored != nullptr);
+    // The size came from the FILE, because nobody overrode it here.
+    CHECK(static_cast<double>(restored->size.x) == doctest::Approx(9.0));
+    // The transparency did NOT: this instance said otherwise, and an override
+    // is what "sem influenciar o anterior" means from the other side.
+    CHECK(static_cast<double>(scene::testing::transparencyOf(*restored)) == doctest::Approx(0.5));
+}
+
+TEST_CASE("two children of one name keep their own overrides")
+{
+    // A stamp whose parts keep the default name. Both had one path in the
+    // file, and the loader gave the second one's values to the first and the
+    // stamp's to the second.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId model = partUnder(fixture, workspace, "Model", core::DVec3{});
+    const core::InstanceId first = partUnder(fixture, model, "Part", core::DVec3{});
+    const core::InstanceId second = partUnder(fixture, model, "Part", core::DVec3{});
+
+    const std::string stampText = scene::writeStamp(fixture.world, model);
+    fixture.world.setStamp(model, fixture.atom("pair"));
+    scene::testing::setTransparencyOf(*fixture.world.parts().find(first), 0.25f);
+    scene::testing::setTransparencyOf(*fixture.world.parts().find(second), 0.75f);
+
+    const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, source);
+    const std::string sceneText = scene::writeScene(fixture.world, nullptr, &library);
+    // Each keyed by its own sid (ADR 0155 §2), which two names alike cannot share.
+    CHECK(sceneText.find("Part#2") == std::string::npos);
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, nullptr, source).has_value());
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Model")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    const core::InstanceId one = other.world.firstChild(placed);
+    const core::InstanceId two = other.world.nextSibling(one);
+    REQUIRE(two.valid());
+    CHECK(static_cast<double>(scene::testing::transparencyOf(*other.world.parts().find(one))) == doctest::Approx(0.25));
+    CHECK(static_cast<double>(scene::testing::transparencyOf(*other.world.parts().find(two))) == doctest::Approx(0.75));
+}
+
+TEST_CASE("a child renamed in one instance keeps its name and its overrides")
+{
+    // The overrides were written under the new name, which the stamp's
+    // fresh copy does not have -- so the rename and the child's edits went.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId post = partUnder(fixture, workspace, "Post", core::DVec3{});
+    const core::InstanceId lantern = partUnder(fixture, post, "Lantern", core::DVec3{});
+
+    const std::string stampText = scene::writeStamp(fixture.world, post);
+    fixture.world.setStamp(post, fixture.atom("lantern-post"));
+    fixture.world.setName(lantern, fixture.atom("Lamp"));
+    scene::testing::setTransparencyOf(*fixture.world.parts().find(lantern), 0.5f);
+
+    const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, source);
+    SceneIoReport wrote;
+    const std::string sceneText = scene::writeScene(fixture.world, &wrote, &library);
+    CHECK(wrote.stamped == 1);
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    SceneIoReport read;
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, &read, source).has_value());
+    CHECK(read.refusedProperties == 0);
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Post")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    const core::InstanceId child = other.world.firstChild(placed);
+    REQUIRE(child.valid());
+    CHECK(other.world.atoms().text(other.world.name(child)) == "Lamp");
+    CHECK(static_cast<double>(scene::testing::transparencyOf(*other.world.parts().find(child))) ==
+          doctest::Approx(0.5));
+}
+
+TEST_CASE("a linked instance keeps the attributes and tags given to it")
+{
+    // Only properties were compared, so an attribute or a tag on a placed
+    // stamp was gone at the next save.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId post = partUnder(fixture, workspace, "Post", core::DVec3{});
+    const core::InstanceId lantern = partUnder(fixture, post, "Lantern", core::DVec3{});
+
+    const std::string stampText = scene::writeStamp(fixture.world, post);
+    fixture.world.setStamp(post, fixture.atom("lantern-post"));
+    REQUIRE(fixture.world.setAttribute(post, fixture.atom("Difficulty"), scene::Value{core::f64{3.0}}));
+    REQUIRE(fixture.world.addTag(lantern, fixture.atom("Light")));
+
+    const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, source);
+    const std::string sceneText = scene::writeScene(fixture.world, nullptr, &library);
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, nullptr, source).has_value());
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Post")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    CHECK(other.world.stampOf(placed).valid());
+    scene::AttributeMap attributes;
+    other.world.collectAttributes(placed, attributes);
+    REQUIRE(attributes.size() == 1);
+    CHECK(std::get<core::f64>(attributes.front().second) == doctest::Approx(3.0));
+    scene::TagSet tags;
+    other.world.collectTags(other.world.firstChild(placed), tags);
+    REQUIRE(tags.size() == 1);
+    CHECK(other.world.atoms().text(tags.front()) == "Light");
+}
+
+TEST_CASE("a child added to a copy keeps it linked, and comes back after a save")
+{
+    // It used to write the copy whole and drop its mark: adding a banner to
+    // one lamp post made it a lamp post no change to the stamp would reach
+    // (ADR 0155 §5).
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId post = partUnder(fixture, workspace, "Post", core::DVec3{});
+    (void)partUnder(fixture, post, "Lantern", core::DVec3{});
+
+    const std::string stampText = scene::writeStamp(fixture.world, post);
+    fixture.world.setStamp(post, fixture.atom("lantern-post"));
+    (void)partUnder(fixture, post, "Banner", core::DVec3{});
+
+    const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, source);
+
+    SceneIoReport wrote;
+    const std::string sceneText = scene::writeScene(fixture.world, &wrote, &library);
+    CHECK(wrote.stamped == 1);
+    CHECK(wrote.unlinkedStamps == 0);
+    // The banner in full, as an added child; the lantern is the stamp's.
+    CHECK(sceneText.find("\"added\"") != std::string::npos);
+    CHECK(sceneText.find("Banner") != std::string::npos);
+    CHECK(sceneText.find("Lantern") == std::string::npos);
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, nullptr, source).has_value());
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Post")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    CHECK(other.childNames(placed) == std::vector<std::string>{"Lantern", "Banner"});
+    CHECK(other.world.atoms().text(other.world.stampOf(placed)) == "lantern-post");
+}
+
+TEST_CASE("restamp moves every live instance of a stamp, in place, keeping its overrides")
+{
+    // **The reported defect**: a stamp was placed in the workspace, linked, the
+    // stamp in the content was edited, and the placed one did not change. Changing a stamp
+    // changed every instance of it across a save and a LOAD -- the test above
+    // says so -- and nothing at all while the world sat there. This is the same
+    // arithmetic done live.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId original = partUnder(fixture, workspace, "Post", core::DVec3{});
+    (void)partUnder(fixture, original, "Lantern", core::DVec3{});
+    const std::string before = scene::writeStamp(fixture.world, original);
+    (void)fixture.world.destroy(original);
+    fixture.world.retireDestroyed();
+
+    // Two linked instances, and a neighbour after them: the neighbour is what
+    // proves the refresh happens IN PLACE rather than by rebuilding, because a
+    // rebuilt instance would land after it.
+    SceneIoReport placing;
+    const core::InstanceId first = scene::readStamp(fixture.world, before, workspace, "post", &placing);
+    const core::InstanceId second = scene::readStamp(fixture.world, before, workspace, "post", &placing);
+    const core::InstanceId neighbour = partUnder(fixture, workspace, "Neighbour", core::DVec3{});
+    REQUIRE(first.valid());
+    REQUIRE(second.valid());
+
+    // What the second one has of its own: one value on the instance, one on
+    // something inside it, and a name.
+    fixture.world.setName(second, fixture.atom("Second"));
+    scene::PartComponent* body = fixture.world.parts().find(second);
+    REQUIRE(body != nullptr);
+    body->cframe.position = core::DVec3{5.0, 0.0, 0.0};
+    scene::PartComponent* inner = fixture.world.parts().find(fixture.world.firstChild(second));
+    REQUIRE(inner != nullptr);
+    scene::testing::setTransparencyOf(*inner, 0.5f);
+
+    // **The file moves on structurally**: a child added and a child taken away,
+    // which is exactly what was reported and what a load-time refresh would
+    // have handled and a live one did not.
+    Fixture edited;
+    (void)makeWorkspace(edited);
+    SceneIoReport ignored;
+    const core::InstanceId editing = scene::readStamp(edited.world, before, core::InstanceId{}, "post", &ignored);
+    REQUIRE(editing.valid());
+    (void)edited.world.destroy(edited.world.firstChild(editing));
+    edited.world.retireDestroyed();
+    const core::InstanceId glow = partUnder(edited, editing, "Glow", core::DVec3{});
+    scene::PartComponent* glowBody = edited.world.parts().find(glow);
+    REQUIRE(glowBody != nullptr);
+    glowBody->size = {9.0f, 9.0f, 9.0f};
+    const std::string after = scene::writeStamp(edited.world, editing);
+
+    SceneIoReport moved;
+    CHECK(scene::restamp(fixture.world, workspace, "post", before, after, &moved) == 2);
+
+    for (const core::InstanceId instance : {first, second}) {
+        CHECK(fixture.childNames(instance) == std::vector<std::string>{"Glow"});
+        // Same instance, same parent, same place among its siblings.
+        CHECK(fixture.world.alive(instance));
+        CHECK(fixture.world.parentOf(instance) == workspace);
+        // From the FILE, because nobody overrode it here.
+        const scene::PartComponent* refreshed = fixture.world.parts().find(fixture.world.firstChild(instance));
+        REQUIRE(refreshed != nullptr);
+        CHECK(static_cast<double>(refreshed->size.x) == doctest::Approx(9.0));
+    }
+    CHECK(fixture.world.nextSibling(first) == second);
+    CHECK(fixture.world.nextSibling(second) == neighbour);
+
+    // **What the second one had of its own is still its own.** A refresh that
+    // ate this would be a reset, and a person who had moved one lamp post would
+    // find it back at the origin every time somebody else saved the file.
+    CHECK(fixture.nameOf(second) == "Second");
+    body = fixture.world.parts().find(second);
+    REQUIRE(body != nullptr);
+    CHECK(body->cframe.position.x == doctest::Approx(5.0));
+    // The override INSIDE it named the lantern, and the lantern is gone from the
+    // file -- dropped and counted rather than fatal, exactly as a load does it.
+    CHECK(moved.refusedProperties > 0);
+    const scene::PartComponent* replaced = fixture.world.parts().find(fixture.world.firstChild(second));
+    REQUIRE(replaced != nullptr);
+    CHECK(static_cast<double>(scene::testing::transparencyOf(*replaced)) == doctest::Approx(0.0));
+}
+
+TEST_CASE("restamp refreshes a copy with a child of its own, and keeps the child")
+{
+    // Somebody who added a child to ONE lamp post is not asking for it to be
+    // thrown away the next time the file is saved -- nor for that lamp post to
+    // stop following the file (ADR 0155 §5). It used to be left as it was.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId original = partUnder(fixture, workspace, "Post", core::DVec3{});
+    (void)partUnder(fixture, original, "Lantern", core::DVec3{});
+    const std::string before = scene::writeStamp(fixture.world, original);
+    (void)fixture.world.destroy(original);
+    fixture.world.retireDestroyed();
+
+    SceneIoReport ignored;
+    const core::InstanceId mine = scene::readStamp(fixture.world, before, workspace, "post", &ignored);
+    REQUIRE(mine.valid());
+    (void)partUnder(fixture, mine, "Banner", core::DVec3{});
+
+    Fixture edited;
+    (void)makeWorkspace(edited);
+    const core::InstanceId editing = scene::readStamp(edited.world, before, core::InstanceId{}, "post", &ignored);
+    REQUIRE(editing.valid());
+    (void)partUnder(edited, editing, "Glow", core::DVec3{});
+    const std::string after = scene::writeStamp(edited.world, editing);
+
+    SceneIoReport moved;
+    CHECK(scene::restamp(fixture.world, workspace, "post", before, after, &moved) == 1);
+    CHECK(moved.unlinkedStamps == 0);
+    // The stamp's two, then the one this copy added.
+    CHECK(fixture.childNames(mine) == std::vector<std::string>{"Lantern", "Glow", "Banner"});
+
+    // And a stamp nobody in the world is an instance of moves nothing.
+    CHECK(scene::restamp(fixture.world, workspace, "some-other-stamp", before, after, &moved) == 0);
+}
+
+// --- Instance-valued overrides on a placed stamp ----------------------
+//
+// **The rule these three test was written for a case narrower than the rule.**
+// `collectOverrides` skipped every `ValueType::Instance` property outright,
+// with the reasoning that a reference inside a stamp resolves inside that stamp
+// and the two worlds' ids are not comparable — both true, and neither one a
+// reason to skip a reference that was CHANGED, or one that points somewhere
+// else entirely. Ids are not comparable; paths are, and the loader has resolved
+// instance properties by path through a deferred pass since the format existed.
+//
+// The third case is the one the skip was protecting and it must keep passing:
+// an untouched internal reference is not an override, or every placed stamp in
+// a world would carry one for nothing.
+
+TEST_CASE("a reference re-pointed inside a placed stamp is an override, not a silent revert")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+
+    const core::InstanceId rig = fixture.world.create(fixture.schema.modelClass);
+    fixture.world.setName(rig, fixture.atom("Rig"));
+    (void)fixture.world.setParent(rig, workspace);
+    const core::InstanceId a = partUnder(fixture, rig, "A", {});
+    (void)partUnder(fixture, rig, "B", {});
+    (void)fixture.world.setProperty(rig, fixture.schema.primaryPartProperty, scene::Value{a});
+
+    const std::string stampText = scene::writeStamp(fixture.world, rig);
+    fixture.world.setStamp(rig, fixture.atom("rig"));
+
+    // This instance points at the OTHER child. The stamp still says `A`.
+    core::InstanceId b;
+    for (core::InstanceId child = fixture.world.firstChild(rig); child.valid();
+         child = fixture.world.nextSibling(child)) {
+        if (fixture.world.atoms().text(fixture.world.name(child)) == "B")
+            b = child;
+    }
+    REQUIRE(b.valid());
+    (void)fixture.world.setProperty(rig, fixture.schema.primaryPartProperty, scene::Value{b});
+
+    const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, source);
+
+    SceneIoReport wrote;
+    const std::string text = scene::writeScene(fixture.world, &wrote, &library);
+    CHECK(wrote.stamped == 1);
+    // **The assertion the defect was.** The write produced no override at all,
+    // so the file recorded the stamp's choice and the edit was gone.
+    CHECK(wrote.overrides >= 1);
+    CHECK(wrote.droppedReferences == 0);
+
+    Fixture reloaded;
+    (void)makeWorkspace(reloaded);
+    SceneIoReport read;
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text, &read, source).has_value());
+    CHECK(read.stamped == 1);
+
+    core::InstanceId placed;
+    reloaded.world.models().forEach([&](core::InstanceId id, const scene::ModelComponent&) {
+        if (reloaded.world.atoms().text(reloaded.world.name(id)) == "Rig")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    const std::optional<scene::Value> primary = reloaded.world.getProperty(placed, reloaded.schema.primaryPartProperty);
+    REQUIRE(primary.has_value());
+    const core::InstanceId restored = std::get<core::InstanceId>(*primary);
+    REQUIRE(restored.valid());
+    CHECK(reloaded.world.atoms().text(reloaded.world.name(restored)) == "B");
+}
+
+TEST_CASE("a reference from inside a placed stamp to something beside it survives the save")
+{
+    // The shape that was hit: a `Material` living in the world, assigned to a
+    // part inside a placed stamp. The stamp file cannot carry it — it is not
+    // under the stamp's root — so the SCENE has to, as an override naming the
+    // full path. This is the placed-stamp twin of an earlier defect, which was the same loss
+    // one level up.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+
+    const core::InstanceId rig = fixture.world.create(fixture.schema.modelClass);
+    fixture.world.setName(rig, fixture.atom("Rig"));
+    (void)fixture.world.setParent(rig, workspace);
+    const core::InstanceId a = partUnder(fixture, rig, "A", {});
+    (void)fixture.world.setProperty(rig, fixture.schema.primaryPartProperty, scene::Value{a});
+
+    const std::string stampText = scene::writeStamp(fixture.world, rig);
+    fixture.world.setStamp(rig, fixture.atom("rig"));
+
+    // Beside the stamp, not under it.
+    const core::InstanceId beside = partUnder(fixture, workspace, "Beside", {});
+    (void)fixture.world.setProperty(rig, fixture.schema.primaryPartProperty, scene::Value{beside});
+
+    const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, source);
+
+    SceneIoReport wrote;
+    const std::string text = scene::writeScene(fixture.world, &wrote, &library);
+    CHECK(wrote.overrides >= 1);
+    // **Nothing dropped and nothing silent.** The old path did not even count
+    // this as a dropped reference: it never reached the writer that counts.
+    CHECK(wrote.droppedReferences == 0);
+    CHECK(text.find("Beside") != std::string::npos);
+
+    Fixture reloaded;
+    (void)makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text, nullptr, source).has_value());
+
+    core::InstanceId placed;
+    reloaded.world.models().forEach([&](core::InstanceId id, const scene::ModelComponent&) {
+        if (reloaded.world.atoms().text(reloaded.world.name(id)) == "Rig")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    const std::optional<scene::Value> primary = reloaded.world.getProperty(placed, reloaded.schema.primaryPartProperty);
+    REQUIRE(primary.has_value());
+    const core::InstanceId restored = std::get<core::InstanceId>(*primary);
+    REQUIRE(restored.valid());
+    CHECK(reloaded.world.atoms().text(reloaded.world.name(restored)) == "Beside");
+}
+
+TEST_CASE("an untouched reference inside a placed stamp is not an override")
+{
+    // The invariant the blanket skip was protecting, and the reason the fix
+    // compares PATHS rather than ids: every placed stamp in a world holds
+    // internal references, and recording one per instance would turn a mark
+    // plus a placement into a mark plus a placement plus a lie about what was
+    // edited.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+
+    const core::InstanceId rig = fixture.world.create(fixture.schema.modelClass);
+    fixture.world.setName(rig, fixture.atom("Rig"));
+    (void)fixture.world.setParent(rig, workspace);
+    const core::InstanceId a = partUnder(fixture, rig, "A", {});
+    (void)partUnder(fixture, rig, "B", {});
+    (void)fixture.world.setProperty(rig, fixture.schema.primaryPartProperty, scene::Value{a});
+
+    const std::string stampText = scene::writeStamp(fixture.world, rig);
+    fixture.world.setStamp(rig, fixture.atom("rig"));
+
+    const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, source);
+
+    SceneIoReport wrote;
+    const std::string text = scene::writeScene(fixture.world, &wrote, &library);
+    CHECK(wrote.stamped == 1);
+    CHECK(wrote.overrides == 0);
+    CHECK(text.find("overrides") == std::string::npos);
+}
+
+// --- Which properties a placed stamp has of its own -------------------
+//
+// The SAVE has understood overrides since ADR 0051: an instance inherits from
+// its stamp, a change to one instance stays local, a change to the stamp reaches
+// every instance that has not overridden that property. Nothing could ASK the
+// same question, so a person editing a placed lamp post could not see which of
+// its properties were its own and which came from the file -- and therefore had
+// nothing to revert and nothing to push back up.
+//
+// `stampOverrides` is that question, and it shares its comparison with the
+// writer rather than restating it: two definitions of "differs" would disagree
+// the first time either was touched, and the panel would offer to revert
+// something the save had already decided was not an override.
+
+namespace {
+
+// A placed stamp of one part with one child, and the text to read it back from.
+struct PlacedStamp
+{
+    core::InstanceId root;
+    core::InstanceId child;
+    std::string text;
+};
+
+[[nodiscard]] PlacedStamp placeStamp(Fixture& fixture, core::InstanceId parent)
+{
+    PlacedStamp placed;
+    placed.root = partUnder(fixture, parent, "Post", {1.0, 2.0, 3.0});
+    placed.child = partUnder(fixture, placed.root, "Lamp", {0.0, 4.0, 0.0});
+    placed.text = scene::writeStamp(fixture.world, placed.root);
+    fixture.world.setStamp(placed.root, fixture.atom("lamppost"));
+    return placed;
+}
+
+[[nodiscard]] bool holds(const std::vector<core::NameAtom>& names, core::NameAtom wanted)
+{
+    return std::find(names.begin(), names.end(), wanted) != names.end();
+}
+
+} // namespace
+
+TEST_CASE("a placed stamp nobody touched has no overrides at all")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const PlacedStamp placed = placeStamp(fixture, workspace);
+
+    const auto source = [&placed](std::string_view) -> std::optional<std::string> { return placed.text; };
+    scene::StampLibrary library(fixture.world, source);
+
+    // **The case the whole thing rests on.** If a freshly placed instance
+    // reported overrides, every stamp in a world would come up marked and the
+    // mark would mean nothing.
+    CHECK(scene::stampOverrides(fixture.world, placed.root, library).empty());
+    CHECK(scene::stampOverrides(fixture.world, placed.child, library).empty());
+}
+
+TEST_CASE("the property somebody changed is the property reported, and only it")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const PlacedStamp placed = placeStamp(fixture, workspace);
+
+    (void)fixture.world.setProperty(placed.root, fixture.schema.transparencyProperty, scene::Value{0.5f});
+
+    const auto source = [&placed](std::string_view) -> std::optional<std::string> { return placed.text; };
+    scene::StampLibrary library(fixture.world, source);
+
+    const std::vector<core::NameAtom> overrides = scene::stampOverrides(fixture.world, placed.root, library);
+    CHECK(holds(overrides, fixture.schema.transparencyProperty));
+    // Not `Size`, not `CFrame`. A panel that marked every property would be as
+    // useless as one that marked none.
+    CHECK_FALSE(holds(overrides, fixture.schema.sizeProperty));
+    CHECK_FALSE(holds(overrides, fixture.schema.cframeProperty));
+    CHECK(overrides.size() == 1);
+}
+
+TEST_CASE("an instance INSIDE a placed stamp answers for itself")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const PlacedStamp placed = placeStamp(fixture, workspace);
+
+    // A person selects the lamp as readily as the post it hangs on, and the
+    // question is the same one measured from the same root.
+    (void)fixture.world.setProperty(placed.child, fixture.schema.sizeProperty,
+                                    scene::Value{core::Vec3{9.0f, 9.0f, 9.0f}});
+
+    const auto source = [&placed](std::string_view) -> std::optional<std::string> { return placed.text; };
+    scene::StampLibrary library(fixture.world, source);
+
+    CHECK(holds(scene::stampOverrides(fixture.world, placed.child, library), fixture.schema.sizeProperty));
+    // And the ROOT is untouched, which is what makes the mark per-instance
+    // rather than per-stamp.
+    CHECK(scene::stampOverrides(fixture.world, placed.root, library).empty());
+}
+
+TEST_CASE("an instance that is not in a stamp reports nothing rather than everything")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId loose = partUnder(fixture, workspace, "Loose", {});
+    const PlacedStamp placed = placeStamp(fixture, workspace);
+
+    const auto source = [&placed](std::string_view) -> std::optional<std::string> { return placed.text; };
+    scene::StampLibrary library(fixture.world, source);
+
+    // Nothing to measure against is not "every property differs".
+    CHECK(scene::stampOverrides(fixture.world, loose, library).empty());
+}
+
+TEST_CASE("a stamp the source cannot read reports nothing rather than guessing")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const PlacedStamp placed = placeStamp(fixture, workspace);
+    (void)fixture.world.setProperty(placed.root, fixture.schema.transparencyProperty, scene::Value{0.5f});
+
+    const auto missing = [](std::string_view) -> std::optional<std::string> { return std::nullopt; };
+    scene::StampLibrary library(fixture.world, missing);
+
+    // A deleted stamp file must not make every property look overridden, which
+    // is what a panel would draw if this answered by comparing against nothing.
+    CHECK(scene::stampOverrides(fixture.world, placed.root, library).empty());
+}
+
+TEST_CASE("a structural change reports no overrides, which is what the save does too")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const PlacedStamp placed = placeStamp(fixture, workspace);
+
+    // A child added inside an instance makes it a different shape from the file.
+    // The save writes such an instance IN FULL and drops its mark; reporting
+    // every property as an override instead would offer a revert that cannot be
+    // honoured.
+    (void)partUnder(fixture, placed.root, "Extra", {});
+
+    const auto source = [&placed](std::string_view) -> std::optional<std::string> { return placed.text; };
+    scene::StampLibrary library(fixture.world, source);
+
+    CHECK(scene::stampOverrides(fixture.world, placed.root, library).empty());
+}
+
+TEST_CASE("the query and the save agree about what an override is")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const PlacedStamp placed = placeStamp(fixture, workspace);
+
+    (void)fixture.world.setProperty(placed.root, fixture.schema.transparencyProperty, scene::Value{0.25f});
+    (void)fixture.world.setProperty(placed.child, fixture.schema.sizeProperty,
+                                    scene::Value{core::Vec3{1.0f, 1.0f, 1.0f}});
+
+    const auto source = [&placed](std::string_view) -> std::optional<std::string> { return placed.text; };
+    scene::StampLibrary library(fixture.world, source);
+
+    SceneIoReport wrote;
+    (void)scene::writeScene(fixture.world, &wrote, &library);
+
+    // **One definition, two callers.** The save counts overrides as it writes
+    // them; the query lists them. A drift between the two is a panel offering to
+    // revert something the file does not record, and this is what would catch it.
+    const core::u32 listed = static_cast<core::u32>(scene::stampOverrides(fixture.world, placed.root, library).size() +
+                                                    scene::stampOverrides(fixture.world, placed.child, library).size());
+    CHECK(listed == wrote.overrides);
+}
+
+// --- The ground is part of the scene ------------------------------------
+
+namespace {
+
+// A sculpted world: ground that reaches the floor, which is whole chunks of one
+// value, a surface through them, which is rows, and a cave, which is air inside
+// ground -- every shape a chunk is stored in.
+core::InstanceId terrainUnder(Fixture& fixture, core::InstanceId parent)
+{
+    const core::InstanceId id = fixture.world.create(fixture.schema.terrainClass);
+    fixture.world.setName(id, fixture.atom("Terrain"));
+    (void)fixture.world.setParent(id, parent);
+
+    scene::TerrainComponent* component = fixture.world.terrains().find(id);
+    REQUIRE(component != nullptr);
+    component->field =
+        asset::TerrainField(asset::FieldSettings{.voxelSize = 0.5f, .minHeight = -32.0f, .maxHeight = 32.0f});
+    (void)asset::fillFlat(component->field, core::DVec3{0.0, 0.0, 0.0}, 48.0f, 0.0f, 1);
+    (void)asset::fillBall(component->field, core::DVec3{0.0, -3.0, 0.0}, 4.0, 0);
+    component->minHeight = -32.0f;
+    component->maxHeight = 32.0f;
+    return id;
+}
+
+} // namespace
+
+TEST_CASE("a terrain larger than a streamed cell survives a save and a load")
+{
+    // A scene carries its whole field as one cell, and the reader held
+    // it to a STREAMED cell's ceiling -- so a terrain past about a square
+    // kilometre saved, and reopened empty.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId ground = terrainUnder(fixture, workspace);
+    scene::TerrainComponent* component = fixture.world.terrains().find(ground);
+    REQUIRE(component != nullptr);
+    // More chunks than a streamed cell may hold, laid whole: ground under a
+    // square of 130 by 130 chunk columns.
+    for (core::i32 z = 0; z < 130; ++z) {
+        for (core::i32 x = 0; x < 130; ++x)
+            component->field.setChunk(asset::ChunkKey{x, -1, z},
+                                      std::make_shared<asset::TerrainChunk>(asset::Voxel{asset::FullOccupancy, 1}));
+    }
+    REQUIRE(component->field.chunkCount() > asset::MaxCellChunks);
+    const core::u64 digest = component->field.digest();
+
+    const std::string text = scene::writeScene(fixture.world);
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+
+    const scene::TerrainComponent* after = nullptr;
+    for (core::InstanceId child = reloaded.world.firstChild(target); child.valid();
+         child = reloaded.world.nextSibling(child)) {
+        if (const scene::TerrainComponent* found = reloaded.world.terrains().find(child); found != nullptr)
+            after = found;
+    }
+    REQUIRE(after != nullptr);
+    CHECK(after->field.digest() == digest);
+}
+
+namespace {
+
+// The terrain of the first workspace in a scene read into a fresh fixture.
+[[nodiscard]] scene::TerrainComponent reloadedTerrain(const std::string& text)
+{
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+    scene::TerrainComponent out;
+    bool found = false;
+    for (core::InstanceId child = reloaded.world.firstChild(target); child.valid();
+         child = reloaded.world.nextSibling(child)) {
+        if (const scene::TerrainComponent* terrain = reloaded.world.terrains().find(child); terrain != nullptr) {
+            out = *terrain;
+            found = true;
+        }
+    }
+    REQUIRE(found);
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("a new terrain has no materials, and saves and reads back with none")
+{
+    // Reported: a terrain's materials are the project's own
+    // files; none come with it. Its empty list is written, because a list
+    // that is absent means something else (below).
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId ground = terrainUnder(fixture, workspace);
+    const scene::TerrainComponent* component = fixture.world.terrains().find(ground);
+    REQUIRE(component != nullptr);
+    CHECK(component->layers.empty());
+    CHECK(component->rules.empty());
+    const std::string text = scene::writeScene(fixture.world);
+    CHECK(text.find("terrainLayers") != std::string::npos);
+    const scene::TerrainComponent after = reloadedTerrain(text);
+    CHECK(after.layers.empty());
+    CHECK(after.rules.empty());
+}
+
+TEST_CASE("a scene from before terrains started empty reads the engine's eight and the slope rock")
+{
+    // A scene written while a terrain came with the engine's eight carried no
+    // list for them, and no list for the one rule: absent still means those,
+    // so every such scene looks as it did.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId ground = terrainUnder(fixture, workspace);
+    scene::TerrainComponent* component = fixture.world.terrains().find(ground);
+    REQUIRE(component != nullptr);
+    component->layers = asset::defaultTerrainLayers();
+    component->rules = asset::defaultTerrainRules();
+    const std::string text = scene::writeScene(fixture.world);
+    CHECK(text.find("terrainLayers") == std::string::npos);
+    CHECK(text.find("terrainRules") == std::string::npos);
+    const scene::TerrainComponent after = reloadedTerrain(text);
+    CHECK(after.layers == asset::defaultTerrainLayers());
+    CHECK(after.rules == asset::defaultTerrainRules());
+}
+
+TEST_CASE("a terrain's layers survive a save")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId ground = terrainUnder(fixture, workspace);
+    scene::TerrainComponent* component = fixture.world.terrains().find(ground);
+    REQUIRE(component != nullptr);
+    component->layers = {"asset://materials/terrain/grass.material.json", "asset://materials/cliff.material.json",
+                         "asset://materials/moss.material.json"};
+    const scene::TerrainComponent after = reloadedTerrain(scene::writeScene(fixture.world));
+    CHECK(after.layers == component->layers);
+}
+
+TEST_CASE("a terrain's rules survive a save, and turning the rock off is saved too")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId ground = terrainUnder(fixture, workspace);
+
+    scene::TerrainComponent* component = fixture.world.terrains().find(ground);
+    REQUIRE(component != nullptr);
+    component->rules = asset::defaultTerrainRules();
+    asset::TerrainRule snow;
+    snow.material = 4;
+    snow.heightMin = 30.0f;
+    snow.blend = 3.0f;
+    snow.appliesTo = {1, 2};
+    component->rules[0].enabled = false;
+    component->rules.push_back(snow);
+    const std::vector<asset::TerrainRule> written = component->rules;
+
+    const auto reload = [&](const std::string& text) {
+        Fixture reloaded;
+        const core::InstanceId target = makeWorkspace(reloaded);
+        REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+        std::vector<asset::TerrainRule> rules;
+        for (core::InstanceId child = reloaded.world.firstChild(target); child.valid();
+             child = reloaded.world.nextSibling(child)) {
+            if (const scene::TerrainComponent* found = reloaded.world.terrains().find(child); found != nullptr)
+                rules = found->rules;
+        }
+        return rules;
+    };
+    CHECK(reload(scene::writeScene(fixture.world)) == written);
+
+    // An empty list is a list: the rock off, not the rock back.
+    component->rules.clear();
+    CHECK(reload(scene::writeScene(fixture.world)).empty());
+}
+
+TEST_CASE("a sculpted world survives a save and a load")
+{
+    // **The defect this exists for**: for one commit the editor could sculpt and
+    // the save wrote every instance in the world and none of the ground. A
+    // sculpted world is somebody's afternoon.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId ground = terrainUnder(fixture, workspace);
+    (void)partUnder(fixture, workspace, "Tower", {10.0, 0.0, -5.0});
+
+    const scene::TerrainComponent* before = fixture.world.terrains().find(ground);
+    REQUIRE(before != nullptr);
+    REQUIRE(before->field.chunkCount() > 0);
+    const core::u64 digest = before->field.digest();
+
+    const std::string text = scene::writeScene(fixture.world);
+
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+
+    core::InstanceId loaded;
+    for (core::InstanceId child = reloaded.world.firstChild(target); child.valid();
+         child = reloaded.world.nextSibling(child)) {
+        if (reloaded.world.terrains().find(child) != nullptr)
+            loaded = child;
+    }
+    REQUIRE(loaded.valid());
+
+    const scene::TerrainComponent* after = reloaded.world.terrains().find(loaded);
+    REQUIRE(after != nullptr);
+    CHECK(after->field.digest() == digest);
+    CHECK(after->field.chunkCount() == before->field.chunkCount());
+
+    // **The world's floor and ceiling ride with the field**: a load that kept
+    // the property's value and the ground's range apart would clamp every later
+    // edit to the wrong band.
+    CHECK(after->minHeight == before->minHeight);
+    CHECK(after->maxHeight == before->maxHeight);
+    CHECK(after->field.settings().voxelSize == before->field.settings().voxelSize);
+
+    // And writing it again is the same bytes, which is what keeps a scene file
+    // diffable.
+    CHECK(scene::writeScene(reloaded.world) == text);
+}
+
+TEST_CASE("a terrain saved as cells writes where they are, and reads back as its settings and no ground (ADR 0087)")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId id = fixture.world.create(fixture.schema.terrainClass);
+    fixture.world.setName(id, fixture.atom("Terrain"));
+    (void)fixture.world.setParent(id, workspace);
+    scene::TerrainComponent& terrain = *fixture.world.terrains().find(id);
+    terrain.field =
+        asset::TerrainField(asset::FieldSettings{.voxelSize = 0.5f, .minHeight = -100.0f, .maxHeight = 80.0f});
+    terrain.minHeight = -100.0f;
+    terrain.maxHeight = 80.0f;
+    // Some ground resident, as there is while editing: it is not written.
+    (void)asset::fillBall(terrain.field, core::DVec3{0.0, 0.0, 0.0}, 4.0, 1);
+    terrain.cellIndex = "terrain/scenes/main.scene/index.json";
+
+    const std::string text = scene::writeScene(fixture.world);
+    CHECK(text.find("\"terrainCells\"") != std::string::npos);
+    CHECK(text.find("\"terrain\"") == std::string::npos);
+
+    Fixture reopened;
+    (void)makeWorkspace(reopened);
+    REQUIRE_FALSE(scene::readScene(reopened.world, text).has_value());
+    bool found = false;
+    reopened.world.terrains().forEach([&](core::InstanceId, const scene::TerrainComponent& read) {
+        found = true;
+        CHECK(read.cellIndex == "terrain/scenes/main.scene/index.json");
+        CHECK(read.field.empty());
+        CHECK(read.field.settings().voxelSize == 0.5f);
+        CHECK(read.minHeight == -100.0f);
+        CHECK(read.maxHeight == 80.0f);
+    });
+    CHECK(found);
+}
+
+TEST_CASE("a terrain with nothing in it writes nothing")
+{
+    // An empty field is not a fact about the world worth a kilobyte of base64 --
+    // and every existing scene in this repository has no terrain in it, so this
+    // is also what stops them all moving.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId id = fixture.world.create(fixture.schema.terrainClass);
+    fixture.world.setName(id, fixture.atom("Terrain"));
+    (void)fixture.world.setParent(id, workspace);
+
+    const std::string text = scene::writeScene(fixture.world);
+    CHECK(text.find("\"terrain\"") == std::string::npos);
+}
+
+TEST_CASE("what a scene read could not build is written back by the next save, as it was")
+{
+    // The audit of 2026-09-28: a class this build does not have, or a stamp
+    // whose file is gone, was left out of the world -- and so out of the next
+    // save, for good.
+    const std::string text = R"json({
+  "format": "scene",
+  "version": 2,
+  "root": {"class": "Workspace", "name": "Workspace", "children": [
+    {"class": "Part", "name": "Kept"},
+    {"class": "FromAFutureBuild", "name": "Gizmo", "properties": {"Power": 3}},
+    {"class": "Model", "name": "Lamp", "stamp": "stamps/gone.stamp.json"}
+  ]}
+})json";
+    Fixture fixture;
+    (void)makeWorkspace(fixture);
+    scene::SceneIoReport report;
+    REQUIRE_FALSE(scene::readScene(fixture.world, text, &report).has_value());
+    CHECK(report.unknownClasses == 1);
+
+    const std::string written = scene::writeScene(fixture.world);
+    CHECK(written.find("FromAFutureBuild") != std::string::npos);
+    CHECK(written.find("\"Power\"") != std::string::npos);
+    CHECK(written.find("stamps/gone.stamp.json") != std::string::npos);
+    CHECK(written.find("Kept") != std::string::npos);
+
+    // And again: kept across any number of saves.
+    Fixture again;
+    (void)makeWorkspace(again);
+    REQUIRE_FALSE(scene::readScene(again.world, written).has_value());
+    CHECK(scene::writeScene(again.world).find("FromAFutureBuild") != std::string::npos);
+}
+
+TEST_CASE("a stamp that names itself many times is read once, and stops at the load's limit")
+{
+    // A hand-edited stamp whose children are twenty of itself: bounded only in
+    // depth, it built 1 + 20 + 400 + 8000 + 160000 instances, re-reading and
+    // re-parsing the file at every one.
+    std::string children;
+    for (int at = 0; at < 20; ++at)
+        children += std::string(at == 0 ? "" : ",") + R"({"stamp":"self","name":"c)" + std::to_string(at) + R"("})";
+    const std::string stampText =
+        R"({"format":"scene","version":2,"root":{"class":"Part","name":"Node","children":[)" + children + "]}}";
+    int reads = 0;
+    const scene::StampSource source = [&](std::string_view) -> std::optional<std::string> {
+        ++reads;
+        return stampText;
+    };
+    const std::string sceneText =
+        R"({"format":"scene","version":2,"root":{"children":[{"stamp":"self","name":"top"}]},"storage":{}})";
+
+    Fixture fixture;
+    (void)makeWorkspace(fixture);
+    SceneIoReport read;
+    read.instanceLimit = 5000;
+    REQUIRE_FALSE(scene::readScene(fixture.world, sceneText, &read, source).has_value());
+    // Read and parsed once -- and a stamp that holds itself is a cycle, refused
+    // by name at the first copy of itself inside itself (ADR 0155 §3).
+    CHECK(reads == 1);
+    CHECK(read.stampCycles > 0);
+    CHECK(read.stampCycle == "self -> self");
+    // Wide stops where the load says: past its limit by at most one stamp's
+    // worth, and not the 168,421 the depth alone allowed.
+    CHECK(read.instances <= 5000 + 21);
+    CHECK(read.missingStamps > 0);
+}

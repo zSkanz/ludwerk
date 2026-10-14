@@ -1,0 +1,8 @@
+{
+  "spec.menu.play": "Jogar",
+  "spec.hud.score": "Pontos: {points}",
+  "spec.hud.greeting": "Olá, {name}!",
+  "engine.settings.apply": "Aplicar",
+  "spec.speaker.guide": "Guia",
+  "spec.hello": "Olá."
+}

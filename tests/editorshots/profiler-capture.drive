@@ -1,0 +1,26 @@
+# A profile written by `--profile-capture` opened in the editor's Profiler
+# (ADR 0210): the panel opened from the command palette, the file's path typed
+# into the bar's field, Open pressed. `<capture>` is the file the gate wrote
+# a moment before. Coordinates are a 1600 by 900 frame's.
+wait 60
+key ctrl+shift+p
+wait 8
+text Profiler
+wait 8
+key enter
+wait 20
+drag 700 607 700 330
+wait 10
+click 800 373
+wait 4
+text <capture>
+wait 4
+click 1160 373
+move 700 200
+wait 10
+shot capture-open
+click 165 373
+move 700 200
+wait 6
+shot capture-worst
+quit

@@ -1,0 +1,8 @@
+{
+  "name": "coop",
+  "script": ".",
+  "seed": 195,
+  "ticks": 600,
+  "checkpointEvery": 100,
+  "requireAttribute": "TwoSeats"
+}

@@ -1,0 +1,16 @@
+# Several players at one screen (ADR 0205): two to four at one machine, each
+# with a view of the window, and one picture while they stand together.
+#
+# No scene file: the script builds the ground and seats the players, because
+# how a seat is made is the subject.
+
+[project]
+name = "Ludwerk Couch"
+id = "dev.ludwerk.couch"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"
+
+[window]
+title = "Ludwerk — Couch"
+size = [1600, 900]

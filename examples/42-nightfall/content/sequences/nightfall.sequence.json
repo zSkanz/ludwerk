@@ -1,0 +1,37 @@
+{
+  "format": "sequence",
+  "version": 1,
+  "bindings": ["Lighting", "Anna"],
+  "tracks": [
+    { "type": "marker", "keys": [
+        { "time": 0, "name": "Arrival" },
+        { "time": 8, "name": "TheDoor" },
+        { "time": 14, "name": "Night" } ] },
+    { "type": "camera", "keys": [
+        { "time": 0, "position": [10, 6, 24], "lookAt": "Anna", "fieldOfView": 55, "cut": true },
+        { "time": 4, "position": [6, 4, 20], "lookAt": "Anna", "ease": "sineInOut" },
+        { "time": 4, "position": [0.7, 0.9, 2.4], "relativeTo": "Anna", "lookAt": [0, 0.6, -6], "fieldOfView": 62, "cut": true },
+        { "time": 8, "position": [0.7, 0.9, 1.8], "relativeTo": "Anna", "lookAt": [0, 0.6, -6] },
+        { "time": 8, "position": [-1.4, 0.6, -2.6], "relativeTo": "Anna", "lookAt": "Anna", "fieldOfView": 48, "cut": true },
+        { "time": 14, "position": [-2.2, 0.8, -3.4], "relativeTo": "Anna", "lookAt": "Anna", "ease": "sineInOut" },
+        { "time": 14, "position": [12, 9, 26], "lookAt": [-2, 2, -8], "fieldOfView": 55, "cut": true },
+        { "time": 20, "position": [14, 12, 30], "lookAt": [-2, 2, -8], "ease": "sineOut" } ] },
+    { "type": "hold", "keys": [
+        { "time": 8, "name": "AtTheDoor" } ] },
+    { "type": "property", "target": "Lighting", "property": "ClockTime", "keys": [
+        { "time": 0, "value": 17 },
+        { "time": 20, "value": 19.4, "ease": "sineInOut" } ] },
+    { "type": "fade", "keys": [
+        { "time": 0, "value": 1 },
+        { "time": 1.5, "value": 0, "ease": "sineOut" },
+        { "time": 18.5, "value": 0 },
+        { "time": 20, "value": 1, "ease": "sineIn" } ] },
+    { "type": "bars", "keys": [
+        { "time": 0, "value": 1 },
+        { "time": 19, "value": 1 },
+        { "time": 20, "value": 0 } ] },
+    { "type": "caption", "keys": [
+        { "time": 1, "caption": "story.the_courtyard", "seconds": 3 },
+        { "time": 14.5, "caption": "story.night", "seconds": 3 } ] }
+  ]
+}

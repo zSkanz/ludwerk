@@ -1,0 +1,225 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "Workspace",
+  "name": "Workspace",
+  "properties": {
+   "CurrentCamera": "Workspace.MainCamera"
+  },
+  "children": [
+   {
+    "class": "Camera",
+    "name": "MainCamera",
+    "properties": {
+     "CFrame": [
+      0.0,
+      1.95,
+      3.1,
+      1.0,
+      0.0,
+      -0.0,
+      -0.0,
+      0.9972589698876365,
+      -0.07399018163682464,
+      0.0,
+      0.07399018163682464,
+      0.9972589698876365
+     ],
+     "FieldOfView": 40.0
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Floor",
+    "properties": {
+     "CFrame": [
+      0.0,
+      -0.5,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      40.0,
+      1.0,
+      40.0
+     ],
+     "Anchored": true
+    }
+   },
+   {
+    "class": "Part",
+    "name": "TalkerStand",
+    "properties": {
+     "CFrame": [
+      -1.1,
+      0.5,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.9,
+      1.0,
+      0.6
+     ],
+     "Anchored": true
+    }
+   },
+   {
+    "class": "MeshPart",
+    "name": "Talker",
+    "properties": {
+     "MeshContent": "asset://models/head.gltf",
+     "CFrame": [
+      -1.1,
+      1.0,
+      0.0,
+      0.9424277454812464,
+      0.0,
+      -0.3344098451707649,
+      0.0,
+      1.0,
+      0.0,
+      0.3344098451707649,
+      0.0,
+      0.9424277454812464
+     ],
+     "Anchored": true
+    },
+    "children": [
+     {
+      "class": "AnimationPlayer",
+      "name": "Animation",
+      "properties": {}
+     }
+    ]
+   },
+   {
+    "class": "Part",
+    "name": "ActorStand",
+    "properties": {
+     "CFrame": [
+      0.0,
+      0.5,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.9,
+      1.0,
+      0.6
+     ],
+     "Anchored": true
+    }
+   },
+   {
+    "class": "MeshPart",
+    "name": "Actor",
+    "properties": {
+     "MeshContent": "asset://models/head.gltf",
+     "CFrame": [
+      0.0,
+      1.0,
+      0.0,
+      1.0,
+      0.0,
+      -0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Anchored": true
+    },
+    "children": [
+     {
+      "class": "AnimationPlayer",
+      "name": "Animation",
+      "properties": {}
+     }
+    ]
+   },
+   {
+    "class": "Part",
+    "name": "StillStand",
+    "properties": {
+     "CFrame": [
+      1.1,
+      0.5,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.9,
+      1.0,
+      0.6
+     ],
+     "Anchored": true
+    }
+   },
+   {
+    "class": "MeshPart",
+    "name": "Still",
+    "properties": {
+     "MeshContent": "asset://models/head.gltf",
+     "CFrame": [
+      1.1,
+      1.0,
+      0.0,
+      0.9424277454812464,
+      0.0,
+      0.3344098451707649,
+      0.0,
+      1.0,
+      0.0,
+      -0.3344098451707649,
+      0.0,
+      0.9424277454812464
+     ],
+     "Anchored": true
+    },
+    "children": [
+     {
+      "class": "AnimationPlayer",
+      "name": "Animation",
+      "properties": {}
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -1,0 +1,197 @@
+// Reading a world's replicated state, and comparing it with what a peer holds
+// (ADR 0069).
+//
+// **This is the half that has to be right before anything is sent**, and it is
+// deliberately free of transports, peers and sockets: everything here is a
+// function of a world and a baseline, which is what lets the whole of it be
+// tested in a process with no network in it.
+#pragma once
+
+#include <span>
+#include <vector>
+
+#include "engine/core/id.h"
+#include "engine/replication/field.h"
+#include "engine/replication/types.h"
+
+namespace engine::scene {
+class World;
+}
+
+namespace engine::replication {
+
+namespace generated {
+struct ClassDesc;
+struct FieldDesc;
+} // namespace generated
+
+class ScriptTemplates;
+
+// The fields one instance replicates: the common set, then its class's, in
+// schema order.
+//
+// **A flat vector and not a map.** It is indexed by position, the position is
+// the schema's own order, and both ends compute it from the same generated
+// table -- so a peer and an authority cannot disagree about what index three
+// means without disagreeing about the protocol version first.
+using FieldSet = std::vector<FieldValue>;
+
+// Which class's schema applies to an instance, or null when it replicates
+// nothing.
+//
+// **Walks up the hierarchy**, because `Part` and `MeshPart` have no schema of
+// their own and inherit `BasePart`'s. That is the same rule `wirecheck` uses to
+// decide a class is "decided", and having the two agree is not a coincidence to
+// be maintained -- it is why the checker walks rather than demanding a row per
+// leaf.
+[[nodiscard]] const generated::ClassDesc* schemaFor(const scene::World& world, core::InstanceId id);
+
+// How many fields an instance of this class carries, common set included.
+[[nodiscard]] core::usize fieldCount(const generated::ClassDesc& desc);
+
+// **How many cells its set is** (protocol 44): a cell a field, and after the
+// last of them the further cells of each sequence the class holds, in field
+// order. The same as `fieldCount` for every class with no sequence. Everything
+// that walks a set by index meets the further cells past the fields, where
+// `fieldAt` is null and `wireIdAt` is 0: they are their sequence's, and are
+// read, sent and written with it.
+[[nodiscard]] core::usize cellCount(const generated::ClassDesc& desc);
+
+// Where the further cells of the field at `index` lie in a set, and how many:
+// none for a field that is not a sequence.
+struct CellRange
+{
+    core::usize first = 0;
+    core::usize count = 0;
+};
+[[nodiscard]] CellRange furtherCells(const generated::ClassDesc& desc, core::usize index);
+
+// Whether the field at `index` is the same in two sets of this class: its
+// cell, and for a sequence its further cells too.
+[[nodiscard]] bool sameField(const generated::ClassDesc& desc, core::usize index, std::span<const FieldValue> a,
+                             std::span<const FieldValue> b) noexcept;
+
+// A sequence field of a set, onto a message and back into a set. `decode`
+// refuses what `decodeSequence` refuses, and a field that is no sequence.
+void encodeSequenceField(std::vector<core::u8>& out, const generated::ClassDesc& desc, core::usize index,
+                         std::span<const FieldValue> cells);
+[[nodiscard]] bool decodeSequenceField(std::span<const core::u8> bytes, core::usize& at,
+                                       const generated::ClassDesc& desc, core::usize index,
+                                       std::span<FieldValue> cells) noexcept;
+
+// **Writes the sequence field at `index` to an instance**, from a whole set.
+// False when the field is no sequence, the instance has no such component, or
+// the cells do not hold a sequence -- and then nothing is written: what the
+// instance had stands.
+[[nodiscard]] bool applySequence(scene::World& world, core::InstanceId id, const generated::ClassDesc& desc,
+                                 core::usize index, std::span<const FieldValue> cells);
+
+// Reads every field of `id` into `out`, sized to `cellCount`.
+//
+// Returns false when the instance is not replicable -- no schema, or gone.
+// **Never partially fills**: a half-read field set diffed against a baseline
+// would report the unread half as changed, every tick, for ever.
+[[nodiscard]] bool extractFields(const scene::World& world, core::InstanceId id, const generated::ClassDesc& desc,
+                                 FieldSet& out);
+
+// The same into a set the caller keeps and gives again -- its storage is used,
+// so a capture of a few thousand instances does not allocate a few thousand
+// times a tick. **On false `out` holds nothing to be read**: this one does
+// fill partially, and the caller that asked for it throws the set back.
+[[nodiscard]] bool extractFieldsInto(const scene::World& world, core::InstanceId id, const generated::ClassDesc& desc,
+                                     FieldSet& out);
+
+// What one instance's diff looks like on the wire.
+struct FieldDelta
+{
+    // The field's PERMANENT id from the schema, not its index. An index is a
+    // fact about this build's table; an id is a fact about the protocol.
+    core::u16 id = 0;
+    FieldValue value;
+};
+
+// Every field of `current` that differs from `baseline`. A sequence is
+// reported by its first cell when any of its cells differ.
+//
+// **A size mismatch means every field changed**, which is the honest answer: it
+// happens when a peer's baseline was taken under a different class -- an
+// instance replaced by another of the same id -- and sending everything is what
+// makes the replica correct rather than subtly wrong.
+void diffFields(const generated::ClassDesc& desc, std::span<const FieldValue> baseline,
+                std::span<const FieldValue> current, std::vector<FieldDelta>& out);
+
+// The field descriptor at a flat index, common set first. Null past the end.
+[[nodiscard]] const generated::FieldDesc* fieldAt(const generated::ClassDesc& desc, core::usize index);
+
+// **What the components this class's fields are read from come to, byte for
+// byte**, for `id` -- or 0 when that cannot be said: a field read from a pool
+// this does not know, or from a component that holds memory of its own, whose
+// bytes do not say what it holds.
+//
+// The same number as the capture before means every field reads as it did,
+// and the instance is kept without being read: an authority read every field
+// of every instance every tick to find the few that had changed. It is the
+// components' own bytes, so it does not matter who wrote them or how -- and a
+// part wearing a material copy, which is the world's and in no component,
+// has the world's count of changes to those in its number.
+[[nodiscard]] core::u64 sourceDigestOf(const scene::World& world, core::InstanceId id,
+                                       const generated::ClassDesc& desc) noexcept;
+
+// **The instance the reference field at `index` names**, as this machine holds
+// it -- none for a field that is no reference, or names nothing. What a
+// capture asks to tell whether an instance it would keep still names what it
+// did: a component's bytes do not say that the thing it names has gone.
+[[nodiscard]] core::InstanceId referenceAt(const scene::World& world, core::InstanceId id,
+                                           const generated::ClassDesc& desc, core::usize index);
+
+// Whether every pool this class's fields are read from is one the digest
+// knows. False is not wrong -- the class is read every tick -- but it is a
+// pool added to the wire and not to the digest's list, which a test catches.
+[[nodiscard]] bool digestKnowsPoolsOf(const generated::ClassDesc& desc) noexcept;
+
+// Whether the property `name` of `id` is one the wire carries: what a write
+// to it on the authority sends to every machine. False for an instance with
+// no schema. What `--net-log-client-writes` asks (ADR 0186 section 5).
+[[nodiscard]] bool carriesField(const scene::World& world, core::InstanceId id, std::string_view name);
+
+// The id a field travels under, which is NOT `FieldDesc::id`.
+//
+// **The schema numbers the common fields from 1 and each class's fields from 1
+// independently**, so `Name` (common id 1) and `CFrame` (`BasePart` id 1) are
+// the same number. The top bit says which half, which makes the wire id unique
+// within a class while staying a permanent fact about the protocol rather than
+// an index into this build's table.
+[[nodiscard]] core::u16 wireIdAt(const generated::ClassDesc& desc, core::usize index);
+
+// Destroys every instance under `root` that replicates, subtree and all, and
+// answers how many it destroyed.
+//
+// **What a replica does to its own scene before the first snapshot.** A replica
+// boots the same project the authority does -- the same scene, the same
+// scripts -- and everything in that scene the authority replicates is about to
+// arrive from the authority with network ids. Kept, it would be every part
+// twice: one local copy nothing moves and one the snapshots do. What does NOT
+// replicate stays -- the terrain (ADR 0069, decision 7), the camera, the
+// scripts -- which is exactly what a replica needs from its own files.
+//
+// With `templates`, the scripts under each subtree are taken into it before
+// the subtree goes (ADR 0138 §6), and the first destroy replaces what it held
+// for the scene.
+core::usize clearReplicated(scene::World& world, core::InstanceId root, ScriptTemplates* templates = nullptr);
+
+// **What a replica clears when it joins** (ADR 0080): what replicates under
+// `workspace`, what replicates under `ReplicatedStorage` -- the authority's
+// copy of both is on its way -- and everything under `ServerStorage`,
+// `ServerScriptService` and `GlobalScriptService.Server`, which are the
+// authority's alone (ADR 0105). `workspace`'s parent is the data model the
+// services are found under. Returns how many subtrees went.
+core::usize clearForReplica(scene::World& world, core::InstanceId workspace, ScriptTemplates* templates = nullptr);
+
+// Applies one field to an instance. Returns false when the id is not one this
+// class has -- which is what a peer speaking a newer protocol looks like, and is
+// a refusal rather than a guess. False for a sequence too, which one cell does
+// not hold (`applySequence`).
+[[nodiscard]] bool applyField(scene::World& world, core::InstanceId id, const generated::ClassDesc& desc,
+                              const FieldDelta& delta);
+
+} // namespace engine::replication

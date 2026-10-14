@@ -1,0 +1,755 @@
+#include <algorithm>
+#include <cstddef>
+#include <cstring>
+#include <doctest/doctest.h>
+#include <string>
+#include <vector>
+
+#include "engine/asset/mesh_format.h"
+#include "engine/core/i18n.h"
+
+using namespace engine::asset;
+using engine::core::engineCatalog;
+using engine::core::f32;
+using engine::core::hashText;
+using engine::core::u32;
+using engine::core::usize;
+
+namespace {
+
+void seedRealCatalog()
+{
+    const auto result = engineCatalog().loadFromFile(ENG_TEST_CATALOG);
+    REQUIRE_MESSAGE(result.ok, result.diagnostic);
+}
+
+// A grid of quads, dense enough that meshoptimizer has something to simplify
+// and enough triangles to become more than one meshlet. Built rather than
+// loaded: a fixture file would make this case about glTF parsing.
+[[nodiscard]] Model gridModel(u32 side, u32 materialCount = 1)
+{
+    Model model;
+    model.mesh.vertices.reserve(static_cast<usize>(side + 1) * (side + 1));
+    for (u32 z = 0; z <= side; ++z) {
+        for (u32 x = 0; x <= side; ++x) {
+            Vertex vertex;
+            const f32 fx = static_cast<f32>(x) / static_cast<f32>(side);
+            const f32 fz = static_cast<f32>(z) / static_cast<f32>(side);
+            // A gentle bulge, so simplification has curvature to lose. A flat
+            // grid simplifies to two triangles and proves nothing.
+            vertex.position = {fx * 10.0f, (fx - 0.5f) * (fz - 0.5f) * 4.0f, fz * 10.0f};
+            vertex.normal = {0.0f, 1.0f, 0.0f};
+            vertex.uv[0] = fx;
+            vertex.uv[1] = fz;
+            model.mesh.vertices.push_back(vertex);
+        }
+    }
+
+    const u32 stride = side + 1;
+    std::vector<std::vector<u32>> perMaterial(materialCount);
+    for (u32 z = 0; z < side; ++z) {
+        for (u32 x = 0; x < side; ++x) {
+            const u32 a = z * stride + x;
+            const u32 b = a + 1;
+            const u32 c = a + stride;
+            const u32 d = c + 1;
+            std::vector<u32>& target = perMaterial[(x + z) % materialCount];
+            for (const u32 index : {a, c, b, b, c, d}) {
+                target.push_back(index);
+            }
+        }
+    }
+
+    for (u32 material = 0; material < materialCount; ++material) {
+        Submesh submesh;
+        submesh.firstIndex = static_cast<u32>(model.mesh.indices.size());
+        submesh.indexCount = static_cast<u32>(perMaterial[material].size());
+        submesh.material = material;
+        submesh.bounds = engine::core::AABB::fromMinMax({0.0f, -1.0f, 0.0f}, {10.0f, 1.0f, 10.0f});
+        model.mesh.indices.insert(model.mesh.indices.end(), perMaterial[material].begin(), perMaterial[material].end());
+        model.mesh.submeshes.push_back(submesh);
+
+        MaterialDef definition;
+        definition.name = "material" + std::to_string(material);
+        definition.baseColorFactor = {0.5f, 0.25f, 0.125f};
+        definition.roughnessFactor = 0.75f;
+        definition.baseColor.image = material;
+        model.materials.push_back(definition);
+        model.images.push_back(Image{});
+    }
+
+    model.mesh.bounds = engine::core::AABB::fromMinMax({0.0f, -1.0f, 0.0f}, {10.0f, 1.0f, 10.0f});
+    return model;
+}
+
+// meshoptimizer's index codec restores every triangle and its winding, but is
+// free to ROTATE which of the three vertices a triangle starts on -- `(16, 15,
+// 32)` comes back as `(15, 32, 16)`. That is the same triangle wound the same
+// way, and it is invisible to a renderer; it is only visible to a test that
+// compares index arrays element by element, which the first version of the
+// round-trip case did.
+[[nodiscard]] bool sameTriangles(const std::vector<u32>& a, const std::vector<u32>& b)
+{
+    if (a.size() != b.size() || (a.size() % 3) != 0) {
+        return false;
+    }
+    for (usize i = 0; i < a.size(); i += 3) {
+        const bool rotated = (a[i] == b[i] && a[i + 1] == b[i + 1] && a[i + 2] == b[i + 2]) ||
+                             (a[i] == b[i + 1] && a[i + 1] == b[i + 2] && a[i + 2] == b[i]) ||
+                             (a[i] == b[i + 2] && a[i + 1] == b[i] && a[i + 2] == b[i + 1]);
+        if (!rotated) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] std::vector<TextureSlot> slotsFor(const Model& model)
+{
+    std::vector<TextureSlot> slots;
+    for (usize i = 0; i < model.images.size(); ++i) {
+        slots.push_back(TextureSlot{hashText("texture" + std::to_string(i)), i == 0});
+    }
+    return slots;
+}
+
+} // namespace
+
+TEST_CASE("a compiled mesh round-trips through the format")
+{
+    seedRealCatalog();
+
+    const Model model = gridModel(16, 2);
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+
+    const std::vector<std::byte> bytes = encodeMesh(compiled);
+    CompiledMesh decoded;
+    REQUIRE_FALSE(decodeMesh(bytes, decoded).has_value());
+
+    REQUIRE(decoded.vertices.size() == compiled.vertices.size());
+    for (usize i = 0; i < compiled.vertices.size(); ++i) {
+        // Bit-exact, not approximate: meshopt's vertex codec is lossless, and
+        // an encoder that quantized here would move every world's geometry by
+        // an amount nobody chose.
+        CHECK(std::memcmp(&decoded.vertices[i], &compiled.vertices[i], sizeof(Vertex)) == 0);
+    }
+
+    REQUIRE(decoded.lods.size() == compiled.lods.size());
+    for (usize level = 0; level < compiled.lods.size(); ++level) {
+        CHECK(sameTriangles(decoded.lods[level].indices, compiled.lods[level].indices));
+        REQUIRE(decoded.lods[level].submeshes.size() == compiled.lods[level].submeshes.size());
+        for (usize i = 0; i < compiled.lods[level].submeshes.size(); ++i) {
+            const Submesh& a = compiled.lods[level].submeshes[i];
+            const Submesh& b = decoded.lods[level].submeshes[i];
+            CHECK(a.firstIndex == b.firstIndex);
+            CHECK(a.indexCount == b.indexCount);
+            CHECK(a.material == b.material);
+            CHECK(a.bounds == b.bounds);
+        }
+        CHECK(decoded.lods[level].error == compiled.lods[level].error);
+    }
+
+    REQUIRE(decoded.materials.size() == 2);
+    CHECK(decoded.materials[0].name == "material0");
+    CHECK(decoded.materials[1].name == "material1");
+    CHECK(decoded.materials[0].shader == "pbr");
+    CHECK(decoded.materials[0].baseColorFactor == compiled.materials[0].baseColorFactor);
+    CHECK(decoded.materials[0].roughnessFactor == 0.75f);
+    CHECK(decoded.materials[1].baseColor.image == 1);
+
+    REQUIRE(decoded.images.size() == 2);
+    CHECK(decoded.images[0].hash == hashText("texture0"));
+    CHECK(decoded.images[0].srgb);
+    CHECK_FALSE(decoded.images[1].srgb);
+
+    CHECK(decoded.bounds == compiled.bounds);
+    CHECK(decoded.meshlets.meshlets.size() == compiled.meshlets.meshlets.size());
+    CHECK(decoded.meshlets.vertices == compiled.meshlets.vertices);
+    CHECK(decoded.meshlets.triangles == compiled.meshlets.triangles);
+}
+
+TEST_CASE("the LOD chain shrinks and stops when it stops paying")
+{
+    const Model model = gridModel(24);
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+
+    REQUIRE(compiled.lods.size() >= 2);
+    CHECK(compiled.lods.size() <= 4);
+    CHECK(compiled.lods[0].indices.size() == model.mesh.indices.size());
+    CHECK(compiled.lods[0].error == 0.0f);
+
+    for (usize level = 1; level < compiled.lods.size(); ++level) {
+        CHECK(compiled.lods[level].indices.size() < compiled.lods[level - 1].indices.size());
+        // Error is ABSOLUTE, in the mesh's own units, and it must grow as
+        // detail is lost. It became absolute with the streaming work when the runtime selector
+        // arrived: it was stored divided by `meshopt_simplifyScale` where it
+        // should have been multiplied, which is neither relative nor absolute
+        // -- a number with no consumer is a number with no test.
+        CHECK(compiled.lods[level].error >= compiled.lods[level - 1].error);
+    }
+
+    // A LEVEL ABOVE ZERO HAS A NON-ZERO ERROR, which is the property the whole
+    // selector rests on: an error that stayed zero would make every level look
+    // free and the coarsest one always win.
+    CHECK(compiled.lods[1].error > 0.0f);
+
+    // And it is a plausible LENGTH rather than a fraction. The grid spans one
+    // unit, so simplifying it can move the surface by a fraction of a unit and
+    // not by hundreds -- which is what the old division produced.
+    CHECK(compiled.lods.back().error < 1.0f);
+}
+
+TEST_CASE("simplification never welds across a material boundary")
+{
+    const Model model = gridModel(24, 3);
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+    REQUIRE(compiled.lods.size() >= 2);
+
+    for (const MeshLod& lod : compiled.lods) {
+        // Every level keeps every submesh, and every submesh keeps its own
+        // material: a tree whose leaves start being drawn with the trunk's
+        // shader is what the per-submesh simplify exists to prevent.
+        REQUIRE(lod.submeshes.size() == 3);
+        for (u32 i = 0; i < 3; ++i) {
+            CHECK(lod.submeshes[i].material == i);
+        }
+        // Contiguous and complete: the ranges tile the index buffer with no
+        // gap and no overlap.
+        u32 cursor = 0;
+        for (const Submesh& submesh : lod.submeshes) {
+            CHECK(submesh.firstIndex == cursor);
+            cursor += submesh.indexCount;
+        }
+        CHECK(cursor == lod.indices.size());
+    }
+}
+
+TEST_CASE("meshlets are emitted and describe the mesh they came from")
+{
+    const Model model = gridModel(20);
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+
+    // Emitted from day one and consumed by nothing (ADR 0010): an asset re-baked
+    // at the milestone that finally wants them is an asset every shipped game
+    // has to re-download.
+    REQUIRE_FALSE(compiled.meshlets.meshlets.empty());
+
+    usize triangles = 0;
+    for (const Meshlet& meshlet : compiled.meshlets.meshlets) {
+        CHECK(meshlet.vertexCount <= 64);
+        CHECK(meshlet.triangleCount <= 124);
+        CHECK(meshlet.vertexOffset + meshlet.vertexCount <= compiled.meshlets.vertices.size());
+        CHECK(meshlet.radius > 0.0f);
+        triangles += meshlet.triangleCount;
+    }
+    // Every triangle of LOD 0 is in exactly one meshlet.
+    CHECK(triangles == compiled.lods[0].indices.size() / 3);
+
+    // Meshlet vertex references index the real vertex buffer.
+    for (const u32 index : compiled.meshlets.vertices) {
+        CHECK(index < compiled.vertices.size());
+    }
+}
+
+TEST_CASE("compiling and encoding the same model twice produces the same bytes")
+{
+    const Model model = gridModel(18, 2);
+
+    CompiledMesh first;
+    CompiledMesh second;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, first).has_value());
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, second).has_value());
+
+    // The property the whole asset pipeline rests on: same input, same bytes,
+    // so a content hash is a name and a CI cache is legitimate.
+    CHECK(encodeMesh(first) == encodeMesh(second));
+}
+
+TEST_CASE("a skinned mesh carries its skeleton and its clips")
+{
+    seedRealCatalog();
+
+    Model model = gridModel(6);
+    model.skin.resize(model.mesh.vertices.size());
+    for (usize i = 0; i < model.skin.size(); ++i) {
+        model.skin[i].joints[0] = static_cast<f32>(i % 2);
+        model.skin[i].weights[0] = 1.0f;
+    }
+
+    Joint root;
+    root.name = "root";
+    model.joints.push_back(root);
+    Joint child;
+    child.name = "child";
+    child.parent = 0;
+    child.localBind.position = {0.0, 1.5, 0.0};
+    model.joints.push_back(child);
+
+    AnimationClip clip;
+    clip.name = "walk";
+    clip.duration = 1.25f;
+    AnimationChannel channel;
+    channel.joint = 1;
+    channel.target = AnimationChannel::Target::Rotation;
+    channel.stride = 4;
+    channel.times = {0.0f, 0.5f, 1.25f};
+    channel.values = {0, 0, 0, 1, 0, 0.1f, 0, 0.99f, 0, 0, 0, 1};
+    clip.channels.push_back(channel);
+    model.clips.push_back(clip);
+
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+    CHECK(compiled.skinned());
+
+    CompiledMesh decoded;
+    REQUIRE_FALSE(decodeMesh(encodeMesh(compiled), decoded).has_value());
+
+    REQUIRE(decoded.skin.size() == compiled.skin.size());
+    CHECK(std::memcmp(decoded.skin.data(), compiled.skin.data(), decoded.skin.size() * sizeof(SkinVertex)) == 0);
+
+    REQUIRE(decoded.joints.size() == 2);
+    CHECK(decoded.joints[0].name == "root");
+    CHECK(decoded.joints[1].name == "child");
+    CHECK(decoded.joints[1].parent == 0);
+    CHECK(decoded.joints[1].localBind.position.y == doctest::Approx(1.5));
+
+    REQUIRE(decoded.clips.size() == 1);
+    CHECK(decoded.clips[0].name == "walk");
+    CHECK(decoded.clips[0].duration == 1.25f);
+    REQUIRE(decoded.clips[0].channels.size() == 1);
+    CHECK(decoded.clips[0].channels[0].joint == 1);
+    CHECK(decoded.clips[0].channels[0].target == AnimationChannel::Target::Rotation);
+    CHECK(decoded.clips[0].channels[0].times == channel.times);
+    CHECK(decoded.clips[0].channels[0].values == channel.values);
+    CHECK(decoded.clips[0].channels[0].interpolation == AnimationChannel::Interpolation::Linear);
+
+    SUBCASE("a step or cubic-spline channel keeps how its keys are joined")
+    {
+        model.clips[0].channels[0].interpolation = AnimationChannel::Interpolation::Step;
+        AnimationChannel spline = channel;
+        spline.target = AnimationChannel::Target::Translation;
+        spline.stride = 3;
+        spline.interpolation = AnimationChannel::Interpolation::CubicSpline;
+        spline.values.assign(3 * 3 * 3, 0.5f);
+        model.clips[0].channels.push_back(spline);
+        CompiledMesh both;
+        REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, both).has_value());
+        CompiledMesh back;
+        REQUIRE_FALSE(decodeMesh(encodeMesh(both), back).has_value());
+        REQUIRE(back.clips[0].channels.size() == 2);
+        CHECK(back.clips[0].channels[0].interpolation == AnimationChannel::Interpolation::Step);
+        CHECK(back.clips[0].channels[1].interpolation == AnimationChannel::Interpolation::CubicSpline);
+        CHECK(back.clips[0].channels[1].values.size() == 27);
+    }
+}
+
+TEST_CASE("a skinned mesh's levels keep every vertex where one joint gives way to another")
+{
+    // The simplifier judges error in the bind pose, where an elbow's vertices
+    // lie along a straight arm and go first -- and a level without them does
+    // not bend.
+    seedRealCatalog();
+    Model model = gridModel(24);
+    model.skin.resize(model.mesh.vertices.size());
+    for (usize i = 0; i < model.skin.size(); ++i) {
+        // The near half on one joint, the far half on another.
+        model.skin[i].joints[0] = model.mesh.vertices[i].position.x < 5.0f ? 0.0f : 1.0f;
+        model.skin[i].weights[0] = 1.0f;
+    }
+    Joint root;
+    root.name = "root";
+    model.joints.push_back(root);
+    Joint other;
+    other.name = "other";
+    other.parent = 0;
+    model.joints.push_back(other);
+
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+    REQUIRE(compiled.lods.size() > 1);
+
+    // The vertices on the seam: a joint-0 vertex with a joint-1 neighbour, or
+    // the other way round. Every level draws every one of them.
+    std::vector<u32> seam;
+    const std::vector<u32>& triangles = model.mesh.indices;
+    for (usize first = 0; first + 2 < triangles.size(); first += 3) {
+        for (usize side = 0; side < 3; ++side) {
+            const u32 a = triangles[first + side];
+            const u32 b = triangles[first + (side + 1) % 3];
+            if (model.skin[a].joints[0] != model.skin[b].joints[0]) {
+                seam.push_back(a);
+                seam.push_back(b);
+            }
+        }
+    }
+    REQUIRE_FALSE(seam.empty());
+    for (usize level = 1; level < compiled.lods.size(); ++level) {
+        const std::vector<u32>& indices = compiled.lods[level].indices;
+        for (const u32 vertex : seam)
+            CHECK(std::find(indices.begin(), indices.end(), vertex) != indices.end());
+        // And it is still a coarser level.
+        CHECK(indices.size() < compiled.lods[0].indices.size());
+    }
+}
+
+TEST_CASE("a static mesh has no skin section at all")
+{
+    const Model model = gridModel(6);
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+
+    CompiledMesh decoded;
+    REQUIRE_FALSE(decodeMesh(encodeMesh(compiled), decoded).has_value());
+    CHECK(decoded.skin.empty());
+    CHECK(decoded.joints.empty());
+    CHECK(decoded.clips.empty());
+    CHECK_FALSE(decoded.skinned());
+}
+
+TEST_CASE("a mesh with no geometry is refused rather than compiled")
+{
+    seedRealCatalog();
+
+    Model empty;
+    CompiledMesh compiled;
+    const auto error = compileMesh(empty, {}, {}, compiled);
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("asset.mesh.err.empty") != std::string::npos);
+}
+
+TEST_CASE("a texture hash list that does not match the images is refused")
+{
+    seedRealCatalog();
+
+    const Model model = gridModel(4, 2);
+    CompiledMesh compiled;
+    const std::vector<TextureSlot> tooFew = {TextureSlot{hashText("only one"), false}};
+    const auto error = compileMesh(model, tooFew, {}, compiled);
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("asset.mesh.err.image_count") != std::string::npos);
+}
+
+TEST_CASE("a corrupted mesh is an error and never a crash")
+{
+    seedRealCatalog();
+
+    const Model model = gridModel(8, 2);
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+    const std::vector<std::byte> good = encodeMesh(compiled);
+
+    // Every prefix: a mesh blob can arrive truncated exactly as a pack can.
+    for (usize length = 0; length < good.size(); length += 1 + length / 16) {
+        std::vector<std::byte> truncated(good.begin(), good.begin() + static_cast<std::ptrdiff_t>(length));
+        CompiledMesh decoded;
+        const auto error = decodeMesh(truncated, decoded);
+        if (length < good.size()) {
+            REQUIRE_MESSAGE(error.has_value(), "a prefix of length " << length << " was accepted");
+        }
+    }
+
+    // **A section count nothing could hold.** This is the flip that got out: the
+    // section table has no section describing it, so its count was read from the
+    // header and handed straight to `reserve` -- four billion records of
+    // twenty-four bytes, which is a `std::bad_alloc` escaping a decoder whose
+    // whole contract is "an error and never a crash". Asserted on its own rather
+    // than left to the sweep below, because whether the sweep reaches it depends
+    // on how much memory the machine has: it passed on a developer box for
+    // months and failed the first time CI ran it.
+    {
+        std::vector<std::byte> lying = good;
+        REQUIRE(lying.size() > 16);
+        // Bytes 12..15 are the section count, after the magic, the version and
+        // the reserved word.
+        for (usize at = 12; at < 16; ++at) {
+            lying[at] = std::byte{0xFF};
+        }
+        CompiledMesh decoded;
+        const auto error = decodeMesh(lying, decoded);
+        REQUIRE(error.has_value());
+        CHECK(error->message.find("asset.mesh.err.malformed") != std::string::npos);
+    }
+
+    // And every single-bit flip in the header and the section table, which is
+    // where a bad offset would come from.
+    for (usize at = 0; at < 40 + 15 * 24 && at < good.size(); ++at) {
+        for (int bit = 0; bit < 8; ++bit) {
+            std::vector<std::byte> corrupted = good;
+            corrupted[at] ^= static_cast<std::byte>(1u << bit);
+            CompiledMesh decoded;
+            // The requirement is a structured answer, not a particular one: a
+            // flip in a float is legitimately still a valid mesh.
+            (void)decodeMesh(corrupted, decoded);
+        }
+    }
+}
+
+TEST_CASE("a mesh from a newer compiler says so, and the format before this one still reads")
+{
+    // A player given meshes from a newer asset compiler called each of them
+    // malformed -- which reads as a corrupt file, not as two builds mixed.
+    seedRealCatalog();
+    Model model = gridModel(4);
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+    const std::vector<std::byte> good = encodeMesh(compiled);
+
+    const auto withVersion = [&good](engine::core::u32 version) {
+        std::vector<std::byte> bytes = good;
+        // Bytes 4..7, after the magic, little-endian.
+        for (usize at = 0; at < 4; ++at)
+            bytes[4 + at] = static_cast<std::byte>((version >> (8 * at)) & 0xFFu);
+        return bytes;
+    };
+
+    CompiledMesh decoded;
+    auto error = decodeMesh(withVersion(MeshFormatVersion + 1), decoded);
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("asset.mesh.err.newer") != std::string::npos);
+    CHECK(error->message.find(std::to_string(MeshFormatVersion + 1)) != std::string::npos);
+
+    error = decodeMesh(withVersion(MeshFormatOldest - 1), decoded);
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("asset.mesh.err.version") != std::string::npos);
+
+    // Format 2 had no interpolation: what it says is what it was.
+    CHECK_FALSE(decodeMesh(withVersion(MeshFormatOldest), decoded).has_value());
+}
+
+TEST_CASE("a mesh from another format is refused by name")
+{
+    seedRealCatalog();
+
+    std::vector<std::byte> notAMesh(128, std::byte{0x5a});
+    CompiledMesh decoded;
+    const auto error = decodeMesh(notAMesh, decoded);
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("asset.mesh.err.magic") != std::string::npos);
+}
+
+TEST_CASE("an index that names a vertex the file does not contain is refused")
+{
+    seedRealCatalog();
+
+    Model model = gridModel(4);
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+
+    // Reach past the vertex buffer by one. Encoded, so this is what a real
+    // malformed file looks like rather than a hand-built struct.
+    compiled.lods[0].indices[0] = static_cast<u32>(compiled.vertices.size());
+    CompiledMesh decoded;
+    const auto error = decodeMesh(encodeMesh(compiled), decoded);
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("asset.mesh.err.malformed") != std::string::npos);
+}
+
+TEST_CASE("an animation channel or a skin index the skeleton cannot hold is refused")
+{
+    seedRealCatalog();
+
+    // A valid skinned mesh with one clip, then one field of it broken at a
+    // time -- encoded, so each is what a malformed file looks like.
+    const auto build = [] {
+        Model model = gridModel(4);
+        model.skin.resize(model.mesh.vertices.size());
+        for (SkinVertex& vertex : model.skin)
+            vertex.weights[0] = 1.0f;
+        Joint root;
+        root.name = "root";
+        model.joints.push_back(root);
+        AnimationClip clip;
+        clip.name = "idle";
+        clip.duration = 1.0f;
+        AnimationChannel channel;
+        channel.joint = 0;
+        channel.target = AnimationChannel::Target::Translation;
+        channel.stride = 3;
+        channel.times = {0.0f, 1.0f};
+        channel.values = {0, 0, 0, 0, 1, 0};
+        clip.channels.push_back(channel);
+        model.clips.push_back(clip);
+        CompiledMesh compiled;
+        REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+        return compiled;
+    };
+    const auto refused = [](const CompiledMesh& mesh) {
+        CompiledMesh decoded;
+        const auto error = decodeMesh(encodeMesh(mesh), decoded);
+        return error.has_value() && error->message.find("asset.mesh.err.malformed") != std::string::npos;
+    };
+
+    CompiledMesh good = build();
+    CompiledMesh decoded;
+    CHECK_FALSE(decodeMesh(encodeMesh(good), decoded).has_value());
+
+    // A stride the target does not have: sampled into a four-float buffer.
+    CompiledMesh wide = build();
+    wide.clips[0].channels[0].stride = 64;
+    CHECK(refused(wide));
+
+    // A rotation with a translation's stride.
+    CompiledMesh narrow = build();
+    narrow.clips[0].channels[0].target = AnimationChannel::Target::Rotation;
+    CHECK(refused(narrow));
+
+    // Fewer values than the keys need.
+    CompiledMesh shortValues = build();
+    shortValues.clips[0].channels[0].values.resize(4);
+    CHECK(refused(shortValues));
+
+    // A channel for a joint the skeleton does not have.
+    CompiledMesh ghostJoint = build();
+    ghostJoint.clips[0].channels[0].joint = 7;
+    CHECK(refused(ghostJoint));
+
+    // A skin vertex naming a joint past the skeleton.
+    CompiledMesh farIndex = build();
+    farIndex.skin[0].joints[0] = 5.0f;
+    CHECK(refused(farIndex));
+}
+
+// --- Morph targets (ADR 0196) ---------------------------------------------------
+
+namespace {
+
+// A grid with two targets and a clip that drives them: `Lift` raises every
+// vertex of the first row, `Lean` pushes one vertex sideways and tips its
+// normal. Sparse, as an importer leaves them: only what moves is listed.
+[[nodiscard]] Model morphedGrid()
+{
+    Model model = gridModel(8);
+    MorphTarget lift;
+    lift.name = "Lift";
+    for (u32 vertex = 0; vertex < 9; ++vertex)
+        lift.deltas.push_back(MorphDelta{vertex, {0.0f, 0.5f, 0.0f}, {}});
+    MorphTarget lean;
+    lean.name = "Lean";
+    lean.defaultWeight = 0.25f;
+    lean.deltas.push_back(MorphDelta{40, {0.125f, 0.0f, 0.0f}, {0.0f, 0.2f, 0.0f}});
+    model.morphs = {lift, lean};
+
+    AnimationClip clip;
+    clip.name = "Speak";
+    clip.duration = 1.0f;
+    for (u32 target = 0; target < 2; ++target) {
+        AnimationChannel channel;
+        channel.joint = target;
+        channel.target = AnimationChannel::Target::Weight;
+        channel.stride = 1;
+        channel.times = {0.0f, 1.0f};
+        channel.values = target == 0 ? std::vector<f32>{0.0f, 1.0f} : std::vector<f32>{0.25f, 0.0f};
+        clip.weights.push_back(channel);
+    }
+    model.clips.push_back(clip);
+    return model;
+}
+
+[[nodiscard]] bool hasTag(const std::vector<std::byte>& bytes, const char* tag)
+{
+    const auto* text = reinterpret_cast<const char*>(bytes.data());
+    return std::search(text, text + bytes.size(), tag, tag + 4) != text + bytes.size();
+}
+
+} // namespace
+
+TEST_CASE("a mesh's morph targets and its clips' weights round-trip through the format")
+{
+    seedRealCatalog();
+
+    const Model model = morphedGrid();
+    CompiledMesh compiled;
+    MeshCompileOptions options;
+    // One level: the simplifier does not know a vertex moves with a target
+    // yet, and this is about the format.
+    options.maxLods = 1;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), options, compiled).has_value());
+    REQUIRE(compiled.morphs.size() == 2);
+
+    const std::vector<std::byte> bytes = encodeMesh(compiled);
+    CompiledMesh decoded;
+    REQUIRE_FALSE(decodeMesh(bytes, decoded).has_value());
+
+    REQUIRE(decoded.morphs.size() == 2);
+    CHECK(decoded.morphs[0].name == "Lift");
+    CHECK(decoded.morphs[1].name == "Lean");
+    CHECK(decoded.morphs[1].defaultWeight == 0.25f);
+    REQUIRE(decoded.morphs[0].deltas.size() == 9);
+    REQUIRE(decoded.morphs[1].deltas.size() == 1);
+    for (usize at = 0; at < 9; ++at) {
+        CHECK(decoded.morphs[0].deltas[at].vertex == at);
+        CHECK(decoded.morphs[0].deltas[at].position.y == 0.5f);
+    }
+    CHECK(decoded.morphs[1].deltas[0].vertex == 40);
+    CHECK(decoded.morphs[1].deltas[0].position.x == 0.125f);
+    CHECK(decoded.morphs[1].deltas[0].normal.y == 0.2f);
+
+    REQUIRE(decoded.clips.size() == 1);
+    CHECK(decoded.clips[0].channels.empty());
+    REQUIRE(decoded.clips[0].weights.size() == 2);
+    CHECK(decoded.clips[0].weights[0].joint == 0);
+    CHECK(decoded.clips[0].weights[1].joint == 1);
+    CHECK(decoded.clips[0].weights[0].target == AnimationChannel::Target::Weight);
+    CHECK(decoded.clips[0].weights[0].times == std::vector<f32>{0.0f, 1.0f});
+    CHECK(decoded.clips[0].weights[0].values == std::vector<f32>{0.0f, 1.0f});
+    CHECK(decoded.clips[0].weights[1].values == std::vector<f32>{0.25f, 0.0f});
+
+    // Twice is the same bytes, targets and all.
+    CHECK(encodeMesh(decoded) == bytes);
+}
+
+TEST_CASE("a mesh with no morph targets is the file it was")
+{
+    seedRealCatalog();
+
+    const Model plain = gridModel(8);
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(plain, slotsFor(plain), {}, compiled).has_value());
+    const std::vector<std::byte> bytes = encodeMesh(compiled);
+    // None of the four sections: nothing for a reader from before them to
+    // skip, and nothing in the bytes that was not there.
+    CHECK_FALSE(hasTag(bytes, "MRPH"));
+    CHECK_FALSE(hasTag(bytes, "MRPD"));
+    CHECK_FALSE(hasTag(bytes, "WCHN"));
+    CHECK_FALSE(hasTag(bytes, "WCLP"));
+
+    const Model morphed = morphedGrid();
+    CompiledMesh withTargets;
+    MeshCompileOptions options;
+    options.maxLods = 1;
+    REQUIRE_FALSE(compileMesh(morphed, slotsFor(morphed), options, withTargets).has_value());
+    const std::vector<std::byte> morphedBytes = encodeMesh(withTargets);
+    CHECK(hasTag(morphedBytes, "MRPH"));
+    CHECK(hasTag(morphedBytes, "WCLP"));
+}
+
+TEST_CASE("a morph target that names a vertex the mesh does not have is refused")
+{
+    seedRealCatalog();
+
+    Model model = morphedGrid();
+    CompiledMesh compiled;
+    MeshCompileOptions options;
+    options.maxLods = 1;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), options, compiled).has_value());
+
+    // Past the end.
+    CompiledMesh beyond = compiled;
+    beyond.morphs[1].deltas[0].vertex = static_cast<u32>(beyond.vertices.size());
+    CompiledMesh decoded;
+    CHECK(decodeMesh(encodeMesh(beyond), decoded).has_value());
+
+    // Out of order: a reader walks a target's vertices upward.
+    CompiledMesh shuffled = compiled;
+    std::swap(shuffled.morphs[0].deltas[2], shuffled.morphs[0].deltas[5]);
+    CHECK(decodeMesh(encodeMesh(shuffled), decoded).has_value());
+
+    // A weight channel for a target that is not there.
+    CompiledMesh stray = compiled;
+    stray.clips[0].weights[1].joint = 9;
+    CHECK(decodeMesh(encodeMesh(stray), decoded).has_value());
+}

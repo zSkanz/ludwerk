@@ -1,0 +1,179 @@
+# 0199 — Retargeting: one clip on bodies of other proportions
+
+- Status: accepted; built
+- Date: 2026-10-10
+- Builds on: a clip named from another file playing on this rig, the
+  joint map by name, `@engine/ragdoll`'s humanoid profile, R10
+
+## The question
+
+A walk is bought, or made once, on one skeleton. The game has a tall hero,
+a short one and a broad one, each exported from another tool with its own
+joint names and its own bone lengths. The clip has to move all of them.
+
+## What is there
+
+Read before this was written. A clip from another file is played on a rig
+by matching joints **by exactly equal names** (`jointMapFor`), cached a
+pair of rigs. Nothing else: the clip's translations are written as they
+are, so the body takes the SOURCE's bone lengths wherever a clip keys
+translation; a rest pose turned differently -- another bone roll, an A
+where the clip's rig stood in a T -- is not accounted for; a rig whose
+joints are called `mixamorig:LeftArm` where the clip's are `upperarm_l`
+matches nothing and stands still. A joint has a name, a parent, a rest
+transform from its parent and an inverse bind; no length, no role.
+
+## Decision
+
+A clip is carried across by **what each joint is**, not by what it is
+called, and as **turns from rest**, not as transforms.
+
+### Roles
+
+A rig's joints are given **roles** when it is loaded: hips, spine (up to
+three), chest, neck, head; each arm's shoulder, upper arm, lower arm and
+hand; each leg's upper leg, lower leg, foot and toes; and the fingers,
+three joints each, where the rig has them.
+
+A role is found by the joint's name against **lists of the names rigs
+really arrive with** -- the engine's own, kept as data beside the ragdoll's
+profile, which already reads four of these families:
+
+- the common free motion library's (`mixamorig:LeftUpLeg`, with or without
+  its prefix);
+- the two big engines' exported humanoids (`LeftUpperArm`; `upperarm_l`,
+  `thigh_r`, `spine_01`, `pelvis`);
+- the common Blender rigs' deform bones (`DEF-upper_arm.L`, `upper_arm.L`,
+  `thigh.L`, `shin.R`, `forearm.L`);
+- plain English either way round (`LeftArm`, `Arm_L`, `l_arm`).
+
+A name is compared with its case, its separators and a rig's own prefix
+taken off. **A rig no list fits says its roles in a file beside it**,
+`<model>.rig.json` -- a role to a joint's name -- which is also how one
+wrong guess is put right. And **what was not found is said**: a warning
+that names each role the clip moves and the rig has no joint for, once a
+pair of rigs.
+
+Two rigs with roles are matched role to role. Joints with no role -- a
+tail, a cape, a weapon bone -- are still matched by equal names, as now,
+and so is everything when either rig has too few roles to be a body
+(a shirt on the body it was cut for, a creature on its own clips).
+
+### What is carried across
+
+For a matched joint, each tick:
+
+- **The turn, from rest.** The clip says where the source joint is turned
+  to; what is taken is how far that is from the source's rest, and it is
+  given to the target joint from the target's rest -- through each rig's
+  own rest frame, so a bone that rolls differently about its own length,
+  or was drawn along another axis, turns the same way in the world.
+- **The stance.** Where the two rigs REST differently -- arms straight out
+  on one, lowered on the other -- each limb's rest direction is compared
+  once, when the pair is first met, and the difference is taken out, so a
+  clip made on the first does not hold the second's arms out by the angle
+  between them.
+- **The hips' travel, scaled.** The one translation that is motion and not
+  build: how far the hips move from their rest, multiplied by how tall the
+  target's legs are against the source's. A short hero's hips bob less and
+  its feet meet the ground.
+- **Nothing else of translation, and nothing of scale.** Every other joint
+  keeps the target's own rest offset: its own bone lengths, which is what
+  makes a tall body tall under a clip made on a short one.
+
+All of it is worked out once a pair of rigs -- two quaternions a joint and
+one number for the hips -- and costs a clip two multiplications a channel.
+
+### The API
+
+- Nothing new to play one: `LoadAnimation("asset://clips/walk.glb#Walk")`
+  already names a clip in another file.
+- `AnimationPlayer.Retargeting: Enum.Retargeting` -- `Automatic` (by roles
+  where both rigs are bodies and are not one skeleton, by name otherwise)
+  and `ByName` (as it was). A third value, `Off`, was drawn and not built:
+  by name the clip's transforms already are as they are, and two names for
+  one behaviour is a question nobody could answer.
+- A graph (ADR 0197) names clips the same way, and a graph made for one
+  hero plays on another by naming the same clip library.
+
+### Which side of the hash (R10)
+
+**The simulation's**, with the pose: what is carried across is a pure
+function of the two rigs and the clip, the same on every machine and every
+run, with nothing of a frame or a clock in it. The map for a pair is built
+when the pair is first played and rebuilt when either rig is loaded again.
+
+### In the editor
+
+With a mesh selected, the rig's roles are listed beside its joints -- which
+joint was taken for the left upper arm, and which roles found none -- so a
+rig that moves wrongly is read, not guessed at.
+
+## What this does not do
+
+- **No feet pinned to the ground by the retarget itself.** Scaling the hips
+  keeps them close; a foot that must not slide is `FootPlacement`'s
+  (ADR 0198), which is picture.
+- **No hands kept where the source's hands were**: a clap made on long arms
+  does not meet on short ones. That is a limb reaching for a place, and
+  also ADR 0198's.
+- **No bodies that are not bodies**: a horse's walk does not go on a dog by
+  roles. Equal names still work.
+- **No baked copy**: nothing writes a retargeted clip to disk.
+
+## Proof
+
+Unit tests on two rigs made to differ in every way that matters -- other
+names from two of the lists, bones drawn along another axis, another
+stance, legs half as long: a clip made on the first raises the second's
+arm to the same place in the world, its feet reach the ground, its bone
+lengths are its own, and a role the clip moves that the second lacks is
+named in one warning. A rig's `.rig.json` overrides a guess. By name is as
+it was (the existing cases hold unchanged). `examples/37-character` is
+three heroes of other proportions on one library of clips.
+
+## Amended 2026-10-10: what real rigs corrected
+
+Run over the heroes, two public-domain character packs and a
+public-domain mannequin, with `engine-host --describe-rig`:
+
+- **A rig is turned to the clip's first.** Each rig's up and left are read
+  off its rest and snapped to whole axes; where two differ -- a model that
+  faces the other way, one that stands along another axis -- the source's
+  rest is taken into the target's space before anything is carried.
+- **A limb is a chain.** A lower limb that does not hang from the part above
+  it gets no role, and where no upper leg hangs from the joint named as the
+  hips, the hips are the nearest joint above that both the named joint and
+  the legs hang from, and the named joint is the first of the back.
+- **Nothing above the hips is matched by name** when roles are in use: two
+  real rigs each have a `root` that rests differently, and it laid one of
+  them on its back.
+- **A rest further than a third of a turn from the source's is not aligned**
+  to it: a back that starts below the hips would turn the other rig's pelvis
+  over.
+- Names: a lower arm called `Fore`, a bare finger name as its first joint,
+  two more prefixes.
+- **The hips scale is also what a graph divides a body's speed by** (ADR
+  0197's amendment).
+
+What it still does not do, found the same way and written in the manual: a
+clip's character does not cross -- a short body's walk on long legs is a
+march.
+
+## Amended 2026-10-10 again: a turn with nowhere to go is folded
+
+The line above this one used to say a turn of a source joint the target has
+no joint for was dropped. On the sixteen-joint heroes -- no neck, one
+joint for a back -- under a forty-one-joint library, that was a third of a
+walk's lean and most of a nod.
+
+- **A dropped joint's turn goes into the next joint down the chain that the
+  target has**: a neck's into the head, the upper spine joints' into the one
+  the body has. For each mapped joint the map records the source ancestors
+  between it and the nearest mapped one above; at play time their samples are
+  multiplied, top down, in front of the joint's own. Keyed or not: a joint
+  the clip does not key, under one it does and the body lacks, still turns.
+- **A back of one joint is the chest**, not the spine: it is the joint the
+  arms hang from, and a library's chest motion is the motion it should have.
+- **The warning names what is lost**, not what is folded: a role with nowhere
+  to go -- fingers on a body with none -- and past six of them, how many.

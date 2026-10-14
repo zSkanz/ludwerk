@@ -1,0 +1,28 @@
+{
+  "format": "sequence",
+  "version": 1,
+  "bindings": ["Lighting", "Grade"],
+  "tracks": [
+    { "type": "property", "target": "Lighting", "property": "ClockTime", "keys": [
+        { "time": 0, "value": 12 },
+        { "time": 0.2, "value": 18 } ] },
+    { "type": "property", "target": "Lighting", "property": "Ambient", "keys": [
+        { "time": 0, "value": [0, 0, 0] },
+        { "time": 0.2, "value": [0.5, 0.25, 1] } ] },
+    { "type": "property", "target": "Lighting/SpecAir", "property": "Density", "keys": [
+        { "time": 0, "value": 0 },
+        { "time": 0.2, "value": 0.5 } ] },
+    { "type": "property", "target": "Lighting/SpecSky", "property": "SunAngularSize", "keys": [
+        { "time": 0, "value": 1 },
+        { "time": 0.2, "value": 9 } ] },
+    { "type": "property", "target": "Grade", "property": "Saturation", "keys": [
+        { "time": 0, "value": 0 },
+        { "time": 0.2, "value": -1 } ] },
+    { "type": "property", "target": "Grade", "property": "TintColor", "keys": [
+        { "time": 0, "value": [1, 1, 1] },
+        { "time": 0.2, "value": [1, 0.5, 0] } ] },
+    { "type": "property", "target": "Lighting/SpecFocus", "property": "FocusDistance", "keys": [
+        { "time": 0, "value": 2 },
+        { "time": 0.2, "value": 40 } ] }
+  ]
+}

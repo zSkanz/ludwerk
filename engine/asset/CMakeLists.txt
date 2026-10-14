@@ -1,0 +1,137 @@
+# L2 -- runtime asset loading (architecture.md §2 `asset`, ADR 0010).
+#
+# Born with the first renderer as a loader, not as the streaming system architecture.md describes
+# in full: mount points, URN resolution, meshes, materials and images are what a
+# glTF scene needs to reach the renderer. StreamingManager, chunk manifests,
+# `.lpack` and content addressing arrive with the streaming work, which is the milestone that
+# has something to stream.
+#
+# Knows nothing about rhi: this module produces CPU-side resources and `render`
+# owns every upload (architecture.md §2).
+
+engine_add_module(asset
+    LAYER 2
+    SOURCES
+        src/chunk.cpp
+        src/content.cpp
+        src/terrain.cpp
+        src/terrain_mesher.cpp
+        src/terrain_raycast.cpp
+        src/terrain_cell.cpp
+        src/field_cells.cpp
+        src/terrain_pyramid.cpp
+        src/terrain_palette.cpp
+        src/terrain_layers.cpp
+        src/terrain_rules.cpp
+        src/foliage.cpp
+        src/terrain_edit.cpp
+        src/voxel.cpp
+        src/voxel_mesher.cpp
+        src/image.cpp
+        src/icon_set.cpp
+        src/archive.cpp
+        src/material.cpp
+        src/animation_graph.cpp
+        src/gltf.cpp
+        src/mesh_format.cpp
+        src/model_split.cpp
+        src/pack.cpp
+        src/lip_sync.cpp
+        src/sequence.cpp
+        src/localized.cpp
+        src/seal.cpp
+        src/primitives.cpp
+        src/streaming.cpp
+        src/surface_build.cpp
+        src/surface_graph.cpp
+        src/surface_shader.cpp
+        src/texture.cpp
+    DEPS
+        core
+        platform
+        jobs
+)
+
+# stb_image and stb_image_write. Header-only and SYSTEM, so upstream's warnings
+# are not our warnings-as-errors bar; both implementations are compiled exactly
+# once, in src/image.cpp.
+target_include_directories(engine_asset SYSTEM PRIVATE "${ENG_THIRD_PARTY_DIR}/stb")
+
+# xxhash, for the per-object digests a terrain tile and brick carry (ADR 0067).
+# Header-only through `XXH_INLINE_ALL`, PRIVATE for the same reason `scene` takes
+# it that way: nothing above needs the header, because a digest crosses the seam
+# as a `u64`.
+target_include_directories(engine_asset SYSTEM PRIVATE "${ENG_THIRD_PARTY_DIR}/xxhash")
+
+# fastgltf and meshoptimizer are PRIVATE, and that is the point of this module:
+# no fastgltf type appears in `engine/asset/*.h`, so `render` and `scene` link an
+# importer without inheriting a parser's headers. R17 is about the Luau API, but
+# the same instinct applies one layer down.
+# simdjson beside it, for one thing: a mesh's `extras`, where every exporter
+# writes its morph targets' names, reaches a caller as the JSON parser's own
+# object (ADR 0196). It is the library fastgltf already brings (ADR 0036), not
+# a new one.
+target_link_libraries(engine_asset PRIVATE fastgltf::fastgltf meshoptimizer simdjson::simdjson)
+
+# The basis TRANSCODER and never the encoder (ADR 0010, third_party/CMakeLists).
+# The engine reads textures; only the offline `assetc` tool writes them, and
+# keeping the encoder out of this link line is what makes that a property of the
+# build rather than a promise.
+target_link_libraries(engine_asset PRIVATE basis::transcoder)
+
+engine_add_module_tests(asset
+    MODULES
+        asset
+    SOURCES
+        tests/chunk_tests.cpp
+        tests/content_tests.cpp
+        tests/terrain_tests.cpp
+        tests/terrain_levels_tests.cpp
+        tests/terrain_mesher_tests.cpp
+        tests/terrain_layers_tests.cpp
+        tests/terrain_rules_tests.cpp
+        tests/foliage_tests.cpp
+        tests/terrain_mesh_validation_tests.cpp
+        tests/terrain_cell_tests.cpp
+        tests/field_cells_tests.cpp
+        tests/voxel_tests.cpp
+        tests/image_tests.cpp
+        tests/icon_set_tests.cpp
+        tests/archive_tests.cpp
+        tests/material_tests.cpp
+        tests/gltf_tests.cpp
+        tests/mesh_format_tests.cpp
+        tests/model_split_tests.cpp
+        tests/pack_tests.cpp
+        tests/lip_sync_tests.cpp
+        tests/sequence_tests.cpp
+        tests/localized_tests.cpp
+        tests/seal_tests.cpp
+        tests/primitive_tests.cpp
+        tests/streaming_tests.cpp
+        tests/surface_shader_tests.cpp
+        tests/texture_tests.cpp
+        tests/animation_graph_tests.cpp
+        tests/surface_graph_tests.cpp
+)
+
+if(ENG_BUILD_TESTS)
+    # The glTF fixtures are read from the source tree rather than copied beside
+    # the binary: `importGltf` resolves a relative URI against the directory it
+    # is handed, and `textured.gltf` names a `.png` sibling -- a copy step would
+    # have to keep the pair together, and getting that wrong would show up as a
+    # missing texture rather than as a build failure.
+    target_compile_definitions(engine_asset_tests PRIVATE
+        ENG_TEST_CATALOG="${CMAKE_SOURCE_DIR}/i18n/en.json"
+        ENG_ASSET_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+        ENG_ASSET_TEST_EXAMPLES="${CMAKE_SOURCE_DIR}/examples")
+
+    # The model the skipped import bench measures. Overridable, because the
+    # interesting answer comes from somebody's own asset -- the fixtures here are
+    # three kilobytes and answer "roughly zero" for every question worth asking.
+    if(NOT DEFINED ENG_BENCH_GLTF)
+        set(ENG_BENCH_GLTF "${CMAKE_SOURCE_DIR}/examples/02-meshes/content/models/scene.gltf")
+    endif()
+    target_compile_definitions(engine_asset_tests PRIVATE
+        ENG_BENCH_GLTF="${ENG_BENCH_GLTF}")
+endif()

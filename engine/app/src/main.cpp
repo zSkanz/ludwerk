@@ -1,0 +1,2135 @@
+// engine-host -- the bootstrap's engine host: boot a sandboxed Luau VM, run one script,
+// report failures as structured, key-identified engine errors.
+
+#include <Luau/Bytecode.h>
+#include <lua.h>
+
+#include <algorithm>
+#include <array>
+#include <charconv>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <mutex>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "engine/app/backends.h"
+#include "engine/app/bench.h"
+#include "engine/app/debug_measure.h"
+#include "engine/app/engine.h"
+#include "engine/app/project_config.h"
+#include "engine/app/replay.h"
+#include "engine/app/script_package.h"
+#include "engine/app/script_sides.h"
+#include "engine/app/two_worlds.h"
+#include "engine/asset/gltf.h"
+#include "engine/asset/mesh_format.h"
+#include "engine/asset/model.h"
+#include "engine/core/brand.h"
+#include "engine/core/build_info.h"
+#include "engine/core/content_path.h"
+#include "engine/core/error.h"
+#include "engine/core/i18n.h"
+#include "engine/core/json.h"
+#include "engine/core/log.h"
+#include "engine/core/run_record.h"
+#include "engine/platform/console.h"
+#include "engine/platform/crash.h"
+#include "engine/platform/file.h"
+#include "engine/platform/platform.h"
+#include "engine/platform/process.h"
+#include "engine/platform/stop_signal.h"
+#include "engine/render/retarget.h"
+
+#if defined(_WIN32) && defined(ENG_GUI_SUBSYSTEM)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+namespace {
+
+using engine::core::I18nArg;
+using engine::core::LogLevel;
+
+constexpr int kExitOk = 0;
+constexpr int kExitUsage = 2;
+constexpr int kExitScriptError = 1;
+constexpr int kExitNoCatalog = 3;
+
+// The port a networked posture uses when none is given. Any unprivileged number
+// would do; a fixed one means `--host` and `--join=address` meet without either
+// person having to agree on anything.
+constexpr engine::core::u16 kDefaultGamePort = 7777;
+
+// Distinct because "this machine has no usable GPU" is not a failure of
+// anything under test. CTest maps it to SKIP, so a runner without a driver
+// reports a skipped render test instead of a red build nobody can act on.
+constexpr int kExitNoGraphicsDevice = 4;
+
+// The graphics device was lost while the engine ran -- a driver reset, most
+// often a shader that ran too long. Its own code so a test can tell "survived
+// and said so" from a crash or a script error.
+constexpr int kExitDeviceLost = 5;
+
+// Catalogs are UTF-8 (ADR 0019); a Windows console decodes raw byte writes with
+// its own codepage and mangles anything non-ASCII, which would quietly reduce
+// "adding a locale is adding a file" to "adding a locale nobody on Windows can
+// read". `platform::writeConsole` is the fix, and routing the log through it is
+// how every engine message gets it.
+// **What a start that failed says to somebody with no console**: the
+// last errors the log was given, where the log is, and whether a window was
+// meant. Kept by the sink below, which is given every line.
+struct StartReport
+{
+    std::mutex guard;
+    std::vector<std::string> errors;
+    std::string logPath;
+    // A phone's app is a window from its first instruction; a desk's is one
+    // once its options say it is not headless.
+#if defined(__ANDROID__)
+    bool windowed = true;
+#else
+    bool windowed = false;
+#endif
+    // A dialog of its own was shown already.
+    bool told = false;
+
+    // **Everything said before the log file was open**, as it was
+    // printed: a start-up reads its options and its project before it knows
+    // where its log goes, and what it said meanwhile used to be in no file at
+    // all. Written into the log when it opens, and into a file of its own
+    // when the process ends before there is one.
+    std::vector<std::string> early;
+    bool logOpen = false;
+    // `main` got its answer: the process is ending the way it means to.
+    bool ended = false;
+    // Its arguments say it is a tool's run -- a replay, a check -- whatever
+    // its options make of "headless".
+    bool tool = false;
+    // What is said if it ends another way -- something called `exit` -- made
+    // ready while the catalogue is still there to make it from.
+    std::string exitTitle;
+    std::string exitText;
+    std::string exitClose;
+};
+
+StartReport& startReport()
+{
+    static StartReport report;
+    return report;
+}
+
+void installConsoleLogSink()
+{
+    engine::core::setLogSink([](LogLevel level, std::string_view text) {
+        {
+            StartReport& report = startReport();
+            const std::lock_guard lock(report.guard);
+            if (level == LogLevel::Error) {
+                // The last few: a failure's own line and the ones that led to it.
+                constexpr std::size_t Kept = 6;
+                if (report.errors.size() == Kept)
+                    report.errors.erase(report.errors.begin());
+                report.errors.emplace_back(text);
+            }
+            // Until the file is open, the lines it will begin with. Bounded:
+            // a start-up says a few dozen things, and a run whose log never
+            // opens must not keep every line it ever prints.
+            constexpr std::size_t EarlyKept = 512;
+            if (!report.logOpen && report.early.size() < EarlyKept)
+                report.early.push_back(engine::core::formatLogLine(level, text));
+        }
+        // Warnings and errors go to stderr so a headless CI run can
+        // separate them from ordinary output without parsing.
+        const auto stream = (level == LogLevel::Warn || level == LogLevel::Error)
+                                ? engine::platform::ConsoleStream::Err
+                                : engine::platform::ConsoleStream::Out;
+        engine::platform::writeConsole(stream, engine::core::formatLogLine(level, text));
+    });
+}
+
+// The one place a user-facing string may be hardcoded: if the catalog itself
+// failed to load there is, by definition, nothing to translate through. Kept
+// deliberately to stderr and to this single call site (ADR 0019).
+void reportCatalogFailure(const std::string& diagnostic)
+{
+    const std::string line = "engine-host: cannot load the message catalog: " + diagnostic;
+    engine::platform::writeConsole(engine::platform::ConsoleStream::Err, line + "\n");
+    StartReport& report = startReport();
+    const std::lock_guard lock(report.guard);
+    report.errors.push_back(line);
+}
+
+// **A start that failed says so**. A game that could not make its
+// graphics device, read its project, find its content, closed -- and on a
+// phone, or opened by a double click, closed with nothing on the screen: the
+// reason was in a log nobody had. A system dialog then, with the errors and
+// where the log is. Not where somebody is reading the output, not for a run
+// with no window, and not for a lost device, which has a dialog of its own.
+//
+// **Every start that failed, not only one that left an error**. It
+// said nothing for a failure that logged no error line, nothing for one that
+// came before the options were read -- a missing catalogue, a bad flag in a
+// shortcut -- because "is this a window" was not known yet and was taken for
+// no, and what such a start had printed was in no file. Now: the lines said
+// before the log opened are written to a file of their own when the process
+// ends without one, a failure with no error line says its exit code, and
+// whether a window was meant is read from the arguments from the first
+// instruction.
+// The folder a start writes to before it knows its own: the system's
+// temporary one, under the engine's name. Not a game's folder -- the game is
+// not known yet -- and not the engine's user folder, which a shipped game's
+// player has never heard of.
+std::filesystem::path startFolder()
+{
+    std::error_code error;
+    std::filesystem::path folder = std::filesystem::temp_directory_path(error);
+    if (error)
+        return {};
+    folder /= std::string(ENG_BRAND_SHORT) + "-start";
+    std::filesystem::create_directories(folder, error);
+    return error ? std::filesystem::path{} : folder;
+}
+
+// What was said before any log was open, in a file: where a start that
+// failed too early for a log left its reasons. Empty when it could not.
+std::string writeStartLog(const std::vector<std::string>& lines)
+{
+    const std::filesystem::path folder = startFolder();
+    if (folder.empty() || lines.empty())
+        return {};
+    // The folder is the engine's own and nobody empties it: what is older
+    // than a week goes, so a machine that fails to start every day keeps a
+    // week of reasons and not a year of them.
+    std::error_code error;
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(folder, error)) {
+        const std::string name = entry.path().filename().string();
+        if (!name.starts_with("start-") || entry.path().extension() != ".log")
+            continue;
+        const auto age = std::filesystem::file_time_type::clock::now() - entry.last_write_time(error);
+        if (!error && age > std::chrono::hours(24 * 7))
+            std::filesystem::remove(entry.path(), error);
+    }
+    const std::filesystem::path path = folder / ("start-" + std::to_string(engine::platform::processId()) + ".log");
+    std::FILE* file = nullptr;
+#ifdef _WIN32
+    (void)::_wfopen_s(&file, path.c_str(), L"wb");
+#else
+    file = std::fopen(path.c_str(), "wb");
+#endif
+    if (file == nullptr)
+        return {};
+    for (const std::string& line : lines)
+        std::fwrite(line.data(), 1, line.size(), file);
+    std::fclose(file);
+    return path.string();
+}
+
+void sayStartFailure(int code)
+{
+    StartReport& report = startReport();
+    std::string body;
+    {
+        const std::lock_guard lock(report.guard);
+        if (code == kExitOk || code == kExitDeviceLost || report.told || !report.windowed)
+            return;
+        // A start that ended before its log was open leaves one now.
+        if (!report.logOpen && report.logPath.empty())
+            report.logPath = writeStartLog(report.early);
+        const bool worded = code != kExitNoCatalog;
+        for (const std::string& line : report.errors) {
+            if (!body.empty())
+                body += "\n\n";
+            body += line;
+        }
+        if (body.empty() && worded) {
+            // It failed and said nothing of why: its code, which is at least
+            // what somebody can be asked for.
+            const std::array<I18nArg, 1> args{I18nArg{"code", static_cast<engine::core::i64>(code)}};
+            body = engine::core::engineCatalog().format(ENG_TR("engine.start.err.no_reason"), args);
+        }
+        if (!report.logPath.empty()) {
+            if (worded) {
+                const std::array<I18nArg, 1> args{I18nArg{"path", report.logPath}};
+                body += "\n\n" + engine::core::engineCatalog().format(ENG_TR("engine.start.err.log"), args);
+            }
+            else {
+                // No catalogue, no words: the path alone, under the one
+                // sentence this file may write by itself.
+                body += "\n\n" + report.logPath;
+            }
+        }
+        if (body.empty())
+            return;
+    }
+    if (!engine::platform::outputGoesUnread())
+        return;
+    const engine::core::Catalog& text = engine::core::engineCatalog();
+    // With no catalogue there are no words for a title or a button: the
+    // message is the one sentence this file may write by itself.
+    const bool worded = code != kExitNoCatalog;
+    (void)engine::platform::askChoice(nullptr, worded ? text.format(ENG_TR("engine.start.err.title")) : std::string(),
+                                      body,
+                                      {worded ? text.format(ENG_TR("engine.start.err.close")) : std::string("OK")});
+}
+
+// **Whether these arguments are a run with no window**, from the arguments
+// alone: what "is a failure a window's" is taken to be until the options are
+// read properly. A game opened by a double click has none of these; a
+// shortcut that carries `--gpu=vulkan` has none of these either, and it was
+// that start -- arguments, and a failure before they were parsed -- that
+// closed without a word.
+[[nodiscard]] bool runsWithNoWindow(int argc, char** argv)
+{
+    constexpr std::array<std::string_view, 18> Quiet{
+        "--headless",      "--serve",        "--version",        "--run-tests",    "--check-scripts",
+        "--replay",        "--bench",        "--write-types",    "--import-",      "--partition",
+        "--save-scene",    "--capture-out",  "--two-worlds",     "--replica-gate", "--reads-mesh-format",
+        "--record-replay", "--describe-rig", "--bake-irradiance"};
+    for (int index = 1; index < argc; ++index) {
+        const std::string_view arg = argv[index];
+        for (const std::string_view quiet : Quiet) {
+            if (arg.starts_with(quiet))
+                return true;
+        }
+    }
+    return false;
+}
+
+// **The process is leaving, and `main` did not get its answer**:
+// something called `exit` -- a library, a driver. Nothing of the engine's own
+// does. The log gets a line, and a player who has seen no frame gets a
+// dialog; the words were made ready while there was a catalogue to make them
+// from, because this runs while the program is being taken down.
+void onProcessExit()
+{
+    StartReport& report = startReport();
+    std::string title;
+    std::string text;
+    std::string close;
+    {
+        const std::lock_guard lock(report.guard);
+        if (report.ended || report.exitText.empty())
+            return;
+        title = report.exitTitle;
+        text = report.exitText;
+        close = report.exitClose;
+        if (!report.logOpen && report.logPath.empty()) {
+            report.early.push_back(text + "\n");
+            report.logPath = writeStartLog(report.early);
+        }
+        if (!report.logPath.empty())
+            text += "\n\n" + report.logPath;
+        if (!report.windowed || report.told)
+            close.clear();
+    }
+    engine::core::appendToLogFile(report.exitText + "\n");
+    std::fprintf(stderr, "%s\n", report.exitText.c_str());
+    std::fflush(stderr);
+    if (close.empty() || engine::core::firstFrameShown() || !engine::platform::outputGoesUnread())
+        return;
+    (void)engine::platform::askChoice(nullptr, title, text, {close});
+}
+
+void printVersion()
+{
+    const std::array<I18nArg, 2> engineArgs{I18nArg{"version", ENG_VERSION_STRING},
+                                            I18nArg{"profile", ENG_PROFILE_NAME}};
+    engine::core::log(LogLevel::Info, ENG_TR("engine.cli.version.engine"), engineArgs);
+
+    // Version and commit come from third_party/manifest.json via the generated
+    // provenance header (ADR 0031) -- Luau itself ships no version constant.
+    const std::array<I18nArg, 2> luauArgs{I18nArg{"version", ENG_LUAU_VERSION}, I18nArg{"commit", ENG_LUAU_COMMIT}};
+    engine::core::log(LogLevel::Info, ENG_TR("engine.cli.version.luau"), luauArgs);
+
+    // These come from the vendored headers at compile time, so they describe
+    // the VM actually linked into this binary rather than what we intended.
+    const std::array<I18nArg, 4> abiArgs{
+        I18nArg{"bytecode", static_cast<engine::core::i64>(LBC_VERSION_TARGET)},
+        I18nArg{"types", static_cast<engine::core::i64>(LBC_TYPE_VERSION_TARGET)},
+        I18nArg{"vectorSize", static_cast<engine::core::i64>(LUA_VECTOR_SIZE)},
+        I18nArg{"vectorPrecision", LUA_VECTOR_DOUBLE ? std::string_view{"f64"} : std::string_view{"f32"}}};
+    engine::core::log(LogLevel::Info, ENG_TR("engine.cli.version.abi"), abiArgs);
+}
+
+// Fills `options` from the command line. Returns kExitOk when the caller should
+// proceed, or the exit code to return.
+//
+// Deliberately hand-rolled and small: a getopt-style dependency for six flags
+// would be a dependency (R5) bought for nothing, and the engine's real CLI is
+// `ludwerk`, which lives in Lute and is the thing users will actually type.
+// This is the host's own switchboard.
+int parseOptions(std::span<const std::string_view> args, engine::app::EngineOptions& options,
+                 engine::app::GraphicsOverrides& graphics, bool& sizeFromFlags)
+{
+    const auto numericValue = [](std::string_view text, engine::core::u64& out) {
+        const auto result = std::from_chars(text.data(), text.data() + text.size(), out);
+        return result.ec == std::errc{} && result.ptr == text.data() + text.size();
+    };
+
+    // `strtod` rather than `from_chars`, for the reason `core/json.cpp` records:
+    // the floating-point overloads of from_chars are missing from one of the
+    // standard libraries this engine builds against. The WHOLE token has to
+    // convert, so `--render-scale=0.75x` is a usage error rather than 0.75.
+    const auto decimalValue = [](std::string_view text, double& out) {
+        const std::string buffer(text);
+        char* end = nullptr;
+        const double value = std::strtod(buffer.c_str(), &end);
+        if (end != buffer.c_str() + buffer.size())
+            return false;
+        out = value;
+        return true;
+    };
+
+    for (const std::string_view arg : args) {
+        if (!arg.empty() && arg.front() != '-') {
+            options.scriptPath = std::filesystem::path(arg);
+            continue;
+        }
+
+        if (arg == "--headless") {
+            options.headless = true;
+            continue;
+        }
+        // **The three networked postures** (ADR 0070). Each is a flag rather
+        // than a subcommand because each is still the same game -- the same
+        // project, the same scene -- run in a different relationship to other
+        // copies of itself. One posture per process: two is a usage error.
+        if (arg == "--host" || arg.starts_with("--host=") || arg == "--serve" || arg.starts_with("--serve=")) {
+            const bool serve = arg.starts_with("--serve");
+            if (options.network.topology != engine::replication::Topology::Solo) {
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.one_posture"));
+                return kExitUsage;
+            }
+            options.network.topology =
+                serve ? engine::replication::Topology::Dedicated : engine::replication::Topology::Host;
+            options.network.port = kDefaultGamePort;
+            if (const std::size_t equals = arg.find('='); equals != std::string_view::npos) {
+                engine::core::u64 port = 0;
+                if (!numericValue(arg.substr(equals + 1), port) || port == 0 || port > 65535) {
+                    engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_port"));
+                    return kExitUsage;
+                }
+                options.network.port = static_cast<engine::core::u16>(port);
+            }
+            // A dedicated server has no window by definition.
+            if (serve)
+                options.headless = true;
+            continue;
+        }
+        if (arg.starts_with("--join=")) {
+            if (options.network.topology != engine::replication::Topology::Solo) {
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.one_posture"));
+                return kExitUsage;
+            }
+            std::string_view target = arg.substr(std::string_view("--join=").size());
+            options.network.topology = engine::replication::Topology::Replica;
+            options.network.port = kDefaultGamePort;
+            if (const std::size_t colon = target.rfind(':'); colon != std::string_view::npos) {
+                engine::core::u64 port = 0;
+                if (!numericValue(target.substr(colon + 1), port) || port == 0 || port > 65535) {
+                    engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_port"));
+                    return kExitUsage;
+                }
+                options.network.port = static_cast<engine::core::u16>(port);
+                target = target.substr(0, colon);
+            }
+            if (target.empty()) {
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_port"));
+                return kExitUsage;
+            }
+            options.network.address = std::string(target);
+            continue;
+        }
+        if (arg.starts_with("--relay=")) {
+            // Read where it is used: a name is looked up when the match
+            // starts, not while the arguments are.
+            options.defaultRelay = std::string(arg.substr(std::string_view("--relay=").size()));
+            if (options.defaultRelay.empty()) {
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_port"));
+                return kExitUsage;
+            }
+            continue;
+        }
+        if (arg.starts_with("--max-players=")) {
+            engine::core::u64 count = 0;
+            if (!numericValue(arg.substr(std::string_view("--max-players=").size()), count) || count == 0 ||
+                count > 4095) {
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_max_players"));
+                return kExitUsage;
+            }
+            options.network.maxPeers = static_cast<engine::core::u32>(count);
+            continue;
+        }
+        // **Where this run keeps its saves**: a server and a player of one
+        // exported game on one machine shared the player's folder, and each
+        // overwrote the other's slots.
+        if (arg.starts_with("--saves=")) {
+            options.saveDirectory = std::filesystem::path(std::string(arg.substr(std::string_view("--saves=").size())));
+            options.saveDirectoryGiven = true;
+            continue;
+        }
+        // **A worse network than the one there is**: this
+        // machine's link to the server it joins, held, jittered and lost both
+        // ways, below the transport. For measuring; a shipping build has no
+        // use for it and refuses it.
+        if (arg.starts_with("--net-delay=") || arg.starts_with("--net-jitter=") || arg.starts_with("--net-loss=")) {
+            if (std::string_view(ENG_PROFILE_NAME) == "shipping") {
+                const std::array<I18nArg, 1> refused{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.not_in_shipping"), refused);
+                return kExitUsage;
+            }
+            engine::core::u64 value = 0;
+            const std::string_view number = arg.substr(arg.find('=') + 1);
+            const bool loss = arg.starts_with("--net-loss=");
+            if (!numericValue(number, value) || value > (loss ? 100u : 10000u)) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            if (arg.starts_with("--net-delay="))
+                options.network.simulatedDelayMs = static_cast<engine::core::u32>(value);
+            else if (arg.starts_with("--net-jitter="))
+                options.network.simulatedJitterMs = static_cast<engine::core::u32>(value);
+            else
+                options.network.simulatedLossPercent = static_cast<engine::core::f32>(value);
+            continue;
+        }
+        // **Why a prediction was corrected**: each correction of this
+        // machine's character, said in the log with what it disagreed about.
+        // In any build: it is how a game in somebody's hands is diagnosed.
+        if (arg == "--net-log-corrections") {
+            options.network.logCorrections = true;
+            continue;
+        }
+        // **A host's client script writing what its friends are sent** (ADR
+        // 0186 §5): said once a script and property. In any build, for the
+        // reason above.
+        if (arg == "--net-log-client-writes") {
+            options.logClientWrites = true;
+            continue;
+        }
+        if (arg == "--exit") {
+            options.exitAfterFrames = true;
+            continue;
+        }
+        if (arg == "--launcher") {
+            options.launcher = true;
+            continue;
+        }
+        if (arg == "--edit") {
+            options.editor = true;
+            continue;
+        }
+        if (arg == "--frame-stats") {
+            options.frameStats = true;
+            continue;
+        }
+        if (arg.starts_with("--frame-stats-warmup=")) {
+            engine::core::u64 seconds = 0;
+            if (!numericValue(arg.substr(21), seconds) || seconds > 600) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.frameStatsWarmupSeconds = static_cast<engine::core::f64>(seconds);
+            continue;
+        }
+        if (arg.starts_with("--frame-report=")) {
+            engine::core::u64 seconds = 0;
+            if (!numericValue(arg.substr(15), seconds) || seconds > 3600) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.frameReportSeconds = static_cast<engine::core::f64>(seconds);
+            continue;
+        }
+        // The measuring keys (ADR 0171).
+        if (arg == "--gpu-pass-times") {
+            options.gpuPassTimes = true;
+            continue;
+        }
+        // A profile to open in the editor's Profiler (ADR 0210).
+        if (arg.starts_with("--profile-capture=")) {
+            options.profileCapturePath = std::string(arg.substr(18));
+            if (options.profileCapturePath.empty()) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            continue;
+        }
+        if (arg == "--profile-lines") {
+            options.profileLines = true;
+            continue;
+        }
+        if (arg == "--gpu-frame-times") {
+            options.gpuFrameTimes = true;
+            continue;
+        }
+        if (arg == "--log-ui-touches") {
+            options.logUiTouches = true;
+            continue;
+        }
+        if (arg == "--log-keys") {
+            engine::core::setLogKeys(true);
+            continue;
+        }
+        if (arg.starts_with("--hide=")) {
+            options.debugHide = std::string(arg.substr(7));
+            continue;
+        }
+        if (arg.starts_with("--skip=")) {
+            options.debugSkip = std::string(arg.substr(7));
+            continue;
+        }
+        if (arg.starts_with("--shadow-taps=")) {
+            engine::core::u64 taps = 0;
+            if (!numericValue(arg.substr(14), taps) || taps == 0 || taps > 16) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.debugShadowTaps = static_cast<engine::core::u32>(taps);
+            continue;
+        }
+        if (arg.starts_with("--pace=")) {
+            engine::core::u64 hz = 0;
+            if (!numericValue(arg.substr(7), hz) || hz == 0 || hz > 1000) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.paceHz = static_cast<engine::core::u32>(hz);
+            continue;
+        }
+        if (arg == "--vsync" || arg == "--no-vsync") {
+            graphics.vsync = arg == "--vsync";
+            continue;
+        }
+        if (arg.starts_with("--max-frame-rate=") || arg.starts_with("--background-frame-rate=")) {
+            const bool background = arg.starts_with("--background-frame-rate=");
+            engine::core::u64 rate = 0;
+            if (!numericValue(arg.substr(arg.find('=') + 1), rate) || rate > 1000) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            (background ? graphics.backgroundFrameRate : graphics.maxFrameRate) = static_cast<engine::core::u32>(rate);
+            continue;
+        }
+        if (arg == "--gpu-debug") {
+            options.gpuDebug = true;
+            continue;
+        }
+        if (arg.starts_with("--gpu=")) {
+            // Which graphics API: a player's way round a driver that draws
+            // wrong through one of them.
+            options.gpuDriver = std::string(arg.substr(6));
+            continue;
+        }
+        if (arg == "--gpu-least") {
+            options.gpuLeast = true;
+            continue;
+        }
+        if (arg == "--no-astc") {
+            options.astcTextures = false;
+            continue;
+        }
+
+        // The streaming work's gate. The report path turns the recorder on; the ceiling is
+        // separate because a soak that only wants the histogram should not have
+        // to invent a memory number to get one.
+        if (arg.starts_with("--soak-report=")) {
+            options.soakReportPath = std::filesystem::path(arg.substr(arg.find('=') + 1));
+            continue;
+        }
+        if (arg.starts_with("--soak-ceiling-mb=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            engine::core::u64 parsed = 0;
+            if (!numericValue(value, parsed) || parsed == 0) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.soakCeilingBytes = parsed * 1024 * 1024;
+            continue;
+        }
+        if (arg.starts_with("--soak-return-radius=")) {
+            // Whole metres, like every other numeric flag here parses: a radius
+            // in centimetres is not a thing a fly-through declares, and the
+            // shared `numericValue` is what keeps a bad value a NAMED error
+            // rather than a silent zero -- which for this option would turn the
+            // check off instead of failing.
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            engine::core::u64 parsed = 0;
+            if (!numericValue(value, parsed) || parsed == 0) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.soakReturnRadiusMetres = static_cast<engine::core::f32>(parsed);
+            continue;
+        }
+        if (arg.starts_with("--soak-min-instances=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            engine::core::u64 parsed = 0;
+            if (!numericValue(value, parsed) || parsed == 0) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.soakMinimumInstances = parsed;
+            continue;
+        }
+        if (arg.starts_with("--soak-min-ground=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            engine::core::u64 parsed = 0;
+            if (!numericValue(value, parsed) || parsed == 0) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.soakMinimumGroundCells = parsed;
+            continue;
+        }
+        if (arg.starts_with("--soak-memory-growth=") || arg.starts_with("--soak-frame-p99-ms=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            engine::core::u64 parsed = 0;
+            if (!numericValue(value, parsed) || parsed == 0) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            (arg.starts_with("--soak-memory-growth=") ? options.soakMemoryGrowthPercent : options.soakFrameP99Ms) =
+                parsed;
+            continue;
+        }
+        // The render target's size. Windowed it is the window; headless it is the
+        // offscreen texture. The first renderer's gate records a frame-time baseline at 1080p
+        // and the host had no way to be asked for one.
+        // The text and the voice language for this run (ADR 0200), in front
+        // of what the player saved and never written to it.
+        if (arg.starts_with("--locale=")) {
+            options.localeOverride = std::string{arg.substr(std::string_view("--locale=").size())};
+            continue;
+        }
+        if (arg.starts_with("--voice-locale=")) {
+            options.voiceLocaleOverride = std::string{arg.substr(std::string_view("--voice-locale=").size())};
+            continue;
+        }
+        // **Which scene the run starts in, and what it is handed**:
+        // content-relative, as the project file names one, and JSON for the
+        // scene's `GetLoadData`. Checked here, where a mistake is a usage
+        // error, rather than found by a scene that reads nil.
+        if (arg.starts_with("--scene=")) {
+            const std::string named{arg.substr(std::string_view("--scene=").size())};
+            if (named.empty() || !engine::core::safeRelativePath(named).has_value()) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", named}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.startupScene = named;
+            options.startupSceneFromFlag = true;
+            continue;
+        }
+        if (arg.starts_with("--scene-data=")) {
+            const std::string_view text = arg.substr(std::string_view("--scene-data=").size());
+            engine::core::JsonDocument document;
+            if (const auto parsed = document.parse(text, "--scene-data"); !parsed) {
+                const std::array<I18nArg, 1> notJson{I18nArg{"reason", parsed.diagnostic}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.scene_data"), notJson);
+                return kExitUsage;
+            }
+            options.startupSceneData = std::string(text);
+            continue;
+        }
+        if (arg.starts_with("--width=") || arg.starts_with("--height=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            engine::core::u64 parsed = 0;
+            // Bounded rather than merely positive: a target larger than any GPU
+            // will allocate fails inside the backend with a message about
+            // memory, which is a long way from "you typed a silly number".
+            if (!numericValue(value, parsed) || parsed == 0 || parsed > 16384) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            (arg.starts_with("--width=") ? options.width : options.height) = static_cast<engine::core::i32>(parsed);
+            // Remembered so `[window] size` in the project file can fill in for
+            // a size nobody asked for and stay out of the way of one somebody
+            // did.
+            sizeFromFlags = true;
+            continue;
+        }
+        // A match's windows (ADR 0106 §5): where each goes, what each is
+        // called, and a log of its own.
+        if (arg.starts_with("--window=")) {
+            engine::platform::WindowPlacement placement;
+            // Four integers, comma-separated: x, y, width, height.
+            std::array<int*, 4> slots{&placement.x, &placement.y, &placement.width, &placement.height};
+            std::string_view rest = arg.substr(9);
+            bool parsed = true;
+            for (std::size_t index = 0; index < slots.size() && parsed; ++index) {
+                const std::size_t comma = index + 1 < slots.size() ? rest.find(',') : rest.size();
+                const std::string_view piece = rest.substr(0, comma);
+                const auto [end, failure] = std::from_chars(piece.data(), piece.data() + piece.size(), *slots[index]);
+                parsed =
+                    failure == std::errc{} && end == piece.data() + piece.size() && comma != std::string_view::npos;
+                rest = comma < rest.size() ? rest.substr(comma + 1) : std::string_view{};
+            }
+            if (!parsed || placement.width <= 0 || placement.height <= 0) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.windowPlacement = placement;
+            options.width = placement.width;
+            options.height = placement.height;
+            sizeFromFlags = true;
+            continue;
+        }
+        if (arg.starts_with("--label=")) {
+            options.windowLabel = std::string(arg.substr(8));
+            continue;
+        }
+        if (arg.starts_with("--log-file=")) {
+            options.logFile = std::filesystem::path(std::string(arg.substr(11)));
+            continue;
+        }
+        if (arg.starts_with("--frames=")) {
+            if (!numericValue(arg.substr(9), options.frames)) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            continue;
+        }
+        if (arg.starts_with("--remove-device=")) {
+            if (!numericValue(arg.substr(16), options.removeDeviceAt)) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            continue;
+        }
+        if (arg.starts_with("--simulate-device-loss=")) {
+            if (!numericValue(arg.substr(23), options.simulateDeviceLossAt)) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            continue;
+        }
+        if (arg.starts_with("--simulate-window-hold=")) {
+            if (!numericValue(arg.substr(23), options.simulateWindowHoldAt)) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            continue;
+        }
+        if (arg.starts_with("--surface-cache=")) {
+            options.surfaceCache = std::filesystem::path(arg.substr(16));
+            continue;
+        }
+        if (arg.starts_with("--screenshot=")) {
+            options.screenshotPath = std::filesystem::path(arg.substr(13));
+            continue;
+        }
+        if (arg.starts_with("--screenshot-every=")) {
+            if (!numericValue(arg.substr(19), options.screenshotEvery) || options.screenshotEvery == 0) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            continue;
+        }
+        if (arg.starts_with("--terrain-detail=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            if (value != "full" && value != "distance") {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.terrainFullDetail = value == "full";
+            continue;
+        }
+        if (arg == "--no-instancing") {
+            graphics.instancing = false;
+            continue;
+        }
+        if (arg.starts_with("--debug-view=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            const std::optional<engine::render::DebugView> view = engine::render::parseDebugView(value);
+            if (!view.has_value()) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            graphics.debugView = *view;
+            continue;
+        }
+        if (arg.starts_with("--save-scene=")) {
+            options.saveScenePath = std::filesystem::path(arg.substr(13));
+            continue;
+        }
+        if (arg == "--write-types") {
+            // A build step like `--partition`: headless, and gone after one
+            // write.
+            options.writeTypesOnly = true;
+            options.headless = true;
+            continue;
+        }
+        if (arg == "--fault-on-purpose") {
+            options.faultOnPurpose = true;
+            continue;
+        }
+        if (arg == "--bake-irradiance") {
+            // A game opened with no window, its volumes worked out and kept.
+            options.bakeIrradiance = true;
+            options.headless = true;
+            continue;
+        }
+        if (arg == "--check-scripts") {
+            // The same shape: the scene as the editor holds it, checked, gone.
+            options.checkScriptsOnly = true;
+            options.headless = true;
+            continue;
+        }
+        if (arg.starts_with("--import-terrain=")) {
+            // A build step like `--partition`: headless, and gone once the
+            // scene is saved (ADR 0149 §2). `hills`, a `.luau` file that
+            // returns a function, or a heightmap -- a file or a folder of
+            // tiles.
+            engine::app::EngineOptions::TerrainImport spec =
+                options.terrainImport.value_or(engine::app::EngineOptions::TerrainImport{});
+            const std::string_view source = arg.substr(17);
+            using Kind = engine::app::EngineOptions::TerrainImport::Kind;
+            if (source == "hills") {
+                spec.kind = Kind::Hills;
+            }
+            else {
+                spec.source = std::filesystem::path(source);
+                spec.kind = spec.source.extension() == ".luau" ? Kind::Function : Kind::Heightmap;
+            }
+            options.terrainImport = spec;
+            options.headless = true;
+            continue;
+        }
+        if (arg.starts_with("--import-")) {
+            // The numbers of an import, in any order round `--import-terrain`.
+            engine::app::EngineOptions::TerrainImport spec =
+                options.terrainImport.value_or(engine::app::EngineOptions::TerrainImport{});
+            const std::string_view::size_type equals = arg.find('=');
+            const std::string_view name = arg.substr(0, equals);
+            const std::string_view value =
+                equals == std::string_view::npos ? std::string_view{} : arg.substr(equals + 1);
+            double number = 0.0;
+            const bool parsed = decimalValue(value, number);
+            bool known = true;
+            if (name == "--import-size")
+                spec.size = static_cast<float>(number);
+            else if (name == "--import-low")
+                spec.low = static_cast<float>(number);
+            else if (name == "--import-high")
+                spec.high = static_cast<float>(number);
+            else if (name == "--import-scale")
+                spec.scale = static_cast<float>(number);
+            else if (name == "--import-material")
+                spec.material = static_cast<engine::core::u8>(std::clamp(number, 0.0, 255.0));
+            else if (name == "--import-seed")
+                spec.seed = static_cast<engine::core::u32>(std::max(number, 0.0));
+            else if (name == "--import-octaves")
+                spec.octaves = static_cast<engine::core::u32>(std::clamp(number, 1.0, 10.0));
+            else
+                known = false;
+            if (!known || !parsed) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.terrainImport = spec;
+            options.headless = true;
+            continue;
+        }
+        if (arg == "--partition") {
+            // Partition the project's scene into the cache and stop. Headless
+            // and windowless for the same reason `--save-scene` is: it is a
+            // build step, not a session.
+            options.partitionOnly = true;
+            options.headless = true;
+            continue;
+        }
+        if (arg.starts_with("--capture-out=")) {
+            options.capturePath = std::filesystem::path(arg.substr(14));
+            continue;
+        }
+        if (arg.starts_with("--run-tests=")) {
+            options.conformanceRoot = std::filesystem::path(arg.substr(12));
+            // A conformance run has no window and ends when the suite does, so
+            // the two flags a headless run needs are implied rather than typed
+            // out at every call site.
+            options.headless = true;
+            options.exitAfterFrames = true;
+            continue;
+        }
+        if (arg.starts_with("--test-report=")) {
+            options.testReportPath = std::filesystem::path(arg.substr(14));
+            continue;
+        }
+        if (arg.starts_with("--dev-control=")) {
+            options.devControlUrl = std::string(arg.substr(14));
+            continue;
+        }
+        if (arg.starts_with("--dev-token=")) {
+            options.devControlToken = std::string(arg.substr(12));
+            continue;
+        }
+        if (arg.starts_with("--replay=")) {
+            options.replayRoot = std::filesystem::path(arg.substr(9));
+            continue;
+        }
+        if (arg == "--record-replay") {
+            options.replayRecord = true;
+            continue;
+        }
+        if (arg.starts_with("--two-worlds=")) {
+            options.twoWorldsRoot = std::filesystem::path(arg.substr(arg.find('=') + 1));
+            continue;
+        }
+        if (arg.starts_with("--replica-gate=")) {
+            options.replicaGateProject = std::filesystem::path(arg.substr(arg.find('=') + 1));
+            continue;
+        }
+        if (arg.starts_with("--two-worlds-out=")) {
+            options.twoWorldsOutDir = std::filesystem::path(arg.substr(arg.find('=') + 1));
+            continue;
+        }
+        if (arg.starts_with("--bench=")) {
+            options.benchRoot = std::filesystem::path(arg.substr(8));
+            continue;
+        }
+        if (arg.starts_with("--bench-repeats=")) {
+            if (!numericValue(arg.substr(16), options.benchRepeats)) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            continue;
+        }
+        // --- The graphics settings family (ADR 0044) -----------
+        //
+        // The outermost of the three layers: a preset, then the project file,
+        // then these. Each is an OVERRIDE rather than a value, so that "nobody
+        // said anything" and "somebody asked for the default" stay different
+        // answers -- see `project_config.h`.
+        // ADR 0091's proof instrument: every static part drawn with a surface
+        // shader the engine ships, in place of the built-in surface.
+        if (arg.starts_with("--force-surface=")) {
+            graphics.forcedSurface = std::string(arg.substr(arg.find('=') + 1));
+            continue;
+        }
+        if (arg.starts_with("--quality=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            const std::optional<engine::render::QualityLevel> level = engine::render::parseQuality(value);
+            if (!level.has_value()) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            graphics.quality = *level;
+            continue;
+        }
+        if (arg.starts_with("--render-scale=") || arg.starts_with("--shadow-distance=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            double parsed = 0.0;
+            if (!decimalValue(value, parsed) || parsed <= 0.0) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            if (arg.starts_with("--render-scale="))
+                graphics.renderScale = static_cast<engine::core::f32>(parsed);
+            else
+                graphics.shadowDistance = static_cast<engine::core::f32>(parsed);
+            continue;
+        }
+        if (arg.starts_with("--shadow-resolution=") || arg.starts_with("--shadow-cascades=") ||
+            arg.starts_with("--light-budget=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            engine::core::u64 parsed = 0;
+            // Zero is legal for two of the three -- no cascades is "the sun
+            // casts no shadow" and no lights is a scene lit by the sky alone --
+            // so only the resolution refuses it.
+            if (!numericValue(value, parsed) || (arg.starts_with("--shadow-resolution=") && parsed == 0)) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            if (arg.starts_with("--shadow-resolution="))
+                graphics.shadowResolution = static_cast<engine::core::u32>(parsed);
+            else if (arg.starts_with("--shadow-cascades="))
+                graphics.shadowCascades = static_cast<engine::core::u32>(parsed);
+            else
+                graphics.lightBudget = static_cast<engine::core::u32>(parsed);
+            continue;
+        }
+        // Both directions, because a preset is a starting point rather than a
+        // menu: somebody on `low` may still want bloom, and somebody measuring
+        // may want the frame held still with `--no-auto-exposure`.
+        if (arg == "--bloom" || arg == "--no-bloom") {
+            graphics.bloom = arg == "--bloom";
+            continue;
+        }
+        if (arg == "--contact-shadows" || arg == "--no-contact-shadows") {
+            graphics.contactShadows = arg == "--contact-shadows";
+            continue;
+        }
+        // A measurement's: a receiver under a caster told from one in
+        // the clear, said over the level -- off, to time what it costs; on,
+        // on a handheld, where the levels leave it off until it is measured.
+        if (arg == "--shadow-under-casters" || arg == "--no-shadow-under-casters") {
+            options.debugShadowUnderCasters = arg == "--shadow-under-casters" ? 1 : 0;
+            continue;
+        }
+        // What a room reflects and whether light bounces (ADRs 0202, 0203),
+        // each a level: what a measurement turns off and on by itself.
+        if (arg.starts_with("--reflections=") || arg.starts_with("--global-illumination=") ||
+            arg.starts_with("--screen-reflections=") || arg.starts_with("--screen-bounce=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            const std::array<std::string_view, 4> names{"low", "medium", "high", "ultra"};
+            bool known = false;
+            for (std::size_t index = 0; index < names.size(); ++index) {
+                if (names[index] != value)
+                    continue;
+                known = true;
+                if (arg.starts_with("--reflections="))
+                    graphics.reflections = static_cast<engine::core::i32>(index);
+                else if (arg.starts_with("--screen-reflections="))
+                    graphics.screenSpaceReflections = static_cast<engine::core::i32>(index);
+                else if (arg.starts_with("--screen-bounce="))
+                    graphics.screenSpaceBounce = static_cast<engine::core::i32>(index);
+                else
+                    graphics.globalIllumination = static_cast<engine::core::i32>(index);
+            }
+            if (!known) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            continue;
+        }
+        // The milliseconds of a frame the bounced light may take (ADR 0203).
+        if (arg.starts_with("--global-illumination-budget=")) {
+            char* end = nullptr;
+            const std::string text(arg.substr(arg.find('=') + 1));
+            const double number = std::strtod(text.c_str(), &end);
+            if (text.empty() || end != text.c_str() + text.size() || number < 0.25 || number > 16.0) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            graphics.globalIlluminationBudget = static_cast<engine::core::f32>(number);
+            continue;
+        }
+        if (arg == "--foliage-decals" || arg == "--no-foliage-decals") {
+            graphics.foliageDecals = arg == "--foliage-decals";
+            continue;
+        }
+        // `[graphics] terrain_surface`, as a flag (ADR 0175).
+        if (arg.starts_with("--terrain-surface=")) {
+            const std::string_view value = arg.substr(18);
+            using Surface = engine::render::GraphicsSettings::TerrainSurface;
+            if (value != "full" && value != "lean" && value != "fast" && value != "flat") {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            graphics.terrainSurface = value == "full"   ? Surface::Full
+                                      : value == "lean" ? Surface::Lean
+                                      : value == "fast" ? Surface::Fast
+                                                        : Surface::Flat;
+            continue;
+        }
+        // `[graphics] render_cap`, as a flag: zero is no cap.
+        if (arg.starts_with("--render-cap=")) {
+            engine::core::u64 lines = 0;
+            if (!numericValue(arg.substr(13), lines) || lines > 16384) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            graphics.renderCap = static_cast<engine::core::u32>(lines);
+            continue;
+        }
+        if (arg == "--ambient-occlusion" || arg == "--no-ambient-occlusion") {
+            graphics.ambientOcclusion = arg == "--ambient-occlusion";
+            continue;
+        }
+        if (arg == "--anti-aliasing" || arg == "--no-anti-aliasing") {
+            graphics.antiAliasing = arg == "--anti-aliasing" ? engine::render::AntiAliasingMode::Fxaa
+                                                             : engine::render::AntiAliasingMode::Off;
+            continue;
+        }
+        // **Which anti-aliasing, and how an upscale is done** (ADR 0158).
+        if (arg.starts_with("--anti-aliasing=") || arg.starts_with("--upscaling=") || arg.starts_with("--sharpness=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            bool known = false;
+            if (arg.starts_with("--anti-aliasing=")) {
+                const std::array<std::string_view, 4> names{"off", "fxaa", "smaa", "taa"};
+                for (std::size_t index = 0; index < names.size(); ++index) {
+                    if (names[index] == value) {
+                        graphics.antiAliasing = static_cast<engine::render::AntiAliasingMode>(index);
+                        known = true;
+                    }
+                }
+            }
+            else if (arg.starts_with("--upscaling=")) {
+                const std::array<std::string_view, 3> names{"none", "fsr1", "fsr2"};
+                for (std::size_t index = 0; index < names.size(); ++index) {
+                    if (names[index] == value) {
+                        graphics.upscaling = static_cast<engine::render::UpscalingMode>(index);
+                        known = true;
+                    }
+                }
+            }
+            else {
+                char* end = nullptr;
+                const std::string text(value);
+                const double number = std::strtod(text.c_str(), &end);
+                known = !text.empty() && end == text.c_str() + text.size() && number >= 0.0 && number <= 1.0;
+                if (known)
+                    graphics.sharpness = static_cast<engine::core::f32>(number);
+            }
+            if (!known) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            continue;
+        }
+        if (arg == "--auto-exposure" || arg == "--no-auto-exposure") {
+            graphics.autoExposure = arg == "--auto-exposure";
+            continue;
+        }
+        // A frame made between every two drawn (ADR 0165).
+        if (arg == "--frame-generation" || arg == "--no-frame-generation") {
+            graphics.frameGeneration = arg == "--frame-generation";
+            continue;
+        }
+
+        if (arg.starts_with("--editor-drive=")) {
+            options.editorDrive = std::filesystem::path(arg.substr(15));
+            continue;
+        }
+
+        if (arg.starts_with("--editor-shots=")) {
+            options.editorShots = std::filesystem::path(arg.substr(15));
+            continue;
+        }
+
+        if (arg.starts_with("--rhi=")) {
+            const std::optional<engine::rhi::BackendId> backend = engine::app::parseBackendId(arg.substr(6));
+            if (!backend.has_value()) {
+                const std::array<I18nArg, 2> unknownBackend{I18nArg{"name", arg.substr(6)},
+                                                            I18nArg{"available", engine::app::availableBackendNames()}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.unknown_backend"), unknownBackend);
+                return kExitUsage;
+            }
+            options.backend = *backend;
+            options.backendChosen = true;
+            continue;
+        }
+
+        const std::array<I18nArg, 1> unknownArgs{I18nArg{"option", arg}};
+        engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.unknown_option"), unknownArgs);
+        return kExitUsage;
+    }
+
+    // A replay answers to none of the checks below: it has no window, no frame
+    // budget and no backend, because it never opens a device at all. Validating
+    // it as though it were a session would demand `--headless --frames=N` for a
+    // mode in which neither means anything.
+    //
+    // `--partition` is the same shape one step along: it boots, writes the
+    // cache and returns without ever reaching the loop, so a frame budget would
+    // be a ceiling on a loop that does not run.
+    // `--launcher` is the third: it has its own loop, no world and no frame
+    // budget, and it ends when somebody chooses a project or closes the window.
+    // An import's numbers with nothing to import: `--import-terrain` names it.
+    if (options.terrainImport.has_value() && options.terrainImport->source.empty() &&
+        options.terrainImport->kind != engine::app::EngineOptions::TerrainImport::Kind::Hills) {
+        const std::array<I18nArg, 1> badValue{I18nArg{"option", "--import-terrain"}};
+        engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+        return kExitUsage;
+    }
+    if (!options.replayRoot.empty() || !options.benchRoot.empty() || !options.twoWorldsRoot.empty() ||
+        !options.replicaGateProject.empty() || options.partitionOnly || options.writeTypesOnly ||
+        options.checkScriptsOnly || options.launcher || options.terrainImport.has_value())
+        return kExitOk;
+
+    // A conformance run needs a ceiling for the same reason, and a generous one:
+    // it ends when the suite calls `Shutdown`, and the budget is only there so a
+    // suite that hangs fails rather than running until CI gives up.
+    if (!options.conformanceRoot.empty() && options.frames == 0)
+        options.frames = 100000;
+
+    // A dev session is driven by its dev server and ends when that server says
+    // so, so a frame budget would be a timer on a loop nobody asked to time.
+    // Requiring one for `--headless --dev-control` -- which is what the E2E
+    // gate runs -- would mean guessing how long a test needs.
+    if (!options.devControlUrl.empty() && options.headless && options.frames == 0)
+        return kExitOk;
+
+    // A headless run with no frame budget would never terminate and nothing
+    // could tell you why, since there is no window to close. Saying so beats
+    // hanging a CI job until its timeout.
+    // **A server is the one headless run that is meant to run until stopped**,
+    // so it is the one exception: it ends when its game calls `game:Shutdown()`
+    // -- a match over -- or when it is sent a stop (Ctrl+C, SIGTERM), which
+    // closes it the same way (`platform::installStopSignals`).
+    // (And a bake, which ends when its volumes are written -- or says why
+    // it could not.)
+    if (options.headless && options.frames == 0 && !options.bakeIrradiance &&
+        options.network.topology != engine::replication::Topology::Dedicated) {
+        engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.headless_needs_frames"));
+        return kExitUsage;
+    }
+
+    // A windowed frame renders into the swapchain, which has been presented and
+    // is gone before anything could read it back. Headless renders into a
+    // target the engine owns, which is why the harness uses it.
+    if (!options.screenshotPath.empty() && !options.headless) {
+        engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.screenshot_needs_headless"));
+        return kExitUsage;
+    }
+
+    // An editor with no window is not an editor. Refusing beats quietly
+    // starting a headless session that draws the world into a texture nobody
+    // will ever see. **Unless it was asked for its pictures**
+    // (`--editor-shots`): then the editor is drawn, interface and all, into
+    // the headless frame, and that frame is what is kept.
+    if (options.editor && options.headless && options.editorShots.empty()) {
+        engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.editor_needs_window"));
+        return kExitUsage;
+    }
+
+    // **`--record-replay` says HOW a replay is run, never where.** Given
+    // alone -- or with the folder as a word after it, which is what a hand
+    // types -- there is no replay to record, and what was left was a project
+    // path: the host started as a game, with a window, on a folder of
+    // scenarios. It happened once (2026-10-11) and is refused from here on.
+    if (options.replayRecord && options.replayRoot.empty()) {
+        engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.record_needs_replay"));
+        return kExitUsage;
+    }
+
+    // Only the capture backend records a stream. Asking any other one for it
+    // would produce an empty file, and an empty golden matches forever.
+    if (!options.capturePath.empty() && options.backend != engine::rhi::BackendId::Capture) {
+        engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.capture_needs_backend"));
+        return kExitUsage;
+    }
+
+    return kExitOk;
+}
+
+// **`--describe-rig=<model>`: what the role mapper makes of one file** (ADR
+// 0199). A body that moves wrongly under another rig's clips is read here
+// before anything is guessed at: each joint with the role its name gave it,
+// then the roles that found no joint and the joints that found no role. The
+// file is named by its own path and need not be in a project; a `.rig.json`
+// beside it counts, as it does when a game loads the model.
+[[nodiscard]] int describeRig(const std::filesystem::path& path)
+{
+    namespace retarget = engine::render::retarget;
+    const std::string shown = path.generic_string();
+    const std::array<I18nArg, 1> named{I18nArg{"path", shown}};
+
+    std::vector<std::byte> bytes;
+    if (!engine::platform::readFile(path, bytes)) {
+        engine::core::log(LogLevel::Error, ENG_TR("engine.rig.err.unreadable"), named);
+        return kExitScriptError;
+    }
+    engine::asset::GltfImportOptions options;
+    options.skeletonOnly = true;
+    engine::asset::Model model;
+    if (const std::optional<engine::core::EngineError> error =
+            engine::asset::importGltf(bytes, path.parent_path(), options, model)) {
+        engine::core::logText(LogLevel::Error, error->message, error->detail);
+        return kExitScriptError;
+    }
+    if (model.joints.empty()) {
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.no_skeleton"), named);
+        return kExitOk;
+    }
+
+    std::vector<retarget::RoleOverride> overrides;
+    std::filesystem::path beside = path;
+    beside.replace_extension(".rig.json");
+    if (std::vector<std::byte> text; engine::platform::readFile(beside, text)) {
+        const std::string besideShown = beside.generic_string();
+        std::string reason;
+        if (std::optional<std::vector<retarget::RoleOverride>> read = retarget::readRigRoles(
+                std::string_view(reinterpret_cast<const char*>(text.data()), text.size()), &reason)) {
+            overrides = std::move(*read);
+            const std::array<I18nArg, 1> from{I18nArg{"path", besideShown}};
+            engine::core::log(LogLevel::Info, ENG_TR("engine.rig.roles_file"), from);
+        }
+        else {
+            const std::array<I18nArg, 2> failed{I18nArg{"path", besideShown}, I18nArg{"reason", reason}};
+            engine::core::log(LogLevel::Warn, ENG_TR("asset.rig.err.unreadable"), failed);
+        }
+    }
+
+    const retarget::RigRoles roles = retarget::assignRoles(model.joints, overrides);
+
+    std::string clips;
+    for (const engine::asset::AnimationClip& clip : model.clips) {
+        if (!clips.empty())
+            clips += ", ";
+        clips += clip.name;
+    }
+    const std::array<I18nArg, 3> summary{I18nArg{"path", shown},
+                                         I18nArg{"joints", static_cast<engine::core::i64>(model.joints.size())},
+                                         I18nArg{"clips", static_cast<engine::core::i64>(model.clips.size())}};
+    engine::core::log(LogLevel::Info, ENG_TR("engine.rig.summary"), summary);
+    if (!clips.empty()) {
+        const std::array<I18nArg, 1> listed{I18nArg{"clips", clips}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.clips"), listed);
+    }
+
+    std::string unassigned;
+    for (engine::core::usize joint = 0; joint < model.joints.size(); ++joint) {
+        const engine::asset::Joint& bone = model.joints[joint];
+        const std::string_view parent = bone.parent < joint ? std::string_view(model.joints[bone.parent].name) : "-";
+        const retarget::Role role = roles.ofJoint[joint];
+        if (role == retarget::Role::None) {
+            const std::array<I18nArg, 2> line{I18nArg{"joint", bone.name}, I18nArg{"parent", parent}};
+            engine::core::log(LogLevel::Info, ENG_TR("engine.rig.joint_no_role"), line);
+            if (!unassigned.empty())
+                unassigned += ", ";
+            unassigned += bone.name;
+            continue;
+        }
+        const std::array<I18nArg, 3> line{I18nArg{"joint", bone.name}, I18nArg{"parent", parent},
+                                          I18nArg{"role", retarget::roleName(role)}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.joint"), line);
+    }
+
+    std::string missing;
+    for (engine::core::usize role = 1; role < retarget::RoleCount; ++role) {
+        if (roles.jointOf[role] >= 0)
+            continue;
+        if (!missing.empty())
+            missing += ", ";
+        missing += retarget::roleName(static_cast<retarget::Role>(role));
+    }
+    if (missing.empty()) {
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.roles_all_found"));
+    }
+    else {
+        const std::array<I18nArg, 1> listed{I18nArg{"roles", missing}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.roles_missing"), listed);
+    }
+    if (unassigned.empty()) {
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.joints_all_given"));
+    }
+    else {
+        const std::array<I18nArg, 1> listed{I18nArg{"joints", unassigned}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.rig.joints_without_role"), listed);
+    }
+    engine::core::log(LogLevel::Info, roles.body() ? ENG_TR("engine.rig.is_body") : ENG_TR("engine.rig.not_body"));
+    return kExitOk;
+}
+
+} // namespace
+
+static int hostMain(int argc, char** argv)
+{
+#if defined(_WIN32) && defined(ENG_GUI_SUBSYSTEM)
+    // A Windows-subsystem program has no console of its own. Started from a
+    // terminal, it borrows that one, so a person who typed its name still sees
+    // what it says; started with its streams redirected -- a pipe, a test --
+    // it already has them and is left alone.
+    if (GetStdHandle(STD_OUTPUT_HANDLE) == nullptr && AttachConsole(ATTACH_PARENT_PROCESS)) {
+        FILE* stream = nullptr;
+        (void)freopen_s(&stream, "CONOUT$", "w", stdout);
+        (void)freopen_s(&stream, "CONOUT$", "w", stderr);
+    }
+#endif
+    installConsoleLogSink();
+    {
+        // From the first instruction a failure is a window's or it is not;
+        // the options, once read, say it properly.
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        report.tool = runsWithNoWindow(argc, argv);
+#if !defined(__ANDROID__)
+        report.windowed = !report.tool;
+#endif
+    }
+    // **The first line, before anything that can fail**: what this
+    // is, which process, and what it was asked -- facts, so it needs no
+    // catalogue, which is the first thing below that can be missing. Kept
+    // for the log and not printed: a tool that reads this program's output
+    // reads what it asked for, and this is nobody's answer. A fault from
+    // here on leaves its dump in the start folder until the run knows its
+    // own.
+    {
+        std::string first = std::string(ENG_BRAND_SHORT) + " " + ENG_VERSION_STRING + " " + ENG_PROFILE_NAME + " | " +
+                            std::to_string(engine::platform::processId()) + " |";
+        for (int index = 0; index < argc; ++index)
+            first += std::string(" ") + argv[index];
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        report.early.push_back(engine::core::formatLogLine(LogLevel::Info, first));
+    }
+    if (const std::filesystem::path folder = startFolder(); !folder.empty())
+        (void)engine::platform::installCrashHandler(folder);
+    // After the report and the log's own state exist, so both outlive it:
+    // this runs while the program is taken down, in the reverse of the order
+    // things were made. (Writing nothing is what makes the log's state now.)
+    engine::core::appendToLogFile(std::string_view{});
+    (void)std::atexit(&onProcessExit);
+    // Before anything that can run for long: a stop asked for from outside
+    // closes the engine as `game:Shutdown()` would, close handlers and all.
+    engine::platform::installStopSignals();
+
+    const auto& paths = engine::platform::paths();
+    const auto catalogLoad = engine::core::engineCatalog().loadFromFile(paths.contentDir / "i18n" / "en.json");
+    if (!catalogLoad) {
+        reportCatalogFailure(catalogLoad.diagnostic);
+        return kExitNoCatalog;
+    }
+    {
+        // What an exit nobody announced will say, while there are words.
+        const engine::core::Catalog& text = engine::core::engineCatalog();
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        report.exitTitle = text.format(ENG_TR("engine.start.err.title"));
+        report.exitText = text.format(ENG_TR("engine.start.err.exit_called"));
+        report.exitClose = text.format(ENG_TR("engine.start.err.close"));
+    }
+
+    std::vector<std::string_view> args;
+    args.reserve(static_cast<std::size_t>(argc > 1 ? argc - 1 : 0));
+    for (int i = 1; i < argc; ++i)
+        args.emplace_back(argv[i]);
+
+    // **A packaged game is a folder that runs**. `ludwerk build`
+    // produces `<Game>.exe` beside a `game/` directory, and the player is this
+    // same host: given no script, it mounts the project next to itself. That is
+    // the whole of what makes the artifact double-clickable, and it is a
+    // convention rather than a configuration file, because a configuration file
+    // would be a second thing that can go missing.
+    const std::filesystem::path packagedProject = engine::platform::paths().executableDir / "game";
+    std::error_code packagedError;
+    const bool hasPackagedProject = std::filesystem::is_directory(packagedProject, packagedError);
+
+#if defined(__ANDROID__)
+    // **A phone's launch arguments are the project's to allow** (ADR 0171).
+    // The activity hands over what an intent's `args` extra said -- how a
+    // measurement is run on a phone without a build for every setting -- and
+    // any app on the phone can send that intent. So they are read only by a
+    // game whose project file says `[debug] launch_arguments = true`, which a
+    // game that ships does not.
+    if (!args.empty() &&
+        !engine::app::launchArgumentsAllowed(hasPackagedProject ? packagedProject : std::filesystem::path{})) {
+        engine::core::log(LogLevel::Warn, ENG_TR("engine.cli.warn.launch_arguments_refused"));
+        args.clear();
+        argc = 1;
+    }
+#endif
+
+    // **No project is no longer a usage error** (ADR 0055): given nothing at all,
+    // the host shows the project browser, which is what makes the engine
+    // something a person can double-click. Decided here and DISPATCHED at the
+    // bottom, so the launcher gets the log file and the crash handler like every
+    // other session -- a launcher whose failure went only to a console nobody
+    // opened would be the hardest thing here to diagnose.
+    //
+    // A host given a path that is not a project still refuses exactly as it did.
+    // This is the case where there is no path, not a fallback that swallows a
+    // bad one.
+    const bool noProjectGiven = args.empty() && !hasPackagedProject;
+
+    if (!args.empty() && args[0] == "--version") {
+        printVersion();
+        return kExitOk;
+    }
+
+    // **Whether this player reads a mesh format**, asked by `ludwerk
+    // build` of the player it is about to package, with the format its asset
+    // compiler writes: an answer in the exit code, so no text is printed.
+    if (!args.empty() && args[0].starts_with("--reads-mesh-format=")) {
+        const std::string_view number = args[0].substr(std::string_view{"--reads-mesh-format="}.size());
+        engine::core::u32 format = 0;
+        const auto parsed = std::from_chars(number.data(), number.data() + number.size(), format);
+        const bool reads = parsed.ec == std::errc{} && parsed.ptr == number.data() + number.size() &&
+                           format >= engine::asset::MeshFormatOldest && format <= engine::asset::MeshFormatVersion;
+        return reads ? kExitOk : kExitUsage;
+    }
+
+    if (!args.empty() && args[0] == "--help") {
+        engine::core::log(LogLevel::Info, ENG_TR("engine.cli.usage"));
+        return kExitOk;
+    }
+
+    // **A build step, and nothing else** (ADR 0112): `ludwerk build` hands the
+    // laid-out game here so its scripts are compiled by this engine's compiler
+    // with the options it runs them with. No window, no world.
+    // The scripts a scene, a stamp or `global.json` carries, in a staged
+    // content directory `ludwerk build` is about to pack.
+    // **`ludwerk check`'s side pass** (ADR 0138 §8): every script a project
+    // carries, linted for the side it runs on. Warnings, so the exit is clean.
+    if (args.size() == 2 && args[0] == "--check-sides") {
+        const engine::core::usize found = engine::app::checkProjectSides(std::filesystem::path(args[1]));
+        const std::array<I18nArg, 1> counted{I18nArg{"count", static_cast<engine::core::i64>(found)}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.cli.sides_checked"), counted);
+        return kExitOk;
+    }
+    if (args.size() == 1 && args[0].starts_with("--describe-rig="))
+        return describeRig(std::filesystem::path(args[0].substr(std::string_view{"--describe-rig="}.size())));
+    if (args.size() == 2 && args[0] == "--compile-content-scripts") {
+        engine::app::ScriptPackageReport report;
+        if (!engine::app::compileContentScripts(std::filesystem::path(args[1]), report)) {
+            const std::array<I18nArg, 2> failed{I18nArg{"path", report.failed}, I18nArg{"message", report.message}};
+            engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.compile_script"), failed);
+            return kExitScriptError;
+        }
+        const std::array<I18nArg, 1> compiled{I18nArg{"count", static_cast<engine::core::i64>(report.compiled)}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.cli.compiled_scripts"), compiled);
+        return kExitOk;
+    }
+    if (args.size() == 2 && args[0] == "--compile-scripts") {
+        engine::app::ScriptPackageReport report;
+        if (!engine::app::compileGameScripts(std::filesystem::path(args[1]), report)) {
+            const std::array<I18nArg, 2> failed{I18nArg{"path", report.failed}, I18nArg{"message", report.message}};
+            engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.compile_script"), failed);
+            return kExitScriptError;
+        }
+        const std::array<I18nArg, 1> compiled{I18nArg{"count", static_cast<engine::core::i64>(report.compiled)}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.cli.compiled_scripts"), compiled);
+        return kExitOk;
+    }
+
+    engine::app::EngineOptions options;
+    for (int index = 1; index < argc; ++index)
+        options.arguments.emplace_back(argv[index]);
+    if (hasPackagedProject)
+        options.scriptPath = packagedProject;
+    engine::app::GraphicsOverrides graphicsOverrides;
+    bool sizeFromFlags = false;
+    const int usageExit = parseOptions(args, options, graphicsOverrides, sizeFromFlags);
+    {
+        // From here a failure is a window's or it is not.
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        report.windowed = !options.headless;
+    }
+    if (usageExit != kExitOk)
+        return usageExit;
+    if (noProjectGiven)
+        options.launcher = true;
+
+    // The project file, and the three-layer resolution it completes. A bare
+    // script has no project and gets the preset plus the flags, which is the
+    // same code path with an empty root.
+    std::string playing;
+    std::filesystem::path gameHome;
+    {
+        std::error_code projectError;
+        const bool isProject =
+            !options.scriptPath.empty() && std::filesystem::is_directory(options.scriptPath, projectError);
+        std::string configDiagnostic;
+        const engine::app::ProjectConfig config = engine::app::loadProjectConfig(
+            isProject ? options.scriptPath : std::filesystem::path{}, graphicsOverrides, &configDiagnostic);
+        // What is running, for the record of this run (ADR 0187).
+        if (isProject) {
+            playing = config.name.empty() ? config.id : config.name;
+            if (!config.version.empty())
+                playing += " " + config.version;
+        }
+
+        if (!configDiagnostic.empty()) {
+            // Named and survivable, like a content pack that will not open: a
+            // malformed project file leaves the engine's own defaults standing
+            // rather than refusing to start, and says which line stopped it.
+            const std::array<I18nArg, 1> configArgs{I18nArg{"reason", configDiagnostic}};
+            engine::core::log(LogLevel::Warn, ENG_TR("app.warn.project_config"), configArgs);
+        }
+
+        options.graphics = config.graphics;
+        // The measuring keys (ADR 0171): the flag beats the file, and what the
+        // file hides is added to what the flag does.
+        options.graphics.measuredShadowTaps =
+            options.debugShadowTaps != 0 ? options.debugShadowTaps : config.shadowTaps;
+        options.graphics.measuredShadowUnderCasters = options.debugShadowUnderCasters;
+        if (options.debugShadowUnderCasters >= 0)
+            options.graphics.shadowUnderCasters = options.debugShadowUnderCasters != 0;
+        options.graphics = engine::render::clampSettings(options.graphics);
+        options.indirectBudgetKept = graphicsOverrides.globalIlluminationBudget.has_value();
+        options.gpuPassTimes = options.gpuPassTimes || config.gpuPassTimes;
+        options.logUiTouches = options.logUiTouches || config.logUiTouches;
+        options.astcTextures = options.astcTextures && config.astcTextures;
+        if (!config.debugHide.empty())
+            options.debugHide += (options.debugHide.empty() ? "" : ",") + config.debugHide;
+        if (!config.debugSkip.empty())
+            options.debugSkip += (options.debugSkip.empty() ? "" : ",") + config.debugSkip;
+        options.graphics.measuredSkip = engine::app::parseDebugSkip(options.debugSkip);
+        options.graphicsModel = config.graphicsModel;
+        options.rememberPlayerSettings = config.rememberPlayerSettings;
+        options.defaultLocale = config.defaultLocale;
+        options.pacing = engine::app::pacingWith(config.pacing, graphicsOverrides);
+        options.windowTitle = config.windowTitle;
+        // The project's, unless the run was told one.
+        if (!options.startupSceneFromFlag)
+            options.startupScene = config.scene;
+        options.defaultServer = config.networkServer;
+        options.enabledIntegrations = config.enabledIntegrations;
+        options.integrationConfigurations = config.integrationConfigurations;
+        options.platformServices = config.platformServices;
+        // The run's own relay wins over the project's.
+        if (options.defaultRelay.empty())
+            options.defaultRelay = config.networkRelay;
+        options.network.timeoutMs = config.networkTimeoutSeconds * 1000u;
+        options.maxViewsPerFrame = config.maxViewsPerFrame;
+        options.maxHighlights = config.maxHighlights;
+        options.foliageDensity = config.foliageDensity;
+        options.foliageShadowDistance = config.foliageShadowDistance;
+        options.maxViewResolution = config.maxViewResolution;
+        options.maxSubWorlds = config.maxSubWorlds;
+
+        // **Where a game's saves go** (ADR 0111): a player's own folder, named
+        // by the game's company and name, for the PACKAGED game; the project's
+        // `.engine/saves/` for every run of a project that is being made --
+        // the editor's Play, `ludwerk dev`, a match's windows (one folder
+        // each, so four players do not share one) and a project handed to the
+        // host by hand -- so a test run never touches a real player's
+        // saves; and a folder of its own for a conformance run.
+        options.saveMaxSlotBytes = config.saveMaxSlotBytes;
+        options.saveMaxSlots = config.saveMaxSlots;
+        options.sceneCloseGrace = config.sceneCloseGrace;
+        options.scriptMemoryMb = config.scriptMemoryMb;
+        // The flag beats the file, as every other one does.
+        if (options.frameReportSeconds <= 0.0)
+            options.frameReportSeconds = config.frameReportSeconds;
+        // A name that is no key is no key: the overlay is then opened from
+        // the menu alone, and every key is the game's.
+        options.overlayKey = engine::platform::keyFromName(config.overlayKey);
+        options.developerWarnings =
+            isProject && (options.editor || !options.devControlUrl.empty() || !options.windowLabel.empty());
+        // And a match hosted here says what its replicas will not be sent
+        // (protocol 44): the command line's match and one a script hosts alike.
+        options.network.developer = options.developerWarnings;
+        if (options.saveDirectoryGiven) {
+            // `--saves=DIR` said where.
+        }
+        else if (!options.conformanceRoot.empty()) {
+            std::error_code tempError;
+            options.saveDirectory = std::filesystem::temp_directory_path(tempError) /
+                                    ("engine-conformance-saves-" + std::to_string(engine::platform::nowNs()));
+        }
+        else if (std::error_code sameError;
+                 isProject &&
+                 engine::app::saveHomeFor(
+                     hasPackagedProject && std::filesystem::equivalent(options.scriptPath, packagedProject, sameError),
+                     options.editor || !options.devControlUrl.empty() || !options.windowLabel.empty()) ==
+                     engine::app::SaveHome::Project) {
+            options.saveDirectory = options.scriptPath / ".engine" / "saves";
+            if (!options.windowLabel.empty()) {
+                std::string folder = options.windowLabel;
+                for (char& c : folder) {
+                    const bool plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+                    c = plain ? c : '-';
+                }
+                options.saveDirectory /= folder;
+            }
+        }
+        else if (isProject) {
+            const std::string game = config.name.empty() ? config.id : config.name;
+            if (const std::filesystem::path home =
+                    engine::platform::preferencePath(config.company.empty() ? game : config.company, game);
+                !home.empty()) {
+                options.saveDirectory = home / "saves";
+                // The game's own folder, for what else of it has to be
+                // written somewhere a player may write (its log, below).
+                gameHome = home;
+            }
+        }
+        // A server package, run with no posture of its own: what `--serve`
+        // would have been, on the default port. A posture on the command line
+        // still wins -- the package is also something a person can `--host` --
+        // and a build step (`--partition`, which `ludwerk build` runs on the
+        // package itself) is not a session and serves nothing.
+        const bool buildStep = options.partitionOnly || options.writeTypesOnly || options.checkScriptsOnly ||
+                               !options.saveScenePath.empty() || options.terrainImport.has_value();
+        if (config.serverRole && options.network.topology == engine::replication::Topology::Solo && !options.editor &&
+            !buildStep) {
+            options.network.topology = engine::replication::Topology::Dedicated;
+            options.network.port = kDefaultGamePort;
+            options.headless = true;
+        }
+        // The flag beats everything: a server and a player started from the
+        // same game can be told apart. A dedicated server with no flag
+        // keeps its own, beside the player's, rather than in it.
+        if (!options.saveDirectoryGiven && options.network.topology == engine::replication::Topology::Dedicated &&
+            !options.saveDirectory.empty() && options.conformanceRoot.empty()) {
+            options.saveDirectory = options.saveDirectory.parent_path() / "saves-server";
+        }
+        if (!config.icon.empty())
+            options.projectIcon = options.scriptPath / std::filesystem::path(config.icon);
+        options.fullscreen = engine::app::startsFullscreen(config);
+        options.resizable = config.resizable;
+
+        // Before any window exists, because the shell reads a process's
+        // identity when it first shows one -- and a pinned shortcut that lost
+        // its icon is not something a later call can undo.
+        engine::platform::setApplicationId(config.id);
+
+        if (!sizeFromFlags && config.windowWidth > 0 && config.windowHeight > 0) {
+            options.width = config.windowWidth;
+            options.height = config.windowHeight;
+        }
+    }
+
+    // The two artifacts `architecture.md` §app has promised since the bootstrap, and the
+    // reason they are HERE: `core` is L0 and cannot ask where a file belongs,
+    // `platform::paths()` is L1, and this is the layer that sees both. The
+    // directory is the process's own, so `run.bat` leaves them beside the
+    // example a person was running.
+    //
+    // Neither failure is fatal. An engine that refuses to start because it could
+    // not open a log is an engine that a read-only directory takes away
+    // entirely, which is a worse trade than losing the log.
+#if defined(__ANDROID__) || ENG_PLATFORM_UWP
+    // An app's working directory is `/`, which it may not write. **Its
+    // external files folder first** -- `Android/data/<id>/files`,
+    // which a tester opens with a file manager or a cable and sends from --
+    // and its internal storage, which only `adb` reads, where there is none.
+    const engine::platform::Paths& places = engine::platform::paths();
+    std::filesystem::path artifactDir = !places.reportDir.empty() ? places.reportDir
+                                        : !places.userDir.empty() ? places.userDir
+                                                                  : std::filesystem::current_path();
+#else
+    std::filesystem::path artifactDir = std::filesystem::current_path();
+#endif
+    // **The run before keeps its log**: the log was opened over
+    // itself, so the run that crashed lost its log to the run started to see
+    // why. One generation, beside it.
+    const auto openRotated = [](const std::filesystem::path& path) {
+        std::error_code error;
+        if (std::filesystem::exists(path, error)) {
+            std::filesystem::path previous = path;
+            previous.replace_filename(path.stem().string() + ".previous" + path.extension().string());
+            std::filesystem::rename(path, previous, error);
+        }
+        return engine::core::openLogFile(path);
+    };
+    std::filesystem::path logPath = options.logFile.empty() ? artifactDir / "engine.log" : options.logFile;
+    // **A second run from the same folder writes the log beside the first's**
+    // (`openLogFileBeside`), rather than taking it from the run still writing it.
+    const auto openBeside = [&logPath]() {
+        const std::optional<std::filesystem::path> opened = engine::core::openLogFileBeside(logPath);
+        if (opened.has_value())
+            logPath = *opened;
+        return opened.has_value();
+    };
+    bool logOpened = options.logFile.empty() ? openBeside() : openRotated(logPath);
+    // **Where it can write, when it cannot write here**: a game
+    // installed where a player may not write -- Program Files -- had no log
+    // and no crash report at all. Its own folder then, as a phone's already is.
+    // **And a game's is the game's own folder**: it was the engine's
+    // -- a shipped game's log under a name its player has never heard, in a
+    // folder every other game made with the engine wrote to as well.
+    if (!logOpened && options.logFile.empty() && (!gameHome.empty() || !engine::platform::paths().userDir.empty())) {
+        std::error_code error;
+        const std::filesystem::path fallback =
+            (!gameHome.empty() ? gameHome : engine::platform::paths().userDir) / "logs";
+        std::filesystem::create_directories(fallback, error);
+        artifactDir = fallback;
+        logPath = artifactDir / "engine.log";
+        logOpened = openBeside();
+    }
+    const bool handlerInstalled = engine::platform::installCrashHandler(artifactDir);
+    {
+        // **The log begins with what was said before it could be opened**:
+        // the first line, the options' complaints, the project file's.
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        if (logOpened) {
+            std::string said;
+            for (const std::string& line : report.early)
+                said += line;
+            engine::core::appendToLogFile(said);
+            report.logOpen = true;
+            report.early.clear();
+            report.early.shrink_to_fit();
+        }
+    }
+    // **A fault says so on the screen**, where there is a screen and
+    // nobody reading the output: a game opened by a double click that died on
+    // a fault closed with nothing, its report in a folder its player had
+    // never heard of.
+    if (handlerInstalled && !options.headless && engine::platform::outputGoesUnread()) {
+        const engine::core::Catalog& text = engine::core::engineCatalog();
+        const std::array<I18nArg, 1> crashedArgs{I18nArg{"folder", artifactDir.string()}};
+        engine::platform::setCrashNotice(text.format(ENG_TR("engine.crash.title")),
+                                         text.format(ENG_TR("engine.crash.text"), crashedArgs));
+    }
+
+    // **What the run before this one left** (ADR 0187), read before this run
+    // writes anything of its own beside it: how it ended, and its report --
+    // which `RunService:GetLastRun` hands a game. And this run's own record
+    // begins, saying it is running until `main` says it ended.
+    if (logOpened) {
+        // Where the crash handler writes, which is not always where the log
+        // is: `--log-file` names the log alone.
+        const std::filesystem::path besideLog = artifactDir;
+        (void)engine::core::beginRun(engine::core::RunFiles{
+                                         .log = logPath,
+                                         .crashNoteOf =
+                                             [besideLog](engine::core::u32 process) {
+                                                 return engine::platform::crashNotePathOf(besideLog, process);
+                                             },
+                                         .crashDumpOf =
+                                             [besideLog](engine::core::u32 process) {
+                                                 return engine::platform::crashDumpPathOf(besideLog, process);
+                                             },
+                                     },
+                                     engine::core::RunIdentity{
+                                         .process = static_cast<engine::core::u32>(engine::platform::processId()),
+                                         .game = playing.empty() ? options.scriptPath.filename().string() : playing,
+                                         .engine = std::string(ENG_BRAND_SHORT) + " " + ENG_VERSION_STRING,
+                                         .platform =
+#if defined(__ANDROID__)
+                                             "Android",
+#elif defined(_WIN32)
+                                             "Windows",
+#elif defined(__APPLE__)
+                                             "macOS",
+#else
+                                             "Linux",
+#endif
+                                     });
+    }
+
+    const std::array<I18nArg, 1> bootArgs{I18nArg{"version", ENG_VERSION_STRING}};
+    engine::core::log(LogLevel::Info, ENG_TR("engine.boot.hello"), bootArgs);
+
+    // Printed, not assumed. The whole failure this closes is a human reporting a
+    // crash from memory, and a log whose path nobody knows is a log nobody
+    // sends. It goes out at Info so it is in the log file as well -- the first
+    // line of which then says where the log file is, which sounds circular and
+    // is not: the copy in the terminal is the one a person reads.
+    if (logOpened) {
+        const std::array<I18nArg, 1> logArgs{I18nArg{"path", logPath.string()}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.boot.info.log_file"), logArgs);
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        report.logPath = logPath.string();
+    }
+    else {
+        const std::array<I18nArg, 1> logArgs{I18nArg{"path", logPath.string()}};
+        engine::core::log(LogLevel::Warn, ENG_TR("engine.boot.warn.log_file_failed"), logArgs);
+    }
+    if (handlerInstalled) {
+        const std::array<I18nArg, 1> crashArgs{I18nArg{"path", engine::platform::crashArtifactPath().string()}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.boot.info.crash_artifact"), crashArgs);
+    }
+
+    if (options.faultOnPurpose) {
+        // Through a pointer the compiler cannot see through, so the write is
+        // made and the fault is the system's: what a real one is.
+        static volatile int* const nowhere = nullptr;
+        *nowhere = 1;
+    }
+
+    if (!options.benchRoot.empty()) {
+        // A benchmark is a measuring run with no window: see
+        // `platform::raiseProcessPriority` for what that protects it from.
+        if (engine::platform::raiseProcessPriority())
+            engine::core::log(LogLevel::Info, ENG_TR("engine.info.priority_raised"));
+        std::vector<engine::app::BenchResult> results;
+        if (const std::optional<engine::core::EngineError> error =
+                engine::app::runBenchmarks(options.benchRoot, options.benchRepeats, results)) {
+            engine::core::logText(LogLevel::Error, error->message);
+            return kExitScriptError;
+        }
+        return kExitOk;
+    }
+
+    if (!options.twoWorldsRoot.empty()) {
+        if (const std::optional<engine::core::EngineError> error = engine::app::runTwoWorldsGate({
+                .root = options.twoWorldsRoot,
+                .outputDir = options.twoWorldsOutDir,
+                .backend = options.backend,
+                .ticks = options.frames == 0 ? 8 : options.frames,
+                .width = options.width,
+                .height = options.height,
+            })) {
+            engine::core::logText(LogLevel::Error, error->message);
+
+            // Same mapping the session path uses, and for the same reason: a
+            // runner with no driver has not found anything about the seam.
+            if (error->key.hash == ENG_TR("rhi.err.device_create_failed").hash)
+                return kExitNoGraphicsDevice;
+            return kExitScriptError;
+        }
+        return kExitOk;
+    }
+
+    if (!options.replicaGateProject.empty()) {
+        if (const std::optional<engine::core::EngineError> error = engine::app::runReplicaGate({
+                .project = options.replicaGateProject,
+                .outputDir = options.twoWorldsOutDir,
+                .backend = options.backend,
+                .ticks = options.frames == 0 ? 240 : options.frames,
+                .width = options.width,
+                .height = options.height,
+            })) {
+            engine::core::logText(LogLevel::Error, error->message);
+            if (error->key.hash == ENG_TR("rhi.err.device_create_failed").hash)
+                return kExitNoGraphicsDevice;
+            return kExitScriptError;
+        }
+        return kExitOk;
+    }
+
+    if (!options.replayRoot.empty()) {
+        if (const std::optional<engine::core::EngineError> error =
+                engine::app::runReplayGate(options.replayRoot, options.replayRecord)) {
+            engine::core::logText(LogLevel::Error, error->message);
+            return kExitScriptError;
+        }
+        return kExitOk;
+    }
+
+    if (options.launcher) {
+        if (const std::optional<engine::core::EngineError> error = engine::app::runLauncher(options)) {
+            engine::core::logText(LogLevel::Error, error->message);
+            if (!error->detail.empty())
+                engine::core::logText(LogLevel::Error, error->detail);
+            if (error->key.hash == ENG_TR("rhi.err.device_create_failed").hash)
+                return kExitNoGraphicsDevice;
+            return kExitScriptError;
+        }
+        return kExitOk;
+    }
+
+    // **A dedicated server opens no graphics device** (ADR 0105, ADR 0107: a
+    // server draws nothing). It used to open the ordinary one and render every
+    // frame offscreen for nobody -- and on a Linux host with no GPU, the
+    // machine a server most often runs on, that device is Mesa's software
+    // rasteriser, which crashed the server a few seconds after it started. The
+    // no-op backend hands out handles and draws nothing; `--rhi=` still wins.
+    if (options.network.topology == engine::replication::Topology::Dedicated && options.headless &&
+        !options.backendChosen) {
+        if (const std::optional<engine::rhi::BackendId> none = engine::app::parseBackendId("null"); none.has_value())
+            options.backend = *none;
+    }
+
+    // **Nor does an import**: it lays ground and saves it, and draws
+    // none of it. With the ordinary device it could not run where there is no
+    // GPU -- a build machine, CI's Linux runner -- and `ludwerk terrain
+    // import` there said that no graphics device could be created.
+    if (options.terrainImport.has_value() && !options.backendChosen) {
+        if (const std::optional<engine::rhi::BackendId> none = engine::app::parseBackendId("null"); none.has_value())
+            options.backend = *none;
+    }
+
+    // **Nor checking a project's scripts, nor writing its tree as types**:
+    // both read a scene and draw none of it. `ludwerk check` runs
+    // them, and a project's own CI is a machine with no GPU -- where
+    // `--check-scripts` ended with "no graphics device" and this
+    // repository's CI went red on the gate test of it, and `--write-types`
+    // had failed there without a word since it was written.
+    if ((options.checkScriptsOnly || options.writeTypesOnly) && !options.backendChosen) {
+        if (const std::optional<engine::rhi::BackendId> none = engine::app::parseBackendId("null"); none.has_value())
+            options.backend = *none;
+    }
+
+    if (const std::optional<engine::core::EngineError> error = engine::app::run(options)) {
+        engine::core::logText(LogLevel::Error, error->message);
+        if (!error->detail.empty())
+            engine::core::logText(LogLevel::Error, error->detail);
+        // **A server that did not start says so where it can be read** (the
+        // multiplayer smoothness work): opened with a double click, its
+        // console closes as it exits, and the reason with it.
+        if (options.network.topology == engine::replication::Topology::Dedicated &&
+            engine::platform::consoleClosesWithProcess()) {
+            const engine::core::Catalog& text = engine::core::engineCatalog();
+            (void)engine::platform::askChoice(nullptr, text.format(ENG_TR("engine.server.err.title")), error->message,
+                                              {text.format(ENG_TR("engine.server.ok"))});
+            StartReport& report = startReport();
+            const std::lock_guard lock(report.guard);
+            report.told = true;
+        }
+        if (error->key.hash == ENG_TR("engine.err.device_lost").hash)
+            return kExitDeviceLost;
+
+        // The key IS the identity of an engine error (ADR 0019), so matching on
+        // it is the intended way to tell one failure from another -- no second
+        // channel, no parsing of prose that translation would break.
+        if (error->key.hash == ENG_TR("rhi.err.device_create_failed").hash)
+            return kExitNoGraphicsDevice;
+
+        return kExitScriptError;
+    }
+
+    return kExitOk;
+}
+
+int engineHostMain(int argc, char** argv)
+{
+    // Before the first line is said: a gate reads the whole of a run by keys.
+    if (engine::platform::environmentFlag("ENG_LOG_KEYS"))
+        engine::core::setLogKeys(true);
+    const int code = hostMain(argc, argv);
+    {
+        StartReport& report = startReport();
+        const std::lock_guard lock(report.guard);
+        report.ended = true;
+    }
+    // **An end before the first frame is written down, whatever its code**:
+    // a window that never showed anything and a process that answered
+    // "fine" is the one start nobody can tell from a game that did not open.
+    // A line, not a dialog -- what ends a run that early with no error is its
+    // player closing it, or its own script.
+    if (code == kExitOk && !engine::core::firstFrameShown()) {
+        bool windowed = false;
+        {
+            StartReport& report = startReport();
+            const std::lock_guard lock(report.guard);
+            windowed = report.windowed && report.logOpen && !report.tool;
+        }
+        if (windowed)
+            engine::core::log(LogLevel::Info, ENG_TR("engine.start.info.ended_before_first_frame"));
+    }
+    // It ended because it was asked to, whatever it has to say about how: the
+    // record that the next run reads says so (ADR 0187). A run that never gets
+    // here is one that did not end well.
+    engine::core::endRun();
+    sayStartFailure(code);
+    return code;
+}
+
+#if !ENG_PLATFORM_UWP
+int main(int argc, char** argv)
+{
+    return engineHostMain(argc, argv);
+}
+#endif

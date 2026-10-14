@@ -1,0 +1,3489 @@
+// The hand-written half of `ui`'s reflection (architecture.md §4).
+//
+// Forty-five properties across thirteen classes, and almost every one of them
+// stores a value and marks a layout dirty. The two that are not boilerplate are
+// worth finding: `AbsolutePosition` and `AbsoluteSize` have no setter at all,
+// because they are the solver's OUTPUT -- writing one would be arguing with the
+// layout rather than changing it.
+//
+// **The dirty marking is the design and not an optimisation.** A write that
+// changes what the solver would produce walks up to the nearest `ScreenGui` and
+// marks it; a purely visual write does not. That is what makes "a screen nothing
+// changed runs no solver" a fact rather than a hope, and it is why the
+// milestone's benchmark asserts ZERO solver invocations on an idle frame --
+// "about zero microseconds" would be a measurement of the clock rather than of
+// the engine.
+#include "engine/scene/world.h"
+#include "engine/ui/scene_types.h"
+#include "engine/ui/text_edit.h"
+#include "engine/ui/ui.h"
+
+// By a path relative to this file rather than through an include directory:
+// every module's generated header has the same name, so two of them on one
+// include path would resolve by search order. `scene`, `render` and `input` all
+// reach theirs the same way.
+#include <cmath>
+#include <limits>
+
+#include "../generated/class_descriptors.gen.h"
+
+namespace engine::ui {
+namespace native {
+namespace {
+
+using core::f32;
+using core::f64;
+using scene::Value;
+
+[[nodiscard]] bool isFinite(f64 value) noexcept
+{
+    return std::isfinite(value);
+}
+
+[[nodiscard]] bool isFinite(core::Vec2 value) noexcept
+{
+    return std::isfinite(value.x) && std::isfinite(value.y);
+}
+
+[[nodiscard]] bool isFinite(core::UDim value) noexcept
+{
+    return std::isfinite(value.scale) && std::isfinite(value.offset);
+}
+
+// Up the tree to the `ScreenGui` this element belongs to, marking it dirty.
+//
+// Walked rather than cached, and the walk is what makes a UI tree's depth the
+// cost of a layout-affecting write. Ten levels is a deep UI and ten parent
+// lookups is nothing; a cached pointer would be a second thing to invalidate on
+// every reparent, which is the bookkeeping that goes wrong quietly.
+//
+// An element outside any ScreenGui marks nothing, and that is correct: it is not
+// laid out, so there is no layout to redo.
+void markLayoutDirty(scene::World& world, core::InstanceId id)
+{
+    for (core::InstanceId current = id; current.valid(); current = world.parentOf(current)) {
+        if (scene::ScreenGuiComponent* screen = world.screenGuis().find(current); screen != nullptr) {
+            screen->layoutDirty = true;
+            return;
+        }
+    }
+}
+
+// An enum write, checked against the right enum AND against the item list, the
+// same way `input`'s is. The id comes from the generated header rather than from
+// a lookup by name: a property write should not pay a hash probe for a number
+// the generator already decided.
+[[nodiscard]] bool takeEnum(const scene::World& world, const Value& value, scene::EnumId enumId, core::i32& out)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    if (item == nullptr || item->enumId != enumId)
+        return false;
+    if (world.enums().findValue(enumId, item->value) == nullptr)
+        return false;
+    out = item->value;
+    return true;
+}
+
+} // namespace
+
+// --- ScreenGui -------------------------------------------------------------
+
+Value getScreenGuiEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    return component == nullptr ? Value{} : Value{component->enabled};
+}
+
+bool setScreenGuiEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->enabled = *flag;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getScreenGuiKeepOnSceneLoad(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    return component == nullptr ? Value{} : Value{component->keepOnSceneLoad};
+}
+
+bool setScreenGuiKeepOnSceneLoad(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (component == nullptr || flag == nullptr)
+        return false;
+    component->keepOnSceneLoad = *flag;
+    return true;
+}
+
+Value getScreenGuiPlayer(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    // A player that left reads as nil, and the interface stays hidden: the
+    // component keeps the id, which is what tells "nobody's any more" from
+    // "everybody's".
+    if (component == nullptr || !world.alive(component->player) || world.destroyed(component->player))
+        return Value{core::InstanceId{}};
+    return Value{component->player};
+}
+
+bool setScreenGuiPlayer(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    if (component == nullptr)
+        return false;
+    if (scene::valueType(value) == scene::ValueType::Nil) {
+        component->player = {};
+        component->selected = {};
+        return true;
+    }
+    const auto* reference = std::get_if<core::InstanceId>(&value);
+    if (reference == nullptr)
+        return false;
+    if (!reference->valid()) {
+        component->player = {};
+        component->selected = {};
+        return true;
+    }
+    // A LOCAL player: an interface is drawn at one machine, for somebody
+    // sitting at it.
+    const scene::PlayerComponent* player = world.players().find(*reference);
+    if (player == nullptr || !player->local || world.destroyed(*reference))
+        return false;
+    if (component->player != *reference)
+        component->selected = {};
+    component->player = *reference;
+    return true;
+}
+
+Value getScreenGuiSelectedObject(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    return component == nullptr || !world.alive(component->selected) || world.destroyed(component->selected)
+               ? Value{core::InstanceId{}}
+               : Value{component->selected};
+}
+
+bool setScreenGuiSelectedObject(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    if (component == nullptr)
+        return false;
+    core::InstanceId selected;
+    if (const auto* reference = std::get_if<core::InstanceId>(&value); reference != nullptr)
+        selected = *reference;
+    else if (scene::valueType(value) != scene::ValueType::Nil)
+        return false;
+    // Something selectable under THIS interface, or nothing: a selection is a
+    // player's place in its own interface.
+    if (selected.valid()) {
+        if (!world.alive(selected) || world.destroyed(selected) || !isSelectable(world, selected) ||
+            !world.isAncestorOf(id, selected))
+            return false;
+    }
+    component->selected = selected;
+    return true;
+}
+
+Value getScreenGuiDisplayOrder(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    return component == nullptr ? Value{} : Value{component->displayOrder};
+}
+
+bool setScreenGuiDisplayOrder(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number))
+        return false;
+    component->displayOrder = static_cast<f32>(*number);
+    return true;
+}
+
+Value getScreenGuiReferenceHeight(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->referenceHeight)};
+}
+
+bool setScreenGuiReferenceHeight(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    const auto* number = std::get_if<core::f64>(&value);
+    if (component == nullptr || number == nullptr || !std::isfinite(*number) || *number < 0.0)
+        return false;
+    component->referenceHeight = static_cast<f32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getScreenGuiScreenInsets(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    return component == nullptr ? Value{} : Value{component->screenInsets};
+}
+
+bool setScreenGuiScreenInsets(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->screenInsets = *flag;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+// --- UIObject --------------------------------------------------------------
+
+Value getUIObjectPosition(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{component->position};
+}
+
+bool setUIObjectPosition(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim2 = std::get_if<core::UDim2>(&value);
+    if (udim2 == nullptr || !isFinite(udim2->x) || !isFinite(udim2->y))
+        return false;
+    component->position = *udim2;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIObjectSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{component->size};
+}
+
+bool setUIObjectSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim2 = std::get_if<core::UDim2>(&value);
+    if (udim2 == nullptr || !isFinite(udim2->x) || !isFinite(udim2->y))
+        return false;
+    component->size = *udim2;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIObjectAnchorPoint(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{component->anchorPoint};
+}
+
+bool setUIObjectAnchorPoint(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* point = std::get_if<core::Vec2>(&value);
+    if (point == nullptr || !isFinite(*point))
+        return false;
+    component->anchorPoint = *point;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIObjectRotation(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{component->rotation};
+}
+
+bool setUIObjectRotation(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number))
+        return false;
+    component->rotation = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIObjectBackgroundColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{component->backgroundColor};
+}
+
+bool setUIObjectBackgroundColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* color = std::get_if<core::Color3>(&value);
+    if (color == nullptr)
+        return false;
+    component->backgroundColor = *color;
+    return true;
+}
+
+Value getUIObjectBackgroundTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{component->backgroundTransparency};
+}
+
+bool setUIObjectBackgroundTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number))
+        return false;
+    component->backgroundTransparency = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIObjectActive(const scene::World& world, core::InstanceId id)
+{
+    // What it does, whether or not anybody said: the answer a script wants.
+    return world.uiObjects().find(id) == nullptr ? Value{} : Value{takesPointer(world, id)};
+}
+
+bool setUIObjectActive(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (component == nullptr || flag == nullptr)
+        return false;
+    component->active = *flag ? 1 : 0;
+    return true;
+}
+
+Value getUIObjectVisible(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{component->visible};
+}
+
+bool setUIObjectVisible(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->visible = *flag;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIObjectZIndex(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{component->zIndex};
+}
+
+bool setUIObjectZIndex(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number))
+        return false;
+    component->zIndex = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIObjectLayoutOrder(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{component->layoutOrder};
+}
+
+bool setUIObjectLayoutOrder(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number))
+        return false;
+    component->layoutOrder = static_cast<f32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIObjectAutomaticSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::AutomaticSizeEnumId, component->automaticSize}};
+}
+
+bool setUIObjectAutomaticSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::AutomaticSizeEnumId, item))
+        return false;
+    component->automaticSize = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIObjectClipsDescendants(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{component->clipsDescendants};
+}
+
+bool setUIObjectClipsDescendants(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->clipsDescendants = *flag;
+    return true;
+}
+
+Value getUIObjectAbsolutePosition(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{component->absolutePosition};
+}
+
+Value getUIObjectAbsoluteSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{component->absoluteSize};
+}
+
+// --- TextLabel -------------------------------------------------------------
+
+Value getTextLabelText(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->text};
+}
+
+bool setTextLabelText(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* text = std::get_if<std::string>(&value);
+    if (text == nullptr)
+        return false;
+    component->text = *text;
+    // **A script assigning `Text` puts the caret at the end**, which is
+    // what every text field does when its value is set programmatically -- and
+    // it is the only answer that is always in range. A caret left where it was
+    // points into a string that no longer exists: at best somewhere arbitrary,
+    // at worst inside a UTF-8 sequence.
+    if (scene::TextInputComponent* field = world.textInputs().find(id); field != nullptr) {
+        field->caret = field->anchor = static_cast<core::u32>(component->text.size());
+        field->textReplaced = true;
+    }
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getTextLabelTextColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->textColor};
+}
+
+bool setTextLabelTextColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* color = std::get_if<core::Color3>(&value);
+    if (color == nullptr)
+        return false;
+    component->textColor = *color;
+    return true;
+}
+
+Value getTextLabelTextTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->textTransparency)};
+}
+
+// Kept as written, like `BackgroundTransparency`; the draw clamps.
+bool setTextLabelTextTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number))
+        return false;
+    component->textTransparency = static_cast<f32>(*number);
+    return true;
+}
+
+Value getTextLabelTextSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->textSize};
+}
+
+bool setTextLabelTextSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number))
+        return false;
+    component->textSize = static_cast<f32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getTextLabelFont(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->font};
+}
+
+bool setTextLabelFont(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* text = std::get_if<std::string>(&value);
+    if (text == nullptr)
+        return false;
+    component->font = *text;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getTextLabelTextXAlignment(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::HorizontalAlignmentEnumId, component->horizontalAlignment}};
+}
+
+bool setTextLabelTextXAlignment(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::HorizontalAlignmentEnumId, item))
+        return false;
+    component->horizontalAlignment = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getTextLabelTextYAlignment(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::VerticalAlignmentEnumId, component->verticalAlignment}};
+}
+
+bool setTextLabelTextYAlignment(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::VerticalAlignmentEnumId, item))
+        return false;
+    component->verticalAlignment = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getTextLabelTextWrapped(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->textWrapped};
+}
+
+bool setTextLabelTextWrapped(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->textWrapped = *flag;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getTextLabelTextOverflow(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::TextOverflowEnumId, component->textOverflow}};
+}
+
+bool setTextLabelTextOverflow(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::TextOverflowEnumId, item))
+        return false;
+    component->textOverflow = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getTextLabelRichText(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->richText};
+}
+
+bool setTextLabelRichText(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->richText = *flag;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getTextLabelTextScaled(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->textScaled};
+}
+
+bool setTextLabelTextScaled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->textScaled = *flag;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+// --- TextInput -------------------------------------------------------------
+
+Value getTextInputPlaceholderText(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    return component == nullptr ? Value{} : Value{component->placeholderText};
+}
+
+bool setTextInputPlaceholderText(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* text = std::get_if<std::string>(&value);
+    if (text == nullptr)
+        return false;
+    component->placeholderText = *text;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+namespace {
+
+// The boolean properties of a `TextInput`, one accessor pair each through
+// this, since they differ only in the member.
+template <bool scene::TextInputComponent::*Member>
+Value getInputFlag(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    return component == nullptr ? Value{} : Value{component->*Member};
+}
+
+template <bool scene::TextInputComponent::*Member>
+bool setInputFlag(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (component == nullptr || flag == nullptr)
+        return false;
+    component->*Member = *flag;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+// A 1-based byte position, or -1, from a caret offset: what a script reads.
+[[nodiscard]] Value position(core::u32 offset) noexcept
+{
+    return Value{static_cast<f64>(offset) + 1.0};
+}
+
+// A script's 1-based position as a byte offset, clamped into the text.
+[[nodiscard]] bool offsetFrom(const scene::World& world, core::InstanceId id, const Value& value, core::u32& out)
+{
+    const auto* number = std::get_if<f64>(&value);
+    const scene::TextLabelComponent* label = world.textLabels().find(id);
+    if (number == nullptr || label == nullptr || !isFinite(*number))
+        return false;
+    const f64 clamped = std::fmax(1.0, std::fmin(*number, static_cast<f64>(label->text.size()) + 1.0));
+    out = static_cast<core::u32>(clamped) - 1;
+    return true;
+}
+
+} // namespace
+
+Value getTextInputPlaceholderColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    return component == nullptr ? Value{} : Value{component->placeholderColor};
+}
+
+bool setTextInputPlaceholderColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    const auto* color = std::get_if<core::Color3>(&value);
+    if (component == nullptr || color == nullptr)
+        return false;
+    component->placeholderColor = *color;
+    return true;
+}
+
+Value getTextInputMultiLine(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::multiLine>(world, id);
+}
+
+bool setTextInputMultiLine(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::multiLine>(world, id, value);
+}
+
+Value getTextInputEditable(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::editable>(world, id);
+}
+
+bool setTextInputEditable(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::editable>(world, id, value);
+}
+
+Value getTextInputMasked(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::masked>(world, id);
+}
+
+bool setTextInputMasked(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::masked>(world, id, value);
+}
+
+Value getTextInputClearTextOnFocus(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::clearTextOnFocus>(world, id);
+}
+
+bool setTextInputClearTextOnFocus(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::clearTextOnFocus>(world, id, value);
+}
+
+Value getTextInputSelectAllOnFocus(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::selectAllOnFocus>(world, id);
+}
+
+bool setTextInputSelectAllOnFocus(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::selectAllOnFocus>(world, id, value);
+}
+
+Value getTextInputReleaseFocusOnSubmit(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::releaseFocusOnSubmit>(world, id);
+}
+
+bool setTextInputReleaseFocusOnSubmit(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::releaseFocusOnSubmit>(world, id, value);
+}
+
+Value getTextInputRevertOnEscape(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::revertOnEscape>(world, id);
+}
+
+bool setTextInputRevertOnEscape(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::revertOnEscape>(world, id, value);
+}
+
+Value getTextInputMaxLength(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->maxLength)};
+}
+
+bool setTextInputMaxLength(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (component == nullptr || number == nullptr || !isFinite(*number) || *number < 0.0 || *number > 1.0e9)
+        return false;
+    component->maxLength = static_cast<core::u32>(*number);
+    return true;
+}
+
+Value getTextInputMaskCharacter(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    return component == nullptr ? Value{} : Value{component->maskCharacter};
+}
+
+bool setTextInputMaskCharacter(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    const auto* text = std::get_if<std::string>(&value);
+    if (component == nullptr || text == nullptr)
+        return false;
+    // Its first character only: a mask is one glyph a character.
+    component->maskCharacter = text->substr(0, ui::nextCharacter(*text, 0));
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getTextInputKeyboardType(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::TextInputKeyboardEnumId, component->keyboardType}};
+}
+
+bool setTextInputKeyboardType(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::TextInputKeyboardEnumId, item))
+        return false;
+    component->keyboardType = item;
+    return true;
+}
+
+Value getTextInputCursorPosition(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    if (component == nullptr)
+        return Value{};
+    return component->focused ? position(component->caret) : Value{-1.0};
+}
+
+bool setTextInputCursorPosition(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    const scene::TextLabelComponent* label = world.textLabels().find(id);
+    core::u32 at = 0;
+    if (component == nullptr || label == nullptr || !offsetFrom(world, id, value, at))
+        return false;
+    component->caret = component->anchor = ui::characterBoundary(label->text, at);
+    return true;
+}
+
+Value getTextInputSelectionStart(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    if (component == nullptr)
+        return Value{};
+    return component->focused && component->anchor != component->caret ? position(component->anchor) : Value{-1.0};
+}
+
+bool setTextInputSelectionStart(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    const scene::TextLabelComponent* label = world.textLabels().find(id);
+    if (component == nullptr || label == nullptr)
+        return false;
+    if (const auto* number = std::get_if<f64>(&value); number != nullptr && *number < 0.0) {
+        component->anchor = component->caret;
+        return true;
+    }
+    core::u32 at = 0;
+    if (!offsetFrom(world, id, value, at))
+        return false;
+    component->anchor = ui::characterBoundary(label->text, at);
+    return true;
+}
+
+// --- ImageLabel ------------------------------------------------------------
+
+Value getImageLabelImage(const scene::World& world, core::InstanceId id)
+{
+    const scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->image};
+}
+
+bool setImageLabelImage(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* text = std::get_if<std::string>(&value);
+    if (text == nullptr)
+        return false;
+    component->image = *text;
+    return true;
+}
+
+Value getImageLabelImageColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->imageColor};
+}
+
+bool setImageLabelImageColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* color = std::get_if<core::Color3>(&value);
+    if (color == nullptr)
+        return false;
+    component->imageColor = *color;
+    return true;
+}
+
+Value getImageLabelImageTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->imageTransparency)};
+}
+
+bool setImageLabelImageTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    // Kept as written, like `TextTransparency`; the draw clamps.
+    if (component == nullptr || number == nullptr || !isFinite(*number))
+        return false;
+    component->imageTransparency = static_cast<f32>(*number);
+    return true;
+}
+
+Value getImageLabelScaleType(const scene::World& world, core::InstanceId id)
+{
+    const scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    return component == nullptr ? Value{} : Value{scene::EnumValue{generated::ScaleTypeEnumId, component->scaleType}};
+}
+
+bool setImageLabelScaleType(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::ScaleTypeEnumId, item))
+        return false;
+    component->scaleType = item;
+    return true;
+}
+
+Value getImageLabelSliceCenter(const scene::World& world, core::InstanceId id)
+{
+    const scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->sliceCenter};
+}
+
+bool setImageLabelSliceCenter(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* rect = std::get_if<core::Rect>(&value);
+    if (rect == nullptr || !isFinite(rect->min) || !isFinite(rect->max))
+        return false;
+    component->sliceCenter = *rect;
+    return true;
+}
+
+Value getImageLabelImageRectOffset(const scene::World& world, core::InstanceId id)
+{
+    const scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->imageRectOffset};
+}
+
+bool setImageLabelImageRectOffset(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    const auto* offset = std::get_if<core::Vec2>(&value);
+    if (component == nullptr || offset == nullptr || !isFinite(*offset))
+        return false;
+    component->imageRectOffset = *offset;
+    return true;
+}
+
+Value getImageLabelImageRectSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->imageRectSize};
+}
+
+bool setImageLabelImageRectSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    const auto* size = std::get_if<core::Vec2>(&value);
+    if (component == nullptr || size == nullptr || !isFinite(*size))
+        return false;
+    component->imageRectSize = *size;
+    return true;
+}
+
+// --- ScrollFrame -----------------------------------------------------------
+
+Value getScrollFrameCanvasSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{component->canvasSize};
+}
+
+bool setScrollFrameCanvasSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim2 = std::get_if<core::UDim2>(&value);
+    if (udim2 == nullptr || !isFinite(udim2->x) || !isFinite(udim2->y))
+        return false;
+    component->canvasSize = *udim2;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getScrollFrameCanvasPosition(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{component->canvasPosition};
+}
+
+bool setScrollFrameCanvasPosition(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* point = std::get_if<core::Vec2>(&value);
+    if (point == nullptr || !isFinite(*point))
+        return false;
+    component->canvasPosition = *point;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getScrollFrameScrollBarThickness(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{component->scrollBarThickness};
+}
+
+bool setScrollFrameScrollBarThickness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number))
+        return false;
+    component->scrollBarThickness = static_cast<f32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getScrollFrameScrollBarImageColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{component->scrollBarImageColor};
+}
+
+bool setScrollFrameScrollBarImageColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* color = std::get_if<core::Color3>(&value);
+    if (color == nullptr)
+        return false;
+    component->scrollBarImageColor = *color;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getScrollFrameScrollBarImageTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->scrollBarImageTransparency)};
+}
+
+bool setScrollFrameScrollBarImageTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    // Kept as written, like `ImageTransparency`; the draw clamps.
+    if (component == nullptr || number == nullptr || !isFinite(*number))
+        return false;
+    component->scrollBarImageTransparency = static_cast<f32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getScrollFrameScrollingEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{component->scrollingEnabled};
+}
+
+bool setScrollFrameScrollingEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (component == nullptr || flag == nullptr)
+        return false;
+    component->scrollingEnabled = *flag;
+    return true;
+}
+
+Value getScrollFrameScrollingDirection(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::ScrollingDirectionEnumId, component->scrollingDirection}};
+}
+
+bool setScrollFrameScrollingDirection(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::ScrollingDirectionEnumId, item))
+        return false;
+    component->scrollingDirection = item;
+    return true;
+}
+
+Value getScrollFrameElasticBehavior(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::ElasticBehaviorEnumId, component->elasticBehavior}};
+}
+
+bool setScrollFrameElasticBehavior(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::ElasticBehaviorEnumId, item))
+        return false;
+    component->elasticBehavior = item;
+    return true;
+}
+
+Value getScrollFrameAutomaticCanvasSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::AutomaticSizeEnumId, component->automaticCanvasSize}};
+}
+
+bool setScrollFrameAutomaticCanvasSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::AutomaticSizeEnumId, item))
+        return false;
+    component->automaticCanvasSize = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getScrollFrameAbsoluteCanvasSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{component->absoluteCanvasSize};
+}
+
+Value getScrollFrameAbsoluteWindowSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScrollFrameComponent* component = world.scrollFrames().find(id);
+    return component == nullptr ? Value{} : Value{component->absoluteWindowSize};
+}
+
+// --- UIListLayout ----------------------------------------------------------
+
+Value getUIListLayoutFillDirection(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::FillDirectionEnumId, component->fillDirection}};
+}
+
+bool setUIListLayoutFillDirection(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::FillDirectionEnumId, item))
+        return false;
+    component->fillDirection = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIListLayoutPadding(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    return component == nullptr ? Value{} : Value{component->padding};
+}
+
+bool setUIListLayoutPadding(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim = std::get_if<core::UDim>(&value);
+    if (udim == nullptr || !isFinite(*udim))
+        return false;
+    component->padding = *udim;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIListLayoutHorizontalAlignment(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::HorizontalAlignmentEnumId, component->horizontalAlignment}};
+}
+
+bool setUIListLayoutHorizontalAlignment(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::HorizontalAlignmentEnumId, item))
+        return false;
+    component->horizontalAlignment = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIListLayoutVerticalAlignment(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::VerticalAlignmentEnumId, component->verticalAlignment}};
+}
+
+bool setUIListLayoutVerticalAlignment(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::VerticalAlignmentEnumId, item))
+        return false;
+    component->verticalAlignment = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIListLayoutSortOrder(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    return component == nullptr ? Value{} : Value{scene::EnumValue{generated::SortOrderEnumId, component->sortOrder}};
+}
+
+bool setUIListLayoutSortOrder(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::SortOrderEnumId, item))
+        return false;
+    component->sortOrder = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIListLayoutWraps(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    return component == nullptr ? Value{} : Value{component->wraps};
+}
+
+bool setUIListLayoutWraps(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->wraps = *flag;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+// --- Layouts, constraints, the group and the drag detector (ADR 0128) ----------
+
+namespace {
+
+// What a reference reads as: the instance, or nothing once it is destroyed --
+// a script that kept a reference to a button it then destroyed reads nil, not
+// a handle to something that is gone.
+[[nodiscard]] core::InstanceId liveOrNothing(const scene::World& world, core::InstanceId id)
+{
+    // Destroyed is gone at once to a script, though the instance is kept
+    // until the frame's end.
+    return world.alive(id) && !world.destroyed(id) ? id : core::InstanceId{};
+}
+
+// A reference to a `UIObject`, or to nothing.
+[[nodiscard]] bool takeObject(const scene::World& world, const Value& value, core::InstanceId& out)
+{
+    if (const auto* id = std::get_if<core::InstanceId>(&value); id != nullptr) {
+        if (id->valid() && (!world.alive(*id) || world.destroyed(*id) || world.uiObjects().find(*id) == nullptr))
+            return false;
+        out = *id;
+        return true;
+    }
+    // `nil` is nothing; anything else is not a reference at all.
+    if (scene::valueType(value) != scene::ValueType::Nil)
+        return false;
+    out = core::InstanceId{};
+    return true;
+}
+
+} // namespace
+
+// --- UIGridLayout ------------------------------------------------------------
+
+Value getUIGridLayoutCellSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    return component == nullptr ? Value{} : Value{component->cellSize};
+}
+
+bool setUIGridLayoutCellSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim = std::get_if<core::UDim2>(&value);
+    if (udim == nullptr || !isFinite(udim->x) || !isFinite(udim->y))
+        return false;
+    component->cellSize = *udim;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIGridLayoutCellPadding(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    return component == nullptr ? Value{} : Value{component->cellPadding};
+}
+
+bool setUIGridLayoutCellPadding(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim = std::get_if<core::UDim2>(&value);
+    if (udim == nullptr || !isFinite(udim->x) || !isFinite(udim->y))
+        return false;
+    component->cellPadding = *udim;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIGridLayoutFillDirection(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::FillDirectionEnumId, component->fillDirection}};
+}
+
+bool setUIGridLayoutFillDirection(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::FillDirectionEnumId, item))
+        return false;
+    component->fillDirection = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIGridLayoutFillDirectionMaxCells(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->fillDirectionMaxCells)};
+}
+
+bool setUIGridLayoutFillDirectionMaxCells(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number) || *number < 0.0 || *number != std::floor(*number))
+        return false;
+    component->fillDirectionMaxCells = static_cast<core::i32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIGridLayoutStartCorner(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::StartCornerEnumId, component->startCorner}};
+}
+
+bool setUIGridLayoutStartCorner(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::StartCornerEnumId, item))
+        return false;
+    component->startCorner = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIGridLayoutSortOrder(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    return component == nullptr ? Value{} : Value{scene::EnumValue{generated::SortOrderEnumId, component->sortOrder}};
+}
+
+bool setUIGridLayoutSortOrder(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::SortOrderEnumId, item))
+        return false;
+    component->sortOrder = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIGridLayoutHorizontalAlignment(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::HorizontalAlignmentEnumId, component->horizontalAlignment}};
+}
+
+bool setUIGridLayoutHorizontalAlignment(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::HorizontalAlignmentEnumId, item))
+        return false;
+    component->horizontalAlignment = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIGridLayoutVerticalAlignment(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::VerticalAlignmentEnumId, component->verticalAlignment}};
+}
+
+bool setUIGridLayoutVerticalAlignment(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::VerticalAlignmentEnumId, item))
+        return false;
+    component->verticalAlignment = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIGridLayoutAbsoluteContentSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGridLayoutComponent* component = world.uiGridLayouts().find(id);
+    return component == nullptr ? Value{} : Value{component->absoluteContentSize};
+}
+
+// --- UIPageLayout ------------------------------------------------------------
+
+Value getUIPageLayoutAnimated(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr ? Value{} : Value{component->animated};
+}
+
+bool setUIPageLayoutAnimated(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->animated = *flag;
+    return true;
+}
+
+Value getUIPageLayoutCircular(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr ? Value{} : Value{component->circular};
+}
+
+bool setUIPageLayoutCircular(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->circular = *flag;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIPageLayoutEasingStyle(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::EasingStyleEnumId, component->easingStyle}};
+}
+
+bool setUIPageLayoutEasingStyle(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::EasingStyleEnumId, item))
+        return false;
+    component->easingStyle = item;
+    return true;
+}
+
+Value getUIPageLayoutEasingDirection(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::EasingDirectionEnumId, component->easingDirection}};
+}
+
+bool setUIPageLayoutEasingDirection(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::EasingDirectionEnumId, item))
+        return false;
+    component->easingDirection = item;
+    return true;
+}
+
+Value getUIPageLayoutTweenTime(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->tweenTime)};
+}
+
+bool setUIPageLayoutTweenTime(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number) || *number < 0.0)
+        return false;
+    component->tweenTime = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIPageLayoutPadding(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr ? Value{} : Value{component->padding};
+}
+
+bool setUIPageLayoutPadding(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim = std::get_if<core::UDim>(&value);
+    if (udim == nullptr || !isFinite(*udim))
+        return false;
+    component->padding = *udim;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIPageLayoutFillDirection(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::FillDirectionEnumId, component->fillDirection}};
+}
+
+bool setUIPageLayoutFillDirection(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::FillDirectionEnumId, item))
+        return false;
+    component->fillDirection = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIPageLayoutSortOrder(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr ? Value{} : Value{scene::EnumValue{generated::SortOrderEnumId, component->sortOrder}};
+}
+
+bool setUIPageLayoutSortOrder(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::SortOrderEnumId, item))
+        return false;
+    component->sortOrder = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIPageLayoutHorizontalAlignment(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::HorizontalAlignmentEnumId, component->horizontalAlignment}};
+}
+
+bool setUIPageLayoutHorizontalAlignment(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::HorizontalAlignmentEnumId, item))
+        return false;
+    component->horizontalAlignment = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIPageLayoutVerticalAlignment(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::VerticalAlignmentEnumId, component->verticalAlignment}};
+}
+
+bool setUIPageLayoutVerticalAlignment(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::VerticalAlignmentEnumId, item))
+        return false;
+    component->verticalAlignment = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIPageLayoutScrollWheelInputEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr ? Value{} : Value{component->scrollWheelInputEnabled};
+}
+
+bool setUIPageLayoutScrollWheelInputEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->scrollWheelInputEnabled = *flag;
+    return true;
+}
+
+Value getUIPageLayoutTouchInputEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr ? Value{} : Value{component->touchInputEnabled};
+}
+
+bool setUIPageLayoutTouchInputEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->touchInputEnabled = *flag;
+    return true;
+}
+
+Value getUIPageLayoutGamepadInputEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr ? Value{} : Value{component->gamepadInputEnabled};
+}
+
+bool setUIPageLayoutGamepadInputEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->gamepadInputEnabled = *flag;
+    return true;
+}
+
+Value getUIPageLayoutCurrentPage(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPageLayoutComponent* component = world.uiPageLayouts().find(id);
+    return component == nullptr ? Value{} : Value{liveOrNothing(world, component->currentPage)};
+}
+
+// --- UIFlexItem --------------------------------------------------------------
+
+Value getUIFlexItemFlexMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIFlexItemComponent* component = world.uiFlexItems().find(id);
+    return component == nullptr ? Value{} : Value{scene::EnumValue{generated::UIFlexModeEnumId, component->flexMode}};
+}
+
+bool setUIFlexItemFlexMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIFlexItemComponent* component = world.uiFlexItems().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::UIFlexModeEnumId, item))
+        return false;
+    component->flexMode = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIFlexItemGrowRatio(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIFlexItemComponent* component = world.uiFlexItems().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->growRatio)};
+}
+
+bool setUIFlexItemGrowRatio(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIFlexItemComponent* component = world.uiFlexItems().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number) || *number < 0.0)
+        return false;
+    component->growRatio = static_cast<f32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIFlexItemShrinkRatio(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIFlexItemComponent* component = world.uiFlexItems().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->shrinkRatio)};
+}
+
+bool setUIFlexItemShrinkRatio(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIFlexItemComponent* component = world.uiFlexItems().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number) || *number < 0.0)
+        return false;
+    component->shrinkRatio = static_cast<f32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIFlexItemItemLineAlignment(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIFlexItemComponent* component = world.uiFlexItems().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::ItemLineAlignmentEnumId, component->itemLineAlignment}};
+}
+
+bool setUIFlexItemItemLineAlignment(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIFlexItemComponent* component = world.uiFlexItems().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::ItemLineAlignmentEnumId, item))
+        return false;
+    component->itemLineAlignment = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+// --- UIScale -----------------------------------------------------------------
+
+Value getUIScaleScale(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIScaleComponent* component = world.uiScales().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->scale)};
+}
+
+bool setUIScaleScale(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIScaleComponent* component = world.uiScales().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number) || *number < 0.0)
+        return false;
+    component->scale = static_cast<f32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
+// --- UIAspectRatioConstraint -------------------------------------------------
+
+Value getUIAspectRatioConstraintAspectRatio(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIAspectRatioConstraintComponent* component = world.uiAspectRatioConstraints().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->aspectRatio)};
+}
+
+bool setUIAspectRatioConstraintAspectRatio(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIAspectRatioConstraintComponent* component = world.uiAspectRatioConstraints().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number) || *number <= 0.0)
+        return false;
+    component->aspectRatio = static_cast<f32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIAspectRatioConstraintAspectType(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIAspectRatioConstraintComponent* component = world.uiAspectRatioConstraints().find(id);
+    return component == nullptr ? Value{} : Value{scene::EnumValue{generated::AspectTypeEnumId, component->aspectType}};
+}
+
+bool setUIAspectRatioConstraintAspectType(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIAspectRatioConstraintComponent* component = world.uiAspectRatioConstraints().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::AspectTypeEnumId, item))
+        return false;
+    component->aspectType = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIAspectRatioConstraintDominantAxis(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIAspectRatioConstraintComponent* component = world.uiAspectRatioConstraints().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::DominantAxisEnumId, component->dominantAxis}};
+}
+
+bool setUIAspectRatioConstraintDominantAxis(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIAspectRatioConstraintComponent* component = world.uiAspectRatioConstraints().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::DominantAxisEnumId, item))
+        return false;
+    component->dominantAxis = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+// --- UISizeConstraint --------------------------------------------------------
+
+Value getUISizeConstraintMinSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::UISizeConstraintComponent* component = world.uiSizeConstraints().find(id);
+    return component == nullptr ? Value{} : Value{component->minSize};
+}
+
+bool setUISizeConstraintMinSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UISizeConstraintComponent* component = world.uiSizeConstraints().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* point = std::get_if<core::Vec2>(&value);
+    if (point == nullptr || !isFinite(*point))
+        return false;
+    component->minSize = *point;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUISizeConstraintMaxSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::UISizeConstraintComponent* component = world.uiSizeConstraints().find(id);
+    return component == nullptr ? Value{} : Value{component->maxSize};
+}
+
+bool setUISizeConstraintMaxSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UISizeConstraintComponent* component = world.uiSizeConstraints().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* point = std::get_if<core::Vec2>(&value);
+    if (point == nullptr || std::isnan(point->x) || std::isnan(point->y) || point->x < 0.0f || point->y < 0.0f)
+        return false;
+    // No limit is zero, and infinity is the same thing said another way.
+    component->maxSize = core::Vec2{std::isinf(point->x) ? 0.0f : point->x, std::isinf(point->y) ? 0.0f : point->y};
+    markLayoutDirty(world, id);
+    return true;
+}
+
+// --- UITextSizeConstraint ----------------------------------------------------
+
+Value getUITextSizeConstraintMinTextSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::UITextSizeConstraintComponent* component = world.uiTextSizeConstraints().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->minTextSize)};
+}
+
+bool setUITextSizeConstraintMinTextSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UITextSizeConstraintComponent* component = world.uiTextSizeConstraints().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number) || *number < 0.0)
+        return false;
+    component->minTextSize = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUITextSizeConstraintMaxTextSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::UITextSizeConstraintComponent* component = world.uiTextSizeConstraints().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->maxTextSize)};
+}
+
+bool setUITextSizeConstraintMaxTextSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UITextSizeConstraintComponent* component = world.uiTextSizeConstraints().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number) || *number < 0.0)
+        return false;
+    component->maxTextSize = static_cast<f32>(*number);
+    return true;
+}
+
+// --- UIDragDetector ----------------------------------------------------------
+
+Value getUIDragDetectorEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    return component == nullptr ? Value{} : Value{component->enabled};
+}
+
+bool setUIDragDetectorEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    component->enabled = *flag;
+    return true;
+}
+
+Value getUIDragDetectorDragStyle(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::UIDragDetectorDragStyleEnumId, component->dragStyle}};
+}
+
+bool setUIDragDetectorDragStyle(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::UIDragDetectorDragStyleEnumId, item))
+        return false;
+    component->dragStyle = item;
+    return true;
+}
+
+Value getUIDragDetectorResponseStyle(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::UIDragDetectorResponseStyleEnumId, component->responseStyle}};
+}
+
+bool setUIDragDetectorResponseStyle(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::UIDragDetectorResponseStyleEnumId, item))
+        return false;
+    component->responseStyle = item;
+    return true;
+}
+
+Value getUIDragDetectorDragAxis(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    return component == nullptr ? Value{} : Value{component->dragAxis};
+}
+
+bool setUIDragDetectorDragAxis(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* point = std::get_if<core::Vec2>(&value);
+    if (point == nullptr || !isFinite(*point))
+        return false;
+    component->dragAxis = *point;
+    return true;
+}
+
+Value getUIDragDetectorBoundingUI(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    return component == nullptr ? Value{} : Value{liveOrNothing(world, component->boundingUI)};
+}
+
+bool setUIDragDetectorBoundingUI(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    if (component == nullptr)
+        return false;
+    if (!takeObject(world, value, component->boundingUI))
+        return false;
+    return true;
+}
+
+Value getUIDragDetectorMinDragTranslation(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    return component == nullptr ? Value{} : Value{component->minDragTranslation};
+}
+
+bool setUIDragDetectorMinDragTranslation(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim = std::get_if<core::UDim2>(&value);
+    if (udim == nullptr || !isFinite(udim->x) || !isFinite(udim->y))
+        return false;
+    component->minDragTranslation = *udim;
+    return true;
+}
+
+Value getUIDragDetectorMaxDragTranslation(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    return component == nullptr ? Value{} : Value{component->maxDragTranslation};
+}
+
+bool setUIDragDetectorMaxDragTranslation(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim = std::get_if<core::UDim2>(&value);
+    if (udim == nullptr || !isFinite(udim->x) || !isFinite(udim->y))
+        return false;
+    component->maxDragTranslation = *udim;
+    return true;
+}
+
+Value getUIDragDetectorMinDragAngle(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->minDragAngle)};
+}
+
+bool setUIDragDetectorMinDragAngle(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number))
+        return false;
+    component->minDragAngle = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIDragDetectorMaxDragAngle(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->maxDragAngle)};
+}
+
+bool setUIDragDetectorMaxDragAngle(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number))
+        return false;
+    component->maxDragAngle = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIDragDetectorDragUDim2(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    return component == nullptr ? Value{} : Value{component->dragUDim2};
+}
+
+Value getUIDragDetectorDragRotation(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIDragDetectorComponent* component = world.uiDragDetectors().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->dragRotation)};
+}
+
+// --- CanvasGroup -------------------------------------------------------------
+
+Value getCanvasGroupGroupTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::CanvasGroupComponent* component = world.canvasGroups().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->groupTransparency)};
+}
+
+bool setCanvasGroupGroupTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::CanvasGroupComponent* component = world.canvasGroups().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number) || *number < 0.0)
+        return false;
+    component->groupTransparency = static_cast<f32>(*number);
+    return true;
+}
+
+Value getCanvasGroupGroupColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::CanvasGroupComponent* component = world.canvasGroups().find(id);
+    return component == nullptr ? Value{} : Value{component->groupColor};
+}
+
+bool setCanvasGroupGroupColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::CanvasGroupComponent* component = world.canvasGroups().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* color = std::get_if<core::Color3>(&value);
+    if (color == nullptr)
+        return false;
+    component->groupColor = *color;
+    return true;
+}
+
+// --- UIListLayout's flex, and selection on every object (ADR 0128) ------------
+
+Value getUIListLayoutHorizontalFlex(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::UIFlexAlignmentEnumId, component->horizontalFlex}};
+}
+
+bool setUIListLayoutHorizontalFlex(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::UIFlexAlignmentEnumId, item))
+        return false;
+    component->horizontalFlex = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIListLayoutVerticalFlex(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::UIFlexAlignmentEnumId, component->verticalFlex}};
+}
+
+bool setUIListLayoutVerticalFlex(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::UIFlexAlignmentEnumId, item))
+        return false;
+    component->verticalFlex = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIListLayoutItemLineAlignment(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::ItemLineAlignmentEnumId, component->itemLineAlignment}};
+}
+
+bool setUIListLayoutItemLineAlignment(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::ItemLineAlignmentEnumId, item))
+        return false;
+    component->itemLineAlignment = item;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIListLayoutAbsoluteContentSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIListLayoutComponent* component = world.listLayouts().find(id);
+    return component == nullptr ? Value{} : Value{component->absoluteContentSize};
+}
+
+Value getUIObjectNextSelectionUp(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{liveOrNothing(world, component->nextSelectionUp)};
+}
+
+bool setUIObjectNextSelectionUp(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    if (!takeObject(world, value, component->nextSelectionUp))
+        return false;
+    return true;
+}
+
+Value getUIObjectNextSelectionDown(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{liveOrNothing(world, component->nextSelectionDown)};
+}
+
+bool setUIObjectNextSelectionDown(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    if (!takeObject(world, value, component->nextSelectionDown))
+        return false;
+    return true;
+}
+
+Value getUIObjectNextSelectionLeft(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{liveOrNothing(world, component->nextSelectionLeft)};
+}
+
+bool setUIObjectNextSelectionLeft(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    if (!takeObject(world, value, component->nextSelectionLeft))
+        return false;
+    return true;
+}
+
+Value getUIObjectNextSelectionRight(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{liveOrNothing(world, component->nextSelectionRight)};
+}
+
+bool setUIObjectNextSelectionRight(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    if (!takeObject(world, value, component->nextSelectionRight))
+        return false;
+    return true;
+}
+
+Value getUIObjectSelectionImageObject(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* component = world.uiObjects().find(id);
+    return component == nullptr ? Value{} : Value{liveOrNothing(world, component->selectionImageObject)};
+}
+
+bool setUIObjectSelectionImageObject(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    if (component == nullptr)
+        return false;
+    if (!takeObject(world, value, component->selectionImageObject))
+        return false;
+    return true;
+}
+
+Value getUIObjectSelectable(const scene::World& world, core::InstanceId id)
+{
+    // What it is, whether or not anybody said: the answer a script wants.
+    return world.uiObjects().find(id) == nullptr ? Value{} : Value{isSelectable(world, id)};
+}
+
+bool setUIObjectSelectable(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (component == nullptr || flag == nullptr)
+        return false;
+    component->selectable = *flag ? 1 : 0;
+    return true;
+}
+
+Value getUIServiceSelectedObject(const scene::World& world, core::InstanceId)
+{
+    return Value{liveOrNothing(world, world.engineState().uiSelected)};
+}
+
+bool setUIServiceSelectedObject(scene::World& world, core::InstanceId, const Value& value)
+{
+    core::InstanceId selected;
+    if (const auto* id = std::get_if<core::InstanceId>(&value); id != nullptr)
+        selected = *id;
+    else if (scene::valueType(value) != scene::ValueType::Nil)
+        return false;
+    // Something to select, or nothing: an object that is not selectable is
+    // refused rather than quietly left unselected.
+    if (selected.valid() && (!world.alive(selected) || world.destroyed(selected) || !isSelectable(world, selected)))
+        return false;
+    world.engineState().uiSelected = selected;
+    return true;
+}
+
+Value getUIServiceGamepadId(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<core::f64>(world.engineState().uiGamepadId)};
+}
+
+bool setUIServiceGamepadId(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* number = std::get_if<core::f64>(&value);
+    if (number == nullptr || !std::isfinite(*number) || *number < 0 ||
+        *number > static_cast<core::f64>(std::numeric_limits<core::u32>::max()) || std::floor(*number) != *number)
+        return false;
+    world.engineState().uiGamepadId = static_cast<core::u32>(*number);
+    return true;
+}
+
+Value getUIServiceAutoSelect(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().uiAutoSelect};
+}
+
+bool setUIServiceAutoSelect(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    world.engineState().uiAutoSelect = *flag;
+    return true;
+}
+
+// --- UIPadding -------------------------------------------------------------
+
+Value getUIPaddingPaddingTop(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPaddingComponent* component = world.uiPaddings().find(id);
+    return component == nullptr ? Value{} : Value{component->paddingTop};
+}
+
+bool setUIPaddingPaddingTop(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPaddingComponent* component = world.uiPaddings().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim = std::get_if<core::UDim>(&value);
+    if (udim == nullptr || !isFinite(*udim))
+        return false;
+    component->paddingTop = *udim;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIPaddingPaddingBottom(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPaddingComponent* component = world.uiPaddings().find(id);
+    return component == nullptr ? Value{} : Value{component->paddingBottom};
+}
+
+bool setUIPaddingPaddingBottom(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPaddingComponent* component = world.uiPaddings().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim = std::get_if<core::UDim>(&value);
+    if (udim == nullptr || !isFinite(*udim))
+        return false;
+    component->paddingBottom = *udim;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIPaddingPaddingLeft(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPaddingComponent* component = world.uiPaddings().find(id);
+    return component == nullptr ? Value{} : Value{component->paddingLeft};
+}
+
+bool setUIPaddingPaddingLeft(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPaddingComponent* component = world.uiPaddings().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim = std::get_if<core::UDim>(&value);
+    if (udim == nullptr || !isFinite(*udim))
+        return false;
+    component->paddingLeft = *udim;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getUIPaddingPaddingRight(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIPaddingComponent* component = world.uiPaddings().find(id);
+    return component == nullptr ? Value{} : Value{component->paddingRight};
+}
+
+bool setUIPaddingPaddingRight(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIPaddingComponent* component = world.uiPaddings().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim = std::get_if<core::UDim>(&value);
+    if (udim == nullptr || !isFinite(*udim))
+        return false;
+    component->paddingRight = *udim;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+// --- UICorner --------------------------------------------------------------
+
+Value getUICornerCornerRadius(const scene::World& world, core::InstanceId id)
+{
+    const scene::UICornerComponent* component = world.uiCorners().find(id);
+    return component == nullptr ? Value{} : Value{component->cornerRadius};
+}
+
+bool setUICornerCornerRadius(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UICornerComponent* component = world.uiCorners().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* udim = std::get_if<core::UDim>(&value);
+    if (udim == nullptr || !isFinite(*udim))
+        return false;
+    component->cornerRadius = *udim;
+    return true;
+}
+
+// --- UIGradient (ADR 0110) ---------------------------------------------------
+//
+// None of these mark a layout dirty: a gradient changes the drawing, and the
+// draw list is rebuilt every frame from what the components hold.
+
+Value getUIGradientColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{component->color};
+}
+
+bool setUIGradientColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    const auto* sequence = std::get_if<core::ColorSequence>(&value);
+    if (component == nullptr || sequence == nullptr || !core::validSequence(sequence->keypoints))
+        return false;
+    component->color = *sequence;
+    return true;
+}
+
+Value getUIGradientTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{component->transparency};
+}
+
+bool setUIGradientTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    const auto* sequence = std::get_if<core::NumberSequence>(&value);
+    if (component == nullptr || sequence == nullptr || !core::validSequence(sequence->keypoints))
+        return false;
+    component->transparency = *sequence;
+    return true;
+}
+
+Value getUIGradientOffset(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{component->offset};
+}
+
+bool setUIGradientOffset(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    const auto* offset = std::get_if<core::Vec2>(&value);
+    if (component == nullptr || offset == nullptr || !isFinite(*offset))
+        return false;
+    component->offset = *offset;
+    return true;
+}
+
+Value getUIGradientRotation(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->rotation)};
+}
+
+bool setUIGradientRotation(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (component == nullptr || number == nullptr || !isFinite(*number))
+        return false;
+    component->rotation = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIGradientEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{component->enabled};
+}
+
+bool setUIGradientEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (component == nullptr || flag == nullptr)
+        return false;
+    component->enabled = *flag;
+    return true;
+}
+
+Value getUIGradientType(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{scene::EnumValue{generated::GradientTypeEnumId, component->type}};
+}
+
+bool setUIGradientType(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    core::i32 item = 0;
+    if (component == nullptr || !takeEnum(world, value, generated::GradientTypeEnumId, item))
+        return false;
+    component->type = item;
+    return true;
+}
+
+Value getUIGradientTileMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::GradientTileModeEnumId, component->tileMode}};
+}
+
+bool setUIGradientTileMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    core::i32 item = 0;
+    if (component == nullptr || !takeEnum(world, value, generated::GradientTileModeEnumId, item))
+        return false;
+    component->tileMode = item;
+    return true;
+}
+
+Value getUIGradientScale(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->scale)};
+}
+
+bool setUIGradientScale(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    // Above zero: a scale of nothing is a sequence squeezed to a point, which
+    // every tiling would then divide by.
+    if (component == nullptr || number == nullptr || !isFinite(*number) || !(*number > 0.0))
+        return false;
+    component->scale = static_cast<f32>(*number);
+    return true;
+}
+
+// --- UIStroke (ADR 0110) ------------------------------------------------------
+
+Value getUIStrokeColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{} : Value{component->color};
+}
+
+bool setUIStrokeColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    const auto* color = std::get_if<core::Color3>(&value);
+    if (component == nullptr || color == nullptr)
+        return false;
+    component->color = *color;
+    return true;
+}
+
+Value getUIStrokeThickness(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->thickness)};
+}
+
+bool setUIStrokeThickness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (component == nullptr || number == nullptr || !isFinite(*number) || *number < 0.0)
+        return false;
+    component->thickness = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIStrokeTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->transparency)};
+}
+
+bool setUIStrokeTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (component == nullptr || number == nullptr || !isFinite(*number))
+        return false;
+    component->transparency = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIStrokeEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{} : Value{component->enabled};
+}
+
+bool setUIStrokeEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (component == nullptr || flag == nullptr)
+        return false;
+    component->enabled = *flag;
+    return true;
+}
+
+Value getUIStrokeApplyStrokeMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::ApplyStrokeModeEnumId, component->applyStrokeMode}};
+}
+
+bool setUIStrokeApplyStrokeMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    core::i32 item = 0;
+    if (component == nullptr || !takeEnum(world, value, generated::ApplyStrokeModeEnumId, item))
+        return false;
+    component->applyStrokeMode = item;
+    return true;
+}
+
+Value getUIStrokeLineJoinMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::LineJoinModeEnumId, component->lineJoinMode}};
+}
+
+bool setUIStrokeLineJoinMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    core::i32 item = 0;
+    if (component == nullptr || !takeEnum(world, value, generated::LineJoinModeEnumId, item))
+        return false;
+    component->lineJoinMode = item;
+    return true;
+}
+
+Value getUIStrokeStrokeSizingMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::StrokeSizingModeEnumId, component->strokeSizingMode}};
+}
+
+bool setUIStrokeStrokeSizingMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    core::i32 item = 0;
+    if (component == nullptr || !takeEnum(world, value, generated::StrokeSizingModeEnumId, item))
+        return false;
+    component->strokeSizingMode = item;
+    return true;
+}
+
+Value getUIStrokeBorderStrokePosition(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::BorderStrokePositionEnumId, component->borderStrokePosition}};
+}
+
+bool setUIStrokeBorderStrokePosition(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    core::i32 item = 0;
+    if (component == nullptr || !takeEnum(world, value, generated::BorderStrokePositionEnumId, item))
+        return false;
+    component->borderStrokePosition = item;
+    return true;
+}
+
+Value getUIStrokeBorderOffset(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{} : Value{component->borderOffset};
+}
+
+bool setUIStrokeBorderOffset(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    const auto* udim = std::get_if<core::UDim>(&value);
+    if (component == nullptr || udim == nullptr || !isFinite(*udim))
+        return false;
+    component->borderOffset = *udim;
+    return true;
+}
+
+Value getUIStrokeZIndex(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->zIndex)};
+}
+
+bool setUIStrokeZIndex(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (component == nullptr || number == nullptr || !isFinite(*number))
+        return false;
+    component->zIndex = static_cast<f32>(*number);
+    return true;
+}
+
+// --- Storage ----------------------------------------------------------------
+//
+// One pair per class that declares its own components. `World::create` walks the
+// ancestry root-first and calls every hook it finds, so a `TextButton` gets both
+// the `UIObject` pair and the `TextLabel` pair without either naming the other.
+
+// --- BillboardGui and SurfaceGui ------------------------------------------
+//
+// Neither has a dirty flag: a world tree is laid out every frame it is drawn,
+// because a billboard's canvas changes size with distance. So these setters
+// store and nothing more.
+
+namespace {
+
+// A part, or nothing. What `Adornee` accepts on both classes.
+// `plane`: whether a part on the 2D plane will do -- a billboard floats over
+// one; a surface has no face of one to cover.
+[[nodiscard]] bool takeAdornee(const scene::World& world, const Value& value, core::InstanceId& out, bool plane = false)
+{
+    const auto* id = std::get_if<core::InstanceId>(&value);
+    if (id == nullptr)
+        return false;
+    if (id->valid() && world.parts().find(*id) == nullptr && !(plane && world.parts2d().find(*id) != nullptr))
+        return false;
+    out = *id;
+    return true;
+}
+
+[[nodiscard]] bool takeAtLeastZero(const Value& value, f32& out)
+{
+    const auto* number = std::get_if<core::f64>(&value);
+    if (number == nullptr || !std::isfinite(*number) || *number < 0.0)
+        return false;
+    out = static_cast<f32>(*number);
+    return true;
+}
+
+} // namespace
+
+Value getBillboardGuiEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    return gui == nullptr ? Value{} : Value{gui->enabled};
+}
+
+bool setBillboardGuiEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (gui == nullptr || flag == nullptr)
+        return false;
+    gui->enabled = *flag;
+    return true;
+}
+
+Value getBillboardGuiAdornee(const scene::World& world, core::InstanceId id)
+{
+    const scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    return gui == nullptr ? Value{} : Value{gui->adornee};
+}
+
+bool setBillboardGuiAdornee(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    return gui != nullptr && takeAdornee(world, value, gui->adornee, true);
+}
+
+Value getBillboardGuiSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    return gui == nullptr ? Value{} : Value{gui->size};
+}
+
+bool setBillboardGuiSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    const auto* size = std::get_if<core::UDim2>(&value);
+    if (gui == nullptr || size == nullptr || !isFinite(size->x) || !isFinite(size->y))
+        return false;
+    gui->size = *size;
+    return true;
+}
+
+Value getBillboardGuiWorldOffset(const scene::World& world, core::InstanceId id)
+{
+    const scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    return gui == nullptr ? Value{} : Value{gui->worldOffset};
+}
+
+bool setBillboardGuiWorldOffset(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    const auto* offset = std::get_if<core::Vec3>(&value);
+    if (gui == nullptr || offset == nullptr || !std::isfinite(offset->x) || !std::isfinite(offset->y) ||
+        !std::isfinite(offset->z))
+        return false;
+    gui->worldOffset = *offset;
+    return true;
+}
+
+Value getBillboardGuiAlwaysOnTop(const scene::World& world, core::InstanceId id)
+{
+    const scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    return gui == nullptr ? Value{} : Value{gui->alwaysOnTop};
+}
+
+bool setBillboardGuiAlwaysOnTop(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (gui == nullptr || flag == nullptr)
+        return false;
+    gui->alwaysOnTop = *flag;
+    return true;
+}
+
+Value getBillboardGuiMaxDistance(const scene::World& world, core::InstanceId id)
+{
+    const scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    return gui == nullptr ? Value{} : Value{static_cast<core::f64>(gui->maxDistance)};
+}
+
+bool setBillboardGuiMaxDistance(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    return gui != nullptr && takeAtLeastZero(value, gui->maxDistance);
+}
+
+Value getBillboardGuiBrightness(const scene::World& world, core::InstanceId id)
+{
+    const scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    return gui == nullptr ? Value{} : Value{static_cast<core::f64>(gui->brightness)};
+}
+
+bool setBillboardGuiBrightness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    return gui != nullptr && takeAtLeastZero(value, gui->brightness);
+}
+
+void attachBillboardGuiComponents(scene::World& world, core::InstanceId id)
+{
+    world.billboardGuis().add(id, scene::BillboardGuiComponent{});
+}
+
+void detachBillboardGuiComponents(scene::World& world, core::InstanceId id)
+{
+    world.billboardGuis().remove(id);
+}
+
+Value getSurfaceGuiEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    return gui == nullptr ? Value{} : Value{gui->enabled};
+}
+
+bool setSurfaceGuiEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (gui == nullptr || flag == nullptr)
+        return false;
+    gui->enabled = *flag;
+    return true;
+}
+
+Value getSurfaceGuiAdornee(const scene::World& world, core::InstanceId id)
+{
+    const scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    return gui == nullptr ? Value{} : Value{gui->adornee};
+}
+
+bool setSurfaceGuiAdornee(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    return gui != nullptr && takeAdornee(world, value, gui->adornee);
+}
+
+Value getSurfaceGuiFace(const scene::World& world, core::InstanceId id)
+{
+    const scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    return gui == nullptr ? Value{} : Value{scene::EnumValue{generated::FaceEnumId, gui->face}};
+}
+
+bool setSurfaceGuiFace(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    if (gui == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::FaceEnumId, item))
+        return false;
+    gui->face = item;
+    return true;
+}
+
+Value getSurfaceGuiPixelsPerMeter(const scene::World& world, core::InstanceId id)
+{
+    const scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    return gui == nullptr ? Value{} : Value{static_cast<core::f64>(gui->pixelsPerMetre)};
+}
+
+bool setSurfaceGuiPixelsPerMeter(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    f32 density = 0.0f;
+    // Zero pixels to a metre is a canvas with no size, which lays out nothing
+    // and divides by zero on the way to the world.
+    if (gui == nullptr || !takeAtLeastZero(value, density) || !(density > 0.0f))
+        return false;
+    gui->pixelsPerMetre = density;
+    return true;
+}
+
+Value getSurfaceGuiAlwaysOnTop(const scene::World& world, core::InstanceId id)
+{
+    const scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    return gui == nullptr ? Value{} : Value{gui->alwaysOnTop};
+}
+
+bool setSurfaceGuiAlwaysOnTop(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (gui == nullptr || flag == nullptr)
+        return false;
+    gui->alwaysOnTop = *flag;
+    return true;
+}
+
+Value getSurfaceGuiBrightness(const scene::World& world, core::InstanceId id)
+{
+    const scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    return gui == nullptr ? Value{} : Value{static_cast<core::f64>(gui->brightness)};
+}
+
+bool setSurfaceGuiBrightness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    return gui != nullptr && takeAtLeastZero(value, gui->brightness);
+}
+
+void attachSurfaceGuiComponents(scene::World& world, core::InstanceId id)
+{
+    world.surfaceGuis().add(id, scene::SurfaceGuiComponent{});
+}
+
+void detachSurfaceGuiComponents(scene::World& world, core::InstanceId id)
+{
+    world.surfaceGuis().remove(id);
+}
+
+void attachScreenGuiComponents(scene::World& world, core::InstanceId id)
+{
+    world.screenGuis().add(id, scene::ScreenGuiComponent{});
+}
+
+void detachScreenGuiComponents(scene::World& world, core::InstanceId id)
+{
+    world.screenGuis().remove(id);
+}
+
+void attachUIObjectComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiObjects().add(id, scene::UIObjectComponent{});
+}
+
+void detachUIObjectComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiObjects().remove(id);
+}
+
+void attachTextLabelComponents(scene::World& world, core::InstanceId id)
+{
+    world.textLabels().add(id, scene::TextLabelComponent{});
+}
+
+void detachTextLabelComponents(scene::World& world, core::InstanceId id)
+{
+    world.textLabels().remove(id);
+}
+
+void attachTextInputComponents(scene::World& world, core::InstanceId id)
+{
+    world.textInputs().add(id, scene::TextInputComponent{});
+}
+
+void detachTextInputComponents(scene::World& world, core::InstanceId id)
+{
+    world.textInputs().remove(id);
+}
+
+void attachImageLabelComponents(scene::World& world, core::InstanceId id)
+{
+    world.imageLabels().add(id, scene::ImageLabelComponent{});
+}
+
+void detachImageLabelComponents(scene::World& world, core::InstanceId id)
+{
+    world.imageLabels().remove(id);
+}
+
+void attachScrollFrameComponents(scene::World& world, core::InstanceId id)
+{
+    world.scrollFrames().add(id, scene::ScrollFrameComponent{});
+}
+
+void detachScrollFrameComponents(scene::World& world, core::InstanceId id)
+{
+    world.scrollFrames().remove(id);
+}
+
+void attachUIListLayoutComponents(scene::World& world, core::InstanceId id)
+{
+    world.listLayouts().add(id, scene::UIListLayoutComponent{});
+}
+
+void detachUIListLayoutComponents(scene::World& world, core::InstanceId id)
+{
+    world.listLayouts().remove(id);
+}
+
+void attachUIGridLayoutComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiGridLayouts().add(id, scene::UIGridLayoutComponent{});
+}
+
+void detachUIGridLayoutComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiGridLayouts().remove(id);
+}
+
+void attachUIPageLayoutComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiPageLayouts().add(id, scene::UIPageLayoutComponent{});
+}
+
+void detachUIPageLayoutComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiPageLayouts().remove(id);
+}
+
+void attachUIFlexItemComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiFlexItems().add(id, scene::UIFlexItemComponent{});
+}
+
+void detachUIFlexItemComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiFlexItems().remove(id);
+}
+
+void attachUIScaleComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiScales().add(id, scene::UIScaleComponent{});
+}
+
+void detachUIScaleComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiScales().remove(id);
+}
+
+void attachUIAspectRatioConstraintComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiAspectRatioConstraints().add(id, scene::UIAspectRatioConstraintComponent{});
+}
+
+void detachUIAspectRatioConstraintComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiAspectRatioConstraints().remove(id);
+}
+
+void attachUISizeConstraintComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiSizeConstraints().add(id, scene::UISizeConstraintComponent{});
+}
+
+void detachUISizeConstraintComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiSizeConstraints().remove(id);
+}
+
+void attachUITextSizeConstraintComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiTextSizeConstraints().add(id, scene::UITextSizeConstraintComponent{});
+}
+
+void detachUITextSizeConstraintComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiTextSizeConstraints().remove(id);
+}
+
+void attachUIDragDetectorComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiDragDetectors().add(id, scene::UIDragDetectorComponent{});
+}
+
+void detachUIDragDetectorComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiDragDetectors().remove(id);
+}
+
+void attachCanvasGroupComponents(scene::World& world, core::InstanceId id)
+{
+    world.canvasGroups().add(id, scene::CanvasGroupComponent{});
+}
+
+void detachCanvasGroupComponents(scene::World& world, core::InstanceId id)
+{
+    world.canvasGroups().remove(id);
+}
+
+void attachUIPaddingComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiPaddings().add(id, scene::UIPaddingComponent{});
+}
+
+void detachUIPaddingComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiPaddings().remove(id);
+}
+
+void attachUICornerComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiCorners().add(id, scene::UICornerComponent{});
+}
+
+void detachUICornerComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiCorners().remove(id);
+}
+
+// --- ViewportFrame (ADR 0107) ---------------------------------------------------
+
+void attachViewportFrameComponents(scene::World& world, core::InstanceId id)
+{
+    world.viewportFrames().add(id, scene::ViewportFrameComponent{});
+}
+
+void detachViewportFrameComponents(scene::World& world, core::InstanceId id)
+{
+    world.viewportFrames().remove(id);
+}
+
+Value getViewportFrameCurrentCamera(const scene::World& world, core::InstanceId id)
+{
+    const scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    if (frame == nullptr || !world.alive(frame->currentCamera))
+        return Value{};
+    return Value{frame->currentCamera};
+}
+
+bool setViewportFrameCurrentCamera(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    if (frame == nullptr)
+        return false;
+    if (const auto* reference = std::get_if<core::InstanceId>(&value); reference != nullptr) {
+        // Typed `Camera?`, as `Workspace.CurrentCamera` is.
+        const scene::ClassId cameraClass = world.classes().findId(world.atoms().lookup("Camera"));
+        if (cameraClass == scene::InvalidClass || !world.isA(*reference, cameraClass))
+            return false;
+        frame->currentCamera = *reference;
+        return true;
+    }
+    if (scene::valueType(value) != scene::ValueType::Nil)
+        return false;
+    frame->currentCamera = core::InstanceId{};
+    return true;
+}
+
+Value getViewportFrameAmbient(const scene::World& world, core::InstanceId id)
+{
+    const scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    return frame == nullptr ? Value{} : Value{frame->ambient};
+}
+
+bool setViewportFrameAmbient(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* color = std::get_if<core::Color3>(&value);
+    scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    if (color == nullptr || frame == nullptr)
+        return false;
+    frame->ambient = *color;
+    return true;
+}
+
+Value getViewportFrameLightColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    return frame == nullptr ? Value{} : Value{frame->lightColor};
+}
+
+bool setViewportFrameLightColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* color = std::get_if<core::Color3>(&value);
+    scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    if (color == nullptr || frame == nullptr)
+        return false;
+    frame->lightColor = *color;
+    return true;
+}
+
+Value getViewportFrameLightDirection(const scene::World& world, core::InstanceId id)
+{
+    const scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    return frame == nullptr ? Value{} : Value{frame->lightDirection};
+}
+
+bool setViewportFrameLightDirection(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* direction = std::get_if<core::Vec3>(&value);
+    scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    // A direction: finite, and not nothing.
+    if (direction == nullptr || frame == nullptr || !std::isfinite(direction->x) || !std::isfinite(direction->y) ||
+        !std::isfinite(direction->z) ||
+        direction->x * direction->x + direction->y * direction->y + direction->z * direction->z < 1e-12f)
+        return false;
+    frame->lightDirection = *direction;
+    return true;
+}
+
+void attachUIGradientComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiGradients().add(id, scene::UIGradientComponent{});
+}
+
+void detachUIGradientComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiGradients().remove(id);
+}
+
+void attachUIStrokeComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiStrokes().add(id, scene::UIStrokeComponent{});
+}
+
+void detachUIStrokeComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiStrokes().remove(id);
+}
+
+// --- UIService --------------------------------------------------------------
+//
+// Two numbers about the WINDOW rather than about any instance, so they live in
+// `EngineState` beside the scheduler's -- the same arrangement
+// `PhysicsService.FixedTimestep` uses, and for the same reason: there is exactly
+// one of each service in a world.
+
+Value getUIServiceSafeAreaInsets(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().safeAreaInsets};
+}
+
+Value getUIServiceViewportSize(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().viewportSize};
+}
+
+Value getUIServiceDisplayScale(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().displayScale)};
+}
+
+Value getUIServiceScreenOrientation(const scene::World& world, core::InstanceId)
+{
+    return Value{scene::EnumValue{generated::ScreenOrientationEnumId, world.engineState().screenOrientation}};
+}
+
+bool setUIServiceScreenOrientation(scene::World& world, core::InstanceId, const Value& value)
+{
+    return takeEnum(world, value, generated::ScreenOrientationEnumId, world.engineState().screenOrientation);
+}
+
+} // namespace native
+
+void registerSceneTypes(scene::ClassRegistry& classes, core::AtomTable& atoms)
+{
+    generated::registerClasses(classes, atoms);
+}
+
+} // namespace engine::ui

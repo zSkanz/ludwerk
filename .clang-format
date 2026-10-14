@@ -1,0 +1,43 @@
+# The C++ style. THE MAJOR IS PART OF THE STYLE: clang-format 18 (Ubuntu
+# 24.04's, which the Tier-2 image and `ubuntu-latest` both carry). A different
+# major formats this tree differently, so scripts/gates/clang-format.sh refuses
+# to run on one -- see its header.
+BasedOnStyle: LLVM
+Standard: c++20
+ColumnLimit: 120
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+PointerAlignment: Left
+DerivePointerAlignment: false
+AccessModifierOffset: -4
+AllowShortFunctionsOnASingleLine: InlineOnly
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLambdasOnASingleLine: All
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterStruct: true
+  AfterFunction: true
+  AfterNamespace: false
+  AfterEnum: true
+  BeforeElse: true
+  SplitEmptyFunction: false
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<(lua|luau|luacode|luacodegen)'
+    Priority: 2
+  - Regex: '^<'
+    Priority: 3
+  # Everything else, which is the engine's own headers, after the system's.
+  # THREE ENTRIES, AND NOT TWO: this list is laid over the base style's entry
+  # by entry, so a shorter one leaves the base style's third in place -- '.*'
+  # at priority 1, which sorts every quoted include first and reorders the
+  # whole tree.
+  - Regex: '.*'
+    Priority: 4
+NamespaceIndentation: None
+FixNamespaceComments: true
+SortIncludes: CaseSensitive
+SpacesBeforeTrailingComments: 1

@@ -1,0 +1,30 @@
+# The Timeline's three popups on examples/40-cinematic (ADR 0204): a track
+# being added, a key's own menu, and the prompt a line's key is named in.
+# Coordinates are a 1600 by 900 frame's.
+wait 60
+click 170 106
+wait 4
+text Meeting
+wait 12
+click 132 155
+wait 8
+key ctrl+shift+p
+wait 8
+text Timeline
+wait 8
+key enter
+wait 30
+click 900 650
+wait 8
+shot timeline-add-track
+click 600 45
+wait 6
+rclick 599 709
+wait 8
+shot timeline-key-menu
+click 600 45
+wait 6
+click 65 736
+wait 8
+shot timeline-key-name
+quit

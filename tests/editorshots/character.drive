@@ -1,0 +1,27 @@
+# examples/37-character: the joint picker of an IKControl while editing, and
+# the animation graph of a character while the game runs.
+# Coordinates are a 1600 by 900 frame's.
+wait 90
+click 170 106
+wait 4
+text LeftHandOnStaff
+wait 12
+click 200 199
+wait 40
+click 1579 232
+wait 12
+shot joint-picker
+click 700 760
+wait 6
+click 781 41
+wait 150
+click 170 106
+wait 4
+key ctrl+a
+wait 2
+text Animation
+wait 12
+click 172 177
+wait 40
+shot graph-running
+quit

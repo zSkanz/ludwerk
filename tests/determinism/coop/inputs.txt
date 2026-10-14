@@ -1,0 +1,23 @@
+# Two controllers, one line each as a device would send it (ADR 0195).
+#
+# <tick> <+ | - | => <Key> [value] @<controller>. A line with `@` is that
+# controller's own -- what a context whose `GamepadId` is that number reads.
+
+# Both plugged in, saying nothing yet.
+10 + Controller @1
+10 + Controller @2
+
+# The first holds right for two hundred ticks: 200/16 = 12.5 metres.
+60 = LeftStickX 1 @1
+260 = LeftStickX 0 @1
+
+# The second holds forward from 100: 120 ticks, 7.5 metres, by the time it is
+# unplugged at 220 -- with its stick still pushed, as a cable pulled out
+# mid-game leaves it. Nothing after that moves its player.
+100 = LeftStickY 1 @2
+150 + ButtonSouth @2
+156 - ButtonSouth @2
+220 - Controller @2
+
+# Back in, still: a controller that returns has nothing held.
+400 + Controller @2

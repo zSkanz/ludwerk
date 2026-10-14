@@ -1,0 +1,17 @@
+{
+  "format": "sequence",
+  "version": 1,
+  "bindings": ["Lamp"],
+  "length": 3,
+  "tracks": [
+    { "type": "camera", "keys": [
+        { "time": 0, "position": [0, 4, 9], "lookAt": "Lamp", "cut": true } ] },
+    { "type": "property", "target": "Lamp/Light", "property": "Brightness", "keys": [
+        { "time": 0, "value": 0 },
+        { "time": 2, "value": 5 } ] },
+    { "type": "event", "keys": [
+        { "time": 0, "name": "Begin" },
+        { "time": 1, "name": "Middle", "data": 7 },
+        { "time": 2.5, "name": "End" } ] }
+  ]
+}

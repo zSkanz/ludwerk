@@ -1,0 +1,11 @@
+{
+  "format": "material",
+  "version": 1,
+  "parent": "",
+  "instanceParameters": ["Color"],
+  "properties": {
+    "Color": [0.95, 0.95, 0.95],
+    "Metalness": 1,
+    "Roughness": 0.05
+  }
+}
