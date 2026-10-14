@@ -189,6 +189,14 @@ local function renderPage(spec: PageSpec, nav: { NavItem }, version: string, bra
             0
         )}</nav></aside>`
 
+    -- **Where the list was, before the page is first drawn.** The site script
+    -- runs at the end of the body, after a first paint with the list at its
+    -- top, and moving it there showed as a jump on every page; this runs
+    -- right after the list exists. The script keeps it (see `site.js`).
+    if sidebar ~= "" then
+        sidebar ..= "<script>(function(){var s=document.getElementById('sidebar');" .. "try{var k=sessionStorage.getItem('engine-docs-nav-scroll');" .. "if(k){s.scrollTop=parseInt(k,10)||0;}}catch(e){}})();</script>"
+    end
+
     local layoutClass = if spec.Wide == true then "layout layout-wide" else "layout"
     local tocHtml = if toc ~= "" then `<div class="rail">{toc}</div>` else ""
 
@@ -199,9 +207,15 @@ local function renderPage(spec: PageSpec, nav: { NavItem }, version: string, bra
         Banner,
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        -- The canvas between two pages takes the reader's scheme, not white.
+        '<meta name="color-scheme" content="light dark">',
         `<title>{markdown.escape(title)}</title>`,
         `<meta name="description" content="{markdown.escape(markdown.summarize(description))}">`,
         `<link rel="icon" href="{prefix}{brand.Mark}">`,
+        -- The theme a reader chose, before anything is drawn: set by the site
+        -- script at the end of the body, a dark page flashed light first.
+        "<script>try{var t=localStorage.getItem('engine-docs-theme');"
+            .. "if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}</script>",
         `<link rel="stylesheet" href="{prefix}assets/site.css">`,
         '<script>window.EngineDocs = { root: "' .. prefix .. '" };</script>',
         "</head>",

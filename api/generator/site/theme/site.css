@@ -40,9 +40,16 @@
     --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
 }
 
-html[data-theme="dark"],
 html[data-theme="auto"] {
     color-scheme: light dark;
+}
+
+html[data-theme="dark"] {
+    color-scheme: dark;
+}
+
+html[data-theme="light"] {
+    color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -86,6 +93,7 @@ html[data-theme="dark"] {
 }
 
 html {
+    background: var(--bg);
     scroll-behavior: smooth;
     /* Every in-page link lands under the fixed header without this. */
     scroll-padding-top: calc(var(--topbar-height) + 1rem);
