@@ -1455,10 +1455,9 @@ public:
     //
     // **A material is a file under `content/`, and never an instance.** It has
     // no transform and no parent that means anything, and putting it in the
-    // tree made every boundary of the tree a place it could be lost -- an earlier defect,
-    // earlier defects were that one fact paid three times. So the editor makes
-    // files, points parts at them by URN, and edits a file in a panel of its
-    // own, with its own undo.
+    // tree made every boundary of the tree a place it could be lost -- a preview with none of its maps,
+    // a material written as null and a reference dropped on save were that one fact paid three times. So the editor
+    // makes files, points parts at them by URN, and edits a file in a panel of its own, with its own undo.
 
     // The library every world the editor draws resolves materials through --
     // the host's, borrowed. An edit to the open material is put in it at once,
@@ -1595,7 +1594,7 @@ public:
 
     // Put the stamp's value back. ONE undo step, and refused rather than
     // recorded when there is nothing to revert -- a step that undoes nothing
-    // eats a press of ctrl-Z, which is the invariant two earlier defects both record.
+    // eats a press of ctrl-Z, which is the invariant two defects taught.
     bool revertOverride(scene::World& world, core::InstanceId id, core::NameAtom property);
 
     // Push this instance's value up into the stamp FILE, so every other
@@ -1812,7 +1811,7 @@ public:
     // What `createStamp` will actually write, given what somebody typed.
     // Public and pure so a dialog can preview the resolved path while it is
     // being typed, which is the half that makes the rule visible rather than
-    // surprising (an earlier defect's lesson, applied before it can happen again).
+    // surprising (the lesson of a scene saved where nothing looks for it, applied before it can happen again).
     [[nodiscard]] static std::string normalizeStampPath(std::string_view typed);
     [[nodiscard]] static bool stampNameIsUsable(std::string_view typed);
 
@@ -1898,7 +1897,7 @@ public:
     // has existed since the verb was built and had nothing to call it, which is
     // why a scene's child order was whatever the order of creation had been.
     //
-    // Records nothing when the move changes nothing, for the reason an earlier defect gives:
+    // Records nothing when the move changes nothing, for a reason learned the hard way:
     // a step that undoes nothing eats a press of ctrl-Z, and recording one
     // clears the redo stack with it.
     bool reorder(scene::World& world, core::InstanceId child, core::u32 index, Inspector& inspector);

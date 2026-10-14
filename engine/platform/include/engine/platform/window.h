@@ -141,7 +141,7 @@ struct WindowInsets
 //
 // Logical because that is what survives a move between displays: the same window
 // on a doubled display has twice the pixels and is the same size to the person
-// who sized it, and restoring the pixel count would double it (an earlier defect is the same
+// who sized it, and restoring the pixel count would double it (a window restored at twice its size is the same
 // distinction from the other end).
 struct WindowPlacement
 {

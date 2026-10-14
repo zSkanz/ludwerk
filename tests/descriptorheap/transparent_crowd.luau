@@ -1,11 +1,11 @@
 --!strict
 
--- An earlier defect's regression scene: enough draws that each bind every sampler the
+-- A regression scene: enough draws that each bind every sampler the
 -- forward pass declares to run a D3D12 GPU descriptor heap past its end.
 --
 -- Transparent parts because the blended pass never instances -- its order is its
 -- correctness -- so every one of them is a draw of its own however the opaque
--- pass batches, and this scene keeps reaching the heap's end after an earlier fix made
+-- pass batches, and this scene keeps reaching the heap's end now that batching makes
 -- differently coloured opaque parts one call. The forward pass binds thirteen
 -- samplers a draw into a heap of 2048, which does not divide: a draw starting
 -- a few slots short of the end is written past it.
@@ -18,7 +18,7 @@
 -- reports an overflowing write only when it lands outside EVERY descriptor
 -- heap, and where it lands is the driver's address layout: unpatched, this
 -- scene ran clean in ten runs of up to 1500 frames while the game that found
--- an earlier defect died in one of one (an earlier defect's row says so). It is the scene that walks the
+-- the defect died in one of one. It is the scene that walks the
 -- replacement path, run under the layer, on every gate.
 
 local RunService = game:GetService("RunService")

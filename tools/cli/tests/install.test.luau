@@ -90,7 +90,7 @@ test.suite("install", function(suite)
     end)
 
     suite:case("an installation keeps the player host somewhere else, and it is not the editor", function()
-        -- An earlier defect, expressed as a path. The two binaries differ by profile and a
+        -- A game packaged with the editor's host in it, expressed as a path. The two binaries differ by profile and a
         -- package that shipped one would put the editor inside somebody's game.
         local editor = projectlib.engineCandidates({ install = "/install" })
         local player = projectlib.playerCandidates({ install = "/install" })
@@ -102,7 +102,7 @@ test.suite("install", function(suite)
     end)
 
     suite:case("ENG_HOST does not decide what a release contains", function()
-        -- Also an earlier defect: `ludwerk dev` honours it and `ludwerk build` must not, or
+        -- The same defect: `ludwerk dev` honours it and `ludwerk build` must not, or
         -- "I pointed the dev server at a build" silently picks the binary a
         -- game ships with. The searches take separate explicit roots, so the
         -- test is that the player list never contains the dev one.

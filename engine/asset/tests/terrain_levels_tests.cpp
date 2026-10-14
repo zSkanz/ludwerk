@@ -137,7 +137,7 @@ TEST_CASE("the top of a filled block is flat: every vertex on it, every normal u
 {
     // The audit's photos/08 showed streaks on flat ground at a low sun, and a
     // lamp dark notches, at full detail too. Not the mesh: the top is flat to
-    // the vertex and the normal, borders of the region included (an earlier defect was the
+    // the vertex and the normal, borders of the region included (streaks on flat ground were the
     // grain's noise). Kept, so a mesher change that dents flat ground says so.
     TerrainField field(settingsOf());
     (void)fillBlock(field, {0.0, 2.0, 0.0}, {160.0f, 4.0f, 160.0f}, 1);

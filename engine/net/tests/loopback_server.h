@@ -269,7 +269,7 @@ public:
     [[nodiscard]] const std::string& failure() const noexcept { return m_failure; }
 
 private:
-    // `accept` with a deadline, which is the half of this helper that an earlier defect was.
+    // `accept` with a deadline, which is the half of this helper that once hung a test run.
     //
     // A bare `::accept` blocks forever when the client never connects -- and a
     // client that failed to connect is exactly the state a FAILING test leaves

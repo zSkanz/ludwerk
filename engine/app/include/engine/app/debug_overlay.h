@@ -206,7 +206,7 @@ public:
     // walks over, which is a player turning their head and re-parenting
     // something they cannot see.
     //
-    // an earlier fix covered the half of this the EDITOR causes, where a right-drag turns
+    // A fix covers the half of this the EDITOR causes, where a right-drag turns
     // the fly camera; `handleEvents` has read `lookInput` since. This is the
     // other half and it is the worse one, because the editor's lasts as long as
     // a button is held and the game's lasts as long as somebody is playing.

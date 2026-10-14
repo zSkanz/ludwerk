@@ -141,7 +141,7 @@ enum class EditorKind : core::u8
     // A reference to another instance: a picker, a drag from the Explorer, a
     // drag of a stamp from the content browser, and a `go` that follows it.
     //
-    // **It was read-only until an earlier fix**, deliberately: reparenting from the panel
+    // **It was read-only at first**, deliberately: reparenting from the panel
     // was out of the first renderer's scope and `Parent` is an Instance property, so an editable
     // reference widget would have been the one feature left out on purpose
     // arriving by accident. `BasePart.Material` is what changed the answer -- a

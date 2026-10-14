@@ -13,8 +13,7 @@ queries) is real scope.
 **Vendor Recast/Detour and define the `nav` module seam** (Recast builds on
 the jobs pool, Detour queries on the sim thread), but ship **no navmesh
 integration and no NavigationService in v1**. Navigation is the first post-v1
-item, together with the 2D layer. Confirmed by the user (planning decision
-#16).
+item, together with the 2D layer.
 
 ## Consequences
 A leaner, honest v1; the seam prevents the deferral from becoming a redesign.

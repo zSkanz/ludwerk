@@ -550,7 +550,7 @@ TEST_CASE("lookAtCFrame degenerates to the identity rotation rather than NaN")
     SUBCASE("a zero up hint is the same situation as a parallel one")
     {
         // No roll was specified, so one is chosen -- and the DIRECTION is still
-        // honoured, which is the whole of an earlier defect. Treated identically to the
+        // honoured, which is the whole of what went wrong with a look straight up or down. Treated identically to the
         // parallel case on purpose: both are "the caller gave a direction and no
         // usable roll", and a special case here would be a second answer to one
         // question.

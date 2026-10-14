@@ -99,7 +99,7 @@ local KnownCopyleft: { { prefix: string, why: string } } = {
         prefix = "third_party/sdl3/src/hidapi/",
         why = "hidapi is triple-licensed -- GPLv3, a BSD-style licence, or its original one, at the choice of"
             .. " whoever uses it (its own LICENSE.txt says so) -- and it is taken here under the BSD-style one"
-            .. " (LICENSE-bsd.txt), as SDL itself takes it. It IS compiled since an earlier fix (`SDL_HIDAPI ON`): the GPL"
+            .. " (LICENSE-bsd.txt), as SDL itself takes it. It IS compiled (`SDL_HIDAPI ON`): the GPL"
             .. " text in this directory is one of three offers, not the terms of the code",
     },
     {

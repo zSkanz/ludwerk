@@ -46,14 +46,14 @@ whichever workload first needs one"*. This was that workload.
 
 ### Fixed per-frame costs are removed first, and without an interface change
 
-- **One staging buffer per frame** (`20b43f0c`). Each upload is written at the
+- **One staging buffer per frame.** Each upload is written at the
   next aligned offset: 512 bytes for a texture copy, which D3D12 requires, and
   16 for a buffer. The first write of a frame cycles the buffer, which is SDL's
   guarantee that bytes a frame still in flight is reading are never overwritten.
   The buffer grows between frames up to 16 MiB. An upload over 4 MiB, or one
   that does not fit mid-frame, keeps a buffer of its own. The RHI interface is
   unchanged (ADR 0037).
-- **The extract resolves the five primitive meshes once per frame** (`e122225b`)
+- **The extract resolves the five primitive meshes once per frame**
   instead of by name for every part.
 - **The part matrix is computed fused** (`toRenderMatrixScaled`, landed with
   this record), bit for bit

@@ -613,8 +613,12 @@ jobs:
           - { os: windows-latest, preset: win-msvc-dev, shard: 2, shards: 3 }
           - { os: windows-latest, preset: win-msvc-dev, shard: 3, shards: 3 }
     runs-on: ${{ matrix.os }}
-    # The hang guard, as on `build-test`.
-    timeout-minutes: 60
+    # The hang guard, as on `build-test`, with the Windows cold case's own
+    # measurement: the public repository's first run (2026-10-14), every cache
+    # cold, built for 28 to 37 minutes a shard and then linked the editor's
+    # test binary for fourteen more; the slowest shard was cut at 60 with its
+    # tests not yet run. A warm run is a fraction of it.
+    timeout-minutes: 90
     env:
       SCCACHE_CACHE_SIZE: "1G"
       SCCACHE_IDLE_TIMEOUT: "0"
@@ -1034,7 +1038,7 @@ jobs:
     #
     # **45 again, since 2026-10-05.** The repository is public and the minutes
     # are not charged; and the build this job does is no longer 168 s. It was
-    # 15.5 minutes on `797806d6` and 18 minutes 47 seconds on `b617eaef`, whose
+    # 15.5 minutes on one push that day and 18 minutes 47 seconds on the next, whose
     # tests were then cut off 53 seconds in -- a run reported as cancelled for
     # a commit with nothing wrong in it, and `main` held back for it.
     timeout-minutes: 45
@@ -1107,7 +1111,7 @@ jobs:
       # 2026-09-23). It was non-blocking until then, the shape used for the
       # sanitizers: the first time any test here executed on macOS, nothing
       # local could predict a different libc++ and a Metal SDL_GPU backend, and
-      # it found earlier defects -- failures nobody had read, which is the cost
+      # it found two failures of macOS's own -- failures nobody had read, which is the cost
       # of a step allowed to fail. `--output-on-failure`, because the one run
       # that failed after those were fixed (`streaming_soak`, once) left only a
       # status line to learn from.

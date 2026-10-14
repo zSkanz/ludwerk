@@ -101,7 +101,7 @@ struct Service
 
     std::array<Request, MaxIoRequests> requests{};
     std::vector<u32> freeSlots;
-    // Whether the current exhaustion episode has already been reported (an earlier defect's
+    // Whether the current exhaustion episode has already been reported (the leak's
     // residual). See `readFileAsync`.
     bool exhaustedReported = false;
     // Slot indices waiting for a place in flight. Kept unsorted and scanned on
@@ -397,7 +397,7 @@ void shutdownIo()
             releaseSlotLocked(s, slot);
         }
         s.queued.clear();
-        // Set under the mutex the submitter waits on, which is an earlier defect's rule and
+        // Set under the mutex the submitter waits on, which is the rule a hung pool taught and
         // not a style choice: a flag flipped outside it can be missed between
         // the predicate being evaluated and the wait being entered, and the
         // thread then sleeps through the shutdown and hangs the join below.
@@ -479,7 +479,7 @@ IoRequest readFileAsync(const std::filesystem::path& path, IoPriority priority, 
 {
     Service& s = service();
 
-    // **Exhaustion is reported, and that is an earlier defect's residual**. This
+    // **Exhaustion is reported, and that is what the leak left to do**. This
     // returns an invalid request when the pool is full, and every caller falls
     // through to a synchronous read -- which is right, and is why nothing
     // BREAKS. What it also is, is silent: a leaked slot took the pool to 512 and
@@ -527,7 +527,7 @@ IoRequest readFileAsync(const std::filesystem::path& path, IoPriority priority, 
     s.queued.push_back(slot);
 
     // The submitter is woken rather than the open being done here. That is the
-    // whole of an earlier defect: this function is called from the frame thread inside the
+    // whole of a soak that stalled inside streaming: this function is called from the frame thread inside the
     // streaming pump, and it must not be able to block on a filesystem.
     s.wake.notify_one();
 
@@ -582,7 +582,7 @@ void pumpIo()
         // A completion freed a place in flight, or what was collected made
         // room under the ceiling, so there may be room for the next queued
         // read. Notified under the lock the predicate reads, which is the
-        // rule an earlier defect was about.
+        // rule a hung pool taught.
         if (!s.queued.empty()) {
             wakeSubmitter = true;
         }

@@ -23,7 +23,7 @@ end)
 
 -- **A wait that gives up, and says for what.** A joiner that waited for ever
 -- said nothing more, and the gate could tell that it failed and not why
--- (an earlier defect was found behind exactly that silence).
+-- (a defect was found behind exactly that silence).
 local function waitFor(what: string, done: () -> boolean)
     local waited = 0
     while not done() do

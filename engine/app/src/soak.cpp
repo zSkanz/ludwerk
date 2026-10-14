@@ -170,7 +170,7 @@ SoakVerdict SoakRecorder::evaluate(const SoakThresholds& thresholds) const
         //
         // It goes to `quarantined` rather than being skipped, so the number is
         // still in the report and a real regression is still visible to anybody
-        // reading it -- the same distinction an earlier defect put this list here for.
+        // reading it -- the distinction this list is here for.
         verdict.quarantined.push_back(core::makeError(ENG_TR("engine.soak.err.over_ceiling"), args));
 #else
         verdict.failures.push_back(core::makeError(ENG_TR("engine.soak.err.over_ceiling"), args));
@@ -219,7 +219,7 @@ SoakVerdict SoakRecorder::evaluate(const SoakThresholds& thresholds) const
         verdict.quarantined.push_back(core::makeError(ENG_TR("engine.soak.err.growing"), args));
     }
 
-    // --- A place visited twice: the check an earlier defect asked for, built ----------------
+    // --- A place visited twice, as a check --------------------------------------------------
     //
     // **The comparison load cannot move.** The quarantined check above reads two
     // windows of a run and therefore reads how far materialisation fell behind

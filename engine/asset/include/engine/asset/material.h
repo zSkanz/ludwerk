@@ -361,7 +361,7 @@ void applyOverrides(const MaterialOverrides& overrides, MaterialFieldMask declar
 // each file and each resolved chain until told the file changed.
 //
 // One per host, shared by every world the host draws: a stamp's stage and the
-// game resolve the same URN to the same material, which is the property an earlier defect
+// game resolve the same URN to the same material, which is the property a preview with no maps
 // was missing.
 class MaterialLibrary
 {

@@ -270,7 +270,7 @@ bool editable(const scene::PropertyDesc& descriptor) noexcept
         return false;
 
     const EditorKind kind = editorFor(descriptor);
-    // **`InstanceRef` used to be here, and taking it out is the whole of an earlier defect.**
+    // **`InstanceRef` used to be here, and taking it out is the whole of the fix.**
     //
     // A reference was deliberately read-only with the first renderer -- reparenting from the panel
     // was out of that milestone's scope, and `Parent` is an Instance property,
@@ -1108,7 +1108,7 @@ void Inspector::applyPending(scene::World& world)
 void Inspector::onWorldRestored() noexcept
 {
     // The values moved; the ids did not. So the value-keyed half goes and the
-    // id-keyed half stays -- see the header, and an earlier defect for what conflating the
+    // id-keyed half stays -- see the header, and the undo that collapsed the Explorer for what conflating the
     // two cost.
     ++worldGeneration_;
     gesture_ = 0;

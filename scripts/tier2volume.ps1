@@ -13,7 +13,7 @@
 # The first checkout keeps the name the volume always had, so its cache
 # stands; a linked worktree gets the name with a mark of its own path.
 #
-# **And a second clone is a second checkout** (an earlier defect's gate, 2026-10-12). A
+# **And a second clone is a second checkout** (2026-10-12). A
 # clone has a `.git` of its own, so it does not look like a linked worktree,
 # and it was handed the first checkout's volume: a fix gated in a clean clone
 # left that volume full of objects built from the clone's sources, and every

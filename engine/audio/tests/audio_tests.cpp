@@ -374,7 +374,7 @@ TEST_CASE("swapping the mounts drops what was decoded against the old ones")
 
 TEST_CASE("a decoded sound is as long as its file, not as long as the placeholder")
 {
-    // An earlier defect. `tick` measured every sound in the world against a one-second
+    // `tick` once measured every sound in the world against a one-second
     // constant, which was correct for the whole of the input and UI work -- nothing decoded a file,
     // so every sound WAS a one-second tone -- and was never revisited when the streaming work
     // made `Content` real.
@@ -498,7 +498,7 @@ TEST_CASE("TimeLength is the file's, read before playing, and TimePosition stays
 
 TEST_CASE("the mixer keeps its cursor unless the timeline has really moved")
 {
-    // An earlier defect, as the rule rather than as the plumbing. The two clocks are the same
+    // The distortion's cure, as the rule rather than as the plumbing. The two clocks are the same
     // clock in a healthy run and are quantised differently -- the simulation
     // steps in whole ticks, the device in whole buffers -- so on any given frame
     // one is ahead of the other by less than either quantum.
@@ -798,7 +798,7 @@ TEST_CASE("the tick answers the same whether the prefetch won or not")
 
 TEST_CASE("a URN that names nothing is fetched once and does not leak its slot")
 {
-    // An earlier defect's class of defect: a failed asynchronous read whose slot nobody
+    // A class of defect met before: a failed asynchronous read whose slot nobody
     // releases, and at five hundred and twelve every read in the process is
     // refused. Six hundred attempts is past that by a margin.
     REQUIRE(engine::platform::initIo());
@@ -838,7 +838,7 @@ TEST_CASE("tearing down with a fetch in flight leaves nothing behind")
     CHECK(true);
 }
 
-// --- The rest of an earlier defect: a header for the tick, and a stream for long files ------
+// --- The rest of the prefetch: a header for the tick, and a stream for long files ----------
 //
 // The prefetch left two things. A sound made and played on one tick still made
 // the TICK decode its file, because the tick needs its length; and a long file

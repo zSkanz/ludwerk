@@ -36,7 +36,7 @@ handle, removes the mesh from `MeshLibrary` and releases its buffers from
 `MeshCache`. The next frame's sync reads the file as it stands on disk.
 
 **It works because loose content is not cached.** `ContentMounts::resolve`
-answers a loose URN with a *path* and reads nothing — an earlier fix took the read out of
+answers a loose URN with a *path* and reads nothing — a fix took the read out of
 it, when every streamed chunk was being read twice — so the next load opens the
 current file. A URN served from a pack or from the editor's object store
 resolves to bytes the mount keeps, and forgetting one reloads the same bytes.

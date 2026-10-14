@@ -77,7 +77,7 @@ TEST_CASE("a request completes even while a caller polls in a tight loop")
 {
     seedCatalog();
 
-    // An earlier defect, and it is a fairness bug rather than a logic one. The frame loop
+    // A request that never came back, and it is a fairness bug rather than a logic one. The frame loop
     // calls `take` once per frame for every outstanding ticket; a headless run
     // on the null backend has no frame pacing at all, so that is a hundred
     // thousand lock/unlock pairs on the same mutex the worker needs for the one

@@ -9,7 +9,7 @@
 // `C` and `R` among them -- and the mixer's own code comes after.
 //
 // It was not compiled at all until the first real `.ogg` was played. The
-// stream's length had been read from its pages by hand since an earlier fix, with a test
+// stream's length had been read from its pages by hand since Vorbis was first decoded, with a test
 // made of a header and no audio, so `TimeLength` was right and every Vorbis
 // file played the placeholder tone.
 //

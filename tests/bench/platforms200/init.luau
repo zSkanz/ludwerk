@@ -1,5 +1,5 @@
 --!strict
---- What an earlier fix costs, measured rather than estimated.
+--- What moving platforms that carry what stands on them cost, measured rather than estimated.
 ---
 --- An anchored part whose `CFrame` is written becomes a KINEMATIC body and goes
 --- back to `Static` twelve ticks after the last write. Changing a body's motion

@@ -200,7 +200,7 @@ echo "== vendored trees and narrowed include lists (ADR 0042) =="
 lute tools/repo/vendor.luau status
 
 # Every component field has a reader, or its property is marked `Inert`. The
-# mechanical half of an earlier defect: `Inert` was built with the rendering work so that "stored and nothing
+# mechanical half of a lesson -- a property that did nothing and nobody knew: `Inert` was built with the rendering work so that "stored and nothing
 # acts on it" would be visible, and two milestones later a property was born into
 # exactly that state and nobody marked it. A marker that depends on somebody
 # remembering is the one thing it exists not to depend on.

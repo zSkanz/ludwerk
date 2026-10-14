@@ -6208,7 +6208,7 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
     // **Which of these properties are this instance's own**. Asked once
     // for the whole grid rather than once per row, and answered from a cache the
     // editor drops whenever anything changes -- the question reads the stamp
-    // FILE, and a panel that asked it per row per frame would be an earlier defect again.
+    // FILE, and a panel that asked it per row per frame would be the editor that seemed to reload everything again.
     //
     // Only for a single selection. With several selected the answer differs per
     // instance, and one mark that meant "some of these" would be worse than no
@@ -6663,7 +6663,7 @@ void drawWriteLog(scene::World& world, const Inspector& inspector)
 // `architecture.md` §app names five panes for the DebugShell -- explorer,
 // properties, profiler with the memcat table, log/REPL, streaming map, physics
 // wireframe -- and two of them had never been written. The audit that found that
-// is what an earlier defect is; this is the pane.
+// is what was missing; this is the pane.
 
 // The last few hundred log lines, and the sink that fills them.
 //
@@ -8457,7 +8457,7 @@ void drawViewportFullscreen(Editor& editor, rhi::TextureHandle texture, EditorCo
 //
 // That is not a guess: ImGui's `FocusWindow` carries the line that would do it
 // and the line is COMMENTED OUT, with its own note -- "for #2304 we avoid
-// applying focus immediately before the tabbar is visible". So an earlier fix for
+// applying focus immediately before the tabbar is visible". So a first fix for
 // "the editor opens on stats" moved the focus and never moved the tab, and the
 // node went on opening on whichever window was docked last, which is what it
 // had always done. Reported again, in the same words, by the same person.
@@ -8568,7 +8568,7 @@ void buildDefaultLayout(ImGuiID dockspace)
 //
 // `CloseCurrentPopup` takes effect immediately, so the shell's own Escape
 // handler would otherwise find no popup where this one had been and drop the
-// selection on the same press -- which is an earlier defect, one dialog over.
+// selection on the same press -- which is Escape closing a menu and clearing the selection, one dialog over.
 //
 // Not while a shortcut is being recorded in Preferences: there Escape cancels
 // the recording, and closing the window under it would lose the page too.
@@ -12096,7 +12096,7 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
 
         // The RESOLVED path, not the typed one. The label above the box already
         // says `content/`, so `content/scenes/main` is the natural thing to
-        // type and used to be saved verbatim into `content/content/` -- an earlier defect,
+        // type and used to be saved verbatim into `content/content/` -- a defect
         // found by the first person to use this dialog. Showing what will
         // actually be written is what makes the normalisation visible instead
         // of surprising.
@@ -12454,7 +12454,7 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
 
         ImGui::Spacing();
         // The RESOLVED path while it is being typed, which is the half that
-        // makes a rule visible rather than surprising -- an earlier defect is what happens
+        // makes a rule visible rather than surprising -- a scene saved where nothing looks for it is what happens
         // without it.
         if (usable)
             ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.editor_dialogs.writes_path"),

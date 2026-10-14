@@ -3062,7 +3062,7 @@ bool Editor::revertNode(scene::World& world, core::InstanceId id, bool wholeCopy
     if (wholeCopy)
         world.collectDescendants(root, nodes);
 
-    // Measured before anything is recorded, for an earlier defect's reason.
+    // Measured before anything is recorded, so that a drop that changes nothing records no step.
     scene::StampLibrary stamps(world, stampSource());
     std::vector<std::tuple<core::InstanceId, core::NameAtom, scene::Value>> back;
     for (const core::InstanceId node : nodes) {

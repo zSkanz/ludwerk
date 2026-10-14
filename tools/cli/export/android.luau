@@ -56,7 +56,7 @@ local function localAppData(): string?
 end
 
 --- The user's folder under the brand's name: the Gradle build's cache, and
---- where toolchains were installed before an earlier fix. **Nothing a rename would
+--- where toolchains were first installed. **Nothing a rename would
 --- orphan is put here any more** -- see `toolsFolder`.
 local function userFolder(): string
     local appData = localAppData()

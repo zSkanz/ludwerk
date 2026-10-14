@@ -1,6 +1,6 @@
 // Who owns the mouse -- the four defects, as cases.
 //
-// **Every one of earlier defects was reported by a person**, because
+// **Every one of the four pointer defects was reported by a person**, because
 // the rule was arithmetic inline in the frame loop and nothing could call it.
 // These are that rule, asserted. A case here is named after the defect it would
 // have caught, so a change that reintroduces one is told which report it is
@@ -15,7 +15,7 @@ using engine::app::PointerRequest;
 
 TEST_CASE("a player build gives the game exactly what it asked for")
 {
-    // The whole of an earlier defect: the property is what decides, and nothing else is in
+    // The whole of the first: the property is what decides, and nothing else is in
     // the way. It was stored and read by nothing at all.
     PointerRequest request;
     request.editorProfile = false;

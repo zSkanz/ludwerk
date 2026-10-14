@@ -743,7 +743,7 @@ if(ENG_BUILD_TESTS)
     # of wall clock, because the fixed 1/60 s headless step decouples the two.
     # That is the whole reason a five-minute gate is affordable at all.
     #
-    # THE THIRD ASSERTION IS THE ONE THAT EARNED ITS PLACE. An earlier defect degraded from
+    # THE THIRD ASSERTION IS THE ONE THAT EARNED ITS PLACE. A streaming world once degraded from
     # 100 fps to 35 over five minutes with no hitch anywhere and no ceiling
     # breach -- a thousand instances leaked every fifteen seconds. `soak.h`
     # explains why the instance count flattening is the property that separates
@@ -774,7 +774,7 @@ if(ENG_BUILD_TESTS)
             -DFRAMES=18000
             -DCEILING_MB=96
                 -DMIN_INSTANCES=1000
-            # **The check an earlier defect asked for lives here**, because this fly-through is
+            # **The revisited-place check lives here**, because this fly-through is
             # a circular orbit: the camera comes back to every place it has been,
             # several times over three hundred seconds. Eight metres is well
             # inside one chunk, so a revisit means the same chunks -- and
@@ -976,7 +976,7 @@ if(ENG_BUILD_TESTS)
             -DCEILING_MB=192
             -DMIN_INSTANCES=2000
             # **No return radius here, and that is a measurement rather than an
-            # omission.** The check an earlier defect asked for needs a path that doubles back, and
+            # omission.** The revisited-place check needs a path that doubles back, and
             # this one does not: over 5,939 frames the nearest an early frame
             # came to a late one was 232 m across a path spanning 835 m, because
             # a walk leg followed by a flight leg goes onward rather than round.
@@ -1093,7 +1093,7 @@ if(ENG_BUILD_TESTS)
         #
         # Unlike the UI pair, this golden CAN see the thing it is about: the
         # joint palette goes up as a uniform block and `bindUniforms` records
-        # contents (the half of an earlier defect that was fixed with the rendering work), so a pose that
+        # contents (the half of the capture's blindness to uploads that was fixed with the rendering work), so a pose that
         # stopped moving is four identical lines in a file the diff points at.
         add_test(NAME capture_gate_skinned
             COMMAND ${CMAKE_COMMAND}
@@ -2369,7 +2369,7 @@ if(ENG_BUILD_TESTS)
         # takes ten seconds here and forty-five on a hosted Windows runner that
         # is also drawing three terrain goldens in software -- and on a slow
         # afternoon it took more than a hundred and thirty, which turned a
-        # green tree red (the run of e3dd5513). A boot that hangs still fails.
+        # green tree red. A boot that hangs still fails.
         set_tests_properties(example_boot_${example} PROPERTIES
             FAIL_REGULAR_EXPRESSION "\\[error\\];\\[warn\\]"
             TIMEOUT 300)
@@ -2547,7 +2547,7 @@ if(ENG_BUILD_TESTS)
     # drifted out of date, silently, and by the time anybody looked it differed
     # from the renderer by 1,585 pixels.
     #
-    # It is worth reading rather than deleting, and an earlier defect is the reason: `upload`
+    # It is worth reading rather than deleting, and a capture that recorded sizes alone is the reason: `upload`
     # records a buffer's SIZE and not its contents, so the capture gate beside
     # this one is structurally blind to the QUADS. The two capture goldens prove
     # the scissors, the viewport and the draw count; only pixels can say the
@@ -2646,7 +2646,7 @@ if(ENG_BUILD_TESTS)
                 -DTOLERANCE=0
                 -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_screenshot_gate.cmake)
 
-        # The instanced path, and it is here for an earlier defect: that path shipped drawing
+        # The instanced path, and it is here for what happened once: that path shipped drawing
         # NOTHING while every gate it had was satisfied -- the draw count fell,
         # the command stream matched its capture, the frame got faster, because
         # the geometry was being transformed off-screen. A command stream and a

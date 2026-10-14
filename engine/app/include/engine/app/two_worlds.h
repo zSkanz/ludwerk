@@ -22,7 +22,7 @@
 //
 // The first half catches a shared static: if world B's contents reach world A's
 // frame, A stops matching its own solo render. The second half catches the
-// vacuous pass -- two empty worlds agree perfectly (an earlier defect is what that costs).
+// vacuous pass -- two empty worlds agree perfectly (an instanced path that drew nothing is what that costs).
 //
 // Like `--replay` and `--bench` this is a mode rather than a flag on a normal
 // run: it owns its own device, its own frame loop and its own exit, because

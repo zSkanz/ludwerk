@@ -8,7 +8,7 @@
 // arithmetic nobody can test.
 //
 // **A third check is here that the roadmap does not name**, and it is the one
-// that earned its place. An earlier defect was a streaming world that grew by a thousand
+// that earned its place. One defect was a streaming world that grew by a thousand
 // instances every fifteen seconds and never shrank -- the frame times degraded
 // smoothly from 100 fps to 35 over five minutes with no hitch anywhere, so a
 // gate watching only for hitches would have shipped it. Peak memory would have
@@ -69,7 +69,7 @@ struct SoakThresholds
     // holds half as much again as a GPU does, of what is the same world. For a
     // path that covers the same ground in both quarters -- out and back,
     // twice: a flight that keeps what it has flown over holds a lap more the
-    // second time. Earlier defects were both that, and both were under every
+    // second time. Two leaks of streamed cells were both that, and both were under every
     // ceiling this world would have been given. Zero asserts nothing.
     f64 memoryGrowthTolerance = 0.0;
 
@@ -104,7 +104,7 @@ struct SoakThresholds
     // Zero asserts nothing.
     u64 minimumGroundCells = 0;
 
-    // --- The revisited-place check (the check an earlier defect asked for) ------------------
+    // --- The revisited-place check ------------------------------------------------------------
     //
     // **It is a place visited twice, not a return to the start**, and that
     // distinction came from running it rather than from designing it. The first
@@ -177,7 +177,7 @@ struct SoakSample
 
     // Where the streaming focus was, in world metres.
     //
-    // **This is what makes the check an earlier defect asked for possible.** The growth check
+    // **This is what makes the revisited-place check possible.** The growth check
     // compares the last quarter of a run against the second, and that measures
     // how far materialisation fell behind as much as it measures the engine --
     // it flaked twice on exactly that, and was quarantined rather than widened
@@ -260,7 +260,7 @@ struct SoakVerdict
     // the cause is understood but the instrument is wrong -- widening its
     // threshold until it stops complaining would remove the only thing watching
     // for the failure it exists to catch, so it keeps running and keeps saying
-    // what it saw. An earlier defect is the one that put this here.
+    // what it saw. A soak that failed only under load is what put this here.
     std::vector<core::EngineError> quarantined;
 };
 

@@ -622,7 +622,7 @@ ctest --preset win-msvc-dev --output-on-failure --no-tests=error -L perf || exit
 # the nightly job -- `.github/workflows/nightly.yml` runs it there -- and here
 # behind `-Only asan` for the afternoon somebody is chasing a lifetime bug.
 #
-# What it is expected to find, from this repository's own history: an earlier defect was a
+# What it is expected to find, from this repository's own history: one defect was a
 # leaked IO slot, and the three-stage decode pipelines hand jobs pointers into
 # buffers whose lifetime is the whole argument for how they are written. Those
 # are exactly the defects ASan reports and no other gate here can.
@@ -723,7 +723,7 @@ Invoke-Stage 'shipping' {
 # profiles differ from `dev` by what `ENG_LUAU_COMPILER` and `ENG_DEBUG_UI`
 # gate, so what rots in them is code inside an `#if` -- and a preprocessor
 # branch that one compiler takes and another does not is precisely where the
-# two disagree. An earlier defect is this repository's own instance: an unknown number of
+# two disagree. This repository has its own instance: an unknown number of
 # commits where the shipping profile did not compile at all.
 #
 # Opt-in for the same reason as `asan`: three Release configures and three

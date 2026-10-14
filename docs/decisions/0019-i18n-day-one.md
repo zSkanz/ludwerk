@@ -4,7 +4,7 @@
 - Date: 2026-08-19
 
 ## Context
-User decision #10: multiple languages must be supported eventually, launching
+The requirement: multiple languages must be supported eventually, launching
 English-only, and adding a language must be trivial. Retrofitting i18n over
 hardcoded strings is notoriously expensive.
 

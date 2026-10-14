@@ -188,7 +188,7 @@ ShadowCascades fitShadowCascades(const ShadowFit& fit, const ShadowCascades* pre
         Vec3 boxCentre = centre;
         // Whether this cascade is reusing last frame's box. It decides two
         // things: the extent and centre above, and whether the snap below runs
-        // at all -- see the comment there, which is an earlier defect.
+        // at all -- see the comment there, which is the flicker under a moving sun.
         bool keptBox = false;
         // Where the box was last frame, in THIS frame's light space. The snap
         // rounds against it rather than against the world, which is what keeps a
@@ -267,7 +267,7 @@ ShadowCascades fitShadowCascades(const ShadowFit& fit, const ShadowCascades* pre
                 f32 wantX = (minX + maxX) * 0.5f;
                 f32 wantY = (minY + maxY) * 0.5f;
 
-                // **The fit's memory, and what it is FOR changed at an earlier fix.**
+                // **The fit's memory, and what it is FOR changed with the flicker's fix.**
                 //
                 // Keeping a box outright -- same centre, same extent, same
                 // lattice -- is the most stable thing a cascade can do, and it
@@ -318,7 +318,7 @@ ShadowCascades fitShadowCascades(const ShadowFit& fit, const ShadowCascades* pre
 
         const f32 texel = (2.0f * extent) / static_cast<f32>(fit.tileResolution);
 
-        // **The snap, and what it rounds AGAINST is the whole of an earlier defect.**
+        // **The snap, and what it rounds AGAINST is the whole of that flicker.**
         //
         // A cascade that follows the camera has to move, and moving it by a
         // fraction of a texel drags every shadow edge across the grid it is

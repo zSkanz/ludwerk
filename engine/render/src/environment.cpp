@@ -577,7 +577,7 @@ void bakeIrradianceSh(const SkyParams& params, Vec3 (&out)[9]) noexcept
     // constant and the Jacobian that corrects it is more code than this loop.
     IrradianceJob job{.params = &params};
 
-    // **Split across workers, and an earlier defect is why it had to be.** This runs on every
+    // **Split across workers, and a ground that pulsed at noon is why it had to be.** This runs on every
     // frame now rather than on one frame in six hundred, because a diffuse
     // ambient that updates in steps is a world that pulses. Measured serial at
     // 0.6 ms, which is a fifth of the flagship's frame; the same eight thousand

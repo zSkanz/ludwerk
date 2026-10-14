@@ -1632,7 +1632,7 @@ TEST_CASE("a boot scene that will not read is reported and the world still boots
 
 TEST_CASE("a project with a scene AND world-building scripts is told it has two of everything")
 {
-    // An earlier defect, and the honest cost of an earlier fix rather than a regression from it:
+    // A world saved with two of everything, and the honest cost of the Play fix rather than a regression from it:
     // once the scene loads BEFORE the scripts, a project whose code also builds
     // a world has two sources for one world and the engine cannot merge them.
     // What it can do is say so with both numbers, the first time, instead of

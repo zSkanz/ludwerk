@@ -14,7 +14,7 @@ commit. Dual MIT+Apache (Rust-style) was considered.
 License the project under **Apache-2.0, as a single license** (explicit patent
 grant + defensive termination; precedent: O3DE). Ship `LICENSE`, `NOTICE`, and
 a generated `THIRD_PARTY_NOTICES.md`. Contributions are accepted under DCO
-sign-off (no CLA at this stage). Confirmed by the user (planning decision #15).
+sign-off (no CLA at this stage).
 
 ## Consequences
 Every contributor grants an explicit patent license. Apache's GPLv2

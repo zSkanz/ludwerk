@@ -549,7 +549,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // After the mount, so a scene that names a class a project's own code
     // registers finds it; after the preserved restore, so a reload's carried
     // instances are in the tree the scene replaces around them; and before the
-    // scripts, which is the half an earlier defect was.
+    // scripts, which is the half that once went wrong.
     //
     // A scene that will not read is reported and the boot continues. The world
     // then holds whatever the scripts build, which is the same world every

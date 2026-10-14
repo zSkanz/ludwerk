@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-27
-- Relates to: ADR 0040 (the UI), an earlier fix (`UICorner`, the one appearance
+- Relates to: ADR 0040 (the UI), `UICorner` (the one appearance
   modifier so far), ADR 0034 (naming), ADR 0107 (a `ViewportFrame` will take a
   gradient too).
 

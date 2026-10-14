@@ -154,7 +154,7 @@ constexpr f64 StandInTouch = 0.01;
 // `Enum.CollisionFidelity`'s items, by name rather than by the numbers they
 // happen to have. The component stores the raw value -- for the reason every
 // enum-valued component does, that a generated accessor needs no per-enum C++
-// type -- and reading it back against a literal is how an earlier defect happened.
+// type -- and reading it back against a literal is how a mesh came to collide as its box.
 enum class CollisionFidelity : i32
 {
     Default = 0,
@@ -307,7 +307,7 @@ physics::BodyDesc PhysicsSync::descOf(core::InstanceId id, const PartComponent& 
     // moving platform is `Anchored` with a tween on its `CFrame`, and it was
     // classified `Static` -- which is the layer Jolt keeps precisely so that it
     // is never re-fitted. A static body does not move and derives no velocity,
-    // so an earlier defect's `MoveKinematic` was handed a target and nothing happened: the
+    // so the moving platform's `MoveKinematic` was handed a target and nothing happened: the
     // fix was right and unreachable.
     //
     // Only what is written, and only while it is written. The alternative --
@@ -402,7 +402,7 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
     // **Nor has a mesh that wears another's pose** (ADR 0201), whatever its
     // `CanCollide`, `CanTouch` and `CanQuery` say: it is picture on its
     // leader, drawn in the leader's place, and what is hit is the leader. So
-    // a breastplate or a bow can never be what its wearer stands on -- an earlier defect
+    // a breastplate or a bow can never be what its wearer stands on -- the defect
     // was a carried part taken for ground, and a piece with no body is not in
     // that question at all. Cleared of its leader it is a part again, and the
     // record below makes its body afresh. A weld or a joint that holds one
@@ -624,7 +624,7 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
             // velocity, and a body nobody re-targets keeps the last one and
             // COASTS. A platform whose tween finished sailed on past its
             // destination, and a welded part whose anchor stopped moving flew
-            // away -- both found by two conformance cases the moment an earlier fix
+            // away -- both found by two conformance cases the moment that fix
             // landed.
             //
             // Handing over the same target computes a velocity of zero, which is

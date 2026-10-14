@@ -24,7 +24,7 @@ engine_add_module(audio
         asset
         core
         scene
-        # Both from an earlier defect's prefetch: the read is `platform::readFileAsync` and
+        # Both from the prefetch: the read is `platform::readFileAsync` and
         # the decode is a job. Named here rather than leaned on transitively,
         # because `tools/repo/checklayers.luau` reads real `#include` edges and
         # an unnamed one is an edge nobody decided.

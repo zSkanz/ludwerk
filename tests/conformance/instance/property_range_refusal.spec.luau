@@ -65,7 +65,7 @@ describe("Property range refusals", function()
             expect(part.Friction):ToBe(0)
         end)
 
-        it("reports a tick length for FixedTimestep, which is what an earlier defect was about", function()
+        it("reports a tick length for FixedTimestep, not the key for its type", function()
             local physics = game:GetService("PhysicsService")
             local before = physics.FixedTimestep
             expect(writeAny(physics, "FixedTimestep", 1 / 10)):ToThrow("scene.err.number_fixed_timestep")

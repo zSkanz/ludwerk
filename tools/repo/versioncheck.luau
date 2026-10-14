@@ -13,7 +13,7 @@
 	What that costs is not abstract. `v1.1.0` pushed against a tree still
 	declaring `1.0.0` produces an archive called `Ludwerk-1.0.0-win64`, a binary
 	whose `--version` says 1.0.0, and a release page saying 1.1.0 -- and the
-	first person to report a bug reports it against the wrong version. An earlier defect
+	first person to report a bug reports it against the wrong version. Another one
 	records the near-miss from the other direction, where the DECLARATION was
 	behind the newest release; `package.luau` has refused that since. This is the
 	same check at the moment it actually matters.

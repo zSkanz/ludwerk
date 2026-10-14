@@ -1540,7 +1540,7 @@ core::u32 MeshLoader::forget(rhi::IDevice& device, std::span<const core::NameAto
         // fresh entry, which the next forget would drop again -- so the worst
         // case is one stale frame, and the alternative is cancelling work from
         // the middle of a pipeline whose whole design is that nothing holds a
-        // pointer into it (an earlier defect's neighbourhood).
+        // pointer into it (where a slot once leaked).
     }
     return dropped;
 }

@@ -91,7 +91,7 @@ TEST_CASE("a player's preset replaces the file's refinements, not just its level
     overrides.quality = render::QualityLevel::Low;
     const app::ProjectConfig config = app::loadProjectConfig(project.path, overrides);
 
-    // **The whole of an earlier defect's second half.** Before it, `--quality=low` took the
+    // **The second half of the far shadows' fix.** Before it, `--quality=low` took the
     // Low preset and then let the file put a 4096-pixel shadow atlas back on
     // top of it -- the single heaviest dial in the file, on the machine that
     // just asked for less. A preset the player names is the preset they get.

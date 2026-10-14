@@ -82,7 +82,7 @@ All of them: a rate that divides the refresh, held, and the display told.
    pacer is.
 
 5. **At the display's own rate nothing is held at the present**, and the
-   frame is paced as one nobody governs is (`governedPaceFor`, as an earlier fix left
+   frame is paced as one nobody governs is (`governedPaceFor`, as a later correction left
    it): by the display, and by the game's cap waited out at the frame's end.
    The first writing left it to the display alone -- "a second pacer beside
    the display's would beat against it" -- and the phone said otherwise.
@@ -162,6 +162,6 @@ governor on and with it off, in the same two scenes:
 - A game at the edge of a rate runs at the rate below it, steadily, instead of
   between the two.
 - `--frame-stats` gains a scope, `wait.pace`: the hold. It is counted as a
-  wait, not as the frame's work. And, since an earlier fix, `wait.cap`: the cap waited
+  wait, not as the frame's work. And, since the cap's wait got a name of its own, `wait.cap`: the cap waited
   out at a frame's end.
 - Protocol unchanged (40).

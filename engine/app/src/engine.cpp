@@ -456,7 +456,7 @@ public:
         // Rebased the same way every other debug line is: `DebugDraw` holds
         // camera-relative f32, and a world-space line drawn through a
         // camera-relative view-projection is displaced by the camera's distance
-        // from the origin -- which is an earlier defect, found by looking at a screenshot.
+        // from the origin -- which happened, and was found by looking at a screenshot.
         m_draw.line(core::toVec3(from), core::toVec3(to),
                     render::DebugColor::fromLinear(static_cast<f32>((color >> 16) & 0xff) / 255.0f,
                                                    static_cast<f32>((color >> 8) & 0xff) / 255.0f,
@@ -2731,7 +2731,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
 
     // **The scene, if the project has one** (ADR 0047), chosen here and applied
     // by `WorldHost::boot` BEFORE it starts the scripts -- which is the order
-    // the ADR describes and `scene_file.h` states, and which an earlier defect is the cost
+    // the ADR describes and `scene_file.h` states, and which a Play that printed an error a frame was the cost
     // of having had backwards.
     //
     // **Which scene opens, in order: what this person had open, what the
@@ -3785,7 +3785,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 // the number the gate wants is a PEAK and a peak between two
                 // samples is a peak nobody saw.
                 // **The PRIMARY focus, in world metres.** The returning-focus
-                // check (the check an earlier defect asked for) compares the same place with itself,
+                // check compares the same place with itself,
                 // so it needs to know where the place was -- and it is the
                 // FIRST focus rather than a centroid, because a world with two
                 // of them has two paths and averaging them describes neither.
@@ -5698,7 +5698,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 //
                 // `ScriptEditor::forgetDestroyed` has existed and been tested
                 // since this editor was built and nothing ever called it, which
-                // is the shape an earlier defect recorded: code that is right and unreachable
+                // is a shape met before: code that is right and unreachable
                 // fails the moment something finally reaches for it.
                 Editor::Stage* const openStage = stageOf();
                 if (const std::size_t orphaned =
@@ -6107,7 +6107,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     // `ENG_TR`, because a `TextKey` is a four-byte hash and
                     // the peer is what resolves it, in the peer's locale. That
                     // is a spelling the i18n lint could not see, and this key
-                    // spent from the tooling loop to an earlier defect naming nothing in any catalog --
+                    // spent a long time naming nothing in any catalog --
                     // so a client that resolved it got the
                     // `[i18n:missing:xxxxxxxx]` marker. The lint sweeps
                     // key-shaped literals now, whoever writes them.
@@ -6245,8 +6245,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             scene::EngineState& engineState = host->world().engineState();
 
             // **Who owns the mouse**, decided by `decidePointer` rather than
-            // here. Four defects came out of this question -- an earlier defect,
-            // earlier defects -- and every one of them was reported by a
+            // here. Four defects came out of this question -- a lock that did nothing, a cursor that vanished,
+            // one that wandered and one that reached the panels -- and every one of them was reported by a
             // person, because the rule was arithmetic inline in this loop and
             // nothing could call it. The rules and the reasons are in
             // `pointer_ownership.cpp` and the cases that hold them are in
@@ -6338,7 +6338,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             // the panel writes the property back, so a game that draws its own
             // hint from it does not go stale. Without the write-back the
             // two would disagree the moment anybody pressed the key, which is
-            // the state an earlier defect named and this lint exists to find.
+            // the state the lint for stored-and-unread properties exists to find.
             if (overlay.has_value()) {
                 if (engineState.overlayVisible != overlayVisible) {
                     overlayVisible = engineState.overlayVisible;
@@ -6429,7 +6429,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // right beside it.
         //
         // The SAME predicate the frame uses to choose the view, computed once
-        // and read twice, because an earlier defect is what a predicate spelled differently
+        // and read twice, because a rainbow where a world should be is what a predicate spelled differently
         // in two files does.
         const core::InstanceId listener = host->currentCamera();
         const bool worldHasCamera = host->world().alive(listener) && !host->world().destroyed(listener) &&
@@ -7522,8 +7522,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             // structurally valid after the instance it named is gone. So this
             // asked "is the field set" while `extract` asked "can I draw through
             // it", the two disagreed for a world whose camera had been deleted,
-            // and the frame fell back to the first window's pulse -- the same rainbow an earlier defect
-            // and an earlier defect each removed from a different direction, arriving from a
+            // and the frame fell back to the first window's pulse -- the same rainbow two fixes
+            // each removed from a different direction, arriving from a
             // third. The predicate is now `extract`'s, spelled out: alive, not
             // retiring, and actually a camera.
             const core::InstanceId gameCamera = host->currentCamera();

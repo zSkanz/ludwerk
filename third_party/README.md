@@ -16,5 +16,10 @@ Rules:
 - Adding or upgrading a dependency = maintainer-approved ADR first (rule R5),
   then a vendor PR run through the full CI matrix.
 - Permissive licenses only (rule R6).
+- **A vendored tree's bytes are upstream's, and one rule governs them**: the
+  repository's `third_party/** -text`. The tool leaves a tree's own
+  `.gitattributes` out of the import, because one nearer a file would win
+  over that rule and make git treat the tree's files as text again; `vendor
+  status` fails when a tracked tree has one.
 - Lute itself is NOT vendored — it is a rokit-installed binary (ADR 0003).
 

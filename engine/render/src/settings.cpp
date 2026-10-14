@@ -89,7 +89,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         // remaining headroom visibly goes: four times the atlas, spent on
         // DENSITY rather than on range.
         //
-        // **160 metres rather than 220, and an earlier defect is why.** A cascade's texel is
+        // **160 metres rather than 220, and blocky shadows at a moderate distance are why.** A cascade's texel is
         // its box divided by its tile, and the far cascade's box is set by the
         // frustum's cross-section at the shadow distance -- so pushing the
         // distance out costs resolution in proportion. At 220 metres the far

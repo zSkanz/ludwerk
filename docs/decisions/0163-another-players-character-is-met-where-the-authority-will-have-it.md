@@ -22,7 +22,7 @@ following another for forty seconds: 137 corrections of his position, 0.17 m
 at the median.
 
 A game whose players need not block each other puts them in a collision group
-that does not meet itself (an earlier fix made that reach replicas) and never pays
+that does not meet itself (a group's rules reach replicas) and never pays
 this. A game whose players must block each other -- a shooter, a brawler --
 could not opt out.
 

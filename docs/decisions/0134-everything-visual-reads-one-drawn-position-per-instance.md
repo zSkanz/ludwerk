@@ -2,7 +2,7 @@
 
 - Status: accepted (built 2026-09-29)
 - Date: 2026-09-29
-- Builds on: an earlier fix (a frame is drawn between two ticks), the multiplayer
+- Builds on: a frame drawn between two ticks, the multiplayer
   smoothness work (a correction's slide),
   [0076](0076-replicas-predict-their-own-and-draw-the-rest-between-snapshots.md)
   (the rest of the world is drawn between snapshots),

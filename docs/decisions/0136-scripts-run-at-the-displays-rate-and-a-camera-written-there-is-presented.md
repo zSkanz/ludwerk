@@ -7,7 +7,7 @@
   `docs/api-design.md` §2.1 (the phases).
 - Builds on: [0039](0039-input-context-rate-and-total-enums.md) (`InputContext.Rate`),
   [0124](0124-a-scene-closes-as-a-game-does-and-a-handler-dies-with-its-script.md) (a handler belongs to the
-  script that made it), an earlier fix (why the default camera moved to `Heartbeat`).
+  script that made it), the world that shook as the character walked (why the default camera moved to `Heartbeat`).
 
 ## Context
 
@@ -90,7 +90,7 @@ simulation phase with a window, where it is almost certainly a mistake.
 `rig:Update` on `Heartbeat` still moves the camera **when no frame drives it**
 -- headless, a gate, the flagship's autopilot -- exactly as it does today, so
 the reference images and the soak do not move. `examples/10-open-world` goes
-back to the render rate through the module, and an earlier defect's comment says the rule
+back to the render rate through the module, and the comment that defect left says the rule
 that replaced it.
 
 ### 5. The pointer's ray

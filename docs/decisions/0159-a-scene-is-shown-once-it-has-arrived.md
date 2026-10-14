@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-10-03
-- Amends: an earlier defect's loading curtain, which covered the first scene only
+- Amends: the loading curtain, which covered the first scene only
 
 ## Context
 
@@ -23,7 +23,7 @@ The causes:
   (`pending()`), and only tests asked it. `StreamingService:LoadAreaAsync`
   waits for the ground to be resident, which ground a script has just written
   already is, so it answers at once.
-- **The loading curtain is raised once.** The curtain of an earlier fix hides the first
+- **The loading curtain is raised once.** The curtain hides the first
   scene's arrival, and lifts when the mesh and texture loaders are idle. It is
   never raised again on a scene change, and it never asks about the terrain.
 - **`LoadSceneAsync` cannot wait for what a scene's scripts build.** Its

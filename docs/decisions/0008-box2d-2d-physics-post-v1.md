@@ -4,9 +4,9 @@
 - Date: 2026-08-19
 
 ## Context
-Ludwerk targets complete 2D games as well as 3D (user requirement), with 3D
-first (user decision #7). The dedicated 2D layer (sprites, tilemaps, 2D
-physics — not just an orthographic camera) is the first post-v1 phase.
+Ludwerk targets complete 2D games as well as 3D (a requirement), with 3D
+first. The dedicated 2D layer (sprites, tilemaps, 2D
+physics — not just an orthographic camera) comes after version 1.
 
 ## Decision
 **Box2D 3.1.1** (MIT, C17, SIMD — the industry standard) is the committed 2D

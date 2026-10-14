@@ -411,7 +411,7 @@ private:
 
 // What a node did on its way through the grid.
 //
-// **Three answers rather than two, and an earlier defect is the cost of having had two.** A
+// **Three answers rather than two, and a world loaded twice is the cost of having had two.** A
 // node that STAYS may still have been rewritten, because something under it did
 // not stay -- and a parent that only asked "did my children stay" copied itself
 // verbatim over the top of that rewrite. Every part of the flagship's `Scenery`
@@ -885,7 +885,7 @@ Outcome Partitioner::visitChildren(std::string_view node, const std::string& pat
     m_parents.push_back(asset::ChunkGroup::NoAnchor);
     // **Two questions, not one.** A child that left changes this node; so does a
     // child that stayed and was rebuilt, because the rebuild is in `kept` and
-    // nowhere else. Asking only the first is an earlier defect: the deeper rewrite was
+    // nowhere else. Asking only the first was a defect: the deeper rewrite was
     // computed, thrown away, and papered over with the original text.
     bool changed = false;
     jsonslice::forEachElement(*children, [&](std::string_view child) {
@@ -1007,7 +1007,7 @@ Outcome Partitioner::visit(std::string_view node, const std::string& parentPath,
         }
         // `Nonatomic`: the model stays and its parts descend individually, so a
         // path to the model still resolves and a script that looks for it finds
-        // it -- empty, until the grid brings its parts back UNDER it (an earlier defect:
+        // it -- empty, until the grid brings its parts back UNDER it (once
         // they came back in a folder of their cell, and never under it).
         ++m_out.report.kept;
         return visitChildren(node, path, residual);

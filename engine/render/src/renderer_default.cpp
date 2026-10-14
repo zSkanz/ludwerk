@@ -1999,7 +1999,7 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .vertexBuffers = buffers,
         .vertexAttributes = attributes,
         // Front faces are culled in the shadow pass rather than back faces, and
-        // the measurement behind that is in an earlier defect: switching to back faces puts a
+        // the measurement behind that was made for the lit band: switching to back faces puts a
         // regular hatched acne across every lit floor in `examples/02-meshes`.
         // What it COSTS is the contact -- the stored depth is the far side of a
         // solid object -- and the answer to that is not the cull mode, it is the
@@ -8337,7 +8337,7 @@ bool DefaultRenderer::ensureVoxel(rhi::IDevice& device)
     });
 
     // The shadow pipeline's state is `shadow_depth`'s -- front faces culled,
-    // for the reason an earlier defect gives -- and only its fragment stage differs.
+    // for that same reason -- and only its fragment stage differs.
     const rhi::ShaderHandle shadowVertex = load("voxel_shadow", rhi::ShaderStage::Vertex);
     const rhi::ShaderHandle shadowFragment = load("voxel_shadow", rhi::ShaderStage::Fragment);
     if (shadowVertex.valid() && shadowFragment.valid()) {

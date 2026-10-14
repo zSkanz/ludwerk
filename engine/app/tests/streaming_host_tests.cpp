@@ -1,7 +1,7 @@
 // Where the world is watched from.
 //
 // A streamed world materialises around a focus and around nothing else, so the
-// focus set is the difference between a world and an empty one -- and an earlier defect is
+// focus set is the difference between a world and an empty one -- and an empty world is
 // what happens when that set is empty by default: a project somebody has just
 // made gets a streaming grid, registers no focus, and shows nothing at all,
 // with both halves reporting success.
@@ -57,7 +57,7 @@ struct WorldFixture
 
 TEST_CASE("a world that registers no focus is watched from its camera")
 {
-    // **The whole of an earlier defect.** `StreamingService:AddFocus` is the only thing that
+    // **The whole of that defect.** `StreamingService:AddFocus` is the only thing that
     // fills the focus set, and `partitionProject` runs for any non-editor run
     // with a scene -- so a project with a camera and two parts in it got a grid
     // and never loaded a cell of it. The log said the scene was partitioned,
@@ -117,7 +117,7 @@ TEST_CASE("a world with no camera and no focus is watched from nowhere")
 TEST_CASE("a camera that has been deleted is not a focus")
 {
     // `CurrentCamera` is a REFERENCE, and deleting the camera leaves the
-    // property naming a dead id -- the same shape as an earlier defect, which produced a
+    // property naming a dead id -- the same shape as the missing camera, which produced a
     // rainbow instead of a world three separate times. Here it would be a focus
     // reading a component that is not there.
     WorldFixture world;

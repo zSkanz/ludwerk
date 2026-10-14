@@ -6,7 +6,7 @@
 -- second vertex buffer, the skinned pipeline is bound for a draw that has a
 -- palette, and the palette itself is uploaded -- and CHANGES from frame to
 -- frame, because the capture backend records a uniform block's contents rather
--- than its size (an earlier defect's other half). A pose that never moved would be four
+-- than its size (the other half of what a capture must record). A pose that never moved would be four
 -- identical `bindUniforms` lines, and this golden would say so.
 --
 -- The rig is `skinned_bar.gltf`: two joints, six vertices in three rings, and a

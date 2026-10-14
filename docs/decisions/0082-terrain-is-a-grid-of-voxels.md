@@ -136,7 +136,7 @@ at the boundary so the surface lands exactly on it.
   - within the ramp round the new top the ramp is written exactly: taking the
     larger or the smaller of two ramps of different slopes put the top in
     neither place;
-  - a cave under the top stays (an earlier defect's promise, kept);
+  - a cave under the top stays (a promise kept);
   - they write chunk by chunk, so a whole square of uniform chunks costs one
     value each, not 32,768 writes.
 

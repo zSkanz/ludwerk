@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-10-05
 - Builds on: ADR 0043 (per-instance vertex stepping, and the runs it made),
-  an earlier fix (what reaches a cascade), the lot that made a skinned horde one run
+  the cull of what reaches a cascade, the lot that made a skinned horde one run
 
 ## Context
 

@@ -586,7 +586,7 @@ TEST_CASE("the atlas says which rows a glyph was written on, and when it was emp
 namespace {
 
 // What a stroke's shape IS: every tap of the kernel tried at every texel. The
-// way it was made until an earlier fix, and what the way it is made now must equal byte
+// way it was first made, and what the way it is made now must equal byte
 // for byte -- an outline that moved by one level would move every golden with
 // stroked text in it.
 std::vector<engine::core::u8> everyTap(const std::vector<engine::core::u8>& coverage, int width, int height,

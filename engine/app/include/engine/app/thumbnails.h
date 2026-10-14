@@ -203,7 +203,7 @@ protected:
 // budget on the main thread cannot help -- an image cannot be decoded half way,
 // and a floor of one per frame is a floor of one dropped frame per thumbnail. At
 // 4K it is sixteen times worse. A mesh is worse again: 21 ms to read and **191
-// ms to parse** the 2937 KiB glTF an earlier defect was opened for.
+// ms to parse** the 2937 KiB glTF that first showed the cost.
 //
 // So the file is read by `platform::readFileAsync`, the decode -- an image
 // resampled, or a glTF imported -- runs on the job pool as `Domain::AssetIo`,

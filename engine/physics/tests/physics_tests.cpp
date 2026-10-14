@@ -615,7 +615,7 @@ TEST_CASE("a character touches the wall it walks into, and the floor it stands o
     }
 
     // The floor it stands on and the wall it walks into, each named once. The
-    // wall is the half an earlier defect carried; the floor is the half that used to be
+    // wall is the half that went unreported; the floor is the half that used to be
     // diffed a layer up and is one mechanism now.
     CHECK(std::count(began.begin(), began.end(), 1u) == 1);
     CHECK(std::count(began.begin(), began.end(), 21u) == 1);

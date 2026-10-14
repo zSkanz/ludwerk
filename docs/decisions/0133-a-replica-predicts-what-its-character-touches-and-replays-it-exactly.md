@@ -116,7 +116,7 @@ across machines (ADR 0083) and save/restore/step of the 3D simulation
 
 ## How it is proved
 
-- A replication test on the jitter/loss transport (an earlier defect's): a replica walks into
+- A replication test on the jitter/loss transport (the one built when two players saw each other stutter): a replica walks into
   a line of crates and pushes one for 10 s — corrections above 1 cm: zero; the
   character never overlaps a crate in the replica's own world.
 - A replica jumping onto a block's edge 100 times at varied offsets, over the

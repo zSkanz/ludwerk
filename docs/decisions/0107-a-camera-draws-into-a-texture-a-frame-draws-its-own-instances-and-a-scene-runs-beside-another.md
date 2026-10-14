@@ -253,7 +253,7 @@ promises:
   nothing yet asks for it. Its sounds are silent: the one audio device is the
   game's.
 - **A sub-world's scene may be empty and its code build it** -- a small game
-  usually is -- so an earlier defect's "two sources for one world" is not said of one: its
+  usually is -- so the old "two sources for one world" is not said of one: its
   scene is what `Load()` names and cannot be left out.
 
 ## Amended: a clip plays inside a frame (2026-10-04)

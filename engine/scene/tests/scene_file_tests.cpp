@@ -1094,7 +1094,7 @@ TEST_CASE("a reference from inside a placed stamp to something beside it survive
     // The shape that was hit: a `Material` living in the world, assigned to a
     // part inside a placed stamp. The stamp file cannot carry it — it is not
     // under the stamp's root — so the SCENE has to, as an override naming the
-    // full path. This is the placed-stamp twin of an earlier defect, which was the same loss
+    // full path. This is the placed-stamp twin of a material lost in an open stamp, which was the same loss
     // one level up.
     Fixture fixture;
     const core::InstanceId workspace = makeWorkspace(fixture);

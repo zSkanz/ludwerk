@@ -271,7 +271,7 @@ struct ColumnBuffer
 // **The top moves; what is under it stays.** A column whose top is below the
 // target gains ground from its top up; one above it loses ground from its top
 // down; one with no ground at all is filled from the floor. A tunnel under the
-// top is below everything written (an earlier defect's promise, kept).
+// top is below everything written (a promise kept).
 //
 // `slope` is how much steeper than flat the ground is here, `sqrt(1 + |grad H|^2)`:
 // a height's vertical distance divided by it is the distance to the surface,

@@ -83,7 +83,7 @@ public:
 
     // **Whether a UI picture may take more than one frame to arrive**.
     //
-    // A 1024-square PNG costs 14 to 36 ms to decode -- measured for an earlier defect on a
+    // A 1024-square PNG costs 14 to 36 ms to decode -- measured on a
     // material's maps, and an `ImageLabel` names the same kind of file. The
     // synchronous path decodes every image a frame newly named, in that frame,
     // with no bound: a HUD that comes up with eight icons pays all eight at once.

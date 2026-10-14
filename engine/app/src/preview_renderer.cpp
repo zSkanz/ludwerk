@@ -138,7 +138,7 @@ bool HostPreviewRenderer::drawPreview(rhi::IDevice& device, rhi::ICmdList& cmd, 
             return false;
 
         // **The model arrives parsed, and that is the seam's whole point.** A
-        // 3 MB glTF parsed on the frame thread is an earlier defect exactly -- the defect
+        // 3 MB glTF parsed on the frame thread is exactly the defect
         // that made the editor feel like it reloaded the world whenever
         // anybody touched anything -- so the cache does it on the job pool and
         // this uploads what it produced.

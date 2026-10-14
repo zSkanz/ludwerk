@@ -370,6 +370,14 @@ local function syncOne(dependency: Dependency)
     else
         table.insert(checkoutArgs, ":/")
     end
+    -- **No vendored tree brings its own `.gitattributes`.** One nearer a file
+    -- wins over this repository's `third_party/** -text`, so an upstream
+    -- `* text=auto` made git treat that tree's files as text again: stored
+    -- with the line ends they were imported with, they read as modified in
+    -- any clone whose index is rebuilt, eighty files nobody touched. What
+    -- governs these bytes is this repository's one rule, and `status` holds
+    -- every tree to it.
+    table.insert(checkoutArgs, ":(top,exclude,glob)**/.gitattributes")
     runGit(checkoutArgs, `{dependency.name} checkout`)
 
     fs.removeDirectory(scratch, { recursive = true })
@@ -558,11 +566,25 @@ local function commandStatus()
         end
     end
 
+    -- A vendored tree's own `.gitattributes` (see `syncOne`). Asked of git, so
+    -- it is the tracked files that are held to it and it costs no walk.
+    local strayAttributes = 0
+    local tracked = runGit({ "ls-files", "--", "third_party" }, "ls-files third_party")
+    for path in string.gmatch(tracked, "[^\r\n]+") do
+        if
+            string.match(path, "^third_party/[^/]+/.*%.gitattributes$") ~= nil
+            and string.match(path, "[^/]+$") == ".gitattributes"
+        then
+            print(`  {path}: a vendored tree's own .gitattributes -- sync its row again`)
+            strayAttributes += 1
+        end
+    end
+
     print(
         `vendor: {#dependencies} rows, {missing} pinned-but-missing, {unpinned} unpinned, `
-            .. `{narrowingProblems} narrowing problem(s)`
+            .. `{narrowingProblems} narrowing problem(s), {strayAttributes} attribute file(s) of a tree's own`
     )
-    if missing > 0 or narrowingProblems > 0 then
+    if missing > 0 or narrowingProblems > 0 or strayAttributes > 0 then
         process.exit(1)
     end
 end

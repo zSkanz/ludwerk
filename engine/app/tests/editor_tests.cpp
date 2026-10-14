@@ -835,7 +835,7 @@ TEST_CASE("undo, redo and stop leave id-keyed panel state alone; a scene load do
     editor.stop(world, inspector);
     // The world's VALUES were replaced, so anything cached about them goes --
     // the frame loop's transform history reads this and a stale one is the
-    // flicker an earlier defect was.
+    // flicker that was once seen.
     CHECK(inspector.worldGeneration() != generation);
     // Its IDENTITY did not, so the expanded set and the selection stay.
     CHECK(inspector.worldIdentity() == identity);
@@ -4580,7 +4580,7 @@ TEST_CASE("the centre is the mean of the transforms, not of a bounding box")
 // this one instance, apply writes this instance's value into the FILE so every
 // instance that has not overridden it follows.
 //
-// The invariant both have to respect is the one earlier defects record: a step
+// The invariant both have to respect is one two defects taught: a step
 // that undoes nothing eats a press of ctrl-Z, and `UndoStack::record` clears the
 // redo stack with it -- so a revert of something that already matches must not
 // record a step.
@@ -4675,7 +4675,7 @@ TEST_CASE("reverting something that already matches the stamp records no undo st
     StampProject project("override-noop");
     OverrideRig fixture(project);
 
-    // **The invariant an earlier defect records.** `UndoStack::record` clears the redo stack,
+    // **The invariant a wasted undo taught.** `UndoStack::record` clears the redo stack,
     // so a step that changes nothing has already destroyed a real redo future by
     // the time somebody presses ctrl-Z and watches nothing happen.
     const core::usize before = fixture.rig.editor.history().depth();
@@ -5142,7 +5142,7 @@ TEST_CASE("reordering moves a row among its siblings, and refuses to record a st
     REQUIRE(editor.reorder(world, c, 0, inspector));
     CHECK(order() == std::vector<core::InstanceId>{c, a, b});
 
-    // **A move that changes nothing records no step**, which is an earlier defect: a step
+    // **A move that changes nothing records no step**, which was a defect: a step
     // that undoes nothing eats a press of ctrl-Z and clears the redo stack with
     // it. Dropping a row back where it started is the commonest way to end a
     // drag by accident, so this is not a corner.

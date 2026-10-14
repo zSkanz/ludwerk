@@ -96,7 +96,7 @@ inline constexpr f32 kShadowRadius = 220.0f;
 // variable step rather than 3x3 with a fixed one: forty-nine bilinear taps can
 // cover eight texels without the gaps that made three bands.
 //
-// **Twenty-five became forty-nine at an earlier fix**, and the reason is
+// **Twenty-five became forty-nine with the second round on the flicker**, and the reason is
 // not softness -- it is the SIZE OF A STEP. A filtered shadow value is a count
 // of taps, so it can only change by one tap's worth: with twenty-five, one
 // texel of the map flipping moves the edge by a twenty-fifth of the penumbra,
@@ -108,7 +108,7 @@ inline constexpr f32 kShadowRadius = 220.0f;
 // frame did not move (the recorded baselines).
 //
 // The band is still a band because the two ends are still real, and **both of
-// its numbers moved at an earlier fix**, which is the third report about the same edge.
+// its numbers moved in that round**, which is the third report about the same edge.
 //
 // The floor is what a FAR cascade gets, because out there the authored
 // penumbra is a fraction of a texel and the clamp is the only thing speaking.
@@ -131,7 +131,7 @@ inline constexpr f32 kShadowRadius = 220.0f;
 // on its own and the world-space penumbra is still the five centimetres this
 // file authored. Contact was re-measured at three sun elevations on
 // `tests/screenshots/contact` after the change, because a wider filter scales
-// the normal offset with it and that is exactly what an earlier defect was about.
+// the normal offset with it and that is exactly what the lit band under a resting object was about.
 //
 // **The floor came down to a texel and a half on 2026-09-22**, and this is the
 // measurement that moved it. Six texels of the LAST cascade is most of a metre:
@@ -153,20 +153,18 @@ inline constexpr f32 kShadowFilterMaxTexels = 6.0f;
 // four texels away needs an offset that reaches as far as it does, or its widest
 // taps land back on the surface that cast them.
 //
-// **Half a filter rather than the diagonal, and an earlier defect is why.** The lighting work set this to
-// `sqrt(2)` -- a square kernel's corner is further away than its edge, and Unity
-// scales its normal bias the same way (U-58). What that ignores is which acne
-// this configuration can actually suffer: the shadow pass culls FRONT faces, so
-// what a receiver compares against is the far side of a solid object and there
-// is nothing for a lit surface to shadow itself with. The offset was therefore
-// paying for a problem the cull mode already prevents, and its only remaining
-// effect was to push every shadow away from the object casting it. A human sent
-// a close-up of a capsule and a boulder hovering over their own shadows.
+// **Half a filter rather than the diagonal, and the lit band under a resting object is why.** The lighting work set
+// this to `sqrt(2)` -- a square kernel's corner is further away than its edge, and Unity scales its normal bias the
+// same way (U-58). What that ignores is which acne this configuration can actually suffer: the shadow pass culls FRONT
+// faces, so what a receiver compares against is the far side of a solid object and there is nothing for a lit surface
+// to shadow itself with. The offset was therefore paying for a problem the cull mode already prevents, and its only
+// remaining effect was to push every shadow away from the object casting it. A human sent a close-up of a capsule and a
+// boulder hovering over their own shadows.
 //
 // Measured on `tests/screenshots/contact` at three sun elevations: at a quarter
 // the contact is perfect and the capsule's own base begins to speckle; at half
 // it is attached at every hour with no speckle anywhere; and
-// `examples/02-meshes` at a 24-degree sun -- an earlier defect's own probe frame -- is clean
+// `examples/02-meshes` at a 24-degree sun -- the frame that first showed the hatching -- is clean
 // at both.
 //
 // **In TEXELS of the cascade since 2026-09-22, and applied only sideways to the

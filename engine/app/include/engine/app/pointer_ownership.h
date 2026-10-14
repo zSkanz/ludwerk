@@ -3,11 +3,11 @@
 // Who owns the mouse this frame: the person using the editor, or the game.
 //
 // **Four defects came out of this one question and every one was reported by a
-// person**. An earlier defect: the pointer lock did nothing at all, because the
-// property was stored and read by nothing. An earlier defect: the editor opened on a project
+// person**. One: the pointer lock did nothing at all, because the
+// property was stored and read by nothing. Another: the editor opened on a project
 // that locks its pointer at file scope, and had no cursor to click a panel
-// with. An earlier defect: a right-drag to turn the camera hid the cursor and did not hold
-// it, so it walked out of the window and reappeared somewhere else. An earlier defect: with
+// with. A third: a right-drag to turn the camera hid the cursor and did not hold
+// it, so it walked out of the window and reappeared somewhere else. A fourth: with
 // the game holding the pointer, the invisible cursor still hovered and clicked
 // rows in the Explorer that nobody could see.
 //

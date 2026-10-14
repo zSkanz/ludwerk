@@ -2111,7 +2111,7 @@ TEST_CASE("a jointed assembly handed to a replica holds together there, and its 
 TEST_CASE("an assembly handed over the moment it is made is where the authority made it, and the authority "
           "follows it 20 m")
 {
-    // The kart game, measured on 43a63075: a server that builds a player's
+    // Measured in a kart game: a server that builds a player's
     // kart and hands it over at once had the owner simulate it from the
     // origin -- the part was given away before its first state arrived, and
     // was never put anywhere -- and the authority refused every place it was

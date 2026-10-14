@@ -272,7 +272,7 @@ TEST_CASE("ADR 0203: a closed room gives back no more light than its lamp put on
     // A round room five metres in radius, every wall the same grey, one lamp
     // at its middle and no sky to be seen: the lamp puts the same light `d`
     // on every point of the wall, squarely -- behind itself as before itself,
-    // which is what an earlier defect was: a lamp that shines every way had a dark cone
+    // which is what happened: a lamp that shines every way had a dark cone
     // behind it, and this room came out a twentieth short and leaning. What the walls give back is then
     // known exactly -- `d` times the albedo for the first bounce, times the
     // albedo again for each one after -- and whatever the bounces, less than

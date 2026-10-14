@@ -230,7 +230,7 @@ struct EngineOptions
     // The editor, `dev` and a match's windows: warnings a player never reads.
     bool developerWarnings = false;
 
-    // The returning-focus soak check (the check an earlier defect asked for). Zero asserts nothing,
+    // The returning-focus soak check (the revisited-place check). Zero asserts nothing,
     // like every other soak threshold: only the caller running a particular
     // fly-through knows whether its path comes back.
     core::f32 soakReturnRadiusMetres = 0.0f;

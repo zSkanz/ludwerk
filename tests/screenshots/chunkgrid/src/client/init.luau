@@ -13,7 +13,7 @@
 --
 -- The claim is a differential and it is the opposite of a golden's: the same
 -- frame with the grid on and with it off must NOT be the same image. That is the
--- shape `run_local_shadow_gate` uses, and for the reason an earlier defect records -- three
+-- shape `run_local_shadow_gate` uses, and for a reason learned once -- three
 -- green instruments once agreed with an empty frame because none of them
 -- compared an image against an image.
 --

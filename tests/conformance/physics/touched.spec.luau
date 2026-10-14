@@ -302,7 +302,7 @@ describe("Touched and a CharacterBody", function()
     end)
 
     it("fires for a wall the character walks into, not only the floor", function()
-        -- An earlier defect, and the reason `examples/04-obby` finishes on a PAD rather than
+        -- Side contacts once went unreported, and that is the reason `examples/04-obby` finishes on a PAD rather than
         -- on the pole it was designed around: a character pressed against a
         -- flagpole fired nothing, because the input and UI work covered the ground half by diffing
         -- the surface under the feet and a wall is not under anybody's feet.

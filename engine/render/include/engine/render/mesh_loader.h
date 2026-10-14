@@ -128,7 +128,7 @@ public:
     // write and no state machine to get wrong.
     //
     // **It works because loose content is not cached.** `ContentMounts::resolve`
-    // answers a loose URN with a PATH and reads nothing (an earlier defect took the read out
+    // answers a loose URN with a PATH and reads nothing (a fix took the read out
     // of it), so the next load opens the file as it stands on disk. A URN served
     // from a pack or from the editor's object store resolves to bytes the mount
     // keeps, and forgetting it reloads the same bytes -- which is correct: those
@@ -284,7 +284,7 @@ public:
     void release(std::span<const core::NameAtom> urns);
     [[nodiscard]] bool kept(core::NameAtom urn) const noexcept;
 
-    // **What began to load while the game was being played** (an earlier defect's aid to
+    // **What began to load while the game was being played** (an aid to
     // an author): with `watching` on -- the loading screen is down and the
     // scene has settled -- a mesh or a picture the WORLD named that was not
     // loaded is noted, once a name. Not what a preload or `Keep` asked for,

@@ -440,7 +440,7 @@ static const float EngineShadowMostSlope = 4.0f;
 // Otherwise the receiver is in the clear and is compared towards the light,
 // as it always was. One read of four texels, beside the taps.
 //
-// Measured (39-interior with contact shadows off, the slab of an earlier defect, a cloth
+// Measured (39-interior with contact shadows off, a thin slab, a cloth
 // and a room with a walker in it, a picture a frame): the band under the
 // ceiling, 21 rows of 720 at `Low` and 10 at `Ultra`, is a dotted line a pixel
 // wide; the slab self-shadows in none of its 36 cases, and one a centimetre

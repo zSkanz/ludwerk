@@ -6,7 +6,7 @@
 // nothing but the fact that they all happened between two adjacent statements.
 //
 // They no longer do. A 1024-square PNG costs 14 to 36 ms to decode (measured for
-// an earlier defect on a material's maps, and an `ImageLabel` names the same kind of file),
+// a material's maps, and an `ImageLabel` names the same kind of file),
 // and the synchronous path decoded every image a frame newly named, in that
 // frame, with no bound. So there are two modes now, and both are asserted here:
 // one that finishes before the frame does, because a capture records the frame

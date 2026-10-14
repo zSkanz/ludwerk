@@ -79,7 +79,7 @@ public:
     // instances belong to which resident chunk lives, so rebuilding it on an
     // unchanged world throws that record away. The manager goes on believing
     // those chunks are resident and asks to evict them; the fresh glue has
-    // never heard of them and does nothing. That was an earlier defect: a world that grew by
+    // never heard of them and does nothing. That happened: a world that grew by
     // a thousand instances every fifteen seconds and never shrank.
     void setWorld(scene::World* world, core::InstanceId streamRoot);
 

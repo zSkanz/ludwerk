@@ -6,7 +6,7 @@
 # looks at pixels, and the claim it has to make is the OPPOSITE of a golden's --
 # two settings must NOT produce the same image.
 #
-# This is an earlier defect's lesson applied before the fact rather than after it. That defect
+# This is the lesson of an instanced path that drew nothing, applied before the fact rather than after it. That defect
 # shipped an instanced path drawing nothing, and three green instruments agreed
 # with the empty frame because none of them compared an image against an image.
 #

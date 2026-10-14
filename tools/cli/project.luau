@@ -140,7 +140,7 @@ local NoDebugUiProfiles: { [string]: boolean } = { player = true, shipping = tru
 --- the engine binaries beside them (ADR 0054).
 ---
 --- **Found by looking for the layout rather than by counting up from this file,
---- and that is an earlier defect.** `new.luau` counted two directories, which was right while
+--- and that was learned from a defect.** `new.luau` counted two directories, which was right while
 --- it lived one level higher and stopped being right the moment it moved; the
 --- command still ran and failed inside `listDirectory` on a path with `../..` in
 --- the middle of it. A count is a fact about a directory layout that no check
@@ -225,7 +225,7 @@ end
 --- it keeps the `player` one `ludwerk build` packages (ADR 0054). Two binaries
 --- rather than one, each with the content directory the host resolves beside
 --- its own executable: a package that shipped only the editor host would make
---- `ludwerk build` package the editor into somebody's game, which is an earlier defect.
+--- `ludwerk build` package the editor into somebody's game, which happened once.
 ---
 --- The player is this machine's one, under its target's directory: an
 --- installation carries a player per target (ADR 0104 §6), and the one this

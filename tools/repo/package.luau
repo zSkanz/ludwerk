@@ -30,7 +30,7 @@
 		  VERSION                          the stamp `--version` reads
 		  LICENSE  NOTICE  THIRD_PARTY_NOTICES.md
 
-	**Two hosts rather than one, and that is an earlier defect rather than caution.** What a
+	**Two hosts rather than one, and that is a lesson rather than caution.** What a
 	person edits with carries the debug overlay, the inspector and a REPL against
 	its own VM; what their players receive must not. A package with one binary
 	would make `ludwerk build` ship the editor inside somebody's game.
@@ -144,7 +144,7 @@ end
 
 --- The newest `vX.Y.Z` tag in this repository, or nothing.
 ---
---- **An earlier defect is why this is here.** `v1.0.0` was tagged and released while
+--- **A release that reported the wrong version is why this is here.** `v1.0.0` was tagged and released while
 --- `project(Engine VERSION ...)` still said 0.0.1, and everything downstream
 --- reported 0.0.1 faithfully -- the generated header, `ludwerk --version`, the api
 --- dump, the engine's boot line. ADR 0031's derivation was never the problem;

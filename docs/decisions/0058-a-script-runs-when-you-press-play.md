@@ -46,7 +46,7 @@ to the game. This is the sixth, and it is the first one found after that rule
 existed — which is worth saying plainly: the rule was written and this call was
 not checked against it.
 
-An earlier defect is the nearest neighbour and the same family: a boot scene applied *after*
+A defect met before is the nearest neighbour and the same family: a boot scene applied *after*
 the entry scripts destroyed what they had built, because the editor took the
 game's boot order.
 
@@ -110,7 +110,7 @@ it at file scope still sees it, because file scope is what play runs.
 **A project opened in the editor shows what its scene holds and nothing else.**
 That is the sentence a person expects and did not get. The Explorer stops showing
 instances nobody authored, and Save stops being able to bake one into a scene —
-which is an earlier defect arriving from a direction that milestone did not cover.
+which is the world saved with two of everything, arriving from a direction that milestone did not cover.
 
 **`ludwerk dev` is unaffected and that matters**, because it is the fast loop: it
 runs the game, not the editor, so a saved file still rebuilds the world and
@@ -123,7 +123,7 @@ like.
 
 **A script cannot set the world up for editing.** Somebody may have leaned on
 file scope to build helper geometry they then edit and save. That was never a
-supported workflow — it is exactly the two-sources problem an earlier fix closed — and the
+supported workflow — it is exactly the two-sources problem closed before — and the
 answer is to author the geometry in the scene.
 
 **The starter template has to change.** `templates/starter/src/scripts/main.luau`

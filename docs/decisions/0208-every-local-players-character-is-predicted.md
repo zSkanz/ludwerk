@@ -67,7 +67,7 @@ stepped again**: they stand in one island, and half a step is not a step.
 
 The one that was right comes out where it was. So only the wrong one's drawn
 offset moves, a correction is counted for the character that was wrong and
-for no other, and the log line of an earlier fix says whose it was
+for no other, and the log line for corrections says whose it was
 (`--net-log-corrections`: "Corrected at tick N, local player 2, ...").
 
 **Where no character was wrong and a part they predict was**, the

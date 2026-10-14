@@ -80,7 +80,7 @@ constexpr core::usize kMaxVoices = 64;
 // sound whose content names nothing still plays, as a tone that is audibly a
 // placeholder rather than as silence, and this is that tone's length.
 //
-// It used to be every sound's length, which is an earlier defect: `tick` measured
+// It used to be every sound's length, which was a defect: `tick` measured
 // `TimePosition` against this constant whatever the file was, so a two-minute
 // track fired `Ended` and stopped itself after one second. A decoded sound is
 // measured against ITS OWN length now -- `clipDuration` -- and this is what is
@@ -243,7 +243,7 @@ struct Voice
     // SEEDED from the sound's `TimePosition`**, rather than taken from it afresh
     // every frame.
     //
-    // Taken afresh is what the input and UI work shipped and it is an earlier defect. The reasoning was sound --
+    // Taken afresh is what the input and UI work shipped and it distorted every sound. The reasoning was sound --
     // the timeline is the sim clock's and the mixer must
     // not become a second clock the simulation can read -- but the two clocks
     // are quantised differently and only one of them is smooth. `TimePosition`
@@ -1343,7 +1343,7 @@ void AudioSystem::tick(scene::World& world, f64 fixedDt)
             // on disk speed, and `replay.cpp` hashes the events a tick raises
             // (R10). Forcing residency here instead would make every sound in a
             // scene decode on its first tick -- forty files at load, which is a
-            // far worse version of the very stall an earlier defect is about.
+            // far worse version of the very stall the prefetch is about.
             //
             // So it stays immediate and it is documented as meaning "this sound
             // exists and its content is named", not "the bytes are here".
@@ -1790,7 +1790,7 @@ namespace {
     ma_decoder decoder{};
     if (ma_decoder_init_memory(bytes.data(), bytes.size(), &config, &decoder) == MA_SUCCESS) {
         // **The declared length is a hint, and reading until the decoder
-        // stops is the answer.** An earlier defect: this used to require a length and
+        // stops is the answer.** This used to require a length and
         // drop the clip when it could not get one, and miniaudio's own
         // header says it cannot get one for Ogg Vorbis -- a format this
         // engine's API documents as supported, and which therefore played
@@ -2083,7 +2083,7 @@ void AudioSystem::Impl::pumpPrefetch()
             }
             else if (status != platform::IoStatus::Pending) {
                 // Terminal and not consumed, so the slot is released by hand --
-                // an earlier defect, where every failed read leaked one and all asynchronous
+                // a defect once, where every failed read leaked one and all asynchronous
                 // IO in the process stopped at five hundred and twelve.
                 platform::cancelIo(entry.read);
                 done = true;

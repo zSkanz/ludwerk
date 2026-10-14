@@ -333,7 +333,7 @@ std::optional<core::EngineError> runTwoWorldsGate(const TwoWorldsOptions& option
 
     // The vacuous pass, refused. Two worlds that draw nothing are byte-identical
     // to each other and to their own solo renders, and every assertion above
-    // would be green -- which is an earlier defect's failure exactly, one milestone later.
+    // would be green -- which is the instanced path that drew nothing, exactly, one release later.
     if (between == 0)
         return core::makeError(ENG_TR("engine.twoworlds.err.indistinguishable"));
 

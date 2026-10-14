@@ -78,7 +78,7 @@ constexpr int MaxWaitMillis = 5000;
 
 // Waits until the submitter has actually handed a read to SDL.
 //
-// Needed since an earlier fix moved admission onto its own thread: `readFileAsync` now
+// Needed since admission moved onto its own thread: `readFileAsync` now
 // queues and returns, so "submitted" and "in flight" are two moments with a
 // scheduler between them. Every case below that reasons about QUEUE ORDER has
 // to pin the first one down first, or it is racing the submitter rather than
@@ -278,7 +278,7 @@ TEST_CASE("cancelling a queued read releases it without reading anything")
     const IoRequest held = readFileAsync(fixture.root / "held.bin", IoPriority::Normal);
     // The held read has to occupy the only in-flight place before the second is
     // queued, or "queued" below counts a read the submitter simply has not got
-    // to yet (an earlier defect put admission on its own thread).
+    // to yet (admission is on its own thread).
     waitUntilInFlight(1);
     const IoRequest dropped = readFileAsync(fixture.root / "dropped.bin", IoPriority::Normal);
     REQUIRE(held.valid());
@@ -437,7 +437,7 @@ TEST_CASE("a read requested without the service running is refused rather than l
 
 // --- The pool's ceiling, and what happens when it is reached ----
 //
-// an earlier defect was a leaked slot: every read that FAILED kept its slot for ever, and
+// The defect was a leaked slot: every read that FAILED kept its slot for ever, and
 // past 512 thumbnails, material textures and world streaming all stopped being
 // asynchronous at once, process-wide, in silence. The leak was fixed at four
 // call sites. **The silence was not**, and that is what these cover: the
@@ -494,7 +494,7 @@ TEST_CASE("the pool refuses past its ceiling and recovers when slots come back")
     // opposite of one.
     pumpUntil([]() { return ioStats().inFlight == 0; });
 
-    // And the pool is whole again -- which is the assertion an earlier defect would have
+    // And the pool is whole again -- which is the assertion the leak would have
     // failed. A leak leaves this short by one for every read that failed.
     std::vector<engine::platform::IoRequest> refilled;
     refilled.reserve(engine::platform::MaxIoRequests);

@@ -55,7 +55,7 @@ work ran the whole of it, however small.
    the note's prefix in. Ninja matched nothing, recorded no header
    dependencies, and the first header edit after the cache went in reused 952
    objects compiled against the old header -- a virtual added to `rhi::IDevice`
-   and every call through it one slot off. That is an earlier defect by another road. The
+   and every call through it one slot off. That is the stale-header build by another road. The
    cache is used where the note is ASCII (an English compiler: CI, and the
    container's Clang, whose dependencies come from a file and not from a note),
    and the Windows gate asks one object for its headers after every build.

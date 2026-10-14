@@ -58,7 +58,7 @@ end
 
 --- A scaffolded project with an icon of its own, under a directory this test
 --- owns. `new.run` rather than a hand-copied template, because the scaffolder
---- is one of the things under test -- an earlier defect was exactly a `ludwerk new` that could
+--- is one of the things under test -- there was once exactly a `ludwerk new` that could
 --- not find its own template, and nothing noticed for two milestones.
 local function scaffold(name: string): (string, string)
     local root = repositoryRoot()

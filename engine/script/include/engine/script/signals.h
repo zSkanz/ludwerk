@@ -174,7 +174,7 @@ struct DeferredEntry
     // script that most needs it. This entry, and only this entry, lets
     // `SuppressReason::Destroyed` through. `Retired` and `Disabled` still
     // suppress, and every other signal on a destroyed subtree still suppresses,
-    // or an earlier defect comes straight back.
+    // or a destroyed script that goes on running comes straight back.
     bool destroyingHook = false;
 };
 

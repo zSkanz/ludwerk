@@ -1015,7 +1015,7 @@ local KeyLiteralsSeen = { count = 0 }
 --- Key-shaped literals written outside `ENG_TR`.
 ---
 --- This is the shape that got `dev.err.not_implemented` past this gate from the tooling loop
---- until an earlier fix: the dev protocol answers a reserved verb with the key on a JSON
+--- for a long time: the dev protocol answers a reserved verb with the key on a JSON
 --- writer, and a field on a wire message is neither a macro use nor an argument
 --- to a named sink. Being outside the macro is legal there and is not what is
 --- reported -- naming a key that no catalog has is.

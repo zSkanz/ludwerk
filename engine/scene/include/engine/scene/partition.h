@@ -65,12 +65,10 @@ inline constexpr core::f32 StructureExtent = 12.0f;
 inline constexpr core::f32 TerrainExtent = 24.0f;
 
 // **What a cached partition was made by.** A cache is keyed by the scene's
-// text, and a partitioner that cuts the same text differently -- as an earlier defect's
-// does: the residual marks its anchors and the cells name them -- must not be
-// handed one an earlier build wrote. Raised whenever what a partition writes
-// changes meaning. Three since the residual keeps the scene's own version:
-// one written before it says version 1 over a version 2 scene's
-// nodes, and reads every material in it as none.
+// text, and a partitioner that cuts the same text differently -- as the fix for parts that came back under the wrong
+// parent does: the residual marks its anchors and the cells name them -- must not be handed one an earlier build wrote.
+// Raised whenever what a partition writes changes meaning. Three since the residual keeps the scene's own version: one
+// written before it says version 1 over a version 2 scene's nodes, and reads every material in it as none.
 inline constexpr core::u32 PartitionRevision = 3;
 
 // The size class an object of this extent belongs to, as a `ChunkId::layer`.

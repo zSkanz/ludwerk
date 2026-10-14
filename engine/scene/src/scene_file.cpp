@@ -704,7 +704,7 @@ void collectPaths(const World& world, core::InstanceId id, const std::string& pr
 // at a different member of the stamp, and a reference to anything BESIDE the
 // stamp rather than under it. Both were dropped silently. The second is how a
 // `Material` assigned to a part inside a placed stamp disappeared on save --
-// the placed-stamp twin of an earlier defect, and it did not even reach the writer that
+// the placed-stamp twin of a material written as null in an open stamp, and it did not even reach the writer that
 // counts a dropped reference.
 //
 // Ids are not comparable; paths under each subtree's own root are. Equal paths

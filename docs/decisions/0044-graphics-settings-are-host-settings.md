@@ -102,14 +102,14 @@ same point from the other side: it creates no device and no renderer at all
   must render the same scene to *different* images
   (`tests/screenshots/run_settings_differential.cmake`). A preset that is parsed
   and then reaches nothing renders exactly what it did before, and no golden can
-  see that — which is an earlier defect's lesson applied before the fact instead of after it.
+  see that — which is the lesson of an instanced path that drew nothing, applied before the fact instead of after it.
 
 ## Alternatives considered
 
 - **`Lighting` properties.** Rejected by the roadmap's sentence, and rightly: a
   scene would then ship its author's GPU budget to every player.
 - **A `SettingsService` in the IDL.** This is the in-game quality slider, and it
-  is the thing a post-v1 phase should take up deliberately. It needs a home for
+  is the thing to take up deliberately after version 1. It needs a home for
   values that must not enter the world hash, and the honest version is a service
   whose backing store is the host's rather than `scene`'s. Declaring a class
   nothing implements is what `instances.api.luau` forbids, so the name is not

@@ -115,7 +115,7 @@ struct WorldHostOptions
     // reads it and then starts the scripts"). Absolute; empty for a project
     // with no scene, which is every example before `06-scene`.
     //
-    // The order is the whole of an earlier defect. A scene load REPLACES the contents of
+    // The order is the whole of it. A scene load REPLACES the contents of
     // `Workspace` -- it has to, or a second load would double everything -- so
     // applying one after the boot drain destroys every instance the entry
     // scripts just built while the VM goes on holding references to them and
@@ -142,7 +142,7 @@ struct WorldHostOptions
     // means what `readSceneNode` says it means -- and those exist only once this
     // host has built them. So the caller supplies the policy and this supplies
     // the moment: after the registries, before the scene, and therefore before
-    // a line of script (an earlier defect's order, one step earlier).
+    // a line of script (the same order, one step earlier).
     //
     // Absent, or answering with an empty path, leaves `bootScene` to be applied
     // as it is, which is every project that streams nothing.

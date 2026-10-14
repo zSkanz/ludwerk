@@ -268,7 +268,7 @@ TEST_CASE("a world that grows and never shrinks fails, with no hitch anywhere")
 {
     seedRealCatalog();
 
-    // An earlier defect in miniature, and the numbers are the ones the defect actually
+    // The growing world in miniature, and the numbers are the ones the defect actually
     // produced: a thousand instances every fifteen seconds, every frame inside
     // budget. A gate watching only for hitches passes this.
     SoakRecorder recorder(0);
@@ -291,7 +291,7 @@ TEST_CASE("a world that grows and never shrinks fails, with no hitch anywhere")
     //
     // Widening the tolerance until it stopped complaining would have removed
     // the only instrument watching a streamed world for a leak, which is what
-    // an earlier defect cost to find. So it keeps measuring and keeps saying what it saw,
+    // that defect cost to find. So it keeps measuring and keeps saying what it saw,
     // and this case holds the distinction: the complaint is present, and the
     // run is a pass.
     CHECK(verdict.ok);
@@ -350,7 +350,7 @@ TEST_CASE("the report carries the histogram the gate is required to assert")
     CHECK(report.find("\"upperMs\": null") != std::string::npos);
 }
 
-// --- A place visited twice: the check an earlier defect asked for ---------------------------
+// --- A place visited twice ---------------------------------------------------------------------------
 //
 // **What it replaces and why it is not the same check.** The quarantined growth
 // check compares the second quarter of a run against the fourth, so it reads how

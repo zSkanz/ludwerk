@@ -33,7 +33,7 @@ port = 4560
 # player's machine. `--quality=low` on the command line still wins, because the
 # flags are the outer layer (ADR 0044).
 quality = "high"
-# **Both of these are one decision, and an earlier defect is the measurement behind it.**
+# **Both of these are one decision, and blocky shadows at a distance are the measurement behind it.**
 #
 # A cascade's texel is its box divided by its tile, and the far cascade's box is
 # set by the frustum's cross-section at the shadow distance -- so distance is

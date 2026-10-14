@@ -22,7 +22,7 @@ endforeach()
 # already run the generator by hand.
 include("${CMAKE_CURRENT_LIST_DIR}/../support/ensure_generated_world.cmake")
 
-# **The returning-focus check is opt-in per scene** (the check an earlier defect asked for). Only the
+# **The returning-focus check is opt-in per scene**. Only the
 # caller running a particular fly-through knows whether its path comes back, so a
 # soak that declares no radius does not run it -- and one that DOES declare a
 # radius and then never returns fails, because a check that quietly did not run

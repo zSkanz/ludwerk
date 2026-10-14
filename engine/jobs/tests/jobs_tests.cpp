@@ -353,7 +353,7 @@ TEST_CASE("a dependent scheduled from a completion wakes a sleeping pool too")
 
 TEST_CASE("shutting a pool down never leaves a worker asleep")
 {
-    // The other half of an earlier defect, and the one that actually hung a build:
+    // The other half of the hang, and the one that actually hung a build:
     // `shutdown` stored `running = false` -- the other half of the worker's wait
     // predicate -- WITHOUT the graph mutex the condition variable waits on. A
     // worker that had evaluated the predicate and not yet registered missed the

@@ -104,7 +104,7 @@ namespace {
 // Whether another writer HOLDS the file -- as opposed to there being no lock
 // to take. **A file system without advisory locks answers every `flock` with
 // an error, and it is not "would block"**: a phone's shared storage,
-// where a game's log has been since an earlier fix, is one on the phones that serve it
+// where a game's log is kept, is one on the phones that serve it
 // through FUSE. Taken for "held", every one of the nine names a log may have
 // was somebody else's, and the game ran with no log at all -- nine empty
 // files in its folder, and nothing for a tester to send. Where there are no

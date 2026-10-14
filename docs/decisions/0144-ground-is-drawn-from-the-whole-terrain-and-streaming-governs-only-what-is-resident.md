@@ -9,7 +9,7 @@
 ## Context
 
 A streamed terrain keeps in memory only the cells within its load radius --
-1 024 m by default, measured across the ground since an earlier fix. The loader drew
+1 024 m by default, measured across the ground and no longer through the air. The loader drew
 only what was in memory, so a terrain wider than the radius ended where its
 loaded cells did: in the corners of 64 m cells, a sawtooth, from any camera
 that could see past the radius. A large streamed world is 1 024 m across; from a
@@ -45,7 +45,7 @@ were weighed:
 3. **What a node is built from does not depend on what is resident.** A
    chunk's digest, read once from its cell, is kept: a node's content is the
    same before its cell comes in, while it is in, and after it is evicted
-   untouched, so ground streaming in under a node rebuilds nothing (an earlier defect's
+   untouched, so ground streaming in under a node rebuilds nothing (the far plates'
    churn). An edit changes the chunk's digest, as it always did.
 4. **Memory is bounded, whatever a node spans.** A build reads its cells a row
    at a time, keeping three rows of decoded cells: each chunk's surfaces are

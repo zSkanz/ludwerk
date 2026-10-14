@@ -176,7 +176,7 @@ jobs:
   # repository. `continue-on-error` says so, and the images are uploaded so a
   # difference can be looked at rather than guessed about.
   #
-  # It is also the only gate anywhere that would catch an earlier defect: the instanced path
+  # It is also the only gate anywhere that would catch what happened once: the instanced path
   # shipped drawing NOTHING while every gate it had was satisfied -- the draw
   # count fell, the command stream matched its capture, the frame got faster,
   # because the geometry was being transformed off-screen. A command stream and

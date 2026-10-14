@@ -49,7 +49,7 @@ std::string recordFrame()
     return captureStream(*device);
 }
 
-// One upload, recorded, so a test can read what the summary made of it. An earlier defect:
+// One upload, recorded, so a test can read what the summary made of it. The defect:
 // this call recorded a byte count through the lighting work, so a frame that drew the same
 // number of different vertices recorded identically.
 std::string recordUpload(BufferUsage usage, std::span<const std::byte> data)
@@ -138,7 +138,7 @@ TEST_CASE("an upload is recorded by what it carried, not by how much")
 {
     // The defect itself: two uploads of the same SIZE and different contents.
     // Through the lighting work these recorded identically, so the two UI goldens would have
-    // been byte-identical if only the quads had moved -- which is how an earlier defect was
+    // been byte-identical if only the quads had moved -- which is how the defect was
     // found.
     const std::array<float, 8> before{0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f};
     const std::array<float, 8> after{0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.5f, 0.0f, 1.0f};
@@ -164,7 +164,7 @@ TEST_CASE("an index buffer is hashed as integers rather than read as floats")
 {
     // Index 1,000 read as an f32 is a denormal around 1.4e-42, so a summary that
     // guessed at the type would give every index buffer in the engine the same
-    // answer. That is an earlier defect's mistake -- reinterpreting a word instead of
+    // answer. That is a mistake made once -- reinterpreting a word instead of
     // converting it -- and the kind comes from `BufferDesc` so it cannot recur.
     const std::array<engine::core::u32, 6> indices{0u, 1u, 2u, 2u, 1u, 3u};
     const std::array<engine::core::u32, 6> different{0u, 1u, 2u, 2u, 3u, 1u};

@@ -164,7 +164,7 @@ void enqueue(u32 slot)
         worker.queue.push_back(slot);
     }
 
-    // Incremented UNDER THE GRAPH LOCK, and that is the whole of an earlier defect.
+    // Incremented UNDER THE GRAPH LOCK, and that is the whole of a pool that hung.
     //
     // `readyCount` is read by the wait predicate of a `condition_variable`
     // whose mutex is `p.mutex`, and a condition variable requires the
@@ -433,7 +433,7 @@ void shutdown()
     while (tryRunOne()) {
     }
 
-    // Under the graph lock, and this is the half of an earlier defect that actually hung the
+    // Under the graph lock, and this is the half of that hang that actually stopped the
     // build. `running` is the other half of the worker's wait predicate, and it
     // was stored without `p.mutex` -- so a worker that had evaluated the
     // predicate (still running, nothing ready) but had not yet registered on the

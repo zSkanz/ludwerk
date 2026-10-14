@@ -8,7 +8,7 @@
 # picture, 0.398 of the way down; so a row under it (0.415) is ground from one
 # side to the other, and a row over it (0.38) is sky.
 #
-# Before an earlier fix the ground was drawn to 4 096 m from the camera, by whole nodes:
+# At first the ground was drawn to 4 096 m from the camera, by whole nodes:
 # at the sides of the picture, where a point inside the far plane is further
 # from the camera than one at the middle, the row under the line was sky.
 #

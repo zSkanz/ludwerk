@@ -8,7 +8,7 @@
 #
 # So this is a differential and its claim is the opposite of a golden's -- two
 # runs must NOT produce the same image. The same shape `run_settings_differential`
-# uses, and for the same reason an earlier defect records: that defect shipped an instanced
+# uses, and for a reason learned once: a defect shipped an instanced
 # path drawing nothing, and three green instruments agreed with the empty frame
 # because none of them compared an image against an image.
 #

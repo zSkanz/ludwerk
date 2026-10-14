@@ -73,7 +73,7 @@
 - **Vibration is levels, re-sent each frame for half a second**: a game that
   stops pumping -- closed, crashed, frozen -- stops shaking by itself. Still
   while the window is not in front; the levels return with it.
-- **On hardware since an earlier fix**: the vendored SDL was built with its joystick,
+- **On hardware since SDL's joystick support was turned on**: the vendored SDL was built with its joystick,
   haptic and HID support off, as it had been -- which also meant no
   gamepad had ever worked. They are on, in a push of their own, held by a test
   that presses a button on a virtual device the library hosts and reads the

@@ -30,9 +30,9 @@ of contents, `ContentKind::Material` swept through the browser's exhaustive
 switches so that `-Werror` would catch a missed arm, and `BasePart.Material` as a
 `Content` naming that file.
 
-It was built. `fe979d04` landed the format and both enum values; `6b5d7717`
+It was built. One commit landed the format and both enum values; a second
 landed the property and made `Color` a multiplier on whatever surface it found.
-Six hours after the first and four after the second, `8ea7eee7` deleted the
+Six hours after the first and four after the second, a third deleted the
 format: `asset/material.{h,cpp}`, its tests, `ContentKind::Material` and its
 arms, and the content browser's write-a-material-file verb. Its message says why:
 
@@ -58,7 +58,7 @@ landing, not after. Its Part B states the same thing as a hard constraint and
 gives the reason: *add no field to an existing component, because new classes
 only exist in scenes that create them.*
 
-`churn`'s two traces moved at `6b5d7717` and again at `8ea7eee7`, and were
+`churn`'s two traces moved at the second of those commits and again at the third, and were
 re-recorded on Windows and in the Tier-2 container both times, justified in the
 commit message and nowhere else.
 
@@ -181,7 +181,7 @@ is encoded as sRGB unconditionally, under a comment saying there is "no material
 to say what it is for". Under this design the material that would have said lives
 in a scene, which `assetc` does not read. So every normal and ORM map that reaches
 a surface through a `Material` instance rather than through an imported glTF is
-bent by a transfer curve, which is the regression `df03f5b0` already closed once
+bent by a transfer curve, which is the regression that was already closed once
 for the other path. That is open, and it is a consequence of this decision rather
 than an accident beside it.
 
@@ -192,7 +192,7 @@ design four hours after it shipped, and it is smaller than the cost of keeping t
 answers to one question.
 
 **`character` could not have moved, and its half of the constraint was vacuous.**
-It has carried no committed trace since `4cf3fc26`, which made it `sameBuildOnly`
+It has carried no committed trace since the change that made it `sameBuildOnly`
 after CI's Windows runner diverged from a trace recorded by a different compiler:
 a physics scenario is floating point amplifying over ticks, and ADR 0025's
 guarantee is *same build*. Such a scenario runs three times and requires the three

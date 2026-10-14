@@ -5,7 +5,7 @@
 
 ## Context
 A Studio-like editor multiplies scope and freezes engine design prematurely.
-Unity/Godot grew editors on top of working engines. User decision #5.
+Unity/Godot grew editors on top of working engines.
 
 ## Decision
 v1 is **code-first**: VS Code + the `ludwerk` CLI + sub-second hot reload, with

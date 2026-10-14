@@ -421,7 +421,7 @@ local componentUnread, componentCount, componentSources = sweep(ComponentsHeader
     return string.match(name, "Component$") ~= nil
 end, inert, pascalCase)
 
--- **The second sweep, and an earlier defect is the whole reason it exists.** A service with
+-- **The second sweep, and a sweep that read component pools alone is the whole reason it exists.** A service with
 -- one instance per world keeps its knobs in `EngineState` rather than in a
 -- component pool, so half the properties in the API were never swept -- which
 -- is how a pointer lock that nothing read survived from the input and UI work to the flagship work.
@@ -456,7 +456,7 @@ if #unread > 0 then
     end
     fail(
         `{#unread} field(s) stored and unread. Either something must act on the value, or its property carries `
-            .. `Inert with the work that will (an earlier defect's lesson)`
+            .. `Inert with the work that will`
     )
 end
 

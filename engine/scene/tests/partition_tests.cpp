@@ -135,7 +135,7 @@ struct Partition
 // Every part in a world, as a comparable row: the set of parts and what each
 // of them is. The tree's SHAPE is `treeOf`'s to compare, below -- it was
 // believed to differ by design, streaming parenting into a folder of the cell,
-// and that belief is an earlier defect.
+// and that belief was a defect.
 struct PartRow
 {
     std::string name;
@@ -604,7 +604,7 @@ TEST_CASE("partitioning a partitioned scene moves nothing")
 {
     seedRealCatalog();
 
-    // The property an earlier defect wants asserted, and the cheapest statement of "the
+    // The property a world loaded twice wants asserted, and the cheapest statement of "the
     // scene it hands the boot holds only what stayed": run it again and there
     // is nothing left to take.
     const std::string nested = R"({"class":"Folder","name":"Scenery","children":[)" +

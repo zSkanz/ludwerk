@@ -4,7 +4,7 @@
 - Date: 2026-08-19
 
 ## Context
-User decision #6: v1 is single-player, but games must be able to open a
+The requirement: v1 is single-player, but games must be able to open a
 socket/web server and connect to one (developers build their own backends; an
 official multiplayer solution comes later). Roblox's 2026 server-authority +
 rollback release shows where replication eventually goes; retrofitting is the

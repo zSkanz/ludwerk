@@ -61,7 +61,7 @@ namespace detail {
 // The two clocks are the same clock in a healthy run -- the simulation advances
 // `TimePosition` by a fixed step and the device advances the cursor by a buffer
 // -- but they are quantised differently, so on any given frame one of them is
-// ahead. Re-seeding the cursor from the timeline every frame is what an earlier defect was:
+// ahead. Re-seeding the cursor from the timeline every frame is what made a sound distort:
 // a frame in which no tick ran dragged the cursor BACK by a frame's worth of
 // samples and the mixer replayed sixteen milliseconds it had already played,
 // sixty times a second.
@@ -180,7 +180,7 @@ public:
     //
     // **This is what the timeline is measured against**, which is why it is here
     // rather than inside the mixer: `Ended` fires when `TimePosition` reaches a
-    // sound's LENGTH, and until an earlier fix that length was a one-second constant for
+    // sound's LENGTH, and at first that length was a one-second constant for
     // every sound in the world -- so a two-minute track stopped after a second.
     // A content that names nothing, or that cannot be decoded, answers with the
     // placeholder tone's length, because the tone is what such a sound plays.

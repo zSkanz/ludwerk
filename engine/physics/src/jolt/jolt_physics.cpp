@@ -1214,7 +1214,7 @@ class DebugBridge final : public JPH::DebugRendererSimple
 public:
     // The origin is passed in rather than read from a world, because the bridge
     // is handed a sink and never a world -- and a wireframe drawn in local space
-    // while everything else is drawn in world space is an earlier defect again, one rebase
+    // while everything else is drawn in world space is the displaced debug lines again, one rebase
     // later.
     DebugBridge(IDebugDrawSink& sink, core::DVec3 origin) : m_sink(sink), m_origin(origin) {}
 
@@ -3501,7 +3501,7 @@ private:
         // and a cylinder no longer than it is wide -- a wheel, a disc, a fan --
         // sweep little new as they turn, so they may turn at highway speed;
         // anything else keeps the ceiling, which is what stops a tumbling log
-        // tunnelling through a floor (an earlier defect's logs fell through it at five
+        // tunnelling through a floor (logs thrown at a slab fell through it at five
         // hundred).
         const bool wheel = desc.shape.type == ShapeType::Sphere ||
                            (desc.shape.type == ShapeType::Cylinder && desc.shape.size.y <= desc.shape.size.x);

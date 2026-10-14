@@ -99,7 +99,7 @@ RagdollBuildResult buildRagdoll(World& world, const SkeletonHost& skeleton, core
     // `ComponentPool` is valid until the pool grows, and every `Part` below adds
     // to the one this came from -- so holding `mesh` across the creates reads
     // freed memory, and reads it in a way that is right most of the time. That
-    // is exactly the shape of an earlier defect, and the case that caught it here is the
+    // is exactly the shape of a clone that read a freed record, and the case that caught it here is the
     // determinism one: two builds in one process agreed until the allocator
     // handed the second a different neighbour.
     const CFrameD rigFrame = mesh->cframe;

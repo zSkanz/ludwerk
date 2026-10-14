@@ -367,7 +367,7 @@ TEST_CASE("connecting where nothing listens fails quickly rather than stalling")
 
 TEST_CASE("a loopback server whose client never arrives reports rather than hangs")
 {
-    // An earlier defect, and the case that keeps it fixed. `::accept` with no deadline turns
+    // A test run that hung, and the case that keeps it fixed. `::accept` with no deadline turns
     // the state a FAILING test leaves behind -- a client that never connected --
     // into a suite that hangs forever, which is why the defect presented as a
     // flake: the underlying assertion failure was invisible behind the hang.

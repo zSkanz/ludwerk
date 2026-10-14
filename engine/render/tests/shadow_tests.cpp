@@ -225,7 +225,7 @@ TEST_CASE("every cascade can draw the penumbra the filter asks for")
         // never over two and a half metres, across a chain whose texels span
         // 23:1.
         //
-        // **The ceiling was one metre until an earlier fix.** The floor of the texel band
+        // **The ceiling was one metre at first.** The floor of the texel band
         // is what the far cascade gets -- out there the authored penumbra is a
         // fraction of a texel and the clamp is the only thing speaking -- and
         // six texels of a third of a metre is two metres of penumbra. That is

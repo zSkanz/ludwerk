@@ -60,7 +60,7 @@ weights needed format version 4. They do not.
 **The compiler's rules number does move** (7 to 8), and that recompiles every
 source of every project once, on its next open: a model with targets that was
 compiled before has none in its cached form, and the cache cannot tell which
-models those are. After an earlier fix that is seconds for a small project and under
+models those are. Since sources are compiled only when they change, that is seconds for a small project and under
 half a minute for one of six hundred sources.
 
 All of a mesh's levels of detail draw from one vertex stream, so a target's

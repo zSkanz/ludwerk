@@ -50,7 +50,7 @@ test.suite("check", function(suite)
     end)
 
     suite:case("an exported game and the engine's own folder are never walked", function()
-        -- **An earlier defect.** `ludwerk build` writes `dist/`, and check and fmt went
+        -- `ludwerk build` writes `dist/`, and check and fmt went
         -- through every exported copy of the game with the source.
         local root = scratch("walk")
         for _, folder in { "src", "dist/windows/content/src", ".engine/types", "src/distance" } do

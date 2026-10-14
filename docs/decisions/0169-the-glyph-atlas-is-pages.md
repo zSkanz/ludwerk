@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-10-04
-- Builds on: the UI's text an earlier fix (a glyph's rows are what is
+- Builds on: the UI's text (a glyph's rows are what is
   uploaded), a frame's text built against one atlas, another (a tree
   drawn for a reference height)
 

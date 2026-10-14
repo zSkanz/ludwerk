@@ -29,7 +29,7 @@ from the operating system, which arrive on the wall clock, know nothing of what
 the UI consumed, and cannot be replayed. Fired from the pipeline the IAS already
 runs, every one of those is answered:
 
-- **Sinking already exists.** `938522b6` built it for the UI: `ui` reports
+- **Sinking already exists.** It was built for the UI: `ui` reports
   whether the pointer landed on an element, `input` consumes the mouse codes for
   that frame. Roblox solved the same problem the same way and named it
   `gameProcessedEvent`.

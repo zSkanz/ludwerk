@@ -157,7 +157,7 @@ TEST_CASE("every delivery mode arrives over a link that drops nothing")
     // their guarantees -- and it does not claim to. What it pins is that all
     // three are WIRED.
     //
-    // **It cannot see the mapping either**, which an earlier defect is the proof of: the
+    // **It cannot see the mapping either**, which a defect proved: the
     // flags are asserted where they are written, in `enet_transport.cpp`, by
     // `static_assert`. ENet is linked PRIVATE so this file cannot name its
     // constants, and a packet that wrongly became reliable arrives anyway --
@@ -243,7 +243,7 @@ TEST_CASE("a payload larger than one MTU arrives whole, on every delivery mode")
     // -- about 1364 at its default MTU of 1392 -- so the whole fragment path,
     // on all three modes, had never run.
     //
-    // That is also where an earlier defect lived: an unreliable payload over that threshold
+    // That is also where that defect lived: an unreliable payload over that threshold
     // silently became reliable, acknowledged and head-of-line blocking, because
     // `enet_peer_send` checks for fragmentation BEFORE it dispatches on the
     // unsequenced flag. This case cannot see that -- a wrongly-reliable packet
@@ -324,7 +324,7 @@ TEST_CASE("a peer that goes silent is gone within the timeout, not thirty second
     }));
 
     // The server goes silent -- a crash, a pulled cable: still there, never
-    // answering. (A server that CLOSES says so now; an earlier defect.)
+    // answering. (A server that CLOSES says so now.)
     clientEvents.clear();
     bool gone = false;
     // Four seconds of polling: past the one-second limit with room for a loaded
@@ -338,9 +338,9 @@ TEST_CASE("a peer that goes silent is gone within the timeout, not thirty second
 
 TEST_CASE("a peer that closes tells the other end at once")
 {
-    // **An earlier defect.** `close` reset its peers without a word, so a player who left a
+    // `close` once reset its peers without a word, so a player who left a
     // match from a script stayed on the server -- a statue for the others --
-    // until the timeout noticed, up to thirty seconds before an earlier fix.
+    // until the timeout noticed, which was up to thirty seconds then.
     seedCatalog();
     auto server = createEnetTransport();
     auto client = createEnetTransport();

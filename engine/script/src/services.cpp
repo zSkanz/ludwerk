@@ -4107,7 +4107,7 @@ void runCloseHandlers(lua_State* L)
         lua_xmove(L, co, 1);
         const bool finished = resumeScheduled(L, co, 0);
         if (!finished) {
-            // Parked, which is the case an earlier defect was about: before this, a handler
+            // Parked, which is the case that once went wrong: before this, a handler
             // that yielded was cut off at the next drain rather than waited
             // for, and `architecture.md` §app promises a capped grace period.
             // Kept referenced so the host can ask whether it is still running.

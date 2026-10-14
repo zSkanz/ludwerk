@@ -76,14 +76,14 @@ std::string quantized(f64 value)
 // product differ between MSVC and Clang in the last bit, and a hash turns one
 // bit into a completely different number. Rounding each float onto the same
 // four-decimal grid the rest of the stream uses gives the digest exactly the
-// tolerance `real` already has, and no more. An earlier defect is what happens when a
+// tolerance `real` already has, and no more. A gate that went red between two compilers is what happens when a
 // cross-build comparison is made of numbers that were never promised to match.
 //
 // **Integers get no such tolerance and need none.** An index buffer holds exact
 // u32 values that no compiler rounds, and quantizing them as floats would be
 // worse than useless: index 1,000 read as an f32 is a denormal around 1.4e-42,
 // which lands on the same grid point as zero, so every index buffer in the
-// engine would digest alike. That is an earlier defect's mistake -- reinterpreting a word
+// engine would digest alike. That is a mistake made once -- reinterpreting a word
 // instead of converting it -- and it is why the caller passes the KIND rather
 // than the digest guessing.
 enum class DigestKind
@@ -120,7 +120,7 @@ inline constexpr f32 kQuantizableCeiling = 1.0e6f;
 
 // What an upload carried, in a form two different compilers can agree on.
 //
-// **A hash cannot do this job, and the attempt is what proved it.** An earlier fix
+// **A hash cannot do this job, and the attempt is what proved it.** The fix
 // first shipped as an FNV of the quantized words, exactly like the uniform
 // digest below, and the two tiers disagreed on precisely the buffers whose
 // contents are COMPUTED rather than read from a file: the primitive-shape meshes
@@ -186,7 +186,7 @@ struct UploadSummary
         // An index buffer is exact integers that no compiler rounds, so the
         // caller says so and the whole thing is hashed. Reading one as f32 would
         // be worse than useless: index 1,000 is a denormal around 1.4e-42, so
-        // every index buffer in the engine would summarise alike. That is an earlier defect's
+        // every index buffer in the engine would summarise alike. That is the same
         // mistake -- reinterpreting a word instead of converting it -- which is
         // why the KIND comes from `BufferDesc` rather than from the bytes.
         if (kind == DigestKind::ExactWord || !quantizable(value)) {

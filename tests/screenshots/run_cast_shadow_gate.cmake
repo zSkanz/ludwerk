@@ -13,7 +13,7 @@
 # And both slabs are drawn in both: the property takes away what a part casts
 # and nothing else.
 #
-# **The first half is an earlier defect's test.** Before it the sun's frame had no shadow
+# **The first half tests a defect that shipped.** Before it the sun's frame had no shadow
 # at all: under an orthographic camera every fragment chose the first cascade.
 #
 # Invoked as:

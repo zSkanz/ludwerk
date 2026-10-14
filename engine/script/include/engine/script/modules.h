@@ -398,7 +398,7 @@ void adoptMountedEntries(lua_State* L, std::vector<ModuleRegistry::Entry> entrie
 
 // WHY a resumption belonging to this script would be dropped.
 //
-// **A reason rather than a bool, and an earlier defect is why** (see `signals.cpp`). One
+// **A reason rather than a bool, and a `Destroying` that stopped running is why** (see `signals.cpp`). One
 // caller has to treat one of these differently: `Instance.Destroying` is the
 // documented last chance to clean up, `World::destroy` marks the instance
 // BEFORE queueing that fire, and a script's own `Destroying` handler is

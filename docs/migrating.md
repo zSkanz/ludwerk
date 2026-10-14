@@ -332,7 +332,7 @@ no runtime aliases, ever.
 
 ## 5. Not in v1, honestly
 
-Each of these has an owner in the roadmap's post-v1 phases rather than a shrug.
+Each of these is planned rather than shrugged at.
 
 | Missing | Where it went |
 |---|---|

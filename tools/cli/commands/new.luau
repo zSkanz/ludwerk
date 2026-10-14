@@ -32,7 +32,7 @@ local Templates = { starter = true }
 --- are found relative to the installation rather than to the caller's cwd.
 ---
 --- **This used to be a walk of its own, and it was the walk the rest of the CLI
---- should have been doing** (ADR 0054). An earlier defect taught it here — a count two
+--- should have been doing** (ADR 0054). A defect taught it here — a count two
 --- directories up was right while this command lived one level higher and
 --- stopped being right the moment it moved, and nothing said so — while the
 --- engine search and `--version` kept counting and kept looking in the working

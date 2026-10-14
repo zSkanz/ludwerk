@@ -7,7 +7,7 @@
 The new type solver is the default in `luau-analyze` (Roblox GA 2025-11-20;
 strict was opt-in at GA due to known bugs; memory/verbosity issues exist at
 scale). Greenfield strict-by-default is viable — there is no legacy error
-wave. User decision #12. Native codegen performance is proportional to type
+wave. Native codegen performance is proportional to type
 annotations, so typing is also a performance feature.
 
 ## Decision

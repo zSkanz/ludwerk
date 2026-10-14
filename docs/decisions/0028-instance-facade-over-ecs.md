@@ -4,7 +4,7 @@
 - Date: 2026-08-19
 
 ## Context
-User decision #2: Roblox-style Instance tree as the public API, data-oriented
+The requirement: Roblox-style Instance tree as the public API, data-oriented
 internals for open-world scale. EnTT was considered for the ECS.
 
 ## Decision

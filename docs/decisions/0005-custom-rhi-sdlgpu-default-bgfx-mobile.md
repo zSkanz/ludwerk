@@ -4,7 +4,7 @@
 - Date: 2026-08-19
 
 ## Context
-The renderer backend must be swappable (core user requirement). Candidates:
+The renderer backend must be swappable (a core requirement). Candidates:
 SDL3 GPU (modern, lean, Vulkan/Metal/D3D12 + compute, zero marginal dependency
 since SDL3 is already in the stack, but Android support officially "limited");
 bgfx (battle-proven iOS/Android incl. GLES2 for low-end devices — the real
@@ -22,7 +22,7 @@ SDL type appears in `rhi_api` headers**; neutrality is validated by the
 `rhi_capture` (CI) and future bgfx backends. **SDL3 GPU is the default backend
 for the desktop MVP**; **bgfx is the second backend, implemented in the mobile
 phase** (post-v1) as the Android low-end hedge and console path. `rhi_null`
-and `rhi_capture` exist for headless/testing. User decision #13.
+and `rhi_capture` exist for headless/testing.
 
 ## Consequences
 Desktop v1 ships on a lean, modern backend; the two-backend plan keeps the
