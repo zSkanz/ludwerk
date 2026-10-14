@@ -1,22 +1,34 @@
 # Platform services
 
-Use the generic services for shared gameplay code. Use XboxService for native
-Xbox-specific identifiers and features. Both layers share one provider session
-and the existing async scheduler. NetworkService, scenes and local SaveService
-keep their existing responsibilities.
+A game sold on a platform signs its player in to that platform's account,
+unlocks its achievements and reads its store. Six services do that, whatever
+the platform:
 
-All six generic services exist without an SDK or enabled integration. Writing
-and checking scripts does not initialize a native SDK. Native providers load on
-first use only when enabled. Connecting a controller does not choose a platform
-account provider.
+| Service | Does |
+|---|---|
+| `IdentityService` | Signs the player in and says who they are. |
+| `AchievementService` | Unlocks achievements and reads their progress. |
+| `LeaderboardService` | Writes scores and reads the boards. |
+| `CloudSaveService` | Keeps save slots in the platform's cloud. `SaveService` keeps them on the machine. |
+| `SocialService` | Friends, presence, blocking, and whether two players may talk. |
+| `StoreService` | Products, what the player owns, and purchases. |
 
-GetService creates each generic service singleton on its first request. Unused
-services do not allocate objects in the game tree. FindService returns nil before
-that request; there is no need to call it before using GetService. Hardware family
-and gamepad connection IDs are excluded from the deterministic world hash; the
-existing input category and gameplay changes remain covered.
+**The platform itself is a provider**: an optional module, installed and
+enabled per project, that talks to the platform's own software. Xbox on
+Windows is the provider there is. `XboxService` is the same provider seen
+directly, for what only Xbox has.
 
-## What works in the initial Xbox provider
+**A script is written once.** The six services always exist, with or without a
+provider: a game is written and checked on a machine with no platform software
+at all, and the provider is loaded the first time a service is used, only when
+the project enables one. Without one, every call answers that the service is
+unavailable, and nothing is ever faked.
+
+The services reach no further than the platform. A match is still
+`NetworkService`'s, a scene is still `SceneService`'s, and a save on the
+machine is still `SaveService`'s.
+
+## What the Xbox provider does
 
 | Service | Real initial capability |
 | --- | --- |

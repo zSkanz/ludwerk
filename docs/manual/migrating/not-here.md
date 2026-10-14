@@ -9,9 +9,10 @@ where it is not, it says that too.
 
 | Missing | State |
 |---|---|
-| Accounts, a players service, friends, avatars | **Not planned.** This is an engine, not a hosted platform. |
-| Data stores | **Not planned.** Persistence is a backend you write. |
-| Marketplace, monetization, analytics | **Not planned.** |
+| A players service, avatars | **Not planned.** This is an engine, not a hosted platform. |
+| Accounts, friends, achievements, a store | **Through a platform, not the engine.** `IdentityService`, `SocialService`, `AchievementService` and `StoreService` reach a platform's own services through an optional provider; Xbox on Windows is the one there is. See [Platform services](manual:guides/platform-services). |
+| Data stores | **Not planned.** A game saves on the player's machine with `SaveService`, or in a platform's cloud with `CloudSaveService`; anything shared between players is a backend you write. |
+| Analytics | **Not planned.** |
 | Matchmaking and hosted servers | **Not planned.** A match is hosted by a player's machine (`NetworkService:Host()`, or `--host`) or a server you run (`--serve`), and a script joins one with `NetworkService:Join(address)`; finding one is your backend's job. |
 
 Replication and a game's own messages are here: see
@@ -38,9 +39,9 @@ HTTP client and your own server: see [Talking to a backend](manual:guides/backen
 
 | Missing | State |
 |---|---|
-| A table layout; UI shapes drawn from a path | **Not scheduled.** Grids, pages, flex, scale and the constraints are here ([Grids, pages and flex](manual:ui/layouts), [Fitting any screen](manual:ui/adapting)). |
-| A drag detector's `DragRelativity`, `DragSpace` and a drag function | **Absent.** `Scriptable` and the two custom responses say where the pointer is and how far; a script does the rest. |
-| Borders | **Absent**, deliberately. |
+| A table layout; UI shapes drawn from a path | **Not scheduled.** Grids, pages, flex, scale and the constraints are here ([Grids, pages and flex](manual:ui/layouts), [Fitting any screen](manual:ui/adapting)), and so are rounded corners, gradients and strokes ([Gradients and strokes](manual:ui/gradients-and-strokes)). |
+| A `UIDragDetector`'s `DragRelativity`, `DragSpace` and a drag function | **Absent.** `Scriptable` and the two custom responses say where the pointer is and how far; a script does the rest. |
+| A proximity prompt, a drag detector for parts in the world | **Absent, deliberately.** Each is a few lines of a game's own over a `ClickDetector` and an input action; see [Clicks, prompts and drags](manual:input/interactions). |
 | A reactive UI framework | **Not the engine's.** The engine ships the instance tree. |
 
 ## Scripting
@@ -48,16 +49,16 @@ HTTP client and your own server: see [Talking to a backend](manual:guides/backen
 | Missing | State |
 |---|---|
 | A filesystem for scripts | **Not present.** A script cannot read or write files. Saves go through `SaveService`, which takes slot names and never paths. |
-| Most of the standard library in the game VM | **Not present yet.** Only an HTTP client is registered; JSON, paths and string helpers are not reachable from a script. |
+| Most of the standard library in the game VM | **Not present.** `@std/net` and `@std/json` are reachable from a script; paths, files and the string and table helpers are not. See [What a script may do](manual:concepts/sandbox). |
 | `loadstring` and friends | **Never.** Sandbox. |
 
 ## Tooling
 
 | Missing | State |
 |---|---|
-| iOS, the web, consoles | **Not present.** The engine runs scripts in an interpreter, as iOS requires, so nothing in its design rules iOS out. |
+| iOS, the web, consoles | **Not present.** A game runs on Windows, Linux, macOS and Android. The web is on the roadmap. The engine runs scripts in an interpreter, as iOS requires, so nothing in its design rules iOS out. |
 | Hot-swapping a compiled asset | **Not present.** Under `ludwerk dev`, a loose file you save is reloaded on the next frame; a packed or compiled one reloads the bytes it was built into. |
-| A package manager | **Not present.** |
+| A package manager | **Not present.** It is on the roadmap. |
 
 ## What to take from this
 

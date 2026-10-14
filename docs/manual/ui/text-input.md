@@ -100,7 +100,7 @@ name.MaxLength = 16
 name.InputRejected:Connect(function(rejected: string)
     print(`a name is at most 16 characters; "{rejected}" did not fit`)
 end)
-name.FocusLost:Connect(function(submitted: boolean, reason: EnumItem)
+name.FocusLost:Connect(function(submitted: boolean, reason: EnumFocusLossReason)
     if reason == Enum.FocusLossReason.Canceled then
         return -- Escape: the player changed their mind
     end

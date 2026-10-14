@@ -65,9 +65,9 @@ So:
   camera every frame.
 - **A camera the gameplay moves once a tick** -- a cut to a new shot, a
   camera on rails -- can be written on `Heartbeat`; it is drawn between ticks.
-- **Nothing in a render phase runs without a window.** A test, a gate or a
-  server runs no render step and no `PreRender`: a camera that matters there
-  also needs a tick's path -- which is what `rig:Update` below is.
+- **A dedicated server runs no render phase.** It draws nothing, so it runs
+  no render step and no `PreRender`: a camera that matters there also needs a
+  tick's path -- which is what `rig:Update` below is.
 
 The simulation reads the camera the player last saw -- movement relative to
 the camera included -- and only at a tick's start, so what a tick does never
@@ -94,8 +94,8 @@ distant geometry fight with itself.
 
 ## Camera rigs
 
-`@engine/camera` ships two, so that a third-person game does not start by writing
-spherical coordinates:
+`@engine/camera` ships three -- third person, first person and an orbit -- so
+that a game does not start by writing spherical coordinates:
 
 ```luau
 --!strict
@@ -131,9 +131,10 @@ camera with it. `camera.orbit` is the same rig turning by itself.
   frame would turn it several times over, so the rig reads only render-rate
   ones. The pointer turns it while the pointer is locked. Without actions, call
   `rig:Turn` and `rig:Look` yourself.
-- **Call `rig:Update(dt)` on `Heartbeat` anyway.** Where a frame is drawn it
-  does nothing; where none is -- a test, the flagship's autopilot -- it moves
-  the camera once a tick, as the picture a test records expects.
+- **Call `rig:Update(dt)` on `Heartbeat` anyway.** Where a frame's render
+  step has moved the camera it does nothing; where none has -- a dedicated
+  server, a test that steps ticks without frames -- it moves the camera once a
+  tick.
 - **Never scale a pointer delta by `dt`.** `Turn` takes a stick deflection and a
   `dt` because a stick is a rate. `Look` takes a mouse delta and no `dt` because
   a mouse delta is already a displacement, and multiplying it by frame time

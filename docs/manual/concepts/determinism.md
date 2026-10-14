@@ -2,17 +2,25 @@
 
 "Deterministic" means nothing until it is scoped, so here is the scope, exactly:
 
-> **Same engine build, same platform, same initial state and seed, same tick
-> configuration, same ordered inputs ⇒ same observable simulation result.**
+> **Same engine version, same initial state and seed, same tick configuration,
+> same ordered inputs ⇒ same simulation result, on every platform and
+> compiler.**
 
-That is the guarantee. Same-run repeatability is implied by it. What is **not**
-guaranteed is bit-identical results across platforms — a Windows run and a Linux
-run of the same world may diverge, and the engine measures that as an aspiration
-in a non-blocking job rather than promising it.
+That is the guarantee, and it holds **across platforms**: a world run on
+Windows, on Linux and on macOS reaches the same state, bit for bit.
+That is why a replay recorded on one machine plays back on another, and why a
+client and its server agree.
+
+It holds because the simulation does its own arithmetic. Its sines, cosines,
+powers and logarithms are the engine's own rather than each platform's C
+library, which round the last bit differently; Luau's `math` library goes
+through them too; and no compiler is allowed to fuse a multiply and an add
+that the source wrote as two operations.
 
 The result is verified by a **world hash**: the engine can hash its own
 simulation state at a tick, replay a recorded input log, and compare. That
-harness is not a demo — it gates merges.
+harness is not a demo: every change to the engine runs it on Windows, Linux
+and macOS against the same recorded hashes.
 
 ## What the engine does to hold the line
 

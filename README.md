@@ -128,8 +128,8 @@ its folder.
 - [Architecture](docs/architecture.md) — how the native core is organized.
 - [API design](docs/api-design.md) — the Luau-facing API and its conventions.
 - [Design decisions](docs/decisions/) — why the engine works the way it does.
-- [Migration guide](docs/migrating.md) — for developers coming from a similar
-  API.
+- [Migration guide](docs/manual/migrating/migration.md) — for developers
+  coming from a similar API.
 
 ## Built with
 

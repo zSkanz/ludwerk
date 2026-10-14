@@ -1310,7 +1310,7 @@ from `Heartbeat` on the same tick come due on the same tick.
   **Only the dev server listens** — the engine opens no port in any profile, and
   the client half is compiled into dev builds only. The same server serves the
   dev server's other clients (the hot-reload gate test, the overlay console, a
-  future editor) and relays between them and the engine. `eval` is reserved the
+  tool) and relays between them and the engine. `eval` is reserved the
   same way `asset-changed` is and is answered the same way: running arbitrary
   source in a live world touches R4 and needs its own design, so the dev console
   it was to power does not evaluate anything.
@@ -1680,10 +1680,10 @@ declares is wider than the sketch this line carried: Get started · Core concept
 · Building a world · Rendering and lighting · Physics · Input · User interface ·
 Audio · Animation · Assets and streaming · Guides · **Why it works this way** —
 the decisions a person will trip over, each with the reasoning that settled it —
-and **Coming from Roblox**, which is the keystone and is three pages rather than
+and **Migrating a game**, which is the keystone and is three pages rather than
 one: the migration guide, every deliberate divergence (§2.5), and what is not
-here. [`migrating.md`](migrating.md) is still the repository's
-own copy of that argument. The reference half is generated from the IDL and not
+here. [`migrating.md`](migrating.md) now only points at those three
+pages. The reference half is generated from the IDL and not
 from the api-dump: the dump carries no doc prose (§5, artifact 4) and could not
 produce a reference page if it wanted to.
 
@@ -1785,10 +1785,11 @@ convention, and Ludwerk keeps it (ADR 0034).
    to save it. `.scene.json` is the format, a stamp is the same format over one
    subtree (§2.6), and `[project] scene` is what a run loads before its scripts
    start (§3). `.prefab.luau` was never built and is not what covered this.
-7. **Single-VM v1 code may assume shared memory and break under a future
-   client/server split.** **Rec:** never ship `IsServer()`-style stubs in v1;
-   push the sibling-backend-on-Lute pattern hard in docs; reserve
-   `RunContext` and the folder names.
+7. ~~**Single-VM v1 code may assume shared memory and break under a future
+   client/server split.**~~ **Closed by the multiplayer work** (ADRs 0105 and
+   0138): where a script runs is decided by the service it is in or by its
+   `RunContext`, a dedicated package leaves the other side's code out, and the
+   manual says plainly that a module's table is not shared across machines.
 8. **Ensemble similarity to Roblox naming despite generic words** (Part,
    Workspace, ScreenGui). **Rec:** pre-launch legal review of the full
    api-dump identifier list (ADR 0020); the deliberate renames stand as

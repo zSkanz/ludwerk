@@ -1,4 +1,4 @@
-# Clicks, and the prompts and drags a game writes
+# Clicks, prompts and drags
 
 A button to press wants a raycast from the pointer, a distance check, a hover
 state, touch handling and, in a match, a message to the server that the server
@@ -10,7 +10,7 @@ Put a `ClickDetector` in a part, or in a model, and the part can be clicked:
 
 ```luau
 --!strict
-local button = workspace:WaitForChild("Button")
+local button = workspace:WaitForChild("Button") :: BasePart
 local detector = Instance.new("ClickDetector")
 detector.MaxActivationDistance = 8
 detector.Parent = button

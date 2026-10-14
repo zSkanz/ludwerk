@@ -67,7 +67,7 @@ local Sections: { Section } = {
     {
         Slug = "world",
         Title = "Building a world",
-        Summary = "Parts, materials, transforms, meshes, prefabs, terrain, water, blocks, and the scene the game starts in.",
+        Summary = "Parts, materials, meshes, prefabs, terrain, wind, foliage, water, blocks, 2D, navigation, and the scene the game starts in.",
         Pages = {
             { Slug = "parts", Title = "Parts and solids" },
             { Slug = "materials", Title = "Materials" },
@@ -87,7 +87,7 @@ local Sections: { Section } = {
     {
         Slug = "rendering",
         Title = "Rendering and lighting",
-        Summary = "The camera, the sun, the sky and the air, the lights, particles and decals, and the post effects.",
+        Summary = "The camera, the sun and the sky, lights and shadows, bounced light, particles, post effects, shaders, and the quality settings.",
         Pages = {
             { Slug = "camera", Title = "The camera" },
             { Slug = "lighting", Title = "Lighting and the sky" },
@@ -128,7 +128,7 @@ local Sections: { Section } = {
         Pages = {
             { Slug = "actions", Title = "Actions, bindings and contexts" },
             { Slug = "rebinding", Title = "Rebinding and prompts" },
-            { Slug = "interactions", Title = "Clicks and proximity prompts" },
+            { Slug = "interactions", Title = "Clicks, prompts and drags" },
             { Slug = "raw", Title = "Raw input, and when to use it" },
             { Slug = "vibration", Title = "Vibration" },
         },
@@ -163,7 +163,7 @@ local Sections: { Section } = {
     {
         Slug = "animation",
         Title = "Animation",
-        Summary = "Tweening a property, and playing a skinned mesh's clips.",
+        Summary = "Tweens, skeletal clips, animation graphs, retargeting, reaching and looking, faces, and cinematics.",
         Pages = {
             { Slug = "tweens", Title = "Tweens" },
             { Slug = "skeletal", Title = "Skeletal animation" },
@@ -192,12 +192,13 @@ local Sections: { Section } = {
     {
         Slug = "guides",
         Title = "Guides",
-        Summary = "Hot reload, testing, localization, the debug overlay, shipping, and multiplayer.",
+        Summary = "Hot reload, testing, localization, profiling, shipping, multiplayer, scenes and saves.",
         Pages = {
             { Slug = "hot-reload", Title = "Hot reload" },
             { Slug = "testing", Title = "Testing" },
             { Slug = "i18n", Title = "Localization" },
             { Slug = "debug-overlay", Title = "The debug overlay" },
+            { Slug = "profiler", Title = "The profiler" },
             { Slug = "shipping", Title = "Shipping a game" },
             { Slug = "platform-services", Title = "Platform services" },
             { Slug = "multiplayer", Title = "Multiplayer" },

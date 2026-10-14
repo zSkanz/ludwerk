@@ -41,24 +41,34 @@ phase is how a game stops reproducing.
 1. Frame start (a safe point)
      apply the hot-reload batch, materialize streamed chunks (budgeted),
      apply a pending origin rebase, run asset-ready callbacks
-2. Pump platform events into the input queue
-3. Dispatch render-rate input (UI and camera contexts)
-4. PreRender          -> drain the deferred queue
-5. while accumulated time >= fixed timestep, up to four times:
+2. while accumulated time >= fixed timestep, up to four times:
      SimTick:
-       a. dispatch sim-rate input (gameplay actions)
-       b. PreAnimation      -> drain, then sample animation clips, then step tweens
+       a. receive from the network; dispatch sim-rate input (gameplay
+          actions); turn this tick's input into intents, then run
+          BindToIntent functions
+       b. PreAnimation      -> drain, then step tweens and sequences, then
+                               sample animation clips
        c. PreSimulation     -> drain
-       d. step physics, drain contacts, enqueue Touched
-       e. scene systems: transforms, character update, welds, day/night
-       f. PostSimulation    -> drain
-       g. task-resume: task.wait and task.delay come due here
-       h. Heartbeat         -> drain
-6. Script GC step, within the frame budget
+       d. step physics -- characters, joints, BindToPredictedStep
+          functions -- then 2D physics and water; enqueue Touched
+       e. PostSimulation    -> drain
+       f. task-resume: task.wait and task.delay come due here
+       g. Heartbeat         -> drain
+       h. send to the network
+3. Update audio
+4. Pump platform events into the input queue
+5. Wait for the frame's turn (frame pacing, the display)
+6. Render phase:
+     dispatch render-rate input (UI and camera contexts),
+     run BindToRenderStep functions in priority order,
+     PreRender            -> drain
 7. Extract the world for rendering, interpolated between ticks
-8. Render, composite UI and the debug shell, present
-9. Update audio, close the profiler frame
+8. Lay out and draw the UI, render, present
 ```
+
+The render phase comes **after** the ticks, so a script in it reads where
+things are drawn this frame: `GetRenderCFrame` answers the interpolated pose
+that is about to be on screen.
 
 Every phase marked "drain" runs its engine work and then drains the deferred
 queue to fixpoint. That is what a *resumption point* is, and it is where every
@@ -77,9 +87,15 @@ so a force applied there is applied to this tick.
 **Reading where a body ended up →** `PostSimulation`. Reading in
 `PreSimulation` gives you last tick's answer.
 
-**Moving the camera →** `PreRender`. The camera is a property of the image, not
-of the simulation, and moving it at tick rate makes it stutter against an
-interpolated world.
+**Moving the camera →** `RunService:BindToRenderStep` at
+`Enum.RenderPriority.Camera`, or `PreRender`, following what it tracks by
+`GetRenderCFrame`. The camera is a property of the image, not of the
+simulation, and moving it at tick rate makes it stutter against an
+interpolated world. See [The camera](manual:rendering/camera).
+
+**Movement a client predicts →** `RunService:BindToPredictedStep`. It runs
+inside the physics step and again when a correction replays a tick. See
+[Multiplayer](manual:guides/multiplayer).
 
 **Everything else →** `Heartbeat`. It is the general per-tick phase and it is
 the right default.
@@ -91,9 +107,13 @@ again; `RunService.IsPaused` reports which. Rendering continues while paused, so
 the world is still on screen and `PreRender` still fires — a paused world is a
 still world, not a black one.
 
+The editor's own pause is stronger: while the editor is paused, no script
+phase runs at all, the render phase included, so a script's camera and the
+editor's do not fight over the view.
+
 ## Headless
 
-`ludwerk test` and every gate run the **identical scheduler** minus the platform,
-render and audio steps, with ticks driven as fast as possible. That is not a
+`ludwerk test` and every gate run the **identical scheduler** minus drawing
+and audio, with ticks driven as fast as possible. That is not a
 simplified mode written for tests: it is the same code path, which is what makes
 a headless determinism replay evidence about the real engine.

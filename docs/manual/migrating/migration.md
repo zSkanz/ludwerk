@@ -9,7 +9,8 @@ The `Instance` tree. `game:GetService`. `Instance.new`, `Parent`, `Clone`,
 `Destroy`, `FindFirstChild`, `WaitForChild`, `GetChildren`, `GetDescendants`,
 `IsA`. Attributes. Tags. `Signal:Connect` and `:Disconnect`. `task.spawn`,
 `task.defer`, `task.delay`, `task.wait`. `Vector3`, `CFrame`, `Color3`, `UDim2`.
-`Enum`. `print` and `warn`. A `Part` with a `Size`, an `Anchored` and a `Color`.
+`Enum`. `print` and `warn`. `Script` and `ModuleScript`, and `require(module)`.
+A `Part` with a `Size`, an `Anchored` and a `CFrame`.
 `Touched`. `TweenService:Create`. A UI tree of frames and labels laid out in
 `UDim2`.
 
@@ -49,16 +50,20 @@ A camera that follows something goes in a render step and reads
 presented as written, and the simulation reads it from the next tick
 ([Camera](manual:rendering/camera)).
 
-### No ModuleScripts
+### Modules can also be files
 
-Modules are plain files, required by string:
+A `ModuleScript` in the tree works as you expect: `require(Shared.Inventory)`.
+A module can also be a plain file, required by path, which a text editor and
+git see as a file:
 
 ```luau
 local Greeting = require("@shared/greeting")
 ```
 
-No `require(instance)`, no instance to find first, no wait-then-require dance.
-Real files the analyzer can follow.
+`src/shared/greeting.luau` is both at once: a file on disk, and a
+`ModuleScript` under `GlobalScriptService.Shared` in the tree. Either way of
+requiring it gives the same module. See
+[Scripts, modules and requires](manual:concepts/scripts).
 
 ### Children, by a dot, typed
 
@@ -83,11 +88,12 @@ their capitals because those are the engine's. See
 Not a property on the scene root. `StreamingService` has foci, radii, a budget
 and events.
 
-### Graphics settings are not a script's
+### Graphics settings are the player's
 
-A script cannot set shadow quality or render scale. Those belong to the machine
-the game is being shown on. See
-[Graphics settings belong to the player](manual:why/graphics-settings).
+Shadow quality, render scale and the frame cap are not in `Lighting` and not in
+the scene. They belong to the machine the game is shown on, and a script sets
+them through `GraphicsService` on the player's behalf, for an options menu.
+See [Graphics settings belong to the player](manual:why/graphics-settings).
 
 ### A destroyed handle stops working
 
@@ -164,7 +170,8 @@ impossible to write.
 ### PlayerGui → UIService
 
 `ScreenGui.Parent = game:GetService("UIService")`. It takes the container's role
-without taking a players service, because there is not one.
+without taking a players service, because there is not one. With several
+players at one screen, `ScreenGui.Player` gives each its own interface.
 
 ### rbxassetid:// → asset://
 
@@ -187,10 +194,10 @@ Messages between the machines of a match are a `RemoteEvent`: see
 ### Studio → an editor, and a terminal
 
 `ludwerk edit` opens the visual editor: viewport, explorer, properties, content
-browser, play/pause/step/stop, save, undo. `ludwerk dev` runs the project with hot
-reload and no editor.
+browser, script editor and debugger, play/pause/step/stop, save, undo.
+`ludwerk dev` runs the project with hot reload and no editor.
 
-Scripts are files in your own editor, with a real language server.
+Scripts can also be files in your own editor, with a real language server.
 
 ## Where to look next
 

@@ -95,7 +95,10 @@ which is what a new script is.
   server script, a client script and a script for both.
 - **A script writes neither its own side nor another's.** The side was fixed
   when the package was made.
-- **In the editor, Play is solo**, so every script runs, once.
+- **In the editor, Play is solo**, so every script runs, once. **Start
+  Match**, under Run and Debug, runs a real match instead: a host and its
+  clients, or a server with no window and every player as a client, each in
+  a window of its own and each running only its own side.
 
 **A scene's client code starts with the world it is in.** The scripts in
 `ClientScriptService` start fresh every time this machine's world is replaced:
@@ -311,7 +314,9 @@ ever runs.
 
 ## Reserved names
 
-`src/client/` and `src/server/` are the folder names the file mounts read.
+`src/client/`, `src/server/`, `src/shared/` and `src/scenes/` are the folder
+names the file mounts read. Any other folder under `src/` holds modules,
+reached by `require` with a path.
 
 ## Where to look next
 

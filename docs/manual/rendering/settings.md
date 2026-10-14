@@ -106,7 +106,7 @@ phone with two gigabytes, 256 on a machine with eight): past it, the pictures
 not shown for longest leave the graphics card and are loaded again when a
 screen shows them. Nothing on the screen is ever among them.
 
-**What is drawn by yet.** A few settings are kept, saved and reported ahead of
+**What nothing reads yet.** A few settings are kept, saved and reported ahead of
 the renderer that reads them, so a menu written today does not change shape:
 `ViewDistance`, `AnisotropicFiltering`, `LODBias`,
 `MaximumLODLevel`, `ParticleBudget`, `SoftParticles`, `SkinWeights`,

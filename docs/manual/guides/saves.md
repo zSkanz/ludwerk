@@ -64,6 +64,7 @@ end)
 | An exported game | the player's folder for the game's `[project]` company and name: `%APPDATA%/<company>/<name>/saves` on Windows, `~/.local/share/<company>/<name>/saves` on Linux, the app's storage on Android |
 | The editor's Play, `ludwerk dev`, the host run on a project folder by hand | the project's `.engine/saves/` -- a test run never touches a real player's |
 | A match started from the editor | `.engine/saves/<window>/`, one folder per window |
+| Any run started with `--saves=DIR` | `DIR` -- so a server and a player of one game on one machine keep apart |
 
 Each slot is `<name>.save`, beside `<name>.bak`, the save before it. A damaged
 file is read from the backup, with a warning; when both are damaged the slot

@@ -20,7 +20,9 @@ What is underneath it is not familiar, and that is deliberate too.
   interpolates between ticks.
 - **A custom rendering interface** over the platform's own graphics API, with
   cascaded shadows, clustered lights with shadows of their own, image-based
-  lighting from the sky or a skybox, materials as assets, an atmosphere, and a
+  lighting from the sky or a skybox, bounced light from reflection probes and
+  irradiance volumes, screen-space reflections, temporal anti-aliasing and
+  upscaling, materials as assets with surface shaders, an atmosphere, and a
   post chain of effects you add as instances.
 - **Jolt** for 3D physics and a 2D physics library for the plane, behind engine
   interfaces: no backend type reaches a script. Joints, welds and ragdolls are
@@ -30,9 +32,15 @@ What is underneath it is not familiar, and that is deliberate too.
   navigation mesh built where agents ask for one.
 - **A 2D layer**: sprites, tilemaps and an orthographic camera, in the same
   world as 3D.
-- **Multiplayer**: one authority, replicas that predict their own character and
-  interpolate everyone else, and `RemoteEvent` and `RemoteFunction` for your own
-  messages.
+- **Multiplayer**: one authority, replicas that predict their own character
+  and roll back when the authority disagrees, interpolation for everyone else,
+  and `RemoteEvent` and `RemoteFunction` for your own messages. Several players
+  can also share one machine, with the screen split between them.
+- **Animation**: animation graphs with states, blend spaces and layers, inverse
+  kinematics, retargeting between skeletons, shape keys, secondary motion, and
+  a sequencer for cutscenes.
+- **Audio**: positional sound, mixing groups and effects, and voice-over per
+  language with subtitles and lip sync.
 - **A visual editor** that is a mode of the engine: the same binary and the
   same world, with a script editor that type-checks as you write.
 - **Sub-second hot reload**: save a file and the world is rebuilt around you.
@@ -40,7 +48,7 @@ What is underneath it is not familiar, and that is deliberate too.
 ## What that buys you
 
 **A world that reproduces.** Same build, same seed, same inputs, same result,
-and since level C, the same result on Windows, Linux and macOS. It is verified
+and the same result on Windows, Linux and macOS. It is verified
 by hashing the simulation and replaying recorded input, which turns "it
 happened once" into a test, and it is what lets a replica and its authority
 agree.
@@ -64,7 +72,8 @@ smaller promise and a portable one.
   down.
 - **Not a hosted platform.** No accounts, no data stores, no matchmaking. A match
   is hosted by a player's machine or by a server you run.
-- **Not on iOS or the web.** A game runs on Windows, Linux, macOS and Android.
+- **Not on iOS or the web, yet.** A game is exported for Windows, Linux and
+  Android, and the engine also builds and runs on macOS from source.
 
 ## The honest gaps
 

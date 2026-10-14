@@ -66,8 +66,8 @@ the function name.
 -- Where is the muzzle, in the world?
 local muzzle = gun.CFrame * CFrame.new(0, 0, -1.2)
 
--- Where is that point, relative to the player?
-local relative = player.CFrame:PointToObjectSpace(muzzle.Position)
+-- Where is that point, relative to the character?
+local relative = character.CFrame:PointToObjectSpace(muzzle.Position)
 ```
 
 `CFrame.PointToWorldSpace` and `CFrame.PointToObjectSpace` move a point;

@@ -219,6 +219,82 @@ A JDK 17, the Android SDK (platform 35, build-tools 35.0.0, platform-tools)
 and Gradle 8.12, into your Ludwerk folder -- what an Android export needs. No
 NDK: the player is prebuilt. A second run installs only what is missing.
 
+### ludwerk saves
+
+```bash
+ludwerk saves list
+ludwerk saves clear --slot=profile
+ludwerk saves list --player
+```
+
+Lists or clears the saves a game wrote while you ran it: the project's own
+`.engine/saves`, or with `--player` the folder a player's copy writes to on
+this machine. `clear` takes one slot, and its backup, with `--slot`. See
+[Saving the game](manual:guides/saves).
+
+### ludwerk terrain
+
+```bash
+ludwerk terrain import island.png --size=4096 --low=-20 --high=380
+ludwerk terrain import hills --size=8192 --high=160 --scale=900 --seed=7
+```
+
+Lays a terrain from a heightmap, a folder of tiles, a Luau function or noise,
+and saves it into the project's scene. The flags are `--size`, `--low`,
+`--high`, `--material`, `--seed`, `--scale` and `--octaves`. See
+[Terrain](manual:world/terrain).
+
+### ludwerk setup
+
+```bash
+ludwerk setup
+```
+
+Writes the project's type definitions into `.engine/types/` for the engine
+this installation carries. A project cloned from git has none, because
+`.engine/` is not committed; the editor and `ludwerk check` both need them.
+
+### ludwerk migrate
+
+```bash
+ludwerk migrate materials
+ludwerk migrate materials path/to/project
+```
+
+Rewrites a project's files for a change in the engine. `materials` is the one
+migration there is: a part's color and transparency become parameters of the
+material it wears. See [Materials](manual:world/materials).
+
+### ludwerk modules
+
+```bash
+ludwerk modules status --project=my-game
+ludwerk modules install android --accept-licenses
+ludwerk modules install microsoft-gdk --accept-licenses
+ludwerk modules update microsoft-gdk --accept-licenses
+ludwerk modules verify microsoft-gdk
+ludwerk modules remove microsoft-gdk
+```
+
+Windows and Linux use the installation's prebuilt players. Android and Microsoft
+GDK tooling are optional. Installing shared tools does not enable a project service,
+and enabling a service does not install an SDK. The editor exposes these operations
+through **Platforms and Services**, reached from Project Settings or Export.
+
+A compatible prebuilt native module can also be installed without the SDK or a
+C++ compiler. Supply the archive and its published SHA-256:
+
+```bash
+ludwerk modules install microsoft-gdk --accept-licenses --package=module.zip --sha256=PUBLISHED_SHA256
+```
+
+The archive's module ID, pinned version, ABI and individual file checksums must
+match. The editor offers the same package installation under the integration's
+card. The SDK installer checks its pinned download hash; Verify also detects
+changes to essential extracted SDK files. Removal applies only to this manager's
+owned module version. Built-in players and externally installed Android tools
+are kept.
+
 ## Exit codes
 
 | Code | Means |
@@ -254,6 +330,8 @@ engine-host [script.luau | project-dir]
   [--screenshot-every=N --debug-view=VIEW --terrain-detail=full|distance
    --no-instancing]
   [--pace=HZ]
+  [--profile-capture=FILE [--profile-lines]] [--gpu-pass-times]
+  [--host | --serve | --join=ADDRESS[:PORT]] [--max-players=N] [--relay=HOST:PORT]
   [--[no-]vsync --max-frame-rate=N --background-frame-rate=N]
   [--locale=LOCALE --voice-locale=LOCALE]
   | --run-tests=DIR | --replay=DIR [--record-replay] | --describe-rig=FILE
@@ -266,6 +344,13 @@ test of a dubbed game is run with ([Dubbing](manual:audio/dubbing)). Neither
 is kept. `--describe-rig=FILE` prints what a model's skeleton is taken to be --
 each joint's role, what has none, its clips -- and exits
 ([Retargeting](manual:animation/retargeting)).
+
+`--profile-capture=FILE` keeps the last minute of frames and writes them to
+`FILE` when the run ends, for the editor's profiler to open; `--profile-lines`
+samples script lines as well ([The profiler](manual:guides/profiler)).
+`--host`, `--serve` and `--join` start the run in a match, `--max-players`
+caps how many may join one it hosts, and `--relay` names the relay a host
+registers with ([Multiplayer](manual:guides/multiplayer)).
 
 `--gpu=NAME` names the graphics API the run draws through -- `vulkan`,
 `direct3d12`, `metal` -- in place of the system's own choice. A name no
@@ -356,7 +441,7 @@ samples ASTC.
 
 `--window=x,y,w,h` places the window, `--label=Name` adds a name to its title,
 and `--log-file=path` writes the log somewhere other than `engine.log`. The
-editor's Play with players uses all three for each window of a match.
+editor's Start Match uses all three for each window of a match.
 
 `--log-keys` writes each of the engine's messages with its catalog key before
 it, as an error always has: `[render.warn.fsr2_unavailable] FSR 2 was
@@ -388,33 +473,3 @@ decide what your players get.
 - [Anatomy of a project](manual:get-started/project-anatomy)
 - [Hot reload](manual:guides/hot-reload)
 - [Shipping a game](manual:guides/shipping)
-
-## Optional platform tools and integrations
-
-```bash
-ludwerk modules status --project=my-game
-ludwerk modules install android --accept-licenses
-ludwerk modules install microsoft-gdk --accept-licenses
-ludwerk modules update microsoft-gdk --accept-licenses
-ludwerk modules verify microsoft-gdk
-ludwerk modules remove microsoft-gdk
-```
-
-Windows and Linux use the installation's prebuilt players. Android and Microsoft
-GDK tooling are optional. Installing shared tools does not enable a project service,
-and enabling a service does not install an SDK. The editor exposes these operations
-through **Platforms and Services**, reached from Project Settings or Export.
-
-A compatible prebuilt native module can also be installed without the SDK or a
-C++ compiler. Supply the archive and its published SHA-256:
-
-```bash
-ludwerk modules install microsoft-gdk --accept-licenses --package=module.zip --sha256=PUBLISHED_SHA256
-```
-
-The archive's module ID, pinned version, ABI and individual file checksums must
-match. The editor offers the same package installation under the integration's
-card. The SDK installer checks its pinned download hash; Verify also detects
-changes to essential extracted SDK files. Removal applies only to this manager's
-owned module version. Built-in players and externally installed Android tools
-are kept.

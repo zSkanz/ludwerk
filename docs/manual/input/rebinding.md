@@ -22,8 +22,7 @@ An action can have any number of bindings, and they are ordinary children:
 ```luau
 --!strict
 local extra = Instance.new("InputBinding")
-extra.KeyCode = Enum.KeyCode.Up
-extra.DeviceType = Enum.InputDeviceType.KeyboardMouse
+extra.KeyCode = Enum.KeyCode.Up -- its DeviceType follows: KeyboardMouse
 extra.Parent = jump
 ```
 

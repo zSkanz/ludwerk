@@ -63,9 +63,11 @@ sky.
 **The sky is also the reflection environment** -- the gradient, or a `Sky`'s
 pictures and clouds. A metal surface reflects the sky at the hour the script
 set — prefiltered per roughness, with diffuse irradiance
-projected from the same sky. One consequence is worth stating plainly: there is
-one environment for the whole world, so a polished floor **indoors** reflects the
-sky outside. It is right outdoors and wrong in a cave.
+projected from the same sky. Left at that, there is one environment for the
+whole world, and a polished floor **indoors** reflects the sky outside. A room
+gets its own with a `ReflectionProbe` for what it reflects and an
+`IrradianceVolume` for the light it bounces: see
+[Indirect light](manual:rendering/indirect-light).
 
 ## The properties
 
@@ -74,7 +76,7 @@ sky outside. It is right outdoors and wrong in a cave.
 | `Lighting.ClockTime` | `number` | 12 | Hour of the day. Wraps mod 24. |
 | `Lighting.GeographicLatitude` | `number` | 0 | Degrees, −90 to 90. |
 | `Lighting.Brightness` | `number` | 2.0 | The sun's strength. |
-| `Lighting.Ambient` | `Color3` | a dim blue-gray | A stand-in for bounced light there is still none of. |
+| `Lighting.Ambient` | `Color3` | a dim blue-gray | A floor of light everywhere, added to what the sky, the probes and the volumes give. |
 | `Lighting.FogColor` | `Color3` | a pale blue | Also the horizon's color. |
 | `Lighting.FogStart` | `number` | 200 | Meters at which fog begins. |
 | `Lighting.FogEnd` | `number` | 0 | Meters at which it is total. |

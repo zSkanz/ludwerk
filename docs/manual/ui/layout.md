@@ -9,9 +9,11 @@ absPos  = parentPos  + parentSize * Position.Scale + Position.Offset
                      - AnchorPoint * absSize
 ```
 
-There is nothing to solve: no constraint is under-determined, no sibling affects
-another, and no iteration converges. That is why the layout is predictable and
-why it costs nothing on a frame that changed nothing.
+There is nothing to solve: no constraint is under-determined and no iteration
+converges. Siblings affect one another only through a layout their parent
+holds -- a list, a grid, a page or flex places them in order, once. That is
+why the layout is predictable and why it costs nothing on a frame that
+changed nothing.
 
 ## UDim and UDim2
 

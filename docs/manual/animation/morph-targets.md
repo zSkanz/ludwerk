@@ -130,8 +130,8 @@ light). Their names come through as you gave them.
 ## What it does not do yet
 
 - A selection's outline and a highlight are drawn round the mesh at rest.
-- Motion blur and the temporal upscalers see the body and its skeleton move,
-  not its keys: fine for a face, visible on a key that throws a limb.
+- Temporal anti-aliasing and the upscalers see the body and its skeleton
+  move, not its keys: fine for a face, visible on a key that throws a limb.
 - A mesh with shape keys is drawn with the built-in surface, as a skinned one
   is: a surface shader on its material is not used.
 - A key's own tangents are not kept; the mesh's are used.

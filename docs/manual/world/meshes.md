@@ -70,13 +70,13 @@ number in the file is then right for everyone who uses it.
 
 | Item | Collides as |
 |---|---|
-| `Default` | Whatever the engine chooses. In this release, a convex hull. |
+| `Default` | Whatever the engine chooses: today, a convex hull. |
 | `Hull` | A convex hull of the geometry. |
 | `Box` | The bounding box. Names a shape rather than an accuracy, and is honored exactly. |
 | `Precise` | **Accepted and not yet implemented** — reads back as `Precise` and behaves as `Hull`. |
 
 A concave triangle-mesh collider is a different shape class with different rules
-— it cannot be dynamic — and it is not in this release.
+— it cannot be dynamic — and the engine does not have one yet.
 
 Two cases fall back to the bounding box, and both are the honest choice:
 
@@ -134,8 +134,15 @@ local DebugService = game:GetService("DebugService")
 print(DebugService:GetStat("VisibleObjects"), DebugService:GetStat("DrawCalls"))
 ```
 
-Two things are never instanced, and both are deliberate: a skinned draw carries
-its own joint palette, and a transparent draw's **order is the result**.
+A crowd of one skinned mesh is drawn the same way, each copy posed by its own
+joints ([Skeletal animation](manual:animation/skeletal)). A transparent draw is
+never instanced, deliberately: its **order is the result**.
+
+## Levels of detail
+
+An imported mesh is given simpler copies of itself when it is compiled, and a
+mesh far from the camera is drawn with one of them. A skinned mesh has them
+too. `DebugService:GetStat("MeshLodDraws")` counts the draws that used one.
 
 ## Where to look next
 

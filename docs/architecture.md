@@ -226,7 +226,7 @@ Vulkan/Metal/D3D12**: Device, Buffer, Texture, Sampler, Shader, Pipeline,
 CmdList, RenderPass, Compute, Swapchain, Capabilities. The shape stays
 deliberately close to SDL_GPU so the default adapter is thin — but **no SDL
 type appears in these headers**, and neutrality is validated by the
-`rhi_capture` (CI) and future bgfx backends (ADR 0005).
+`rhi_capture` (CI) backend and by any second backend added later (ADR 0005).
 ```cpp
 namespace engine::rhi {
   struct DeviceDesc { BackendId backend; bool debug; };
@@ -293,8 +293,8 @@ instead: `antiAliasedAlpha` widens the GGX lobe by the normal variation a pixel
 covers (Kaplanyan/Tokuyoshi; `shaders/include/engine_brdf.hlsli`).
 
 Alternative renderers (deferred, GPU-driven) are build-time selections like
-any backend and may not reach into scene or rhi internals. A 2D sprite pass
-slot is reserved before ui2d for the post-v1 2D layer. Meshlet data ships in
+any backend and may not reach into scene or rhi internals. The 2D layer's
+sprite and tilemap pass runs before ui2d. Meshlet data ships in
 assets from day one; the GPU-driven path gates on `Capabilities`.
 
 **physics_api** (headers-only; deps: core) + `physics_jolt`, later
@@ -341,9 +341,10 @@ L2**: it owns the `Sound` and `AudioGroup` classes, and a module that registers 
 class into scene's registry has to be able to see scene. ADR 0009's seam is
 unchanged by the move -- the seam is the module boundary, not its layer -- and
 `render` sits at L4 for the same reason. miniaudio. **The module itself is the
-swappable seam** (ADR 0009): one implementation in v1, selected at build time;
-the public Luau API never leaks miniaudio concepts; FMOD/Wwise arrive post-v1
-as alternative module implementations, not as a "mixer backend" layer.
+swappable seam** (ADR 0009): one implementation, selected at build time;
+the public Luau API never leaks miniaudio concepts, and another middleware
+would arrive as an alternative module implementation, not as a "mixer
+backend" layer.
 ```cpp
 namespace engine::audio {
   void init(const AudioDesc&); void shutdown();
@@ -424,30 +425,29 @@ fractional anchor point. **Clay was un-vendored** by the same reasoning: a
 dependency nobody calls still enters every build, every notices file and every
 future reader's half hour, and "not used yet" and "does not fit the model" are
 different states. The ADR stays if a genuinely flow-shaped feature ever wants it
-back. Text: stb_truetype atlas, kerning only in v1 (complex-script shaping
-is a flagged i18n gap; HarfBuzz seam post-v1). Produces a 2D draw list
+back. Text: stb_truetype atlas, kerning only (complex-script shaping is a
+flagged i18n gap). Produces a 2D draw list
 consumed by render's ui2d pass; hit-testing routes through an engine-owned
 high-priority `InputContext` with Sink.
 
-**nav** (deps: core, jobs, scene) — **seam only in v1** (ADR 0022): Recast
-builds on jobs (async, per streamed region) and Detour queries on the sim
-thread are the designed shape; vendored, interface sketched, not integrated,
-no Luau service.
+**nav** (deps: core, jobs, scene) — Recast and Detour (ADR 0022):
+`NavigationService` builds the navigation mesh in tiles on jobs, on demand and
+again where something moved, and answers path queries and steers agents and
+crowds on the sim thread.
 
-**net_api** (deps: core) + `net_gns`, `net_enet` — v1 ships primitives only
-(ADR 0012); `ITransport` is the future replication seam.
-```cpp
-namespace engine::net {
-  // Primitives backing @std/net (buffer-based payloads):
-  TcpListener listen(u16 port); TcpStream connect(Host);
-  UdpSocket udp(u16 port); WebSocketServer wsListen(u16); HttpServer httpListen(u16);
-  HttpResponse httpRequest(const HttpRequestDesc&);
-  class ITransport {  // future replication channel abstraction (GNS default, ENet alt)
-    ConnId connect(...); void send(ConnId, Channel, std::span<const std::byte>, Reliability);
-    std::span<const NetEvent> poll();
-  };
-}
-```
+**net_api** (deps: core, with `platform` privately) — the transport and the
+HTTP client (ADR 0012). `ITransport` moves bytes between endpoints with a reliability flag per message;
+ENet is its implementation, and no ENet type appears in the interface. Beside
+it: the platform-TLS HTTP client behind `@std/net`, the relay and rendezvous
+client a host registers with for a join code, and a memory transport for
+tests.
+
+**replication** (deps: core, jobs, scene, net_api) — multiplayer (ADRs 0069 and after):
+the authority's snapshots and interest management, client-side prediction and
+rollback of characters and predicted parts, network ownership, `RemoteEvent`
+and `RemoteFunction`, and the generated wire schema (`docs/protocol/wire.md`).
+A solo game holds no replication object at all, and a build with
+`ENG_ENABLE_REPLICATION=OFF` has no socket code in it.
 
 **app** (deps: everything) — the host executable `engine-host`: subsystem
 bring-up order, the **explicit backend factory** (ADR 0023: one hand-written
@@ -456,7 +456,7 @@ compiled-in options via `--rhi=capture`), the `FrameScheduler` (§3), DataModel
 service wiring, the ImGui `DebugShell` (explorer, properties, profiler with
 the memcat table, log/REPL, streaming map, physics wireframe), **headless
 mode** (`--headless`: no window/rhi unless capture; sim + script + asset only
-— the CI harness and the future dedicated-server shape), crash handler
+— the CI harness, and with `--serve` the dedicated server), crash handler
 (minidump + log), `BindToClose` with a capped grace period.
 
 ---
@@ -760,8 +760,8 @@ fails to build leaves the previous one running. Window, GPU resources, imported 
 streamed chunks survive; target **< 500 ms** (perf-gated). Shader file
 changes re-run shadercross and invalidate pipelines; asset source changes
 re-import → content-hash swap through `asset::onAssetInvalidated` — both
-without a VM restart. Module-level in-place reload (`__hotreload`) is
-post-v1, only if the restart budget fails.
+without a VM restart. Module-level in-place reload (`__hotreload`) is not
+built, and would be only if the restart budget failed.
 
 ---
 
@@ -947,18 +947,11 @@ self-registration.**
   whether a push can affect a build at all; a documentation-only push skips the
   build jobs, and anything it cannot classify builds); `docs-lint`;
   `luau-check`; `build-test` matrix {windows MSVC, ubuntu Clang}. `build-macos`
-  is compile-only and **blocking on every code push**, which is that
-  milestone's own gate item. It ran on `workflow_dispatch` or a `milestone/*`
-  tag until then — a deliberate cost decision, since macOS minutes are charged
-  at 10× and Tier-3 runtime verification is post-v1 — and the cost of that was
-  giving up finding a macOS-only break at the commit that caused it. The first renderer added a
-  shader toolchain, a new module and the first code with no Windows equivalent,
-  which is where that trade stopped paying. The `changes` filter still skips it
-  for a documentation-only push. Planned and not yet present:
-  `sanitize` (ubuntu ASan/UBSan), `determinism` (win+linux), conformance
-  bundled into build-test. `nightly.yml`: the Android NDK cross-compile job
-  (non-blocking); planned there too are the GCC build, TSan, image
-  goldens, the openworld perf smoke and packaging artifacts.
+  builds and runs the determinism traces, and is **blocking on every code
+  push**; the `changes` filter skips it for a documentation-only push. The
+  determinism traces gate on Windows, Linux and macOS alike. `nightly.yml`:
+  the sanitizers (ASan/UBSan), the real-image goldens on Mesa's software
+  Vulkan, the Android NDK cross-compile and the Android package.
   **Cache:** sccache backed by `actions/cache`, plus the hash-pinned DXC archive
   (ADR 0032) keyed on `hash(manifest.json)`. Two caches with opposite rules, on
   purpose: the DXC key is exact with no restore-keys because it holds a real
@@ -1035,16 +1028,16 @@ audio/animation → asset/streaming → flagship.
 2. **Determinism erosion** (Jolt config, float variance, Luau pointer-keyed
    iteration, wall-clock leaks). → Determinism as a merge gate
    (ADR 0025); sim-authoritative state in components; seeded `Random`; R10
-   discipline; cross-platform tracked separately from the same-binary
-   guarantee.
+   discipline; and since ADR 0083 the same world hash on every platform and
+   compiler, with the engine's own transcendentals.
 3. **SDL_GPU feature ceiling** for GPU-driven open-world rendering. → v1
    renderer is classic forward+ with CPU culling and indexed LODs (well
-   within SDL_GPU); meshlet data already in assets; bgfx as the planned
-   second backend; RHI capability flags gate advanced paths.
+   within SDL_GPU); meshlet data already in assets; RHI capability flags
+   gate advanced paths, and a second backend stays possible behind the RHI.
 4. **Hot-reload complexity creep.** → Scope frozen at ADR 0024 (fast world
    restart + state bag); no live upgrade of instances/closures; anything
    fancier is post-v1.
-5. **Agent drift from spec.** → ADRs + the IDL single source of truth +
+5. **Implementation drifting from the spec.** → ADRs + the IDL single source of truth +
    conformance/determinism/layer/apigen gates make silent divergence fail CI.
 6. **Luau upgrade churn** (weekly releases, ABI/type-tag instability). →
    Pinned vendor + patch dir; upgrades only via `tools/repo/vendor.luau` PRs

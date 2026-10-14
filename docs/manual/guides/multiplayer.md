@@ -353,15 +353,14 @@ dedicated server keeps `saves-server` beside the player's `saves`, and
 At the top of **Run and Debug** (`Ctrl+Shift+D`), and under the **Run** menu,
 are a player count, from 1 to 4, and a **Dedicated server** box. With one
 player and no server, Start (`F5`) is the ordinary Play in the viewport.
-With more, Play saves the scene and starts a match of separate windows (ADR
-0106):
+With more, Play saves the scene and starts a match of separate windows:
 
 - without a dedicated server, a **Host** -- the first player -- and a
   **Client** for each other player;
 - with one, a **Server** with no window and a **Client** for every player.
 
 The windows are tiled across the screen. What each one prints appears in the
-Output panel under its name (`[Host]`, `[Client 1]`...), and each writes its
+Console under its name (`[Host]`, `[Client 1]`...), and each writes its
 own log under `.engine/match/`. **Stop** closes them all.
 
 ## Where code runs
@@ -461,7 +460,7 @@ that writes a property of something everyone has -- its color, its material,
 an attribute -- has written it for everybody, where the same write on a
 machine that joined stays there. What one machine alone should see is made by
 the client side, or said with a property that is never sent, like
-[`BasePart.Fade`](manual:rendering/quality). Start the game with
+`BasePart.Fade`. Start the game with
 `--net-log-client-writes` to be told, once a script and property, each such
 write on a machine that is hosting.
 
@@ -750,7 +749,7 @@ machine and on the server.
 ## Attributes: state every machine sees
 
 **An attribute the authority sets reaches every replica that has the
-instance**: on a part, a model, a `Player`, a `Team`, and on
+instance**: on a part, a model, a `Player`, and on
 `GlobalScriptService`. `GetAttributeChangedSignal` and `AttributeChanged` fire
 on the replica when it arrives. **Only what changed is sent**: an
 instance with twenty attributes and one that changes costs that one, and so
@@ -1087,7 +1086,7 @@ trust, or send it to your own backend over `https://` with `net.request`
 
 - lag compensation for hits.
 
-`examples/15-multiplayer` is the whole of it in one file: racers driven by
+`examples/15-multiplayer` is the whole of it in three files: racers driven by
 intent and predicted by their own machine, a horn that is a `RemoteEvent`, and
 H asking a `RemoteFunction` how often you have honked.
 

@@ -20,10 +20,13 @@ never require `Vector3`.
 This list is exhaustive. It ends without an ellipsis on purpose: a name that is
 not on it, is not a world global, and is not a datatype, **does not exist**.
 
-**World and construction:** `game`, `workspace`, `script`, `Instance`, `Enum`.
+**World and construction:** `game`, `workspace`, `script`, `scene` (the scene
+open when it is read), `Instance`, `Enum`.
 
 **Datatypes:** `Vector2`, `Vector3`, `CFrame`, `Color3`, `UDim`, `UDim2`,
-`Rect`, `TweenInfo`, `RaycastParams`, `Random`, `Signal`.
+`Rect`, `ColorSequence`, `ColorSequenceKeypoint`, `NumberSequence`,
+`NumberSequenceKeypoint`, `TweenInfo`, `RaycastParams`, `Random`, `Signal`,
+`Collector`, `Promise`, `Material`.
 
 **Functions:** `assert`, `error`, `print`, `warn`, `pcall`, `xpcall`, `select`,
 `next`, `pairs`, `ipairs`, `rawget`, `rawset`, `rawequal`, `rawlen`,
@@ -59,8 +62,14 @@ This is short, and it is the whole list:
 |---|---|
 | `@std/net` | `net.request` — an HTTP client that yields. |
 | `@std/json` | `json.serialize` and `json.deserialize`, with `json.null`, `json.object`, `json.asObject` and `json.asArray`. |
-| `@engine/camera` | Third-person and orbit camera rigs. |
-| `@engine/testing` | The test runner the conformance suite is written against. |
+| `@engine/camera` | Third-person and orbit camera rigs. See [The camera](manual:rendering/camera). |
+| `@engine/views` | Mirrors and portals, made of camera textures. See [Views](manual:rendering/views). |
+| `@engine/splitscreen` | One picture while local players are together, a view each when they part. See [Several players at one screen](manual:guides/local-players). |
+| `@engine/settings` | A graphics and display options screen in one call. See [Graphics and display settings](manual:rendering/settings). |
+| `@engine/subtitles` | The captions of what is being said, on screen, in one call. See [Dubbing](manual:audio/dubbing). |
+| `@engine/stamppool` | Copies of a stamp built ahead, so spawning one costs nothing at the moment it is asked for. See [Prefabs](manual:world/prefabs). |
+| `@engine/ragdoll` | Body profiles for `Ragdoll:Build`. See [Ragdolls](manual:physics/ragdoll). |
+| `@engine/testing` | The test runner the conformance suite is written against. See [Testing](manual:guides/testing). |
 
 Plus the `task` global, which is a global and **not** a module —
 `require("@std/task")` does not resolve.
@@ -113,7 +122,7 @@ the `Content` properties that name it — `MeshPart.MeshContent`, `Sound.Content
 What a game saves, it saves through `SaveService`, by slot name: see
 [Saving the game](manual:guides/saves).
 
-Persistence today therefore means a backend. See
+Anything kept off the player's machine means a backend. See
 [Talking to a backend](manual:guides/backend).
 
 ## The network surface
@@ -148,9 +157,11 @@ Three things about it that catch people out:
   `https` to `http`, and a credential is not carried to another host.
 
 There is no server, no raw socket and no WebSocket client for a script.
-`net.serve` is a reserved name rather than a missing feature: the engine never
-listens on a port in any build, which is a security property rather than an
-omission.
+`net.serve` is a reserved name rather than a missing feature: a script never
+listens on a port, which is a security property rather than an omission. The
+one port a game opens is the engine's own, when it hosts a match through
+`NetworkService`, and what arrives there is the engine's protocol, never a
+script's.
 
 The `[permissions]` table in `project.toml` parses and is reserved for the day
 `serve` and a filesystem arrive; nothing reads it today.

@@ -35,6 +35,8 @@ benchmark asserts zero solver invocations on an idle frame.
 | `ScreenGui.DisplayOrder` | 0 | Which tree draws on top when two overlap. Highest last. |
 | `ScreenGui.ScreenInsets` | `true` | Whether it lays out inside the safe area rather than against the whole window. |
 | `ScreenGui.ReferenceHeight` | 0 | The height of the window the tree was drawn for, or 0 for pixels. See below. |
+| `ScreenGui.KeepOnSceneLoad` | `false` | Whether the tree stays when the scene changes: a loading screen. See [Scenes at run time](manual:guides/scenes). |
+| `ScreenGui.Player` | `nil` | The local player the tree belongs to, with several at one screen. See [Several players at one screen](manual:guides/local-players). |
 
 `DisplayOrder` orders *between* trees; `UIObject.ZIndex` orders *within* one. So
 a HUD and a modal never have to agree on a shared numbering — give the modal a
@@ -86,7 +88,9 @@ Two of those are worth stating plainly:
 
 ## Modifiers are siblings, not containers
 
-`UIListLayout`, `UIPadding` and `UICorner` extend `Instance` rather than
+The `UI` modifiers -- the layouts (`UIListLayout`, `UIGridLayout`,
+`UIPageLayout`), `UIPadding`, `UICorner`, `UIStroke`, `UIGradient`, `UIScale`,
+the size constraints and `UIDragDetector` -- extend `Instance` rather than
 `UIObject`. They are **parented beside** what they affect:
 
 ```luau
@@ -94,9 +98,9 @@ local layout = Instance.new("UIListLayout")
 layout.Parent = menu      -- arranges menu's children; menu keeps them
 ```
 
-Adding one does not reparent anything. Only the **first** `UIPadding` and the
-**first** `UIListLayout` among a parent's children are read; a second of either
-is ignored.
+Adding one does not reparent anything. A parent takes one layout and one
+padding: only the **first** of each among its children is read, and a second is
+ignored ([Grids, pages and flex](manual:ui/layouts)).
 
 ## The screen itself
 

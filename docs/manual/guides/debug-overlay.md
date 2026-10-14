@@ -28,7 +28,7 @@ who starts the engine is in the way.
 
 ## The panels
 
-Five, and the list is closed. Asking for a name outside it raises rather than
+Six, and the list is closed. Asking for a name outside it raises rather than
 doing nothing:
 
 | Panel | Shows |
@@ -120,15 +120,22 @@ in a signal handler that did not stop anything.
 service. What is compiled out is the ImGui overlay itself, so the methods become
 no-ops rather than absent, and the frame loop needs no conditional.
 
-That is deliberate: a game can offer the overlay to its own players if it wants
-to, and debug-draw calls left in shared code cost nothing.
+That is deliberate: debug-draw calls and stats left in shared code cost
+nothing in a shipped game and need no branch around them.
 
 The overlay is also inert wherever there is nothing to draw with — a headless
 run, a capture run, the null renderer. That is a normal outcome rather than a
 failure.
 
+## Measuring from a script
+
+`DebugService:CaptureProfile` records where the main thread's time went over a span
+of seconds, and `DebugService:GetProfileReport` hands it back: the same scopes the
+editor's Profiler draws. See [The profiler](manual:guides/profiler).
+
 ## Where to look next
 
+- [The profiler](manual:guides/profiler)
 - [Graphics quality settings](manual:rendering/quality) — the settings those
   numbers move
 - [`DebugService`](api:DebugService)

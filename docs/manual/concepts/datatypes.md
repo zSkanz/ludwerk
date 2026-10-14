@@ -3,7 +3,7 @@
 A datatype is a value rather than an instance: nothing parents a `CFrame`, and
 nothing finds a `Color3` in the tree. They are globals — you never require one.
 
-There are sixteen. The five you will touch on the first day are `Vector3`,
+There are twenty-nine. The five you will touch on the first day are `Vector3`,
 `CFrame`, `Color3`, `UDim2` and `Signal`.
 
 ## Units are SI
@@ -118,33 +118,42 @@ stream replays; an ambient `math.random` does not — see
 | Datatype | What it is |
 |---|---|
 | `Vector2` | A 2D vector, with full operator support. |
+| `UDim` | One axis of a layout size: a scale and an offset. |
 | `Rect` | Two corners. |
+| `ColorSequence`, `ColorSequenceKeypoint` | A color that changes along a line or over a lifetime: a gradient, a particle's color. |
+| `NumberSequence`, `NumberSequenceKeypoint` | The same for a number: a particle's size, a fade. |
 | `TweenInfo` | The timing of a tween: duration, style, direction, repeats, reversal, delay. |
 | `Tween` | A running tween. Returned by `TweenService`, never constructed. |
 | `RaycastParams` | Filtering for a spatial query. |
 | `RaycastResult` | What a query hit. Returned, never constructed. |
+| `RaycastResult2D` | What a query in the 2D world hit. Returned, never constructed. |
 | `Signal` | An event you can fire. |
 | `Connection` | What `Signal.Connect` returned. |
 | `InputObject` | One raw input event. Returned, never constructed. |
-| `AnimationTrack` | One clip playing on one `AnimationPlayer`. A handle, and the one mutable datatype. |
+| `AnimationTrack` | One clip playing on one `AnimationPlayer`. A handle. Returned, never constructed. |
+| `IntentWriter` | What a `RunService:BindToIntent` function writes a player's intents through. Handed to you, never constructed. |
+| `PredictedStep` | One predicted tick of one character, handed to a `RunService:BindToPredictedStep` function. |
+| `SaveSlot` | One save slot, from `SaveService`. Returned, never constructed. |
+| `Scene`, `SceneLoad` | The scene that is open, and a scene being loaded, from `SceneService`. Returned, never constructed. |
 | `Material` | A surface, loaded from a `.material.json` asset with `Material.load`. A loaded one is read-only; `Clone` makes the copy a script changes. See [Materials](manual:world/materials). |
 | `Collector` | Holds connections, instances, threads and promises, and ends them all at once. See [Signals](manual:concepts/signals). |
 | `Promise` | Work that finishes later: chained with `AndThen`, waited on with `Await`. See [Signals](manual:concepts/signals). |
 
-Five of those have **no constructor at all** — the engine hands them to you, and
-that is the whole of how you get one.
+The ones marked "returned" or "handed to you" have **no constructor at all** —
+the engine hands them to you, and that is the whole of how you get one.
 
 ## Immutability
 
-Every datatype except `AnimationTrack` is immutable: `cf.Position = v` does not
+Every datatype except `AnimationTrack` and a cloned `Material` is immutable: `cf.Position = v` does not
 compile, because a `CFrame` is a value and writing to it would write to a copy
 you are about to drop. You build a new one.
 
-`AnimationTrack` is the exception, and it is the exception because it is a
-**handle**: `track.Looped = true` names the one track that every holder of that
-handle can see.
+`AnimationTrack` is the exception because it is a **handle**:
+`track.Looped = true` names the one track that every holder of that handle can
+see. A `Material` loaded from an asset is read-only too; `Clone` gives a copy a
+script may change.
 
 ## Where to look next
 
 - [Transforms, pivots and units](manual:world/transforms) — `CFrame` in practice
-- [The datatype reference](site:reference) — all sixteen, with every member
+- [The datatype reference](site:reference) — every one, with every member

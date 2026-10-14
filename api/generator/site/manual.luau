@@ -107,7 +107,7 @@ local function renderLanding(context: reference.Context, version: string): strin
     table.insert(out, "<h1>" .. Brand.read().Name .. " documentation</h1>")
     table.insert(
         out,
-        "<p>A standalone game engine scripted in Luau. An <code>Instance</code> tree, services, deferred signals and <code>task</code> — the developer experience you already know — over a C++ core with a data-oriented ECS, a deterministic fixed tick, Jolt physics and a renderer that carries cascaded shadows, clustered lights and image-based lighting.</p>"
+        "<p>A standalone game engine scripted in Luau. An <code>Instance</code> tree, services, deferred signals and <code>task</code> — the developer experience you already know — over a C++ core with a data-oriented ECS and a deterministic fixed tick. A visual editor, multiplayer with prediction and rollback, 2D and 3D physics, physically based rendering with bounced light, animation graphs and cinematics, and export to Windows, Linux and Android.</p>"
     )
     table.insert(out, '<div class="hero-actions">')
     table.insert(

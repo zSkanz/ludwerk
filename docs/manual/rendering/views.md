@@ -191,8 +191,7 @@ SceneService:SendToHost("score", 12)
 with `Resolution`, `UpdateInterval` and `Quality` as a `CameraTexture` is and
 under the same budget. As with any view, the UI in it is not in the picture --
 a sub-world shows its score to the game running it, which writes it where it
-likes -- and neither, in this release, are its own camera textures or
-viewport frames. Its sounds are silent: the one audio device is the game's.
+likes -- and neither are its own camera textures or viewport frames. Its sounds are silent: the one audio device is the game's.
 
 **It does not replicate.** In a match, each machine that loads one runs its
 own, which is what an arcade cabinet each player plays alone is.

@@ -9,14 +9,17 @@ and everything is inside: the editor, the engine, the command line, the project
 template and the type definitions.
 
 ```
-Ludwerk-1.0.0-win64/
-  engine-host.exe           the editor — double-click it
-  ludwerk.cmd  ludwerk.ps1     the command line, as you type it
+Ludwerk-<version>-win64/
+  engine-host.exe          the editor — double-click it
+  ludwerk.cmd  ludwerk.ps1 the command line, as you type it
   content/                 what the editor loads beside itself
   player/                  the engine your players get: one per target, for
                            Windows, Linux and Android
   platforms/android/       the template an Android export is assembled from
-  tools/  templates/       the command line and what it scaffolds
+  relay/                   a relay server, for Windows and Linux
+  runtime/                 the engine's Luau modules, the standard library
+                           and the type definitions
+  tools/  templates/       the command line, its analyzer, and what it scaffolds
 ```
 
 **Double-click `engine-host.exe` and the project browser opens.** It lists what
@@ -38,16 +41,17 @@ this manual works as written. Nothing else is required to make a game: the
 folder finds its own engine, its own template and its own version, wherever you
 run it from.
 
-**Windows for now.** The archive carries a Windows editor and a Windows engine,
-and `ludwerk build` produces a Windows folder. Linux and macOS are built from
-source, below.
+**The editor runs on Windows.** The archive carries a Windows editor, and from
+it `ludwerk build` exports a game for Windows, Linux and Android. To run the
+editor on Linux or macOS, build it from source, below.
 
-**Two commands want a little more.** `ludwerk check` runs the Luau analyzer and
-`ludwerk fmt` runs the formatter, and neither is in the archive — they are separate
-tools with their own release cadence, and both say so when they are missing:
+**One command wants a little more.** `ludwerk check` runs the Luau analyzer,
+and the archive carries its own copy in `tools/bin/`, at the version the
+engine's definitions were made for. `ludwerk fmt` runs StyLua, which the
+archive does not carry; install it once, and the command says so when it is
+missing:
 
 ```
-rokit add JohnnyMorganz/luau-lsp
 rokit add JohnnyMorganz/StyLua
 ```
 
@@ -168,9 +172,10 @@ Before you push a change to the engine itself:
 scripts\localgate.ps1
 ```
 
-Roughly ninety seconds warm, and it runs everything that can run locally —
-documentation checks, the Luau gates, the Windows build and tests, and the Linux
-tier in a container. `-Only <stage>` runs one while you iterate.
+It runs everything that can run on your machine — the documentation checks,
+the Luau checks, formatting, the Windows build and tests, the Linux build and
+tests in a container, the shipping builds, and the tests that measure time,
+last and alone. `-Only <stage>` runs one stage while you iterate.
 
 The Linux stage is not redundant with the Windows one: Clang diagnoses things
 MSVC does not, and warnings are errors there.

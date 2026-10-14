@@ -89,7 +89,7 @@ tab. **Back to the run** returns to the game in front of you.
 run on the hitch you just watched, save it, and send it to somebody.
 
 The GPU's passes are in a capture only if the run timed them
-(`--gpu-pass-times`, see (manual:rendering/quality)).
+(`--gpu-pass-times`; see [Graphics quality settings](manual:rendering/quality)).
 
 ## What it does not do
 

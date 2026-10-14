@@ -158,8 +158,8 @@ local function bind(name: string, target: Instance)
     binding.Target = target
     binding.Parent = meeting
 end
-bind("Anna", workspace:WaitForChild("Anna"))
-bind("Lamp", workspace:WaitForChild("Lamp"))
+bind("Anna", workspace:WaitForChild("Anna") :: Instance)
+bind("Lamp", workspace:WaitForChild("Lamp") :: Instance)
 meeting.Parent = workspace
 
 meeting.EventReached:Connect(function(name: string, data: any, skipped: boolean)
@@ -414,7 +414,8 @@ binds its own key to `Skip`:
 ```luau
 --!strict
 local meeting = workspace:WaitForChild("Meeting") :: SequencePlayer
-local skip = workspace:WaitForChild("Menu"):WaitForChild("Skip") :: InputAction
+local menu = workspace:WaitForChild("Menu") :: Instance
+local skip = menu:WaitForChild("Skip") :: InputAction
 skip.Pressed:Connect(function()
     if meeting.Playing then
         meeting:Skip()

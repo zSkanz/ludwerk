@@ -36,8 +36,10 @@ uses it is correct at 30 Hz and at 240 Hz without a branch.
 [Determinism](manual:concepts/determinism) states precisely and which the engine
 verifies by hashing the simulation and replaying recorded input.
 
-**Rollback becomes possible later** rather than being a rewrite. Multiplayer is
-a later phase, and it does not have to relitigate the foundation.
+**Prediction and rollback work.** A client simulates its own character ahead
+of the server, and when the server disagrees it goes back and simulates the
+same ticks again with the same result. That is only possible because a tick is
+a tick on every machine.
 
 ## What it costs
 
@@ -64,11 +66,13 @@ That question has a real answer, and it is the practical form of this page:
 | Applying a force or intent | `RunService.PreSimulation` |
 | Reading where physics put something | `RunService.PostSimulation` |
 | General per-tick gameplay | `RunService.Heartbeat` |
-| Moving a camera | `RunService.PreRender`, or `Heartbeat` if it follows the world |
+| Moving a camera | `RunService:BindToRenderStep`, or `RunService.PreRender` |
 
 The last row has a subtlety worth the sentence: a camera that follows a
-simulated thing belongs on `Heartbeat`, because a camera advancing every frame
-against a world advancing every tick reads as the whole world vibrating.
+simulated thing reads where that thing is **drawn**, with `GetRenderCFrame`,
+not its `CFrame`. The drawn position is interpolated between ticks; the
+simulated one jumps once a tick, and a camera that follows the jumps makes
+the whole world look as if it vibrates.
 
 ## Changing it
 

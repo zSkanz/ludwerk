@@ -1,8 +1,5 @@
 # Shipping a game
 
-For identity, achievements and optional native features, see
-[Platform services](manual:guides/platform-services).
-
 A game is exported from one window, for Windows, Linux and Android, from any
 desktop. **File > Export...** (Ctrl+Shift+B), or the Export button beside
 Play.
@@ -411,8 +408,8 @@ A game cannot compile one for itself, so `ludwerk build` refuses to pack a
 `shadercross`, with `dxcompiler` and `dxc` beside it, in the engine's folder.
 The pack step says how many went in.
 
-To ship the folder of files instead -- `project.toml`, `src/`, `i18n/` and
-the pack with its manifest, as every build before this made:
+To ship a folder of files instead -- `project.toml`, `src/`, `i18n/` and the
+content pack with its manifest:
 
 ```toml
 [export]
@@ -524,13 +521,6 @@ end
 `DebugService` remains, with its overlay compiled out — the methods become
 no-ops, so debug drawing left in shared code costs nothing.
 
-## Where to look next
-
-- [The asset pipeline](manual:assets/pipeline)
-- [The ludwerk CLI](manual:get-started/cli)
-- [Scenes](manual:guides/scenes)
-- [Talking to a backend](manual:guides/backend)
-
 ## Optional Xbox services on Windows
 
 Scripts can use `XboxService` even when its integration is disabled. Queries then
@@ -574,3 +564,11 @@ The optional PC adapter covers identity and achievement updates. Microsoft Store
 submission/package validation still needs the official packaging tools and a
 configured title; the public SDK NuGet package does not provide MakePkg. Xbox
 console support requires separate licensed console tooling and an engine backend.
+
+## Where to look next
+
+- [The asset pipeline](manual:assets/pipeline)
+- [The ludwerk CLI](manual:get-started/cli)
+- [Scenes](manual:guides/scenes)
+- [Talking to a backend](manual:guides/backend)
+- [Platform services](manual:guides/platform-services) — accounts, achievements and a store

@@ -64,7 +64,7 @@ numbers that has lost its small part.
 
 It does not move the origin per region, and there is one world. Multiple
 simulation regions with independent origins are possible in the architecture and
-are not something this release exposes.
+are not something the engine exposes.
 
 It also does not help a script that stores its own positions as `vector`s and
 does maths on them across kilometers. The engine keeps *its* numbers precise;

@@ -2,9 +2,11 @@
 
 A match between players is the engine's (see [Multiplayer](manual:guides/multiplayer)):
 the world replicates and a `RemoteEvent` carries a game's messages. What
-outlives a match is not. There is no data store, so a game that needs to
-persist something or authenticate somebody talks to **a server you write**,
-over HTTP.
+outlives a match is not. A game keeps its own saves on the player's machine
+with `SaveService`, and signs a player in to a platform with
+`IdentityService`; anything shared between players or kept where the player
+cannot change it -- a leaderboard of your own, an account, a trade -- is **a
+server you write**, reached over HTTP.
 
 That is a smaller promise than a hosted platform makes, and it is a portable
 one: the backend is yours, in any language, and it outlives this engine.
@@ -110,8 +112,8 @@ known tick rather than the moment it lands.
 ## What is not here
 
 - **No server in a script.** `net.serve` is a reserved name. A script never opens
-  a port; the only listening socket is the one a match opens with `--host` or
-  `--serve` on the command line.
+  a port; the only listening socket is the one a match opens when it is hosted
+  -- `--host` or `--serve` on the command line, or `NetworkService:Host()`.
 - **No raw sockets, and no WebSocket client for a script.**
 - **No filesystem.** A script cannot open a file. A game's own saves go through
   `SaveService` ([Saving the game](manual:guides/saves)); what players share is
@@ -137,4 +139,4 @@ backend" less work than it sounds.
 ## Where to look next
 
 - [What a script may do](manual:concepts/sandbox)
-- [Shipping a game](manual:guides/shipping) — and why your source ships with it
+- [Shipping a game](manual:guides/shipping) — and what goes into the package

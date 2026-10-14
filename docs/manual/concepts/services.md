@@ -60,6 +60,15 @@ instance.
 | `SceneService` | Which scene the game is in, and `LoadScene` to go to another ([Scenes at run time](manual:guides/scenes)). |
 | `ServerScriptService` | This scene's server code: runs only where the world is decided. |
 | `ClientScriptService` | This scene's player code: runs where a player sits, never on a dedicated server. |
+| `GraphicsService` | This machine's graphics and display settings, for an options menu ([Graphics and display settings](manual:rendering/settings)). |
+| `NavigationService` | Where agents can walk, and paths across it ([Navigation](manual:world/navigation)). |
+| `SaveService` | Data kept on the player's machine between runs, in named slots ([Saving the game](manual:guides/saves)). |
+| `LocalizationService` | The game's text by key, in the player's language ([Localization](manual:guides/i18n)). |
+| `DialogueService` | Lines of dialogue, their voices and their captions ([Dubbing](manual:audio/dubbing)). |
+| `ContentProvider` | Loading assets before they are shown, behind a loading screen. |
+| `HapticService` | Vibration: a gamepad's motors and a phone's ([Vibration](manual:input/vibration)). |
+| `CryptoService` | Unpredictable random values and hashes, for tokens and passwords; never the simulation's randomness. |
+| `IdentityService`, `AchievementService`, `LeaderboardService`, `CloudSaveService`, `SocialService`, `StoreService`, `XboxService` | A platform's accounts, achievements, boards, cloud saves, friends and store, through an optional provider ([Platform services](manual:guides/platform-services)). |
 | `DebugService` | The debug overlay, and the engine's own instrumentation. |
 | `HotReloadService` | The hot-reload loop. Development builds only. |
 
@@ -71,8 +80,9 @@ both.
 ## What is deliberately not a service
 
 There is no `Players` and no `DataStoreService`. Both belong to a hosted
-platform this engine is not: players are `NetworkService`'s children, and
-persistence is your own backend, reached with `@std/net`. See
+platform this engine is not: players are `NetworkService`'s children, a game
+saves on the player's own machine with `SaveService`, and anything kept on a
+server is your own backend, reached with `@std/net`. See
 [Talking to a backend](manual:guides/backend).
 
 There is no `StarterPlayer` or `StarterGui` either. Where a script runs is

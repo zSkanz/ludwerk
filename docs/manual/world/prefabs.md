@@ -21,7 +21,7 @@ and turns the model you built into the first copy of it.
 
 ```luau
 --!strict
-local fighter = Instance.stamp("fighter")
+local fighter = Instance.stamp("fighter") :: Model
 fighter:PivotTo(CFrame.new(10, 0, 0))
 fighter.Parent = workspace
 ```

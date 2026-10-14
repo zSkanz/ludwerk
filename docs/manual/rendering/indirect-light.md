@@ -188,7 +188,7 @@ gives its **size**, and where the part is no longer matters.
 ```luau
 local size = Instance.new("Part")
 size.Size = vector.create(40, 16, 40)
-size.Transparency = 1
+size:SetMaterialParameter("Transparency", 1)
 size.CanCollide = false
 size.CanQuery = false
 size.Anchored = true

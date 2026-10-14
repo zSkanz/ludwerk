@@ -13,7 +13,7 @@ transparency, point by point:
 ```luau
 local bar = Instance.new("Frame")
 bar.Size = UDim2.new(0, 300, 0, 24)
-bar.BackgroundColor3 = Color3.new(1, 1, 1)
+bar.BackgroundColor = Color3.new(1, 1, 1)
 bar.Parent = screen
 
 local health = Instance.new("UIGradient")
@@ -103,7 +103,7 @@ text object's border instead.
 ```luau
 local title = Instance.new("TextLabel")
 title.Text = "GAME OVER"
-title.TextColor3 = Color3.new(1, 1, 1)
+title.TextColor = Color3.new(1, 1, 1)
 title.Parent = screen
 
 local outline = Instance.new("UIStroke")

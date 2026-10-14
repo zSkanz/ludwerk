@@ -96,7 +96,7 @@ a loading screen:
 --!strict
 local ContentProvider = game:GetService("ContentProvider")
 
-local level = workspace:WaitForChild("Level")
+local level = workspace:WaitForChild("Level") :: Instance
 ContentProvider:PreloadAsync({ "asset://models/boss.gltf", level }, function(item, status)
     print(item, status.Name) -- Success or Failure, once per item
 end)

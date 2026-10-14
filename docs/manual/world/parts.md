@@ -35,8 +35,9 @@ A capsule's caps are hemispheres the collider never stretches, so
 `Size.y == 2 * Size.x` is where the drawn shape and the simulated one agree
 exactly.
 
-A **`Wedge`** is a ramp with its tall face toward −Z, so an unrotated one is
-walked up as you walk toward −Z.
+A **`Wedge`** is drawn as a ramp with its tall face toward −Z. Its collider is
+its whole box, not the slope: a body rests on the top of the box, and a
+character meets its side as a wall. For a ramp to walk up, tilt a `Block`.
 
 ## How it looks
 
@@ -116,8 +117,8 @@ end
 ```
 
 `Instance.Clone` deep-copies with children, properties, attributes and tags,
-fixing up internal references. That is the prefab pattern in this release — see
-[Prefabs](manual:world/prefabs).
+fixing up internal references. It is the simplest of the three ways to make
+copies — see [Prefabs](manual:world/prefabs).
 
 Set everything **before** assigning `Parent`. A part that is parented and then
 configured makes the engine react to every intermediate value.

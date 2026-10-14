@@ -155,7 +155,7 @@ end
 --- repository, and where a file sits in it is not theirs to be told.
 local Banner = "<!-- Generated. Do not edit. -->"
 
-export type Brand = { Logo: string, Mark: string }
+export type Brand = { Logo: string, LogoDark: string?, Mark: string }
 
 local function renderPage(spec: PageSpec, nav: { NavItem }, version: string, brand: Brand): string
     local prefix = prefixFor(spec.Path)
@@ -209,7 +209,9 @@ local function renderPage(spec: PageSpec, nav: { NavItem }, version: string, bra
         '<a class="skip-link" href="#content">Skip to content</a>',
         '<header class="topbar">',
         '<button class="menu-toggle" id="menu-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>',
-        `<a class="brand" href="{prefix}index.html"><img src="{prefix}{brand.Logo}" alt="{SiteName}"></a>`,
+        if brand.LogoDark ~= nil
+            then `<a class="brand" href="{prefix}index.html"><img class="brand-light" src="{prefix}{brand.Logo}" alt="{SiteName}"><img class="brand-dark" src="{prefix}{brand.LogoDark}" alt="{SiteName}"></a>`
+            else `<a class="brand" href="{prefix}index.html"><img src="{prefix}{brand.Logo}" alt="{SiteName}"></a>`,
         `<span class="version" title="Engine version">{markdown.escape(version)}</span>`,
         '<div class="search" role="search">',
         '<input type="search" id="search-input" placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation">',

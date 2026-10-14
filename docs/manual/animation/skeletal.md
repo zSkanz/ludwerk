@@ -91,8 +91,8 @@ drop.
 | `AnimationTrack.TimePosition` | read-only | Where the clock is. |
 | `AnimationTrack.Ended` | read-only | A property holding a signal. |
 
-`Speed = 0` is the honest way to freeze a frame. `TimePosition` is read-only in
-this release: seeking a blended pose is a different feature from playing one,
+`Speed = 0` is the honest way to freeze a frame. `TimePosition` is read-only:
+seeking a blended pose is a different feature from playing one,
 and a writable seek that ignored the blend would be the wrong half of it.
 
 ## Play and Stop

@@ -62,18 +62,19 @@ divergence nobody could see in a screenshot.
 | `Ball` | A sphere of the **largest** half-extent. A non-uniform `Size` gives a ball sticking out of its own box, not an ellipsoid. |
 | `Cylinder` | Stands along Y. Diameter from the larger of X and Z, full height from Y. |
 | `Capsule` | The same, caps included. |
-| `Wedge` | A ramp with its tall face toward −Z, so an unrotated one is walked **up** as you walk toward −Z. |
+| `Wedge` | Drawn as a ramp with its tall face toward −Z; it collides as its whole box (below). |
 
 Two footnotes that save an afternoon. A capsule's caps are hemispheres the
 collider never stretches, so `Size.y == 2 * Size.x` is where the drawn shape and
 the simulated one agree exactly; away from it the drawn ends are slightly oval.
-And a `Wedge`'s **collider is deliberately the whole box** in this release.
+And a `Wedge`'s **collider is the whole box**, not the slope: for a ramp a
+character walks up, tilt a `Block`.
 
 For imported geometry, `MeshPart.CollisionFidelity` chooses. `Box` names a shape
 and is honored exactly; every other value asks for the geometry and gets a
 **convex hull**. `Precise` is accepted and reads back, and behaves as `Hull` —
-a concave triangle-mesh collider is a different shape class with different rules
-and is not in this release. A mesh whose points have not arrived yet collides as
+a concave triangle-mesh collider is a different shape class with different rules,
+and the engine does not have one yet. A mesh whose points have not arrived yet collides as
 its bounding box, because a body with no shape for one frame is a body that
 falls through the floor.
 

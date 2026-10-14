@@ -118,7 +118,7 @@ quality = "high"
 
 | Section | Keys |
 |---|---|
-| `[project]` | `name` (becomes the built executable's name), `id` (reverse-DNS; groups taskbar buttons on Windows, and the Android package), `version` (`X.Y.Z`, stamped by every export), `company`, `icon` (one square PNG, 1024 pixels is best: every export makes its own sizes from it), `scene` |
+| `[project]` | `name` (becomes the built executable's name), `id` (reverse-DNS; groups taskbar buttons on Windows, and the Android package), `version` (`X.Y.Z`, stamped by every export), `company`, `icon` (one square PNG, 1024 pixels is best: every export makes its own sizes from it), `scene`, `default_locale` (see [Localization](manual:guides/i18n)) |
 | `[debug]` | `overlay_key` (the key that opens the overlay in a development run: `"F3"` unless you say, `"None"` for no key) and `frame_report_seconds` (a line about the frames every so many seconds). The measuring keys, each off unless asked: `gpu_pass_times` (the GPU's time by pass, under that line), `hide` (a list of what is not drawn, as `"foliage,terrain"`), `skip` (a list of the lighting terms left out, as `"shadow,environment"`), `shadow_taps` (1 to 16), `log_ui_touches`, `astc` (`false` sends textures as RGBA to a GPU that samples ASTC), and `launch_arguments` (an Android build takes the host's flags from the intent that launches it) — see [Measuring a frame](manual:rendering/quality) |
 | `[window]` | `title`, `size` (or `width` and `height`), `fullscreen`, `resizable`. On a phone a game always fills the display, the system's bars hidden, and `UIService.SafeAreaInsets` says where a HUD may go |
 | `[display]` | How fast frames are made. `vsync` — a frame waits for the display's refresh; on unless it says otherwise, and always on a phone. `max_frame_rate` — frames a second at most, 0 for no cap; the only limit with `vsync` off, and a cap under the refresh with it on. `background_frame_rate` — the rate while the window is unfocused or minimized, 10 by default, 0 for no throttle. On a phone a game that names no cap is held to 60, and its frames are paced at the highest of 60, 40 or 30 they fit; `adaptive_frame_rate = false` turns that stepping off. The simulation ticks at its own rate whatever these say. Also `window_mode` (`windowed`, `borderless`, `fullscreen`), `resolution`, `monitor`, and `remember_player_settings` — off for a game that keeps its own. See [Graphics and display settings](manual:rendering/settings) |
@@ -126,7 +126,11 @@ quality = "high"
 | `[network]` | `server` — where `NetworkService:Join()` goes with no address; `relay` — the relay a host registers with and a join code is looked up at (`relay.example.com:7789`); `timeout` — seconds a silent connection is kept, 10 by default |
 | `[assets]` | `content` — where the asset compiler reads from |
 | `[graphics]` | The quality family. See [Graphics quality settings](manual:rendering/quality) |
-| `[render]` | `max_views_per_frame`, `max_view_resolution` — what camera textures may cost. See [Views](manual:rendering/views) |
+| `[render]` | `max_views_per_frame`, `max_view_resolution`, `max_sub_worlds` — what camera textures may cost (see [Views](manual:rendering/views)); `max_highlights` (see [Highlights, beams and trails](manual:rendering/effects)); `foliage_density`, `foliage_shadow_distance` (see [Foliage](manual:world/foliage)) |
+| `[export]` | How `ludwerk build` packages the game, per target. See [Shipping a game](manual:guides/shipping) |
+| `[save]` | `max_slot_bytes` and `max_slots` — how much a game may save. See [Saving the game](manual:guides/saves) |
+| `[scene]` | `close_grace_seconds` — how long closing waits for a scene's handlers. See [Scenes at run time](manual:guides/scenes) |
+| `[script]` | `max_memory_mb` — the cap on the scripts' memory: 1024 on a desktop and 512 on a phone unless you say. A table that grows without end stops the scripts before it stops the machine |
 
 The TOML subset is deliberately small: comments, tables, strings, numbers,
 booleans and single-line arrays. A multi-line string, an inline table, an array
@@ -166,11 +170,11 @@ Generated, gitignored, and safe to delete:
 `tests/conformance/**/*.spec.luau` is the engine's shape, run against a headless
 engine. See [Testing](manual:guides/testing).
 
-## Reserved names
+## Where code runs
 
-Where code runs is where it is in the tree, and outside the script services a
-script's own `RunContext` (ADRs 0105 and 0138; see
-[Where my code runs](manual:concepts/scripts)).
+Where code runs is decided by where it is in the tree, and outside the script
+services by a script's own `RunContext`. See
+[Scripts, modules and requires](manual:concepts/scripts).
 
 ## Where to look next
 

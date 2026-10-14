@@ -25,8 +25,8 @@ The editor is laid out the way VS Code is, so a person who lives in one finds
 their way round the other:
 
 - the **activity bar** down the left edge switches the side bar between the
-  **Explorer**, **Content**, **Run and Debug**, and the Terrain, Blocks and
-  Tiles tools; a click on the view already showing folds the side bar away,
+  **Explorer**, **Content**, **Run and Debug**, and the Terrain, Blocks,
+  Tiles and Water tools; a click on the view already showing folds the side bar away,
   and so does `Ctrl+B`;
 - the **Viewport** is the editor area in the middle;
 - **Properties** is the secondary side bar, on the right;
@@ -47,6 +47,17 @@ Every panel can be dragged anywhere, and the layout is remembered per project.
 | **Run and Debug** | Start the game or a match, and the script debugger. |
 | **Console** | What the running game has said, filtered by level and by text, and a line to run Luau in it. |
 | **Stats** | The same numbers the debug overlay shows. |
+| **Profiler** | Where each frame's time went, by system and by script. See [The profiler](manual:guides/profiler). |
+| **Timeline** | A sequence's tracks and keys, to scrub and edit. See [Cinematics](manual:animation/cinematics). |
+| **Animation graph** | An animation graph's states and blends, drawn as nodes. See [Drawing an animation graph](manual:animation/graph-panel). |
+| **Debug** | The script debugger's call stack, variables and breakpoints. |
+| **Saves** | The save slots the game has written while you ran it, to look at or delete. |
+| **Streaming** | The streaming grid, and whether streamed objects show in the Explorer. |
+| **Export** | The game's export targets, and an export with its progress. See [Shipping a game](manual:guides/shipping). |
+| **Viewport Settings** | How the viewport draws while you edit. |
+
+**View** also turns on three things the viewport draws over the world: the
+**Grid**, the **Collision Shapes** physics uses, and characters' **Skeletons**.
 
 ## The command palette
 
@@ -168,8 +179,8 @@ does anything there is another matter -- and the scene saves what is inside
 every service, not only `Workspace`. **A script goes wherever you put it**, and
 is saved in the scene with its `Source`: inside the part it drives,
 in a model, or in a script service. **A script made inside one of the three
-script services is written as a file** under `src/` and opens in a tab (ADR
-0105), because code there is the game's or the scene's, and belongs in files.
+script services is written as a file** under `src/` and opens in a tab,
+because code there is the game's or the scene's, and belongs in files.
 
 Two things are not the scene's to save. Streamed chunks belong to the streaming
 system. And a script mounted from a file under `src/` belongs to its
@@ -232,10 +243,13 @@ Code-first is not deprecated by any of this: `Instance.new` at runtime stays
 first-class, exactly as it is in the other engines that work this way. What
 moved is where the world a project *starts* with is written down.
 
-## What it does not have yet
+## What Play and Stop do to scripts
 
-- **Stop restores the world, not the script VM.** A script that mutated its own
-  module state carries that across a stop.
+**Play is what starts the scripts**, as a player's game starts them. **Stop
+closes the game** -- the scene's and the game's `BindToClose` handlers run and
+the saves are written -- and then throws the scripts away: their connections,
+the modules they required and the values those modules held. The next Play
+starts every script fresh, in the world as it was when you pressed Play.
 
 ## Where to look next
 

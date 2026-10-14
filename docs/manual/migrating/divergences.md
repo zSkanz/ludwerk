@@ -2,11 +2,16 @@
 
 The complete list of places where a familiar spelling is different here, with the
 reason for each. **This list is frozen**: no further renames without a new row,
-and no runtime aliases, ever.
+and no aliases for the old spellings.
 
 An alias would be a second spelling to learn, a second thing to document, and a
 permanent invitation to write the old one. The cost of not having them is paid
 once, at migration.
+
+The API is spelled in American English. The only aliases are the handful of
+names a British spelling also reaches -- `Cancelled` for `Canceled`,
+`PixelsPerMetre` for `PixelsPerMeter`, `MaxNeighbours` for `MaxNeighbors` --
+and the reference lists the American one.
 
 ## Scheduling and events
 
@@ -23,7 +28,6 @@ once, at migration.
 | Was | Is | Why |
 |---|---|---|
 | `Instance.new(class, parent)` | **Single argument** | The parent-then-mutate performance wart, removed. |
-| `ModuleScript` + `require(instance)` | **Plain files, required by string** | Real modules the analyzer can follow; no wait-then-require. |
 | A destroyed instance stays readable | **Handles stop resolving** after the drain in which `Destroying` fired | The slot is reclaimed; use-after-destroy is a keyed error rather than a silent read. |
 | Deprecated camelCase aliases (`:connect`) | **Never existed** | One spelling. |
 | Optional typing | **Fully strict, fully typed** | Non-negotiable quality bar. |

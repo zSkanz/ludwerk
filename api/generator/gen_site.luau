@@ -59,6 +59,11 @@ local BrandLogoCandidates: { string } = {
     "branding/logo.svg",
     "branding/logo-512.png",
 }
+--- The wordmark for a dark page, when the branding has one: its letters are
+--- light, where the default's are dark and vanish against a dark header.
+local BrandLogoDarkCandidates: { string } = {
+    "branding/lockup-horizontal-dark.png",
+}
 local BrandMarkCandidates: { string } = {
     "branding/mark.svg",
     "branding/mark-512.png",
@@ -362,6 +367,7 @@ local Nav = buildNav()
 local function emit(spec: shell.PageSpec)
     local brand: shell.Brand = {
         Logo = BrandFiles["logo"] or "assets/logo.png",
+        LogoDark = BrandFiles["logo-dark"],
         Mark = BrandFiles["mark"] or "assets/mark.png",
     }
     write(spec.Path, shell.renderPage(spec, Nav, Version, brand))
@@ -572,7 +578,7 @@ end
 --- Copies the first candidate that exists, keeping its own extension so the
 --- page can point at it. Returns nothing: the href is recorded in `BrandFiles`
 --- for the shell to read.
-local function copyBrand(candidates: { string }, name: string, what: string)
+local function copyBrand(candidates: { string }, name: string, what: string?)
     for _, source in candidates do
         if fs.exists(source) then
             local extension = string.match(source, "%.([%w]+)$") or "png"
@@ -582,7 +588,11 @@ local function copyBrand(candidates: { string }, name: string, what: string)
             return
         end
     end
-    fail(`no file under branding/ can serve as {what}`)
+    -- An optional file (no `what`) may be absent: the page falls back to the
+    -- one that is required.
+    if what ~= nil then
+        fail(`no file under branding/ can serve as {what}`)
+    end
 end
 
 local function main(): number
@@ -599,6 +609,7 @@ local function main(): number
 
     -- Before any page, because every page names them.
     copyBrand(BrandLogoCandidates, "logo", "the header wordmark")
+    copyBrand(BrandLogoDarkCandidates, "logo-dark", nil)
     copyBrand(BrandMarkCandidates, "mark", "the tab icon")
 
     for _, info in Model.Classes do

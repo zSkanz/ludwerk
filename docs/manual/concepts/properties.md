@@ -63,7 +63,9 @@ surface, and its removal is one of the deliberate divergences.
 
 An attribute is your own named value on any instance, from a fixed value domain:
 `string`, `number`, `boolean`, `vector`, `CFrame`, `Color3`, `Vector2`, `UDim`,
-`UDim2` and `Rect`.
+`UDim2`, `Rect`, `ColorSequence` and `NumberSequence`. Anything else -- a table,
+an instance, a function -- raises `scene.err.attribute_type` and leaves the old
+value in place.
 
 ```luau
 part:SetAttribute("Damage", 25)
@@ -81,7 +83,8 @@ class's `Instance.AttributeChanged` carrying the name. The narrower subscription
 — the one that asked about *this* attribute — is answered before the router, and
 routing after the specific fact has been observed is the order that composes.
 
-Attributes survive serialization and `Instance.Clone`. Use them for
+Attributes survive serialization and `Instance.Clone`, and in a match one set
+on the authority reaches every machine. Use them for
 per-instance configuration somebody should be able to change without touching
 code — and for per-script configuration, since `script` is an instance like any
 other.

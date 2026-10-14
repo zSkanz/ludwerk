@@ -36,7 +36,8 @@ end
 
 The new scene opens from the engine's settings, so nothing the old scene set
 leaks into it: each scene-scoped service goes back to its defaults, and then
-to what the new scene's file says.
+to what the new scene's file says. Then the new scene mounts its own code from
+`src/scenes/<scene>/` and starts its scripts.
 
 | Scene-scoped: back to defaults at every change | Game-scoped: untouched |
 |---|---|
@@ -53,8 +54,7 @@ registered the blocks" is false in the next one; a remote it kept a reference
 to is gone. Keep what the game owns on `game`, on a `Player`, or in the module
 itself, and build the rest again on `SceneLoaded`. The engine says so when it
 happens: a `ScreenGui` a script in `GlobalScriptService` put in `UIService`,
-gone with the scene, is named in a warning with what to set. It reads its file, mounts its own code from
-`src/scenes/<scene>/`, and starts its scripts.
+gone with the scene, is named in a warning with what to set.
 
 **What stays** is the game's:
 
@@ -355,13 +355,14 @@ dropped.
 - **The switch itself is still one tick's work.** `LoadSceneAsync` moves the
   reading, the parsing and the meshes off it; building the new world from the
   parse and starting its scripts stay on the main thread, between two ticks.
-  Textures, sounds and terrain are not warmed yet: they arrive after the
-  switch, as they do today.
+  Textures, sounds and terrain are not prepared ahead: they load after the
+  switch, behind the curtain.
 - **In a match, clients do not prepare ahead.** They load the scene the moment
   the authority switches, as they do for `LoadScene`.
-- **A scene loaded at run time is read whole.** The streaming grid a boot scene
-  is partitioned into is not rebuilt for a scene loaded afterward, so a scene
-  that needs streaming should be the one the game starts in, for now.
+- **A scene prepared in the background is read whole.** A scene changed to
+  with `LoadScene` meets the streaming grid as the first scene does; one
+  prepared with `LoadSceneAsync` was parsed whole off the main thread and
+  loads whole. A large world that streams is changed to with `LoadScene`.
 
 `examples/24-scenes` is a menu and an arena, with a loading screen that stays
 across and fills a bar while the arena is prepared.

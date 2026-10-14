@@ -51,7 +51,7 @@ It is read by the sun's shadow and by every lamp's, it replicates like any
 part of a part's look, and it changes only what the part **casts**: a part
 with it off still receives the shadows of others.
 
-A part that is see-through (`Transparency` above 0) casts no shadow whatever
+A part that is see-through (its material's `Transparency` above 0) casts no shadow whatever
 this says, and a hidden one draws nothing at all. Turn `CastShadow` off rather
 than fading a part by a few percent to lose its shadow: a faded part is drawn
 in the blended pass, sorted every frame, and does not batch.

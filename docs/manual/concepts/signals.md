@@ -239,7 +239,7 @@ end
 - **Canceling**: `Cancel` stops the executor and runs its cancel hook, cancels
   every consumer, and cancels the parent once none of its consumers is left.
 - **Time is the simulation's**: `Promise.delay` and `Timeout` run on the tick
-  clock, like `task.delay`, never on the wall clock (R10).
+  clock, like `task.delay`, never on the wall clock, so a replay agrees.
 - A rejection nothing handled is reported with a warning after the drain.
 
 Both are part of the engine, installed as globals. There is nothing to

@@ -45,7 +45,7 @@ end)
 
 Save. A crate falls onto a green floor while the sun moves.
 
-Six things happened there, and each is a page of its own later:
+Seven things happened there, and each is a page of its own later:
 
 - **`game:GetService`** reached two singletons.
 - **`Instance.new`** made parts, and **`Parent`** put them in the world.
@@ -103,8 +103,9 @@ from.
 
 ## Add a character
 
+Add this to the end as well:
+
 ```luau
---!strict
 local character = Instance.new("CharacterBody")
 character.Size = vector.create(2, 5, 2)
 character.Position = vector.create(0, 6, 8)
@@ -115,7 +116,8 @@ RunService.Heartbeat:Connect(function(dt: number)
 end)
 ```
 
-A capsule walks forward, climbs the ramp it meets and steps over a curb.
+A capsule walks forward across the floor. Put a ramp or a low step in its way
+and it climbs the ramp and steps over the step on its own.
 `CharacterBody.Move` is intent for **one tick** — a character told nothing
 stops, which is why it is called every tick.
 

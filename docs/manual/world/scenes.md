@@ -28,7 +28,7 @@ JSON, with a format marker and a root instance carrying children:
 ```json
 {
   "format": "scene",
-  "version": 1,
+  "version": 2,
   "root": {
     "class": "Workspace",
     "name": "Workspace",
@@ -49,11 +49,25 @@ JSON, with a format marker and a root instance carrying children:
         "name": "Ground",
         "properties": {
           "Size": [40.0, 1.0, 40.0],
-          "Color": [0.35, 0.42, 0.32],
+          "MaterialParameters": { "Color": [0.35, 0.42, 0.32] },
           "Anchored": true
         }
       }
     ]
+  },
+  "storage": {
+    "Lighting": {
+      "class": "Lighting",
+      "name": "Lighting",
+      "properties": { "ClockTime": 8.0 }
+    },
+    "ReplicatedStorage": {
+      "class": "ReplicatedStorage",
+      "name": "ReplicatedStorage",
+      "children": [
+        { "class": "ModuleScript", "name": "Settings", "properties": { "Source": "return { SpinSpeed = 1.5 }" } }
+      ]
+    }
   }
 }
 ```
@@ -69,6 +83,12 @@ A few things worth reading off that:
 - **An instance reference is a path**, resolved after the whole tree is built,
   so an instance can refer to one declared later.
 - Tags and attributes travel with an instance too.
+- **`root` is the `Workspace`; `storage` is every other service the scene
+  holds** -- `Lighting`, `ReplicatedStorage`, `ServerStorage`, `UIService`,
+  the scene's two script services and the rest -- each written only when it
+  holds something or a setting differs from the engine's.
+- A script is saved with its `Source`, unless it is mounted from a file under
+  `src/`: then the file is its source and the scene does not repeat it.
 
 ## Load order
 

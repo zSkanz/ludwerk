@@ -110,9 +110,10 @@ An editor that touched a file without changing it produces no reload.
 ## Where the parts live
 
 The dev server is a small process that `ludwerk dev` starts; the **engine
-connects out to it** as a WebSocket client. Only the server listens — the engine
-opens no port in any build, which is a security property rather than an
-arrangement of convenience.
+connects out to it** as a WebSocket client. Only the server listens — the
+engine opens no port for development, which is a security property rather than
+an arrangement of convenience. (The one port a game ever opens is the match's,
+when it hosts one.)
 
 That is also why the same server can relay to other clients: a gate test, the
 overlay console, a tool.
@@ -140,10 +141,11 @@ is reading: renaming a new file over the old one without deleting the old one
 first. A tool that saves that way reports that the file is in use; saving again
 a moment later works, because a read lasts milliseconds.
 
-If a file is read part of the way through a save, the engine reads it again
-when the tool finishes, because the last write is reported as a change. Until
-then the asset can be incomplete: a sound that does not decode plays the
-placeholder tone and logs a warning.
+If a file is read part of the way through a save, the engine **keeps what it
+had loaded** -- the sound, the material, the animation graph as they were
+before the save began -- and reads the file again when the tool finishes,
+because the last write is reported as a change. A file that stays unreadable
+after that is reported once in the log.
 
 ## Where to look next
 
