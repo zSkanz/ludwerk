@@ -292,9 +292,9 @@ void sayStartFailure(int code)
 [[nodiscard]] bool runsWithNoWindow(int argc, char** argv)
 {
     constexpr std::array<std::string_view, 19> Quiet{
-        "--headless",      "--serve",        "--version",        "--run-tests",    "--check-scripts",
-        "--replay",        "--bench",        "--write-types",    "--import-",      "--partition",
-        "--save-scene",    "--capture-out",  "--two-worlds",     "--replica-gate", "--reads-mesh-format",
+        "--headless",      "--serve",        "--version",         "--run-tests",       "--check-scripts",
+        "--replay",        "--bench",        "--write-types",     "--import-",         "--partition",
+        "--save-scene",    "--capture-out",  "--two-worlds",      "--replica-gate",    "--reads-mesh-format",
         "--record-replay", "--describe-rig", "--bake-irradiance", "--print-luau-flags"};
     for (int index = 1; index < argc; ++index) {
         const std::string_view arg = argv[index];

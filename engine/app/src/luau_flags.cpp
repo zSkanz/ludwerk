@@ -205,7 +205,8 @@ std::vector<std::string> applyLuauFlags(std::span<const LuauFlagSetting> setting
             if (setting.boolean)
                 problems.push_back(core::engineCatalog().format(ENG_TR("engine.luau_flags.err.not_a_number"), named));
             else
-                flag->value = static_cast<int>(std::clamp<core::i64>(setting.value, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()));
+                flag->value = static_cast<int>(std::clamp<core::i64>(setting.value, std::numeric_limits<int>::min(),
+                                                                     std::numeric_limits<int>::max()));
         }
         if (!found)
             problems.push_back(core::engineCatalog().format(ENG_TR("engine.luau_flags.err.unknown"), named));
@@ -330,8 +331,8 @@ std::optional<std::string> withSettingsKey(std::string_view settings, std::strin
         if (c == ':' && depth == 1 && memberKey.has_value() && !inValue) {
             inValue = true;
             ++at;
-            while (at < size && (settings[at] == ' ' || settings[at] == '\t' || settings[at] == '\r' ||
-                                 settings[at] == '\n'))
+            while (at < size &&
+                   (settings[at] == ' ' || settings[at] == '\t' || settings[at] == '\r' || settings[at] == '\n'))
                 ++at;
             valueBegin = at;
             continue;
@@ -351,7 +352,8 @@ std::optional<std::string> withSettingsKey(std::string_view settings, std::strin
                 if (inValue) {
                     // A scalar value runs to the brace, less trailing space.
                     std::size_t end = at;
-                    while (end > valueBegin && std::string_view(" \t\r\n").find(settings[end - 1]) != std::string_view::npos)
+                    while (end > valueBegin &&
+                           std::string_view(" \t\r\n").find(settings[end - 1]) != std::string_view::npos)
                         --end;
                     endValue(end);
                 }

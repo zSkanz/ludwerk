@@ -252,7 +252,7 @@ local function measure(content: string): Lengths?
     end
     local lengths: Lengths = { rate = root.rate :: number, files = {}, unmeasured = {} }
     for _, file in keysOf(files) do
-        local frames = files[file]
+        local frames = (files :: json.Object)[file]
         if typeof(frames) == "number" then
             lengths.files[file] = frames
         end

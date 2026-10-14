@@ -1851,6 +1851,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // breakpoint on a chunk, and `reloadWorld` replaces every instance in the
     // world while the chunk names stay what they were.
     ScriptEditor scripts;
+    // The project's Luau flags as Project Settings last applied them, waiting
+    // for Play to stop before they reach the VM (ADR 0217).
+    std::optional<std::vector<LuauFlagSetting>> pendingLuauFlags;
     scripts.setProjectRoot(options.scriptPath);
     // The open graphs (ADR 0211), and what their panel asked for this frame.
     // With none open they are an empty list: a panel nobody opened costs
@@ -5683,16 +5686,22 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 // stopped first, so no check is half way through a parse when
                 // the language changes under it; then applied, VS Code told,
                 // and every open tab checked again. The next Play compiles
-                // with them.
-                if (editorCommands.luauFlags.has_value()) {
+                // with them. **Never under a running game**: a parser's or a
+                // VM's flag changed while its scripts run is a game compiled
+                // one way and run another, so a change made during Play waits
+                // for Stop.
+                if (editorCommands.luauFlags.has_value())
+                    pendingLuauFlags = std::move(editorCommands.luauFlags);
+                if (pendingLuauFlags.has_value() && !editor.inPlayMode()) {
                     stopLanguageService();
-                    for (const std::string& problem : applyLuauFlags(*editorCommands.luauFlags))
+                    for (const std::string& problem : applyLuauFlags(*pendingLuauFlags))
                         core::log(core::LogLevel::Warn, ENG_TR("engine.luau_flags.warn.setting"),
                                   std::array<core::I18nArg, 1>{core::I18nArg{"problem", problem}});
                     if (!writeVsCodeLuauFlags(editor.content().root().parent_path()))
                         core::log(core::LogLevel::Warn, ENG_TR("engine.luau_flags.warn.vscode"));
                     for (std::size_t index = 0; OpenScript* tab = scripts.at(index); ++index)
                         tab->document.markDiagnosticsStale();
+                    pendingLuauFlags.reset();
                 }
 
                 // **Leaving this project for another one** (ADR 0055). Both

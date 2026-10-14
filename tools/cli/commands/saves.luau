@@ -103,7 +103,7 @@ local function run(options: Options): number
     end
 
     local slots: { [string]: { string } } = {}
-    slotsIn(folder, "", slots, 0)
+    slotsIn(folder :: string, "", slots, 0)
     local names: { string } = {}
     for name in slots do
         if options.slot == nil or name == options.slot or string.match(name, "/(.+)$") == options.slot then

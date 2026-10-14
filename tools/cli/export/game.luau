@@ -238,7 +238,7 @@ local function stripLinked(node: jsondoc.Node, side: Side, readStamp: StampReade
     if text == nil then
         return false
     end
-    local stamp = jsondoc.parse(text)
+    local stamp = jsondoc.parse(text :: string)
     local root = jsondoc.get(stamp, "root")
     if root == nil or root.kind ~= "object" then
         return false
@@ -412,7 +412,7 @@ local function stripStaged(root: string, side: Side, readStamp: StampReader, rel
             end
             if stripped ~= nil then
                 fs.remove(file)
-                fs.writeStringToFile(file, stripped)
+                fs.writeStringToFile(file, stripped :: string)
             end
         end
     end

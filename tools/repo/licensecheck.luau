@@ -96,6 +96,11 @@ local KnownCopyleft: { { prefix: string, why: string } } = {
         why = "upstream's own Makefile, which names the GPL for the tools it builds; this project builds none of them",
     },
     {
+        prefix = "third_party/xxhash/build/",
+        why = "upstream's build helpers, new in 0.8.4 (`build/make/multiconf.make`, GPL-2.0), included by its own"
+            .. " Makefile and by nothing here: only the header is used, as the `cli/` row says",
+    },
+    {
         prefix = "third_party/sdl3/src/hidapi/",
         why = "hidapi is triple-licensed -- GPLv3, a BSD-style licence, or its original one, at the choice of"
             .. " whoever uses it (its own LICENSE.txt says so) -- and it is taken here under the BSD-style one"

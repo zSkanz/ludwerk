@@ -81,6 +81,15 @@ here.
   simdjson 4.6.11, meshoptimizer 1.3 and xxHash 0.8.4. Bytecode exported by
   the previous build still loads: the compiler still writes version 9, and the
   VM now reads versions 3 to 14.
+- luau-lsp 1.70.1 carries Luau 0.740. In `ludwerk check` and VS Code it reports
+  three errors on narrowed values that the editor's checker (Luau 0.742) does
+  not. Write around them with a cast or a named function:
+  - `Expected this to be 'string', but got '(string?) & ~nil'`, for a value
+    checked against `nil`, then used;
+  - `Expected type table, got '(Object?) & ~nil' instead`, for a table checked
+    against `nil`, then indexed;
+  - `Expected this to be 'number', but got 'string?'`, for a function written
+    inside an `if` condition.
 - Android games target API 36 (Android 16), which Google Play requires of new
   apps and updates. They still run from API 21. Building needs SDK platform 36
   and build-tools 36.0.0; `scripts/install-android.ps1` installs them.

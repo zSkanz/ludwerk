@@ -681,17 +681,18 @@ local function run(options: Options): number
         if not assembled then
             return 1
         end
-        if
-            not progress.step(reporter, "sign", function(): string?
-                -- Signed, and loadable where a store requires it to be: both
-                -- are asked of the file itself, not of what built it.
-                local wrong = android.verify(tools, apk) or android.checkPages(tools, apk)
-                if wrong == nil and bundle ~= "" then
-                    wrong = android.verifyBundle(tools, bundle) or android.checkPages(tools, bundle)
-                end
-                return wrong
-            end)
-        then
+        -- Signed, and loadable where a store requires it to be: both are asked
+        -- of the file itself, not of what built it. Named rather than written
+        -- in the call: luau-lsp 1.70.1's solver took a function written inside
+        -- this `if` for one that returns what the enclosing one does.
+        local function sign(): string?
+            local wrong = android.verify(tools, apk) or android.checkPages(tools, apk)
+            if wrong == nil and bundle ~= "" then
+                wrong = android.verifyBundle(tools, bundle) or android.checkPages(tools, bundle)
+            end
+            return wrong
+        end
+        if not progress.step(reporter, "sign", sign) then
             -- **Not left beside the good ones**: an APK whose
             -- signature did not verify sat in `dist/` under the game's name,
             -- the file a person picks up and installs.
@@ -770,11 +771,10 @@ local function run(options: Options): number
     -- The identity, into the executable and read back out of it: an icon
     -- nobody can assert is an icon that silently regresses.
     if chosen.platform == "windows" then
-        if
-            not progress.step(reporter, "stamp", function(): string?
-                return desktop.stampWindows(executable, ico, identity)
-            end)
-        then
+        local function stamp(): string?
+            return desktop.stampWindows(executable, ico, identity)
+        end
+        if not progress.step(reporter, "stamp", stamp) then
             return 1
         end
         if ico ~= nil then
@@ -785,12 +785,11 @@ local function run(options: Options): number
     local archiveName = desktop.archiveBase(identity, chosen)
         .. (if chosen.platform == "windows" then ".zip" else ".tar.gz")
     local archive = projectlib.joined(path.dirname(output), archiveName)
-    if
-        not progress.step(reporter, "archive", function(): string?
-            local executables = if chosen.platform == "linux" then { executableName } else {}
-            return desktop.writeArchive(output, archive, identity.fileName, executables)
-        end)
-    then
+    local function writeArchive(): string?
+        local executables = if chosen.platform == "linux" then { executableName } else {}
+        return desktop.writeArchive(output, archive, identity.fileName, executables)
+    end
+    if not progress.step(reporter, "archive", writeArchive) then
         return 1
     end
 

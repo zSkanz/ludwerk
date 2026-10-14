@@ -102,8 +102,30 @@ Every Luau upgrade from now on is held to this list, and this one was:
 6. Look for the language features this Luau carries behind a flag. Offer them
    by name in Project Settings > Luau (ADR 0217), and take out the ones it
    made permanent.
-7. Report what changed in the diagnostics. This time nothing did: every
-   project gave the same result under 0.742 as under 0.734.
+7. Report what changed in the diagnostics. This time, in the engine's own
+   checker, nothing: every example, template and the starter gave the same
+   result under 0.742 as under 0.734. In luau-lsp 1.70.1 -- which carries
+   Luau 0.740, not 0.742 -- seven new errors in the repository's own tools,
+   in three patterns, all about a narrowed value: one checked against `nil`
+   and then used (`'(string?) & ~nil'` refused where a `string` is wanted),
+   a table checked against `nil` and then indexed, and a function written
+   inside an `if` condition whose `string?` return it took for the enclosing
+   function's `number`. **Measured against the engine's own Luau**: the
+   vendored 0.742's `luau-analyze`, with the same solver, flags and Lute
+   definitions, reports none of them; 1.70.0 (Luau 0.739) reports all seven;
+   1.69.0 (0.729) reports none, but does not know `if local` or the other
+   flags 0.742's parser has, so pinning it would make VS Code refuse what a
+   project's `[luau.flags]` turns on (ADR 0217). **1.70.1 is kept**, each site
+   is written another way -- a cast, a named function -- with nothing turned
+   off, and the three patterns are in the CHANGELOG and the manual's
+   `ludwerk check` page, so a game's developer recognises them. When a
+   luau-lsp built on 0.742 or later is released, it replaces this one and the
+   casts can go. One more, `..=` on a name narrowed by `~= ""`, is reported
+   by 0.742 and 1.69.0 alike, so it is the language's and was simply written
+   another way.
+8. When a luau-lsp built on Luau 0.742 or later is released, move to it,
+   take the casts and named functions of item 7 out, and take the three
+   patterns out of the CHANGELOG's note and the manual.
 
 ### Players of one address: 64, and floods told by their rate
 

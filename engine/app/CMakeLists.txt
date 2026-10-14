@@ -877,7 +877,11 @@ if(ENG_BUILD_TESTS)
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-vehicle
             -DPORT=47920
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_netcode_vehicle.cmake)
-    set_tests_properties(netcode_vehicle PROPERTIES TIMEOUT 600 LABELS "netcode" RUN_SERIAL TRUE)
+    # **A timing test, and run alone** (`perf`): it measures how a car is
+    # drawn tick by tick at 300 ms, which a machine building another tier
+    # beside it changes. The local gate runs `perf` after every other lane;
+    # in CI it is serial in its own job already.
+    set_tests_properties(netcode_vehicle PROPERTIES TIMEOUT 600 LABELS "netcode;perf" RUN_SERIAL TRUE)
 
     # **What a breaking wall costs on the wire** (ADR 0215): fifty pieces,
     # sent as parts while they fall and not once they lie still. Fifteen

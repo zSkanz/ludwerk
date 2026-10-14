@@ -68,8 +68,8 @@ struct Verdicts
     std::string bytecode;
     // A compile error comes back as bytecode of version nought, carrying the
     // message `luau_load` then reports.
-    out.compiles = !script::bytecodeOf(source, "=IfLocal", bytecode).has_value() && !bytecode.empty() &&
-                   bytecode.front() != 0;
+    out.compiles =
+        !script::bytecodeOf(source, "=IfLocal", bytecode).has_value() && !bytecode.empty() && bytecode.front() != 0;
 
     app::ScriptDocument document(source);
     document.refreshDiagnostics();
@@ -180,8 +180,7 @@ TEST_CASE("Project Settings writes what differs from the default, and takes out 
                 "LuauGoneAfterAnUpgrade = true\n";
     }
     std::vector<app::LuauFlagInfo> flags = app::listLuauFlags();
-    std::map<std::string, core::i64, std::less<>> written{{"LuauExportValueSyntax", 1},
-                                                          {"LuauGoneAfterAnUpgrade", 1}};
+    std::map<std::string, core::i64, std::less<>> written{{"LuauExportValueSyntax", 1}, {"LuauGoneAfterAnUpgrade", 1}};
     for (app::LuauFlagInfo& flag : flags) {
         // `if local` turned on, the exported values put back to the default,
         // and one number changed.
@@ -242,9 +241,8 @@ TEST_CASE("only what compiled code can tell moves the fingerprint, and the edito
 
     // Every library has flags here, and each is filed under its own.
     const auto has = [&flags](app::LuauFlagArea area) {
-        return std::any_of(flags.begin(), flags.end(), [area](const app::LuauFlagInfo& flag) {
-            return flag.area == area;
-        });
+        return std::any_of(flags.begin(), flags.end(),
+                           [area](const app::LuauFlagInfo& flag) { return flag.area == area; });
     };
     CHECK(has(app::LuauFlagArea::Parser));
     CHECK(has(app::LuauFlagArea::Compiler));

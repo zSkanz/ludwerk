@@ -180,7 +180,7 @@ local function renderPage(spec: PageSpec, nav: { NavItem }, version: string, bra
         else ""
 
     local toc = if spec.Wide == true then "" else renderToc(spec.Headings)
-    local sidebar = if spec.Wide == true
+    local sidebar: string = if spec.Wide == true
         then ""
         else `<aside class="sidebar" id="sidebar"><nav class="nav" aria-label="Documentation">{renderNavItems(
             nav,
@@ -193,9 +193,13 @@ local function renderPage(spec: PageSpec, nav: { NavItem }, version: string, bra
     -- runs at the end of the body, after a first paint with the list at its
     -- top, and moving it there showed as a jump on every page; this runs
     -- right after the list exists. The script keeps it (see `site.js`).
-    if sidebar ~= "" then
-        sidebar ..= "<script>(function(){var s=document.getElementById('sidebar');" .. "try{var k=sessionStorage.getItem('engine-docs-nav-scroll');" .. "if(k){s.scrollTop=parseInt(k,10)||0;}}catch(e){}})();</script>"
-    end
+    -- One assignment rather than `..=` inside `if sidebar ~= ""`: the new
+    -- solver types the refined name as `string & ~""` and refuses a string.
+    sidebar ..= if sidebar ~= ""
+        then "<script>(function(){var s=document.getElementById('sidebar');"
+            .. "try{var k=sessionStorage.getItem('engine-docs-nav-scroll');"
+            .. "if(k){s.scrollTop=parseInt(k,10)||0;}}catch(e){}})();</script>"
+        else ""
 
     local layoutClass = if spec.Wide == true then "layout layout-wide" else "layout"
     local tocHtml = if toc ~= "" then `<div class="rail">{toc}</div>` else ""

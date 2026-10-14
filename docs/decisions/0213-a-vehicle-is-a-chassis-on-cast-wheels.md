@@ -188,3 +188,29 @@ forward on the throttle, stops on the brake and turns with the wheel; the same
 inputs give the same drive bit for bit, and a restored world drives on as it
 would have; a vehicle needs a moving chassis and a wheel, and goes with its
 chassis. Then the instances: a conformance spec, an example and a drawn gate.
+
+## Amendment, 2026-10-14: what the gate holds, counted in ticks
+
+- **Every measure is in ticks, not frames.** The simulated jump and the drift
+  are read at the end of every tick, as the authority reads its own car; the
+  drawn jump, which can only be read in a frame, is divided by the ticks the
+  frame covered. A machine under load passed and failed the same drive as
+  frames came long or short; with every core busy it now measures what it
+  measures alone.
+- **A duel's drawn car is held against the larger of the two crashes**, the
+  authority's and this machine's own: each driver's machine crashes its car
+  into the other where it sees it, a ping in the past, so its crash is not the
+  authority's and neither bounds the other (49 to 111 mm the authority's over
+  the runs). What is held is that the picture adds no snap on top of the
+  physics, and that a duel's correction stays under 10 cm (31 to 46 mm
+  measured).
+- **The glide is held by the nudge**, the one row where it is all there is to
+  see: half a metre corrected is drawn as at most a quarter of it, and a
+  centimetre, in its first tick (about a tenth of a metre measured).
+- **What a re-simulation moves is drawn gliding too, and held as such**: an
+  answer steps the car again from the authority's state, and on a link whose
+  intents reach the authority late -- a machine with every core busy -- that
+  lands it some centimetres from where it was predicted without being a
+  correction (81 mm at 300 ms, measured). Every row may draw beyond the
+  authority's own car a quarter of the simulated jump and a centimetre, never
+  less than two centimetres: what a fifth-a-tick glide shows of it.

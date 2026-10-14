@@ -97,6 +97,30 @@ problem is one line a terminal makes a link:
 src/client/Hud.luau(12,5): error: Type 'number' could not be converted into 'string'
 ```
 
+**The analyzer is given your project's Luau settings.** It asks the engine
+for the values in `[luau.flags]` and for every parser flag the game runs
+with, so it accepts the syntax the game accepts and refuses what the game
+refuses ([Luau language settings](manual:concepts/luau-flags)).
+
+**The analyzer and the editor's checker are two builds of Luau.** The
+analyzer is luau-lsp 1.70.1, which carries Luau 0.740: the newest release,
+and one that knows the language features the engine's Luau 0.742 puts behind
+flags, which 1.69.0 (Luau 0.729) does not. The editor's checker is the engine's
+own 0.742. Version 0.740 reports three things that 0.742 does not, all of them
+about a value whose type was narrowed:
+
+- a value checked against `nil` and then passed where its type is wanted:
+  `Expected this to be 'string', but got '(string?) & ~nil'`;
+- a table checked against `nil` and then indexed:
+  `Expected type table, got '(Object?) & ~nil' instead`;
+- a function written inside an `if` condition, whose return it takes for the
+  enclosing function's: `Expected this to be 'number', but got 'string?'`.
+
+When the editor calls the same script clean, cast the value where it is used
+(`value :: string`), or move the function out of the condition into a named
+local. The engine's Luau 0.742 does not report them, so a luau-lsp built on
+it should not either, and the engine moves to one when it is released.
+
 A `require` by path — `require("../shared/Match")` — is followed by both, by
 the rule the engine runs one by: beside the requiring file for `./` and `../`,
 from the project's root for anything else, a `.luaurc` alias for `@name/`, and

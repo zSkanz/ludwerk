@@ -4025,14 +4025,15 @@ struct EnetMatch
     explicit EnetMatch(core::u16 port)
     {
         seedCatalog();
-        REQUIRE_FALSE(serverTransport
-                          ->open(net::TransportConfig{.port = port,
-                                                      .maxPeers = 4,
-                                                      .channels = 6,
-                                                      .timeoutMs = 10000,
-                                                      .maxMessageBytes = MaxAuthorityMessageBytes,
-                                                      .maxPeersPerAddress = DefaultPeersPerAddress + MaxHandshakesPerAddress})
-                          .has_value());
+        REQUIRE_FALSE(
+            serverTransport
+                ->open(net::TransportConfig{.port = port,
+                                            .maxPeers = 4,
+                                            .channels = 6,
+                                            .timeoutMs = 10000,
+                                            .maxMessageBytes = MaxAuthorityMessageBytes,
+                                            .maxPeersPerAddress = DefaultPeersPerAddress + MaxHandshakesPerAddress})
+                .has_value());
         REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
         REQUIRE_FALSE(clientTransport->connect("127.0.0.1", port, toServer).has_value());
         host = scene::createPlayer(server.world, server.network, 1, true);
@@ -4174,15 +4175,15 @@ OneAddress joinFromOneAddress(core::u16 port, core::u32 limit, usize joiners)
 {
     seedCatalog();
     std::unique_ptr<net::ITransport> serverTransport = net::createEnetTransport();
-    REQUIRE_FALSE(serverTransport
-                      ->open(net::TransportConfig{.port = port,
-                                                  .maxPeers = 64,
-                                                  .channels = 6,
-                                                  .timeoutMs = 10000,
-                                                  .maxMessageBytes = MaxAuthorityMessageBytes,
-                                                  .maxPeersPerAddress =
-                                                      limit == 0 ? 0 : limit + MaxHandshakesPerAddress})
-                      .has_value());
+    REQUIRE_FALSE(
+        serverTransport
+            ->open(net::TransportConfig{.port = port,
+                                        .maxPeers = 64,
+                                        .channels = 6,
+                                        .timeoutMs = 10000,
+                                        .maxMessageBytes = MaxAuthorityMessageBytes,
+                                        .maxPeersPerAddress = limit == 0 ? 0 : limit + MaxHandshakesPerAddress})
+            .has_value());
     RealSide server;
     (void)scene::createPlayer(server.world, server.network, 1, true);
     AuthoritySession authority(*serverTransport);
@@ -4194,7 +4195,8 @@ OneAddress joinFromOneAddress(core::u16 port, core::u32 limit, usize joiners)
     for (usize at = 0; at < joiners; ++at) {
         transports.push_back(net::createEnetTransport());
         sides.push_back(std::make_unique<RealSide>());
-        REQUIRE_FALSE(transports.back()->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
+        REQUIRE_FALSE(
+            transports.back()->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
         net::PeerId toServer;
         REQUIRE_FALSE(transports.back()->connect("127.0.0.1", port, toServer).has_value());
         (void)scene::createPlayer(sides.back()->world, sides.back()->network, 0, true);

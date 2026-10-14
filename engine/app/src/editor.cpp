@@ -1133,6 +1133,9 @@ std::span<const std::string_view> EditorCommands::keptInPlay() noexcept
         "saveAll",
         "newProject",
         "openProject",
+        // Kept and applied at Stop: a running game's VM is never changed
+        // under it (ADR 0217).
+        "luauFlags",
         "importAssets",
         "colorAsked",
         "colorTarget",

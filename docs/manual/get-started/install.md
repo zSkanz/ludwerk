@@ -153,6 +153,12 @@ template: the Luau language server, and the formatter.
 With that in place, `part.Anchorred = true` is a red squiggle rather than a
 runtime surprise.
 
+VS Code's checker is luau-lsp 1.70.1, which carries Luau 0.740, and the
+editor's script tab uses the engine's Luau 0.742. Three narrowed-type
+patterns show as errors in VS Code and not in the editor:
+[The ludwerk CLI](manual:get-started/cli) lists them and says how to write
+around each.
+
 ## Check it works
 
 ```bash

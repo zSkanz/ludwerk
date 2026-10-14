@@ -138,6 +138,12 @@ foreach(entry IN LISTS conditions)
         if(closest STREQUAL "inf")
             set(closest "--")
         endif()
+        # The largest correction in whole millimetres, for the glide's check.
+        string(REGEX REPLACE "^0*([0-9]*)\\.([0-9][0-9][0-9]).*$" "\\1\\2" largestMillimetres "${largest}")
+        if(largestMillimetres STREQUAL "")
+            set(largestMillimetres 0)
+        endif()
+        math(EXPR largestMillimetres "${largestMillimetres} + 0")
         string(APPEND table
                "| ${name} | ${seat} | ${start} | ${straight} | ${corner} | ${stopping} | ${contact} | ${largest} | ${drawnJump} | ${simJump} | ${authorityJump} | ${driftMean} / ${driftMax} | ${hitches} | ${stop} | ${closest} | ${carTicks}, ${walkTicks} | ${ping} |\n")
 
@@ -163,6 +169,17 @@ foreach(entry IN LISTS conditions)
             if(largest LESS 0.3 OR largest GREATER 0.8)
                 string(APPEND failures "  ${name}: a half-metre move was seen as a correction of ${largest} m\n")
             endif()
+            # **And drawn gliding there**: a fifth of what is left a tick
+            # (`VehicleVisualDecayPerTick`), so the half metre is drawn as a
+            # tenth of a metre in its first tick, never as the half metre --
+            # the one row where the glide is all there is to see, and the
+            # check that holds it.
+            string(REGEX REPLACE "\\..*" "" nudgeDrawn "${drawnJump}")
+            math(EXPR glideMost "${largestMillimetres} / 4 + 10")
+            if(nudgeDrawn GREATER glideMost)
+                string(APPEND failures "  ${name}: a ${largest} m correction was drawn as a ${drawnJump} mm jump -- "
+                       "it did not glide\n")
+            endif()
         endif()
         # Two cars that touched: centre to centre, less than a car's length
         # and a little.
@@ -177,20 +194,65 @@ foreach(entry IN LISTS conditions)
         # nudge's: half a metre moved aside is meant to be seen.
         # A crash stops a car in a tick on every machine: what is held is
         # what this machine draws beyond what the authority's own car did.
+        # **In a duel, beyond what either machine's physics did**: each
+        # driver's machine crashes its own car into the other car where it
+        # sees it -- a remote car, drawn where it was a ping ago -- so its
+        # crash is not the authority's, and neither bounds the other (49 to
+        # 111 mm the authority's, over the runs). What the picture must not
+        # do is snap on top of the physics: the drawn car against the larger
+        # of the two crashes. The correction itself is held below.
         if(NOT mode STREQUAL "nudge")
             string(REGEX REPLACE "\\..*" "" drawnWhole "${drawnJump}")
             string(REGEX REPLACE "\\..*" "" authorityWhole "${authorityJump}")
-            math(EXPR beyond "${drawnWhole} - ${authorityWhole}")
-            if(beyond GREATER 20)
-                string(APPEND failures "  ${name} (seat ${seat}): the car was drawn jumping ${drawnJump} mm in a frame, "
-                       "${beyond} mm beyond the authority's own ${authorityJump}\n")
+            string(REGEX REPLACE "\\..*" "" simulatedWhole "${simJump}")
+            set(physicsWhole ${authorityWhole})
+            set(physicsSaid "the authority's own ${authorityJump}")
+            if(mode STREQUAL "duel" AND simulatedWhole GREATER authorityWhole)
+                set(physicsWhole ${simulatedWhole})
+                set(physicsSaid "this machine's own simulated ${simJump}")
+            endif()
+            math(EXPR beyond "${drawnWhole} - ${physicsWhole}")
+            # **What a re-simulation moved, drawn gliding**: an answer steps
+            # the car again from the authority's state, and on a loaded link
+            # that lands it a few centimetres from where it was predicted (81
+            # mm at 300 ms with every core busy). The glide draws a fifth of
+            # it in the first tick, so a quarter of the simulated jump and a
+            # centimetre is what the picture may add -- and never less than two
+            # centimetres. A broken glide draws the whole jump, and the nudge
+            # holds that.
+            math(EXPR snapMost "${simulatedWhole} / 4 + 10")
+            if(snapMost LESS 20)
+                set(snapMost 20)
+            endif()
+            if(beyond GREATER snapMost)
+                string(APPEND failures "  ${name} (seat ${seat}): the car was drawn jumping ${drawnJump} mm in a tick, "
+                       "${beyond} mm beyond ${physicsSaid}, past the ${snapMost} its glide may add\n")
             endif()
         endif()
-        # **The car is not left apart from the authority's**: at 150 and
-        # 300 ms, under its correction and pulled back each answer, the
-        # furthest it was from it over the drive stays under the correction.
-        if(mode STREQUAL "drive" AND driftMax GREATER 30)
+        # **A duel's corrections are small**: two cars meeting at 150 ms are
+        # corrected where each machine's crash parts from the authority's, by
+        # a few centimetres (31 to 46 mm over the runs), never by a car's
+        # width.
+        if(mode STREQUAL "duel" AND largest GREATER 0.1)
+            string(APPEND failures "  ${name} (seat ${seat}): a correction of ${largest} m in a duel\n")
+        endif()
+        # **The car is not left apart from the authority's**: under its
+        # correction and pulled back each answer, the furthest it was from it
+        # stays under the correction -- on every row but the nudge (moved half
+        # a metre on purpose) and the duel (corrected past it by a crash, and
+        # held to 10 cm below).
+        if(NOT mode STREQUAL "nudge" AND NOT mode STREQUAL "duel" AND driftMax GREATER 30)
             string(APPEND failures "  ${name}: the car drifted ${driftMax} mm from the authority's\n")
+        endif()
+        # **And a ceiling the relative rules cannot raise**: on a clean link
+        # the car steps where the authority's does, a millimetre or two a
+        # tick off its line (1.7 to 1.8 measured), so the simulated jump there
+        # stays under five.
+        if(name STREQUAL "clean")
+            string(REGEX REPLACE "\\..*" "" cleanSimulated "${simJump}")
+            if(cleanSimulated GREATER_EQUAL 5)
+                string(APPEND failures "  clean: the car's simulated place jumped ${simJump} mm on a clean link\n")
+            endif()
         endif()
         if(NOT mode STREQUAL "duel" AND stop GREATER 0.01)
             string(APPEND failures "  ${name}: stopped ${stop} m from where the authority stopped\n")
