@@ -62,18 +62,23 @@ The same inputs produce **byte-identical** output. Four rules make that true:
 2. Every encoder parameter is pinned in the tool rather than defaulted.
 3. No timestamp, absolute path or machine name reaches the output, and a URN
    uses forward slashes on every host.
-4. Encoding is single-threaded, because the mesh encoder's format settings are
-   process-global.
+4. Pictures are encoded side by side, one to a worker, and merged in the order
+   of their paths; the encoder's own threading stays off, because its format
+   settings are process-global. A build with `--jobs 1` is the same bytes.
 
 `--verify` is that guarantee as a flag you can type: it builds twice and
 compares. If the two differ, something in the pipeline is not deterministic and
 the build fails rather than shipping a lottery.
 
-## What it does not do
+## What it remembers, and what it does not do
 
-**There is no build cache.** Every run compiles everything. For a project the
-size of the examples that is a second or two; for a large one it is a reason to
-run it deliberately rather than on every save.
+**What was compiled is remembered, where the editor keeps it.** The editor
+compiles into the project's `.engine/import/cache`, and an export
+(`ludwerk build`) reads the same cache: a model or a picture the editor already
+compiled is not compiled again, and the export says how many it was given. An
+entry is keyed by the source's bytes, its name, the compiler's options and rules
+and the mesh format it writes, so an answer from it is the answer a compile
+gives. `ludwerk build-assets` on its own compiles everything.
 
 There is also no import-settings file: an asset is compiled the one way the
 pipeline compiles that kind of asset. Options that would need per-asset settings

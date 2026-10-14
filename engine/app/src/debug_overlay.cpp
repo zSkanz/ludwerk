@@ -48,6 +48,7 @@
 #include "engine/app/class_favorites.h"
 #include "engine/app/command_palette.h"
 #include "engine/app/doc_summary.h"
+#include "engine/app/editor_performance.h"
 #include "engine/app/export_runner.h"
 #include "engine/app/graph_editor.h"
 #include "engine/app/graph_panel.h"
@@ -7387,6 +7388,41 @@ void drawRunHeader(Editor& editor, EditorCommands& commands, const IconAtlas* ic
     ImGui::Separator();
 }
 
+// `Enum.GraphicsQuality`'s names, Low to Ultra.
+constexpr core::TextKey QualityNames[] = {
+    ENG_TR("engine.graphics.quality.low"),
+    ENG_TR("engine.graphics.quality.medium"),
+    ENG_TR("engine.graphics.quality.high"),
+    ENG_TR("engine.graphics.quality.ultra"),
+};
+
+// A frame rate as the preference names it.
+[[nodiscard]] std::string editorRateName(core::i32 rate)
+{
+    if (rate == EditorPerformance::kMatchMonitor)
+        return core::tr(ENG_TR("engine.editor.performance_preferences.match_display"));
+    if (rate == EditorPerformance::kUnlimited)
+        return core::tr(ENG_TR("engine.editor.performance_preferences.unlimited"));
+    return core::tr(ENG_TR("engine.settings.value.frame_rate"), {core::I18nArg{"value", static_cast<core::i64>(rate)}});
+}
+
+// The viewport's quality as the preference names it.
+[[nodiscard]] std::string viewportQualityName(core::i32 level)
+{
+    if (level < 0 || level >= static_cast<core::i32>(std::size(QualityNames)))
+        return core::tr(ENG_TR("engine.editor.performance_preferences.project_quality"));
+    return core::tr(QualityNames[level]);
+}
+
+// **Set for this process and written for the next one**, as the appearance
+// is -- and not written where the editor is drawn into pictures.
+void changeEditorPerformance(const EditorPerformance& changed)
+{
+    setEditorPerformance(changed);
+    if (!g_picturesOnly)
+        (void)saveEditorPerformance(editorPerformanceFile(), changed);
+}
+
 void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panels, const IconAtlas* icons)
 {
     const RunState run = editor.runState();
@@ -7806,6 +7842,33 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
                    core::tr(ENG_TR("engine.editor.transport.camera_snapping_and_visualization_overlays_tip"))))
         panels.viewportSettings = !panels.viewportSettings;
     measured();
+
+    // **The viewport's quality, a click away** (ADR 0147, section 6): the
+    // preference Performance keeps, and how fast the editor is drawing --
+    // what somebody wants to see while they choose.
+    ImGui::SameLine();
+    if (toolButton(icons::ClassGraphicsService, core::tr(ENG_TR("engine.editor.transport.viewport_quality")),
+                   core::tr(ENG_TR("engine.editor.transport.viewport_quality_tip"))))
+        ImGui::OpenPopup("viewport-quality");
+    measured();
+    if (ImGui::BeginPopup("viewport-quality")) {
+        ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.performance_preferences.viewport_quality")));
+        ImGui::Separator();
+        EditorPerformance chosen = editorPerformance();
+        for (core::i32 level = EditorPerformance::kProjectQuality;
+             level < static_cast<core::i32>(std::size(QualityNames)); ++level) {
+            if (ImGui::MenuItem(viewportQualityName(level).c_str(), nullptr, chosen.viewportQuality == level)) {
+                chosen.viewportQuality = level;
+                changeEditorPerformance(chosen);
+            }
+        }
+        ImGui::Separator();
+        ImGui::TextDisabled("%s",
+                            core::tr(ENG_TR("engine.settings.value.frame_rate"),
+                                     {core::I18nArg{"value", static_cast<core::i64>(ImGui::GetIO().Framerate + 0.5f)}})
+                                .c_str());
+        ImGui::EndPopup();
+    }
 
     // **Export** (ADR 0104 §4): the way from a scene to a game on somebody's
     // phone, at the end of the bar, where a finished thing leaves.
@@ -10216,9 +10279,48 @@ void drawIconPreviews(const std::filesystem::path& picture, const char* label)
 
 // One setting as a row: whether the project says it, its name, and its value
 // -- the project's own when ticked, the level's and greyed when not.
-void graphicsSettingRow(scene::GraphicsModel& model, scene::GraphicsSetting setting)
+// **One setting's value, as its kind is edited**: a switch, a list, a whole
+// number or a number in its range. True when it was changed.
+bool editGraphicsValue(scene::GraphicsSetting setting, core::f64& value)
 {
     const scene::GraphicsSettingInfo& info = scene::graphicsSettingInfo(setting);
+    switch (info.kind) {
+    case scene::GraphicsValueKind::Flag: {
+        bool on = value != 0.0;
+        if (!ImGui::Checkbox("##value", &on))
+            return false;
+        value = on ? 1.0 : 0.0;
+        return true;
+    }
+    case scene::GraphicsValueKind::Choice: {
+        int index = static_cast<int>(value);
+        if (!ImGui::Combo("##value", &index, graphicsChoices(setting).c_str()))
+            return false;
+        value = std::clamp(static_cast<core::f64>(index), info.lowest, info.highest);
+        return true;
+    }
+    case scene::GraphicsValueKind::Whole: {
+        int whole = static_cast<int>(value);
+        if (!ImGui::DragInt("##value", &whole, 1.0f, static_cast<int>(info.lowest), static_cast<int>(info.highest),
+                            "%d", ImGuiSliderFlags_AlwaysClamp))
+            return false;
+        value = static_cast<core::f64>(whole);
+        return true;
+    }
+    case scene::GraphicsValueKind::Number: {
+        float number = static_cast<float>(value);
+        if (!ImGui::SliderFloat("##value", &number, static_cast<float>(info.lowest), static_cast<float>(info.highest),
+                                "%.2f", ImGuiSliderFlags_AlwaysClamp))
+            return false;
+        value = static_cast<core::f64>(number);
+        return true;
+    }
+    }
+    return false;
+}
+
+void graphicsSettingRow(scene::GraphicsModel& model, scene::GraphicsSetting setting)
+{
     ImGui::PushID(static_cast<int>(setting));
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
@@ -10238,44 +10340,17 @@ void graphicsSettingRow(scene::GraphicsModel& model, scene::GraphicsSetting sett
     ImGui::TableNextColumn();
     ImGui::BeginDisabled(!said);
     ImGui::SetNextItemWidth(-FLT_MIN);
-    const core::f64 current = model.effective(setting);
-    switch (info.kind) {
-    case scene::GraphicsValueKind::Flag: {
-        bool on = current != 0.0;
-        if (ImGui::Checkbox("##value", &on))
-            model.project.put(setting, on ? 1.0 : 0.0);
-        break;
-    }
-    case scene::GraphicsValueKind::Choice: {
-        int index = static_cast<int>(current);
-        if (ImGui::Combo("##value", &index, graphicsChoices(setting).c_str()))
-            model.project.put(setting, std::clamp(static_cast<core::f64>(index), info.lowest, info.highest));
-        break;
-    }
-    case scene::GraphicsValueKind::Whole: {
-        int value = static_cast<int>(current);
-        if (ImGui::DragInt("##value", &value, 1.0f, static_cast<int>(info.lowest), static_cast<int>(info.highest), "%d",
-                           ImGuiSliderFlags_AlwaysClamp))
-            model.project.put(setting, static_cast<core::f64>(value));
-        break;
-    }
-    case scene::GraphicsValueKind::Number: {
-        float value = static_cast<float>(current);
-        if (ImGui::SliderFloat("##value", &value, static_cast<float>(info.lowest), static_cast<float>(info.highest),
-                               "%.2f", ImGuiSliderFlags_AlwaysClamp))
-            model.project.put(setting, static_cast<core::f64>(value));
-        break;
-    }
-    }
+    core::f64 current = model.effective(setting);
+    if (editGraphicsValue(setting, current))
+        model.project.put(setting, current);
     ImGui::EndDisabled();
     ImGui::PopID();
 }
 
 // A setting's value as `project.toml` holds it.
-[[nodiscard]] std::string graphicsRendered(const scene::GraphicsModel& model, scene::GraphicsSetting setting)
+[[nodiscard]] std::string graphicsValueRendered(scene::GraphicsSetting setting, core::f64 value)
 {
     const scene::GraphicsSettingInfo& info = scene::graphicsSettingInfo(setting);
-    const core::f64 value = model.project.at(setting);
     if (info.kind == scene::GraphicsValueKind::Flag)
         return core::tomlBoolean(value != 0.0);
     if (info.kind == scene::GraphicsValueKind::Choice) {
@@ -10284,6 +10359,22 @@ void graphicsSettingRow(scene::GraphicsModel& model, scene::GraphicsSetting sett
         return core::tomlString(index < choices.size() ? choices[index] : std::string_view{});
     }
     return core::tomlNumber(value);
+}
+
+[[nodiscard]] std::string graphicsRendered(const scene::GraphicsModel& model, scene::GraphicsSetting setting)
+{
+    return graphicsValueRendered(setting, model.project.at(setting));
+}
+
+// The levels' and the platforms' names as the file has them.
+constexpr std::array<const char*, 4> LevelNamesInFile{"low", "medium", "high", "ultra"};
+constexpr std::array<const char*, 4> PlatformNamesInFile{"windows", "macos", "linux", "android"};
+
+// `graphics.<level>.<setting>`: a setting's key in one level's table.
+[[nodiscard]] std::string levelKeyOf(std::size_t level, scene::GraphicsSetting setting)
+{
+    const std::string key = projectKeyOf(setting);
+    return std::string("graphics.") + LevelNamesInFile[level] + key.substr(key.find('.'));
 }
 
 // The settings the dialog offers: the ones something draws by, less the level
@@ -10319,6 +10410,14 @@ void drawProjectSettings(Editor& editor)
     // the level's value.
     static scene::GraphicsModel shown;
     static std::bitset<scene::kGraphicsSettingCount> written;
+    // **The quality matrix** (ADR 0147, section 6): each level as the project
+    // made it, over the engine's own levels; which of it the file said; and
+    // each platform's default level, -1 where it has none of its own.
+    static std::array<scene::GraphicsLayer, scene::kQualityPresets> levels;
+    static std::array<std::bitset<scene::kGraphicsSettingCount>, scene::kQualityPresets> levelsWritten;
+    static scene::GraphicsModel engineLevels;
+    static std::array<int, PlatformNamesInFile.size()> platformLevel{};
+    static std::array<bool, PlatformNamesInFile.size()> platformWritten{};
     static bool rememberPlayer = true;
     // The App page (ADR 0104 §1): what every export stamps.
     static std::array<char, 32> version{};
@@ -10346,6 +10445,27 @@ void drawProjectSettings(Editor& editor)
         quality = static_cast<int>(config.graphics.quality);
         shown = config.graphicsModel;
         written = shown.project.said;
+        levels = config.levelSettings;
+        for (std::size_t level = 0; level < levels.size(); ++level)
+            levelsWritten[level] = levels[level].said;
+        engineLevels = scene::GraphicsModel{};
+        seedGraphicsModel(engineLevels, GraphicsOverrides{});
+        {
+            std::string text;
+            core::TomlDocument document;
+            const bool read = platform::readTextFile(root / "project.toml", text) && document.parse(text).ok;
+            for (std::size_t index = 0; index < PlatformNamesInFile.size(); ++index) {
+                platformLevel[index] = -1;
+                const std::optional<std::string_view> named =
+                    read ? document.string(std::string("graphics.") + PlatformNamesInFile[index] + ".quality")
+                         : std::nullopt;
+                for (std::size_t level = 0; named.has_value() && level < LevelNamesInFile.size(); ++level) {
+                    if (*named == LevelNamesInFile[level])
+                        platformLevel[index] = static_cast<int>(level);
+                }
+                platformWritten[index] = platformLevel[index] >= 0;
+            }
+        }
         rememberPlayer = config.rememberPlayerSettings;
         version.fill(0);
         company.fill(0);
@@ -10449,6 +10569,85 @@ void drawProjectSettings(Editor& editor)
             ImGui::EndTable();
         }
     }
+    // **The quality matrix** (ADR 0147, section 6): the levels as columns
+    // and each setting as a row, each cell what that level gives -- the
+    // engine's, or the project's own, marked, which a right-click gives back
+    // -- and a level for each platform of its own.
+    if (ImGui::CollapsingHeader(core::tr(ENG_TR("engine.editor.project_settings.levels")))) {
+        ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.project_settings.levels_hint")));
+        const std::string levelChoices = choices({ENG_TR("engine.editor.project_settings.platform_as_project"),
+                                                  ENG_TR("engine.editor.project_settings.quality.low"),
+                                                  ENG_TR("engine.editor.project_settings.quality.medium"),
+                                                  ENG_TR("engine.editor.project_settings.quality.high"),
+                                                  ENG_TR("engine.editor.project_settings.quality.ultra")});
+        static constexpr std::array<core::TextKey, 4> PlatformNames{
+            ENG_TR("engine.editor.project_settings.platform.windows"),
+            ENG_TR("engine.editor.project_settings.platform.macos"),
+            ENG_TR("engine.editor.project_settings.platform.linux"),
+            ENG_TR("engine.editor.project_settings.platform.android")};
+        if (ImGui::BeginTable("##platform-levels", static_cast<int>(PlatformNames.size()), rows)) {
+            for (std::size_t index = 0; index < PlatformNames.size(); ++index) {
+                ImGui::TableNextColumn();
+                ImGui::PushID(static_cast<int>(index));
+                ImGui::TextUnformatted(core::tr(PlatformNames[index]));
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                int chosen = platformLevel[index] + 1;
+                if (ImGui::Combo("##platform-level", &chosen, levelChoices.c_str()))
+                    platformLevel[index] = chosen - 1;
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        static constexpr std::array<core::TextKey, 4> LevelNames{
+            ENG_TR("engine.editor.project_settings.quality.low"),
+            ENG_TR("engine.editor.project_settings.quality.medium"),
+            ENG_TR("engine.editor.project_settings.quality.high"),
+            ENG_TR("engine.editor.project_settings.quality.ultra")};
+        if (ImGui::BeginTable("##quality-matrix", 1 + static_cast<int>(LevelNames.size()),
+                              rows | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
+            ImGui::TableSetupColumn("##setting", ImGuiTableColumnFlags_WidthStretch, 0.32f);
+            for (const core::TextKey levelName : LevelNames)
+                ImGui::TableSetupColumn(core::tr(levelName), ImGuiTableColumnFlags_WidthStretch, 0.17f);
+            ImGui::TableHeadersRow();
+            for (core::usize index = 0; index < scene::kGraphicsSettingCount; ++index) {
+                const auto setting = static_cast<scene::GraphicsSetting>(index);
+                if (!graphicsOffered(setting, false))
+                    continue;
+                ImGui::PushID(static_cast<int>(index));
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(graphicsLabel(setting));
+                for (std::size_t level = 0; level < levels.size(); ++level) {
+                    ImGui::TableNextColumn();
+                    ImGui::PushID(static_cast<int>(level));
+                    scene::GraphicsLayer& made = levels[level];
+                    const bool own = made.says(setting);
+                    core::f64 value =
+                        own ? made.at(setting) : engineLevels.presetValue(setting, static_cast<core::i32>(level));
+                    if (own)
+                        ImGui::PushStyleColor(ImGuiCol_FrameBg, themeColor(palette().accentFill));
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    if (editGraphicsValue(setting, value))
+                        made.put(setting, value);
+                    if (own)
+                        ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered())
+                        pointerTip("%s", core::tr(own ? ENG_TR("engine.editor.project_settings.level_own_tip")
+                                                      : ENG_TR("engine.editor.project_settings.level_engine_tip")));
+                    if (own && ImGui::BeginPopupContextItem("##level-cell")) {
+                        if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.project_settings.level_reset"))))
+                            made.clear(setting);
+                        ImGui::EndPopup();
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+    }
+
     ImGui::Checkbox(core::tr(ENG_TR("engine.editor.project_settings.remember_player_settings")), &rememberPlayer);
     if (ImGui::IsItemHovered())
         pointerTip("%s", core::tr(ENG_TR("engine.editor.project_settings.remember_player_settings_tip")));
@@ -10507,6 +10706,30 @@ void drawProjectSettings(Editor& editor)
             if (shown.project.says(setting))
                 ok = writeProjectSetting(root, key, graphicsRendered(shown, setting), &problem);
             else if (written.test(index))
+                ok = removeProjectSetting(root, key, &problem);
+        }
+        // **And each level's own**, by the same rule: what a level says is
+        // written under its table, and what it stopped saying taken out.
+        for (std::size_t level = 0; ok && level < levels.size(); ++level) {
+            for (core::usize index = 0; ok && index < scene::kGraphicsSettingCount; ++index) {
+                const auto setting = static_cast<scene::GraphicsSetting>(index);
+                if (!graphicsOffered(setting, false))
+                    continue;
+                const std::string key = levelKeyOf(level, setting);
+                if (levels[level].says(setting))
+                    ok = writeProjectSetting(root, key, graphicsValueRendered(setting, levels[level].at(setting)),
+                                             &problem);
+                else if (levelsWritten[level].test(index))
+                    ok = removeProjectSetting(root, key, &problem);
+            }
+        }
+        for (std::size_t index = 0; ok && index < PlatformNamesInFile.size(); ++index) {
+            const std::string key = std::string("graphics.") + PlatformNamesInFile[index] + ".quality";
+            if (platformLevel[index] >= 0)
+                ok = writeProjectSetting(
+                    root, key, core::tomlString(LevelNamesInFile[static_cast<std::size_t>(platformLevel[index])]),
+                    &problem);
+            else if (platformWritten[index])
                 ok = removeProjectSetting(root, key, &problem);
         }
         if (ok) {
@@ -11743,6 +11966,7 @@ enum class PreferencePage : core::u8
 {
     Appearance,
     Viewport,
+    Performance,
     Icons,
     ScriptColours,
     ScriptShortcuts,
@@ -11765,6 +11989,8 @@ const PreferencePageInfo PreferencePages[] = {
      ENG_TR("engine.editor.preferences.page.appearance"), icons::ActionPaint},
     {PreferencePage::Viewport, "general", ENG_TR("engine.editor.preferences.group.general"), "viewport",
      ENG_TR("engine.editor.preferences.page.viewport"), icons::ClassCamera},
+    {PreferencePage::Performance, "general", ENG_TR("engine.editor.preferences.group.general"), "performance",
+     ENG_TR("engine.editor.preferences.page.performance"), icons::ClassGraphicsService},
     {PreferencePage::Icons, "general", ENG_TR("engine.editor.preferences.group.general"), "icons",
      ENG_TR("engine.editor.preferences.page.icons"), icons::ActionVisible},
     {PreferencePage::ScriptColours, "script-editor", ENG_TR("engine.editor.preferences.group.script_editor"), "colours",
@@ -11875,6 +12101,65 @@ std::size_t drawViewportPreferences(const PreferenceQuery& query, Editor& editor
     return 1;
 }
 
+std::size_t drawPerformancePreferences(const PreferenceQuery& query)
+{
+    const bool rate = query.shows(core::tr(ENG_TR("engine.editor.performance_preferences.frame_rate")));
+    const bool throttle = query.shows(core::tr(ENG_TR("engine.editor.performance_preferences.background_throttle")));
+    const bool quality = query.shows(core::tr(ENG_TR("engine.editor.performance_preferences.viewport_quality")));
+    const bool saved = query.shows(core::tr(ENG_TR("engine.editor.performance_preferences.play_saved")));
+    const std::size_t found = (rate ? 1 : 0) + (throttle ? 1 : 0) + (quality ? 1 : 0) + (saved ? 1 : 0);
+    if (!query.draw || found == 0 || !beginSectionGrid("performance"))
+        return found;
+    EditorPerformance chosen = editorPerformance();
+    if (rate) {
+        sectionName(core::tr(ENG_TR("engine.editor.performance_preferences.frame_rate")));
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::BeginCombo("##editor-rate", editorRateName(chosen.frameRate).c_str())) {
+            const auto offer = [&](core::i32 value) {
+                if (ImGui::Selectable(editorRateName(value).c_str(), chosen.frameRate == value)) {
+                    chosen.frameRate = value;
+                    changeEditorPerformance(chosen);
+                }
+            };
+            offer(EditorPerformance::kMatchMonitor);
+            for (const core::i32 value : kEditorFrameRates)
+                offer(value);
+            offer(EditorPerformance::kUnlimited);
+            ImGui::EndCombo();
+        }
+        preferenceHint(core::tr(ENG_TR("engine.editor.performance_preferences.frame_rate_hint")));
+    }
+    if (throttle) {
+        sectionName(core::tr(ENG_TR("engine.editor.performance_preferences.background_throttle")));
+        if (ImGui::Checkbox("##editor-throttle", &chosen.backgroundThrottle))
+            changeEditorPerformance(chosen);
+        preferenceHint(core::tr(ENG_TR("engine.editor.performance_preferences.background_throttle_hint")));
+    }
+    if (quality) {
+        sectionName(core::tr(ENG_TR("engine.editor.performance_preferences.viewport_quality")));
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::BeginCombo("##viewport-quality", viewportQualityName(chosen.viewportQuality).c_str())) {
+            for (core::i32 level = EditorPerformance::kProjectQuality;
+                 level < static_cast<core::i32>(std::size(QualityNames)); ++level) {
+                if (ImGui::Selectable(viewportQualityName(level).c_str(), chosen.viewportQuality == level)) {
+                    chosen.viewportQuality = level;
+                    changeEditorPerformance(chosen);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        preferenceHint(core::tr(ENG_TR("engine.editor.performance_preferences.viewport_quality_hint")));
+    }
+    if (saved) {
+        sectionName(core::tr(ENG_TR("engine.editor.performance_preferences.play_saved")));
+        if (ImGui::Checkbox("##play-saved", &chosen.playWithSavedSettings))
+            changeEditorPerformance(chosen);
+        preferenceHint(core::tr(ENG_TR("engine.editor.performance_preferences.play_saved_hint")));
+    }
+    endSectionGrid();
+    return found;
+}
+
 std::size_t drawIconPreferences(const PreferenceQuery& query, IconAtlas* icons)
 {
     if (icons == nullptr || !query.shows(core::tr(ENG_TR("engine.editor.icon_preferences.colour_icons_by_role"))))
@@ -11897,6 +12182,8 @@ std::size_t drawPreferencePage(PreferencePage page, const PreferenceQuery& query
         return drawAppearancePreferences(query, icons);
     case PreferencePage::Viewport:
         return drawViewportPreferences(query, editor);
+    case PreferencePage::Performance:
+        return drawPerformancePreferences(query);
     case PreferencePage::Icons:
         return drawIconPreferences(query, icons);
     case PreferencePage::ScriptColours:
@@ -19155,6 +19442,15 @@ void drawTimelinePanel(Timeline& timeline, Sequences& sequences, Editor* editor,
 void drawProfilerPanel(Profiler& profiler)
 {
     drawProfiler(profiler);
+}
+
+std::size_t drawPerformancePreferencesPage(std::string_view search)
+{
+    const bool pictures = g_picturesOnly;
+    g_picturesOnly = true;
+    const std::size_t found = drawPerformancePreferences(PreferenceQuery{.needle = search, .draw = true});
+    g_picturesOnly = pictures;
+    return found;
 }
 
 void DebugOverlay::setSurfaceCompiler(SurfaceCompiler* compiler) noexcept

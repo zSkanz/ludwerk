@@ -37,11 +37,15 @@ void usage()
 {
     std::cout << "usage: assetc --input <content-dir> --output <pack> --manifest <json> [--jobs N]\n"
                  "              [--shadercross <exe>] [--shader-include <dir>] [--require-surfaces]\n"
+                 "              [--cache <dir>]\n"
                  "\n"
                  "  Compiles a content directory into one .lpack and its manifest.\n"
                  "  Deterministic: the same inputs produce the same bytes, and --jobs 1 is how\n"
                  "  that is CHECKED rather than asserted: the same tree built serially and in\n"
-                 "  parallel must come out identical.\n";
+                 "  parallel must come out identical.\n"
+                 "  --cache answers a source from what an earlier compile of the same bytes,\n"
+                 "  name and options wrote there, and remembers what it compiles: the editor's\n"
+                 "  import cache is <project>/.engine/import/cache.\n";
 }
 
 [[nodiscard]] bool flagValue(int argc, char** argv, int& index, const char* name, std::string& out)
@@ -374,6 +378,7 @@ int main(int argc, char** argv)
     std::string jobsArgument;
     std::string shadercross;
     std::string shaderInclude;
+    std::string cache;
 
     bool requireSurfaces = false;
     for (int i = 1; i < argc; ++i) {
@@ -388,7 +393,7 @@ int main(int argc, char** argv)
         if (flagValue(argc, argv, i, "--input", input) || flagValue(argc, argv, i, "--output", output) ||
             flagValue(argc, argv, i, "--manifest", manifest) || flagValue(argc, argv, i, "--jobs", jobsArgument) ||
             flagValue(argc, argv, i, "--shadercross", shadercross) ||
-            flagValue(argc, argv, i, "--shader-include", shaderInclude)) {
+            flagValue(argc, argv, i, "--shader-include", shaderInclude) || flagValue(argc, argv, i, "--cache", cache)) {
             continue;
         }
         std::cout << "assetc: unknown option " << argv[i] << "\n";
@@ -429,6 +434,7 @@ int main(int argc, char** argv)
     CompileOptions options;
     options.inputRoot = input;
     options.requireSurfaces = requireSurfaces;
+    options.cacheRoot = cache;
     // **The surface shader compiler** (ADR 0091): given, or beside this binary
     // as a packaged editor carries it, or the build tree's own. The engine's
     // headers the same way: given, staged beside the binary, or the source
@@ -500,6 +506,10 @@ int main(int argc, char** argv)
               << result.materialCount << " material(s), " << result.surfaceCount << " surface shader(s), "
               << result.chunkCount << " chunk(s), " << result.rawCount << " raw file(s) -> " << result.pack.size()
               << " bytes\n";
+    if (!options.cacheRoot.empty()) {
+        std::cout << "assetc: cache: " << result.stats.cacheHits << " answered, " << result.stats.cacheMisses
+                  << " compiled\n";
+    }
     if (result.surfacesUncompiled > 0) {
         // Said, because the pack is complete and the game will run: what it
         // will not do is draw these, and a person should hear that now rather

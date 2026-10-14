@@ -327,3 +327,25 @@ same API.
   its box, for a language that says the thing in more letters. And `ludwerk
   check` no longer calls an engine key a game re-words in one locale a key
   nothing asks for.
+
+## As built, 2026-10-14: the editor's half
+
+Section 6 is built. **Preferences, Performance** keeps the editor's frame
+rate, its background throttle, the Viewport's level and "Play with my saved
+player settings" in `<userDir>/editor-performance.json`; a flag the editor was
+started with stands over a preference. The Viewport's level is the command
+line's layer while editing -- an editor is a development run -- unless the
+command line said one; a setting the project names itself keeps the project's
+value. In the editor the player's saved settings are Play's alone, and only
+with that preference on: the scene is edited, and Play starts, in the
+project's defaults. The Viewport's bar has the level a click away, with the
+frame rate.
+
+**The quality matrix needed a place for a level's own values**, and the file
+gains one table per level, `[graphics.low]` to `[graphics.ultra]`: what the
+project makes of that level, over the engine's preset of it, whoever chose
+the level -- the file, a platform's table or the command line. `[graphics]`
+refines a level as it refines any level, so a key there stands over the
+level's table. The platforms' column is `[graphics.<platform>] quality`, which
+section 2 already had.
+

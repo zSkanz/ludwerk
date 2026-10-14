@@ -48,6 +48,7 @@
 #include "engine/app/debug_overlay.h"
 #include "engine/app/dev_control.h"
 #include "engine/app/editor.h"
+#include "engine/app/editor_performance.h"
 #include "engine/app/field_streamer.h"
 #include "engine/app/frame_pacing.h"
 #include "engine/app/frame_scheduler.h"
@@ -1362,6 +1363,42 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             livePacing.adaptive = options.pacing.adaptive;
         }
     }
+    // **In the editor the player's saved settings are Play's, and only when
+    // asked for** (ADR 0147, section 6): the scene is edited, and Play starts,
+    // in the project's defaults, and "use my saved player settings" in
+    // Preferences tests the player's path. Kept aside here, and put in while
+    // Play runs with that preference on.
+    scene::GraphicsLayer editorSavedPlayer;
+    if (options.editor) {
+        editorSavedPlayer = graphicsHost.player;
+        if (graphicsHost.player.said.any()) {
+            graphicsHost.player = scene::GraphicsLayer{};
+            liveGraphics = graphicsSettingsOf(graphicsHost, Handheld, &options.graphics);
+        }
+        livePacing = options.pacing;
+    }
+    // **And the editor's own pace** (ADR 0147, section 6): the frame rate and
+    // the background throttle chosen in Preferences, where a flag the editor
+    // was started with did not say otherwise. Not in a run with no window:
+    // `--editor-shots` draws the same picture on every machine, whatever this
+    // person chose.
+    const bool editorPreferences = options.editor && !options.headless;
+    const EditorPacingFlags editorFlags{
+        .vsync = graphicsHost.commandLine.says(scene::GraphicsSetting::VSync),
+        .maxFrameRate = graphicsHost.commandLine.says(scene::GraphicsSetting::MaxFrameRate),
+        .backgroundFrameRate = graphicsHost.commandLine.says(scene::GraphicsSetting::BackgroundFrameRate),
+    };
+    const FramePacing editorBasePacing = livePacing;
+    core::u64 appliedEditorPerformance = 0;
+    if (editorPreferences) {
+        loadEditorPerformanceForProcess();
+        appliedEditorPerformance = editorPerformanceRevision();
+        livePacing = editorPacing(editorPerformance(), editorBasePacing, editorFlags);
+    }
+    // The viewport's quality in force, and whether Play has the player's
+    // saved settings: what the frame last applied.
+    core::i32 appliedViewportQuality = EditorPerformance::kProjectQuality;
+    bool appliedSavedPlayer = false;
     // What the window was last put in, so only a change moves it.
     struct WindowChoice
     {
@@ -3985,6 +4022,27 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // earlier tick does not bring back an old command line -- a script's
         // asks for the player's file are answered, and whatever is now in
         // force and was not is applied: ten writes in a frame, once.
+        // **The editor's preferences, as they are now** (ADR 0147, section
+        // 6): a change made in Preferences is in force the frame after.
+        core::i32 viewportQuality = EditorPerformance::kProjectQuality;
+        if (editorPreferences) {
+            if (editorPerformanceRevision() != appliedEditorPerformance) {
+                appliedEditorPerformance = editorPerformanceRevision();
+                const FramePacing pacing = editorPacing(editorPerformance(), editorBasePacing, editorFlags);
+                if (window != nullptr && device != nullptr && pacing.vsync != livePacing.vsync)
+                    applyVSync(*device, *window, pacing.vsync);
+                livePacing = pacing;
+            }
+            const bool playing = !editing(editor.runState());
+            if (!playing)
+                viewportQuality = editorPerformance().viewportQuality;
+            const bool savedPlayer = playing && editorPerformance().playWithSavedSettings;
+            if (savedPlayer != appliedSavedPlayer) {
+                appliedSavedPlayer = savedPlayer;
+                graphicsHost.player = savedPlayer ? editorSavedPlayer : scene::GraphicsLayer{};
+            }
+        }
+
         if (host != nullptr) {
             scene::EngineState& graphicsState = host->world().engineState();
             scene::GraphicsModel& live = graphicsState.graphics;
@@ -4044,6 +4102,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     graphicsHost.player = choices;
                     live.player = choices;
                     live.script = scene::GraphicsLayer{};
+                    editorSavedPlayer = choices;
                 }
                 script::resumeGraphicsWaiters(host->runtime().state(), false, done);
             }
@@ -4059,15 +4118,24 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 script::resumeGraphicsWaiters(host->runtime().state(), true, done);
             }
 
-            if (const core::u64 revision = live.revision(); revision != appliedGraphicsRevision) {
+            // **The viewport's preset while editing**, the command line's
+            // word over the project's -- an editor is a development run --
+            // unless the command line already said one: a heavy game edited
+            // on a light machine, the project untouched.
+            scene::GraphicsModel viewed;
+            const bool viewedApart = viewportModel(live, viewportQuality, viewed);
+            const scene::GraphicsModel& drawn = viewedApart ? viewed : live;
+            if (const core::u64 revision = drawn.revision();
+                revision != appliedGraphicsRevision || viewportQuality != appliedViewportQuality) {
                 appliedGraphicsRevision = revision;
-                liveGraphics = graphicsSettingsOf(live, Handheld, &options.graphics);
+                appliedViewportQuality = viewportQuality;
+                liveGraphics = graphicsSettingsOf(drawn, Handheld, &options.graphics);
                 if (renderer != nullptr)
                     renderer->setSettings(liveGraphics);
                 // For what is loaded from here on: a texture already on the
                 // card keeps the size it came in at.
-                meshLoader.setTextureSkip(textureSkipOf(live));
-                foliage.setSettings({.density = options.foliageDensity * static_cast<f32>(live.effective(
+                meshLoader.setTextureSkip(textureSkipOf(drawn));
+                foliage.setSettings({.density = options.foliageDensity * static_cast<f32>(drawn.effective(
                                                                              scene::GraphicsSetting::FoliageDensity)),
                                      .shadowDistance = options.foliageShadowDistance,
                                      .growthsPerSync = 8});

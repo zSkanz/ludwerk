@@ -12,6 +12,7 @@
 // engine does, and reading it here would be duplicating a decision.
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -230,6 +231,12 @@ struct ProjectConfig
     // `GraphicsService:GetSource` can say whose a value is. `graphics` above
     // is what these resolve to before either has spoken.
     scene::GraphicsModel graphicsModel;
+    // **Each level's own values**, `[graphics.low]` to `[graphics.ultra]`
+    // (ADR 0147, section 6, the quality matrix): what the project makes of a
+    // level, over what the engine's level gives. Already in `graphicsModel`'s
+    // presets; apart here, so the editor can say which values are the
+    // project's and which the engine's.
+    std::array<scene::GraphicsLayer, scene::kQualityPresets> levelSettings;
     // `[display] remember_player_settings`: whether the player's choices are
     // kept in their folder and read at start. On unless a game manages its own.
     bool rememberPlayerSettings = true;

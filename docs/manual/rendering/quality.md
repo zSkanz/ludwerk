@@ -47,6 +47,26 @@ quality = "low"           # high everywhere, low on a phone
 render_cap = 720
 ```
 
+## A level's own table
+
+What a level gives is the engine's, and a project can make a level its own:
+`[graphics.low]`, `[graphics.medium]`, `[graphics.high]`, `[graphics.ultra]`,
+with the same keys, are read over the engine's level -- whoever chose it: the
+file, a platform's table, the command line or a player. `[graphics]` refines
+a level as it refines any, so a key there stands over the level's table.
+Project Settings shows them side by side as **Quality levels**.
+
+```toml
+[graphics]
+quality = "high"
+
+[graphics.high]
+bloom = false            # this game's High has no bloom
+
+[graphics.low]
+render_cap = 540         # and its Low draws at 540 lines at most
+```
+
 ## On a phone
 
 **A handheld starts one level lower**: a project that names no level is

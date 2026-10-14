@@ -6,6 +6,7 @@
 #include <system_error>
 
 #include "engine/app/editor_performance.h"
+#include "engine/app/project_config.h"
 #include "engine/platform/file.h"
 
 using namespace engine;
@@ -131,4 +132,36 @@ TEST_CASE("a changed preference moves the revision, and the same one does not")
 
     app::setEditorPerformance(before);
     CHECK(app::editorPerformance() == before);
+}
+
+TEST_CASE("the viewport's quality is said over the project's, and a setting the project names itself stands")
+{
+    using scene::GraphicsSetting;
+    scene::GraphicsModel model;
+    app::seedGraphicsModel(model, {});
+    model.project.put(GraphicsSetting::QualityLevel, static_cast<core::f64>(scene::kQualityUltra));
+    const core::f64 low = model.presetValue(GraphicsSetting::ShadowQuality, scene::kQualityLow);
+    const core::f64 ultra = model.presetValue(GraphicsSetting::ShadowQuality, scene::kQualityUltra);
+    REQUIRE(low != ultra);
+
+    // The project's own, untouched.
+    scene::GraphicsModel viewed;
+    CHECK_FALSE(app::viewportModel(model, app::EditorPerformance::kProjectQuality, viewed));
+
+    // Low on a light machine: the scene is drawn at Low, and the model the
+    // game runs by is still the project's.
+    REQUIRE(app::viewportModel(model, scene::kQualityLow, viewed));
+    CHECK(viewed.preset() == scene::kQualityLow);
+    CHECK(viewed.effective(GraphicsSetting::ShadowQuality) == low);
+    CHECK(model.preset() == scene::kQualityUltra);
+    CHECK(model.effective(GraphicsSetting::ShadowQuality) == ultra);
+
+    // A setting the project names itself is the project's at any level.
+    model.project.put(GraphicsSetting::ShadowQuality, ultra);
+    REQUIRE(app::viewportModel(model, scene::kQualityLow, viewed));
+    CHECK(viewed.effective(GraphicsSetting::ShadowQuality) == ultra);
+
+    // And a level the editor was started with stands over the preference.
+    model.commandLine.put(GraphicsSetting::QualityLevel, static_cast<core::f64>(scene::kQualityHigh));
+    CHECK_FALSE(app::viewportModel(model, scene::kQualityLow, viewed));
 }

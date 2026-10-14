@@ -434,7 +434,8 @@ engine_add_module_tests(app
 if(ENG_BUILD_TESTS AND ENG_DEBUG_UI)
     target_sources(engine_app_tests PRIVATE tests/language_service_tests.cpp)
     # The Timeline panel, drawn against an ImGui with no window (ADR 0204).
-    target_sources(engine_app_tests PRIVATE tests/timeline_panel_tests.cpp tests/profiler_panel_tests.cpp)
+    target_sources(engine_app_tests PRIVATE tests/timeline_panel_tests.cpp tests/profiler_panel_tests.cpp
+                                           tests/performance_preferences_tests.cpp)
     target_link_libraries(engine_app_tests PRIVATE engine::imgui)
     target_link_libraries(engine_app_tests PRIVATE Luau.Analysis)
 
@@ -734,6 +735,18 @@ if(ENG_BUILD_TESTS)
             -DMIN_FILES=290
             -P ${CMAKE_SOURCE_DIR}/tests/assetdeterminism/run_determinism_gate.cmake)
     set_tests_properties(asset_determinism PROPERTIES TIMEOUT 600)
+
+    # An answer from the compiler's cache is the bytes a compile gives, and a
+    # second compile through it compiles nothing: what an export reading the
+    # editor's import cache rests on. And models compiled side by side are the
+    # models compiled with one worker. A tree of models with their pictures.
+    add_test(NAME asset_cache
+        COMMAND ${CMAKE_COMMAND}
+            -DASSETC=$<TARGET_FILE:assetc>
+            -DCONTENT=${CMAKE_SOURCE_DIR}/examples/37-character/content
+            -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/asset-cache
+            -P ${CMAKE_SOURCE_DIR}/tests/assetdeterminism/run_cache_gate.cmake)
+    set_tests_properties(asset_cache PROPERTIES TIMEOUT 300)
 
     # The streaming work's gate: the scripted five-minute fly-through over `examples/05-streaming`,
     # asserting peak memory under a declared ceiling and a frame-time histogram

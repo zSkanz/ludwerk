@@ -6,6 +6,7 @@
 #include <cstring>
 #include <map>
 #include <meshoptimizer.h>
+#include <mutex>
 #include <string>
 
 #include "engine/core/i18n.h"
@@ -214,7 +215,11 @@ private:
     if (indices.empty()) {
         return {};
     }
-    meshopt_encodeIndexVersion(IndexEncodeVersion);
+    // **Set once, not on every call**: the library keeps the version in a
+    // plain global, and models are compiled on several workers at once -- a
+    // write from each, even of the same number, is a data race.
+    static std::once_flag versioned;
+    std::call_once(versioned, [] { meshopt_encodeIndexVersion(IndexEncodeVersion); });
     std::vector<unsigned char> buffer(meshopt_encodeIndexBufferBound(indices.size(), vertexCount));
     const usize written = meshopt_encodeIndexBuffer(buffer.data(), buffer.size(), indices.data(), indices.size());
     std::vector<std::byte> out(written);

@@ -465,6 +465,10 @@ void drawTimelinePanel(Timeline& timeline, Sequences& sequences, Editor* editor,
 // **The Profiler panel's contents** (ADR 0210), the same way: the strip, the
 // transport and the five tabs, of whatever frames `profiler` holds.
 void drawProfilerPanel(Profiler& profiler);
+// **Preferences' Performance page** (ADR 0147, section 6), the same way: the
+// settings `search` finds, drawn, and how many. Nothing is written to the
+// person's own file while it draws.
+std::size_t drawPerformancePreferencesPage(std::string_view search);
 #endif
 
 } // namespace engine::app

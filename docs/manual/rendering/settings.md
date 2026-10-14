@@ -267,9 +267,40 @@ A game's options menu tried in Play changes the Viewport's picture, and not the
 editor's own window, sync or frame rate: the display's settings are the game's
 window's. Stop puts back what Play changed.
 
-Not built yet: the levels side by side as a matrix, the Viewport's own level,
-the editor's frame rate as a preference, and Play with a player's saved
-settings.
+**Quality levels**, below them, is the levels side by side: a column each
+for Low, Medium, High and Ultra and a row for each setting, each cell what that
+level gives. A cell the project changed is marked and is written to the level's
+own table, `[graphics.low]` to `[graphics.ultra]`; right-click gives the cell
+back to the engine. A setting ticked above stands over every level, as it did.
+Each platform can start at a level of its own -- `[graphics.android]
+quality = "low"` -- from the row of platforms over the table.
+
+```toml
+[graphics]
+quality = "high"
+
+[graphics.high]
+bloom = false      # this project's High has no bloom
+
+[graphics.android]
+quality = "medium" # and a phone starts at Medium
+```
+
+**Preferences, Performance** is the editor's, on this machine, and changes
+nothing in the project:
+
+- **Editor frame rate**: the display's (the default), 30 to 240 a second, or
+  as fast as it can draw. A flag the editor was started with
+  (`--max-frame-rate`, `--no-vsync`) stands over it.
+- **Slow down in the background**: ten frames a second while another window
+  is in front.
+- **Viewport quality**: the level the scene is drawn at while you edit it --
+  a heavy game on a light laptop. Play starts at the project's level. The
+  same choice is a click away on the Viewport's bar, beside how fast the
+  editor is drawing.
+- **Play with my saved player settings**: Play starts with what a game saved
+  for its player, rather than the project's defaults -- the path a player
+  takes.
 
 ## Where to look next
 

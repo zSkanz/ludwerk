@@ -28,6 +28,27 @@ here.
 
 - In a sequence, `"$$..."` is a string that begins with `$` where a value
   goes; the writer puts the second `$` back.
+- `assetc --cache <dir>`: a source is answered from what an earlier compile of
+  the same bytes, name and options wrote there.
+- Preferences, Performance: the editor's frame rate (the display's, 30 to 240,
+  or unlimited), its slowing down in the background, the Viewport's quality
+  while editing, and Play with the player's saved settings; the Viewport's
+  quality is also a click away on its bar.
+- Project Settings, Quality levels: the levels side by side, each cell the
+  engine's value or the project's own, and a level for each platform. A
+  level's own values are `[graphics.low]` to `[graphics.ultra]` in
+  `project.toml`.
+
+### Changed
+
+- In the editor, the scene is edited, and Play starts, in the project's
+  graphics settings; a player's saved ones are Play's only when asked for.
+- Models are compiled side by side, one to a worker, and give the same bytes
+  as with one; the character example compiles in 3 s where it took 14.
+- An export reads the editor's import cache: a model or a picture the editor
+  already compiled is not compiled again, and the export says how many it was
+  given. The cache's key now carries the mesh format, so every entry is
+  compiled once more the first time.
 
 ## [0.0.1]
 

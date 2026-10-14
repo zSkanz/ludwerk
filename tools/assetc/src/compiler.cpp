@@ -201,6 +201,12 @@ void hashPinned(core::ContentHasher& hasher, const CompileOptions& options)
 
     const core::u32 rules = kCompilerRules;
     hasher.update(std::as_bytes(std::span<const core::u32, 1>{&rules, 1}));
+    // **And the mesh format the answer is written in**: an editor and the
+    // compiler of another release can share one cache (an export reads the
+    // editor's), and a mesh in a format this build does not write is not this
+    // build's answer.
+    const core::u32 format = asset::MeshFormatVersion;
+    hasher.update(std::as_bytes(std::span<const core::u32, 1>{&format, 1}));
 }
 
 // The key for one source. Everything that could change the answer goes in, and
@@ -669,6 +675,144 @@ void putU64(std::vector<std::byte>& out, core::u64 value)
     return true;
 }
 
+// The bytes a mesh source is keyed on: its own, then the name and bytes of
+// each companion it reads (an image or a buffer beside a glTF), or its own
+// alone when it has none.
+[[nodiscard]] std::vector<std::byte> keyedMeshBytes(const std::filesystem::path& path, std::span<const std::byte> bytes)
+{
+    const std::vector<std::filesystem::path> companions = companionsOf(path);
+    if (companions.empty())
+        return {};
+    std::vector<std::byte> keyed(bytes.begin(), bytes.end());
+    for (const std::filesystem::path& companion : companions) {
+        const std::string name = companion.filename().generic_string();
+        const auto* text = reinterpret_cast<const std::byte*>(name.data());
+        keyed.insert(keyed.end(), text, text + name.size());
+        std::vector<std::byte> read;
+        if (readWhole(companion, read))
+            keyed.insert(keyed.end(), read.begin(), read.end());
+    }
+    return keyed;
+}
+
+// **A model compiled, before it is put in the pack**: its images encoded, the
+// whole mesh and each of its pieces encoded, and what a manifest row says of
+// each. Made the same way on a worker and in the serial loop, so the pack is
+// the same bytes however many workers ran.
+struct PreparedPiece
+{
+    std::string name;
+    std::vector<std::byte> bytes;
+    u32 lods = 0;
+    u32 vertices = 0;
+    u32 meshlets = 0;
+};
+
+struct PreparedMesh
+{
+    // Each image's encoded bytes, and whether it is colour.
+    std::vector<std::pair<bool, std::vector<std::byte>>> images;
+    PreparedPiece whole;
+    // Empty where the model is one piece: that piece IS the whole.
+    std::vector<PreparedPiece> pieces;
+};
+
+[[nodiscard]] PreparedPiece preparedPieceOf(const asset::CompiledMesh& compiled, std::string name)
+{
+    PreparedPiece out;
+    out.name = std::move(name);
+    out.bytes = asset::encodeMesh(compiled);
+    out.lods = static_cast<u32>(compiled.lods.size());
+    out.vertices = static_cast<u32>(compiled.vertices.size());
+    out.meshlets = static_cast<u32>(compiled.meshlets.meshlets.size());
+    return out;
+}
+
+// The model in `bytes`, compiled, or what is wrong with it.
+[[nodiscard]] std::optional<std::string> prepareMesh(const SourceFile& source, std::span<const std::byte> bytes,
+                                                     const CompileOptions& options, PreparedMesh& out)
+{
+    const std::string named = source.relative.generic_string();
+    asset::Model model;
+    asset::GltfImportOptions importOptions;
+    const std::string extension = lowercase(source.path.extension().string());
+    const auto imported = isExoticMesh(extension)
+                              ? importExotic(bytes, source.path.parent_path(), extension, model)
+                              : asset::importGltf(bytes, source.path.parent_path(), importOptions, model);
+    if (imported)
+        return named + ": " + imported->message;
+
+    // Every image the file carries becomes its own blob, named by what it
+    // contains -- so a texture shared by forty meshes is one blob rather than
+    // forty, and that is the whole point of addressing content by hash.
+    // **Which images are colour and which are numbers**, decided by what
+    // REFERENCES them rather than by what they look like. Base colour and
+    // emissive are colour; normal and metallic-roughness are data, and running
+    // them through an sRGB curve bends every value by a smooth amount that
+    // reads as bad lighting rather than as a broken texture.
+    //
+    // An image used as BOTH -- which an exporter packing roughness into a
+    // colour map produces -- is encoded as colour. That is the wrong answer for
+    // one of its two uses and the right one for the other, and it is the choice
+    // that keeps a shared blob a shared blob; splitting it would mean the same
+    // pixels twice in the pack under two names.
+    std::vector<bool> colourData(model.images.size(), false);
+    for (const asset::MaterialDef& material : model.materials) {
+        if (material.baseColor.present() && material.baseColor.image < colourData.size())
+            colourData[material.baseColor.image] = true;
+        if (material.emissive.present() && material.emissive.image < colourData.size())
+            colourData[material.emissive.image] = true;
+    }
+
+    // A slot names its image by the hash the pack will give it, which is the
+    // hash of its bytes: known here, before any pack exists.
+    std::vector<asset::TextureSlot> slots;
+    slots.reserve(model.images.size());
+    for (usize imageIndex = 0; imageIndex < model.images.size(); ++imageIndex) {
+        const bool srgb = colourData[imageIndex];
+        std::vector<std::byte> encoded;
+        if (const auto error = encodeTexture(model.images[imageIndex], srgb, encoded))
+            return named + ": " + error->message;
+        asset::TextureSlot slot;
+        slot.hash = core::hashBytes(encoded);
+        slot.srgb = srgb;
+        slots.push_back(slot);
+        out.images.emplace_back(srgb, std::move(encoded));
+    }
+
+    asset::CompiledMesh compiled;
+    if (const auto error = asset::compileMesh(model, slots, options.mesh, compiled))
+        return named + ": " + error->message;
+    out.whole = preparedPieceOf(compiled, {});
+
+    // --- And one blob per primitive, under a fragment (the compiled-assets work) ---
+    //
+    // **A model arrives as one opaque `MeshPart` and that is the wrong shape**:
+    // five materials become five submeshes of one part, so there is nothing to
+    // select, nothing to give a material to and nothing for a `Model.Scale` to
+    // scale. **Emitted BESIDE the whole model rather than instead of it**, and
+    // it stays that way (ADR 0065): every scene naming
+    // `asset://models/horse.gltf` resolves to exactly the blob it resolved to
+    // before, and one naming `asset://models/horse.gltf#Body` resolves to the
+    // piece. One piece is the whole model -- every static single-primitive file
+    // and every skinned file -- and a fragment for it would be a second name
+    // for one blob.
+    //
+    // The fragment IS the piece's name, which is also the instance name the
+    // editor gives it -- so a person reading a scene sees the same word the
+    // Explorer shows them.
+    const std::vector<asset::ModelPiece> pieces = asset::splitByPrimitive(model);
+    if (pieces.size() > 1) {
+        for (const asset::ModelPiece& piece : pieces) {
+            asset::CompiledMesh compiledPiece;
+            if (const auto error = asset::compileMesh(piece.model, slots, options.mesh, compiledPiece))
+                return named + "#" + piece.name + ": " + error->message;
+            out.pieces.push_back(preparedPieceOf(compiledPiece, piece.name));
+        }
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 CompileResult compile(const CompileOptions& options)
@@ -795,6 +939,57 @@ CompileResult compile(const CompileOptions& options)
         }
     }
 
+    // --- Models compiled side by side, merged in source order ---------------
+    //
+    // **The same discipline as the pictures above**: each model is imported,
+    // its images encoded and the whole of it and its pieces compiled on a
+    // worker, into its own SOURCE slot, and the serial loop below puts each in
+    // the pack in source order -- so the pack is the bytes a serial build
+    // makes, which `--jobs 1` and `tests/assetdeterminism` hold it to. A model
+    // the cache is about to answer for is not compiled here. One that fails
+    // leaves its slot empty and the serial loop compiles it again, and says
+    // what went wrong with it.
+    std::vector<std::optional<PreparedMesh>> preCompiled(sources.size());
+    {
+        std::vector<usize> meshIndices;
+        for (usize index = 0; index < sources.size(); ++index) {
+            if (sources[index].kind == SourceKind::Mesh)
+                meshIndices.push_back(index);
+        }
+        if (meshIndices.size() > 1) {
+            jobs::parallelFor(
+                "assetc.mesh.compile", jobs::Domain::Tooling, 0, meshIndices.size(), 1,
+                [&](usize begin, usize end, core::u32 bucket) noexcept {
+                    (void)bucket;
+                    // Nothing may leave this body, for the pictures' reason.
+                    try {
+                        for (usize at = begin; at < end; ++at) {
+                            const usize index = meshIndices[at];
+                            const SourceFile& source = sources[index];
+                            std::vector<std::byte> raw;
+                            if (!readWhole(source.path, raw))
+                                continue;
+                            if (!options.cacheRoot.empty()) {
+                                const std::vector<std::byte> withCompanions = keyedMeshBytes(source.path, raw);
+                                const ContentHash key =
+                                    cacheKey(withCompanions.empty() ? std::span<const std::byte>(raw)
+                                                                    : std::span<const std::byte>(withCompanions),
+                                             urnFor(source.relative), options, SourceKind::Mesh, true);
+                                std::error_code ec;
+                                if (std::filesystem::is_regular_file(cachePathFor(options.cacheRoot, key), ec))
+                                    continue;
+                            }
+                            PreparedMesh prepared;
+                            if (!prepareMesh(source, raw, options, prepared).has_value())
+                                preCompiled[index] = std::move(prepared);
+                        }
+                    } catch (...) {
+                        // Left for the serial loop.
+                    }
+                });
+        }
+    }
+
     // **Materials last**: a compiled material carries the content hash of each
     // texture it names, and those are known once the textures are in the pack.
     // Not cached -- a material is a few hundred bytes of JSON and compiling one
@@ -845,21 +1040,9 @@ CompileResult compile(const CompileOptions& options)
         const bool cacheable = options.cacheRoot.empty() ? false : source.kind != SourceKind::Chunk;
         // A source's companions are part of what it is: their names and
         // bytes after its own, for the key alone.
-        std::vector<std::byte> withCompanions;
-        if (cacheable && source.kind == SourceKind::Mesh) {
-            const std::vector<std::filesystem::path> companions = companionsOf(source.path);
-            if (!companions.empty()) {
-                withCompanions = bytes;
-                for (const std::filesystem::path& companion : companions) {
-                    const std::string name = companion.filename().generic_string();
-                    const auto* text = reinterpret_cast<const std::byte*>(name.data());
-                    withCompanions.insert(withCompanions.end(), text, text + name.size());
-                    std::vector<std::byte> read;
-                    if (readWhole(companion, read))
-                        withCompanions.insert(withCompanions.end(), read.begin(), read.end());
-                }
-            }
-        }
+        const std::vector<std::byte> withCompanions = cacheable && source.kind == SourceKind::Mesh
+                                                          ? keyedMeshBytes(source.path, bytes)
+                                                          : std::vector<std::byte>{};
         const std::span<const std::byte> keyed =
             withCompanions.empty() ? std::span<const std::byte>(bytes) : std::span<const std::byte>(withCompanions);
         const ContentHash key = cacheable ? cacheKey(keyed, urn, options, source.kind, textureIsColour) : ContentHash{};
@@ -906,144 +1089,47 @@ CompileResult compile(const CompileOptions& options)
 
         switch (source.kind) {
         case SourceKind::Mesh: {
-            asset::Model model;
-            asset::GltfImportOptions importOptions;
-            const std::string extension = lowercase(source.path.extension().string());
-            const auto imported = isExoticMesh(extension)
-                                      ? importExotic(bytes, source.path.parent_path(), extension, model)
-                                      : asset::importGltf(bytes, source.path.parent_path(), importOptions, model);
-            if (imported) {
-                result.diagnostic = source.relative.generic_string() + ": " + imported->message;
+            // **Taken from the parallel pass when it compiled one**, and
+            // compiled here otherwise -- by the same function, so the bytes
+            // are the same and the diagnostic is said here.
+            const usize sourceIndex = static_cast<usize>(&source - sources.data());
+            PreparedMesh prepared;
+            if (preCompiled[sourceIndex].has_value()) {
+                prepared = std::move(*preCompiled[sourceIndex]);
+            }
+            else if (std::optional<std::string> wrong = prepareMesh(source, bytes, options, prepared)) {
+                result.diagnostic = std::move(*wrong);
                 return result;
             }
-
-            // Every image the file carries becomes its own blob, named by what
-            // it contains -- so a texture shared by forty meshes is one blob
-            // rather than forty, and that is the whole point of addressing
-            // content by hash.
-            // **Which images are colour and which are numbers**, decided by
-            // what REFERENCES them rather than by what they look like. Base
-            // colour and emissive are colour; normal and metallic-roughness are
-            // data, and running them through an sRGB curve bends every value by
-            // a smooth amount that reads as bad lighting rather than as a broken
-            // texture.
-            //
-            // Every image this compiler has ever produced was marked sRGB,
-            // because the field was written `true` with a comment saying the
-            // material would decide and nothing ever did.
-            //
-            // An image used as BOTH -- which an exporter packing roughness into
-            // a colour map produces -- is encoded as colour. That is the wrong
-            // answer for one of its two uses and the right one for the other,
-            // and it is the choice that keeps a shared blob a shared blob;
-            // splitting it would mean the same pixels twice in the pack under
-            // two names.
-            std::vector<bool> colourData(model.images.size(), false);
-            for (const asset::MaterialDef& material : model.materials) {
-                if (material.baseColor.present() && material.baseColor.image < colourData.size())
-                    colourData[material.baseColor.image] = true;
-                if (material.emissive.present() && material.emissive.image < colourData.size())
-                    colourData[material.emissive.image] = true;
-            }
-
-            std::vector<asset::TextureSlot> slots;
-            slots.reserve(model.images.size());
-            for (usize imageIndex = 0; imageIndex < model.images.size(); ++imageIndex) {
-                const bool srgb = colourData[imageIndex];
-                std::vector<std::byte> encoded;
-                const auto error = encodeTexture(model.images[imageIndex], srgb, encoded);
-                if (error) {
-                    result.diagnostic = source.relative.generic_string() + ": " + error->message;
-                    return result;
-                }
-                asset::TextureSlot slot;
-                slot.hash = pack.addContent(AssetKind::Texture, encoded);
-                slot.srgb = srgb;
-                slots.push_back(slot);
+            for (const auto& [srgb, encoded] : prepared.images) {
+                (void)srgb;
+                (void)pack.addContent(AssetKind::Texture, encoded);
                 result.textureCount += 1;
                 result.stats.texturesEncoded += 1;
                 remember(AssetKind::Texture, encoded);
             }
-
-            asset::CompiledMesh compiled;
-            if (const auto error = asset::compileMesh(model, slots, options.mesh, compiled)) {
-                result.diagnostic = source.relative.generic_string() + ": " + error->message;
-                return result;
-            }
-
-            const std::vector<std::byte> encoded = asset::encodeMesh(compiled);
-            ManifestEntry entry;
-            entry.urn = urn;
-            entry.hash = pack.addContent(AssetKind::Mesh, encoded);
-            entry.kind = AssetKind::Mesh;
-            entry.originalBytes = bytes.size();
-            entry.storedBytes = encoded.size();
-            entry.lodCount = static_cast<u32>(compiled.lods.size());
-            entry.vertexCount = static_cast<u32>(compiled.vertices.size());
-            entry.meshletCount = static_cast<u32>(compiled.meshlets.meshlets.size());
-            result.stats.meshesCompiled += 1;
-            remember(AssetKind::Mesh, encoded);
-            rememberEntry(entry);
-            manifest.push_back(std::move(entry));
-            result.meshCount += 1;
-
-            // --- And one blob per primitive, under a fragment (the compiled-assets work) ---
-            //
-            // **A model arrives as one opaque `MeshPart` and that is the wrong
-            // shape**: five materials become five submeshes of one part, so
-            // there is nothing to select, nothing to give a material to and
-            // nothing for a `Model.Scale` to scale. `splitByPrimitive` has cut
-            // an `asset::Model` into named pieces since the compiled-assets work opened and had no
-            // caller outside its own tests.
-            //
-            // **Emitted BESIDE the whole model rather than instead of it**,
-            // and it stays that way (ADR 0065). Every scene naming
-            // `asset://models/horse.gltf` resolves to exactly the blob it
-            // resolved to before, and one naming
-            // `asset://models/horse.gltf#Body` resolves to the piece.
-            //
-            // This note used to say the cut-over would remove the whole-model
-            // row. It does not, and the reason is below: one piece IS the whole
-            // model, so a single-primitive file and every skinned file have the
-            // whole-model row as their only name. What made the row look
-            // redundant was the import placing a `Model` of named parts -- true
-            // of new content, and silent about the scenes that already name the
-            // model.
-            //
-            // The fragment IS the piece's name, which is also the instance name the editor gives it --
-            // so a person reading a scene sees the same word the Explorer shows
-            // them.
-            const std::vector<asset::ModelPiece> pieces = asset::splitByPrimitive(model);
-            // One piece is the whole model, which every static single-primitive
-            // file and every skinned file produces. Emitting a fragment for it
-            // would be a second name for one blob.
-            if (pieces.size() > 1) {
-                for (const asset::ModelPiece& piece : pieces) {
-                    asset::CompiledMesh compiledPiece;
-                    if (const auto error = asset::compileMesh(piece.model, slots, options.mesh, compiledPiece)) {
-                        result.diagnostic = source.relative.generic_string() + "#" + piece.name + ": " + error->message;
-                        return result;
-                    }
-
-                    const std::vector<std::byte> pieceBytes = asset::encodeMesh(compiledPiece);
-                    ManifestEntry pieceEntry;
-                    pieceEntry.urn = urn + "#" + piece.name;
-                    pieceEntry.hash = pack.addContent(AssetKind::Mesh, pieceBytes);
-                    pieceEntry.kind = AssetKind::Mesh;
-                    // The SOURCE file's size, because that is what this piece
-                    // came out of and there is no smaller original to name.
-                    pieceEntry.originalBytes = bytes.size();
-                    pieceEntry.storedBytes = pieceBytes.size();
-                    pieceEntry.lodCount = static_cast<u32>(compiledPiece.lods.size());
-                    pieceEntry.vertexCount = static_cast<u32>(compiledPiece.vertices.size());
-                    pieceEntry.meshletCount = static_cast<u32>(compiledPiece.meshlets.meshlets.size());
-                    result.stats.meshesCompiled += 1;
-                    remember(AssetKind::Mesh, pieceBytes);
-                    rememberEntry(pieceEntry);
-                    manifest.push_back(std::move(pieceEntry));
-                    result.meshCount += 1;
-                }
-            }
+            // The whole model, then each piece under its fragment.
+            const auto put = [&](const PreparedPiece& piece, std::string pieceUrn) {
+                ManifestEntry entry;
+                entry.urn = std::move(pieceUrn);
+                entry.hash = pack.addContent(AssetKind::Mesh, piece.bytes);
+                entry.kind = AssetKind::Mesh;
+                // The SOURCE file's size, because that is what a piece came
+                // out of and there is no smaller original to name.
+                entry.originalBytes = bytes.size();
+                entry.storedBytes = piece.bytes.size();
+                entry.lodCount = piece.lods;
+                entry.vertexCount = piece.vertices;
+                entry.meshletCount = piece.meshlets;
+                result.stats.meshesCompiled += 1;
+                remember(AssetKind::Mesh, piece.bytes);
+                rememberEntry(entry);
+                manifest.push_back(std::move(entry));
+                result.meshCount += 1;
+            };
+            put(prepared.whole, urn);
+            for (const PreparedPiece& piece : prepared.pieces)
+                put(piece, urn + "#" + piece.name);
             break;
         }
 

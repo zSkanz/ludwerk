@@ -460,6 +460,74 @@ TEST_CASE("a platform has a table of its own, over the project's (ADR 0147)")
           0u);
 }
 
+TEST_CASE("a level has a table of its own, under the project's own word (ADR 0147, the quality matrix)")
+{
+    const ProjectDir project("[graphics]\n"
+                             "quality = \"high\"\n"
+                             "shadow_distance = 140.0\n"
+                             "\n"
+                             "[graphics.high]\n"
+                             "bloom = false\n"
+                             "shadow_distance = 300.0\n"
+                             "render_cap = 900\n"
+                             "\n"
+                             "[graphics.low]\n"
+                             "render_cap = 480\n");
+    const app::ProjectConfig config = app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, false);
+    // High, as the project made it: the bloom off and the cap its own -- and
+    // the project's `[graphics]` over the level, as over any level.
+    CHECK(config.graphics.quality == render::QualityLevel::High);
+    CHECK_FALSE(config.graphics.bloom);
+    CHECK(config.graphics.renderResolutionCap == 900u);
+    CHECK(sameMetres(config.graphics.shadowDistance, 140.0f));
+
+    // The model says the same, level by level, and keeps the levels' own apart.
+    using scene::GraphicsSetting;
+    const auto high = static_cast<core::i32>(render::QualityLevel::High);
+    const auto low = static_cast<core::i32>(render::QualityLevel::Low);
+    CHECK(config.graphicsModel.presetValue(GraphicsSetting::Bloom, high) == 0.0);
+    CHECK(config.graphicsModel.presetValue(GraphicsSetting::RenderResolutionCap, low) == 480.0);
+    CHECK(config.graphicsModel.effective(GraphicsSetting::ShadowDistance) == doctest::Approx(140.0));
+    CHECK(config.levelSettings[static_cast<std::size_t>(high)].says(GraphicsSetting::Bloom));
+    CHECK_FALSE(config.levelSettings[static_cast<std::size_t>(low)].says(GraphicsSetting::Bloom));
+
+    // **Whoever chose the level**: the command line's Low is the project's Low.
+    app::GraphicsOverrides lowered;
+    lowered.quality = render::QualityLevel::Low;
+    const app::ProjectConfig onLow = app::loadProjectConfig(project.path, lowered, nullptr, false);
+    CHECK(onLow.graphics.renderResolutionCap == 480u);
+}
+
+TEST_CASE("a level's table and a platform's level, written as the editor's matrix writes them, read back")
+{
+    const ProjectDir project("[project]\nname = \"Matrix\"\n\n[graphics]\nquality = \"medium\"\n");
+    std::string diagnostic;
+    // `graphics.<level>.<setting>` and `graphics.<platform>.quality`, the keys
+    // the quality matrix writes.
+    REQUIRE_MESSAGE(
+        app::writeProjectSetting(project.path, "graphics.medium.bloom", engine::core::tomlBoolean(false), &diagnostic),
+        diagnostic);
+    REQUIRE_MESSAGE(app::writeProjectSetting(project.path, "graphics.ultra.render_cap",
+                                             engine::core::tomlNumber(1440.0), &diagnostic),
+                    diagnostic);
+    REQUIRE_MESSAGE(app::writeProjectSetting(project.path, "graphics.android.quality", engine::core::tomlString("low"),
+                                             &diagnostic),
+                    diagnostic);
+    const app::ProjectConfig desktop = app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, false);
+    CHECK(desktop.graphics.quality == render::QualityLevel::Medium);
+    CHECK_FALSE(desktop.graphics.bloom);
+    CHECK(desktop.levelSettings[3].says(scene::GraphicsSetting::RenderResolutionCap));
+    CHECK(desktop.graphicsModel.presetValue(scene::GraphicsSetting::RenderResolutionCap, 3) == 1440.0);
+    const app::ProjectConfig phone = app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, true);
+    CHECK(phone.graphics.quality == render::QualityLevel::Low);
+
+    // Taken out, the level is the engine's again.
+    REQUIRE_MESSAGE(app::removeProjectSetting(project.path, "graphics.medium.bloom", &diagnostic), diagnostic);
+    CHECK_FALSE(app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, false)
+                    .levelSettings[1]
+                    .says(scene::GraphicsSetting::Bloom));
+}
+
 TEST_CASE("a project asks for a line about its frames every few seconds")
 {
     const ProjectDir silent("[project]\nname = \"Silent\"\n");

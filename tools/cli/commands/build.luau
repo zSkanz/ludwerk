@@ -407,6 +407,10 @@ local function run(options: Options): number
             -- `--require-surfaces`: a surface shader that cannot be compiled
             -- stops the build. Packed as source it drew as the error
             -- surface in every copy of the game, and the build said nothing.
+            -- `--cache`: the editor's import cache, so what the editor
+            -- compiled is not compiled again -- a key is the source's bytes,
+            -- its name and the compiler's options and rules, so an answer
+            -- from it is the one a compile would give.
             local built = process.run({
                 assetc,
                 "--input",
@@ -416,6 +420,8 @@ local function run(options: Options): number
                 "--manifest",
                 manifest,
                 "--require-surfaces",
+                "--cache",
+                projectlib.joined(project.root, ".engine", "import", "cache"),
             })
             if not built.ok then
                 return built.stdout .. built.stderr .. "\n" .. tr("cli.assets.err.failed")
@@ -425,6 +431,10 @@ local function run(options: Options): number
             local summary = string.match(built.stdout, "(assetc: %d+ mesh[^\r\n]*)")
             if summary ~= nil then
                 progress.note(reporter, summary)
+            end
+            local reused = string.match(built.stdout, "(assetc: cache:[^\r\n]*)")
+            if reused ~= nil then
+                progress.note(reporter, reused)
             end
             sidePack = pack
             sideManifest = manifest

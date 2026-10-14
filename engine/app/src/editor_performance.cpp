@@ -135,4 +135,14 @@ void loadEditorPerformanceForProcess()
     state.revision += 1;
 }
 
+bool viewportModel(const scene::GraphicsModel& model, core::i32 quality, scene::GraphicsModel& out)
+{
+    if (quality < kLowestQuality || quality > kHighestQuality ||
+        model.commandLine.says(scene::GraphicsSetting::QualityLevel))
+        return false;
+    out = model;
+    out.commandLine.put(scene::GraphicsSetting::QualityLevel, static_cast<core::f64>(quality));
+    return true;
+}
+
 } // namespace engine::app

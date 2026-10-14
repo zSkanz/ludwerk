@@ -13,6 +13,7 @@
 
 #include "engine/app/frame_pacing.h"
 #include "engine/core/types.h"
+#include "engine/scene/graphics_model.h"
 
 namespace engine::app {
 
@@ -76,5 +77,13 @@ struct EditorPacingFlags
 void setEditorPerformance(const EditorPerformance& performance);
 // Reads the user's file into the process's copy. Once, when an editor starts.
 void loadEditorPerformanceForProcess();
+
+// **The scene as the Viewport draws it while editing**: `model` with
+// `quality` said by the command line's layer -- an editor is a development
+// run -- unless the command line already says one, which stands. A setting
+// the project names itself keeps the project's value, as it does at any
+// level. `kProjectQuality` is the model as it is; false is returned then, and
+// `out` is not written.
+[[nodiscard]] bool viewportModel(const scene::GraphicsModel& model, core::i32 quality, scene::GraphicsModel& out);
 
 } // namespace engine::app

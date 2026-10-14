@@ -133,6 +133,14 @@ void applyFile(const core::TomlDocument& document, std::string_view table, Graph
 // over `[graphics]`, as those engines' quality matrices give each platform
 // its own column. A handheld is Android; a desktop is the system it was built
 // for.
+// The table of one level's own values: `graphics.low` to `graphics.ultra`.
+[[nodiscard]] std::string levelTable(render::QualityLevel level)
+{
+    static constexpr std::array<std::string_view, 4> Names{"low", "medium", "high", "ultra"};
+    const auto index = std::min(static_cast<usize>(level), Names.size() - 1);
+    return "graphics." + std::string(Names[index]);
+}
+
 [[nodiscard]] std::string_view platformTable(bool handheld) noexcept
 {
     if (handheld)
@@ -843,6 +851,10 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     // outer layer: `--quality=low` on a project that asks for ultra is somebody
     // saying "not on this machine".
     config.graphics = presetFor(overrides.quality.value_or(level), handheld);
+    // **A level is what the project made of it**: `[graphics.low]` is the
+    // project's Low, whoever chose Low -- the file, a platform or the command
+    // line -- and `[graphics]` refines that as it refines any level.
+    applyFile(document, levelTable(overrides.quality.value_or(level)), config.graphics);
 
     // **And when it wins, it wins whole.** A file's per-key graphics
     // entries are refinements OF the level it names -- "high, but the shadows
@@ -864,6 +876,18 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.graphics.frameGeneration = *value;
     applyOverrides(overrides, config.graphics);
     config.graphics = render::clampSettings(config.graphics);
+
+    // **The levels as the project made them** (ADR 0147, section 6): each
+    // `[graphics.<level>]` over the engine's preset of that level.
+    for (usize index = 0; index < scene::kQualityPresets; ++index) {
+        GraphicsLayer& made = config.levelSettings[index];
+        sayTable(document, levelTable(static_cast<render::QualityLevel>(index)), false, made);
+        for (usize setting = 0; setting < scene::kGraphicsSettingCount; ++setting) {
+            const auto which = static_cast<GraphicsSetting>(setting);
+            if (made.says(which))
+                config.graphicsModel.presets[index].put(which, made.at(which));
+        }
+    }
 
     // **The same, as the project's layer of the model** (ADR 0147): the level
     // the file names and each key it gives -- its refinements left out under a
