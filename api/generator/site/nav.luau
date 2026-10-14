@@ -108,7 +108,7 @@ local Sections: { Section } = {
     {
         Slug = "physics",
         Title = "Physics",
-        Summary = "Rigid bodies, collisions, queries, joints, movers, and a character that walks.",
+        Summary = "Rigid bodies, collisions, queries, joints, movers, a character that walks, vehicles, and destruction.",
         Pages = {
             { Slug = "bodies", Title = "Rigid bodies" },
             { Slug = "collisions", Title = "Collisions and contact" },
@@ -117,6 +117,8 @@ local Sections: { Section } = {
             { Slug = "movers", Title = "Movers and powered joints" },
             { Slug = "character", Title = "CharacterBody" },
             { Slug = "ragdoll", Title = "Ragdolls" },
+            { Slug = "vehicles", Title = "Vehicles" },
+            { Slug = "destruction", Title = "Destruction" },
         },
     },
     {
@@ -170,6 +172,7 @@ local Sections: { Section } = {
             { Slug = "retargeting", Title = "Retargeting: one clip on many bodies" },
             { Slug = "reach-and-look", Title = "Reaching, looking and feet" },
             { Slug = "secondary-motion", Title = "Capes, tails and hair" },
+            { Slug = "cloth", Title = "Cloth" },
             { Slug = "morph-targets", Title = "Faces and shape keys" },
             { Slug = "wearing-and-holding", Title = "Wearing and holding" },
             { Slug = "cinematics", Title = "Cinematics: a sequence, and what plays it" },

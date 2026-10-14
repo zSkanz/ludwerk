@@ -459,6 +459,20 @@ u64 World::worldHash() const
                     hasher.pod(tile);
             }
         }
+        // A vehicle's engine and wheels (ADR 0213): the clutch, and each
+        // wheel's spin, angle and steering -- simulation state the next tick
+        // starts from, carried to a replica, and in no property.
+        // And who drives, by user id: the property answers a player, and none
+        // where no player of that number is on this machine.
+        if (const VehicleControllerComponent* vehicle = m_vehicleControllers.find(id); vehicle != nullptr) {
+            hasher.number(vehicle->clutch);
+            hasher.pod(vehicle->driver);
+        }
+        if (const VehicleWheelComponent* wheel = m_vehicleWheels.find(id); wheel != nullptr) {
+            hasher.number(wheel->angularVelocity);
+            hasher.number(wheel->rotation);
+            hasher.number(wheel->steerAngle);
+        }
         // How far into its frame an animator is, which decides the tick it turns
         // the page on, and whether it ran out -- neither is a property.
         if (const SpriteAnimatorComponent* animator = m_spriteAnimators.find(id); animator != nullptr) {

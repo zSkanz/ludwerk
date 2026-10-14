@@ -1,0 +1,10 @@
+# The netcode gate of a driven vehicle (ADR 0213): a car each player drives by
+# their intents, predicted on their machine, measured under a worse network.
+# `run_netcode_vehicle.cmake` copies it for each condition and writes
+# `src/client/Condition.module.luau` into the copy.
+
+[project]
+name = "Netcode Vehicle"
+id = "dev.ludwerk.netcode-vehicle"
+version = "1.0.0"
+engine = "0.1"

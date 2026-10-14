@@ -1,0 +1,15 @@
+# The cloth cape example's project file: it loads two models, and a model is
+# found under `content/`, which a project.toml is what makes of a folder.
+
+[project]
+name = "Ludwerk Cloth Cape"
+id = "dev.ludwerk.cloth-cape"
+version = "1.0.0"
+engine = "0.1"
+# The figures, their capes, the wall and the wind are a scene on disk, so the
+# example opens in the editor with them; the script only moves one figure.
+scene = "scenes/cloth.scene.json"
+
+[window]
+title = "Ludwerk — Cloth Cape"
+size = [1600, 900]

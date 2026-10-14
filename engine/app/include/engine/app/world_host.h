@@ -37,6 +37,7 @@
 #include "engine/physics/backends.h"
 #include "engine/platform/game_integration.h"
 #include "engine/render/animation.h"
+#include "engine/render/cloth.h"
 #include "engine/render/draw_poses.h"
 #include "engine/render/ik_controls.h"
 #include "engine/render/spring_bones.h"
@@ -692,7 +693,12 @@ public:
     // pose a frame is drawn with is made in one order -- what reaches and
     // looks, then the feet, then the chains that hang from all of it -- and
     // then what is held to a bone is drawn where the frame has the bone.
-    void stepSecondaryMotion(render::DrawPoses& poses, render::SpringFrame frame, const render::IkFrame& limbs)
+    //
+    // **And, after all of it, its cloth** (ADR 0214): hung from the pose the
+    // chains and the limbs left, in a physics world of its own, and kept out
+    // of the anchored parts near it as this host's own world reports them.
+    void stepSecondaryMotion(render::DrawPoses& poses, render::SpringFrame frame, const render::IkFrame& limbs,
+                             render::ClothFrame cloth = {}, const render::MeshLibrary* meshes = nullptr)
     {
         if (!m_animation)
             return;
@@ -701,8 +707,15 @@ public:
         frame.afterLimbs = true;
         m_springs.update(world(), *m_animation, poses, frame);
         render::IkControls::carryHeld(world(), *m_animation, poses);
+        if (meshes != nullptr) {
+            if (!cloth.obstacles && m_physics && world().cloths().size() != 0)
+                cloth.obstacles = [this](const core::CFrameD& box, core::Vec3 size,
+                                         std::vector<render::ClothObstacle>& out) { clothObstacles(box, size, out); };
+            m_cloth.update(world(), *m_animation, poses, *meshes, m_backend.get(), cloth);
+        }
     }
     [[nodiscard]] const render::SpringBones& secondaryMotion() const noexcept { return m_springs; }
+    [[nodiscard]] const render::ClothSystem& cloth() const noexcept { return m_cloth; }
     [[nodiscard]] const render::IkControls& limbs() const noexcept { return m_limbs; }
 
     // What a frame's extraction reached of the world's rigs: `fresh` for
@@ -954,6 +967,11 @@ private:
     std::vector<std::pair<core::InstanceId, core::u64>> m_graphDigests;
     std::optional<render::AnimationSystem> m_animation;
     render::SpringBones m_springs;
+    // After the backend it makes its world in, so it is gone first.
+    render::ClothSystem m_cloth;
+    std::vector<core::u64> m_clothNear;
+    // The anchored parts the host's own world has in a box, for a cloth.
+    void clothObstacles(const core::CFrameD& box, core::Vec3 size, std::vector<render::ClothObstacle>& out);
     Mouths m_mouths;
     Sequences m_sequences;
     render::IkControls m_limbs;

@@ -1,0 +1,7 @@
+{
+  "hud.speed": "{speed} km/h",
+  "hud.gear": "Marcha {gear}",
+  "hud.reverse": "Ré",
+  "hud.neutral": "Ponto morto",
+  "hud.keys": "W A S D ou o analógico: dirigir   Espaço ou B: freio de mão   R ou Y: desvirar o carro"
+}

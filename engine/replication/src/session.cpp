@@ -4651,6 +4651,38 @@ void ReplicaSession::updatePredicted(scene::World& world)
         if (character != nullptr && world.characterBodies().find(own->second) != nullptr)
             centres.push_back(character->cframe.position);
     }
+    // **And the vehicle each of them drives** (ADR 0213): its chassis is the
+    // middle of an island too, and the nearest thing in it -- a car that
+    // answered its wheel a round trip late would not be drivable. Only for a
+    // driver whose character can be stepped again, for the reason above: a
+    // correction steps the vehicle by that character's commands.
+    std::vector<core::InstanceId> wheelParts;
+    world.vehicleControllers().forEach([&](core::InstanceId id, const scene::VehicleControllerComponent& vehicle) {
+        const scene::PlayerComponent* driver = nullptr;
+        world.players().forEach([&](core::InstanceId, const scene::PlayerComponent& player) {
+            if (vehicle.driver != 0 && player.userId == vehicle.driver && player.local)
+                driver = &player;
+        });
+        if (driver == nullptr || world.characterBodies().find(driver->character) == nullptr)
+            return;
+        const core::InstanceId chassis = world.parentOf(id);
+        const scene::PartComponent* part = world.parts().find(chassis);
+        if (part == nullptr)
+            return;
+        centres.push_back(part->cframe.position);
+        for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
+            if (const scene::VehicleWheelComponent* wheel = world.vehicleWheels().find(child);
+                wheel != nullptr && wheel->wheelPart.valid())
+                wheelParts.push_back(wheel->wheelPart);
+        }
+    });
+    m_drivenWheels.clear();
+    for (const auto& [netId, local] : m_locals) {
+        if (std::find(wheelParts.begin(), wheelParts.end(), local) != wheelParts.end()) {
+            m_drivenWheels.insert(netId);
+            m_samples.erase(netId);
+        }
+    }
     // Only where there is a simulation to predict with: a replica with no
     // physics replay -- a test's bare world -- follows every part.
     if (centres.empty() || m_predictMax == 0 || m_replay == nullptr) {
@@ -4762,19 +4794,54 @@ void ReplicaSession::updatePredicted(scene::World& world)
     }
 }
 
+bool ReplicaSession::carriesVehicle(const scene::World& world, core::InstanceId part)
+{
+    for (core::InstanceId child = world.firstChild(part); child.valid(); child = world.nextSibling(child)) {
+        if (world.vehicleControllers().find(child) != nullptr)
+            return true;
+    }
+    return false;
+}
+
+ReplicaSession::DrivenVehicle ReplicaSession::drivenBy(const scene::World& world, core::InstanceId character)
+{
+    DrivenVehicle found;
+    u32 driver = 0;
+    world.players().forEach([&](core::InstanceId, const scene::PlayerComponent& player) {
+        if (driver == 0 && player.character == character)
+            driver = player.userId;
+    });
+    if (driver == 0)
+        return found;
+    world.vehicleControllers().forEach([&](core::InstanceId id, const scene::VehicleControllerComponent& vehicle) {
+        if (found.chassis.valid() || vehicle.driver != driver)
+            return;
+        found.chassis = world.parentOf(id);
+        found.root = found.chassis;
+        for (core::InstanceId up = world.parentOf(found.chassis); up.valid(); up = world.parentOf(up)) {
+            if (world.models().find(up) != nullptr) {
+                found.root = up;
+                break;
+            }
+        }
+    });
+    return found;
+}
+
 void ReplicaSession::decayVisualOffset() noexcept
 {
-    for (Owned& seat : m_seats) {
-        if (seat.visualFresh) {
-            seat.visualFresh = false;
-            continue;
+    const auto decay = [](core::DVec3& offset, bool& fresh, f64 kept) {
+        if (fresh) {
+            fresh = false;
+            return;
         }
-        seat.visualOffset =
-            core::DVec3{seat.visualOffset.x * VisualDecayPerTick, seat.visualOffset.y * VisualDecayPerTick,
-                        seat.visualOffset.z * VisualDecayPerTick};
-        const core::DVec3& o = seat.visualOffset;
-        if (o.x * o.x + o.y * o.y + o.z * o.z < 1e-8)
-            seat.visualOffset = core::DVec3{};
+        offset = core::DVec3{offset.x * kept, offset.y * kept, offset.z * kept};
+        if (offset.x * offset.x + offset.y * offset.y + offset.z * offset.z < 1e-8)
+            offset = core::DVec3{};
+    };
+    for (Owned& seat : m_seats) {
+        decay(seat.visualOffset, seat.visualFresh, VisualDecayPerTick);
+        decay(seat.vehicleOffset, seat.vehicleFresh, VehicleVisualDecayPerTick);
     }
 }
 
@@ -5086,7 +5153,7 @@ void ReplicaSession::interpolate(scene::World& world)
     const u64 target = m_serverClock > m_interpolationDelay ? m_serverClock - m_interpolationDelay : 0;
     for (auto& [netId, samples] : m_samples) {
         // Its own character is predicted, never drawn from the past.
-        if (samples.empty() || ownsNet(netId) || m_ownedParts.contains(netId))
+        if (samples.empty() || ownsNet(netId) || m_ownedParts.contains(netId) || m_drivenWheels.contains(netId))
             continue;
         const auto local = m_locals.find(netId);
         scene::PartComponent* part =
@@ -6876,14 +6943,26 @@ void ReplicaSession::reconcileSeats(scene::World& world, std::span<Answer> answe
     // island, even with every character where it should be. The machine's,
     // not a character's: said once, with the first answer.
     m_lastBodyCorrection = 0.0;
+    f64 drift = 0.0;
+    bool pulled = false;
     if (anyComparing && m_replay != nullptr) {
         for (const scene::CharacterReplayStart::Body& body : work.front().answer->start.bodies) {
             const std::optional<core::CFrameD> mine = m_replay->remembered(m_ackedIntent, body.id);
             if (!mine.has_value())
                 continue;
             const core::DVec3 apart = body.cframe.position - mine->position;
-            m_lastBodyCorrection =
-                std::max(m_lastBodyCorrection, std::sqrt(apart.x * apart.x + apart.y * apart.y + apart.z * apart.z));
+            const f64 off = std::sqrt(apart.x * apart.x + apart.y * apart.y + apart.z * apart.z);
+            drift = std::max(drift, off);
+            // **A vehicle's chassis under its own threshold is not
+            // corrected, and not left either** (ADR 0213): it is stepped
+            // again pulled part of the way to the authority's, so two
+            // machines never settle a few centimetres apart about where a
+            // car is -- which is what decides what it hits.
+            if (off < scene::VehicleCorrectionMetres && carriesVehicle(world, body.id)) {
+                pulled = pulled || off >= ResyncMetres;
+                continue;
+            }
+            m_lastBodyCorrection = std::max(m_lastBodyCorrection, off);
         }
     }
     bool agreed = true;
@@ -6928,7 +7007,9 @@ void ReplicaSession::reconcileSeats(scene::World& world, std::span<Answer> answe
         agreed = agreed && one.distance < ResyncMetres && !one.turned && !one.attributesOff;
     }
     // **Agreed is agreed**: every one of them, and what they push. Nothing to do.
-    if (agreed && m_lastBodyCorrection < ResyncMetres)
+    if (anyComparing)
+        m_stats.predictedDriftMetres = drift;
+    if (agreed && m_lastBodyCorrection < ResyncMetres && !pulled)
         return;
     // **Under a centimetre, stepped again without a word** (ADR 0133). From
     // the same state the two machines step the island to the bit, but a
@@ -7469,6 +7550,11 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
                 // character and corrected with it, from the answer below.
                 continue;
             }
+            else if (cframe && m_drivenWheels.contains(entity.id.value)) {
+                // A wheel of the vehicle this machine drives, placed here by
+                // it (ADR 0213).
+                continue;
+            }
             else if (cframe && m_interpolationDelay > 0) {
                 std::deque<Sample>& samples = m_samples[entity.id.value];
                 samples.push_back(Sample{state.tick, asCFrame(value), std::nullopt});
@@ -7577,6 +7663,58 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
         }
         all.front().start.bodies.push_back(body);
     }
+    // **And each vehicle on a predicted chassis, at the answered tick** (ADR
+    // 0213), from the same state.
+    if (world.vehicleControllers().size() != 0) {
+        std::map<u64, u32> netOf;
+        for (const auto& [netId, local] : m_locals)
+            netOf.emplace(static_cast<u64>(local.index) | (static_cast<u64>(local.generation) << 32), netId);
+        const auto heldOf = [&](core::InstanceId id) -> const EntityState* {
+            const auto found = netOf.find(static_cast<u64>(id.index) | (static_cast<u64>(id.generation) << 32));
+            return found != netOf.end() ? findEntity(state, found->second) : nullptr;
+        };
+        world.vehicleControllers().forEach([&](core::InstanceId id, const scene::VehicleControllerComponent&) {
+            const scene::RigidBodyComponent* chassis = world.rigidBodies().find(world.parentOf(id));
+            const EntityState* held = chassis != nullptr && chassis->predicted ? heldOf(id) : nullptr;
+            if (held == nullptr)
+                return;
+            scene::CharacterReplayStart::Vehicle vehicle;
+            vehicle.controller = id;
+            const generated::ClassDesc& desc = generated::Classes[held->schema];
+            for (usize at = 0; at < held->fields.size(); ++at) {
+                const generated::FieldDesc* field = fieldAt(desc, at);
+                if (field == nullptr || field->pool != "vehicleControllers")
+                    continue;
+                if (field->name == "RPM")
+                    vehicle.rpm = asF32(held->fields[at]);
+                else if (field->name == "CurrentGear")
+                    vehicle.gear = asI32(held->fields[at]);
+                else if (field->name == "Clutch")
+                    vehicle.clutch = asF32(held->fields[at]);
+            }
+            for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
+                const EntityState* wheelHeld = world.vehicleWheels().find(child) != nullptr ? heldOf(child) : nullptr;
+                if (wheelHeld == nullptr)
+                    continue;
+                scene::CharacterReplayStart::Vehicle::Wheel wheel;
+                wheel.id = child;
+                const generated::ClassDesc& wheelDesc = generated::Classes[wheelHeld->schema];
+                for (usize at = 0; at < wheelHeld->fields.size(); ++at) {
+                    const generated::FieldDesc* field = fieldAt(wheelDesc, at);
+                    if (field == nullptr || field->pool != "vehicleWheels")
+                        continue;
+                    if (field->name == "AngularVelocity")
+                        wheel.angularVelocity = asF32(wheelHeld->fields[at]);
+                    else if (field->name == "Rotation")
+                        wheel.rotation = asF32(wheelHeld->fields[at]);
+                    else if (field->name == "SteerAngle")
+                        wheel.steerAngle = asF32(wheelHeld->fields[at]);
+                }
+                vehicle.wheels.push_back(wheel);
+            }
+            all.front().start.vehicles.push_back(std::move(vehicle));
+        });
+    }
     // **Corrected at once, drawn sliding**:
     // what the correction moved is kept as an offset the drawing decays over a
     // tenth of a second, unless it is a teleport. **A character each** (ADR
@@ -7586,6 +7724,17 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
     for (const Answer& each : all) {
         if (const scene::PartComponent* drawn = world.parts().find(each.character); drawn != nullptr)
             before[each.seat] = drawn->cframe.position;
+    }
+    // **And the vehicle each drives** (ADR 0213): its chassis is stepped
+    // again with the island, and a correction moves it as it moves the
+    // character -- drawn sliding the same way, the model it is in with it,
+    // so a cabin welded on and its wheels go where the chassis goes.
+    std::array<DrivenVehicle, 4> driven{};
+    std::array<core::DVec3, 4> vehicleBefore{};
+    for (const Answer& each : all) {
+        driven[each.seat] = drivenBy(world, each.character);
+        if (const scene::PartComponent* chassis = world.parts().find(driven[each.seat].chassis); chassis != nullptr)
+            vehicleBefore[each.seat] = chassis->cframe.position;
     }
     const u64 counted = m_stats.corrections;
     const std::array<u64, 4> seatCounted = m_stats.seatCorrections;
@@ -7613,6 +7762,25 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
         // that is the machine's, below.
         if (m_stats.seatCorrections[each.seat] != seatCounted[each.seat])
             m_stats.seatLastCorrectionMetres[each.seat] = distance;
+
+        const DrivenVehicle& vehicle = driven[each.seat];
+        const scene::PartComponent* chassis = world.parts().find(vehicle.chassis);
+        if (chassis == nullptr) {
+            seat.visualVehicle = core::InstanceId{};
+            seat.vehicleOffset = core::DVec3{};
+            continue;
+        }
+        const core::DVec3 carried = vehicleBefore[each.seat] - chassis->cframe.position;
+        if (seat.visualVehicle != vehicle.root)
+            seat.vehicleOffset = core::DVec3{};
+        seat.visualVehicle = vehicle.root;
+        seat.vehicleOffset = seat.vehicleOffset + carried;
+        seat.vehicleFresh = carried.x != 0.0 || carried.y != 0.0 || carried.z != 0.0;
+        const core::DVec3& v = seat.vehicleOffset;
+        if (std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z) > VisualSnapMetres)
+            seat.vehicleOffset = core::DVec3{};
+        else
+            seat.vehicleDisplaced = seat.vehicleDisplaced - carried;
     }
     if (m_stats.corrections != counted)
         m_stats.lastCorrectionMetres = std::max(furthest, m_lastBodyCorrection);

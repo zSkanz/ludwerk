@@ -1,0 +1,4 @@
+{
+  "hud.keys": "Space or A: roll a ball at the wall   R or Y: build it again",
+  "hud.pieces": "{pieces} pieces, {broken} joints broken"
+}

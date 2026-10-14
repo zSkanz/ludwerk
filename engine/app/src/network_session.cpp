@@ -600,6 +600,7 @@ void NetworkSession::update()
         shown.jitterMs = static_cast<core::f64>(status.jitterMs);
         shown.lossPercent = static_cast<core::f64>(status.loss) * 100.0;
         shown.lastCorrectionMetres = stats.lastCorrectionMetres;
+        shown.predictedDriftMetres = stats.predictedDriftMetres;
         shown.inputBufferDepth = stats.intentDepth;
         shown.inputStarvations = stats.intentStarvations;
         shown.inputReanchors = stats.intentReanchors;
@@ -756,16 +757,26 @@ void receiveDrawn(WorldHost& host, NetworkSession& network, render::TransformHis
 {
     // Each of the machine's own characters by what its own corrections
     // moved it (ADR 0208).
-    core::DVec3 before[render::TransformHistory::VisualOffsets];
-    for (core::usize seat = 0; seat < render::TransformHistory::VisualOffsets; ++seat)
+    constexpr core::usize Seats = render::TransformHistory::VisualSeats;
+    core::DVec3 before[Seats];
+    core::DVec3 vehicleBefore[Seats];
+    for (core::usize seat = 0; seat < Seats; ++seat) {
         before[seat] = network.visualCorrection(seat).displaced;
+        vehicleBefore[seat] = network.visualCorrection(seat).vehicleDisplaced;
+    }
     network.receive(ticking);
-    for (core::usize seat = 0; seat < render::TransformHistory::VisualOffsets; ++seat) {
+    for (core::usize seat = 0; seat < Seats; ++seat) {
         const replication::VisualCorrection after = network.visualCorrection(seat);
         const core::DVec3 by{after.displaced.x - before[seat].x, after.displaced.y - before[seat].y,
                              after.displaced.z - before[seat].z};
         if (after.character.valid() && (by.x != 0.0 || by.y != 0.0 || by.z != 0.0))
             history.shift(host.world(), after.character, by);
+        // And the vehicle it drives, the same way (ADR 0213).
+        const core::DVec3 carried{after.vehicleDisplaced.x - vehicleBefore[seat].x,
+                                  after.vehicleDisplaced.y - vehicleBefore[seat].y,
+                                  after.vehicleDisplaced.z - vehicleBefore[seat].z};
+        if (after.vehicle.valid() && (carried.x != 0.0 || carried.y != 0.0 || carried.z != 0.0))
+            history.shift(host.world(), after.vehicle, carried);
     }
 }
 

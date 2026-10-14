@@ -41,6 +41,26 @@ TEST_CASE("a pop is one frame out of line and back, of a size that is asked for"
     CHECK(countPops(before, row({100, 100}), after, 6.0, 24.0) == -1);
 }
 
+TEST_CASE("only one thing's pops are counted when its colour is asked for")
+{
+    // Two pixels that pop by the same twelve levels of luma: one red, one grey.
+    const auto pixels = [](std::initializer_list<std::array<std::uint8_t, 3>> colours) {
+        Image image;
+        image.width = static_cast<int>(colours.size());
+        image.height = 1;
+        for (const auto& colour : colours)
+            image.rgba.insert(image.rgba.end(), {colour[0], colour[1], colour[2], 255});
+        return image;
+    };
+    const Image before = pixels({{180, 40, 40}, {100, 100, 100}});
+    const Image now = pixels({{180, 57, 57}, {112, 112, 112}});
+    CHECK(engine::imgcmp::countPops(before, now, before, 6.0, 24.0) == 2);
+    // Red by more than forty: the red one alone.
+    CHECK(engine::imgcmp::countPops(before, now, before, 6.0, 24.0, engine::imgcmp::PopColour{0, 40.0}) == 1);
+    // Green: neither.
+    CHECK(engine::imgcmp::countPops(before, now, before, 6.0, 24.0, engine::imgcmp::PopColour{1, 40.0}) == 0);
+}
+
 TEST_CASE("a pixel that changes steadily does not flicker; one that pops does")
 {
     // An edge sweeping across: each pixel brightens by the same step a frame.

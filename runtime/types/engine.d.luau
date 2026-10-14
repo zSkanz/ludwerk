@@ -192,6 +192,9 @@ end
 declare extern type EnumActuatorRelativeTo extends EnumItem with
 end
 
+declare extern type EnumVehicleTransmission extends EnumItem with
+end
+
 declare extern type EnumVelocityConstraintMode extends EnumItem with
 end
 
@@ -1246,6 +1249,19 @@ declare extern type BasePart extends PVInstance with
     --- Applies an instant push at the part's center of mass, in kilogram meters per second. It takes
     --- effect at the next simulation tick. An anchored part ignores it.
     function ApplyImpulse(self, impulse: vector): ()
+    --- Breaks the part into pieces and returns them in a `Model` where the part was. The part is
+    --- destroyed. Each piece is a part like the original, held to the pieces beside it by a
+    --- `FixedConstraint` that breaks under `Strength` newtons, so the pieces stand together until
+    --- something hits them hard enough. The pieces are unanchored. A part that was anchored keeps its
+    --- footing: an anchored `Footing` part under its bottom, which does not collide, holds the pieces
+    --- along the bottom by the same joints, so a wall breaks where it is hit rather than falling over
+    --- whole. `options.Pieces` is how many, from 1 to 64 (8 by default). `options.Seed` chooses the
+    --- cut: the same seed and the same part give the same pieces on every machine. `options.Strength`
+    --- is what each joint holds; by default it is twice the part's weight. The pieces are simulation:
+    --- in a match the server's, sent to every player as parts, so use as few as the moment needs. Dust
+    --- and small chips are better as a `ParticleEmitter` burst when a joint breaks: drawn on each
+    --- machine and sent as nothing but the burst. Only a `Part` whose `Shape` is `Block` can be broken.
+    function Fracture(self, options: { Pieces: number?, Seed: number?, Strength: number? }?): Model
     --- Runs `fn(character, step)` inside the simulation step when a player's character that this
     --- machine simulates starts touching this part. Use it for a jump pad, a booster or a trampoline,
     --- so the effect is predicted on the player's machine and needs no correction. On a client the
@@ -1477,6 +1493,35 @@ declare extern type SpringCollider extends Instance with
     Offset: vector
 end
 
+declare extern type Cloth extends Instance with
+    --- Whether the cloth is simulated. When it is off, the mesh is drawn as the animation has it.
+    Enabled: boolean
+    --- A name pattern for the joints the cloth hangs from, where `*` matches any run of characters. A
+    --- vertex weighted at least half to joints it matches is pinned to where the animation puts it.
+    --- With no pinned vertex, the cloth hangs only by `MaxDistance`.
+    PinJoints: string
+    --- How far, in meters, a vertex may move from where the animation puts it. A cape that should never
+    --- fly over the head has a small one; at 0 the cloth does not move.
+    MaxDistance: number
+    --- How much the cloth resists stretching, from 0 to 1. At 1 it keeps the length it was modeled
+    --- with, as canvas does; lower values stretch like knitted cloth.
+    Stiffness: number
+    --- How much the cloth resists folding, from 0 to 1. Silk is near 0 and leather near 1.
+    BendStiffness: number
+    --- How much of its motion the cloth loses each second, from 0 to 1. A low value flutters for a long
+    --- time; a high value settles quickly and looks heavy.
+    Damping: number
+    --- How much of the world's gravity affects the cloth. At 0 the cloth floats.
+    GravityScale: number
+    --- How much the world's wind pushes the cloth. At 0 the cloth ignores wind.
+    WindInfluence: number
+    --- How far, in meters, the cloth stays from what it rests on.
+    Thickness: number
+    --- Whether the cloth is kept out of the anchored parts near it, such as a wall it is pressed
+    --- against or the floor it drags on. It never pushes them.
+    CollidesWithWorld: boolean
+end
+
 declare extern type Constraint extends Instance with
     --- The attachment at one end of the joint. The part it is on is one of the two bodies the joint
     --- connects.
@@ -1675,6 +1720,105 @@ declare extern type RodConstraint extends Constraint with
     Color: Color3
     --- The thickness of the line the rod is drawn as, in meters.
     Thickness: number
+end
+
+declare extern type VehicleController extends Instance with
+    --- The most torque the engine gives, in newton meters. At 0 it is what the chassis' mass needs to
+    --- drive briskly without spinning its driven wheels.
+    MaxTorque: number
+    --- The engine's turns a minute when it idles.
+    MinRPM: number
+    --- The most turns a minute the engine reaches. It is held under this.
+    MaxRPM: number
+    --- Whether the gearbox shifts by itself, at `ShiftUpRPM` and `ShiftDownRPM`, or stays in the `Gear`
+    --- asked for.
+    Transmission: EnumVehicleTransmission
+    --- With an automatic gearbox: the engine's turns a minute at which it shifts up.
+    ShiftUpRPM: number
+    --- With an automatic gearbox: the engine's turns a minute at which it shifts down.
+    ShiftDownRPM: number
+    --- The ratio from the gearbox to the wheels. A higher ratio accelerates harder and reaches a lower
+    --- top speed.
+    FinalDriveRatio: number
+    --- How far the chassis can lean, in degrees, before the vehicle holds it upright. At 180 it can
+    --- roll over.
+    MaxLeanAngle: number
+    --- How hard the engine is asked to drive, from -1 (full reverse) to 1 (full forward). With an
+    --- automatic gearbox, a negative value at rest selects reverse.
+    Throttle: number
+    --- How far the steering wheels are turned, from -1 (full left) to 1 (full right).
+    Steer: number
+    --- How hard the brakes are pressed, from 0 to 1.
+    Brake: number
+    --- How hard the hand brake is pulled, from 0 to 1. It holds only the wheels that have a
+    --- `MaxHandBrakeTorque`.
+    HandBrake: number
+    --- With a manual gearbox: the gear asked for, -1 for reverse and 0 for neutral.
+    Gear: number
+    --- The player who drives, or nil. While a player drives, their intents named by `DriveIntent`,
+    --- `BrakeIntent` and `HandBrakeIntent` set `Throttle`, `Steer`, `Brake` and `HandBrake` every
+    --- simulation tick, and no script needs to. In a match, the server sets it, and the driver's own
+    --- machine predicts the vehicle as it predicts their character, so the car answers the wheel at
+    --- once.
+    Driver: Player?
+    --- The name of the driver's `Direction2D` input action that drives: up and down set `Throttle`,
+    --- left and right set `Steer`.
+    DriveIntent: string
+    --- The name of the driver's input action that brakes: a button, or the first axis of a direction.
+    BrakeIntent: string
+    --- The name of the driver's input action that pulls the hand brake.
+    HandBrakeIntent: string
+    --- The chassis' speed along its forward direction at the last simulation tick, in meters per
+    --- second; negative when it is going backward.
+    read Speed: number
+    --- The engine's turns a minute at the last simulation tick.
+    read RPM: number
+    --- The gear the gearbox was in at the last simulation tick: -1 reverse, 0 neutral, then the forward
+    --- gears from 1.
+    read CurrentGear: number
+end
+
+declare extern type VehicleWheel extends Instance with
+    --- The attachment of the chassis the suspension hangs from: the top of its travel. A wheel with no
+    --- attachment, or with one on another part, is not part of the vehicle.
+    Attachment: Attachment?
+    --- A part the engine places where the wheel is, turned by its steering and rolling, after each
+    --- simulation tick. It should not collide: the wheel itself is not a part.
+    WheelPart: BasePart?
+    --- The wheel's radius, in meters.
+    Radius: number
+    --- The wheel's width, in meters.
+    Width: number
+    --- The shortest the suspension can be, in meters from the attachment to the wheel's center.
+    SuspensionMinLength: number
+    --- The longest the suspension can be, in meters from the attachment to the wheel's center.
+    SuspensionMaxLength: number
+    --- How stiff the suspension is, as the times a second it would bounce. 1 is soft, 2 is firm, 3 is a
+    --- race car.
+    SuspensionFrequency: number
+    --- How much of a bounce the suspension takes away, from 0 (it bounces on) to 1 (it stops in one
+    --- swing).
+    SuspensionDamping: number
+    --- How far the wheel turns at full `Steer`, in degrees. At 0 it does not steer.
+    MaxSteerAngle: number
+    --- Whether the engine turns this wheel.
+    Driven: boolean
+    --- The brake's torque at full `Brake`, in newton meters. At 0 it is enough for the chassis' mass.
+    MaxBrakeTorque: number
+    --- The hand brake's torque at full `HandBrake`, in newton meters. At 0 the hand brake does not hold
+    --- this wheel.
+    MaxHandBrakeTorque: number
+    --- How well the tire holds the ground, as a scale of the ground's own friction: below 1 it slides
+    --- sooner, above 1 later.
+    Grip: number
+    --- Whether the wheel touched the ground at the last simulation tick.
+    read Grounded: boolean
+    --- How far the suspension was pushed in at the last simulation tick, from 0 (fully out) to 1 (fully
+    --- in).
+    read Compression: number
+    --- How much the tire slid sideways at the last simulation tick, as the angle between where it
+    --- points and where it goes, in degrees.
+    read Slip: number
 end
 
 declare extern type SpringConstraint extends Constraint with
@@ -5183,28 +5327,31 @@ declare extern type NetworkService extends Instance with
     --- milliseconds. - `Jitter`: how much the round trip varies. - `Loss`: the share of packets lost,
     --- in percent. - The number of snapshots per second. - `Corrections`: how often this machine's own
     --- character was corrected, per second and in total since joining. `LastCorrection` is how far the
-    --- last correction moved it, in meters. - `InputBufferDepth`: how many ticks of this player's input
-    --- the authority has queued. `InputStarvations` counts the times the queue ran empty, and
-    --- `InputReanchors` the times it was restarted because the player's clock jumped, as after a long
-    --- frame. - `InterpolationDelay`: how far in the past other players are drawn, in milliseconds. It
-    --- is two snapshot intervals plus the link's jitter, and adapts to the link. - On a client,
-    --- `PredictedParts` is the number of loose parts near its character that it predicts. The table
-    --- also reports how often a correction made the client simulate them again, how many ticks it
-    --- simulated again, and `ResimulationTime`, the average time that took in milliseconds. Traffic:
-    --- `BytesSent` and `BytesReceived` are totals since the session began. Five more fields break the
-    --- total down, sent and received together: `SnapshotBytes` for world state, `AttributeBytes` for
-    --- attributes, `RemoteBytes` for `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for
-    --- `UnreliableRemoteEvent`s, and `InputBytes` for a client's input and the state of the parts it
-    --- owns. `SwarmBytes` is the positions of replicated swarms. The remainder is instances being
-    --- created and removed, terrain and the handshake. To get a rate, read a field twice, one second
-    --- apart, and subtract. `Path` says how the other end is reached: `"lan"` on the same network,
-    --- `"direct"` across the internet, or `"relayed"` through a relay, which adds the relay's distance
-    --- to the round trip. On a host it is the longest path among its players. It is empty when nobody
-    --- is connected. `LocalPlayers` has one entry for each local player on a machine that joined a
-    --- match: the primary player first, then the guests. Each entry has the player's `UserId` and the
-    --- three correction numbers for that player's character alone. It is empty on an authority and in
-    --- single-player.
-    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }
+    --- last correction moved it, in meters. - `PredictedDrift`: how far the parts this machine predicts
+    --- were from the authority's at the last answer, in meters, whether or not that was a correction.
+    --- These are what its character pushes and the vehicle it drives. A driven vehicle is left a few
+    --- centimeters of drift and pulled back gently, so this stays small but is rarely zero. -
+    --- `InputBufferDepth`: how many ticks of this player's input the authority has queued.
+    --- `InputStarvations` counts the times the queue ran empty, and `InputReanchors` the times it was
+    --- restarted because the player's clock jumped, as after a long frame. - `InterpolationDelay`: how
+    --- far in the past other players are drawn, in milliseconds. It is two snapshot intervals plus the
+    --- link's jitter, and adapts to the link. - On a client, `PredictedParts` is the number of loose
+    --- parts near its character that it predicts. The table also reports how often a correction made
+    --- the client simulate them again, how many ticks it simulated again, and `ResimulationTime`, the
+    --- average time that took in milliseconds. Traffic: `BytesSent` and `BytesReceived` are totals
+    --- since the session began. Five more fields break the total down, sent and received together:
+    --- `SnapshotBytes` for world state, `AttributeBytes` for attributes, `RemoteBytes` for
+    --- `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for `UnreliableRemoteEvent`s, and
+    --- `InputBytes` for a client's input and the state of the parts it owns. `SwarmBytes` is the
+    --- positions of replicated swarms. The remainder is instances being created and removed, terrain
+    --- and the handshake. To get a rate, read a field twice, one second apart, and subtract. `Path`
+    --- says how the other end is reached: `"lan"` on the same network, `"direct"` across the internet,
+    --- or `"relayed"` through a relay, which adds the relay's distance to the round trip. On a host it
+    --- is the longest path among its players. It is empty when nobody is connected. `LocalPlayers` has
+    --- one entry for each local player on a machine that joined a match: the primary player first, then
+    --- the guests. Each entry has the player's `UserId` and the three correction numbers for that
+    --- player's character alone. It is empty on an authority and in single-player.
+    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }
     --- Connects to a server at `address`, written as `host` or `host:port`. With no address, it
     --- connects to `[network] server` from `project.toml`. Joining replaces this machine's scene with
     --- the server's, and server scripts stop, because this machine is no longer the authority.
@@ -6552,6 +6699,11 @@ declare Enum: {
         World: EnumActuatorRelativeTo,
         GetEnumItems: (self: any) -> { EnumActuatorRelativeTo },
     },
+    VehicleTransmission: {
+        Automatic: EnumVehicleTransmission,
+        Manual: EnumVehicleTransmission,
+        GetEnumItems: (self: any) -> { EnumVehicleTransmission },
+    },
     VelocityConstraintMode: {
         Line: EnumVelocityConstraintMode,
         Plane: EnumVelocityConstraintMode,
@@ -7075,12 +7227,15 @@ type InstanceClasses = {
     LipSync: LipSync,
     SpringBone: SpringBone,
     SpringCollider: SpringCollider,
+    Cloth: Cloth,
     BallSocketConstraint: BallSocketConstraint,
     HingeConstraint: HingeConstraint,
     FixedConstraint: FixedConstraint,
     PrismaticConstraint: PrismaticConstraint,
     RopeConstraint: RopeConstraint,
     RodConstraint: RodConstraint,
+    VehicleController: VehicleController,
+    VehicleWheel: VehicleWheel,
     SpringConstraint: SpringConstraint,
     LinearVelocity: LinearVelocity,
     AngularVelocity: AngularVelocity,

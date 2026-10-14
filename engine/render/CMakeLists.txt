@@ -50,12 +50,14 @@ engine_add_module(render
         src/retarget.cpp
         src/spring_chain.cpp
         src/spring_bones.cpp
+        src/cloth.cpp
         src/morph.cpp
         generated/class_descriptors.gen.cpp
     DEPS
         asset
         core
         jobs
+        physics_api
         platform
         rhi_api
         scene
@@ -80,6 +82,7 @@ engine_add_module_tests(render
     MODULES
         render
         rhi_null
+        physics_jolt
     # The terrain loader's cases are half the executable's minute, and one of
     # them half of that: three shards that run side by side (ADR 0148).
     SHARD_CASES
@@ -117,6 +120,7 @@ engine_add_module_tests(render
         tests/ribbons_tests.cpp
         tests/spring_chain_tests.cpp
         tests/spring_bones_tests.cpp
+        tests/cloth_tests.cpp
         tests/morph_tests.cpp
         tests/morph_weights_tests.cpp
         tests/voxel_loader_tests.cpp

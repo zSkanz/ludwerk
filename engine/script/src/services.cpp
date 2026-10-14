@@ -1809,6 +1809,7 @@ int networkServiceGetStats(lua_State* L)
     field("SnapshotsPerSecond", stats.snapshotsPerSecond);
     field("CorrectionsPerSecond", stats.correctionsPerSecond);
     field("LastCorrection", stats.lastCorrectionMetres);
+    field("PredictedDrift", stats.predictedDriftMetres);
     field("InputBufferDepth", static_cast<double>(stats.inputBufferDepth));
     field("InputStarvations", static_cast<double>(stats.inputStarvations));
     field("InputReanchors", static_cast<double>(stats.inputReanchors));

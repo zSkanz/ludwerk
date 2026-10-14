@@ -482,6 +482,8 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // the same shape the RHI backend is chosen with. A build with no physics
     // backend leaves the mirror null and every part stays where a script put
     // it -- which is what the bootstrap through the first renderer were.
+    // A cloth's world is the old backend's, and goes before it does.
+    m_cloth.clear();
     m_backend = physics::createJoltPhysics();
     if (m_backend != nullptr) {
         m_physics.emplace(*m_world, *m_backend);
@@ -2482,6 +2484,29 @@ void WorldHost::preRender(f64 renderDt, const render::DrawPoses* poses)
     m_runtime->drain(core::Phase::PreRender);
     m_runtime->setDrawnPoseSink(script::DrawnPoseSink{});
     state.renderPhase = false;
+}
+
+void WorldHost::clothObstacles(const core::CFrameD& box, core::Vec3 size, std::vector<render::ClothObstacle>& out)
+{
+    if (!m_physics)
+        return;
+    m_physics->syncForQuery();
+    m_clothNear.clear();
+    m_physics->backend().overlapBox(m_physics->worldHandle(), box, size, physics::QueryFilter{}, m_clothNear);
+    for (const core::u64 data : m_clothNear) {
+        const core::InstanceId id = m_physics->instanceOf(data);
+        const scene::PartComponent* part = id.valid() ? world().parts().find(id) : nullptr;
+        const scene::RigidBodyComponent* body = id.valid() ? world().rigidBodies().find(id) : nullptr;
+        // What stands still and is solid: a wall, a floor. What moves is a
+        // body a cape brushes past, and its colliders are what it rests on.
+        if (part == nullptr || body == nullptr || !body->anchored || !body->canCollide)
+            continue;
+        render::ClothObstacle obstacle;
+        obstacle.part = id;
+        obstacle.place = part->cframe;
+        if (m_physics->collisionShape(id, obstacle.shape))
+            out.push_back(std::move(obstacle));
+    }
 }
 
 bool WorldHost::askSequenceCamera(Sequences::Camera& camera, const render::DrawPoses* poses)

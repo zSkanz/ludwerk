@@ -126,7 +126,8 @@ def arrow(i, direction):
 TOOLKIT = {
     "interaction": ("ClickDetector", "ProximityPrompt", "ProximityPromptService", "DragDetector"),
     "physics": ("LinearVelocity", "AngularVelocity", "AlignPosition", "AlignOrientation", "VectorForce", "Torque",
-                "PrismaticConstraint", "RopeConstraint", "RodConstraint", "SpringConstraint", "NoCollisionConstraint"),
+                "PrismaticConstraint", "RopeConstraint", "RodConstraint", "SpringConstraint", "NoCollisionConstraint",
+                "VehicleController", "VehicleWheel"),
     "ui": ("UIGridLayout", "UIPageLayout", "UIFlexItem", "UIScale", "UIAspectRatioConstraint",
            "UISizeConstraint", "UITextSizeConstraint", "CanvasGroup", "UIDragDetector"),
     "effects": ("Highlight", "Beam", "Trail"),
@@ -186,6 +187,15 @@ def toolkit_icon(group, name):
     elif name == "NoCollisionConstraint":
         i.line((3,6),(8,6),(8,18),(3,18)).line((21,6),(16,6),(16,18),(21,18))
         i.line((9,3),(15,21))
+    elif name == "VehicleController":
+        i.line((2,16),(2,12),(6,11),(9,6),(16,6),(19,11),(22,12),(22,16))
+        i.line((10,16),(14,16)).line((9,7),(9,11)).line((2,11),(22,11))
+        i.circle(6,17,3).circle(18,17,3)
+    elif name == "VehicleWheel":
+        i.circle(12,12,9).circle(12,12,2.5)
+        for angle in (0, 72, 144, 216, 288):
+            a = math.radians(angle - 90)
+            i.line((12+3.5*math.cos(a),12+3.5*math.sin(a)),(12+7.5*math.cos(a),12+7.5*math.sin(a)))
     elif name == "UIGridLayout":
         i.rect(2,3,20,18,1).line((2,9),(22,9)).line((2,15),(22,15)).line((9,3),(9,21)).line((16,3),(16,21))
     elif name == "UIPageLayout":
@@ -811,6 +821,11 @@ def draw_icon(group, name):
         # The capsule a chain is kept out of, and the chain's joint against it.
         i.arc(10,8,5,180,360).arc(10,16,5,0,180).line((5,8),(5,16)).line((15,8),(15,16))
         i.circle(20,12,2)
+    elif name == "Cloth":
+        # A cape hung from a bar by its top corners, its hem in folds that a
+        # wind has pushed to one side (ADR 0214).
+        i.line((3,4),(21,4)).line((5,4),(4,13),(6,20)).line((19,4),(20,12),(22,19))
+        i.line((6,20),(10,18),(14,21),(18,18),(22,19)).line((11,7),(10,15)).line((15,7),(16,15))
     elif name == "Caption":
         # What a sound says (ADR 0200): two lines of text under a bar, as a
         # subtitle sits at the foot of a picture.
@@ -1197,6 +1212,22 @@ def preview(theme, images):
                 sheet.paste(Image.new("RGB", (size,size), color), (x+offset,y+32-size), alpha)
             d.text((x,y+43), name, font=font, fill=fg)
     sheet.save(ART / "services-review.png")
+    additions = ("Cloth", "VehicleController", "VehicleWheel")
+    sheet = Image.new("RGB", (780, 240))
+    d = ImageDraw.Draw(sheet)
+    for row, (mode, bg) in enumerate((("dark", "#1F1F1F"), ("light", "#FFFFFF"))):
+        d.rectangle((0, row*120, 780, (row+1)*120), fill=bg)
+        fg = "#CCCCCC" if mode == "dark" else "#3B3B3B"
+        d.text((20, row*120+8), "ORBIT / Cloth and vehicles / 32, 24, 16, 13 px", font=font, fill=fg)
+        for n, name in enumerate(additions):
+            x, y = 20+n*260, row*120+35
+            icon_id = "class."+name
+            color = theme["palette"][theme["roles"][icon_id]][mode]
+            for offset, size in ((0,32), (45,24), (82,16), (110,13)):
+                alpha = images[theme["icons"][icon_id]].getchannel("A").resize((size,size), Image.Resampling.BOX)
+                sheet.paste(Image.new("RGB", (size,size), color), (x+offset,y+32-size), alpha)
+            d.text((x,y+43), name, font=font, fill=fg)
+    sheet.save(ART / "cloth-vehicles-review.png")
     cards=[]
     for path in images:
         cards.append(f'<figure><div><img src="{path.replace(".png", ".svg")}" width="48"><img src="{path.replace(".png", ".svg")}" width="24"><img src="{path.replace(".png", ".svg")}" width="16"></div><figcaption>{html.escape(path[:-4])}</figcaption></figure>')

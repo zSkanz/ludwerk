@@ -222,6 +222,93 @@ public:
 
     [[nodiscard]] virtual ConstraintState constraintState(WorldHandle world, ConstraintHandle constraint) const = 0;
 
+    // --- Vehicles (ADR 0213) -------------------------------------------------
+
+    // A chassis on its wheels, or an invalid handle when the chassis is not a
+    // moving body, there is no wheel, or the backend has no vehicles.
+    [[nodiscard]] virtual VehicleHandle createVehicle(WorldHandle world, const VehicleDesc& desc)
+    {
+        (void)world;
+        (void)desc;
+        return {};
+    }
+    virtual void destroyVehicle(WorldHandle world, VehicleHandle vehicle)
+    {
+        (void)world;
+        (void)vehicle;
+    }
+    // What the driver asks for, from the next step on.
+    virtual void setVehicleInput(WorldHandle world, VehicleHandle vehicle, const VehicleInput& input)
+    {
+        (void)world;
+        (void)vehicle;
+        (void)input;
+    }
+    [[nodiscard]] virtual VehicleState vehicleState(WorldHandle world, VehicleHandle vehicle) const
+    {
+        (void)world;
+        (void)vehicle;
+        return {};
+    }
+    // **Put back as another machine had it** (ADR 0213, in a match): the
+    // engine's turns, the gear and the clutch, and each wheel's spin, angle
+    // and steering -- what a replica restores before stepping a driven
+    // vehicle again. Where a wheel was and what it touched are worked out
+    // again by the next step's casts.
+    virtual void setVehicleState(WorldHandle world, VehicleHandle vehicle, const VehicleState& state)
+    {
+        (void)world;
+        (void)vehicle;
+        (void)state;
+    }
+
+    // --- Soft bodies (ADR 0214) ---------------------------------------------
+
+    // A cloth, or an invalid handle when it has no face or the backend has no
+    // soft bodies.
+    [[nodiscard]] virtual SoftBodyHandle createSoftBody(WorldHandle world, const SoftBodyDesc& desc)
+    {
+        (void)world;
+        (void)desc;
+        return {};
+    }
+    virtual void destroySoftBody(WorldHandle world, SoftBodyHandle body)
+    {
+        (void)world;
+        (void)body;
+    }
+    // **Where its joints are now**: each the matrix that takes a vertex as it
+    // was modelled to where it is, relative to `origin`. The next step moves
+    // its pinned vertices there over the step and keeps the rest within
+    // reach. `snap` puts every vertex where its joints put it at once: the
+    // first time, and when the cloth was put somewhere else.
+    virtual void skinSoftBody(WorldHandle world, SoftBodyHandle body, core::DVec3 origin,
+                              std::span<const core::Mat4> joints, bool snap)
+    {
+        (void)world;
+        (void)body;
+        (void)origin;
+        (void)joints;
+        (void)snap;
+    }
+    // The air it moves through, from the next step on.
+    virtual void blowSoftBody(WorldHandle world, SoftBodyHandle body, const SoftBodyWind& wind)
+    {
+        (void)world;
+        (void)body;
+        (void)wind;
+    }
+    // Where each of its vertices is, relative to `origin`, in the order the
+    // description gave them.
+    virtual void softBodyVertices(WorldHandle world, SoftBodyHandle body, core::DVec3 origin,
+                                  std::vector<core::Vec3>& out) const
+    {
+        (void)world;
+        (void)body;
+        (void)origin;
+        out.clear();
+    }
+
     // --- Simulation ----------------------------------------------------------
 
     // One fixed step. `fixedDt` is the sim tick, never a wall-clock delta

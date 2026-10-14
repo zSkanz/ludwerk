@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<defs><mask id="ink" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<circle cx="12" cy="12" r="9.9" fill="white"/>
+<circle cx="12" cy="12" r="8.1" fill="black"/>
+<circle cx="12" cy="12" r="3.4" fill="white"/>
+<circle cx="12" cy="12" r="1.6" fill="black"/>
+<polyline points="12,8.5 12,4.5" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="15.3287,10.9184 19.1329,9.68237" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="14.0572,14.8316 16.4084,18.0676" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="9.94275,14.8316 7.59161,18.0676" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="8.6713,10.9184 4.86708,9.68237" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</mask></defs><rect width="24" height="24" fill="white" mask="url(#ink)"/>
+</svg>

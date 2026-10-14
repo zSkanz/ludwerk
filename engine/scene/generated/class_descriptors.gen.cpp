@@ -760,7 +760,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setBasePartAngularVelocity,
         },
     }};
-    static std::array<MethodDesc, 11> basePartMethods;
+    static std::array<MethodDesc, 12> basePartMethods;
     basePartMethods = {{
         MethodDesc{
             .name = atoms.intern("SetMaterialParameter"),
@@ -797,6 +797,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Applies an instant push at the part's center of mass, in kilogram meters per second. It takes effect at the next simulation tick. An anchored part ignores it.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Fracture"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Breaks the part into pieces and returns them in a `Model` where the part was. The part is destroyed. Each piece is a part like the original, held to the pieces beside it by a `FixedConstraint` that breaks under `Strength` newtons, so the pieces stand together until something hits them hard enough. The pieces are unanchored. A part that was anchored keeps its footing: an anchored `Footing` part under its bottom, which does not collide, holds the pieces along the bottom by the same joints, so a wall breaks where it is hit rather than falling over whole.\012\012`options.Pieces` is how many, from 1 to 64 (8 by default). `options.Seed` chooses the cut: the same seed and the same part give the same pieces on every machine. `options.Strength` is what each joint holds; by default it is twice the part's weight.\012\012The pieces are simulation: in a match the server's, sent to every player as parts, so use as few as the moment needs. Dust and small chips are better as a `ParticleEmitter` burst when a joint breaks: drawn on each machine and sent as nothing but the burst.\012\012Only a `Part` whose `Shape` is `Block` can be broken.",
         },
         MethodDesc{
             .name = atoms.intern("BindToPredictedTouch"),
@@ -1652,6 +1658,440 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     rodConstraintDesc.attachComponents = native::attachRodConstraintComponents;
     rodConstraintDesc.detachComponents = native::detachRodConstraintComponents;
     classes.registerClass(rodConstraintDesc);
+
+    // --- VehicleController ---
+    static std::array<PropertyDesc, 20> vehicleControllerProperties;
+    vehicleControllerProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("MaxTorque"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most torque the engine gives, in newton meters. At 0 it is what the chassis' mass needs to drive briskly without spinning its driven wheels.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getVehicleControllerMaxTorque,
+            .set = native::setVehicleControllerMaxTorque,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MinRPM"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The engine's turns a minute when it idles.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getVehicleControllerMinRPM,
+            .set = native::setVehicleControllerMinRPM,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxRPM"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most turns a minute the engine reaches. It is held under this.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getVehicleControllerMaxRPM,
+            .set = native::setVehicleControllerMaxRPM,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Transmission"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("VehicleTransmission"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the gearbox shifts by itself, at `ShiftUpRPM` and `ShiftDownRPM`, or stays in the `Gear` asked for.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getVehicleControllerTransmission,
+            .set = native::setVehicleControllerTransmission,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ShiftUpRPM"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "With an automatic gearbox: the engine's turns a minute at which it shifts up.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getVehicleControllerShiftUpRPM,
+            .set = native::setVehicleControllerShiftUpRPM,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ShiftDownRPM"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "With an automatic gearbox: the engine's turns a minute at which it shifts down.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getVehicleControllerShiftDownRPM,
+            .set = native::setVehicleControllerShiftDownRPM,
+        },
+        PropertyDesc{
+            .name = atoms.intern("FinalDriveRatio"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The ratio from the gearbox to the wheels. A higher ratio accelerates harder and reaches a lower top speed.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getVehicleControllerFinalDriveRatio,
+            .set = native::setVehicleControllerFinalDriveRatio,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxLeanAngle"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far the chassis can lean, in degrees, before the vehicle holds it upright. At 180 it can roll over.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getVehicleControllerMaxLeanAngle,
+            .set = native::setVehicleControllerMaxLeanAngle,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Throttle"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard the engine is asked to drive, from -1 (full reverse) to 1 (full forward). With an automatic gearbox, a negative value at rest selects reverse.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_minus_one_to_one"),
+            .get = native::getVehicleControllerThrottle,
+            .set = native::setVehicleControllerThrottle,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Steer"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far the steering wheels are turned, from -1 (full left) to 1 (full right).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_minus_one_to_one"),
+            .get = native::getVehicleControllerSteer,
+            .set = native::setVehicleControllerSteer,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Brake"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard the brakes are pressed, from 0 to 1.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getVehicleControllerBrake,
+            .set = native::setVehicleControllerBrake,
+        },
+        PropertyDesc{
+            .name = atoms.intern("HandBrake"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard the hand brake is pulled, from 0 to 1. It holds only the wheels that have a `MaxHandBrakeTorque`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getVehicleControllerHandBrake,
+            .set = native::setVehicleControllerHandBrake,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Gear"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "With a manual gearbox: the gear asked for, -1 for reverse and 0 for neutral.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getVehicleControllerGear,
+            .set = native::setVehicleControllerGear,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Driver"),
+            .type = ValueType::Instance,
+            .instanceClass = atoms.intern("Player"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The player who drives, or nil. While a player drives, their intents named by `DriveIntent`, `BrakeIntent` and `HandBrakeIntent` set `Throttle`, `Steer`, `Brake` and `HandBrake` every simulation tick, and no script needs to. In a match, the server sets it, and the driver's own machine predicts the vehicle as it predicts their character, so the car answers the wheel at once.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getVehicleControllerDriver,
+            .set = native::setVehicleControllerDriver,
+        },
+        PropertyDesc{
+            .name = atoms.intern("DriveIntent"),
+            .type = ValueType::String,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The name of the driver's `Direction2D` input action that drives: up and down set `Throttle`, left and right set `Steer`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getVehicleControllerDriveIntent,
+            .set = native::setVehicleControllerDriveIntent,
+        },
+        PropertyDesc{
+            .name = atoms.intern("BrakeIntent"),
+            .type = ValueType::String,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The name of the driver's input action that brakes: a button, or the first axis of a direction.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getVehicleControllerBrakeIntent,
+            .set = native::setVehicleControllerBrakeIntent,
+        },
+        PropertyDesc{
+            .name = atoms.intern("HandBrakeIntent"),
+            .type = ValueType::String,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The name of the driver's input action that pulls the hand brake.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getVehicleControllerHandBrakeIntent,
+            .set = native::setVehicleControllerHandBrakeIntent,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Speed"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .doc = "The chassis' speed along its forward direction at the last simulation tick, in meters per second; negative when it is going backward.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getVehicleControllerSpeed,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("RPM"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .doc = "The engine's turns a minute at the last simulation tick.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getVehicleControllerRPM,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("CurrentGear"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .doc = "The gear the gearbox was in at the last simulation tick: -1 reverse, 0 neutral, then the forward gears from 1.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getVehicleControllerCurrentGear,
+            .set = nullptr,
+        },
+    }};
+    ClassDescriptor vehicleControllerDesc;
+    vehicleControllerDesc.name = atoms.intern("VehicleController");
+    vehicleControllerDesc.super = instanceClass;
+    vehicleControllerDesc.flags = ClassFlags::None;
+    vehicleControllerDesc.defaultName = atoms.intern("VehicleController");
+    vehicleControllerDesc.doc = "Makes the part it is under a vehicle's chassis, held up by the `VehicleWheel`s under it and driven by an engine through a gearbox. Each wheel is a suspension and a tire. Set `Throttle`, `Steer`, `Brake` and `HandBrake` each frame, from a script or an input action, to drive it.\012\012The chassis must be unanchored. A wheel is not a part of the simulation: it is a cast from the chassis down to the ground, so it rolls over a curb a wheel part would bounce off. Give each wheel a `WheelPart` to see it turn and roll. Forward is the chassis' `LookVector`.\012\012It runs on the server, in the simulation, and is replicated as the chassis is.";
+    static constexpr std::array<std::string_view, 3> vehicleControllerParents{{"BasePart", "ReplicatedStorage", "ServerStorage"}};
+    vehicleControllerDesc.parents = vehicleControllerParents;
+    vehicleControllerDesc.properties = vehicleControllerProperties;
+    vehicleControllerDesc.attachComponents = native::attachVehicleControllerComponents;
+    vehicleControllerDesc.detachComponents = native::detachVehicleControllerComponents;
+    classes.registerClass(vehicleControllerDesc);
+
+    // --- VehicleWheel ---
+    static std::array<PropertyDesc, 16> vehicleWheelProperties;
+    vehicleWheelProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Attachment"),
+            .type = ValueType::Instance,
+            .instanceClass = atoms.intern("Attachment"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The attachment of the chassis the suspension hangs from: the top of its travel. A wheel with no attachment, or with one on another part, is not part of the vehicle.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getVehicleWheelAttachment,
+            .set = native::setVehicleWheelAttachment,
+        },
+        PropertyDesc{
+            .name = atoms.intern("WheelPart"),
+            .type = ValueType::Instance,
+            .instanceClass = atoms.intern("BasePart"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "A part the engine places where the wheel is, turned by its steering and rolling, after each simulation tick. It should not collide: the wheel itself is not a part.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getVehicleWheelWheelPart,
+            .set = native::setVehicleWheelWheelPart,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Radius"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The wheel's radius, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getVehicleWheelRadius,
+            .set = native::setVehicleWheelRadius,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Width"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The wheel's width, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getVehicleWheelWidth,
+            .set = native::setVehicleWheelWidth,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SuspensionMinLength"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The shortest the suspension can be, in meters from the attachment to the wheel's center.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getVehicleWheelSuspensionMinLength,
+            .set = native::setVehicleWheelSuspensionMinLength,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SuspensionMaxLength"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The longest the suspension can be, in meters from the attachment to the wheel's center.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getVehicleWheelSuspensionMaxLength,
+            .set = native::setVehicleWheelSuspensionMaxLength,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SuspensionFrequency"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How stiff the suspension is, as the times a second it would bounce. 1 is soft, 2 is firm, 3 is a race car.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getVehicleWheelSuspensionFrequency,
+            .set = native::setVehicleWheelSuspensionFrequency,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SuspensionDamping"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of a bounce the suspension takes away, from 0 (it bounces on) to 1 (it stops in one swing).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getVehicleWheelSuspensionDamping,
+            .set = native::setVehicleWheelSuspensionDamping,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxSteerAngle"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far the wheel turns at full `Steer`, in degrees. At 0 it does not steer.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getVehicleWheelMaxSteerAngle,
+            .set = native::setVehicleWheelMaxSteerAngle,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Driven"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the engine turns this wheel.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getVehicleWheelDriven,
+            .set = native::setVehicleWheelDriven,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxBrakeTorque"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The brake's torque at full `Brake`, in newton meters. At 0 it is enough for the chassis' mass.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getVehicleWheelMaxBrakeTorque,
+            .set = native::setVehicleWheelMaxBrakeTorque,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxHandBrakeTorque"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The hand brake's torque at full `HandBrake`, in newton meters. At 0 the hand brake does not hold this wheel.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getVehicleWheelMaxHandBrakeTorque,
+            .set = native::setVehicleWheelMaxHandBrakeTorque,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Grip"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How well the tire holds the ground, as a scale of the ground's own friction: below 1 it slides sooner, above 1 later.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getVehicleWheelGrip,
+            .set = native::setVehicleWheelGrip,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Grounded"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .doc = "Whether the wheel touched the ground at the last simulation tick.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getVehicleWheelGrounded,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Compression"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .doc = "How far the suspension was pushed in at the last simulation tick, from 0 (fully out) to 1 (fully in).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getVehicleWheelCompression,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Slip"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .doc = "How much the tire slid sideways at the last simulation tick, as the angle between where it points and where it goes, in degrees.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getVehicleWheelSlip,
+            .set = nullptr,
+        },
+    }};
+    ClassDescriptor vehicleWheelDesc;
+    vehicleWheelDesc.name = atoms.intern("VehicleWheel");
+    vehicleWheelDesc.super = instanceClass;
+    vehicleWheelDesc.flags = ClassFlags::None;
+    vehicleWheelDesc.defaultName = atoms.intern("VehicleWheel");
+    vehicleWheelDesc.doc = "One wheel of a vehicle, under its `VehicleController`. It hangs from `Attachment`, an attachment of the chassis, on a suspension that pushes the chassis up where the wheel meets the ground; its tire then pushes the chassis along and across by how much it slips.\012\012A wheel that steers has a `MaxSteerAngle`; one the engine turns is `Driven`. Driven wheels are paired in the order they are under the controller, left then right, so give a car's driven wheels left first.";
+    static constexpr std::array<std::string_view, 3> vehicleWheelParents{{"VehicleController", "ReplicatedStorage", "ServerStorage"}};
+    vehicleWheelDesc.parents = vehicleWheelParents;
+    vehicleWheelDesc.properties = vehicleWheelProperties;
+    vehicleWheelDesc.attachComponents = native::attachVehicleWheelComponents;
+    vehicleWheelDesc.detachComponents = native::detachVehicleWheelComponents;
+    classes.registerClass(vehicleWheelDesc);
 
     // --- SpringConstraint ---
     static std::array<PropertyDesc, 8> springConstraintProperties;
@@ -6352,7 +6792,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("GetStats"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Returns statistics about the connection, as a table. Use them to show a connection quality indicator. Every number is 0 in single-player. On an authority, the link numbers are those of the worst client and the deepest input queue.\012\012Link quality:\012\012- `Ping`: the round trip, in milliseconds.\012- `Jitter`: how much the round trip varies.\012- `Loss`: the share of packets lost, in percent.\012- The number of snapshots per second.\012- `Corrections`: how often this machine's own character was corrected, per second and in total since joining. `LastCorrection` is how far the last correction moved it, in meters.\012- `InputBufferDepth`: how many ticks of this player's input the authority has queued. `InputStarvations` counts the times the queue ran empty, and `InputReanchors` the times it was restarted because the player's clock jumped, as after a long frame.\012- `InterpolationDelay`: how far in the past other players are drawn, in milliseconds. It is two snapshot intervals plus the link's jitter, and adapts to the link.\012- On a client, `PredictedParts` is the number of loose parts near its character that it predicts. The table also reports how often a correction made the client simulate them again, how many ticks it simulated again, and `ResimulationTime`, the average time that took in milliseconds.\012\012Traffic: `BytesSent` and `BytesReceived` are totals since the session began. Five more fields break the total down, sent and received together: `SnapshotBytes` for world state, `AttributeBytes` for attributes, `RemoteBytes` for `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for `UnreliableRemoteEvent`s, and `InputBytes` for a client's input and the state of the parts it owns. `SwarmBytes` is the positions of replicated swarms. The remainder is instances being created and removed, terrain and the handshake. To get a rate, read a field twice, one second apart, and subtract.\012\012`Path` says how the other end is reached: `\"lan\"` on the same network, `\"direct\"` across the internet, or `\"relayed\"` through a relay, which adds the relay's distance to the round trip. On a host it is the longest path among its players. It is empty when nobody is connected.\012\012`LocalPlayers` has one entry for each local player on a machine that joined a match: the primary player first, then the guests. Each entry has the player's `UserId` and the three correction numbers for that player's character alone. It is empty on an authority and in single-player.",
+            .doc = "Returns statistics about the connection, as a table. Use them to show a connection quality indicator. Every number is 0 in single-player. On an authority, the link numbers are those of the worst client and the deepest input queue.\012\012Link quality:\012\012- `Ping`: the round trip, in milliseconds.\012- `Jitter`: how much the round trip varies.\012- `Loss`: the share of packets lost, in percent.\012- The number of snapshots per second.\012- `Corrections`: how often this machine's own character was corrected, per second and in total since joining. `LastCorrection` is how far the last correction moved it, in meters.\012- `PredictedDrift`: how far the parts this machine predicts were from the authority's at the last answer, in meters, whether or not that was a correction. These are what its character pushes and the vehicle it drives. A driven vehicle is left a few centimeters of drift and pulled back gently, so this stays small but is rarely zero.\012- `InputBufferDepth`: how many ticks of this player's input the authority has queued. `InputStarvations` counts the times the queue ran empty, and `InputReanchors` the times it was restarted because the player's clock jumped, as after a long frame.\012- `InterpolationDelay`: how far in the past other players are drawn, in milliseconds. It is two snapshot intervals plus the link's jitter, and adapts to the link.\012- On a client, `PredictedParts` is the number of loose parts near its character that it predicts. The table also reports how often a correction made the client simulate them again, how many ticks it simulated again, and `ResimulationTime`, the average time that took in milliseconds.\012\012Traffic: `BytesSent` and `BytesReceived` are totals since the session began. Five more fields break the total down, sent and received together: `SnapshotBytes` for world state, `AttributeBytes` for attributes, `RemoteBytes` for `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for `UnreliableRemoteEvent`s, and `InputBytes` for a client's input and the state of the parts it owns. `SwarmBytes` is the positions of replicated swarms. The remainder is instances being created and removed, terrain and the handshake. To get a rate, read a field twice, one second apart, and subtract.\012\012`Path` says how the other end is reached: `\"lan\"` on the same network, `\"direct\"` across the internet, or `\"relayed\"` through a relay, which adds the relay's distance to the round trip. On a host it is the longest path among its players. It is empty when nobody is connected.\012\012`LocalPlayers` has one entry for each local player on a machine that joined a match: the primary player first, then the guests. Each entry has the player's `UserId` and the three correction numbers for that player's character alone. It is empty on an authority and in single-player.",
         },
         MethodDesc{
             .name = atoms.intern("Join"),
@@ -9818,6 +10258,26 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     actuatorRelativeToDesc.doc = "The frame in which a mover's vector is given.";
     actuatorRelativeToDesc.items = actuatorRelativeToItems;
     enums.registerEnum(actuatorRelativeToDesc);
+
+    // --- VehicleTransmission ---
+    static std::array<EnumItemDesc, 2> vehicleTransmissionItems;
+    vehicleTransmissionItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Automatic"),
+            .value = 0,
+            .doc = "It shifts by itself, by the engine's turns a minute.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Manual"),
+            .value = 1,
+            .doc = "It stays in the gear the controller's `Gear` asks for.",
+        },
+    }};
+    EnumDescriptor vehicleTransmissionDesc;
+    vehicleTransmissionDesc.name = atoms.intern("VehicleTransmission");
+    vehicleTransmissionDesc.doc = "How a `VehicleController`'s gearbox chooses its gear.";
+    vehicleTransmissionDesc.items = vehicleTransmissionItems;
+    enums.registerEnum(vehicleTransmissionDesc);
 
     // --- VelocityConstraintMode ---
     static std::array<EnumItemDesc, 3> velocityConstraintModeItems;

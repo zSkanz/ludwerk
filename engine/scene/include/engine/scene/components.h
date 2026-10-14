@@ -366,6 +366,81 @@ struct AttachmentComponent
 // the solver and lets it work out where they end up. Welding a MeshPart to a
 // character keeps them together whatever the solver thinks; a hinge lets a door
 // swing under its own weight.
+// **A vehicle** (ADR 0213): the engine and the gearbox of the chassis part it
+// is under, and what its driver asks, each tick; and what the vehicle did,
+// read back after the step. Its wheels are its `VehicleWheel` children.
+struct VehicleControllerComponent
+{
+    // Newton-meters at the most, the brake's at full; nought is enough for
+    // the chassis' mass.
+    f32 maxTorque = 0.0f;
+    f32 minRpm = 1000.0f;
+    f32 maxRpm = 6000.0f;
+    // `Enum.VehicleTransmission`: 0 automatic, 1 manual.
+    i32 transmission = 0;
+    f32 shiftUpRpm = 4000.0f;
+    f32 shiftDownRpm = 2000.0f;
+    f32 finalDriveRatio = 3.42f;
+    // Degrees the chassis may lean before the vehicle holds it; 180 lets it
+    // roll over.
+    f32 maxLeanAngle = 180.0f;
+    // What the driver asks.
+    f32 throttle = 0.0f;
+    f32 steer = 0.0f;
+    f32 brake = 0.0f;
+    f32 handBrake = 0.0f;
+    // A manual gearbox's gear: -1 reverse, 0 neutral, then forward gears.
+    i32 gear = 1;
+    // **Who drives** (ADR 0213, in a match): a player, by their user id --
+    // what names a player on both ends, as a part's network owner does --
+    // whose intents of these names write the inputs above every tick, on the
+    // authority and on that player's machine, which predicts the vehicle as
+    // it predicts their character. Nought: a script writes the inputs.
+    u32 driver = 0;
+    core::NameAtom driveIntent;
+    core::NameAtom brakeIntent;
+    core::NameAtom handBrakeIntent;
+    // Read back after each step: meters a second along the chassis' forward
+    // (negative backward), the engine's turns a minute, the gear it is in.
+    f32 speed = 0.0f;
+    f32 rpm = 0.0f;
+    i32 currentGear = 0;
+    // And the clutch, 0 to 1: with the turns and the gear, what a replica
+    // puts back before stepping a driven vehicle again.
+    f32 clutch = 0.0f;
+};
+
+// One wheel of a vehicle (ADR 0213), at an attachment of the chassis.
+struct VehicleWheelComponent
+{
+    core::InstanceId attachment;
+    // A part placed where the wheel is, turned and rolling, after each step.
+    core::InstanceId wheelPart;
+    f32 radius = 0.35f;
+    f32 width = 0.25f;
+    f32 suspensionMinLength = 0.1f;
+    f32 suspensionMaxLength = 0.35f;
+    f32 suspensionFrequency = 1.5f;
+    f32 suspensionDamping = 0.5f;
+    // Degrees for full steering; nought does not steer.
+    f32 maxSteerAngle = 0.0f;
+    bool driven = false;
+    // Newton-meters; nought is enough for the chassis' mass, and the hand
+    // brake's nought is none.
+    f32 maxBrakeTorque = 0.0f;
+    f32 maxHandBrakeTorque = 0.0f;
+    f32 grip = 1.0f;
+    // Read back after each step.
+    bool grounded = false;
+    f32 compression = 0.0f;
+    f32 slip = 0.0f;
+    // Radians a second about the axle, its angle, and its steering: what a
+    // replica puts back with the engine.
+    f32 angularVelocity = 0.0f;
+    f32 rotation = 0.0f;
+    f32 steerAngle = 0.0f;
+};
+
 struct ConstraintComponent
 {
     core::InstanceId attachment0;
@@ -556,6 +631,25 @@ struct SpringBoneComponent
     f32 limitAngle = 70.0f;
     f32 radius = 0.05f;
     f32 windInfluence = 1.0f;
+};
+
+// **A mesh that hangs as cloth** (ADR 0214): what the instance says. Where
+// each vertex is this frame is the renderer's, per machine, and never state.
+struct ClothComponent
+{
+    bool enabled = true;
+    // Every joint whose name this matches (`*` for any run of characters):
+    // a vertex weighted at least half to them is pinned to its pose.
+    core::NameAtom pinJoints;
+    // How far, in meters, a free vertex may hang from its pose.
+    f32 maxDistance = 1.0f;
+    f32 stiffness = 0.9f;
+    f32 bendStiffness = 0.2f;
+    f32 damping = 0.1f;
+    f32 gravityScale = 1.0f;
+    f32 windInfluence = 1.0f;
+    f32 thickness = 0.02f;
+    bool collidesWithWorld = true;
 };
 
 // A ball or capsule on a joint that the chains of the same mesh keep out of.

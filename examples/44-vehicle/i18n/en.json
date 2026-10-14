@@ -1,0 +1,7 @@
+{
+  "hud.speed": "{speed} km/h",
+  "hud.gear": "Gear {gear}",
+  "hud.reverse": "Reverse",
+  "hud.neutral": "Neutral",
+  "hud.keys": "W A S D or the stick: drive   Space or B: hand brake   R or Y: put it back on its wheels"
+}

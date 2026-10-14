@@ -1,0 +1,16 @@
+# A vehicle (ADR 0213): a car of parts on four cast wheels, driven by the
+# keyboard or a controller, on a ground with a ramp to jump and cones to hit.
+#
+# No scene file: the script builds the ground and the car, because how a car
+# is put together is the subject.
+
+[project]
+name = "Ludwerk Vehicle"
+id = "dev.ludwerk.vehicle"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"
+
+[window]
+title = "Ludwerk — Vehicle"
+size = [1600, 900]

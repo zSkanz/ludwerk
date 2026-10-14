@@ -217,6 +217,11 @@ public:
     // The other direction, for a query filter.
     [[nodiscard]] u64 userDataOf(core::InstanceId id) const noexcept;
 
+    // **The shape a part collides as**, for a world that copies it: a cloth's,
+    // which is kept out of the anchored parts near it (ADR 0214). False for
+    // an id that is not a part.
+    [[nodiscard]] bool collisionShape(core::InstanceId id, physics::ShapeDesc& out) const;
+
     // Seconds inside the last `step`, in the three stages that are separable at
     // this seam (see `physics::StepTimings` for why they are not broadphase,
     // narrowphase and solver).
@@ -532,6 +537,31 @@ private:
     void applyNoCollisions();
     // After the step: what each joint carried, and whether it gave.
     void readConstraints(f32 fixedDt);
+
+    // --- ADR 0213 (physics_vehicles.cpp) -------------------------------------
+    //
+    // Each `VehicleController` and its wheels, on its chassis' body, built
+    // again only when what it is built from changed, and given what its
+    // driver asks -- before the step.
+    void applyVehicles();
+    // After the step: what each vehicle did, and its wheels' parts placed.
+    void readVehicles();
+    // A vehicle put as the authority had it, for a replay (ADR 0213).
+    void putVehicle(const CharacterReplayStart::Vehicle& vehicle);
+    // A driver's intents for the step being taken: a replay's command, or
+    // the player's own.
+    [[nodiscard]] std::span<const PlayerIntent> driverIntents(core::u32 driver) const;
+    struct VehicleRecord
+    {
+        core::u32 generation = 0;
+        physics::VehicleHandle handle;
+        core::u64 signature = 0;
+        // Its wheels, in the order the vehicle was given them.
+        std::vector<core::InstanceId> wheels;
+        bool seen = false;
+    };
+    // By the controller's slot.
+    std::vector<VehicleRecord> m_vehicles;
     struct NoCollisionRecord
     {
         core::u32 generation = 0;
@@ -541,6 +571,10 @@ private:
         bool seen = false;
     };
     std::vector<NoCollisionRecord> m_noCollisions;
+    // And each weld's two bodies, kept from colliding the same way: a weld's
+    // moved part pressed into its anchor dragged it.
+    void applyWeldPairs();
+    std::vector<NoCollisionRecord> m_weldPairs;
     // Whether this tick's walk over the joints found a spring: a world with
     // no mover and no spring does not walk them a second time.
     bool m_anySpring = false;
@@ -716,6 +750,12 @@ private:
     static constexpr f64 NudgeMetres = 0.05;
     std::map<u64, Island> m_islands;
     [[nodiscard]] bool restoreIsland(const Island& island);
+    // Whether a part carries a `VehicleController` (ADR 0213): its chassis
+    // is put in a replay only when off by `VehicleCorrectionMetres`.
+    [[nodiscard]] bool isChassis(core::InstanceId id) const;
+    // How much of the way to the authority's a chassis under its correction
+    // is pulled, an answer at a time.
+    static constexpr f64 VehiclePull = 0.2;
 
     std::vector<BodyRecord> m_bodies;
     // The parts a constraint holds, gathered each tick before the bodies are

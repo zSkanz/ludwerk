@@ -79,6 +79,7 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`CharacterBody`](characterbody.md) | [`BasePart`](basepart.md) | A capsule that walks: a player's character, or anything that should climb a ramp and step over a curb instead of tumbling. |
 | [`ChorusSoundEffect`](chorussoundeffect.md) | [`SoundEffect`](soundeffect.md) | Adds a copy of the sound that drifts slightly out of time and tune with it, which makes one voice sound like several. |
 | [`ClickDetector`](clickdetector.md) | [`Instance`](instance.md) | Lets a player click the part or model it is parented to. |
+| [`Cloth`](cloth.md) | [`Instance`](instance.md) | Makes the `MeshPart` it is parented to hang, sway and fold like cloth: a cape, a flag, a skirt or a banner. |
 | [`ColorCorrectionEffect`](colorcorrectioneffect.md) | [`PostEffect`](posteffect.md) | Adjusts the color of the whole picture: its brightness, contrast, saturation and tint. |
 | [`CompressorSoundEffect`](compressorsoundeffect.md) | [`SoundEffect`](soundeffect.md) | Reduces the loud parts of a sound so that the whole can be made louder. |
 | [`Constraint`](constraint.md) | [`Instance`](instance.md) | The abstract base class of physics joints. |
@@ -143,7 +144,7 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`SoundEffect`](soundeffect.md) | [`Instance`](instance.md) | The base class of audio effects, which process a sound before it reaches the speakers. |
 | [`SpotLight`](spotlight.md) | [`Instance`](instance.md) | A light that shines in a cone around its forward direction. |
 | [`SpringBone`](springbone.md) | [`Instance`](instance.md) | Makes a chain of joints swing and settle behind the body that carries it, for a cape, a tail, hair or a tassel. |
-| [`SpringCollider`](springcollider.md) | [`Instance`](instance.md) | A sphere or capsule attached to a joint that the `SpringBone` chains of the same `MeshPart` cannot pass through. |
+| [`SpringCollider`](springcollider.md) | [`Instance`](instance.md) | A sphere or capsule attached to a joint that the `SpringBone` chains and the `Cloth` of the same `MeshPart` cannot pass through. |
 | [`SpringConstraint`](springconstraint.md) | [`Constraint`](constraint.md) | A spring between two attachments. |
 | [`SpringConstraint2D`](springconstraint2d.md) | [`Constraint2D`](constraint2d.md) | Holds two points at a distance, with a spring: a spring, a bungee cord or a suspension. |
 | [`SpriteAnimator`](spriteanimator.md) | [`Instance`](instance.md) | Plays the frames of a sprite sheet on its parent `Part2D`, on simulation time, so a walk cycle needs no script. |
@@ -174,6 +175,8 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`UITextSizeConstraint`](uitextsizeconstraint.md) | [`Instance`](instance.md) | Keeps the text size of a label with `TextScaled` on between a minimum and a maximum, so the text is never too small to read or too large. |
 | [`UnreliableRemoteEvent`](unreliableremoteevent.md) | [`Instance`](instance.md) | A `RemoteEvent` for data that is sent many times per second and replaced each time. |
 | [`VectorForce`](vectorforce.md) | [`Constraint`](constraint.md) | Applies a constant force to the part that `Attachment0` is on. |
+| [`VehicleController`](vehiclecontroller.md) | [`Instance`](instance.md) | Makes the part it is under a vehicle's chassis, held up by the `VehicleWheel`s under it and driven by an engine through a gearbox. |
+| [`VehicleWheel`](vehiclewheel.md) | [`Instance`](instance.md) | One wheel of a vehicle, under its `VehicleController`. |
 | [`ViewportFrame`](viewportframe.md) | [`UIObject`](uiobject.md) | A UI object that draws the parts and models parented inside it: an item turning in an inventory slot, a character preview or a 3D icon. |
 | [`Water`](water.md) | [`Instance`](instance.md) | A body of water: a sea, a pool, a lake or a river. |
 | [`WaterPoint`](waterpoint.md) | [`Instance`](instance.md) | One of the points that a `River` runs through or that the outline of a `Lake` passes through, in order. |

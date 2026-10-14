@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 51;
+inline constexpr u32 ProtocolVersion = 52;
 
 // How a field's bytes are laid down. Every one is little-endian and fixed-width
 // with no nesting -- a wire format whose parser can recurse has a stack-depth
@@ -576,6 +576,52 @@ inline constexpr FieldDesc SpotLightFields[] = {
     {"Shadows", 7, Encoding::Bool, Source::Component, "spotLights"},
 };
 
+inline constexpr FieldDesc VehicleControllerFields[] = {
+    {"MaxTorque", 1, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"MinRPM", 2, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"MaxRPM", 3, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"Transmission", 4, Encoding::I32, Source::Component, "vehicleControllers"},
+    {"ShiftUpRPM", 5, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"ShiftDownRPM", 6, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"FinalDriveRatio", 7, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"MaxLeanAngle", 8, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"Throttle", 9, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"Steer", 10, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"Brake", 11, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"HandBrake", 12, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"Gear", 13, Encoding::I32, Source::Component, "vehicleControllers"},
+    {"Speed", 14, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"RPM", 15, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"CurrentGear", 16, Encoding::I32, Source::Component, "vehicleControllers"},
+    {"Driver", 17, Encoding::U32, Source::Component, "vehicleControllers"},
+    {"DriveIntent", 18, Encoding::NameAtom, Source::Component, "vehicleControllers"},
+    {"BrakeIntent", 19, Encoding::NameAtom, Source::Component, "vehicleControllers"},
+    {"HandBrakeIntent", 20, Encoding::NameAtom, Source::Component, "vehicleControllers"},
+    {"Clutch", 21, Encoding::F32, Source::Component, "vehicleControllers"},
+};
+
+inline constexpr FieldDesc VehicleWheelFields[] = {
+    {"Attachment", 1, Encoding::InstanceRef, Source::Component, "vehicleWheels"},
+    {"WheelPart", 2, Encoding::InstanceRef, Source::Component, "vehicleWheels"},
+    {"Radius", 3, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"Width", 4, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"SuspensionMinLength", 5, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"SuspensionMaxLength", 6, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"SuspensionFrequency", 7, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"SuspensionDamping", 8, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"MaxSteerAngle", 9, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"Driven", 10, Encoding::Bool, Source::Component, "vehicleWheels"},
+    {"MaxBrakeTorque", 11, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"MaxHandBrakeTorque", 12, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"Grip", 13, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"Grounded", 14, Encoding::Bool, Source::Component, "vehicleWheels"},
+    {"Compression", 15, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"Slip", 16, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"AngularVelocity", 17, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"Rotation", 18, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"SteerAngle", 19, Encoding::F32, Source::Component, "vehicleWheels"},
+};
+
 inline constexpr FieldDesc SpringBoneFields[] = {
     {"Enabled", 1, Encoding::Bool, Source::Component, "springBones"},
     {"RootJoint", 2, Encoding::NameAtom, Source::Component, "springBones"},
@@ -594,6 +640,19 @@ inline constexpr FieldDesc SpringColliderFields[] = {
     {"Radius", 2, Encoding::F32, Source::Component, "springColliders"},
     {"Length", 3, Encoding::F32, Source::Component, "springColliders"},
     {"Offset", 4, Encoding::Vector3, Source::Component, "springColliders"},
+};
+
+inline constexpr FieldDesc ClothFields[] = {
+    {"Enabled", 1, Encoding::Bool, Source::Component, "cloths"},
+    {"PinJoints", 2, Encoding::NameAtom, Source::Component, "cloths"},
+    {"MaxDistance", 3, Encoding::F32, Source::Component, "cloths"},
+    {"Stiffness", 4, Encoding::F32, Source::Component, "cloths"},
+    {"BendStiffness", 5, Encoding::F32, Source::Component, "cloths"},
+    {"Damping", 6, Encoding::F32, Source::Component, "cloths"},
+    {"GravityScale", 7, Encoding::F32, Source::Component, "cloths"},
+    {"WindInfluence", 8, Encoding::F32, Source::Component, "cloths"},
+    {"Thickness", 9, Encoding::F32, Source::Component, "cloths"},
+    {"CollidesWithWorld", 10, Encoding::Bool, Source::Component, "cloths"},
 };
 
 inline constexpr FieldDesc BoneFields[] = {
@@ -801,8 +860,11 @@ inline constexpr ClassDesc Classes[] = {
     {"NoCollisionConstraint", NoCollisionConstraintFields, -1, false, false},
     {"PointLight", PointLightFields, -1, false, false},
     {"SpotLight", SpotLightFields, -1, false, false},
+    {"VehicleController", VehicleControllerFields, -1, false, false},
+    {"VehicleWheel", VehicleWheelFields, -1, false, false},
     {"SpringBone", SpringBoneFields, -1, false, false},
     {"SpringCollider", SpringColliderFields, -1, false, false},
+    {"Cloth", ClothFields, -1, false, false},
     {"Bone", BoneFields, 28, false, false},
     {"Highlight", HighlightFields, -1, false, false},
     {"Beam", BeamFields, -1, false, false},

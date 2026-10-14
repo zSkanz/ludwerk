@@ -234,6 +234,137 @@ TEST_CASE("a part in a world nobody scripted still falls, because the mirror is 
     CHECK(part->cframe.position.y < 39.0);
 }
 
+TEST_CASE("a part welded into the part it is welded to does not push it")
+{
+    // The part a weld moves is placed where its anchor puts it, every tick.
+    // Where it overlapped its anchor the solver met an immovable body pressed
+    // into the anchor, and the anchor was pushed by its own part: a block at
+    // rest with a lid welded a little into it slid away on its own.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local floor = Instance.new("Part")
+        floor.Anchored = true
+        floor.Size = vector.create(40, 1, 40)
+        floor.Position = vector.create(0, -0.5, 0)
+        floor.Parent = workspace
+        local base = Instance.new("Part")
+        base.Name = "Base"
+        base.Size = vector.create(2, 1, 2)
+        base.Position = vector.create(0, 0.5, 0)
+        base.Parent = workspace
+        local lid = Instance.new("Part")
+        lid.Name = "Lid"
+        lid.Size = vector.create(1.6, 0.4, 1.6)
+        -- A tenth of a metre into the base, as a modeller leaves a seam.
+        lid.Position = vector.create(0.1, 1.1, 0)
+        lid.Parent = base
+        local weld = Instance.new("WeldConstraint")
+        weld.Part0 = base
+        weld.Part1 = lid
+        weld.Parent = lid
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 30; ++tick)
+        host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    scene::World& world = host.world();
+    const core::InstanceId base = world.findFirstChild(host.workspace(), world.atoms().lookup("Base"));
+    REQUIRE(base.valid());
+    const core::DVec3 settled = world.parts().find(base)->cframe.position;
+    for (int tick = 0; tick < 120; ++tick)
+        host.tick();
+    const core::DVec3 after = world.parts().find(base)->cframe.position;
+    const core::DVec3 moved = after - settled;
+    CHECK(std::sqrt(moved.x * moved.x + moved.z * moved.z) < 0.001);
+}
+
+TEST_CASE("ADR 0213: a car of parts a script builds drives on its throttle, its wheels on the ground and turning")
+{
+    // Default parts: a chassis of tens of kilograms, where the vehicle's own
+    // defaults are a road car's ton and a half. Nought for a torque is
+    // "enough for this chassis", so it drives as built.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        local floor = Instance.new("Part")
+        floor.Anchored = true
+        floor.Size = vector.create(400, 1, 400)
+        floor.Position = vector.create(0, -0.5, 0)
+        floor.Parent = workspace
+
+        local car = Instance.new("Part")
+        car.Name = "Car"
+        car.Size = vector.create(2, 0.6, 4)
+        car.Position = vector.create(0, 1.2, 0)
+        car.Parent = workspace
+        local controller = Instance.new("VehicleController")
+        controller.Name = "Controller"
+        controller.Parent = car
+        for _, corner in { { -0.9, -1.4 }, { 0.9, -1.4 }, { -0.9, 1.4 }, { 0.9, 1.4 } } do
+            local front = corner[2] < 0
+            local hub = Instance.new("Attachment")
+            hub.CFrame = CFrame.new(corner[1], -0.2, corner[2])
+            hub.Parent = car
+            local drawn = Instance.new("Part")
+            drawn.Name = "Tyre"
+            drawn.Anchored = true
+            drawn.CanCollide = false
+            drawn.Size = vector.create(0.25, 0.7, 0.7)
+            drawn.Parent = workspace
+            local wheel = Instance.new("VehicleWheel")
+            wheel.Attachment = hub
+            wheel.WheelPart = drawn
+            wheel.MaxSteerAngle = if front then 30 else 0
+            wheel.Driven = not front
+            wheel.Parent = controller
+        end
+        local ticks = 0
+        RunService.PreSimulation:Connect(function()
+            ticks += 1
+            controller.Throttle = if ticks > 60 then 1 else 0
+        end)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 60; ++tick)
+        host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    scene::World& world = host.world();
+    const core::InstanceId car = world.findFirstChild(host.workspace(), world.atoms().lookup("Car"));
+    REQUIRE(car.valid());
+    const core::InstanceId controller = world.findFirstChild(car, world.atoms().lookup("Controller"));
+    REQUIRE(controller.valid());
+    const scene::VehicleControllerComponent* driven = world.vehicleControllers().find(controller);
+    REQUIRE(driven != nullptr);
+    // At rest on its four wheels.
+    const core::f64 restZ = world.parts().find(car)->cframe.position.z;
+    CHECK(std::abs(driven->speed) < 0.1f);
+    world.vehicleWheels().forEach(
+        [&](core::InstanceId, const scene::VehicleWheelComponent& wheel) { CHECK(wheel.grounded); });
+
+    // Three seconds of throttle: forward is the chassis' LookVector, -Z.
+    for (int tick = 0; tick < 180; ++tick)
+        host.tick();
+    CHECK(driven->speed > 3.0f);
+    CHECK(driven->rpm > 0.0f);
+    CHECK(world.parts().find(car)->cframe.position.z < restZ - 5.0);
+    // And the tyres are drawn where the wheels are: by the car, and below it.
+    const core::DVec3 at = world.parts().find(car)->cframe.position;
+    int placed = 0;
+    world.vehicleWheels().forEach([&](core::InstanceId, const scene::VehicleWheelComponent& wheel) {
+        const scene::PartComponent* tyre = world.parts().find(wheel.wheelPart);
+        REQUIRE(tyre != nullptr);
+        const core::DVec3 offset = tyre->cframe.position - at;
+        CHECK(std::sqrt(offset.x * offset.x + offset.z * offset.z) < 2.5);
+        CHECK(tyre->cframe.position.y < at.y);
+        ++placed;
+    });
+    CHECK(placed == 4);
+}
+
 TEST_CASE("a script saves the simulation, rolls back to it and steps again to exactly where it was (ADR 0101)")
 {
     Captured log;
@@ -529,6 +660,101 @@ TEST_CASE("a replay from a remembered tick is the live step again, to the bit (A
         CHECK(replayed[at].position.y == walked[at].y);
         CHECK(replayed[at].position.z == walked[at].z);
     }
+}
+
+TEST_CASE("ADR 0213: a replay of a car setting off is the live drive again")
+{
+    // What a replica does to the car it drives at every answer: the island
+    // put back as it was at the answered tick and stepped again. Two defects
+    // made that a different drive, each failing this on its own:
+    //
+    //   - the vehicle's engine and wheels were put back from its components,
+    //     which hold what the NEWEST step left -- wheels already turning on
+    //     a car the answered tick had still;
+    //   - the island held its bodies and not its vehicles: the gearbox's
+    //     timers, what its wheels last pushed with and its suspension came
+    //     out of the newest step, not the answered one.
+    //
+    // A car four ticks into setting off -- in gear, its clutch coming in --
+    // is the case both show in: at 300 ms the car was drawn two to seven
+    // centimetres back and forth over its first second.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        local floor = Instance.new("Part")
+        floor.Anchored = true
+        floor.Size = vector.create(400, 1, 400)
+        floor.Position = vector.create(0, -0.5, 0)
+        floor.Parent = workspace
+        local walker = Instance.new("CharacterBody")
+        walker.Name = "Walker"
+        walker.Position = vector.create(-8, 3, 0)
+        walker.Parent = workspace
+
+        local car = Instance.new("Part")
+        car.Name = "Car"
+        car.Size = vector.create(2, 0.6, 4)
+        car.Position = vector.create(0, 1.2, 0)
+        car.Parent = workspace
+        local controller = Instance.new("VehicleController")
+        controller.Name = "Controller"
+        controller.Parent = car
+        for _, corner in { { -0.9, -1.4 }, { 0.9, -1.4 }, { -0.9, 1.4 }, { 0.9, 1.4 } } do
+            local front = corner[2] < 0
+            local hub = Instance.new("Attachment")
+            hub.CFrame = CFrame.new(corner[1], -0.2, corner[2])
+            hub.Parent = car
+            local wheel = Instance.new("VehicleWheel")
+            wheel.Attachment = hub
+            wheel.MaxSteerAngle = if front then 30 else 0
+            wheel.Driven = not front
+            wheel.Parent = controller
+        end
+        local ticks = 0
+        RunService.PreSimulation:Connect(function()
+            ticks += 1
+            controller.Throttle = if ticks > 90 then 1 else 0
+        end)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 95; ++tick)
+        host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    scene::World& world = host.world();
+    const core::InstanceId walker = world.findFirstChild(host.workspace(), world.atoms().lookup("Walker"));
+    const core::InstanceId car = world.findFirstChild(host.workspace(), world.atoms().lookup("Car"));
+    REQUIRE(walker.valid());
+    REQUIRE(car.valid());
+    scene::PhysicsSync* physics = host.physics();
+    REQUIRE(physics != nullptr);
+    physics->remember(1000);
+    scene::CharacterReplayStart start;
+    start.tick = 1000;
+    start.transform = world.parts().find(walker)->cframe;
+    start.verticalVelocity = world.characterBodies().find(walker)->verticalVelocity;
+    start.grounded = world.characterBodies().find(walker)->grounded;
+
+    std::vector<scene::CharacterCommand> commands;
+    for (int tick = 0; tick < 30; ++tick) {
+        host.tick();
+        const std::optional<scene::CharacterCommand> command = physics->lastCommand(walker);
+        REQUIRE(command.has_value());
+        commands.push_back(*command);
+        physics->remember(1001 + static_cast<core::u64>(tick));
+    }
+    const core::DVec3 drove = world.parts().find(car)->cframe.position;
+    // It set off: what is compared is a drive, not a car at rest.
+    REQUIRE(std::abs(drove.z) > 0.05);
+
+    const std::vector<core::CFrameD> replayed = physics->replay(walker, start, commands);
+    REQUIRE(replayed.size() == commands.size());
+    const core::DVec3 again = world.parts().find(car)->cframe.position;
+    MESSAGE("live ", drove.z, " m, again ", again.z, " m");
+    CHECK(again.x == doctest::Approx(drove.x).epsilon(1e-9));
+    CHECK(again.y == doctest::Approx(drove.y).epsilon(1e-9));
+    CHECK(again.z == doctest::Approx(drove.z).epsilon(1e-9));
 }
 
 TEST_CASE("a replay from the tick a predicted touch launched or moved the character is the live step again")

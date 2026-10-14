@@ -703,13 +703,140 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     springColliderDesc.super = instanceClass;
     springColliderDesc.flags = scene::ClassFlags::None;
     springColliderDesc.defaultName = atoms.intern("SpringCollider");
-    springColliderDesc.doc = "A sphere or capsule attached to a joint that the `SpringBone` chains of the same `MeshPart` cannot pass through. Use a few to keep a cape or hair out of the body: one for the back and one for each leg is usually enough.\012\012It affects only `SpringBone` chains. It is not a physics shape, and nothing else in the world collides with it.";
+    springColliderDesc.doc = "A sphere or capsule attached to a joint that the `SpringBone` chains and the `Cloth` of the same `MeshPart` cannot pass through. Use a few to keep a cape or hair out of the body: one for the back and one for each leg is usually enough. A `Cloth` on a mesh that wears another's pose is also kept out of the colliders of the mesh it follows.\012\012It affects only `SpringBone` chains and `Cloth`. It is not a physics shape, and nothing else in the world collides with it.";
     static constexpr std::array<std::string_view, 3> springColliderParents{{"MeshPart", "ReplicatedStorage", "ServerStorage"}};
     springColliderDesc.parents = springColliderParents;
     springColliderDesc.properties = springColliderProperties;
     springColliderDesc.attachComponents = native::attachSpringColliderComponents;
     springColliderDesc.detachComponents = native::detachSpringColliderComponents;
     classes.registerClass(springColliderDesc);
+
+    // --- Cloth ---
+    static std::array<scene::PropertyDesc, 10> clothProperties;
+    clothProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the cloth is simulated. When it is off, the mesh is drawn as the animation has it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getClothEnabled,
+            .set = native::setClothEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("PinJoints"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "A name pattern for the joints the cloth hangs from, where `*` matches any run of characters. A vertex weighted at least half to joints it matches is pinned to where the animation puts it. With no pinned vertex, the cloth hangs only by `MaxDistance`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getClothPinJoints,
+            .set = native::setClothPinJoints,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MaxDistance"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far, in meters, a vertex may move from where the animation puts it. A cape that should never fly over the head has a small one; at 0 the cloth does not move.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getClothMaxDistance,
+            .set = native::setClothMaxDistance,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Stiffness"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much the cloth resists stretching, from 0 to 1. At 1 it keeps the length it was modeled with, as canvas does; lower values stretch like knitted cloth.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getClothStiffness,
+            .set = native::setClothStiffness,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("BendStiffness"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much the cloth resists folding, from 0 to 1. Silk is near 0 and leather near 1.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getClothBendStiffness,
+            .set = native::setClothBendStiffness,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Damping"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of its motion the cloth loses each second, from 0 to 1. A low value flutters for a long time; a high value settles quickly and looks heavy.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getClothDamping,
+            .set = native::setClothDamping,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("GravityScale"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of the world's gravity affects the cloth. At 0 the cloth floats.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getClothGravityScale,
+            .set = native::setClothGravityScale,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("WindInfluence"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much the world's wind pushes the cloth. At 0 the cloth ignores wind.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getClothWindInfluence,
+            .set = native::setClothWindInfluence,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Thickness"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far, in meters, the cloth stays from what it rests on.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getClothThickness,
+            .set = native::setClothThickness,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("CollidesWithWorld"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the cloth is kept out of the anchored parts near it, such as a wall it is pressed against or the floor it drags on. It never pushes them.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getClothCollidesWithWorld,
+            .set = native::setClothCollidesWithWorld,
+        },
+    }};
+    scene::ClassDescriptor clothDesc;
+    clothDesc.name = atoms.intern("Cloth");
+    clothDesc.super = instanceClass;
+    clothDesc.flags = scene::ClassFlags::None;
+    clothDesc.defaultName = atoms.intern("Cloth");
+    clothDesc.doc = "Makes the `MeshPart` it is parented to hang, sway and fold like cloth: a cape, a flag, a skirt or a banner. Each vertex of the mesh is simulated, pulled by gravity and the world's wind, kept at its distance from its neighbors, and kept out of the `SpringCollider`s of the mesh and of the parts anchored near it.\012\012It is visual only. Each machine runs it at the frame rate after the animation is applied; it is not replicated or recorded in a replay, and a server with no window does not run it. Game logic should not read where the cloth is.\012\012The mesh must be skinned. Its vertices that are weighted at least half to a joint `PinJoints` matches are pinned: they stay where the animation puts them, and the rest hang from them. Every other vertex hangs free, never further than `MaxDistance` from where the animation would put it. A cape is modeled hanging straight down, with its top row weighted to a joint at the shoulders and the rest weighted as it would be without cloth.\012\012A mesh of more than 8,192 vertices is drawn as the animation has it. Cloth further from the camera than the quality level allows, and at the Low quality level, is also drawn as the animation has it.";
+    static constexpr std::array<std::string_view, 3> clothParents{{"MeshPart", "ReplicatedStorage", "ServerStorage"}};
+    clothDesc.parents = clothParents;
+    clothDesc.properties = clothProperties;
+    clothDesc.attachComponents = native::attachClothComponents;
+    clothDesc.detachComponents = native::detachClothComponents;
+    classes.registerClass(clothDesc);
 
     // --- Camera ---
     static std::array<scene::PropertyDesc, 9> cameraProperties;

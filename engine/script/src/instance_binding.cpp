@@ -15,6 +15,7 @@
 #include "engine/core/finite.h"
 #include "engine/core/log.h"
 #include "engine/scene/camera_view.h"
+#include "engine/scene/fracture.h"
 #include "engine/scene/pivot.h"
 #include "engine/scene/players.h"
 #include "engine/scene/ragdoll_build.h"
@@ -1171,6 +1172,162 @@ int methodApplyImpulse(lua_State* L)
     if (scene::RigidBodyComponent* body = world(L).rigidBodies().find(id); body != nullptr)
         body->pendingImpulse = body->pendingImpulse + impulse;
     return 0;
+}
+
+// --- Fracture (ADR 0215) ---------------------------------------------------------
+
+// **`part:Fracture(options?)`**: the part cut into pieces of itself, held to
+// their neighbours by joints that break, in a `Model` where the part was. The
+// pieces are simulation, as any part is: the authority's, sent as parts. The
+// cut is the seed's, the same on every machine.
+int methodFracture(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    World& w = world(L);
+    const scene::PartComponent* part = w.parts().find(id);
+    if (part == nullptr || part->shape != 0 || w.meshParts().find(id) != nullptr) {
+        const core::I18nArg args[] = {{"instance", w.atoms().text(w.name(id))}};
+        raise(L, ENG_TR("scene.err.fracture_not_a_box"), args);
+    }
+    core::u32 pieces = 8;
+    core::u64 seed = 1;
+    double strength = -1.0;
+    if (!lua_isnoneornil(L, 2)) {
+        luaL_checktype(L, 2, LUA_TTABLE);
+        lua_getfield(L, 2, "Pieces");
+        if (!lua_isnil(L, -1)) {
+            const double wanted = luaL_checknumber(L, -1);
+            if (!std::isfinite(wanted) || wanted < 1.0 || wanted != std::floor(wanted))
+                luaL_argerror(L, 2, "a whole number of Pieces, 1 or more");
+            pieces = static_cast<core::u32>(std::min(wanted, static_cast<double>(scene::MaxFracturePieces)));
+        }
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "Seed");
+        if (!lua_isnil(L, -1)) {
+            const double given = luaL_checknumber(L, -1);
+            if (!std::isfinite(given) || given != std::floor(given))
+                luaL_argerror(L, 2, "a whole Seed");
+            seed = static_cast<core::u64>(static_cast<core::i64>(given));
+        }
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "Strength");
+        if (!lua_isnil(L, -1)) {
+            strength = luaL_checknumber(L, -1);
+            if (!std::isfinite(strength) || strength < 0.0)
+                luaL_argerror(L, 2, "a Strength of 0 or more");
+        }
+        lua_pop(L, 1);
+    }
+
+    const core::CFrameD whole = part->cframe;
+    const core::Vec3 size = part->size;
+    const scene::RigidBodyComponent* rigid = w.rigidBodies().find(id);
+    const bool footed = rigid != nullptr && rigid->anchored;
+    const scene::FractureCut cut = scene::cutBox(size, pieces, seed);
+    // **What a joint holds, where the game said nothing**: twice the weight of
+    // the whole thing -- it stands under itself, and a blow of a few times
+    // its weight in one tick breaks it where it lands.
+    if (strength < 0.0) {
+        const double density = rigid != nullptr ? static_cast<double>(rigid->density) : 1.0;
+        const double mass =
+            density * static_cast<double>(size.x) * static_cast<double>(size.y) * static_cast<double>(size.z);
+        strength = 2.0 * mass * 9.81;
+    }
+
+    const bool local = threadMakesLocal(L);
+    const auto make = [&](std::string_view className) {
+        const core::InstanceId made = w.create(w.classes().findId(w.atoms().intern(className)));
+        if (made.valid() && local)
+            w.setLocal(made, true);
+        return made;
+    };
+    const auto set = [&](core::InstanceId target, std::string_view property, const scene::Value& value) {
+        (void)w.setProperty(target, w.atoms().intern(property), value);
+    };
+
+    const core::InstanceId model = make("Model");
+    set(model, "Name", scene::Value{std::string(w.atoms().text(w.name(id)))});
+    std::vector<core::InstanceId> made;
+    made.reserve(cut.pieces.size());
+    for (core::usize index = 0; index < cut.pieces.size(); ++index) {
+        const scene::FracturePiece& piece = cut.pieces[index];
+        // The part itself, again: its material, its colour, how it collides.
+        const core::InstanceId copy = w.clone(id);
+        if (!copy.valid())
+            continue;
+        if (local)
+            w.setLocal(copy, true);
+        std::vector<core::InstanceId> inside;
+        w.collectDescendants(copy, inside);
+        for (auto at = inside.rbegin(); at != inside.rend(); ++at)
+            (void)w.destroy(*at);
+        set(copy, "Name", scene::Value{"Piece" + std::to_string(index + 1)});
+        set(copy, "Size", scene::Value{piece.size});
+        set(copy, "CFrame", scene::Value{whole * core::CFrameD(core::toDVec3(piece.center))});
+        set(copy, "Anchored", scene::Value{false});
+        (void)w.setParent(copy, model);
+        made.push_back(copy);
+    }
+    // A joint for every two pieces that share a face, at the middle of what
+    // they share, breaking under `Strength` newtons.
+    for (const scene::FractureJoint& joint : cut.joints) {
+        if (joint.first >= made.size() || joint.second >= made.size())
+            continue;
+        const core::InstanceId first = make("Attachment");
+        const core::InstanceId second = make("Attachment");
+        set(first, "CFrame", scene::Value{core::CFrameD(core::toDVec3(joint.at - cut.pieces[joint.first].center))});
+        set(second, "CFrame", scene::Value{core::CFrameD(core::toDVec3(joint.at - cut.pieces[joint.second].center))});
+        (void)w.setParent(first, made[joint.first]);
+        (void)w.setParent(second, made[joint.second]);
+        const core::InstanceId hold = make("FixedConstraint");
+        set(hold, "Attachment0", scene::Value{first});
+        set(hold, "Attachment1", scene::Value{second});
+        set(hold, "BreakForce", scene::Value{strength});
+        set(hold, "BreakTorque", scene::Value{strength});
+        (void)w.setParent(hold, made[joint.first]);
+    }
+    // **A part that stood where it was built keeps its footing**: an
+    // anchored sliver under its bottom face, which does not collide, and each
+    // piece along the bottom joined to it by a joint like the others -- so a
+    // blow breaks the wall where it lands, not the whole of it over in one
+    // slab, and a hard enough one tears it from its footing too.
+    if (footed) {
+        const core::InstanceId footing = make("Part");
+        const core::f32 thin = std::max(0.01f, size.y * 0.005f);
+        set(footing, "Name", scene::Value{std::string("Footing")});
+        set(footing, "Anchored", scene::Value{true});
+        set(footing, "CanCollide", scene::Value{false});
+        set(footing, "CastShadow", scene::Value{false});
+        set(footing, "Size", scene::Value{core::Vec3{size.x, thin, size.z}});
+        const core::Vec3 under{0.0f, -size.y * 0.5f - thin * 0.5f, 0.0f};
+        set(footing, "CFrame", scene::Value{whole * core::CFrameD(core::toDVec3(under))});
+        (void)w.setParent(footing, model);
+        for (core::usize index = 0; index < made.size(); ++index) {
+            const scene::FracturePiece& piece = cut.pieces[index];
+            if (piece.center.y - piece.size.y * 0.5f > -size.y * 0.5f + 1.0e-4f * size.y)
+                continue;
+            const core::Vec3 at{piece.center.x, -size.y * 0.5f, piece.center.z};
+            const core::InstanceId onPiece = make("Attachment");
+            const core::InstanceId onFooting = make("Attachment");
+            set(onPiece, "CFrame", scene::Value{core::CFrameD(core::toDVec3(at - piece.center))});
+            set(onFooting, "CFrame", scene::Value{core::CFrameD(core::toDVec3(at - under))});
+            (void)w.setParent(onPiece, made[index]);
+            (void)w.setParent(onFooting, footing);
+            const core::InstanceId hold = make("FixedConstraint");
+            set(hold, "Attachment0", scene::Value{onPiece});
+            set(hold, "Attachment1", scene::Value{onFooting});
+            // Four times a piece's joint: the footing carries the push of the
+            // whole wall, and gave before any piece did.
+            set(hold, "BreakForce", scene::Value{strength * 4.0});
+            set(hold, "BreakTorque", scene::Value{strength * 4.0});
+            (void)w.setParent(hold, made[index]);
+        }
+    }
+    (void)w.setParent(model, w.parentOf(id));
+    (void)w.destroy(id);
+    pushInstance(L, model);
+    flushSceneChanges(L);
+    return 1;
 }
 
 // --- Swarm (ADR 0156) ------------------------------------------------------------
@@ -3224,6 +3381,7 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"PVInstance", "PivotTo", methodPivotTo},
     {"Model", "GetExtentsSize", methodGetExtentsSize},
     {"BasePart", "ApplyImpulse", methodApplyImpulse},
+    {"BasePart", "Fracture", methodFracture},
     {"BasePart", "BindToPredictedTouch", partBindToPredictedTouch},
     {"BasePart", "UnbindFromPredictedTouch", partUnbindFromPredictedTouch},
     {"Swarm", "AddAgent", methodSwarmAddAgent},

@@ -707,6 +707,18 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "Fracture",
+          "Parameters": [
+            {
+              "Name": "options",
+              "Type": "{ Pieces: number?, Seed: number?, Strength: number? }?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["Model"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "GetMaterialParameter",
           "Parameters": [
             {
@@ -1371,6 +1383,64 @@
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
       "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Cloth",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "BendStiffness",
+          "Type": "number",
+          "Default": "0.2"
+        },
+        {
+          "Name": "CollidesWithWorld",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Damping",
+          "Type": "number",
+          "Default": "0.1"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "GravityScale",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "MaxDistance",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "PinJoints",
+          "Type": "string"
+        },
+        {
+          "Name": "Stiffness",
+          "Type": "number",
+          "Default": "0.9"
+        },
+        {
+          "Name": "Thickness",
+          "Type": "number",
+          "Default": "0.02"
+        },
+        {
+          "Name": "WindInfluence",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
       "Methods": [],
       "Events": []
     },
@@ -4925,7 +4995,7 @@
         {
           "Name": "GetStats",
           "Parameters": [],
-          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }"],
+          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }"],
           "ThreadSafety": "Unsafe"
         },
         {
@@ -9886,6 +9956,201 @@
           "Name": "RelativeTo",
           "Type": "Enum.ActuatorRelativeTo",
           "Default": "Enum.ActuatorRelativeTo.Attachment0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "VehicleController",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Brake",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "BrakeIntent",
+          "Type": "string",
+          "Default": "\"Brake\""
+        },
+        {
+          "Name": "CurrentGear",
+          "Type": "number",
+          "ReadOnly": true
+        },
+        {
+          "Name": "DriveIntent",
+          "Type": "string",
+          "Default": "\"Drive\""
+        },
+        {
+          "Name": "Driver",
+          "Type": "Player?"
+        },
+        {
+          "Name": "FinalDriveRatio",
+          "Type": "number",
+          "Default": "3.42"
+        },
+        {
+          "Name": "Gear",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "HandBrake",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "HandBrakeIntent",
+          "Type": "string",
+          "Default": "\"HandBrake\""
+        },
+        {
+          "Name": "MaxLeanAngle",
+          "Type": "number",
+          "Default": "180"
+        },
+        {
+          "Name": "MaxRPM",
+          "Type": "number",
+          "Default": "6000"
+        },
+        {
+          "Name": "MaxTorque",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MinRPM",
+          "Type": "number",
+          "Default": "1000"
+        },
+        {
+          "Name": "RPM",
+          "Type": "number",
+          "ReadOnly": true
+        },
+        {
+          "Name": "ShiftDownRPM",
+          "Type": "number",
+          "Default": "2000"
+        },
+        {
+          "Name": "ShiftUpRPM",
+          "Type": "number",
+          "Default": "4000"
+        },
+        {
+          "Name": "Speed",
+          "Type": "number",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Steer",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Throttle",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Transmission",
+          "Type": "Enum.VehicleTransmission",
+          "Default": "Enum.VehicleTransmission.Automatic"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "VehicleWheel",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Attachment",
+          "Type": "Attachment?"
+        },
+        {
+          "Name": "Compression",
+          "Type": "number",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Driven",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Grip",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Grounded",
+          "Type": "boolean",
+          "ReadOnly": true
+        },
+        {
+          "Name": "MaxBrakeTorque",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MaxHandBrakeTorque",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MaxSteerAngle",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Radius",
+          "Type": "number",
+          "Default": "0.35"
+        },
+        {
+          "Name": "Slip",
+          "Type": "number",
+          "ReadOnly": true
+        },
+        {
+          "Name": "SuspensionDamping",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "SuspensionFrequency",
+          "Type": "number",
+          "Default": "1.5"
+        },
+        {
+          "Name": "SuspensionMaxLength",
+          "Type": "number",
+          "Default": "0.35"
+        },
+        {
+          "Name": "SuspensionMinLength",
+          "Type": "number",
+          "Default": "0.1"
+        },
+        {
+          "Name": "WheelPart",
+          "Type": "BasePart?"
+        },
+        {
+          "Name": "Width",
+          "Type": "number",
+          "Default": "0.25"
         }
       ],
       "Methods": [],
@@ -15926,6 +16191,19 @@
         {
           "Name": "Touch",
           "Value": 8
+        }
+      ]
+    },
+    {
+      "Name": "VehicleTransmission",
+      "Items": [
+        {
+          "Name": "Automatic",
+          "Value": 0
+        },
+        {
+          "Name": "Manual",
+          "Value": 1
         }
       ]
     },

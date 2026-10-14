@@ -862,6 +862,32 @@ if(ENG_BUILD_TESTS)
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_netcode_acceptance.cmake)
     set_tests_properties(netcode_acceptance_guest PROPERTIES TIMEOUT 600 LABELS "netcode" RUN_SERIAL TRUE)
 
+    # **A driven vehicle** (ADR 0213): a car its player drives, predicted on
+    # that player's machine as the character is -- a straight, a corner and a
+    # stop at 0, 50, 150 and 300 ms, held to no correction, to where the
+    # authority stopped, and to answering the stick within a tick of the
+    # character; and one run into a parked car. Real time, a minute and a half.
+    add_test(NAME netcode_vehicle
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/vehicle
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-vehicle
+            -DPORT=47920
+            -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_netcode_vehicle.cmake)
+    set_tests_properties(netcode_vehicle PROPERTIES TIMEOUT 600 LABELS "netcode" RUN_SERIAL TRUE)
+
+    # **What a breaking wall costs on the wire** (ADR 0215): fifty pieces,
+    # sent as parts while they fall and not once they lie still. Fifteen
+    # seconds of real time.
+    add_test(NAME netcode_fracture
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/fracture
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-fracture
+            -DPORT=47928
+            -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_fracture.cmake)
+    set_tests_properties(netcode_fracture PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
+
     # **`examples/15-multiplayer` with a second player at the joining machine**
     # (ADR 0208): the example's own test run seats a guest over a link held
     # 75 ms each way and holds both sticks for two seconds, and both racers
@@ -1772,6 +1798,49 @@ if(ENG_BUILD_TESTS)
     # two together in one picture, the two apart across a line, and one of
     # those two views whole, which is black on the side it is not seen on
     # because nothing is lit there. See the driver.
+    # **A vehicle, looked at** (ADR 0213): the example driven at full throttle,
+    # and the picture its camera takes -- the car where it looks, its rear
+    # tyres darker than the road under it. Two hundred kilobytes of picture.
+    # **A wall broken, looked at** (ADR 0215): untouched and after a ball, the
+    # hole where it struck and the rest standing as it stood.
+    add_test(NAME breaking_wall_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/examples/45-breaking-wall
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/breaking-wall
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_breaking_wall_gate.cmake)
+    set_tests_properties(breaking_wall_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
+    # **A cape that is cloth, in a real run** (ADR 0214): three capes stepped
+    # at High and none at Low, and the pixels that pop from frame to frame
+    # with the cloth and without. Alone, for the reason the shadow flicker
+    # gate is: it writes and reads back six hundred and sixty pictures.
+    add_test(NAME cloth_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DFLICKER=$<TARGET_FILE:imgflicker>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/examples/46-cloth-cape
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/cloth
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_cloth_gate.cmake)
+    set_tests_properties(cloth_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        RUN_SERIAL TRUE
+        TIMEOUT 900)
+
+    add_test(NAME vehicle_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/examples/44-vehicle
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/vehicle
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_vehicle_gate.cmake)
+    set_tests_properties(vehicle_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
     add_test(NAME split_screen_gate
         COMMAND ${CMAKE_COMMAND}
             -DHOST=$<TARGET_FILE:engine_host>
@@ -2374,7 +2443,7 @@ if(ENG_BUILD_TESTS)
                     26-security-cameras 27-mirrors-and-portals 28-arcade 29-meadow
                     30-interactions 31-lake-and-river 32-menus 33-options 34-settings-list
                     35-cape 37-character 38-dubbing 39-interior 40-cinematic 41-couch 42-nightfall
-                    43-ambush)
+                    43-ambush 44-vehicle 45-breaking-wall 46-cloth-cape)
         add_test(NAME example_boot_${example}
             COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/${example}"
                     --headless --frames=20 --exit --rhi=null)
@@ -2413,6 +2482,19 @@ if(ENG_BUILD_TESTS)
         COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/21-navigation" --headless --frames=1200 --exit --rhi=null)
     set_tests_properties(example_navigation_arrives PROPERTIES
         PASS_REGULAR_EXPRESSION "reached goal 1"
+        TIMEOUT 120)
+
+    # `examples/44-vehicle` drives (ADR 0213): with a throttle given and no
+    # hand on the keys, four seconds take it tens of meters. A vehicle that
+    # was built and never drove -- an engine rebuilt every tick, a chassis
+    # whose wheels did not reach the ground -- runs perfectly and stands
+    # still, so the assertion is the distance: ten meters at least.
+    add_test(NAME example_vehicle_drives
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/44-vehicle" --headless --frames=300 --exit --rhi=null
+                "--scene-data={\"throttle\":1}")
+    set_tests_properties(example_vehicle_drives PROPERTIES
+        PASS_REGULAR_EXPRESSION "drove ([1-9][0-9]|[1-9][0-9][0-9]+) m"
+        FAIL_REGULAR_EXPRESSION "\\[error\\]"
         TIMEOUT 120)
 
     # `examples/38-dubbing` says its lines (ADR 0200): twenty frames of a boot
@@ -2761,7 +2843,7 @@ if(ENG_BUILD_TESTS)
         decal_blend_gate decal_receives_gate thin_wall_gate mesh_room_gate furnace_gate baked_room_gate relight_gate open_field_gate split_screen_gate overlay_shots_game editor_shots_timeline editor_shots_timeline-popups editor_shots_properties editor_shots_character editor_shots_profiler editor_shots_profiler-capture editor_shots_graph-surface editor_shots_graph-animation editor_shots_graph-running foliage_decal_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d
         temporal_upscale_gate frame_generation_gate motion_whole_gate morph_landing shape_keys_example texture_quality_gate scene_release_gate
         screen_light_gate shadow_edge_gate probe_read_gate ceiling_joint_gate ceiling_joint_bare_gate
-        cloth_shadow_flicker_gate)
+        cloth_shadow_flicker_gate vehicle_gate breaking_wall_gate cloth_gate)
     if(WIN32)
         list(APPEND drawn_tests morph_landing_vulkan screen_light_gate_vulkan)
     endif()
@@ -2779,6 +2861,9 @@ if(ENG_BUILD_TESTS)
         "examples/00-clear|capture_gate,screenshot_gate"
         "examples/05-streaming|asset_determinism,streaming_soak"
         "examples/12-ragdoll|example_boot_12-ragdoll,example_ragdoll_builds"
+        "examples/44-vehicle|example_boot_44-vehicle,example_vehicle_drives,vehicle_gate"
+        "examples/45-breaking-wall|example_boot_45-breaking-wall,breaking_wall_gate"
+        "examples/46-cloth-cape|example_boot_46-cloth-cape,cloth_gate"
         "examples/21-navigation|example_boot_21-navigation,example_navigation_arrives"
         "examples/36-face|shape_keys_example,device_removed_survived"
         "examples/37-character|example_boot_37-character,editor_shots_character,editor_shots_graph-animation,editor_shots_graph-running"

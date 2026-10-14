@@ -24,6 +24,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         // Half the rate and half as far: a cape on a phone is the hero's.
         settings.secondaryMotionRate = 60;
         settings.secondaryMotionDistance = 30.0f;
+        settings.cloth = false;
         settings.shadowTaps = shadowTapsFor(QualityLevel::Low);
         settings.terrainLean = true;
         settings.shadowDistance = 70.0f;
@@ -204,6 +205,8 @@ GraphicsSettings handheldSettings(GraphicsSettings settings) noexcept
     if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium) {
         settings.reflectionProbes = 0;
         settings.contactShadows = false;
+        // And no cloth (ADR 0214): a cape is its animation's below High.
+        settings.cloth = false;
         // And no second pass over the grass a decal covers (ADR 0185): the
         // decal is on the ground under it.
         settings.foliageDecals = false;

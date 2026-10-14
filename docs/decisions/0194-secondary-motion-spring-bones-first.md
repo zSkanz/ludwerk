@@ -125,7 +125,7 @@ joints) about 0.9 ms a stepped frame, three microseconds a chain.
 ## What this does not do
 
 - No cloth mesh, no self-collision, no collision with the world: a cape goes
-  through a wall. Tier 2.
+  through a wall. Tier 2, built since as ADR 0214: a `Cloth`.
 - A mesh stretched unevenly (`Size` against `MeshSize`) has its chains sized
   by the mean of the three.
 - The editor shows both classes in Properties, with their own icons and the

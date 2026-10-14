@@ -244,6 +244,15 @@ MaterialRef floorMaterial(const World& world, core::InstanceId character)
     return found;
 }
 
+bool PhysicsSync::collisionShape(core::InstanceId id, physics::ShapeDesc& out) const
+{
+    const PartComponent* part = m_scene.parts().find(id);
+    if (part == nullptr)
+        return false;
+    out = shapeOf(id, *part);
+    return true;
+}
+
 physics::ShapeDesc PhysicsSync::shapeOf(core::InstanceId id, const PartComponent& part) const
 {
     physics::ShapeDesc shape;
@@ -1332,6 +1341,15 @@ std::optional<PredictedAttributes> PhysicsSync::rememberedAttributes(u64 tick, c
     return std::nullopt;
 }
 
+bool PhysicsSync::isChassis(core::InstanceId id) const
+{
+    for (core::InstanceId child = m_scene.firstChild(id); child.valid(); child = m_scene.nextSibling(child)) {
+        if (m_scene.vehicleControllers().find(child) != nullptr)
+            return true;
+    }
+    return false;
+}
+
 bool PhysicsSync::restoreIsland(const Island& island)
 {
     // Every one of them still here, as it was, or nothing is touched.
@@ -1478,6 +1496,25 @@ std::vector<std::vector<core::CFrameD>> PhysicsSync::replayAll(std::span<const C
                 if (same != saved.entities.end() && same->body && same->cframe == pushed.cframe &&
                     same->linear == pushed.linear && same->angular == pushed.angular)
                     continue;
+                // **A vehicle's chassis is the authority's only when it is off
+                // by a correction** (ADR 0213, `VehicleCorrectionMetres`):
+                // under it, this machine's own, with the wheels and the
+                // engine it was stepped with.
+                CharacterReplayStart::Body put = pushed;
+                if (same != saved.entities.end() && same->body && isChassis(pushed.id)) {
+                    const core::DVec3 off = pushed.cframe.position - same->cframe.position;
+                    if (off.x * off.x + off.y * off.y + off.z * off.z <
+                        VehicleCorrectionMetres * VehicleCorrectionMetres) {
+                        // A fifth of the way, each answer: drift that does not
+                        // grow is gone in a second, and no step of it shows.
+                        put.cframe.position =
+                            same->cframe.position +
+                            core::DVec3{off.x * VehiclePull, off.y * VehiclePull, off.z * VehiclePull};
+                        put.cframe.rotation = same->cframe.rotation;
+                        put.linear = same->linear + (pushed.linear - same->linear) * static_cast<f32>(VehiclePull);
+                        put.angular = same->angular;
+                    }
+                }
                 PartComponent* place = m_scene.parts().find(pushed.id);
                 RigidBodyComponent* motion = m_scene.rigidBodies().find(pushed.id);
                 if (place == nullptr || motion == nullptr || pushed.id.index >= m_bodies.size())
@@ -1485,13 +1522,24 @@ std::vector<std::vector<core::CFrameD>> PhysicsSync::replayAll(std::span<const C
                 BodyRecord& held = m_bodies[pushed.id.index];
                 if (held.generation != pushed.id.generation || !held.live)
                     continue;
-                place->cframe = pushed.cframe;
-                held.written = pushed.cframe;
-                motion->linearVelocity = pushed.linear;
-                motion->angularVelocity = pushed.angular;
-                m_backend.setBodyTransform(m_world, held.handle, pushed.cframe);
-                m_backend.setBodyVelocity(m_world, held.handle, pushed.linear, pushed.angular);
+                place->cframe = put.cframe;
+                held.written = put.cframe;
+                motion->linearVelocity = put.linear;
+                motion->angularVelocity = put.angular;
+                m_backend.setBodyTransform(m_world, held.handle, put.cframe);
+                m_backend.setBodyVelocity(m_world, held.handle, put.linear, put.angular);
             }
+            // **And each vehicle on them, its engine, gearbox and wheels, as
+            // the authority had it** (ADR 0213): what is not a body's came
+            // back with the island, as this machine had it then, and what
+            // the authority sends of it is put over that. Put back from the
+            // vehicle's components instead -- what the newest step left
+            // there, not the answered tick -- a car at rest in the answered
+            // tick was stepped again with its wheels already turning, crept
+            // forward on no throttle, and was drawn two to three
+            // centimetres back and forth at 300 ms.
+            for (const CharacterReplayStart::Vehicle& vehicle : steps.front().start.vehicles)
+                putVehicle(vehicle);
             for (std::vector<core::CFrameD>& each : frames)
                 each.reserve(count);
             for (usize at = 0; at < count; ++at) {
@@ -2407,6 +2455,8 @@ void PhysicsSync::applyScene()
     // After the sweep, so a pair is only ever excluded between bodies that
     // exist.
     applyNoCollisions();
+    // And the vehicles, on chassis that exist (ADR 0213).
+    applyVehicles();
 }
 
 void PhysicsSync::syncForQuery()
@@ -3490,6 +3540,7 @@ void PhysicsSync::step(f64 fixedDt)
         ENG_PROFILE_SCOPE("physics.writeback");
         writeBack();
         readConstraints(static_cast<f32>(fixedDt));
+        readVehicles();
     }
     {
         ENG_PROFILE_SCOPE("physics.attachments");

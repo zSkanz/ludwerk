@@ -20,6 +20,7 @@
 #include "engine/core/log.h"
 #include "engine/core/profile.h"
 #include "engine/core/text_key.h"
+#include "engine/render/cloth.h"
 #include "engine/render/clusters.h"
 #include "engine/render/environment.h"
 #include "engine/render/particles.h"
@@ -1278,6 +1279,10 @@ private:
     // Every pipeline of both sets exists. Until then a body with weights is
     // drawn at rest, in its run, as if it had none.
     bool morphReady_ = false;
+    // **The frame's cloth rows** (ADR 0214, `RenderWorld::clothRows`), read by
+    // the morph pipelines as a cloth's one target. Made the first frame there
+    // is a cloth, at its whole size: `kMaxClothRows` rows.
+    rhi::BufferHandle clothBuffer_{};
     std::vector<InstanceBatch> batches_;
     // Per draw: which batch covers it, or `kNoBatch`.
     std::vector<u32> batchOf_;
@@ -3309,7 +3314,7 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
         device.destroy(particleBuffer_);
     particleBuffer_ = {};
     releaseGpuParticles(device);
-    for (rhi::BufferHandle* buffer : {&skinnedInstanceBuffer_, &paletteBuffer_}) {
+    for (rhi::BufferHandle* buffer : {&skinnedInstanceBuffer_, &paletteBuffer_, &clothBuffer_}) {
         if (buffer->valid())
             device.destroy(*buffer);
         *buffer = {};
@@ -3953,6 +3958,9 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
         // targets to a horde that is not using them.
         if (draw.morph != NoMorph && morphReady_)
             return false;
+        // And so is a cloth (ADR 0214): its vertices are its own too.
+        if (draw.cloth != NoCloth)
+            return false;
         if (draw.transparent)
             return blendedRun(draw);
         return draw.boneCount == 0 || skinnedRuns;
@@ -4362,8 +4370,17 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // whose file failed to load has no skin buffer while a track already
         // exists -- and drawing that through the skinned pipeline would read an
         // unbound vertex buffer.
+        //
+        // **A cloth is not** (ADR 0214): its vertices are where the cloth
+        // hangs, in the mesh's own space, and are added to the mesh as it was
+        // modelled through the morph pipelines -- a target of weight one,
+        // read from this frame's rows. The masks draw it posed, as it was
+        // before the cloth: a silhouette, for the reason a face's is.
+        const bool clothDraw = !mask && batch == nullptr && morphReady_ && clothBuffer_.valid() &&
+                               draw.cloth < world.cloths.size() && resolved->vertexOffset == 0 && !draw.terrain &&
+                               !draw.voxelBlock;
         const bool skinnedDraw =
-            batch == nullptr && draw.boneCount > 0 && resolved->skin.valid() && skinnedPipeline.valid();
+            batch == nullptr && !clothDraw && draw.boneCount > 0 && resolved->skin.valid() && skinnedPipeline.valid();
         // A run of them, posed from the frame's palette buffer.
         const bool skinnedRun = batch != nullptr && batch->skinned;
         // **A body its morph targets move this frame** (ADR 0196). The masks
@@ -4378,9 +4395,9 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // table to no other mesh; this is the same statement where the
         // pipeline is chosen, so that changing the one cannot quietly break
         // the other.
-        const bool morphDraw = !mask && batch == nullptr && morphReady_ && draw.morph < world.morphs.size() &&
-                               resolved->morph.valid() && resolved->vertexOffset == 0 && !draw.terrain &&
-                               !draw.voxelBlock;
+        const bool morphDraw =
+            clothDraw || (!mask && batch == nullptr && morphReady_ && draw.morph < world.morphs.size() &&
+                          resolved->morph.valid() && resolved->vertexOffset == 0 && !draw.terrain && !draw.voxelBlock);
         // A terrain mesh in the opaque pass is drawn with the terrain's look,
         // and in the shadow pass with no culling and a push from the light (see
         // the cascade loop); in the prepass it is an ordinary static mesh.
@@ -4405,7 +4422,7 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // are this frame: its morphed draw has no surface pipeline, and a face
         // that changed its look the moment it spoke would be worse than one
         // that never had the surface.
-        const u32 surfaceId = !mask && !skinnedDraw && !skinnedRun && !draw.terrain && !draw.voxelBlock &&
+        const u32 surfaceId = !mask && !skinnedDraw && !skinnedRun && !clothDraw && !draw.terrain && !draw.voxelBlock &&
                                       !resolved->morph.valid() && draw.material < materialSurface_.size()
                                   ? materialSurface_[draw.material]
                                   : 0u;
@@ -4714,11 +4731,23 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         if (morphDraw) {
             // The table at the vertex stage's first storage slot, and the
             // draw's targets in the block after the ones it already has: the
-            // object's, and a skinned draw's palette.
-            const std::array<rhi::BufferHandle, 1> table{resolved->morph};
+            // object's, and a skinned draw's palette. A cloth's table is the
+            // frame's rows, and its one target the run that is its own.
+            const std::array<rhi::BufferHandle, 1> table{clothDraw ? clothBuffer_ : resolved->morph};
             cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0, table);
-            const GpuMorphUniforms block = morphUniforms(world.morphs[draw.morph], resolved->morphFirstVertex,
-                                                         resolved->morphVertexCount, resolved->morphTargetCount);
+            GpuMorphUniforms block;
+            if (clothDraw) {
+                const ClothDraw& rows = world.cloths[draw.cloth];
+                block.range[0] = 0;
+                block.range[1] = rows.vertexCount;
+                block.range[2] = 1;
+                block.rows[0] = rows.firstRow;
+                block.weights[0] = 1.0f;
+            }
+            else {
+                block = morphUniforms(world.morphs[draw.morph], resolved->morphFirstVertex, resolved->morphVertexCount,
+                                      resolved->morphTargetCount);
+            }
             cmd.bindUniforms(rhi::ShaderStage::Vertex, skinnedDraw ? 2 : 1, asBytes(&block, sizeof(block)));
             // That slot is the block world's too, bound once a run of chunks:
             // whatever chunk is drawn next binds its own again.
@@ -8995,8 +9024,23 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // otherwise pay for ten pipelines there. A mesh arrives behind whatever
     // its load is behind -- a loading curtain, `ContentProvider:PreloadAsync`
     // -- and so do these. A game with no such mesh builds nothing.
-    if (!morphTried_ && (meshes.morphMeshCount() > 0 || !world.morphs.empty()))
+    if (!morphTried_ && (meshes.morphMeshCount() > 0 || !world.morphs.empty() || !world.cloths.empty()))
         (void)ensureMorph(device);
+    // This frame's cloths (ADR 0214), up before any pass for the reason the
+    // palettes are.
+    if (!world.clothRows.empty()) {
+        if (!clothBuffer_.valid())
+            clothBuffer_ = device.createBuffer({
+                .usage = rhi::BufferUsage::GraphicsStorageRead,
+                .sizeBytes = kMaxClothRows * static_cast<u32>(sizeof(GpuMorphDelta)),
+                .debugName = "cloth-rows",
+            });
+        if (clothBuffer_.valid())
+            cmd.upload(clothBuffer_,
+                       asBytes(world.clothRows.data(),
+                               std::min<usize>(world.clothRows.size(), kMaxClothRows) * sizeof(GpuMorphDelta)),
+                       0);
+    }
     buildInstanceBatches(world, meshes);
     if (!instanceStaging_.empty()) {
         cmd.upload(instanceBuffer_, asBytes(instanceStaging_.data(), instanceStaging_.size() * sizeof(GpuInstance)), 0);

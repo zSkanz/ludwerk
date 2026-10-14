@@ -43,4 +43,17 @@ struct FlickerReport
 [[nodiscard]] long long countPops(const Image& before, const Image& now, const Image& after, double least, double most,
                                   double back = 2.0);
 
+// **Only the pops of one thing**, told by its colour: a pixel counts only
+// where, in `before` or in `now`, `channel` (0 red, 1 green, 2 blue) is above
+// both of the others by more than `margin`. What says a red cape pops and
+// not the shadows round it -- a count a change to the shadows elsewhere can
+// neither pass nor fail.
+struct PopColour
+{
+    int channel = 0;
+    double margin = 40.0;
+};
+[[nodiscard]] long long countPops(const Image& before, const Image& now, const Image& after, double least, double most,
+                                  const PopColour& only, double back = 2.0);
+
 } // namespace engine::imgcmp

@@ -491,6 +491,139 @@ bool setSpringColliderOffset(scene::World& world, core::InstanceId id, const Val
     return true;
 }
 
+// --- Cloth (ADR 0214) ------------------------------------------------------------
+//
+// What the instance says. Where each vertex is, frame by frame, is the
+// renderer's, each machine's own, and no property reads it.
+
+void attachClothComponents(scene::World& world, core::InstanceId id)
+{
+    world.cloths().add(id, scene::ClothComponent{});
+}
+
+void detachClothComponents(scene::World& world, core::InstanceId id)
+{
+    world.cloths().remove(id);
+}
+
+Value getClothEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::ClothComponent* cloth = world.cloths().find(id);
+    return cloth == nullptr ? Value{} : Value{cloth->enabled};
+}
+
+bool setClothEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    scene::ClothComponent* cloth = world.cloths().find(id);
+    if (flag == nullptr || cloth == nullptr)
+        return false;
+    cloth->enabled = *flag;
+    return true;
+}
+
+Value getClothPinJoints(const scene::World& world, core::InstanceId id)
+{
+    const scene::ClothComponent* cloth = world.cloths().find(id);
+    return cloth == nullptr ? Value{} : Value{std::string(world.atoms().text(cloth->pinJoints))};
+}
+
+bool setClothPinJoints(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    scene::ClothComponent* cloth = world.cloths().find(id);
+    if (text == nullptr || cloth == nullptr)
+        return false;
+    cloth->pinJoints = world.atoms().intern(*text);
+    return true;
+}
+
+Value getClothMaxDistance(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.cloths().find(id), &scene::ClothComponent::maxDistance);
+}
+
+bool setClothMaxDistance(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.cloths().find(id), &scene::ClothComponent::maxDistance, value, 0.0, AnyAmount);
+}
+
+Value getClothStiffness(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.cloths().find(id), &scene::ClothComponent::stiffness);
+}
+
+bool setClothStiffness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.cloths().find(id), &scene::ClothComponent::stiffness, value, 0.0, 1.0);
+}
+
+Value getClothBendStiffness(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.cloths().find(id), &scene::ClothComponent::bendStiffness);
+}
+
+bool setClothBendStiffness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.cloths().find(id), &scene::ClothComponent::bendStiffness, value, 0.0, 1.0);
+}
+
+Value getClothDamping(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.cloths().find(id), &scene::ClothComponent::damping);
+}
+
+bool setClothDamping(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.cloths().find(id), &scene::ClothComponent::damping, value, 0.0, 1.0);
+}
+
+Value getClothGravityScale(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.cloths().find(id), &scene::ClothComponent::gravityScale);
+}
+
+bool setClothGravityScale(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.cloths().find(id), &scene::ClothComponent::gravityScale, value, -AnyAmount, AnyAmount);
+}
+
+Value getClothWindInfluence(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.cloths().find(id), &scene::ClothComponent::windInfluence);
+}
+
+bool setClothWindInfluence(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.cloths().find(id), &scene::ClothComponent::windInfluence, value, 0.0, AnyAmount);
+}
+
+Value getClothThickness(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.cloths().find(id), &scene::ClothComponent::thickness);
+}
+
+bool setClothThickness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.cloths().find(id), &scene::ClothComponent::thickness, value, 0.0, AnyAmount);
+}
+
+Value getClothCollidesWithWorld(const scene::World& world, core::InstanceId id)
+{
+    const scene::ClothComponent* cloth = world.cloths().find(id);
+    return cloth == nullptr ? Value{} : Value{cloth->collidesWithWorld};
+}
+
+bool setClothCollidesWithWorld(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    scene::ClothComponent* cloth = world.cloths().find(id);
+    if (flag == nullptr || cloth == nullptr)
+        return false;
+    cloth->collidesWithWorld = *flag;
+    return true;
+}
+
 void attachMeshPartComponents(scene::World& world, core::InstanceId id)
 {
     world.meshParts().add(id, scene::MeshPartComponent{});

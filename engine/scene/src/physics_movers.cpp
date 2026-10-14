@@ -557,6 +557,7 @@ void PhysicsSync::motorOf(const ConstraintComponent& constraint, const Constrain
 
 void PhysicsSync::applyNoCollisions()
 {
+    applyWeldPairs();
     if (m_scene.noCollisions().size() == 0 && m_noCollisions.empty())
         return;
     for (NoCollisionRecord& record : m_noCollisions)
@@ -590,6 +591,51 @@ void PhysicsSync::applyNoCollisions()
     });
 
     for (NoCollisionRecord& record : m_noCollisions) {
+        if (record.seen || !record.applied)
+            continue;
+        m_backend.setPairCollidable(m_world, record.first, record.second, true);
+        record = NoCollisionRecord{};
+    }
+}
+
+// **A weld's two parts do not touch each other.** The part a weld moves
+// is a kinematic body placed where its anchor puts it, every tick; where it
+// rests on or overlaps its anchor, the solver met an immovable body pressed
+// into the anchor, and the anchor was pushed and dragged by its own parts -- a
+// car with a cabin welded on drove at less than half its speed. They are one
+// thing: the pair is kept from colliding, as a `NoCollisionConstraint` keeps
+// its two, for as long as the weld holds them.
+void PhysicsSync::applyWeldPairs()
+{
+    if (m_scene.welds().size() == 0 && m_weldPairs.empty())
+        return;
+    for (NoCollisionRecord& record : m_weldPairs)
+        record.seen = false;
+
+    m_scene.welds().forEach([&](core::InstanceId id, const WeldComponent& weld) {
+        if (id.index >= m_weldPairs.size())
+            m_weldPairs.resize(id.index + 1);
+        NoCollisionRecord& record = m_weldPairs[id.index];
+        const physics::BodyHandle first = bodyHandleOf(ownerOf(weld.part0));
+        const physics::BodyHandle second = bodyHandleOf(weld.part1);
+        const bool wanted = weld.enabled && first.valid() && second.valid() && !(first == second);
+        const bool same =
+            record.applied && record.generation == id.generation && record.first == first && record.second == second;
+        if (record.applied && (!wanted || !same)) {
+            m_backend.setPairCollidable(m_world, record.first, record.second, true);
+            record.applied = false;
+        }
+        if (wanted && !record.applied) {
+            m_backend.setPairCollidable(m_world, first, second, false);
+            record.applied = true;
+            record.first = first;
+            record.second = second;
+        }
+        record.generation = id.generation;
+        record.seen = true;
+    });
+
+    for (NoCollisionRecord& record : m_weldPairs) {
         if (record.seen || !record.applied)
             continue;
         m_backend.setPairCollidable(m_world, record.first, record.second, true);

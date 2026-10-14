@@ -222,8 +222,10 @@ TEST_CASE("the generated schema is what the module was built against")
     // `SpringBone`, `SpringCollider`, `Bone`, `Highlight`, `Beam`, `Trail`
     // and `Sound`. And what a sound says (protocol 45, ADR 0200): `Caption`.
     // And what a room reflects and the light it gives back (protocol 46, ADRs
-    // 0202, 0203): `ReflectionProbe` and `IrradianceVolume`.
-    CHECK(std::size(generated::Classes) == 64);
+    // 0202, 0203): `ReflectionProbe` and `IrradianceVolume`. And a vehicle
+    // (protocol 52, ADR 0213): `VehicleController` and `VehicleWheel`; and a
+    // cloth (protocol 52, ADR 0214): `Cloth`.
+    CHECK(std::size(generated::Classes) == 67);
     CHECK(std::size(generated::Channels) == 6);
 
     // Channel 3 was claimed from protocol 1 so the numbering could not shift

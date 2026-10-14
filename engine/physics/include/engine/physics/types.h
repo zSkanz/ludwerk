@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <vector>
 
 #include "engine/core/math.h"
 #include "engine/core/types.h"
@@ -405,6 +406,191 @@ struct ConstraintDesc
 
     // Opaque to this module, exactly as `BodyDesc::userData` is.
     u64 userData = 0;
+};
+
+// --- Vehicles (ADR 0213) -------------------------------------------------------
+//
+// **A chassis and its wheels**: a body the suspension holds up on wheels that
+// are not bodies -- each a cast from the chassis down to the ground, turned,
+// braked and driven by an engine through a gearbox. What a car, a kart or a
+// truck is in every engine that has one, and what a chassis on four hinged
+// wheel bodies only approximates: a wheel body bounces off a curb a cast
+// wheel rolls over, and four joints held at sixty steps a second wobble.
+
+struct VehicleHandle
+{
+    u32 index = 0;
+    u32 generation = 0;
+
+    [[nodiscard]] constexpr bool valid() const noexcept { return generation != 0; }
+    [[nodiscard]] constexpr bool operator==(const VehicleHandle&) const noexcept = default;
+};
+
+// One wheel, in the chassis' own space.
+struct VehicleWheelDesc
+{
+    // Where the suspension is fixed to the chassis, its top.
+    core::Vec3 position{};
+    f32 radius = 0.35f;
+    f32 width = 0.2f;
+    // How far the wheel's center may be below `position`, at the most and at
+    // the least -- the suspension's travel.
+    f32 suspensionMinLength = 0.15f;
+    f32 suspensionMaxLength = 0.4f;
+    // The suspension as a spring: how many times a second it would bounce,
+    // and how much of that bounce it takes away (one stops it in one swing).
+    f32 suspensionFrequency = 1.5f;
+    f32 suspensionDamping = 0.5f;
+    // The most it turns for full steering, in radians. Zero: it does not steer.
+    f32 maxSteerAngle = 0.0f;
+    // What the engine turns, through a differential with the wheel driven
+    // after it (left, then right).
+    bool driven = false;
+    // Newton-meters, the brake's and the hand brake's.
+    f32 maxBrakeTorque = 1500.0f;
+    f32 maxHandBrakeTorque = 0.0f;
+    // The tire's grip along and across the wheel, as a scale of the road's.
+    f32 longitudinalFriction = 1.0f;
+    f32 lateralFriction = 1.0f;
+    // The wheel's moment of inertia about its axle, kg m^2: what the engine
+    // and the brakes turn against. A wheel far heavier than its car spins up
+    // slowly; one far lighter skids at a touch.
+    f32 inertia = 0.9f;
+};
+
+struct VehicleDesc
+{
+    BodyHandle chassis;
+    std::vector<VehicleWheelDesc> wheels;
+    // The engine: newton-meters at the most, and the turns a minute it idles
+    // at and is held under.
+    f32 maxTorque = 500.0f;
+    f32 minRpm = 1000.0f;
+    f32 maxRpm = 6000.0f;
+    // The engine's own moment of inertia, kg m^2.
+    f32 engineInertia = 0.5f;
+    // How hard the clutch, fully in, ties the engine to the wheels: the torque
+    // a turn a second of difference between them makes, kg m^2 s^-1.
+    f32 clutchStrength = 10.0f;
+    // The gearbox: each forward gear's ratio, low first, and reverse's. It
+    // shifts by itself, up at `shiftUpRpm` and down at `shiftDownRpm`, unless
+    // it is `manual` -- then a gear is asked for.
+    std::vector<f32> gearRatios{2.66f, 1.78f, 1.3f, 1.0f, 0.74f};
+    f32 reverseRatio = -2.9f;
+    bool manual = false;
+    f32 shiftUpRpm = 4000.0f;
+    f32 shiftDownRpm = 2000.0f;
+    // The differentials' ratio, from the gearbox to the wheels.
+    f32 differentialRatio = 3.42f;
+    // How far the chassis may lean, in radians, before the vehicle holds it:
+    // a car that cannot roll over. Pi lets it.
+    f32 maxPitchRollAngle = 3.14159265f;
+    // Opaque to this module.
+    u64 userData = 0;
+};
+
+// What the driver asks for, each tick.
+struct VehicleInput
+{
+    // -1 full reverse to 1 full forward.
+    f32 forward = 0.0f;
+    // -1 full left to 1 full right.
+    f32 right = 0.0f;
+    // 0 to 1.
+    f32 brake = 0.0f;
+    f32 handBrake = 0.0f;
+    // A manual gearbox: the gear asked for, -1 reverse, 0 neutral.
+    core::i32 gear = 1;
+};
+
+struct VehicleWheelState
+{
+    // Where the wheel is drawn, in world space: its center, turned by its
+    // steering and its roll -- X across the axle.
+    core::CFrameD transform;
+    bool grounded = false;
+    // The suspension's length now, between its least and its most.
+    f32 suspensionLength = 0.0f;
+    // Radians a second about the axle, and how far it has turned in all.
+    f32 angularVelocity = 0.0f;
+    f32 rotation = 0.0f;
+    f32 steerAngle = 0.0f;
+    // How much the tire slips, along it and across it.
+    f32 longitudinalSlip = 0.0f;
+    f32 lateralSlip = 0.0f;
+};
+
+struct VehicleState
+{
+    f32 rpm = 0.0f;
+    // -1 reverse, 0 neutral, then the forward gears from one.
+    core::i32 gear = 0;
+    // How far the clutch is in, 0 to 1.
+    f32 clutch = 0.0f;
+    std::vector<VehicleWheelState> wheels;
+};
+
+// --- Soft bodies (ADR 0214) ----------------------------------------------
+//
+// **A cloth: a mesh whose every vertex moves**, kept at its distance from its
+// neighbours, carried by joints and hanging from them. What the renderer's
+// cloth is stepped on, in a world of its own that only draws.
+
+struct SoftBodyHandle
+{
+    u32 index = 0;
+    u32 generation = 0;
+
+    [[nodiscard]] constexpr bool valid() const noexcept { return generation != 0; }
+    [[nodiscard]] constexpr bool operator==(const SoftBodyHandle&) const noexcept = default;
+};
+
+// The joints one vertex follows and how much of each, the weights adding to
+// one. A weight of nought ends the list.
+struct SoftBodySkin
+{
+    u32 joints[4]{0, 0, 0, 0};
+    f32 weights[4]{1.0f, 0.0f, 0.0f, 0.0f};
+};
+
+struct SoftBodyDesc
+{
+    // The cloth as it was modelled, every joint at its bind: where
+    // `skinSoftBody`'s joints carry each vertex from.
+    std::vector<core::Vec3> vertices;
+    // Three vertices a face.
+    std::vector<u32> triangles;
+    // One a vertex. Empty: every vertex follows joint nought.
+    std::vector<SoftBodySkin> skin;
+    // One a vertex: how far it may hang from where its joints put it, in
+    // metres. Nought pins it there.
+    std::vector<f32> maxDistance;
+    // Where the body starts; the first `skinSoftBody` puts its vertices.
+    core::DVec3 position{};
+    // How much an edge gives, in metres a newton (nought does not stretch),
+    // and how much a fold between two faces does.
+    f32 stretchCompliance = 0.0f;
+    f32 bendCompliance = 1.0e-3f;
+    // How much of its speed it loses a second, 0 to 1.
+    f32 linearDamping = 0.1f;
+    f32 gravityFactor = 1.0f;
+    f32 friction = 0.2f;
+    // How far it stays from what it touches.
+    f32 vertexRadius = 0.02f;
+    // The whole cloth's mass, shared by its free vertices.
+    f32 mass = 1.0f;
+    // Solver iterations a step: each a sub-step of its own.
+    u32 iterations = 6;
+};
+
+// The forces on a cloth that are not gravity: the air it moves through.
+struct SoftBodyWind
+{
+    // The air's velocity, metres a second.
+    core::Vec3 velocity{};
+    // How hard air pushes a square metre of cloth for each metre a second it
+    // crosses the cloth at.
+    f32 drag = 0.0f;
 };
 
 // What a live constraint is doing, for a caller that wants to break one under

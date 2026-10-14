@@ -1,0 +1,9 @@
+# What a wall broken into fifty pieces costs on the wire (ADR 0215): the
+# server breaks it on the joiner's word, and the joiner counts what it
+# receives before, while the pieces fall, and after they settle.
+
+[project]
+name = "Netcode Fracture"
+id = "dev.ludwerk.netcode-fracture"
+version = "1.0.0"
+engine = "0.1"

@@ -1,0 +1,429 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "Workspace",
+  "name": "Workspace",
+  "properties": {
+   "CurrentCamera": "Workspace.MainCamera",
+   "GlobalWind": [
+    5.0,
+    0.0,
+    1.0
+   ],
+   "WindGusts": 0.6
+  },
+  "children": [
+   {
+    "class": "Camera",
+    "name": "MainCamera",
+    "properties": {
+     "CFrame": [
+      0.6,
+      2.0,
+      4.6,
+      0.9995411791453814,
+      0.0,
+      -0.030289126640769132,
+      -0.004535438910785289,
+      0.9887256825511932,
+      -0.14966948405591457,
+      0.029947637411773986,
+      0.14973818705886996,
+      0.9882720345885416
+     ],
+     "FieldOfView": 55.0
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Floor",
+    "properties": {
+     "CFrame": [
+      0.0,
+      -0.5,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      -0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      80.0,
+      1.0,
+      80.0
+     ],
+     "Anchored": true
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Wall",
+    "properties": {
+     "CFrame": [
+      4.6,
+      1.5,
+      -2.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      -0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.3,
+      3.0,
+      2.4
+     ],
+     "Anchored": true,
+     "MaterialParameters": {
+      "Color": [
+       0.62,
+       0.6,
+       0.55
+      ]
+     }
+    }
+   },
+   {
+    "class": "Model",
+    "name": "Runner",
+    "children": [
+     {
+      "class": "MeshPart",
+      "name": "Body",
+      "properties": {
+       "MeshContent": "asset://models/figure.gltf",
+       "CFrame": [
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        -0.0,
+        0.0,
+        1.0
+       ],
+       "Anchored": true
+      },
+      "children": [
+       {
+        "class": "SpringCollider",
+        "name": "BackLeft",
+        "properties": {
+         "JointName": "Body",
+         "Offset": [
+          -0.2,
+          0.17,
+          0.0
+         ],
+         "Length": 1.38,
+         "Radius": 0.17
+        }
+       },
+       {
+        "class": "SpringCollider",
+        "name": "Back",
+        "properties": {
+         "JointName": "Body",
+         "Offset": [
+          0.0,
+          0.17,
+          0.0
+         ],
+         "Length": 1.38,
+         "Radius": 0.17
+        }
+       },
+       {
+        "class": "SpringCollider",
+        "name": "BackRight",
+        "properties": {
+         "JointName": "Body",
+         "Offset": [
+          0.2,
+          0.17,
+          0.0
+         ],
+         "Length": 1.38,
+         "Radius": 0.17
+        }
+       }
+      ]
+     },
+     {
+      "class": "MeshPart",
+      "name": "Cape",
+      "properties": {
+       "MeshContent": "asset://models/cape.gltf",
+       "CFrame": [
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        -0.0,
+        0.0,
+        1.0
+       ],
+       "Anchored": true,
+       "CanCollide": false,
+       "PoseFrom": "Workspace.Runner.Body"
+      },
+      "children": [
+       {
+        "class": "Cloth",
+        "name": "Cloth",
+        "properties": {
+         "PinJoints": "CapePin",
+         "MaxDistance": 1.4,
+         "Stiffness": 0.95,
+         "BendStiffness": 0.15,
+         "Damping": 0.15,
+         "Thickness": 0.02
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "class": "Model",
+    "name": "InTheWind",
+    "children": [
+     {
+      "class": "MeshPart",
+      "name": "Body",
+      "properties": {
+       "MeshContent": "asset://models/figure.gltf",
+       "CFrame": [
+        -3.0,
+        0.0,
+        -2.0,
+        6.123233995736766e-17,
+        0.0,
+        -1.0,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        6.123233995736766e-17
+       ],
+       "Anchored": true
+      },
+      "children": [
+       {
+        "class": "SpringCollider",
+        "name": "BackLeft",
+        "properties": {
+         "JointName": "Body",
+         "Offset": [
+          -0.2,
+          0.17,
+          0.0
+         ],
+         "Length": 1.38,
+         "Radius": 0.17
+        }
+       },
+       {
+        "class": "SpringCollider",
+        "name": "Back",
+        "properties": {
+         "JointName": "Body",
+         "Offset": [
+          0.0,
+          0.17,
+          0.0
+         ],
+         "Length": 1.38,
+         "Radius": 0.17
+        }
+       },
+       {
+        "class": "SpringCollider",
+        "name": "BackRight",
+        "properties": {
+         "JointName": "Body",
+         "Offset": [
+          0.2,
+          0.17,
+          0.0
+         ],
+         "Length": 1.38,
+         "Radius": 0.17
+        }
+       }
+      ]
+     },
+     {
+      "class": "MeshPart",
+      "name": "Cape",
+      "properties": {
+       "MeshContent": "asset://models/cape.gltf",
+       "CFrame": [
+        -3.0,
+        0.0,
+        -2.0,
+        6.123233995736766e-17,
+        0.0,
+        -1.0,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        6.123233995736766e-17
+       ],
+       "Anchored": true,
+       "CanCollide": false,
+       "PoseFrom": "Workspace.InTheWind.Body"
+      },
+      "children": [
+       {
+        "class": "Cloth",
+        "name": "Cloth",
+        "properties": {
+         "PinJoints": "CapePin",
+         "MaxDistance": 1.4,
+         "Stiffness": 0.95,
+         "BendStiffness": 0.15,
+         "Damping": 0.15,
+         "Thickness": 0.02
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "class": "Model",
+    "name": "AtTheWall",
+    "children": [
+     {
+      "class": "MeshPart",
+      "name": "Body",
+      "properties": {
+       "MeshContent": "asset://models/figure.gltf",
+       "CFrame": [
+        4.05,
+        0.0,
+        -2.0,
+        6.123233995736766e-17,
+        0.0,
+        -1.0,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        6.123233995736766e-17
+       ],
+       "Anchored": true
+      },
+      "children": [
+       {
+        "class": "SpringCollider",
+        "name": "BackLeft",
+        "properties": {
+         "JointName": "Body",
+         "Offset": [
+          -0.2,
+          0.17,
+          0.0
+         ],
+         "Length": 1.38,
+         "Radius": 0.17
+        }
+       },
+       {
+        "class": "SpringCollider",
+        "name": "Back",
+        "properties": {
+         "JointName": "Body",
+         "Offset": [
+          0.0,
+          0.17,
+          0.0
+         ],
+         "Length": 1.38,
+         "Radius": 0.17
+        }
+       },
+       {
+        "class": "SpringCollider",
+        "name": "BackRight",
+        "properties": {
+         "JointName": "Body",
+         "Offset": [
+          0.2,
+          0.17,
+          0.0
+         ],
+         "Length": 1.38,
+         "Radius": 0.17
+        }
+       }
+      ]
+     },
+     {
+      "class": "MeshPart",
+      "name": "Cape",
+      "properties": {
+       "MeshContent": "asset://models/cape.gltf",
+       "CFrame": [
+        4.05,
+        0.0,
+        -2.0,
+        6.123233995736766e-17,
+        0.0,
+        -1.0,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        6.123233995736766e-17
+       ],
+       "Anchored": true,
+       "CanCollide": false,
+       "PoseFrom": "Workspace.AtTheWall.Body"
+      },
+      "children": [
+       {
+        "class": "Cloth",
+        "name": "Cloth",
+        "properties": {
+         "PinJoints": "CapePin",
+         "MaxDistance": 1.4,
+         "Stiffness": 0.95,
+         "BendStiffness": 0.15,
+         "Damping": 0.15,
+         "Thickness": 0.02
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

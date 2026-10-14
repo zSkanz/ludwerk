@@ -166,6 +166,11 @@ struct GraphicsSettings
     // a cape swings and nothing a game can read.
     u32 secondaryMotionRate = 120;
     f32 secondaryMotionDistance = 60.0f;
+    // **Cloth** (ADR 0214): whether a `Cloth` hangs, as far as secondary
+    // motion is stepped. Off, its mesh is drawn as its animation has it --
+    // which is what the Low level, and a phone below High, draw until cloth
+    // is measured on one.
+    bool cloth = true;
 
     // **How many reflection probes are kept at once** (ADR 0202), and the
     // side of each of a probe's six pictures in texels. None, and no probe is
@@ -353,6 +358,10 @@ inline constexpr u32 BakeTriangles = 4096u;
 // Not a term a measurement leaves out but a setting the lit shaders are told
 // by the same word: `GraphicsSettings::shadowUnderCasters`, off.
 inline constexpr u32 ShadowUnder = 8192u;
+// Nor this: every `Cloth` drawn as its animation has it (ADR 0214) -- what
+// cloth adds to a frame's time, or to the pixels that pop from one frame to
+// the next, read off two runs.
+inline constexpr u32 Cloth = 16384u;
 } // namespace MeasureSkip
 
 // The taps a shadow quality filters with: `shadowTaps` for the level's place

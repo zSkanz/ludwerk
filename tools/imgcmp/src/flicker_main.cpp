@@ -22,10 +22,14 @@ constexpr std::string_view Usage = "usage: imgflicker <frame.png> <frame.png> <f
                                    "  than change steadily.\n"
                                    "       imgflicker --pops=LEAST,MOST [--max-pops=N] <frame.png>...\n"
                                    "  How many pixels, over every inner frame, are more than LEAST and no more\n"
-                                   "  than MOST from the frame before and back within 2 of it the frame after.\n";
+                                   "  than MOST from the frame before and back within 2 of it the frame after.\n"
+                                   "  --only=CHANNEL,MARGIN counts a pixel only where, in the frame before or\n"
+                                   "  this one, CHANNEL (r, g or b) is above both others by MARGIN: one thing's\n"
+                                   "  pops, told by its colour.\n";
 
 // `--pops`: three frames at a time, so a run of hundreds is three in memory.
-int countThePops(const std::vector<std::string>& paths, double least, double most, long long allowed)
+int countThePops(const std::vector<std::string>& paths, double least, double most, long long allowed,
+                 const engine::imgcmp::PopColour* only)
 {
     if (paths.size() < 3) {
         std::fputs(Usage.data(), stderr);
@@ -42,7 +46,9 @@ int countThePops(const std::vector<std::string>& paths, double least, double mos
         window.push_back(std::move(loaded.image));
         if (window.size() < 3)
             continue;
-        const long long here = engine::imgcmp::countPops(window[0], window[1], window[2], least, most);
+        const long long here = only != nullptr
+                                   ? engine::imgcmp::countPops(window[0], window[1], window[2], least, most, *only)
+                                   : engine::imgcmp::countPops(window[0], window[1], window[2], least, most);
         if (here < 0) {
             std::fputs("imgflicker: the frames are not all one size\n", stderr);
             return 2;
@@ -67,8 +73,23 @@ int main(int argc, char** argv)
     double popLeast = 0.0;
     double popMost = 0.0;
     long long popsAllowed = -1;
+    engine::imgcmp::PopColour only;
+    bool onlyGiven = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view arg = argv[index];
+        if (arg.starts_with("--only=")) {
+            const std::string_view value = arg.substr(7);
+            const std::string_view margin = value.size() > 2 ? value.substr(2) : std::string_view{};
+            const auto [end, error] = std::from_chars(margin.data(), margin.data() + margin.size(), only.margin);
+            only.channel = value.empty() ? -1 : value[0] == 'r' ? 0 : value[0] == 'g' ? 1 : value[0] == 'b' ? 2 : -1;
+            if (only.channel < 0 || value.size() < 3 || value[1] != ',' || error != std::errc{} ||
+                end != margin.data() + margin.size() || only.margin < 0.0) {
+                std::fputs(Usage.data(), stderr);
+                return 2;
+            }
+            onlyGiven = true;
+            continue;
+        }
         if (arg.starts_with("--pops=")) {
             const std::string_view value = arg.substr(7);
             const std::size_t comma = value.find(',');
@@ -122,7 +143,7 @@ int main(int argc, char** argv)
         paths.emplace_back(arg);
     }
     if (pops)
-        return countThePops(paths, popLeast, popMost, popsAllowed);
+        return countThePops(paths, popLeast, popMost, popsAllowed, onlyGiven ? &only : nullptr);
     std::vector<engine::imgcmp::Image> frames;
     frames.reserve(paths.size());
     for (const std::string& path : paths) {

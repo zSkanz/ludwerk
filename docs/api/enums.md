@@ -1118,6 +1118,15 @@ The kind of input an `InputObject` comes from, in the input events of `InputServ
 | `Gamepad` | 7 | A gamepad button or stick. `KeyCode` gives which. A stick's movement fires `InputChanged`, with the axis value in `Position`. |
 | `Touch` | 8 | A finger on a touchscreen. It fires `InputBegan` when the finger touches, `InputChanged` as it moves and `InputEnded` when it lifts, with `Position` in window pixels and `TouchId` identifying the finger. Even a very short tap begins and ends.<br><br>These events fire whether or not the interface used the touch. Use them for a game's own on-screen controls, which drive actions through `InputService:SetVirtualState`. |
 
+## Enum.VehicleTransmission
+
+How a `VehicleController`'s gearbox chooses its gear.
+
+| Item | Value | Description |
+|---|---|---|
+| `Automatic` | 0 | It shifts by itself, by the engine's turns a minute. |
+| `Manual` | 1 | It stays in the gear the controller's `Gear` asks for. |
+
 ## Enum.VelocityConstraintMode
 
 How much of the velocity a `LinearVelocity` controls.

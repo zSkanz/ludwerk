@@ -30,6 +30,7 @@
 #include "engine/core/math.h"
 #include "engine/core/name_atom.h"
 #include "engine/render/graph_player.h"
+#include "engine/render/morph.h"
 #include "engine/render/retarget.h"
 #include "engine/scene/animation_host.h"
 #include "engine/scene/morph_host.h"
@@ -387,6 +388,27 @@ public:
     // What `extract` draws: the presented pose where there is one, else
     // `pose`.
     [[nodiscard]] const Pose* drawnPose(core::InstanceId meshPart) const noexcept;
+
+    // --- A cloth's vertices this frame (ADR 0214) ---------------------------
+    //
+    // **What a `Cloth` moved each vertex of its mesh by**, in the mesh's own
+    // space and from where it was modelled: a row a vertex, as a morph
+    // target's (`engine_morph.hlsli`). Its mesh is then drawn from these and
+    // not from its skin. Picture, as the presented pose is: set again each
+    // frame, and nothing the simulation reads.
+    struct PresentedCloth
+    {
+        std::vector<GpuMorphDelta> rows;
+        // Where the moved vertices are, in the mesh's own space.
+        core::AABB bounds{};
+        bool live = false;
+    };
+    void presentCloth(core::InstanceId meshPart, std::span<const GpuMorphDelta> rows, const core::AABB& bounds);
+    // Null for a mesh no cloth moved this frame.
+    [[nodiscard]] const PresentedCloth* drawnCloth(core::InstanceId meshPart) const noexcept;
+    // No cloth is presented any more. What was kept for one is kept, to be
+    // written over by the next frame's.
+    void clearPresentedCloth() noexcept;
     // A joint's animated transform from its parent this tick, or its rest one
     // for a mesh nothing is driving. False for a joint the rig does not have.
     [[nodiscard]] bool jointLocal(core::InstanceId meshPart, core::u32 joint, core::CFrameD& out) const;
@@ -815,6 +837,9 @@ private:
     std::unordered_map<core::u64, std::shared_ptr<const Pose>> poses_;
     // The poses drawn in place of those, this frame (`present`).
     std::unordered_map<core::u64, Pose> presented_;
+    // The cloths presented (`presentCloth`), kept between frames for their
+    // storage; one a frame did not present is not live.
+    std::map<core::u64, PresentedCloth> clothPresented_;
     std::vector<core::InstanceId> presentedMeshes_;
     // This mesh's pose to write to: the one it holds, when nothing else does;
     // a copy of it otherwise, or a new one.

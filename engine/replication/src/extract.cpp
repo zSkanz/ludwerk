@@ -371,6 +371,54 @@ constexpr Carried<SpotLight> SpotLightCarried[] = {
     {"Shadows", &SpotLight::shadows},
 };
 
+using VehicleController = scene::VehicleControllerComponent;
+constexpr Carried<VehicleController> VehicleControllerCarried[] = {
+    {"MaxTorque", &VehicleController::maxTorque},
+    {"MinRPM", &VehicleController::minRpm},
+    {"MaxRPM", &VehicleController::maxRpm},
+    {"Transmission", &VehicleController::transmission},
+    {"ShiftUpRPM", &VehicleController::shiftUpRpm},
+    {"ShiftDownRPM", &VehicleController::shiftDownRpm},
+    {"FinalDriveRatio", &VehicleController::finalDriveRatio},
+    {"MaxLeanAngle", &VehicleController::maxLeanAngle},
+    {"Throttle", &VehicleController::throttle},
+    {"Steer", &VehicleController::steer},
+    {"Brake", &VehicleController::brake},
+    {"HandBrake", &VehicleController::handBrake},
+    {"Gear", &VehicleController::gear},
+    {"Speed", &VehicleController::speed},
+    {"RPM", &VehicleController::rpm},
+    {"CurrentGear", &VehicleController::currentGear},
+    {"Driver", &VehicleController::driver},
+    {"DriveIntent", &VehicleController::driveIntent},
+    {"BrakeIntent", &VehicleController::brakeIntent},
+    {"HandBrakeIntent", &VehicleController::handBrakeIntent},
+    {"Clutch", &VehicleController::clutch},
+};
+
+using VehicleWheel = scene::VehicleWheelComponent;
+constexpr Carried<VehicleWheel> VehicleWheelCarried[] = {
+    {"Attachment", &VehicleWheel::attachment},
+    {"WheelPart", &VehicleWheel::wheelPart},
+    {"Radius", &VehicleWheel::radius},
+    {"Width", &VehicleWheel::width},
+    {"SuspensionMinLength", &VehicleWheel::suspensionMinLength},
+    {"SuspensionMaxLength", &VehicleWheel::suspensionMaxLength},
+    {"SuspensionFrequency", &VehicleWheel::suspensionFrequency},
+    {"SuspensionDamping", &VehicleWheel::suspensionDamping},
+    {"MaxSteerAngle", &VehicleWheel::maxSteerAngle},
+    {"Driven", &VehicleWheel::driven},
+    {"MaxBrakeTorque", &VehicleWheel::maxBrakeTorque},
+    {"MaxHandBrakeTorque", &VehicleWheel::maxHandBrakeTorque},
+    {"Grip", &VehicleWheel::grip},
+    {"Grounded", &VehicleWheel::grounded},
+    {"Compression", &VehicleWheel::compression},
+    {"Slip", &VehicleWheel::slip},
+    {"AngularVelocity", &VehicleWheel::angularVelocity},
+    {"Rotation", &VehicleWheel::rotation},
+    {"SteerAngle", &VehicleWheel::steerAngle},
+};
+
 using SpringBone = scene::SpringBoneComponent;
 constexpr Carried<SpringBone> SpringBoneCarried[] = {
     {"Enabled", &SpringBone::enabled},
@@ -391,6 +439,20 @@ constexpr Carried<SpringCollider> SpringColliderCarried[] = {
     {"Radius", &SpringCollider::radius},
     {"Length", &SpringCollider::length},
     {"Offset", &SpringCollider::offset},
+};
+
+using Cloth = scene::ClothComponent;
+constexpr Carried<Cloth> ClothCarried[] = {
+    {"Enabled", &Cloth::enabled},
+    {"PinJoints", &Cloth::pinJoints},
+    {"MaxDistance", &Cloth::maxDistance},
+    {"Stiffness", &Cloth::stiffness},
+    {"BendStiffness", &Cloth::bendStiffness},
+    {"Damping", &Cloth::damping},
+    {"GravityScale", &Cloth::gravityScale},
+    {"WindInfluence", &Cloth::windInfluence},
+    {"Thickness", &Cloth::thickness},
+    {"CollidesWithWorld", &Cloth::collidesWithWorld},
 };
 
 using Highlight = scene::HighlightComponent;
@@ -1669,6 +1731,14 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         const SpotLight* light = world.spotLights().find(id);
         return light != nullptr && readCarried(SpotLightCarried, *light, field.name, out, further);
     }
+    if (field.pool == "vehicleControllers") {
+        const VehicleController* vehicle = world.vehicleControllers().find(id);
+        return vehicle != nullptr && readCarried(VehicleControllerCarried, *vehicle, field.name, out, further);
+    }
+    if (field.pool == "vehicleWheels") {
+        const VehicleWheel* wheel = world.vehicleWheels().find(id);
+        return wheel != nullptr && readCarried(VehicleWheelCarried, *wheel, field.name, out, further);
+    }
     if (field.pool == "springBones") {
         const SpringBone* spring = world.springBones().find(id);
         return spring != nullptr && readCarried(SpringBoneCarried, *spring, field.name, out, further);
@@ -1676,6 +1746,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
     if (field.pool == "springColliders") {
         const SpringCollider* collider = world.springColliders().find(id);
         return collider != nullptr && readCarried(SpringColliderCarried, *collider, field.name, out, further);
+    }
+    if (field.pool == "cloths") {
+        const Cloth* cloth = world.cloths().find(id);
+        return cloth != nullptr && readCarried(ClothCarried, *cloth, field.name, out, further);
     }
     if (field.pool == "highlights") {
         const Highlight* highlight = world.highlights().find(id);
@@ -2731,6 +2805,14 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         SpotLight* light = world.spotLights().find(id);
         return light != nullptr && writeCarried(SpotLightCarried, *light, field.name, value, further);
     }
+    if (field.pool == "vehicleControllers") {
+        VehicleController* vehicle = world.vehicleControllers().find(id);
+        return vehicle != nullptr && writeCarried(VehicleControllerCarried, *vehicle, field.name, value, further);
+    }
+    if (field.pool == "vehicleWheels") {
+        VehicleWheel* wheel = world.vehicleWheels().find(id);
+        return wheel != nullptr && writeCarried(VehicleWheelCarried, *wheel, field.name, value, further);
+    }
     if (field.pool == "springBones") {
         SpringBone* spring = world.springBones().find(id);
         return spring != nullptr && writeCarried(SpringBoneCarried, *spring, field.name, value, further);
@@ -2738,6 +2820,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
     if (field.pool == "springColliders") {
         SpringCollider* collider = world.springColliders().find(id);
         return collider != nullptr && writeCarried(SpringColliderCarried, *collider, field.name, value, further);
+    }
+    if (field.pool == "cloths") {
+        Cloth* cloth = world.cloths().find(id);
+        return cloth != nullptr && writeCarried(ClothCarried, *cloth, field.name, value, further);
     }
     if (field.pool == "highlights") {
         Highlight* highlight = world.highlights().find(id);
@@ -2970,6 +3056,9 @@ constexpr NamedPool Pools[] = {
     ENG_REPLICATION_POOL_DIGEST(reflectionProbes) ENG_REPLICATION_POOL_DIGEST(irradianceVolumes)
     // Protocol 47: a sequence being played (ADR 0204).
     ENG_REPLICATION_POOL_DIGEST(sequencePlayers) ENG_REPLICATION_POOL_DIGEST(sequenceBindings)
+    // Protocol 52: a vehicle and its wheels (ADR 0213), and a cloth (ADR 0214).
+    ENG_REPLICATION_POOL_DIGEST(vehicleControllers) ENG_REPLICATION_POOL_DIGEST(vehicleWheels)
+        ENG_REPLICATION_POOL_DIGEST(cloths)
     // **A pivot is known, and not
     // read**: every part and model
     // has one, nearly all at the

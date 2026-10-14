@@ -65,8 +65,10 @@ public:
     //
     // **One a seat** (ADR 0208): a machine has up to four players of its
     // own, and each one's character slides by its own corrections. `seat`
-    // is 0 for the first.
-    static constexpr core::usize VisualOffsets = 4;
+    // is 0 for the first. **And one a seat's vehicle** (ADR 0213), after the
+    // characters': `VisualSeats + seat`.
+    static constexpr core::usize VisualSeats = 4;
+    static constexpr core::usize VisualOffsets = VisualSeats * 2;
     void setVisualOffset(core::InstanceId id, core::DVec3 offset, core::usize seat = 0) noexcept
     {
         if (seat < VisualOffsets) {

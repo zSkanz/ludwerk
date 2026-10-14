@@ -2906,6 +2906,211 @@ local SpotLightFields: { Schema.Field } = {
     spotLight("Shadows", 7, "Bool", "Whether it casts, as authored."),
 }
 
+local vehicleController = authored("vehicleControllers")
+local VehicleControllerFields: { Schema.Field } = {
+    vehicleController("MaxTorque", 1, "F32", "The engine's torque."),
+    vehicleController("MinRPM", 2, "F32", "Its idle."),
+    vehicleController("MaxRPM", 3, "F32", "Its limit."),
+    vehicleController("Transmission", 4, "I32", "Automatic or manual."),
+    vehicleController("ShiftUpRPM", 5, "F32", "Where an automatic box shifts up."),
+    vehicleController("ShiftDownRPM", 6, "F32", "And down."),
+    vehicleController("FinalDriveRatio", 7, "F32", "From the gearbox to the wheels."),
+    vehicleController("MaxLeanAngle", 8, "F32", "How far the chassis may lean."),
+    vehicleController(
+        "Throttle",
+        9,
+        "F32",
+        "What the driver asks, as the authority last had it: a replica draws a car being driven."
+    ),
+    vehicleController("Steer", 10, "F32", "The same, of the steering."),
+    vehicleController("Brake", 11, "F32", "The same, of the brake."),
+    vehicleController("HandBrake", 12, "F32", "The same, of the hand brake."),
+    vehicleController("Gear", 13, "I32", "A manual box's gear asked for."),
+    vehicleController(
+        "Speed",
+        14,
+        "F32",
+        "**The authority's answers**, which a replica that does not solve the vehicle cannot work out: "
+            .. "how fast it goes, as a speedometer shows."
+    ),
+    vehicleController("RPM", 15, "F32", "The engine's turns, as a rev counter and an engine's sound use."),
+    vehicleController("CurrentGear", 16, "I32", "The gear it is in."),
+    vehicleController(
+        "Driver",
+        17,
+        "U32",
+        "Who drives, by user id -- a player is no instance on the wire -- so the driver's machine predicts "
+            .. "the chassis while it is theirs."
+    ),
+    vehicleController("DriveIntent", 18, "NameAtom", "The driver's action that drives."),
+    vehicleController("BrakeIntent", 19, "NameAtom", "The one that brakes."),
+    vehicleController("HandBrakeIntent", 20, "NameAtom", "The one that pulls the hand brake."),
+    vehicleController(
+        "Clutch",
+        21,
+        "F32",
+        "**Not a property: what a replica puts back** before stepping a vehicle it drives again, with "
+            .. "`RPM` and `CurrentGear` -- an engine at another speed is a drive that comes out elsewhere."
+    ),
+}
+
+local VehicleWheelFields: { Schema.Field } = {
+    {
+        Name = "Attachment",
+        Id = 1,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "Where the wheel hangs. A network id; resolved on the replica to its own copy.",
+    },
+    {
+        Name = "WheelPart",
+        Id = 2,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "The part drawn as the wheel. A network id; the part's place travels as any moved part's does.",
+    },
+    {
+        Name = "Radius",
+        Id = 3,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "The wheel's size.",
+    },
+    {
+        Name = "Width",
+        Id = 4,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "Its width.",
+    },
+    {
+        Name = "SuspensionMinLength",
+        Id = 5,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "The suspension's travel, at its least.",
+    },
+    {
+        Name = "SuspensionMaxLength",
+        Id = 6,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "And at its most.",
+    },
+    {
+        Name = "SuspensionFrequency",
+        Id = 7,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "How stiff it is.",
+    },
+    {
+        Name = "SuspensionDamping",
+        Id = 8,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "How soon it settles.",
+    },
+    {
+        Name = "MaxSteerAngle",
+        Id = 9,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "How far it steers.",
+    },
+    {
+        Name = "Driven",
+        Id = 10,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "Whether the engine turns it.",
+    },
+    {
+        Name = "MaxBrakeTorque",
+        Id = 11,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "Its brake.",
+    },
+    {
+        Name = "MaxHandBrakeTorque",
+        Id = 12,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "Its hand brake.",
+    },
+    {
+        Name = "Grip",
+        Id = 13,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "Its tire's grip.",
+    },
+    {
+        Name = "Grounded",
+        Id = 14,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "The authority's answer, as `CharacterBody.Grounded` is: whether a wheel touches depends on "
+            .. "collision a replica does not solve. A wheel's dust and its skid marks read it.",
+    },
+    {
+        Name = "Compression",
+        Id = 15,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "How far in its suspension was.",
+    },
+    {
+        Name = "Slip",
+        Id = 16,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "How far its tire slid sideways: what a squeal is played by.",
+    },
+    {
+        Name = "AngularVelocity",
+        Id = 17,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "**Not a property: what a replica puts back** before stepping a vehicle it drives again: how "
+            .. "fast the wheel spins.",
+    },
+    {
+        Name = "Rotation",
+        Id = 18,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "And how far it has turned, as its part is drawn.",
+    },
+    {
+        Name = "SteerAngle",
+        Id = 19,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "And how far it is steered.",
+    },
+}
+
 local springBone = authored("springBones")
 local SpringBoneFields: { Schema.Field } = {
     springBone("Enabled", 1, "Bool", "Whether the chain swings at all."),
@@ -2926,6 +3131,20 @@ local SpringColliderFields: { Schema.Field } = {
     springCollider("Radius", 2, "F32", "How big it is."),
     springCollider("Length", 3, "F32", "How long, along the joint: none is a ball."),
     springCollider("Offset", 4, "Vector3", "Where on its joint it sits."),
+}
+
+local cloth = authored("cloths")
+local ClothFields: { Schema.Field } = {
+    cloth("Enabled", 1, "Bool", "Whether the cloth moves at all."),
+    cloth("PinJoints", 2, "NameAtom", "The joints it hangs from, by a pattern of their names."),
+    cloth("MaxDistance", 3, "F32", "How far a vertex may hang from its pose."),
+    cloth("Stiffness", 4, "F32", "How little it stretches."),
+    cloth("BendStiffness", 5, "F32", "How little it folds."),
+    cloth("Damping", 6, "F32", "How soon a flutter dies."),
+    cloth("GravityScale", 7, "F32", "How much of gravity it feels."),
+    cloth("WindInfluence", 8, "F32", "How much of the wind it takes."),
+    cloth("Thickness", 9, "F32", "How far it stays from what it rests on."),
+    cloth("CollidesWithWorld", 10, "Bool", "Whether anchored parts near it keep it out."),
 }
 
 local bone = authored("attachments")
@@ -3582,6 +3801,17 @@ local Classes: { Schema.Class } = {
         Fields = SpotLightFields,
     },
     {
+        Name = "VehicleController",
+        Doc = "A vehicle (ADR 0213): what was authored, what its driver asks, and what the authority's "
+            .. "simulation answered. The chassis travels as any body does.",
+        Fields = VehicleControllerFields,
+    },
+    {
+        Name = "VehicleWheel",
+        Doc = "One wheel of a vehicle; as `VehicleController`.",
+        Fields = VehicleWheelFields,
+    },
+    {
         Name = "SpringBone",
         Doc = "A chain that trails behind its body (ADR 0194): what was authored, so a cape the authority "
             .. "spawned exists on a replica. **The swing is each machine's own**, stepped at its own frame "
@@ -3590,8 +3820,14 @@ local Classes: { Schema.Class } = {
     },
     {
         Name = "SpringCollider",
-        Doc = "What a `SpringBone`'s chains are kept out of; as `SpringBone`.",
+        Doc = "What a `SpringBone`'s chains and a `Cloth` are kept out of; as `SpringBone`.",
         Fields = SpringColliderFields,
+    },
+    {
+        Name = "Cloth",
+        Doc = "A mesh that hangs as cloth (ADR 0214): what was authored, as `SpringBone`. **Where each vertex "
+            .. "is, is each machine's own**, and no vertex of it is ever sent.",
+        Fields = ClothFields,
     },
     {
         Name = "Bone",

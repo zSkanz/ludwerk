@@ -18,6 +18,7 @@
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
 #include "engine/platform/file.h"
+#include "engine/render/cloth.h"
 #include "engine/scene/components.h"
 #include "engine/scene/world.h"
 
@@ -1154,6 +1155,9 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
             entry.positions.reserve(geometry.vertices.size());
             for (const asset::Vertex& vertex : geometry.vertices)
                 entry.positions.push_back(vertex.position);
+            if (skinned && compiled.skin.size() == geometry.vertices.size() &&
+                geometry.vertices.size() <= kClothMaxVertices)
+                entry.skin = compiled.skin;
             library.set(content, entry);
             if (completed != nullptr)
                 completed->push_back(content);
@@ -1309,6 +1313,9 @@ bool MeshLoader::uploadModel(rhi::IDevice& device, rhi::ICmdList& cmd, const ass
     entry.positions.reserve(model.mesh.vertices.size());
     for (const asset::Vertex& vertex : model.mesh.vertices)
         entry.positions.push_back(vertex.position);
+    if (model.skinned() && model.skin.size() == model.mesh.vertices.size() &&
+        model.mesh.vertices.size() <= kClothMaxVertices)
+        entry.skin = model.skin;
     library.set(urn, entry);
     return true;
 }

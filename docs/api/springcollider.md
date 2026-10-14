@@ -5,9 +5,9 @@
 - Inherits [`Instance`](instance.md)
 - Created with `Instance.new("SpringCollider")`
 
-A sphere or capsule attached to a joint that the `SpringBone` chains of the same `MeshPart` cannot pass through. Use a few to keep a cape or hair out of the body: one for the back and one for each leg is usually enough.
+A sphere or capsule attached to a joint that the `SpringBone` chains and the `Cloth` of the same `MeshPart` cannot pass through. Use a few to keep a cape or hair out of the body: one for the back and one for each leg is usually enough. A `Cloth` on a mesh that wears another's pose is also kept out of the colliders of the mesh it follows.
 
-It affects only `SpringBone` chains. It is not a physics shape, and nothing else in the world collides with it.
+It affects only `SpringBone` chains and `Cloth`. It is not a physics shape, and nothing else in the world collides with it.
 
 This page lists the members this class declares. Inherited members are
 listed on the page of the class that declares them.

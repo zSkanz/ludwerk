@@ -599,8 +599,9 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // 304: `AnimationPlayer`'s four for its graph (ADR 0197).
     // 314: `ReflectionProbe:Refresh`, and `IrradianceVolume`'s `Refresh` and
     // `GetProgress` (ADRs 0202, 0203).
-    CHECK(coverage.declared == 327);
-    CHECK(coverage.bound == 327);
+    // 328: `BasePart:Fracture` (ADR 0215).
+    CHECK(coverage.declared == 328);
+    CHECK(coverage.bound == 328);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

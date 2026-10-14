@@ -1,6 +1,6 @@
 # 0212 — A file the engine is reading can be saved
 
-- Status: accepted; the first half is built, the second is its own item
+- Status: accepted; built (the second half on 2026-10-14)
 - Date: 2026-10-13
 - Builds on: ADR 0021 (vendoring: a local change is a patch and a manifest
   note), ADR 0024 (hot reload)

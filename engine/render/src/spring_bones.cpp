@@ -27,37 +27,6 @@ using core::Vec3;
 // a cape in a ten metre wind is pushed about as hard as gravity pulls it.
 constexpr f32 WindPush = 1.0f;
 
-// Whether `name` is `pattern`, in which a `*` stands for any run of
-// characters, none included. Letter for letter otherwise: joints are named
-// by a file and matched as the file wrote them.
-[[nodiscard]] bool matchesPattern(std::string_view pattern, std::string_view name) noexcept
-{
-    core::usize p = 0;
-    core::usize n = 0;
-    core::usize star = std::string_view::npos;
-    core::usize resume = 0;
-    while (n < name.size()) {
-        if (p < pattern.size() && pattern[p] == '*') {
-            star = p++;
-            resume = n;
-        }
-        else if (p < pattern.size() && pattern[p] == name[n]) {
-            ++p;
-            ++n;
-        }
-        else if (star != std::string_view::npos) {
-            p = star + 1;
-            n = ++resume;
-        }
-        else {
-            return false;
-        }
-    }
-    while (p < pattern.size() && pattern[p] == '*')
-        ++p;
-    return p == pattern.size();
-}
-
 // The frame a mesh is drawn in, and how many of the world's units one of its
 // rig's is. A stretch that is not the same every way has no one answer for a
 // chain that swings through all of them; the mean is the least wrong.
@@ -93,6 +62,34 @@ struct Carrier
 }
 
 } // namespace
+
+bool matchesJointPattern(std::string_view pattern, std::string_view name) noexcept
+{
+    core::usize p = 0;
+    core::usize n = 0;
+    core::usize star = std::string_view::npos;
+    core::usize resume = 0;
+    while (n < name.size()) {
+        if (p < pattern.size() && pattern[p] == '*') {
+            star = p++;
+            resume = n;
+        }
+        else if (p < pattern.size() && pattern[p] == name[n]) {
+            ++p;
+            ++n;
+        }
+        else if (star != std::string_view::npos) {
+            p = star + 1;
+            n = ++resume;
+        }
+        else {
+            return false;
+        }
+    }
+    while (p < pattern.size() && pattern[p] == '*')
+        ++p;
+    return p == pattern.size();
+}
 
 void SpringBones::update(const scene::World& world, AnimationSystem& animation, const DrawPoses& poses,
                          const SpringFrame& frame)
@@ -152,7 +149,7 @@ void SpringBones::update(const scene::World& world, AnimationSystem& animation, 
             if (const std::string_view pattern = world.atoms().text(spring.jointPattern); !pattern.empty()) {
                 matched_.assign(rigJoints, 0);
                 for (core::u32 joint = 0; joint < rigJoints; ++joint)
-                    matched_[joint] = matchesPattern(pattern, animation.jointName(meshPart, joint)) ? 1 : 0;
+                    matched_[joint] = matchesJointPattern(pattern, animation.jointName(meshPart, joint)) ? 1 : 0;
                 for (core::u32 joint = 0; joint < rigJoints; ++joint) {
                     if (matched_[joint] == 0)
                         continue;

@@ -50,8 +50,14 @@
 #include <Jolt/Physics/StateRecorder.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
+#include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
+#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
+#include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
+#include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
+#include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
 #include <Jolt/Physics/StateRecorderImpl.h>
 #include <Jolt/RegisterTypes.h>
 #ifdef JPH_DEBUG_RENDERER
@@ -62,6 +68,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cfloat>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -597,6 +604,31 @@ JPH::TwoBodyConstraint* PivotMotorSettings::Create(JPH::Body& first, JPH::Body& 
 {
     return new PivotMotor(first, second, *this);
 }
+
+// A chassis on its wheels (ADR 0213): Jolt's vehicle constraint, which is also
+// a step listener -- each step it casts the wheels and drives them before the
+// solver -- kept with what built it, so a chassis replaced by a resize is
+// driven again by the same vehicle.
+struct VehicleRecord
+{
+    JPH::Ref<JPH::VehicleConstraint> constraint;
+    u32 generation = 0;
+    bool alive = false;
+    VehicleDesc desc;
+    VehicleInput input;
+};
+
+// A cloth (ADR 0214): Jolt's soft body, and the air it is in until told
+// otherwise.
+struct SoftBodyRecord
+{
+    JPH::BodyID id;
+    u32 generation = 0;
+    bool alive = false;
+    // How many joints its vertices follow: what a skinning must give.
+    u32 jointCount = 1;
+    SoftBodyWind wind;
+};
 
 struct ConstraintRecord
 {
@@ -1337,6 +1369,12 @@ public:
                 bodies.DestroyBody(record.id);
             }
         }
+        for (const SoftBodyRecord& record : m_softBodies) {
+            if (record.alive) {
+                bodies.RemoveBody(record.id);
+                bodies.DestroyBody(record.id);
+            }
+        }
     }
 
     JoltWorld(const JoltWorld&) = delete;
@@ -1401,6 +1439,16 @@ public:
             if (record.character != nullptr) {
                 record.character->SetPosition(record.character->GetPosition() - delta);
             }
+        }
+
+        // A cloth's vertices are its body's, and go with it.
+        for (const SoftBodyRecord& record : m_softBodies) {
+            if (!record.alive)
+                continue;
+            JPH::RVec3 position;
+            JPH::Quat rotation;
+            bodies.GetPositionAndRotation(record.id, position, rotation);
+            bodies.SetPositionAndRotation(record.id, position - delta, rotation, JPH::EActivation::DontActivate);
         }
     }
 
@@ -1551,6 +1599,7 @@ public:
         // holds a pointer to the destroyed one. Rebuilt in creation order, so a
         // resized limb stays attached and the solve sequence does not move.
         rebuildConstraintsOn(handle);
+        rebuildVehiclesOn(handle);
         return true;
     }
 
@@ -1651,6 +1700,7 @@ public:
         // the interface states this as a contract because a caller sweeping
         // both must not be the only thing that remembers.
         retireConstraintsOn(handle);
+        retireVehiclesOn(handle);
 
         // A destroyed part does not fire TouchEnded -- the instance is gone,
         // and a signal on an instance nobody can reach is a signal nobody can
@@ -1966,6 +2016,30 @@ public:
                 recorder.Write(pair.otherIsCharacter);
             }
         }
+        // **And each vehicle on a body of the island** (ADR 0213), whole: its
+        // inputs, its engine, its gearbox and the timers a gear change and the
+        // clutch count down on, and what its wheels last pushed with. None of
+        // that is a body's, and a replica that put back only the gear, the
+        // clutch and the engine's turns stepped a driven car again from its
+        // newest gearbox: at 300 ms the car was drawn fifteen to twenty
+        // centimetres back and forth over its first second.
+        u64 vehicleCount = 0;
+        for (const VehicleRecord& vehicle : m_vehicles)
+            vehicleCount += vehicle.alive && inIsland(bodies, vehicle.desc.chassis) ? 1u : 0u;
+        recorder.Write(vehicleCount);
+        for (u32 slot = 0; slot < static_cast<u32>(m_vehicles.size()); ++slot) {
+            const VehicleRecord& vehicle = m_vehicles[slot];
+            if (!vehicle.alive || !inIsland(bodies, vehicle.desc.chassis))
+                continue;
+            recorder.Write(slot);
+            recorder.Write(vehicle.generation);
+            // Its own bytes, counted: one built again since is read past.
+            JPH::StateRecorderImpl own;
+            vehicle.constraint->SaveState(own);
+            const std::string bytes = own.GetData();
+            recorder.Write(static_cast<u64>(bytes.size()));
+            recorder.WriteBytes(bytes.data(), bytes.size());
+        }
         // **And the contacts the solver warm-starts from.** Without them a
         // step taken again started from the impulses of the newest step, not
         // of the one restored, and even a crate at rest came out a few
@@ -2031,9 +2105,35 @@ public:
             }
             std::sort(m_previousCharacterPairs.begin(), m_previousCharacterPairs.end());
         }
+        u64 vehicleCount = 0;
+        recorder.Read(vehicleCount);
+        for (u64 at = 0; at < vehicleCount && !recorder.IsFailed(); ++at) {
+            u32 slot = 0;
+            u32 generation = 0;
+            recorder.Read(slot);
+            recorder.Read(generation);
+            u64 size = 0;
+            recorder.Read(size);
+            std::string bytes(static_cast<usize>(size), char{});
+            recorder.ReadBytes(bytes.data(), bytes.size());
+            // A vehicle gone, or built again since, is not this one: its
+            // state is read past.
+            VehicleRecord* vehicle = resolve(VehicleHandle{slot, generation});
+            if (vehicle == nullptr || recorder.IsFailed())
+                continue;
+            JPH::StateRecorderImpl own;
+            own.WriteBytes(bytes.data(), bytes.size());
+            own.Rewind();
+            vehicle->constraint->RestoreState(own);
+        }
         if (recorder.IsFailed() || !m_system.RestoreState(recorder))
             return false;
         return !recorder.IsFailed();
+    }
+
+    [[nodiscard]] static bool inIsland(std::span<const BodyHandle> bodies, BodyHandle body) noexcept
+    {
+        return std::find(bodies.begin(), bodies.end(), body) != bodies.end();
     }
 
     [[nodiscard]] bool restoreState(std::span<const u8> blob)
@@ -2092,6 +2192,8 @@ public:
                 bodies.MoveKinematic(pending.id, pending.position, pending.rotation, fixedDt);
             m_kinematicMoves.clear();
         }
+
+        blowSoftBodies(fixedDt);
 
         const auto begin = std::chrono::steady_clock::now();
         // One collision step per tick. Jolt allows several sub-steps per call;
@@ -2773,6 +2875,347 @@ public:
     // Every constraint that names this body, destroyed. Called BEFORE the body
     // is: a joint holding a body that is gone is a dangling pointer inside the
     // solver, and it is silent.
+    // --- Vehicles (ADR 0213) ------------------------------------------------
+
+    [[nodiscard]] VehicleHandle createVehicle(const VehicleDesc& desc)
+    {
+        JPH::Ref<JPH::VehicleConstraint> built = buildVehicle(desc);
+        if (built == nullptr)
+            return {};
+        u32 slot = 0;
+        if (!m_freeVehicles.empty()) {
+            slot = m_freeVehicles.back();
+            m_freeVehicles.pop_back();
+        }
+        else {
+            slot = static_cast<u32>(m_vehicles.size());
+            m_vehicles.emplace_back();
+        }
+        VehicleRecord& record = m_vehicles[slot];
+        record.generation = record.generation + 1 == 0 ? 1 : record.generation + 1;
+        record.alive = true;
+        record.desc = desc;
+        record.input = VehicleInput{};
+        record.constraint = built;
+        m_system.AddConstraint(built);
+        m_system.AddStepListener(built);
+        return VehicleHandle{slot, record.generation};
+    }
+
+    void destroyVehicle(VehicleHandle handle)
+    {
+        VehicleRecord* record = resolve(handle);
+        if (record == nullptr)
+            return;
+        retireVehicle(*record);
+        m_freeVehicles.push_back(handle.index);
+    }
+
+    void setVehicleInput(VehicleHandle handle, const VehicleInput& input)
+    {
+        VehicleRecord* record = resolve(handle);
+        if (record == nullptr)
+            return;
+        record->input = input;
+        applyVehicleInput(*record);
+    }
+
+    [[nodiscard]] VehicleState vehicleState(VehicleHandle handle) const
+    {
+        VehicleState state;
+        const VehicleRecord* record = resolve(handle);
+        if (record == nullptr)
+            return state;
+        const JPH::VehicleConstraint& vehicle = *record->constraint;
+        const auto& controller = static_cast<const JPH::WheeledVehicleController&>(*vehicle.GetController());
+        state.rpm = controller.GetEngine().GetCurrentRPM();
+        state.gear = controller.GetTransmission().GetCurrentGear();
+        state.clutch = controller.GetTransmission().GetClutchFriction();
+        state.wheels.resize(vehicle.GetWheels().size());
+        for (u32 index = 0; index < static_cast<u32>(state.wheels.size()); ++index) {
+            const JPH::Wheel& wheel = *vehicle.GetWheel(index);
+            VehicleWheelState& out = state.wheels[index];
+            // X across the axle and Y up, as a wheel's part is drawn.
+            const JPH::RMat44 placed = vehicle.GetWheelWorldTransform(index, JPH::Vec3::sAxisX(), JPH::Vec3::sAxisY());
+            out.transform.position = toWorld(placed.GetTranslation());
+            out.transform.rotation = fromJolt(placed.GetQuaternion());
+            out.grounded = wheel.HasContact();
+            out.suspensionLength = wheel.GetSuspensionLength();
+            out.angularVelocity = wheel.GetAngularVelocity();
+            out.rotation = wheel.GetRotationAngle();
+            out.steerAngle = wheel.GetSteerAngle();
+            const auto& tire = static_cast<const JPH::WheelWV&>(wheel);
+            out.longitudinalSlip = tire.mLongitudinalSlip;
+            out.lateralSlip = tire.mLateralSlip;
+        }
+        return state;
+    }
+
+    void setVehicleState(VehicleHandle handle, const VehicleState& state)
+    {
+        VehicleRecord* record = resolve(handle);
+        if (record == nullptr)
+            return;
+        JPH::VehicleConstraint& vehicle = *record->constraint;
+        auto& controller = static_cast<JPH::WheeledVehicleController&>(*vehicle.GetController());
+        controller.GetEngine().SetCurrentRPM(state.rpm);
+        controller.GetTransmission().Set(state.gear, state.clutch);
+        const u32 wheels =
+            std::min(static_cast<u32>(vehicle.GetWheels().size()), static_cast<u32>(state.wheels.size()));
+        for (u32 index = 0; index < wheels; ++index) {
+            JPH::Wheel& wheel = *vehicle.GetWheel(index);
+            wheel.SetAngularVelocity(state.wheels[index].angularVelocity);
+            wheel.SetRotationAngle(state.wheels[index].rotation);
+            wheel.SetSteerAngle(state.wheels[index].steerAngle);
+        }
+    }
+
+    // --- Soft bodies (ADR 0214) ------------------------------------------------
+
+    [[nodiscard]] SoftBodyHandle createSoftBody(const SoftBodyDesc& desc)
+    {
+        const auto count = static_cast<u32>(desc.vertices.size());
+        if (count == 0 || desc.triangles.size() < 3)
+            return {};
+        const auto pinnedAt = [&desc](u32 vertex) {
+            return vertex < desc.maxDistance.size() && !(desc.maxDistance[vertex] > 0.0f);
+        };
+        u32 free = 0;
+        for (u32 vertex = 0; vertex < count; ++vertex)
+            free += pinnedAt(vertex) ? 0u : 1u;
+        // The cloth's mass shared by what can move; a pinned vertex is moved
+        // by its joints alone, and weighs nothing to the solver.
+        const f32 inverseMass = free == 0 ? 1.0f : static_cast<f32>(free) / std::max(desc.mass, 1.0e-3f);
+
+        JPH::Ref<JPH::SoftBodySharedSettings> shared = new JPH::SoftBodySharedSettings;
+        shared->mVertices.reserve(count);
+        for (u32 vertex = 0; vertex < count; ++vertex) {
+            const core::Vec3 at = desc.vertices[vertex];
+            shared->mVertices.emplace_back(JPH::Float3(at.x, at.y, at.z), JPH::Float3(0.0f, 0.0f, 0.0f),
+                                           pinnedAt(vertex) ? 0.0f : inverseMass);
+        }
+        for (usize at = 0; at + 2 < desc.triangles.size(); at += 3) {
+            const u32 a = desc.triangles[at];
+            const u32 b = desc.triangles[at + 1];
+            const u32 c = desc.triangles[at + 2];
+            if (a >= count || b >= count || c >= count || a == b || b == c || a == c)
+                continue;
+            shared->AddFace(JPH::SoftBodySharedSettings::Face(a, b, c));
+        }
+        if (shared->mFaces.empty())
+            return {};
+        // Its edges and its folds from its faces, and **a long-range tether
+        // from each free vertex to the nearest pinned one**: a cape of a
+        // hundred links does not stretch under its own weight, which edges
+        // alone, solved a few times a step, let it.
+        const JPH::SoftBodySharedSettings::VertexAttributes attributes(
+            desc.stretchCompliance, desc.stretchCompliance, desc.bendCompliance,
+            JPH::SoftBodySharedSettings::ELRAType::EuclideanDistance);
+        shared->CreateConstraints(&attributes, 1, JPH::SoftBodySharedSettings::EBendType::Dihedral);
+
+        // Every vertex follows its joints. The joints arrive already carrying
+        // the bind (`skinSoftBody`), so the binds here are nothing.
+        u32 joints = 1;
+        for (const SoftBodySkin& skin : desc.skin)
+            for (u32 slot = 0; slot < 4; ++slot)
+                if (skin.weights[slot] > 0.0f)
+                    joints = std::max(joints, skin.joints[slot] + 1);
+        for (u32 joint = 0; joint < joints; ++joint)
+            shared->mInvBindMatrices.emplace_back(joint, JPH::Mat44::sIdentity());
+        shared->mSkinnedConstraints.reserve(count);
+        for (u32 vertex = 0; vertex < count; ++vertex) {
+            const f32 reach = pinnedAt(vertex)                   ? 0.0f
+                              : vertex < desc.maxDistance.size() ? desc.maxDistance[vertex]
+                                                                 : FLT_MAX;
+            JPH::SoftBodySharedSettings::Skinned skinned(vertex, reach, FLT_MAX, 40.0f);
+            if (vertex < desc.skin.size()) {
+                u32 used = 0;
+                for (u32 slot = 0; slot < 4; ++slot) {
+                    if (!(desc.skin[vertex].weights[slot] > 0.0f))
+                        continue;
+                    skinned.mWeights[used++] = JPH::SoftBodySharedSettings::SkinWeight(desc.skin[vertex].joints[slot],
+                                                                                       desc.skin[vertex].weights[slot]);
+                }
+                if (used == 0)
+                    skinned.mWeights[0] = JPH::SoftBodySharedSettings::SkinWeight(0, 1.0f);
+                skinned.NormalizeWeights();
+            }
+            else {
+                skinned.mWeights[0] = JPH::SoftBodySharedSettings::SkinWeight(0, 1.0f);
+            }
+            shared->mSkinnedConstraints.push_back(skinned);
+        }
+        shared->CalculateSkinnedConstraintNormals();
+        shared->Optimize();
+
+        JPH::SoftBodyCreationSettings settings(shared, toLocal(desc.position), JPH::Quat::sIdentity(),
+                                               encodeLayer(kDefaultCollisionGroup, true));
+        settings.mNumIterations = std::clamp<u32>(desc.iterations, 1, 32);
+        settings.mLinearDamping = std::max(desc.linearDamping, 0.0f);
+        settings.mGravityFactor = desc.gravityFactor;
+        settings.mFriction = std::max(desc.friction, 0.0f);
+        settings.mVertexRadius = std::max(desc.vertexRadius, 0.0f);
+        // Carried by its joints and blown by the wind, it is never still for
+        // a reason it could see.
+        settings.mAllowSleeping = false;
+        settings.mUpdatePosition = true;
+        JPH::BodyInterface& bodies = m_system.GetBodyInterface();
+        JPH::Body* body = bodies.CreateSoftBody(settings);
+        if (body == nullptr)
+            return {};
+        bodies.AddBody(body->GetID(), JPH::EActivation::Activate);
+
+        u32 slot = 0;
+        if (!m_freeSoftBodies.empty()) {
+            slot = m_freeSoftBodies.back();
+            m_freeSoftBodies.pop_back();
+        }
+        else {
+            slot = static_cast<u32>(m_softBodies.size());
+            m_softBodies.emplace_back();
+        }
+        SoftBodyRecord& record = m_softBodies[slot];
+        record.generation = record.generation + 1 == 0 ? 1 : record.generation + 1;
+        record.alive = true;
+        record.id = body->GetID();
+        record.jointCount = joints;
+        record.wind = SoftBodyWind{};
+        return SoftBodyHandle{slot, record.generation};
+    }
+
+    void destroySoftBody(SoftBodyHandle handle)
+    {
+        SoftBodyRecord* record = resolve(handle);
+        if (record == nullptr)
+            return;
+        JPH::BodyInterface& bodies = m_system.GetBodyInterface();
+        bodies.RemoveBody(record->id);
+        bodies.DestroyBody(record->id);
+        record->alive = false;
+        m_freeSoftBodies.push_back(handle.index);
+    }
+
+    void skinSoftBody(SoftBodyHandle handle, core::DVec3 origin, std::span<const core::Mat4> joints, bool snap)
+    {
+        const SoftBodyRecord* record = resolve(handle);
+        if (record == nullptr || joints.size() < record->jointCount)
+            return;
+        JPH::BodyLockWrite lock(m_system.GetBodyLockInterface(), record->id);
+        if (!lock.Succeeded())
+            return;
+        JPH::Body& body = lock.GetBody();
+        auto* motion = static_cast<JPH::SoftBodyMotionProperties*>(body.GetMotionProperties());
+        const JPH::RMat44 centre = body.GetCenterOfMassTransform();
+        // From `origin`'s space to the body's: a soft body is never turned,
+        // and its centre follows its vertices, so this is a short shift.
+        const core::Vec3 shift = core::toVec3(origin - toWorld(centre.GetTranslation()));
+        m_skinJoints.resize(joints.size());
+        for (usize at = 0; at < joints.size(); ++at) {
+            const core::Mat4& m = joints[at];
+            m_skinJoints[at] =
+                JPH::Mat44(JPH::Vec4(m.m[0][0], m.m[0][1], m.m[0][2], m.m[0][3]),
+                           JPH::Vec4(m.m[1][0], m.m[1][1], m.m[1][2], m.m[1][3]),
+                           JPH::Vec4(m.m[2][0], m.m[2][1], m.m[2][2], m.m[2][3]),
+                           JPH::Vec4(m.m[3][0] + shift.x, m.m[3][1] + shift.y, m.m[3][2] + shift.z, m.m[3][3]));
+        }
+        motion->SkinVertices(centre, m_skinJoints.data(), static_cast<JPH::uint>(m_skinJoints.size()), snap, m_temp);
+    }
+
+    void blowSoftBody(SoftBodyHandle handle, const SoftBodyWind& wind)
+    {
+        if (SoftBodyRecord* record = resolve(handle); record != nullptr)
+            record->wind = wind;
+    }
+
+    void softBodyVertices(SoftBodyHandle handle, core::DVec3 origin, std::vector<core::Vec3>& out) const
+    {
+        out.clear();
+        const SoftBodyRecord* record = resolve(handle);
+        if (record == nullptr)
+            return;
+        JPH::BodyLockRead lock(m_system.GetBodyLockInterface(), record->id);
+        if (!lock.Succeeded())
+            return;
+        const JPH::Body& body = lock.GetBody();
+        const auto* motion = static_cast<const JPH::SoftBodyMotionProperties*>(body.GetMotionProperties());
+        const JPH::RMat44 centre = body.GetCenterOfMassTransform();
+        const core::Vec3 shift = core::toVec3(toWorld(centre.GetTranslation()) - origin);
+        out.reserve(motion->GetVertices().size());
+        for (const JPH::SoftBodyVertex& vertex : motion->GetVertices()) {
+            const JPH::Vec3 turned = centre.Multiply3x3(vertex.mPosition);
+            out.push_back(core::Vec3{turned.GetX() + shift.x, turned.GetY() + shift.y, turned.GetZ() + shift.z});
+        }
+    }
+
+    // **The air on each face**, as a change of its vertices' speed for the
+    // step about to be taken: what crosses a face pushes it along its normal,
+    // in proportion to its area, so a cape side-on to the wind barely moves
+    // and one facing it fills.
+    void blowSoftBodies(f32 dt)
+    {
+        for (const SoftBodyRecord& record : m_softBodies) {
+            if (!record.alive || !(record.wind.drag > 0.0f))
+                continue;
+            JPH::BodyLockWrite lock(m_system.GetBodyLockInterface(), record.id);
+            if (!lock.Succeeded())
+                continue;
+            auto* motion = static_cast<JPH::SoftBodyMotionProperties*>(lock.GetBody().GetMotionProperties());
+            JPH::Array<JPH::SoftBodyVertex>& vertices = motion->GetVertices();
+            const JPH::Vec3 air = toJolt(record.wind.velocity);
+            for (const JPH::SoftBodySharedSettings::Face& face : motion->GetSettings()->mFaces) {
+                JPH::SoftBodyVertex& a = vertices[face.mVertex[0]];
+                JPH::SoftBodyVertex& b = vertices[face.mVertex[1]];
+                JPH::SoftBodyVertex& c = vertices[face.mVertex[2]];
+                const JPH::Vec3 doubled = (b.mPosition - a.mPosition).Cross(c.mPosition - a.mPosition);
+                const f32 twiceArea = doubled.Length();
+                if (!(twiceArea > 1.0e-9f))
+                    continue;
+                const JPH::Vec3 normal = doubled / twiceArea;
+                const JPH::Vec3 crossing = air - (a.mVelocity + b.mVelocity + c.mVelocity) / 3.0f;
+                // A third of the face's push to each of its corners.
+                const JPH::Vec3 push =
+                    normal * (normal.Dot(crossing) * record.wind.drag * 0.5f * twiceArea * dt / 3.0f);
+                a.mVelocity += push * a.mInvMass;
+                b.mVelocity += push * b.mInvMass;
+                c.mVelocity += push * c.mInvMass;
+            }
+        }
+    }
+
+    // Every vehicle on this body, gone with it.
+    void retireVehiclesOn(BodyHandle body)
+    {
+        for (u32 slot = 0; slot < static_cast<u32>(m_vehicles.size()); ++slot) {
+            VehicleRecord& record = m_vehicles[slot];
+            if (!record.alive || !(record.desc.chassis == body))
+                continue;
+            retireVehicle(record);
+            m_freeVehicles.push_back(slot);
+        }
+    }
+
+    // Every vehicle on this body, built again on the body that replaced it,
+    // in slot order for the reason constraints are.
+    void rebuildVehiclesOn(BodyHandle body)
+    {
+        for (u32 slot = 0; slot < static_cast<u32>(m_vehicles.size()); ++slot) {
+            VehicleRecord& record = m_vehicles[slot];
+            if (!record.alive || !(record.desc.chassis == body))
+                continue;
+            m_system.RemoveStepListener(record.constraint);
+            m_system.RemoveConstraint(record.constraint);
+            record.constraint = buildVehicle(record.desc);
+            if (record.constraint == nullptr) {
+                record.alive = false;
+                m_freeVehicles.push_back(slot);
+                continue;
+            }
+            m_system.AddConstraint(record.constraint);
+            m_system.AddStepListener(record.constraint);
+            applyVehicleInput(record);
+        }
+    }
+
     void retireConstraintsOn(BodyHandle body)
     {
         for (u32 slot = 0; slot < static_cast<u32>(m_constraints.size()); ++slot) {
@@ -3396,6 +3839,140 @@ private:
         record.constraint = nullptr;
     }
 
+    [[nodiscard]] SoftBodyRecord* resolve(SoftBodyHandle handle) noexcept
+    {
+        return const_cast<SoftBodyRecord*>(static_cast<const JoltWorld*>(this)->resolve(handle));
+    }
+
+    [[nodiscard]] const SoftBodyRecord* resolve(SoftBodyHandle handle) const noexcept
+    {
+        if (handle.index >= m_softBodies.size())
+            return nullptr;
+        const SoftBodyRecord& record = m_softBodies[handle.index];
+        return record.alive && record.generation == handle.generation ? &record : nullptr;
+    }
+
+    [[nodiscard]] VehicleRecord* resolve(VehicleHandle handle) noexcept
+    {
+        return const_cast<VehicleRecord*>(static_cast<const JoltWorld*>(this)->resolve(handle));
+    }
+
+    [[nodiscard]] const VehicleRecord* resolve(VehicleHandle handle) const noexcept
+    {
+        if (handle.index >= m_vehicles.size())
+            return nullptr;
+        const VehicleRecord& record = m_vehicles[handle.index];
+        return record.alive && record.generation == handle.generation ? &record : nullptr;
+    }
+
+    // **The vehicle, in the engine's axes**: up is +Y and forward is -Z, as a
+    // part's `LookVector` is. Each wheel's suspension points down and steers
+    // about up; the driven wheels are paired, left then right, in the order
+    // they were given, each pair a differential with an equal share of the
+    // engine.
+    [[nodiscard]] JPH::Ref<JPH::VehicleConstraint> buildVehicle(const VehicleDesc& desc)
+    {
+        const BodyRecord* chassis = resolve(desc.chassis);
+        if (chassis == nullptr || chassis->motion != MotionType::Dynamic || desc.wheels.empty())
+            return nullptr;
+        JPH::VehicleConstraintSettings settings;
+        settings.mUp = JPH::Vec3::sAxisY();
+        settings.mForward = -JPH::Vec3::sAxisZ();
+        settings.mMaxPitchRollAngle = desc.maxPitchRollAngle;
+        std::vector<int> driven;
+        for (usize index = 0; index < desc.wheels.size(); ++index) {
+            const VehicleWheelDesc& given = desc.wheels[index];
+            auto* wheel = new JPH::WheelSettingsWV;
+            wheel->mPosition = JPH::Vec3(given.position.x, given.position.y, given.position.z);
+            wheel->mSuspensionDirection = -JPH::Vec3::sAxisY();
+            wheel->mSteeringAxis = JPH::Vec3::sAxisY();
+            wheel->mWheelUp = JPH::Vec3::sAxisY();
+            wheel->mWheelForward = -JPH::Vec3::sAxisZ();
+            wheel->mSuspensionMinLength = given.suspensionMinLength;
+            wheel->mSuspensionMaxLength = std::max(given.suspensionMaxLength, given.suspensionMinLength);
+            wheel->mSuspensionSpring.mFrequency = given.suspensionFrequency;
+            wheel->mSuspensionSpring.mDamping = given.suspensionDamping;
+            wheel->mRadius = given.radius;
+            wheel->mWidth = given.width;
+            wheel->mMaxSteerAngle = given.maxSteerAngle;
+            wheel->mMaxBrakeTorque = given.maxBrakeTorque;
+            wheel->mMaxHandBrakeTorque = given.maxHandBrakeTorque;
+            wheel->mInertia = std::max(given.inertia, 1.0e-4f);
+            for (JPH::LinearCurve::Point& point : wheel->mLongitudinalFriction.mPoints)
+                point.mY *= given.longitudinalFriction;
+            for (JPH::LinearCurve::Point& point : wheel->mLateralFriction.mPoints)
+                point.mY *= given.lateralFriction;
+            settings.mWheels.push_back(wheel);
+            if (given.driven)
+                driven.push_back(static_cast<int>(index));
+        }
+        JPH::Ref<JPH::WheeledVehicleControllerSettings> controller = new JPH::WheeledVehicleControllerSettings;
+        controller->mEngine.mMaxTorque = desc.maxTorque;
+        controller->mEngine.mMinRPM = desc.minRpm;
+        controller->mEngine.mMaxRPM = std::max(desc.maxRpm, desc.minRpm);
+        controller->mEngine.mInertia = std::max(desc.engineInertia, 1.0e-4f);
+        controller->mTransmission.mMode = desc.manual ? JPH::ETransmissionMode::Manual : JPH::ETransmissionMode::Auto;
+        if (!desc.gearRatios.empty()) {
+            controller->mTransmission.mGearRatios.clear();
+            for (const f32 ratio : desc.gearRatios)
+                controller->mTransmission.mGearRatios.push_back(ratio);
+        }
+        controller->mTransmission.mReverseGearRatios.clear();
+        controller->mTransmission.mReverseGearRatios.push_back(desc.reverseRatio);
+        controller->mTransmission.mClutchStrength = std::max(desc.clutchStrength, 1.0e-4f);
+        controller->mTransmission.mShiftUpRPM = desc.shiftUpRpm;
+        controller->mTransmission.mShiftDownRPM = desc.shiftDownRpm;
+        const usize pairs = (driven.size() + 1) / 2;
+        for (usize pair = 0; pair < pairs; ++pair) {
+            JPH::VehicleDifferentialSettings differential;
+            differential.mLeftWheel = driven[pair * 2];
+            differential.mRightWheel = pair * 2 + 1 < driven.size() ? driven[pair * 2 + 1] : -1;
+            differential.mDifferentialRatio = desc.differentialRatio;
+            differential.mEngineTorqueRatio = 1.0f / static_cast<f32>(pairs);
+            controller->mDifferentials.push_back(differential);
+        }
+        settings.mController = controller;
+
+        JPH::Ref<JPH::VehicleConstraint> built;
+        {
+            const JPH::BodyLockWrite lock(m_system.GetBodyLockInterface(), chassis->id);
+            if (!lock.Succeeded())
+                return nullptr;
+            built = new JPH::VehicleConstraint(lock.GetBody(), settings);
+        }
+        // A cylinder cast for each wheel, over what the chassis collides with:
+        // a curb is rolled over, not caught by a ray between its edges.
+        built->SetVehicleCollisionTester(
+            new JPH::VehicleCollisionTesterCastCylinder(encodeLayer(chassis->group, true)));
+        return built;
+    }
+
+    void applyVehicleInput(VehicleRecord& record)
+    {
+        auto& controller = static_cast<JPH::WheeledVehicleController&>(*record.constraint->GetController());
+        const VehicleInput& input = record.input;
+        controller.SetDriverInput(std::clamp(input.forward, -1.0f, 1.0f), std::clamp(input.right, -1.0f, 1.0f),
+                                  std::clamp(input.brake, 0.0f, 1.0f), std::clamp(input.handBrake, 0.0f, 1.0f));
+        if (record.desc.manual)
+            controller.GetTransmission().Set(input.gear, 1.0f);
+        // A chassis at rest is asleep, and a sleeping body is not stepped:
+        // somebody pressing the throttle wakes it.
+        const bool asked =
+            input.forward != 0.0f || input.right != 0.0f || input.brake != 0.0f || input.handBrake != 0.0f;
+        if (const BodyRecord* chassis = resolve(record.desc.chassis); asked && chassis != nullptr)
+            m_system.GetBodyInterface().ActivateBody(chassis->id);
+    }
+
+    void retireVehicle(VehicleRecord& record)
+    {
+        if (record.constraint != nullptr) {
+            m_system.RemoveStepListener(record.constraint);
+            m_system.RemoveConstraint(record.constraint);
+        }
+        record.constraint = nullptr;
+        record.alive = false;
+    }
+
     [[nodiscard]] ConstraintRecord* resolve(ConstraintHandle handle) noexcept
     {
         return const_cast<ConstraintRecord*>(static_cast<const JoltWorld*>(this)->resolve(handle));
@@ -3991,6 +4568,12 @@ private:
     // solve (R10).
     std::vector<ConstraintRecord> m_constraints;
     std::vector<u32> m_freeConstraints;
+    std::vector<VehicleRecord> m_vehicles;
+    std::vector<u32> m_freeVehicles;
+    std::vector<SoftBodyRecord> m_softBodies;
+    std::vector<u32> m_freeSoftBodies;
+    // Scratch for a skinning, kept so a frame of cloths does not allocate.
+    std::vector<JPH::Mat44> m_skinJoints;
 
     std::vector<ContactPair> m_previousPairs;
     // The character half of the same diff.
@@ -4212,6 +4795,70 @@ public:
         if (JoltWorld* world = resolve(handle); world != nullptr) {
             world->destroyConstraint(constraint);
         }
+    }
+
+    [[nodiscard]] VehicleHandle createVehicle(WorldHandle handle, const VehicleDesc& desc) override
+    {
+        JoltWorld* world = resolve(handle);
+        return world != nullptr ? world->createVehicle(desc) : VehicleHandle{};
+    }
+
+    void destroyVehicle(WorldHandle handle, VehicleHandle vehicle) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr)
+            world->destroyVehicle(vehicle);
+    }
+
+    void setVehicleInput(WorldHandle handle, VehicleHandle vehicle, const VehicleInput& input) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr)
+            world->setVehicleInput(vehicle, input);
+    }
+
+    [[nodiscard]] VehicleState vehicleState(WorldHandle handle, VehicleHandle vehicle) const override
+    {
+        const JoltWorld* world = resolve(handle);
+        return world != nullptr ? world->vehicleState(vehicle) : VehicleState{};
+    }
+
+    void setVehicleState(WorldHandle handle, VehicleHandle vehicle, const VehicleState& state) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr)
+            world->setVehicleState(vehicle, state);
+    }
+
+    [[nodiscard]] SoftBodyHandle createSoftBody(WorldHandle handle, const SoftBodyDesc& desc) override
+    {
+        JoltWorld* world = resolve(handle);
+        return world != nullptr ? world->createSoftBody(desc) : SoftBodyHandle{};
+    }
+
+    void destroySoftBody(WorldHandle handle, SoftBodyHandle body) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr)
+            world->destroySoftBody(body);
+    }
+
+    void skinSoftBody(WorldHandle handle, SoftBodyHandle body, core::DVec3 origin, std::span<const core::Mat4> joints,
+                      bool snap) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr)
+            world->skinSoftBody(body, origin, joints, snap);
+    }
+
+    void blowSoftBody(WorldHandle handle, SoftBodyHandle body, const SoftBodyWind& wind) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr)
+            world->blowSoftBody(body, wind);
+    }
+
+    void softBodyVertices(WorldHandle handle, SoftBodyHandle body, core::DVec3 origin,
+                          std::vector<core::Vec3>& out) const override
+    {
+        if (const JoltWorld* world = resolve(handle); world != nullptr)
+            world->softBodyVertices(body, origin, out);
+        else
+            out.clear();
     }
 
     void setConstraintEnabled(WorldHandle handle, ConstraintHandle constraint, bool enabled) override

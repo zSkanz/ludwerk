@@ -783,6 +783,33 @@ local Classes: { Schema.Class } = {
                     .. "takes effect at the next simulation tick. An anchored part ignores it.",
             },
             {
+                Name = "Fracture",
+                Parameters = {
+                    {
+                        Name = "options",
+                        Type = "{ Pieces: number?, Seed: number?, Strength: number? }?",
+                        Default = "nil",
+                    },
+                },
+                Returns = { "Model" },
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0215" },
+                Doc = "Breaks the part into pieces and returns them in a `Model` where the part was. The part is "
+                    .. "destroyed. Each piece is a part like the original, held to the pieces beside it by a "
+                    .. "`FixedConstraint` that breaks under `Strength` newtons, so the pieces stand together until "
+                    .. "something hits them hard enough. The pieces are unanchored. A part that was anchored keeps "
+                    .. "its footing: an anchored `Footing` part under its bottom, which does not collide, holds the "
+                    .. "pieces along the bottom by the same joints, so a wall breaks where it is hit rather than "
+                    .. "falling over whole.\n\n"
+                    .. "`options.Pieces` is how many, from 1 to 64 (8 by default). `options.Seed` chooses the "
+                    .. "cut: the same seed and the same part give the same pieces on every machine. "
+                    .. "`options.Strength` is what each joint holds; by default it is twice the part's weight.\n\n"
+                    .. "The pieces are simulation: in a match the server's, sent to every player as parts, so "
+                    .. "use as few as the moment needs. Dust and small chips are better as a `ParticleEmitter` "
+                    .. "burst when a joint breaks: drawn on each machine and sent as nothing but the burst.\n\n"
+                    .. "Only a `Part` whose `Shape` is `Block` can be broken.",
+            },
+            {
                 Name = "BindToPredictedTouch",
                 Parameters = { { Name = "fn", Type = "(character: BasePart, step: PredictedStep) -> ()" } },
                 Returns = {},
@@ -1359,11 +1386,12 @@ local Classes: { Schema.Class } = {
         Parents = under("MeshPart"),
         Storage = "SpringCollider",
         Records = { "ADR 0194" },
-        Doc = "A sphere or capsule attached to a joint that the `SpringBone` chains of the same `MeshPart` cannot "
-            .. "pass through. Use a few to keep a cape or hair out of the body: one for the back and one for each "
-            .. "leg is usually enough.\n\n"
-            .. "It affects only `SpringBone` chains. It is not a physics shape, and nothing else in the world "
-            .. "collides with it.",
+        Doc = "A sphere or capsule attached to a joint that the `SpringBone` chains and the `Cloth` of the same "
+            .. "`MeshPart` cannot pass through. Use a few to keep a cape or hair out of the body: one for the back "
+            .. "and one for each leg is usually enough. A `Cloth` on a mesh that wears another's pose is also kept "
+            .. "out of the colliders of the mesh it follows.\n\n"
+            .. "It affects only `SpringBone` chains and `Cloth`. It is not a physics shape, and nothing else in the "
+            .. "world collides with it.",
         Properties = {
             {
                 Name = "JointName",
@@ -1390,6 +1418,101 @@ local Classes: { Schema.Class } = {
                 Name = "Offset",
                 Type = "vector",
                 Doc = "The position of the sphere's center, or of the capsule's lower end, in the joint's own space.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "Cloth",
+        Extends = "Instance",
+        Module = "render",
+        Parents = under("MeshPart"),
+        Storage = "Cloth",
+        Records = { "ADR 0214" },
+        Doc = "Makes the `MeshPart` it is parented to hang, sway and fold like cloth: a cape, a flag, a skirt or a "
+            .. "banner. Each vertex of the mesh is simulated, pulled by gravity and the world's wind, kept at its "
+            .. "distance from its neighbors, and kept out of the `SpringCollider`s of the mesh and of the parts "
+            .. "anchored near it.\n\n"
+            .. "It is visual only. Each machine runs it at the frame rate after the animation is applied; it is not "
+            .. "replicated or recorded in a replay, and a server with no window does not run it. Game logic should "
+            .. "not read where the cloth is.\n\n"
+            .. "The mesh must be skinned. Its vertices that are weighted at least half to a joint `PinJoints` "
+            .. "matches are pinned: they stay where the animation puts them, and the rest hang from them. Every "
+            .. "other vertex hangs free, never further than `MaxDistance` from where the animation would put it. "
+            .. "A cape is modeled hanging straight down, with its top row weighted to a joint at the shoulders and "
+            .. "the rest weighted as it would be without cloth.\n\n"
+            .. "A mesh of more than 8,192 vertices is drawn as the animation has it. Cloth further from the camera "
+            .. "than the quality level allows, and at the Low quality level, is also drawn as the animation has it.",
+        Properties = {
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether the cloth is simulated. When it is off, the mesh is drawn as the animation has it.",
+            },
+            {
+                Name = "PinJoints",
+                Type = "string",
+                Doc = "A name pattern for the joints the cloth hangs from, where `*` matches any run of characters. "
+                    .. "A vertex weighted at least half to joints it matches is pinned to where the animation puts "
+                    .. "it. With no pinned vertex, the cloth hangs only by `MaxDistance`.",
+            },
+            {
+                Name = "MaxDistance",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How far, in meters, a vertex may move from where the animation puts it. A cape that should "
+                    .. "never fly over the head has a small one; at 0 the cloth does not move.",
+            },
+            {
+                Name = "Stiffness",
+                Type = "number",
+                Default = "0.9",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How much the cloth resists stretching, from 0 to 1. At 1 it keeps the length it was modeled "
+                    .. "with, as canvas does; lower values stretch like knitted cloth.",
+            },
+            {
+                Name = "BendStiffness",
+                Type = "number",
+                Default = "0.2",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How much the cloth resists folding, from 0 to 1. Silk is near 0 and leather near 1.",
+            },
+            {
+                Name = "Damping",
+                Type = "number",
+                Default = "0.1",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How much of its motion the cloth loses each second, from 0 to 1. A low value flutters for a "
+                    .. "long time; a high value settles quickly and looks heavy.",
+            },
+            {
+                Name = "GravityScale",
+                Type = "number",
+                Default = "1",
+                Doc = "How much of the world's gravity affects the cloth. At 0 the cloth floats.",
+            },
+            {
+                Name = "WindInfluence",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How much the world's wind pushes the cloth. At 0 the cloth ignores wind.",
+            },
+            {
+                Name = "Thickness",
+                Type = "number",
+                Default = "0.02",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How far, in meters, the cloth stays from what it rests on.",
+            },
+            {
+                Name = "CollidesWithWorld",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether the cloth is kept out of the anchored parts near it, such as a wall it is pressed "
+                    .. "against or the floor it drags on. It never pushes them.",
             },
         } :: { Schema.Property },
     },
@@ -1969,6 +2092,280 @@ local Classes: { Schema.Class } = {
                 Doc = "The thickness of the line the rod is drawn as, in meters.",
             },
         },
+    },
+    {
+        Name = "VehicleController",
+        Extends = "Instance",
+        Module = "scene",
+        Parents = under("BasePart"),
+        Storage = "VehicleController",
+        Records = { "ADR 0213" },
+        Doc = "Makes the part it is under a vehicle's chassis, held up by the `VehicleWheel`s under it and driven "
+            .. "by an engine through a gearbox. Each wheel is a suspension and a tire. "
+            .. "Set `Throttle`, `Steer`, `Brake` and `HandBrake` each frame, from a script or an input action, "
+            .. "to drive it.\n\n"
+            .. "The chassis must be unanchored. A wheel is not a part of the simulation: it is a cast from the "
+            .. "chassis down to the ground, so it rolls over a curb a wheel part would bounce off. Give each "
+            .. "wheel a `WheelPart` to see it turn and roll. Forward is the chassis' `LookVector`.\n\n"
+            .. "It runs on the server, in the simulation, and is replicated as the chassis is.",
+        Properties = {
+            {
+                Name = "MaxTorque",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The most torque the engine gives, in newton meters. At 0 it is what the chassis' mass needs to drive briskly without spinning its driven wheels.",
+            },
+            {
+                Name = "MinRPM",
+                Type = "number",
+                Default = "1000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The engine's turns a minute when it idles.",
+            },
+            {
+                Name = "MaxRPM",
+                Type = "number",
+                Default = "6000",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "The most turns a minute the engine reaches. It is held under this.",
+            },
+            {
+                Name = "Transmission",
+                Type = "Enum.VehicleTransmission",
+                Default = "Enum.VehicleTransmission.Automatic",
+                Doc = "Whether the gearbox shifts by itself, at `ShiftUpRPM` and `ShiftDownRPM`, or stays in the `Gear` asked for.",
+            },
+            {
+                Name = "ShiftUpRPM",
+                Type = "number",
+                Default = "4000",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "With an automatic gearbox: the engine's turns a minute at which it shifts up.",
+            },
+            {
+                Name = "ShiftDownRPM",
+                Type = "number",
+                Default = "2000",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "With an automatic gearbox: the engine's turns a minute at which it shifts down.",
+            },
+            {
+                Name = "FinalDriveRatio",
+                Type = "number",
+                Default = "3.42",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "The ratio from the gearbox to the wheels. A higher ratio accelerates harder and reaches a lower top speed.",
+            },
+            {
+                Name = "MaxLeanAngle",
+                Type = "number",
+                Default = "180",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How far the chassis can lean, in degrees, before the vehicle holds it upright. At 180 it can roll over.",
+            },
+            {
+                Name = "Throttle",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_minus_one_to_one",
+                Doc = "How hard the engine is asked to drive, from -1 (full reverse) to 1 (full forward). With an automatic gearbox, a negative value at rest selects reverse.",
+            },
+            {
+                Name = "Steer",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_minus_one_to_one",
+                Doc = "How far the steering wheels are turned, from -1 (full left) to 1 (full right).",
+            },
+            {
+                Name = "Brake",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How hard the brakes are pressed, from 0 to 1.",
+            },
+            {
+                Name = "HandBrake",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How hard the hand brake is pulled, from 0 to 1. It holds only the wheels that have a `MaxHandBrakeTorque`.",
+            },
+            {
+                Name = "Gear",
+                Type = "number",
+                Default = "1",
+                Doc = "With a manual gearbox: the gear asked for, -1 for reverse and 0 for neutral.",
+            },
+            {
+                Name = "Driver",
+                Type = "Player?",
+                Doc = "The player who drives, or nil. While a player drives, their intents named by `DriveIntent`, "
+                    .. "`BrakeIntent` and `HandBrakeIntent` set `Throttle`, `Steer`, `Brake` and `HandBrake` "
+                    .. "every simulation tick, and no script needs to. In a match, the server sets it, and the "
+                    .. "driver's own machine predicts the vehicle as it predicts their character, so the car "
+                    .. "answers the wheel at once.",
+            },
+            {
+                Name = "DriveIntent",
+                Type = "string",
+                Default = '"Drive"',
+                Doc = "The name of the driver's `Direction2D` input action that drives: up and down set `Throttle`, "
+                    .. "left and right set `Steer`.",
+            },
+            {
+                Name = "BrakeIntent",
+                Type = "string",
+                Default = '"Brake"',
+                Doc = "The name of the driver's input action that brakes: a button, or the first axis of a "
+                    .. "direction.",
+            },
+            {
+                Name = "HandBrakeIntent",
+                Type = "string",
+                Default = '"HandBrake"',
+                Doc = "The name of the driver's input action that pulls the hand brake.",
+            },
+            {
+                Name = "Speed",
+                Type = "number",
+                ReadOnly = true,
+                Doc = "The chassis' speed along its forward direction at the last simulation tick, in meters per second; negative when it is going backward.",
+            },
+            {
+                Name = "RPM",
+                Type = "number",
+                ReadOnly = true,
+                Doc = "The engine's turns a minute at the last simulation tick.",
+            },
+            {
+                Name = "CurrentGear",
+                Type = "number",
+                ReadOnly = true,
+                Doc = "The gear the gearbox was in at the last simulation tick: -1 reverse, 0 neutral, then the forward gears from 1.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "VehicleWheel",
+        Extends = "Instance",
+        Module = "scene",
+        Parents = under("VehicleController"),
+        Storage = "VehicleWheel",
+        Records = { "ADR 0213" },
+        Doc = "One wheel of a vehicle, under its `VehicleController`. It hangs from `Attachment`, an attachment "
+            .. "of the chassis, on a suspension that pushes the chassis up where the wheel meets the ground; "
+            .. "its tire then pushes the chassis along and across by how much it slips.\n\n"
+            .. "A wheel that steers has a `MaxSteerAngle`; one the engine turns is `Driven`. Driven wheels are "
+            .. "paired in the order they are under the controller, left then right, so give a car's driven "
+            .. "wheels left first.",
+        Properties = {
+            {
+                Name = "Attachment",
+                Type = "Attachment?",
+                Doc = "The attachment of the chassis the suspension hangs from: the top of its travel. A wheel with no attachment, or with one on another part, is not part of the vehicle.",
+            },
+            {
+                Name = "WheelPart",
+                Type = "BasePart?",
+                Doc = "A part the engine places where the wheel is, turned by its steering and rolling, after each simulation tick. It should not collide: the wheel itself is not a part.",
+            },
+            {
+                Name = "Radius",
+                Type = "number",
+                Default = "0.35",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "The wheel's radius, in meters.",
+            },
+            {
+                Name = "Width",
+                Type = "number",
+                Default = "0.25",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "The wheel's width, in meters.",
+            },
+            {
+                Name = "SuspensionMinLength",
+                Type = "number",
+                Default = "0.1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The shortest the suspension can be, in meters from the attachment to the wheel's center.",
+            },
+            {
+                Name = "SuspensionMaxLength",
+                Type = "number",
+                Default = "0.35",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The longest the suspension can be, in meters from the attachment to the wheel's center.",
+            },
+            {
+                Name = "SuspensionFrequency",
+                Type = "number",
+                Default = "1.5",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "How stiff the suspension is, as the times a second it would bounce. 1 is soft, 2 is firm, 3 is a race car.",
+            },
+            {
+                Name = "SuspensionDamping",
+                Type = "number",
+                Default = "0.5",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How much of a bounce the suspension takes away, from 0 (it bounces on) to 1 (it stops in one swing).",
+            },
+            {
+                Name = "MaxSteerAngle",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How far the wheel turns at full `Steer`, in degrees. At 0 it does not steer.",
+            },
+            {
+                Name = "Driven",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether the engine turns this wheel.",
+            },
+            {
+                Name = "MaxBrakeTorque",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The brake's torque at full `Brake`, in newton meters. At 0 it is enough for the chassis' mass.",
+            },
+            {
+                Name = "MaxHandBrakeTorque",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The hand brake's torque at full `HandBrake`, in newton meters. At 0 the hand brake does not hold this wheel.",
+            },
+            {
+                Name = "Grip",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How well the tire holds the ground, as a scale of the ground's own friction: below 1 it slides sooner, above 1 later.",
+            },
+            {
+                Name = "Grounded",
+                Type = "boolean",
+                ReadOnly = true,
+                Doc = "Whether the wheel touched the ground at the last simulation tick.",
+            },
+            {
+                Name = "Compression",
+                Type = "number",
+                ReadOnly = true,
+                Doc = "How far the suspension was pushed in at the last simulation tick, from 0 (fully out) to 1 (fully in).",
+            },
+            {
+                Name = "Slip",
+                Type = "number",
+                ReadOnly = true,
+                Doc = "How much the tire slid sideways at the last simulation tick, as the angle between where it points and where it goes, in degrees.",
+            },
+        } :: { Schema.Property },
     },
     {
         Name = "SpringConstraint",

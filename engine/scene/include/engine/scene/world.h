@@ -503,6 +503,9 @@ struct EngineState
         // a test or a game's own counter reads exactly.
         u64 corrections = 0;
         f64 lastCorrectionMetres = 0.0;
+        // The furthest a predicted part was from the authority's at the last
+        // answer (ADR 0213).
+        f64 predictedDriftMetres = 0.0;
         // **The same, a player at this machine** (ADR 0208): its first
         // player, then its guests by seat, each with a character of its own
         // that this machine predicts. A correction is counted for the
@@ -722,8 +725,11 @@ struct NameIndex
     X(ConstraintComponent, constraints)                                                                                \
     X(MoverComponent, movers)                                                                                          \
     X(NoCollisionComponent, noCollisions)                                                                              \
+    X(VehicleControllerComponent, vehicleControllers)                                                                  \
+    X(VehicleWheelComponent, vehicleWheels)                                                                            \
     X(RagdollComponent, ragdolls)                                                                                      \
     X(SpringBoneComponent, springBones)                                                                                \
+    X(ClothComponent, cloths)                                                                                          \
     X(SpringColliderComponent, springColliders)                                                                        \
     X(IKControlComponent, ikControls)                                                                                  \
     X(FootPlacementComponent, footPlacements)                                                                          \
@@ -1489,10 +1495,22 @@ public:
     [[nodiscard]] const ComponentPool<MoverComponent>& movers() const noexcept { return m_movers; }
     [[nodiscard]] ComponentPool<NoCollisionComponent>& noCollisions() noexcept { return m_noCollisions; }
     [[nodiscard]] const ComponentPool<NoCollisionComponent>& noCollisions() const noexcept { return m_noCollisions; }
+    [[nodiscard]] ComponentPool<VehicleControllerComponent>& vehicleControllers() noexcept
+    {
+        return m_vehicleControllers;
+    }
+    [[nodiscard]] const ComponentPool<VehicleControllerComponent>& vehicleControllers() const noexcept
+    {
+        return m_vehicleControllers;
+    }
+    [[nodiscard]] ComponentPool<VehicleWheelComponent>& vehicleWheels() noexcept { return m_vehicleWheels; }
+    [[nodiscard]] const ComponentPool<VehicleWheelComponent>& vehicleWheels() const noexcept { return m_vehicleWheels; }
     [[nodiscard]] ComponentPool<RagdollComponent>& ragdolls() noexcept { return m_ragdolls; }
     [[nodiscard]] const ComponentPool<RagdollComponent>& ragdolls() const noexcept { return m_ragdolls; }
     [[nodiscard]] ComponentPool<SpringBoneComponent>& springBones() noexcept { return m_springBones; }
     [[nodiscard]] const ComponentPool<SpringBoneComponent>& springBones() const noexcept { return m_springBones; }
+    [[nodiscard]] ComponentPool<ClothComponent>& cloths() noexcept { return m_cloths; }
+    [[nodiscard]] const ComponentPool<ClothComponent>& cloths() const noexcept { return m_cloths; }
     [[nodiscard]] ComponentPool<SpringColliderComponent>& springColliders() noexcept { return m_springColliders; }
     [[nodiscard]] const ComponentPool<SpringColliderComponent>& springColliders() const noexcept
     {

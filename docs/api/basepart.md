@@ -65,6 +65,16 @@ On a client the function runs again for each tick that is replayed after a corre
 
 Removes this part's override of one material parameter, so the part uses the material's value again. Does nothing if the parameter is not overridden.
 
+### `Fracture(options: { Pieces: number?, Seed: number?, Strength: number? }? = nil): Model`
+
+Breaks the part into pieces and returns them in a `Model` where the part was. The part is destroyed. Each piece is a part like the original, held to the pieces beside it by a `FixedConstraint` that breaks under `Strength` newtons, so the pieces stand together until something hits them hard enough. The pieces are unanchored. A part that was anchored keeps its footing: an anchored `Footing` part under its bottom, which does not collide, holds the pieces along the bottom by the same joints, so a wall breaks where it is hit rather than falling over whole.
+
+`options.Pieces` is how many, from 1 to 64 (8 by default). `options.Seed` chooses the cut: the same seed and the same part give the same pieces on every machine. `options.Strength` is what each joint holds; by default it is twice the part's weight.
+
+The pieces are simulation: in a match the server's, sent to every player as parts, so use as few as the moment needs. Dust and small chips are better as a `ParticleEmitter` burst when a joint breaks: drawn on each machine and sent as nothing but the burst.
+
+Only a `Part` whose `Shape` is `Block` can be broken.
+
 ### `GetMaterialParameter(name: string): (Color3 | number | Vector2 | vector | { number })?`
 
 Returns the value this part is drawn with for one material parameter: the part's override if it has one, otherwise the material's own value. Returns nil for a surface shader parameter that neither sets; the shader's default is then used.

@@ -67,7 +67,9 @@ engine_add_module_tests(physics
         tests/constraint_tests.cpp
         tests/physics_tests.cpp
         tests/physics2d_tests.cpp
+        tests/soft_body_tests.cpp
         tests/terrain_shape_tests.cpp
+        tests/vehicle_tests.cpp
     MODULES
         ${engine_physics_test_modules}
 )

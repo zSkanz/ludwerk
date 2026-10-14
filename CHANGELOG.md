@@ -23,6 +23,8 @@ here.
   out the volume it was asked for and leaves every other its file's colour.
 - In the Timeline, the name a `cast` track brings is in the list of bindings
   a track is added on, and a track on it is not marked unbound.
+- Two parts welded together no longer push each other apart: a weld's two
+  bodies do not collide, so a cabin welded on a chassis no longer drags it.
 
 ### Added
 
@@ -38,6 +40,20 @@ here.
   engine's value or the project's own, and a level for each platform. A
   level's own values are `[graphics.low]` to `[graphics.ultra]` in
   `project.toml`.
+
+- Vehicles: a `VehicleController` on a chassis and a `VehicleWheel` for
+  each wheel make a car that drives on a cast suspension, with an engine,
+  gears and brakes. A player seated as its `Driver` drives it predicted, as a
+  character walks, allowed three centimeters from the authority's car and
+  pulled back gently, and drawn gliding when it is corrected. Protocol 52.
+- `NetworkService:GetStats().PredictedDrift`: how far the parts this machine
+  predicts were from the authority's at the last answer.
+- `BasePart:Fracture`: a box part cut into pieces held by joints that break.
+  A wall that stood keeps its footing and breaks where it is struck.
+- `Cloth`: a skinned mesh that hangs as cloth, every vertex simulated, pinned
+  by the joints `PinJoints` names, kept out of its body's `SpringCollider`s and
+  the anchored parts near it, and blown by the wind. Picture only; off at the
+  Low level and on a phone below High. `--skip=cloth` draws a run without it.
 
 ### Changed
 

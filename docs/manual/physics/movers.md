@@ -358,3 +358,4 @@ authority's answer arrives.
 - [Welds and constraints](manual:physics/joints)
 - [Rigid bodies](manual:physics/bodies)
 - [A ragdoll](manual:physics/ragdoll)
+- [Vehicles](manual:physics/vehicles) -- a chassis on wheels, which is not four hinges

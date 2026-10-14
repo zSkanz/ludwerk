@@ -3225,6 +3225,32 @@ const Pose* AnimationSystem::drawnPose(core::InstanceId meshPart) const noexcept
     return pose(meshPart);
 }
 
+void AnimationSystem::presentCloth(core::InstanceId meshPart, std::span<const GpuMorphDelta> rows,
+                                   const core::AABB& bounds)
+{
+    PresentedCloth& cloth = clothPresented_[keyOf(meshPart)];
+    cloth.rows.assign(rows.begin(), rows.end());
+    cloth.bounds = bounds;
+    cloth.live = true;
+}
+
+const AnimationSystem::PresentedCloth* AnimationSystem::drawnCloth(core::InstanceId meshPart) const noexcept
+{
+    if (clothPresented_.empty())
+        return nullptr;
+    const auto found = clothPresented_.find(keyOf(meshPart));
+    return found != clothPresented_.end() && found->second.live ? &found->second : nullptr;
+}
+
+void AnimationSystem::clearPresentedCloth() noexcept
+{
+    // A mesh that was a cloth and is no longer -- gone, switched off -- is
+    // let go of; the rest keep their storage for the next frame.
+    std::erase_if(clothPresented_, [](const auto& entry) { return !entry.second.live; });
+    for (auto& [key, cloth] : clothPresented_)
+        cloth.live = false;
+}
+
 bool AnimationSystem::jointLocal(core::InstanceId meshPart, core::u32 joint, core::CFrameD& out) const
 {
     const SkeletonLibrary::Entry* entry = skeletonOf(meshPart);

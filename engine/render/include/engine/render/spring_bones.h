@@ -8,6 +8,7 @@
 // the ragdoll use. A world with no window never makes one of these.
 #pragma once
 
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -48,6 +49,12 @@ struct SpringFrame
     // Seconds, for the wind's gusts.
     f32 time = 0.0f;
 };
+
+// Whether `name` is `pattern`, in which a `*` stands for any run of
+// characters, none included: how a `SpringBone` finds its chains and a `Cloth`
+// the joints it hangs from. Letter for letter otherwise: joints are named by a
+// file and matched as the file wrote them.
+[[nodiscard]] bool matchesJointPattern(std::string_view pattern, std::string_view name) noexcept;
 
 class SpringBones
 {

@@ -31,7 +31,10 @@ engine_add_module(scene
         src/native_accessors.cpp
         src/native_accessors_2d.cpp
         src/native_accessors_movers.cpp
+        src/native_accessors_vehicles.cpp
         src/physics_movers.cpp
+        src/physics_vehicles.cpp
+        src/fracture.cpp
         src/native_accessors_nav.cpp
         src/swarm.cpp
         src/partition.cpp
@@ -95,6 +98,7 @@ engine_add_module_tests(scene
         tests/wind_tests.cpp
         tests/partition_tests.cpp
         tests/physics_sync_tests.cpp
+        tests/fracture_tests.cpp
         tests/physics_sync_2d_tests.cpp
         tests/ragdoll_build_tests.cpp
         tests/sprite_animation_tests.cpp

@@ -46,6 +46,33 @@ FlickerReport measureFlicker(std::span<const Image> frames, double ignore)
     return report;
 }
 
+long long countPops(const Image& before, const Image& now, const Image& after, double least, double most,
+                    const PopColour& only, double back)
+{
+    for (const Image* frame : {&before, &now, &after}) {
+        if (frame->empty() || !frame->wellFormed() || frame->width != before.width || frame->height != before.height)
+            return -1;
+    }
+    const auto ofIt = [&only](const Image& image, std::size_t pixel) {
+        const std::uint8_t* rgba = image.rgba.data() + pixel * 4;
+        const int it = rgba[only.channel];
+        const int a = rgba[(only.channel + 1) % 3];
+        const int b = rgba[(only.channel + 2) % 3];
+        return it - a > only.margin && it - b > only.margin;
+    };
+    long long pops = 0;
+    const std::size_t pixels = before.pixelCount();
+    for (std::size_t pixel = 0; pixel < pixels; ++pixel) {
+        if (!ofIt(before, pixel) && !ofIt(now, pixel))
+            continue;
+        const double was = lumaAt(before, pixel);
+        const double moved = std::abs(lumaAt(now, pixel) - was);
+        if (moved > least && moved <= most && std::abs(lumaAt(after, pixel) - was) <= back)
+            ++pops;
+    }
+    return pops;
+}
+
 long long countPops(const Image& before, const Image& now, const Image& after, double least, double most, double back)
 {
     for (const Image* frame : {&before, &now, &after}) {

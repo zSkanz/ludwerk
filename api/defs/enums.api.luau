@@ -1513,6 +1513,14 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         {
+            Name = "VehicleTransmission",
+            Doc = "How a `VehicleController`'s gearbox chooses its gear.",
+            Items = {
+                { Name = "Automatic", Value = 0, Doc = "It shifts by itself, by the engine's turns a minute." },
+                { Name = "Manual", Value = 1, Doc = "It stays in the gear the controller's `Gear` asks for." },
+            } :: { Schema.EnumItem },
+        },
+        {
             Name = "VelocityConstraintMode",
             Doc = "How much of the velocity a `LinearVelocity` controls.",
             Items = {

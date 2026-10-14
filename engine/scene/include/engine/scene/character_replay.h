@@ -81,11 +81,41 @@ struct CharacterReplayStart
         core::Vec3 angular{};
     };
     std::vector<Body> bodies;
+    // **And each vehicle on them, as the authority had it** (ADR 0213): the
+    // engine's turns, the gear and the clutch, and each wheel's spin, angle
+    // and steering. A car is more than its chassis, and stepped again from
+    // the authority's chassis on this machine's engine and wheels it is a car
+    // neither machine had.
+    struct Vehicle
+    {
+        core::InstanceId controller{};
+        core::f32 rpm = 0.0f;
+        core::i32 gear = 0;
+        core::f32 clutch = 0.0f;
+        struct Wheel
+        {
+            core::InstanceId id{};
+            core::f32 angularVelocity = 0.0f;
+            core::f32 rotation = 0.0f;
+            core::f32 steerAngle = 0.0f;
+        };
+        std::vector<Wheel> wheels;
+    };
+    std::vector<Vehicle> vehicles;
     // **Its predicted attributes, as the authority had them**, put back
     // with the rest before the steps are taken again. Nothing: the authority
     // said nothing of them.
     std::optional<PredictedAttributes> attributes;
 };
+
+// **How far a predicted vehicle's chassis may be from the authority's before
+// it is corrected** (ADR 0213), in metres. A crate is all its state, and the
+// two machines step it to the bit from the same; a car is its chassis and
+// what its wheels last pushed with, which is not sent, and two machines
+// stepping it apart by a centimetre over a third of a second is a car
+// driven, not a car wrong. Under this it is left to this machine; over it,
+// put back, counted, and drawn gliding there.
+inline constexpr core::f64 VehicleCorrectionMetres = 0.03;
 
 // **One character's predicted step**: what a script bound to it is
 // handed. The intents are the player's at `tick` -- on a step taken again,

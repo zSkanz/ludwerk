@@ -238,6 +238,10 @@ struct Stats
     u64 replays = 0;
     // How far the last correction moved the own character, in metres.
     core::f64 lastCorrectionMetres = 0.0;
+    // **How far this machine's predicted parts were from the authority's at
+    // the last answer**, the furthest of them, in metres, corrected or not
+    // (ADR 0213): what a car left to drift under its correction is off by.
+    core::f64 predictedDriftMetres = 0.0;
     // **The same, a seat** (ADR 0208): 0 the machine's first player, 1 to 3 its
     // guests. A correction is counted for each character that was wrong, so
     // "it is laggy for player two only" can be read back from a log.
@@ -344,6 +348,12 @@ struct VisualCorrection
     // teleport past `VisualSnapMetres` is not in it: that is drawn where it
     // lands.
     core::DVec3 displaced{};
+    // **And the vehicle that character drives** (ADR 0213): what its
+    // corrections moved it, the same way -- the chassis and what is drawn
+    // with it (`vehicle`: the model it is in, or the chassis alone).
+    core::InstanceId vehicle;
+    core::DVec3 vehicleOffset{};
+    core::DVec3 vehicleDisplaced{};
 };
 
 } // namespace engine::replication

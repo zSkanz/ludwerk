@@ -190,6 +190,11 @@ inline constexpr core::f64 DefaultPredictRadius = 8.0;
 inline constexpr u32 DefaultPredictMaxBodies = 32;
 inline constexpr u32 DefaultPredictLingerTicks = 30;
 inline constexpr core::f64 VisualSnapMetres = 2.0;
+// **A vehicle glides slower than a character** (ADR 0213): what is left of a
+// correction a tick, about a quarter of a second to nothing. A car moves its
+// own length in a few ticks, and corrected over a character's tenth of a
+// second its step showed as a jolt.
+inline constexpr core::f64 VehicleVisualDecayPerTick = 0.8;
 // **A replica's island disagreeing by this much is stepped again** from the
 // authority's word, without counting a correction (ADR 0133). Measured: from
 // the same state the two machines step it to the bit, so any difference is a
@@ -1022,11 +1027,23 @@ public:
     {
         if (seat >= m_seats.size())
             return {};
-        return VisualCorrection{m_seats[seat].visualCharacter, m_seats[seat].visualOffset, m_seats[seat].displaced};
+        const Owned& one = m_seats[seat];
+        return VisualCorrection{one.visualCharacter, one.visualOffset,  one.displaced,
+                                one.visualVehicle,   one.vehicleOffset, one.vehicleDisplaced};
     }
 
 private:
     void decayVisualOffset() noexcept;
+    // The chassis of the vehicle a character's player drives, and what is
+    // drawn sliding with it: the nearest model above it, or the chassis.
+    struct DrivenVehicle
+    {
+        core::InstanceId chassis;
+        core::InstanceId root;
+    };
+    [[nodiscard]] static DrivenVehicle drivenBy(const scene::World& world, core::InstanceId character);
+    // Whether a part is a vehicle's chassis.
+    [[nodiscard]] static bool carriesVehicle(const scene::World& world, core::InstanceId part);
     // Which loose parts are predicted this tick: in, out, and what each
     // starts from.
     void updatePredicted(scene::World& world);
@@ -1154,6 +1171,10 @@ private:
     std::map<u32, core::NameAtom> m_names;
     // Network id to local instance, for everything spawned and not despawned.
     std::map<u32, core::InstanceId> m_locals;
+    // **The wheels' parts of a vehicle this machine's player drives** (ADR
+    // 0213): placed here by the predicted vehicle each step, so neither
+    // written from a snapshot nor drawn from the past.
+    std::set<u32> m_drivenWheels;
     // What the world was last given, per id, in the authority's terms -- so an
     // apply writes only what changed.
     std::map<u32, FieldSet> m_written;
@@ -1266,6 +1287,11 @@ private:
         // correction was a pop on its first frame.
         bool visualFresh = false;
         core::DVec3 displaced{};
+        // The same for the vehicle it drives (ADR 0213).
+        core::InstanceId visualVehicle;
+        core::DVec3 vehicleOffset{};
+        bool vehicleFresh = false;
+        core::DVec3 vehicleDisplaced{};
     };
     // By seat: 0 the machine's first player, 1 to 3 its guests (`m_guests`).
     std::array<Owned, 4> m_seats{};

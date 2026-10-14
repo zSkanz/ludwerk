@@ -144,8 +144,9 @@ half as far.
 ## What it does not do
 
 A cape goes through a wall, and does not collide with itself: it collides
-with the `SpringCollider`s of its own mesh and nothing else. A cloth with a
-mesh of its own is planned on the same colliders and the same dials.
+with the `SpringCollider`s of its own mesh and nothing else. A cape that must
+lie on a wall, fold and fill is a [`Cloth`](manual:animation/cloth): a mesh of
+its own, every vertex simulated, on the same colliders.
 
 ## Where to look next
 

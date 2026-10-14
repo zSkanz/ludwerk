@@ -275,6 +275,18 @@ struct RenderMaterial
 inline constexpr core::u32 NoTerrainMorph = 0xFFFFFFFFu;
 // A draw no morph target moves (ADR 0196): nearly every draw there is.
 inline constexpr core::u32 NoMorph = 0xFFFFFFFFu;
+// A draw that is no cloth's (ADR 0214).
+inline constexpr core::u32 NoCloth = 0xFFFFFFFFu;
+
+// **A cloth's vertices, as one draw reads them** (ADR 0214): a run of rows in
+// `RenderWorld::clothRows`, one a vertex of its mesh, each how far that vertex
+// moved from where it was modelled. Its draw adds them as a morph target of
+// weight one, and is not skinned: the cloth already is where it hangs.
+struct ClothDraw
+{
+    core::u32 firstRow = 0;
+    core::u32 vertexCount = 0;
+};
 
 // One draw: a mesh section with a transform and a material.
 //
@@ -372,6 +384,10 @@ struct DrawItem
     // nought this frame. A draw with a row is drawn on its own, through the
     // morph pipelines; one without is as it always was, in its run.
     u32 morph = NoMorph;
+    // **The cloth this draw is** (ADR 0214): its row in `RenderWorld::cloths`,
+    // or `NoCloth`. A cloth's draw is drawn on its own, through the morph
+    // pipelines, with its vertices where the cloth has them.
+    u32 cloth = NoCloth;
     // **Which thing this draw is, for its motion** (ADR 0158): the instance,
     // packed, for a part a frame can find again in the next; zero for what
     // never moves on its own -- the ground, the blocks, the water -- whose
@@ -836,6 +852,10 @@ struct RenderWorld
     // Every body with a morph target above nought, once: which targets, and
     // how far (`DrawItem::morph`).
     std::vector<MorphDraw> morphs;
+    // Every cloth drawn this frame (`DrawItem::cloth`), and their vertices'
+    // rows, one run each, uploaded once.
+    std::vector<ClothDraw> cloths;
+    std::vector<GpuMorphDelta> clothRows;
     // Every skinned mesh the camera or a shadow reached, and how big it is on
     // the picture: what the animation's update rate is decided from.
     std::vector<SeenSkin> seenSkins;
@@ -952,6 +972,8 @@ struct RenderWorld
         draws.clear();
         bones.clear();
         morphs.clear();
+        cloths.clear();
+        clothRows.clear();
         seenSkins.clear();
         terrainMorphs.clear();
         terrains.clear();
@@ -1139,6 +1161,11 @@ public:
         // the first one already answered is the kind of cost nobody notices
         // until a world has a hundred of them.
         std::vector<Vec3> positions;
+        // **And which joints each vertex follows**, for a mesh small enough to
+        // be a cloth (ADR 0214, `kClothMaxVertices`): what a `Cloth` pins and
+        // carries its vertices by. Empty for a mesh with no rig, and for one
+        // larger, which no cloth simulates and whose skin only the card needs.
+        std::vector<asset::SkinVertex> skin;
 
         // **What a ray of the light bake meets** (ADR 0203): the mesh's own
         // triangles -- level zero's indices over `positions` -- which is its

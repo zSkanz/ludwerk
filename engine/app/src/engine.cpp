@@ -3709,6 +3709,16 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     };
                     core::log(LogLevel::Info, ENG_TR("engine.frame.info.secondary_motion"), stepped);
                 }
+                // And the cloths (ADR 0214): how many, how many vertices, and
+                // what the last frame of them cost.
+                if (host != nullptr && host->cloth().clothsStepped() != 0) {
+                    const std::array<I18nArg, 3> stepped{
+                        I18nArg{"cloths", static_cast<core::i64>(host->cloth().clothsStepped())},
+                        I18nArg{"vertices", static_cast<core::i64>(host->cloth().verticesStepped())},
+                        I18nArg{"milliseconds", std::round(host->cloth().lastSeconds() * 1.0e5) / 100.0},
+                    };
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.cloth"), stepped);
+                }
                 // **And what the game holds** -- the other thing a phone has
                 // no profiler to say. A game that stutters on two gigabytes
                 // is told apart from one that is merely slow by this line:
@@ -6286,9 +6296,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // An own character drawn sliding after a correction, never popping
         // -- each of this machine's
         // players' by its own (ADR 0208).
-        for (core::usize seat = 0; seat < render::TransformHistory::VisualOffsets; ++seat) {
+        for (core::usize seat = 0; seat < render::TransformHistory::VisualSeats; ++seat) {
             const replication::VisualCorrection slide = network.visualCorrection(seat);
             transformHistory.setVisualOffset(slide.character, slide.offset, seat);
+            // And the vehicle the seat drives (ADR 0213).
+            transformHistory.setVisualOffset(slide.vehicle, slide.vehicleOffset,
+                                             render::TransformHistory::VisualSeats + seat);
         }
         // A windowless server would otherwise spin a core waiting for its next
         // tick. A millisecond is far below a tick and far above a spin.
@@ -7812,7 +7825,17 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         return true;
                     };
                 }
-                host->stepSecondaryMotion(framePoses, springs, limbs);
+                // And the cloths (ADR 0214), as far as the chains, where the
+                // level has them.
+                render::ClothFrame cloth;
+                cloth.seconds = springs.seconds;
+                cloth.camera = springs.camera;
+                cloth.maxDistance = look.secondaryMotionDistance;
+                cloth.enabled = look.cloth && (look.measuredSkip & render::MeasureSkip::Cloth) == 0;
+                cloth.gravity = springs.gravity;
+                cloth.wind = springs.wind;
+                cloth.time = springs.time;
+                host->stepSecondaryMotion(framePoses, springs, limbs, std::move(cloth), &meshLibrary);
             }
             {
                 ENG_PROFILE_SCOPE("render.extract");

@@ -1,0 +1,14 @@
+# A wall broken into pieces (ADR 0215): a part cut by `BasePart:Fracture`,
+# held by joints that break, and a heavy ball rolled into it -- the pieces
+# fall as parts, the dust is a particle burst where each joint gives.
+
+[project]
+name = "Ludwerk Breaking Wall"
+id = "dev.ludwerk.breaking-wall"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"
+
+[window]
+title = "Ludwerk — Breaking Wall"
+size = [1600, 900]

@@ -2324,6 +2324,7 @@ local Classes: { Schema.Class } = {
                 Returns = {
                     "{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, "
                         .. "CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, "
+                        .. "PredictedDrift: number, "
                         .. "InputBufferDepth: number, "
                         .. "InputStarvations: number, InputReanchors: number, InterpolationDelay: number, "
                         .. "PredictedParts: number, ResimulationsPerSecond: number, "
@@ -2346,6 +2347,10 @@ local Classes: { Schema.Class } = {
                     .. "- The number of snapshots per second.\n"
                     .. "- `Corrections`: how often this machine's own character was corrected, per second and in "
                     .. "total since joining. `LastCorrection` is how far the last correction moved it, in meters.\n"
+                    .. "- `PredictedDrift`: how far the parts this machine predicts were from the authority's at the "
+                    .. "last answer, in meters, whether or not that was a correction. These are what its character "
+                    .. "pushes and the vehicle it drives. A driven vehicle is left a few centimeters of drift and "
+                    .. "pulled back gently, so this stays small but is rarely zero.\n"
                     .. "- `InputBufferDepth`: how many ticks of this player's input the authority has queued. "
                     .. "`InputStarvations` counts the times the queue ran empty, and `InputReanchors` the times "
                     .. "it was restarted because the player's clock jumped, as after a long frame.\n"

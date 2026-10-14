@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "engine/core/profile.h"
+#include "engine/render/cloth.h"
 #include "engine/render/lighting.h"
 #include "engine/render/shader_types.h"
 #include "engine/render/terrain_loader.h"
@@ -1261,9 +1262,19 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                            sized->size.z / shaped->meshSize.z};
         if (stretch.x != 1.0f || stretch.y != 1.0f || stretch.z != 1.0f)
             transform = transform * core::scaling(stretch);
+        // **A cloth is where it hangs** (ADR 0214), which can be outside the
+        // mesh as it was modelled: the bounds hold both.
+        const AnimationSystem::PresentedCloth* cloth =
+            animation != nullptr && entry->positions.size() <= kClothMaxVertices ? animation->drawnCloth(id) : nullptr;
+        if (cloth != nullptr && (cloth->rows.size() != entry->positions.size() ||
+                                 out.clothRows.size() + cloth->rows.size() > kMaxClothRows))
+            cloth = nullptr;
+        AABB drawnBounds = entry->bounds;
+        if (cloth != nullptr)
+            core::expand(drawnBounds, cloth->bounds);
         // Transformed by the SCALED matrix, so the cull box and the shadow
         // cast-in test both describe what is actually drawn.
-        const AABB worldBounds = core::transformed(transform, entry->bounds);
+        const AABB worldBounds = core::transformed(transform, drawnBounds);
 
         // Culled against the whole mesh's bounds rather than a section's: the
         // section bounds are in the library and this is the loop that would
@@ -1337,6 +1348,15 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 morph = static_cast<u32>(out.morphs.size());
                 out.morphs.push_back(moved);
             }
+        }
+
+        // Its vertices' rows, once for the mesh: every section of it reads them.
+        u32 clothRow = NoCloth;
+        if (cloth != nullptr) {
+            clothRow = static_cast<u32>(out.cloths.size());
+            out.cloths.push_back(
+                ClothDraw{static_cast<u32>(out.clothRows.size()), static_cast<u32>(cloth->rows.size())});
+            out.clothRows.insert(out.clothRows.end(), cloth->rows.begin(), cloth->rows.end());
         }
 
         // What the part itself says about its surface, resolved once for the
@@ -1461,6 +1481,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             // its run while its face is drawn alone.
             if (morph != NoMorph && section < entry->sectionMorphed.size() && entry->sectionMorphed[section] != 0)
                 out.draws.back().morph = morph;
+            out.draws.back().cloth = clothRow;
         }
     });
 
