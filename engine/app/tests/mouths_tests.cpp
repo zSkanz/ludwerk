@@ -15,6 +15,7 @@
 #include <fstream>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "class_descriptors.gen.h"
@@ -23,6 +24,7 @@
 #include "engine/asset/localized.h"
 #include "engine/audio/audio.h"
 #include "engine/audio/scene_types.h"
+#include "engine/core/log.h"
 #include "engine/render/animation.h"
 #include "engine/render/scene_types.h"
 #include "engine/scene/world.h"
@@ -229,6 +231,48 @@ TEST_CASE("ADR 0200: a line with a viseme track moves the mouth by it, cue by cu
     stage.frame();
     CHECK(stage.key(hero.face, MouthClosed) == 0.0f);
     CHECK(stage.mouths.stats().moved == 0);
+}
+
+TEST_CASE("a viseme track read half way through its save keeps what was read, and says so only if no save follows")
+{
+    // A notice can come in the middle of a save, and the read it starts finds
+    // half a file: the mouth fell back to the sound's bands, with a warning,
+    // until the next notice (ADR 0212, section 3).
+    Stage stage("engine-mouths-half");
+    const Stage::Speaker hero = stage.speaker();
+    (void)stage.say(hero.character, "asset://voice/line.wav", 0.1);
+    stage.mouths.setReloadPatience(0.05);
+    stage.frame();
+    REQUIRE(stage.mouths.stats().byTrack == 1);
+
+    std::vector<std::string> warnings;
+    core::setLogSink([&warnings](core::LogLevel level, std::string_view text) {
+        if (level == core::LogLevel::Warn)
+            warnings.emplace_back(text);
+    });
+    const std::string whole =
+        R"({ "cues": [ { "start": 0.0, "end": 0.4, "value": "A" }, { "start": 0.5, "end": 1.0, "value": "D" } ] })";
+    writeText(stage.root / "voice" / "line.visemes.json", whole.substr(0, whole.size() / 2));
+    const std::vector<std::string> changed{"asset://voice/line.visemes.json"};
+    stage.mouths.forget(changed);
+    stage.frame();
+    // The track read before: the first cue is still "D".
+    CHECK(stage.mouths.stats().byTrack == 1);
+    CHECK(static_cast<double>(stage.key(hero.face, JawOpen)) == doctest::Approx(0.8));
+    CHECK(warnings.empty());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    stage.frame();
+    stage.frame();
+    CHECK(warnings.size() == 1u);
+
+    // The save ends: the whole new track, whose first cue is "A".
+    writeText(stage.root / "voice" / "line.visemes.json", whole);
+    stage.mouths.forget(changed);
+    stage.frame();
+    CHECK(static_cast<double>(stage.key(hero.face, MouthClosed)) == doctest::Approx(1.0));
+    CHECK(warnings.size() == 1u);
+    core::resetLogSink();
 }
 
 TEST_CASE("ADR 0200: a mouth plays the track of the language its machine hears")

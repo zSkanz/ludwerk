@@ -297,10 +297,12 @@ bool readSequence(std::string_view json, Sequence& out, std::string* what)
                     return refuse(at + ".afterLine");
             }
             // **`"$Name"` where a value goes**: the game's to say, by the
-            // player's attribute of that name.
+            // player's attribute of that name. `"$$..."` is a string that
+            // begins with `$`.
             const auto variable = [&](std::string_view field) {
                 const std::string_view written = source[field].asString();
-                if (source[field].type() != core::JsonType::String || written.size() < 2 || written[0] != '$')
+                if (source[field].type() != core::JsonType::String || written.size() < 2 || written[0] != '$' ||
+                    written[1] == '$')
                     return false;
                 key.variable = std::string(written.substr(1));
                 return true;
@@ -397,6 +399,8 @@ bool readSequence(std::string_view json, Sequence& out, std::string* what)
                     return refuse(at + ".value");
                 if (track.type == SequenceTrackType::Morph && key.value.kind != SequenceValue::Kind::Number)
                     return refuse(at + ".value");
+                if (key.value.kind == SequenceValue::Kind::Text && key.value.text.starts_with("$$"))
+                    key.value.text.erase(0, 1);
                 break;
             case SequenceTrackType::Event:
                 key.name = std::string(source["name"].asString());
@@ -717,10 +721,12 @@ std::string writeSequence(const Sequence& sequence)
             case SequenceTrackType::Property:
             case SequenceTrackType::Morph:
                 out += ", \"value\": ";
-                if (key.variable.empty())
-                    putValue(out, key.value);
-                else
+                if (!key.variable.empty())
                     putText(out, "$" + key.variable);
+                else if (key.value.kind == SequenceValue::Kind::Text && key.value.text.starts_with('$'))
+                    putText(out, "$" + key.value.text);
+                else
+                    putValue(out, key.value);
                 break;
             case SequenceTrackType::Event:
                 out += ", \"name\": ";

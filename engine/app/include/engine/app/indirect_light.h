@@ -318,6 +318,10 @@ public:
         // setting, and no file is read -- what is written is what the rays
         // said, not what the last file said.
         bool baking = false;
+        // **The one volume the editor's Bake asked for**, or none for a bake
+        // of every volume. On a machine whose settings work no volume out it
+        // is the only one worked out: the rest stay their files' colour.
+        core::InstanceId bakingOne{};
     };
     // Once a frame, after the main view is extracted and before any is drawn.
     void update(const Frame& frame);
@@ -352,8 +356,10 @@ public:
     // did not work out.
     [[nodiscard]] bool keep(const scene::World& world, core::InstanceId volume, BakedLight& out) const;
     // The files read are read again when next asked for: one was written, or
-    // changed on disk.
+    // changed on disk. **And a volume given its light by a file read
+    // before is given the new read** at once, without anybody asking.
     void forgetBaked() noexcept { m_kept.clear(); }
+    void forgetBaked(std::span<const core::NameAtom> urns);
     // **What stands in a volume's box, as one number**: every part that does
     // not move and is in or against the box -- where it stands in the box's
     // own space, how it is turned and how large it is, to the millimetre. The
@@ -506,6 +512,9 @@ private:
         // Said once: its file is not there, is another volume's, or is of a
         // room that has changed.
         bool warnedBaked = false;
+        // The read of its file it was given, or looked for and not found;
+        // nought where it asked for none. Another read starts it again.
+        core::u32 fileRead = 0;
         bool seen = false;
     };
     // A file read (ADR 0207), or looked for and not found.
@@ -514,6 +523,8 @@ private:
         core::NameAtom urn;
         bool found = false;
         BakedLight light;
+        // Which read of the files this is, counted from one.
+        core::u32 read = 0;
     };
     // A volume drawn as its file's one colour: what it was when its file
     // was looked at, so the file is looked at once and not every frame.
@@ -526,6 +537,8 @@ private:
         // The file is this volume's light.
         bool lit = false;
         core::Color3 mean;
+        // The read of the file it was looked at in.
+        core::u32 read = 0;
         bool seen = false;
     };
     [[nodiscard]] const Kept& keptFor(const Frame& frame, core::NameAtom urn);
@@ -535,6 +548,7 @@ private:
                                              const scene::IrradianceVolumeComponent& set, core::u32 pieces,
                                              bool& warned);
     std::vector<Kept> m_kept;
+    core::u32 m_reads = 0;
     std::vector<Flat> m_flats;
     core::InstanceId m_workspace;
 

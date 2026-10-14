@@ -440,7 +440,10 @@ this section and the text above disagree, this is what is built.
       makes is. A replica makes nobody.
     - **Under the editor's scrub they are there between their keys**, made
       for the scrub: never saved, not a row of the tree, bound by no
-      instance, and gone when the scrub lets go.
+      instance, and gone when the scrub lets go. **In the Timeline the
+      name is a binding's** (amended 2026-10-14): listed where a track is
+      added, after the player's bindings, and a track on it is not marked
+      unbound where the scrub is outside the cast's keys.
     - A stamp that is not there brings nobody, and says so once.
 
 14. **A value the game says: `"$Name"`.** Where a key of a `property`,
@@ -449,8 +452,9 @@ this section and the text above disagree, this is what is built.
     -- a number, a boolean, a string, a `Vector3`, a `Color3`, a `Vector2`.
     Attributes travel (ADR 0106), so what a server sets every machine reads:
     nothing new is on the wire. An attribute nobody set is no value, and the
-    track writes nothing for that key. A string property whose value really
-    begins with `$` cannot be keyed to it; none of the engine's does.
+    track writes nothing for that key. A string whose value really begins
+    with `$` is written with two (`"$$5"` is the text `$5`), and the writer
+    puts the second back (amended 2026-10-14; it could not be keyed before).
 
     **And a sequence written as a table: `SequencePlayer:LoadSequence(t)`**,
     in the shape the file has. It is given a name of its own
@@ -467,7 +471,10 @@ this section and the text above disagree, this is what is built.
     would be drawn and the sequence's time; what it answers -- a `CFrame`,
     then a field of view, either, or `nil` -- is drawn. It answers in the
     frame: one that waits has answered nothing. One function a player; on
-    the machine that binds it only. Not asked under the editor's scrub.
+    the machine that binds it only. Not asked under the editor's scrub:
+    the scrub is of the scene being edited, where no script of the game has
+    run, so there is no function to ask (looked at again 2026-10-14, and
+    kept).
 
     **`"keepInSight": true`** on a camera key that looks at a bound
     instance: where something that does not move stands between the camera

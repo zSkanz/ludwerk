@@ -1107,10 +1107,15 @@ void IndirectLight::update(const Frame& frame)
         m_probes.resize(m_probeBudget);
     for (const Probe& probe : m_probes)
         probeState(probe.key).seen = true;
+    // Baking one volume on a machine that works none out: that one is worked
+    // out, and every other is still drawn as its file's colour.
+    const bool bakingOnlyOne = !settings.indirectLight && frame.bakingOne.valid();
     if (m_volumesOn) {
         world.irradianceVolumes().forEach([&](InstanceId id, const scene::IrradianceVolumeComponent& set) {
             const scene::PartComponent* part = world.parts().find(world.parentOf(id));
             if (!set.enabled || part == nullptr || !inWorkspace(world, id, frame.workspace))
+                return;
+            if (bakingOnlyOne && id != frame.bakingOne)
                 return;
             // **As pieces** (ADR 0206): levels round the camera, or the box
             // itself -- whole, or as tiles where it is more than one volume
@@ -1139,7 +1144,7 @@ void IndirectLight::update(const Frame& frame)
             }
         });
     }
-    else {
+    if (!m_volumesOn || bakingOnlyOne) {
         // **A machine that works no volume out** (ADR 0207): one that has a
         // file is drawn as the file's one colour, the mean of its light, over
         // the whole of its box. Nothing is cast, nothing is uploaded.
@@ -1147,6 +1152,8 @@ void IndirectLight::update(const Frame& frame)
             const scene::PartComponent* part = world.parts().find(world.parentOf(id));
             if (!set.enabled || set.followsCamera || set.baked.id == 0 || part == nullptr ||
                 !inWorkspace(world, id, frame.workspace))
+                return;
+            if (bakingOnlyOne && id == frame.bakingOne)
                 return;
             // Two ticks in, as a volume that is worked out waits: what a
             // script builds as it starts is in the room by then.
@@ -1159,10 +1166,12 @@ void IndirectLight::update(const Frame& frame)
                     held = &flat;
             }
             // Looked at once, and again when it is another volume: its box
-            // moved or resized, or what it is worked out as changed.
+            // moved or resized, or what it is worked out as changed -- or its
+            // file was read again.
             const bool another = held == nullptr || !(held->box == part->cframe) || !(held->size == part->size) ||
                                  held->set.baked.id != set.baked.id || held->set.spacing != set.spacing ||
-                                 held->set.bounces != set.bounces || held->set.mode != set.mode;
+                                 held->set.bounces != set.bounces || held->set.mode != set.mode ||
+                                 held->read != keptFor(frame, set.baked).read;
             if (another) {
                 if (held == nullptr) {
                     m_flats.push_back(Flat{});
@@ -1176,6 +1185,7 @@ void IndirectLight::update(const Frame& frame)
                     bakedFor(frame, id, set,
                              static_cast<u32>(volumeTilesOf(part->cframe, part->size, set.spacing).size()), said);
                 held->lit = kept != nullptr;
+                held->read = keptFor(frame, set.baked).read;
                 if (kept != nullptr) {
                     held->mean = kept->mean;
                     const std::array<core::I18nArg, 5> args{
@@ -1289,7 +1299,12 @@ void IndirectLight::stepVolumes(const Frame& frame)
                              // Made `Dynamic` after it gave its rays back, or
                              // was given its light by a file: there is nothing
                              // to light again, so it is worked out again.
-                             (volume.set.dynamic && !state.pending && state.bake.whole() && !state.bake.hasRays());
+                             (volume.set.dynamic && !state.pending && state.bake.whole() && !state.bake.hasRays()) ||
+                             // **Its file read again** -- baked again, or
+                             // changed on disk -- or another file named: given
+                             // the new one, as it was given the first.
+                             (state.fileRead != 0 && !frame.baking &&
+                              (volume.set.baked.id == 0 || keptFor(frame, volume.set.baked).read != state.fileRead));
         if (another) {
             // Asked for now, begun two ticks on: what its rays are cast
             // against is the physics world, which a tick brings up to the
@@ -1305,6 +1320,7 @@ void IndirectLight::stepVolumes(const Frame& frame)
             state.refreshes = volume.set.refreshes;
             state.pending = true;
             state.ready = false;
+            state.fileRead = 0;
         }
         if (state.pending && frame.tick >= state.askedTick + 2) {
             state.pending = false;
@@ -1365,6 +1381,7 @@ void IndirectLight::stepVolumes(const Frame& frame)
             bool given = false;
             if (!frame.baking && !volume.follows && volume.set.baked.id != 0 && volume.set.refreshes == 0) {
                 const BakedLight* kept = bakedFor(frame, volume.id, volume.set, volume.pieces, state.warnedBaked);
+                state.fileRead = keptFor(frame, volume.set.baked).read;
                 if (kept != nullptr) {
                     const BakedPiece& piece = kept->pieces[volume.piece];
                     state.shown = piece.samples;
@@ -1986,11 +2003,19 @@ const IndirectLight::Kept& IndirectLight::keptFor(const Frame& frame, core::Name
     }
     Kept read;
     read.urn = urn;
+    read.read = ++m_reads;
     std::vector<std::byte> bytes;
     if (frame.readContent && frame.readContent(frame.world->atoms().text(urn), bytes))
         read.found = readBakedLight(bytes, read.light);
     m_kept.push_back(std::move(read));
     return m_kept.back();
+}
+
+void IndirectLight::forgetBaked(std::span<const core::NameAtom> urns)
+{
+    std::erase_if(m_kept, [&](const Kept& kept) {
+        return std::any_of(urns.begin(), urns.end(), [&](core::NameAtom urn) { return urn.id == kept.urn.id; });
+    });
 }
 
 const BakedLight* IndirectLight::bakedFor(const Frame& frame, InstanceId id,

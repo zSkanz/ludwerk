@@ -408,6 +408,37 @@ TEST_CASE("ADR 0204: a cast, a curved and shaken camera, a key after a line and 
     CHECK(written.find("\"shake\": [0.05, 4]") != std::string::npos);
 }
 
+TEST_CASE("ADR 0204: a string that begins with a dollar is written with two, and read as the string it was")
+{
+    const std::string text = R"({
+      "format": "sequence", "version": 1, "bindings": ["Sign"],
+      "tracks": [
+        { "type": "property", "target": "Sign", "property": "Text", "keys": [
+            { "time": 0, "value": "$$5 a ticket" }, { "time": 1, "value": "$" }, { "time": 2, "value": "$Price" } ] }
+      ]
+    })";
+    Sequence sequence;
+    std::string why;
+    REQUIRE_MESSAGE(readSequence(text, sequence, &why), why);
+    const std::vector<SequenceKey>& keys = sequence.tracks[0].keys;
+    REQUIRE(keys.size() == 3);
+    CHECK(keys[0].variable.empty());
+    CHECK(keys[0].value.text == "$5 a ticket");
+    // One dollar alone names nothing, and is the string it is.
+    CHECK(keys[1].variable.empty());
+    CHECK(keys[1].value.text == "$");
+    CHECK(keys[2].variable == "Price");
+
+    const std::string written = writeSequence(sequence);
+    CHECK(written.find("\"value\": \"$$5 a ticket\"") != std::string::npos);
+    Sequence again;
+    REQUIRE_MESSAGE(readSequence(written, again, &why), why);
+    CHECK(again.tracks[0].keys[0].value.text == "$5 a ticket");
+    CHECK(again.tracks[0].keys[1].value.text == "$");
+    CHECK(again.tracks[0].keys[2].variable == "Price");
+    CHECK(writeSequence(again) == written);
+}
+
 TEST_CASE("ADR 0204: what the new keys cannot mean is refused, with where")
 {
     const auto refused = [](const char* tracks) {

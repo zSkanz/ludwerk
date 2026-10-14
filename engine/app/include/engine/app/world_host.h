@@ -30,6 +30,7 @@
 #include "engine/asset/material.h"
 #include "engine/audio/audio.h"
 #include "engine/core/error.h"
+#include "engine/core/kept_reads.h"
 #include "engine/core/name_atom.h"
 #include "engine/input/input.h"
 #include "engine/nav/nav.h"
@@ -626,6 +627,16 @@ public:
     // animation graph. The loaders that draw forget their own; these are the
     // simulation's. How many it let go.
     core::u32 forgetContent(std::span<const core::NameAtom> urns);
+    // What was read of a forgotten graph, roles, track, face map or sequence
+    // stands while a read of the new file fails, and a failure no notice
+    // follows is said after this long (ADR 0212, section 3).
+    void setReloadPatience(double seconds) noexcept
+    {
+        m_keptGraphs.setPatience(seconds);
+        m_keptRoles.setPatience(seconds);
+        m_mouths.setReloadPatience(seconds);
+        m_sequences.setReloadPatience(seconds);
+    }
 
     // **What is being said on this machine, this frame** (ADR 0200): the
     // captions of the sounds that can be heard here, in the order they
@@ -935,6 +946,11 @@ private:
     // graph that cannot be read is said once, not once a tick.
     render::GraphLibrary m_graphs;
     std::unordered_set<core::u32> m_graphsTried;
+    // **What was read of a graph, or of a rig's roles, before its file
+    // changed** (ADR 0212, section 3): put back when the read of the new file
+    // fails in the middle of a save, and said once if no notice follows.
+    core::KeptReads<core::u32, asset::AnimationGraph> m_keptGraphs;
+    core::KeptReads<core::u32, std::vector<render::retarget::RoleOverride>> m_keptRoles;
     std::vector<std::pair<core::InstanceId, core::u64>> m_graphDigests;
     std::optional<render::AnimationSystem> m_animation;
     render::SpringBones m_springs;

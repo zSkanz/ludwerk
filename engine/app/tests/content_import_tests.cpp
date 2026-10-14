@@ -35,6 +35,7 @@
 #include <doctest/doctest.h>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -327,6 +328,58 @@ TEST_CASE("a model is compiled again when a file it reads beside itself changes"
     const app::ContentImportReport restored = app::openProjectContent(project.root, project.content(), fourth);
     CHECK(std::find(restored.compiled.begin(), restored.compiled.end(), "models/card.gltf") != restored.compiled.end());
     CHECK(restored.cacheHits >= 1);
+}
+
+TEST_CASE("a model saved half way keeps the mesh it compiled to, and the half file is named")
+{
+    // A mesh reaches the runtime only through its compiled form: a notice
+    // during a session reloads that, never the source, and the source is
+    // compiled again when the project is opened. A model read in the middle
+    // of its author's save must not cost the mesh it had (ADR 0212, section 3).
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+
+    seedRealCatalog();
+    const Project project;
+    const std::filesystem::path cards = std::filesystem::path(ENG_TEST_CARD_DIR);
+    const std::filesystem::path model = project.content() / "models" / "card.gltf";
+    {
+        std::error_code ec;
+        std::filesystem::copy_file(cards / "content" / "models" / "card.gltf", model,
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        REQUIRE_FALSE(ec);
+        std::filesystem::copy_file(cards / "variants" / "solid.png", project.content() / "models" / "card.png",
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        REQUIRE_FALSE(ec);
+    }
+
+    asset::ContentMounts first;
+    REQUIRE(app::openProjectContent(project.root, project.content(), first).failed.empty());
+    const asset::ResolvedContent before = first.resolve("asset://models/card.gltf");
+    REQUIRE(before.found());
+    const std::vector<std::byte> compiled(before.bytes.begin(), before.bytes.end());
+    REQUIRE_FALSE(compiled.empty());
+
+    // The first half of the file, as a save under way leaves it.
+    std::string text;
+    {
+        std::ifstream file(model, std::ios::binary);
+        text.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    }
+    REQUIRE(text.size() > 100u);
+    {
+        std::ofstream file(model, std::ios::binary | std::ios::trunc);
+        file.write(text.data(), static_cast<std::streamsize>(text.size() / 2));
+    }
+
+    asset::ContentMounts second;
+    const app::ContentImportReport half = app::openProjectContent(project.root, project.content(), second);
+    CHECK(std::find(half.failed.begin(), half.failed.end(), "models/card.gltf") != half.failed.end());
+    const asset::ResolvedContent after = second.resolve("asset://models/card.gltf");
+    REQUIRE(after.found());
+    CHECK(std::vector<std::byte>(after.bytes.begin(), after.bytes.end()) == compiled);
 }
 
 TEST_CASE("sources compiled in batches are the sources compiled one at a time")

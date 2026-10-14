@@ -355,7 +355,15 @@ Sequences::File* Sequences::fileFor(const scene::World& world, core::NameAtom ur
         std::string where;
         read.there = true;
         read.found = asset::readSequence(*text, read.sequence, &where);
-        if (!read.found) {
+        if (read.found) {
+            m_kept.release(urn.id);
+        }
+        else if (const asset::Sequence* kept = m_kept.fallBack(urn.id, where); kept != nullptr) {
+            // In the middle of a save: what was read before stands.
+            read.sequence = *kept;
+            read.found = true;
+        }
+        else {
             const std::array<core::I18nArg, 2> args{core::I18nArg{"path", std::string_view{name}},
                                                     core::I18nArg{"where", std::string_view{where}}};
             core::log(core::LogLevel::Warn, ENG_TR("app.warn.sequence_unreadable"), args);
@@ -502,6 +510,13 @@ void Sequences::put(const scene::World& world, core::NameAtom urn, asset::Sequen
 
 void Sequences::forget(std::span<const core::NameAtom> urns)
 {
+    for (const core::NameAtom urn : urns)
+        m_kept.notice(urn.id);
+    for (const File& file : m_files) {
+        if (file.found && !file.made &&
+            std::any_of(urns.begin(), urns.end(), [&](core::NameAtom urn) { return urn.id == file.urn.id; }))
+            m_kept.keep(file.urn.id, file.sequence);
+    }
     std::erase_if(m_files, [&](const File& file) {
         return std::any_of(urns.begin(), urns.end(), [&](core::NameAtom urn) { return urn.id == file.urn.id; });
     });
@@ -516,6 +531,7 @@ void Sequences::forgetAll()
 void Sequences::clear()
 {
     m_files.clear();
+    m_kept.clear();
     m_states.clear();
     m_preview = Preview{};
     m_order = 0;
@@ -1376,6 +1392,12 @@ void Sequences::step(const Tick& tick)
     if (tick.world == nullptr)
         return;
     scene::World& world = *tick.world;
+    // A reload that failed and that no notice followed, said once.
+    for (const auto& [urn, where] : m_kept.due()) {
+        const std::array<core::I18nArg, 2> args{core::I18nArg{"path", world.atoms().text(core::NameAtom{urn})},
+                                                core::I18nArg{"where", std::string_view{where}}};
+        core::log(core::LogLevel::Warn, ENG_TR("app.warn.sequence_unreadable"), args);
+    }
     // Nothing plays a sequence in nearly every game, nearly always.
     if (world.sequencePlayers().size() == 0 && m_states.empty())
         return;

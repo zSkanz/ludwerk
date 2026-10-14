@@ -16690,6 +16690,15 @@ void drawTimeline(Editor* editor, scene::World& world, Inspector* inspector, con
                     if (ImGui::Selectable(name.c_str(), name == ui.binding))
                         std::snprintf(ui.binding, sizeof(ui.binding), "%s", name.c_str());
                 }
+                // **And whoever a cast track brings**: a name the other
+                // tracks play on, as a binding's is, with no instance under
+                // the player to stand for it.
+                for (const asset::SequenceTrack& brought : sequence.tracks) {
+                    if (brought.type != asset::SequenceTrackType::Cast || brought.target.empty())
+                        continue;
+                    if (ImGui::Selectable(brought.target.c_str(), brought.target == ui.binding))
+                        std::snprintf(ui.binding, sizeof(ui.binding), "%s", brought.target.c_str());
+                }
                 ImGui::EndCombo();
             }
             ImGui::InputText(core::tr(ENG_TR("engine.editor.timeline.path")), ui.path, sizeof(ui.path));
@@ -16837,7 +16846,17 @@ void drawTimeline(Editor* editor, scene::World& world, Inspector* inspector, con
         std::string on = row.target;
         if (!row.property.empty())
             on += (on.empty() ? "" : ".") + row.property;
-        const bool unbound = !row.target.empty() && !sequences.resolve(world, timeline.player(), row.target).valid();
+        // A name a cast track brings is not missing where the scrub is
+        // outside its keys: it is somebody who is not there yet.
+        std::string_view bindingOf;
+        std::string_view pathOf;
+        asset::splitSequenceTarget(row.target, bindingOf, pathOf);
+        const bool brought =
+            std::any_of(sequence.tracks.begin(), sequence.tracks.end(), [&](const asset::SequenceTrack& other) {
+                return other.type == asset::SequenceTrackType::Cast && other.target == bindingOf;
+            });
+        const bool unbound =
+            !row.target.empty() && !brought && !sequences.resolve(world, timeline.player(), row.target).valid();
         const ImVec2 labelAt(origin.x + frame + gap, y);
         const float labelRight = laneLeft - 8.0f - (keyed ? frame + gap * 0.5f : 0.0f);
         ImGui::SetCursorScreenPos(labelAt);

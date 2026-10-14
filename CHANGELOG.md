@@ -9,6 +9,26 @@ here.
 
 ## [Unreleased]
 
+### Fixed
+
+- A content file read in the middle of its author's save no longer drops
+  what was loaded: a sound, a material, a viseme track or face map, a
+  sequence, an animation graph and the roles beside a model keep what was
+  read until a whole read succeeds, and a file left unreadable is said once,
+  two seconds after its last change.
+- A volume's light baked again, or its file changed while a development
+  session runs, is the room's light at once, and only the file that changed
+  is read again.
+- The editor's Bake, on a machine whose settings work no volume out, works
+  out the volume it was asked for and leaves every other its file's colour.
+- In the Timeline, the name a `cast` track brings is in the list of bindings
+  a track is added on, and a track on it is not marked unbound.
+
+### Added
+
+- In a sequence, `"$$..."` is a string that begins with `$` where a value
+  goes; the writer puts the second `$` back.
+
 ## [0.0.1]
 
 The first version under the name Ludwerk. What the engine has:

@@ -22,6 +22,7 @@
 
 #include "engine/asset/lip_sync.h"
 #include "engine/core/id.h"
+#include "engine/core/kept_reads.h"
 #include "engine/core/types.h"
 
 namespace engine::asset {
@@ -47,8 +48,16 @@ public:
               const asset::ContentMounts* mounts, core::f32 seconds);
 
     // A track or a face map changed on disk: read again when next wanted.
+    // What was read of it is kept until a read of the new file succeeds
+    // (ADR 0212, section 3).
     void forget(std::span<const std::string> names);
     void clear();
+    // How long a failed reload waits for another notice before it is said.
+    void setReloadPatience(double seconds) noexcept
+    {
+        keptTracks_.setPatience(seconds);
+        keptMaps_.setPatience(seconds);
+    }
 
     // What the frame before did, for a readout and for a test: the mouths
     // that were moved, and by which of the three ways.
@@ -73,6 +82,8 @@ private:
     // every frame it plays, and must cost a lookup here and not a file's.
     std::vector<Read<asset::VisemeTrack>> tracks_;
     std::vector<Read<asset::FaceMap>> maps_;
+    core::KeptReads<std::string, asset::VisemeTrack> keptTracks_;
+    core::KeptReads<std::string, asset::FaceMap> keptMaps_;
     [[nodiscard]] const asset::VisemeTrack* trackFor(const asset::ContentMounts* mounts, std::string_view sound);
     [[nodiscard]] const asset::FaceMap* mapFor(const asset::ContentMounts* mounts, std::string_view name);
 

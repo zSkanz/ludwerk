@@ -299,6 +299,12 @@ room is lit the frame it is first seen, and the log says so once. `Dynamic`,
 the file is its first light and it is lit again as the light moves; `Refresh`
 works it out by rays.
 
+**A file baked again is the room's light at once**: from the editor's Bake,
+or written on disk while `ludwerk dev` runs, every volume that names it is
+given the new light, on either kind of machine. The editor's Bake on a
+machine that works none out works out the volume it was asked for, and every
+other volume stays the color of its own file.
+
 **A machine that works none out** -- `GlobalIllumination` below `High`, which
 is every phone unless a player turns it up -- reads one color of the file:
 the mean of the whole. The room is lit by that where it had the flat ambient.

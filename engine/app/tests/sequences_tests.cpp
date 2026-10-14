@@ -15,12 +15,14 @@
 #include <ostream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "class_descriptors.gen.h"
 #include "engine/app/sequences.h"
 #include "engine/app/timeline.h"
 #include "engine/audio/scene_types.h"
+#include "engine/core/log.h"
 #include "engine/render/animation.h"
 #include "engine/render/scene_types.h"
 #include "engine/scene/change_queue.h"
@@ -1016,6 +1018,51 @@ TEST_CASE("ADR 0204: a file that is not there, or not a sequence, plays nothing 
     self.playing = true;
     stage.tick();
     CHECK(asked == 2);
+}
+
+TEST_CASE("a sequence read half way through its save keeps what was read, and says so only if no save follows")
+{
+    // A notice can come in the middle of a save, and the read it starts finds
+    // half a file: the sequence stopped, with a warning, until the next
+    // notice (ADR 0212, section 3).
+    LampStage stage;
+    stage.sequences.setReloadPatience(0.05);
+    stage.self->playing = true;
+    stage.tick(60);
+    REQUIRE(stage.number(stage.light, "Brightness") == doctest::Approx(3.0));
+
+    std::vector<std::string> warnings;
+    core::setLogSink([&warnings](core::LogLevel level, std::string_view text) {
+        if (level == core::LogLevel::Warn)
+            warnings.emplace_back(text);
+    });
+    std::string brighter = Lamp;
+    brighter.replace(brighter.find(R"("value": 3)"), 10, R"("value": 9)");
+    stage.files[LampFile] = brighter.substr(0, brighter.size() / 2);
+    const core::NameAtom urn = stage.self->sequence;
+    stage.sequences.forget(std::span<const core::NameAtom>{&urn, 1});
+    stage.self->timePosition = 0.9;
+    stage.self->seeks += 1;
+    stage.tick(6);
+    // The sequence read before goes on: its last key is three.
+    CHECK(stage.self->playing);
+    CHECK(stage.number(stage.light, "Brightness") == doctest::Approx(3.0));
+    CHECK(warnings.empty());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    stage.tick();
+    stage.tick();
+    CHECK(warnings.size() == 1u);
+
+    // The save ends: the whole new file, whose last key is nine.
+    stage.files[LampFile] = brighter;
+    stage.sequences.forget(std::span<const core::NameAtom>{&urn, 1});
+    stage.self->timePosition = 0.9;
+    stage.self->seeks += 1;
+    stage.tick(6);
+    CHECK(stage.number(stage.light, "Brightness") == doctest::Approx(9.0));
+    CHECK(warnings.size() == 1u);
+    core::resetLogSink();
 }
 
 TEST_CASE("ADR 0204: what fifty tracks cost a tick")

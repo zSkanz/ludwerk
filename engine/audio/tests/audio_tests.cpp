@@ -3,11 +3,14 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 #include <doctest/doctest.h>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <iterator>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -16,6 +19,7 @@
 #include "engine/asset/localized.h"
 #include "engine/audio/audio.h"
 #include "engine/audio/scene_types.h"
+#include "engine/core/log.h"
 #include "engine/platform/async_io.h"
 #include "engine/platform/file.h"
 #include "engine/scene/world.h"
@@ -1854,6 +1858,94 @@ TEST_CASE("a sound recorded again is heard as it is now, without the world being
     fixture.sound(id).timePosition = 1.0;
     fixture.system.update(*fixture.world, InstanceId{});
     CHECK(loudest(fixture, 480u) > 0.2f);
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("a sound file is whole when what it says of itself is all there")
+{
+    std::error_code ec;
+    const std::filesystem::path root = std::filesystem::temp_directory_path(ec) / "engine-audio-whole";
+    std::filesystem::remove_all(root, ec);
+    writeTone(root / "tone.wav", 44100u, 4410u);
+    std::vector<std::byte> bytes;
+    REQUIRE(engine::platform::readFile(root / "tone.wav", bytes));
+    CHECK(engine::audio::detail::wholeFile(bytes));
+    CHECK_FALSE(engine::audio::detail::wholeFile(std::span<const std::byte>(bytes).first(bytes.size() / 2)));
+
+    // An Ogg stream is whole when a page says it ends.
+    std::vector<std::byte> ogg(27, std::byte{0});
+    std::memcpy(ogg.data(), "OggS", 4);
+    CHECK_FALSE(engine::audio::detail::wholeFile(ogg));
+    ogg[5] = std::byte{0x04};
+    CHECK(engine::audio::detail::wholeFile(ogg));
+
+    // A format that says neither is taken at its word.
+    const std::vector<std::byte> other(64, std::byte{0x11});
+    CHECK(engine::audio::detail::wholeFile(other));
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("a sound read half way through its save keeps what was loaded, and says so only if no save follows")
+{
+    // A recorder that writes in place lets others read the file while it
+    // writes, and the notice of its first write starts a reload that can
+    // read the file half written. Every cache forgot first and read on the
+    // next use, so the line played the placeholder tone, with a warning,
+    // until the next notice (ADR 0212, section 3).
+    std::error_code ec;
+    const std::filesystem::path root = std::filesystem::temp_directory_path(ec) / "engine-audio-half";
+    std::filesystem::remove_all(root, ec);
+    writeSine(root / "line.wav", 0.5, 440.0);
+    engine::asset::ContentMounts mounts;
+    mounts.mountDirectory(root);
+
+    Fixture fixture;
+    fixture.system.setContentMounts(&mounts);
+    (void)playing(fixture, "asset://line.wav");
+    fixture.system.tick(*fixture.world, Tick);
+    fixture.system.update(*fixture.world, InstanceId{});
+    REQUIRE(fixture.system.clipDuration("asset://line.wav") == doctest::Approx(0.5).epsilon(0.0001));
+
+    std::vector<std::string> warnings;
+    engine::core::setLogSink([&warnings](engine::core::LogLevel level, std::string_view text) {
+        if (level == engine::core::LogLevel::Warn)
+            warnings.emplace_back(text);
+    });
+    fixture.system.setReloadPatience(0.05);
+
+    // The first half of a longer recording: its header promises 1.25 s, and
+    // the samples stop part way.
+    writeSine(root / "line.wav", 1.25, 440.0);
+    std::vector<char> whole;
+    {
+        std::ifstream file(root / "line.wav", std::ios::binary);
+        whole.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    }
+    REQUIRE(whole.size() > 1000u);
+    writeWhole(root / "line.wav", std::vector<char>(whole.begin(), whole.begin() + whole.size() / 2));
+
+    const std::vector<std::string> changed{"asset://line.wav"};
+    fixture.system.forget(changed);
+    fixture.system.update(*fixture.world, InstanceId{});
+    // What was loaded is what plays, and nothing is said: a save is under way.
+    CHECK(fixture.system.clipDuration("asset://line.wav") == doctest::Approx(0.5).epsilon(0.0001));
+    CHECK(warnings.empty());
+
+    // No notice follows: past the moment, the failed read is said, once.
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    fixture.system.update(*fixture.world, InstanceId{});
+    fixture.system.update(*fixture.world, InstanceId{});
+    CHECK(warnings.size() == 1u);
+    CHECK(fixture.system.clipDuration("asset://line.wav") == doctest::Approx(0.5).epsilon(0.0001));
+
+    // The save ends, and its notice brings the whole recording.
+    writeWhole(root / "line.wav", whole);
+    fixture.system.forget(changed);
+    CHECK(fixture.system.clipDuration("asset://line.wav") == doctest::Approx(1.25).epsilon(0.0001));
+    fixture.system.update(*fixture.world, InstanceId{});
+    CHECK(warnings.size() == 1u);
+
+    engine::core::resetLogSink();
     std::filesystem::remove_all(root, ec);
 }
 

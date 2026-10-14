@@ -113,6 +113,12 @@ void panGains(f32 pan, f32& left, f32& right) noexcept;
 // the tick may use it: two machines agree on it however fast their disks are.
 [[nodiscard]] std::optional<u64> probeFrames(std::span<const std::byte> bytes);
 
+// **Whether a sound file is all there, by what it says of itself**: a WAV's
+// RIFF chunk says how long the file is, and an Ogg stream marks its last page.
+// A file read in the middle of its author's save is short of both. A format
+// that says neither is taken as whole.
+[[nodiscard]] bool wholeFile(std::span<const std::byte> bytes);
+
 } // namespace detail
 
 struct AudioStats
@@ -223,6 +229,12 @@ public:
     // let go, and the next sound that names it reads it again. A re-recorded
     // line is heard without the world being made anew.
     void forget(std::span<const std::string> names);
+    // **How long a reload whose read failed waits for another notice before
+    // it says so**, in seconds. A read can come in the middle of its author's
+    // save; what was loaded stays in use, and the failure is said once only
+    // if no further notice brings a read that succeeds. Two seconds unless a
+    // test asks for less.
+    void setReloadPatience(f64 seconds) noexcept;
 
     // The file a playing sound resolved to on this machine -- its name in
     // the language it is heard in -- or empty for one that is not playing.

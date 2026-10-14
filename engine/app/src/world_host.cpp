@@ -1178,6 +1178,17 @@ std::optional<std::string> WorldHost::readContentText(std::string_view urn) cons
 
 void WorldHost::syncGraphs()
 {
+    // A reload that failed and that no notice followed, said once.
+    // The reason was kept as the place, a line, then the problem.
+    for (const auto& [content, why] : m_keptGraphs.due()) {
+        const std::size_t split = why.find('\n');
+        const std::string_view text{why};
+        const std::array<core::I18nArg, 3> args{
+            core::I18nArg{"path", m_world->atoms().text(core::NameAtom{content})},
+            core::I18nArg{"where", text.substr(0, split)},
+            core::I18nArg{"problem", split == std::string_view::npos ? std::string_view{} : text.substr(split + 1)}};
+        core::log(core::LogLevel::Warn, ENG_TR("asset.animgraph.err.unreadable"), args);
+    }
     m_world->animationPlayers().forEach([&](core::InstanceId, const scene::AnimationPlayerComponent& player) {
         const core::NameAtom content = player.graph;
         // A set, for `syncSkeletons`' reason: asked of every player every
@@ -1195,11 +1206,18 @@ void WorldHost::syncGraphs()
         std::optional<asset::AnimationGraph> graph = asset::readAnimationGraph(*text, &error);
         if (!graph.has_value()) {
             const std::string problem = core::tr(graphProblem(error.code), {core::I18nArg{"what", error.what}});
+            // In the middle of a save: the graph read before stands.
+            if (const asset::AnimationGraph* kept = m_keptGraphs.fallBack(content.id, error.where + '\n' + problem);
+                kept != nullptr) {
+                m_graphs.set(content, *kept, m_world->atoms());
+                return;
+            }
             const std::array<core::I18nArg, 3> args{core::I18nArg{"path", urn}, core::I18nArg{"where", error.where},
                                                     core::I18nArg{"problem", problem}};
             core::log(core::LogLevel::Warn, ENG_TR("asset.animgraph.err.unreadable"), args);
             return;
         }
+        m_keptGraphs.release(content.id);
         m_graphs.set(content, std::move(*graph), m_world->atoms());
     });
 }
@@ -1348,6 +1366,10 @@ core::u32 WorldHost::forgetContent(std::span<const core::NameAtom> urns)
         if (asset::isAnimationGraphPath(text)) {
             if (m_graphsTried.erase(urn.id) != 0)
                 ++dropped;
+            if (const render::GraphLibrary::Entry* held = m_graphs.find(urn); held != nullptr)
+                m_keptGraphs.keep(urn.id, held->graph);
+            else
+                m_keptGraphs.notice(urn.id);
             m_graphs.forget(urn);
             continue;
         }
@@ -1371,6 +1393,11 @@ core::u32 WorldHost::forgetContent(std::span<const core::NameAtom> urns)
         std::sort(again.begin(), again.end());
         for (const core::u32 tried : again) {
             m_skeletonsTried.erase(tried);
+            if (const render::SkeletonLibrary::Entry* held = m_skeletons.find(core::NameAtom{tried});
+                held != nullptr && !held->roles.empty())
+                m_keptRoles.keep(tried, held->roles);
+            else
+                m_keptRoles.notice(tried);
             m_skeletons.forget(core::NameAtom{tried});
             ++dropped;
         }
@@ -1380,6 +1407,13 @@ core::u32 WorldHost::forgetContent(std::span<const core::NameAtom> urns)
 
 void WorldHost::syncSkeletons()
 {
+    // A reload of a rig's roles that failed and that no notice followed, said once.
+    for (const auto& [content, reason] : m_keptRoles.due()) {
+        const std::array<core::I18nArg, 2> args{
+            core::I18nArg{"path", rigFileOf(m_world->atoms().text(core::NameAtom{content}))},
+            core::I18nArg{"reason", std::string_view{reason}}};
+        core::log(core::LogLevel::Warn, ENG_TR("asset.rig.err.unreadable"), args);
+    }
     m_world->meshParts().forEach(
         [&](core::InstanceId, const scene::MeshPartComponent& meshPart) { loadSkeleton(meshPart.meshContent); });
     // **And the files tracks are waiting for** (ADR 0197): a library of
@@ -1462,6 +1496,13 @@ void WorldHost::loadSkeleton(core::NameAtom content)
                         render::retarget::readRigRoles(*text, &reason);
                     roles.has_value()) {
                     rig.roles = std::move(*roles);
+                    m_keptRoles.release(content.id);
+                }
+                else if (const std::vector<render::retarget::RoleOverride>* kept =
+                             m_keptRoles.fallBack(content.id, reason);
+                         kept != nullptr) {
+                    // In the middle of a save: the roles read before stand.
+                    rig.roles = *kept;
                 }
                 else {
                     const std::array<core::I18nArg, 2> args{core::I18nArg{"path", beside},

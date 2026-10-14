@@ -1,9 +1,16 @@
 // Material assets (ADR 0090): the file, variants, the library.
+#include <chrono>
 #include <doctest/doctest.h>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <string>
+#include <thread>
+#include <vector>
 
+#include "engine/asset/content.h"
 #include "engine/asset/material.h"
+#include "engine/core/log.h"
 
 using namespace engine;
 using asset::fieldBit;
@@ -254,6 +261,55 @@ TEST_CASE("the library loads once, resolves once, and forgets a changed file")
     const int reads2 = reads;
     CHECK(library.resolve("").instanceParameters == asset::DefaultMaterialParameters);
     CHECK(reads == reads2);
+}
+
+TEST_CASE("a material read half way through its save keeps what was read, and says so only if no save follows")
+{
+    // A notice can come in the middle of a save, and the read it starts finds
+    // half a file. The library forgot first, so the surface went white with
+    // a warning until the next notice (ADR 0212, section 3).
+    std::error_code ec;
+    const std::filesystem::path root = std::filesystem::temp_directory_path(ec) / "engine-material-half";
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root, ec);
+    const auto write = [&](const std::string& text) {
+        std::ofstream file(root / "red.material.json", std::ios::binary | std::ios::trunc);
+        file << text;
+    };
+    const auto colored = [](const char* color) {
+        return std::string(R"({"format": "material", "version": 1, "properties": {"Color": )") + color + "}}";
+    };
+    write(colored("[1, 0, 0]"));
+    asset::ContentMounts mounts;
+    mounts.mountDirectory(root);
+    asset::MaterialLibrary library(asset::mountedMaterials(mounts));
+    library.setReloadPatience(0.05);
+    REQUIRE(library.resolve("asset://red.material.json").properties.color == core::Color3{1.0f, 0.0f, 0.0f});
+
+    std::vector<std::string> warnings;
+    core::setLogSink([&warnings](core::LogLevel level, std::string_view text) {
+        if (level == core::LogLevel::Warn)
+            warnings.emplace_back(text);
+    });
+    const std::string blue = colored("[0, 0, 1]");
+    write(blue.substr(0, blue.size() / 2));
+    library.forget("asset://red.material.json");
+    CHECK(library.resolve("asset://red.material.json").properties.color == core::Color3{1.0f, 0.0f, 0.0f});
+    library.sayFailedReloads();
+    CHECK(warnings.empty());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    library.sayFailedReloads();
+    library.sayFailedReloads();
+    CHECK(warnings.size() == 1u);
+
+    write(blue);
+    library.forget("asset://red.material.json");
+    CHECK(library.resolve("asset://red.material.json").properties.color == core::Color3{0.0f, 0.0f, 1.0f});
+    library.sayFailedReloads();
+    CHECK(warnings.size() == 1u);
+    core::resetLogSink();
+    std::filesystem::remove_all(root, ec);
 }
 
 TEST_CASE("a part's overrides apply only where the material declares them, and clearing one is exact")

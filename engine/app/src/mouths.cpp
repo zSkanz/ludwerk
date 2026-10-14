@@ -85,7 +85,15 @@ const asset::VisemeTrack* Mouths::trackFor(const asset::ContentMounts* mounts, s
         if (const std::optional<std::string> text = textOf(*mounts, name); text.has_value()) {
             std::string why;
             read.found = asset::readVisemeTrack(*text, read.file, &why);
-            if (!read.found) {
+            if (read.found) {
+                keptTracks_.release(name);
+            }
+            else if (const asset::VisemeTrack* kept = keptTracks_.fallBack(name, why); kept != nullptr) {
+                // In the middle of a save: what was read before stands.
+                read.file = *kept;
+                read.found = true;
+            }
+            else {
                 const std::array<core::I18nArg, 2> args{core::I18nArg{"file", std::string_view{name}},
                                                         core::I18nArg{"why", std::string_view{why}}};
                 core::log(core::LogLevel::Warn, ENG_TR("app.warn.viseme_track_unreadable"), args);
@@ -107,7 +115,14 @@ const asset::FaceMap* Mouths::mapFor(const asset::ContentMounts* mounts, std::st
         if (const std::optional<std::string> text = textOf(*mounts, name); text.has_value()) {
             std::string why;
             read.found = asset::readFaceMap(*text, read.file, &why);
-            if (!read.found) {
+            if (read.found) {
+                keptMaps_.release(read.name);
+            }
+            else if (const asset::FaceMap* kept = keptMaps_.fallBack(read.name, why); kept != nullptr) {
+                read.file = *kept;
+                read.found = true;
+            }
+            else {
                 const std::array<core::I18nArg, 2> args{core::I18nArg{"file", name},
                                                         core::I18nArg{"why", std::string_view{why}}};
                 core::log(core::LogLevel::Warn, ENG_TR("app.warn.face_map_unreadable"), args);
@@ -121,10 +136,22 @@ const asset::FaceMap* Mouths::mapFor(const asset::ContentMounts* mounts, std::st
 void Mouths::forget(std::span<const std::string> names)
 {
     for (const std::string& name : names) {
-        if (const auto at = placeOf(tracks_, name); at != tracks_.end() && at->name == name)
+        if (const auto at = placeOf(tracks_, name); at != tracks_.end() && at->name == name) {
+            if (at->found)
+                keptTracks_.keep(name, at->file);
             tracks_.erase(at);
-        if (const auto at = placeOf(maps_, name); at != maps_.end() && at->name == name)
+        }
+        else {
+            keptTracks_.notice(name);
+        }
+        if (const auto at = placeOf(maps_, name); at != maps_.end() && at->name == name) {
+            if (at->found)
+                keptMaps_.keep(name, at->file);
             maps_.erase(at);
+        }
+        else {
+            keptMaps_.notice(name);
+        }
     }
 }
 
@@ -133,11 +160,24 @@ void Mouths::clear()
     tracks_.clear();
     maps_.clear();
     mouths_.clear();
+    keptTracks_.clear();
+    keptMaps_.clear();
 }
 
 void Mouths::step(const scene::World& world, audio::AudioSystem& audio, render::AnimationSystem& animation,
                   const asset::ContentMounts* mounts, f32 seconds)
 {
+    // A reload that failed and that no notice followed, said once.
+    for (const auto& [name, why] : keptTracks_.due()) {
+        const std::array<core::I18nArg, 2> args{core::I18nArg{"file", std::string_view{name}},
+                                                core::I18nArg{"why", std::string_view{why}}};
+        core::log(core::LogLevel::Warn, ENG_TR("app.warn.viseme_track_unreadable"), args);
+    }
+    for (const auto& [name, why] : keptMaps_.due()) {
+        const std::array<core::I18nArg, 2> args{core::I18nArg{"file", std::string_view{name}},
+                                                core::I18nArg{"why", std::string_view{why}}};
+        core::log(core::LogLevel::Warn, ENG_TR("app.warn.face_map_unreadable"), args);
+    }
     stats_ = Stats{};
     animation.clearPresentedMorphWeights();
     // No mouth anywhere is every game that has none: one size asked.

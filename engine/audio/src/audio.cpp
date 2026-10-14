@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -144,6 +145,9 @@ struct ClipWork
     // The clip's length in frames at 48 kHz, by `prepareClip`'s rule; 0 for a
     // file that names no sound.
     u64 length = 0;
+    // Whether the bytes were all there (`detail::wholeFile`), decided before
+    // the decode, which may take them.
+    bool whole = true;
 };
 
 // **One voice's decoder over a streamed clip.** Owned by the voice that plays
@@ -909,6 +913,41 @@ struct AudioSystem::Impl
     // for a content that names no sound. Sorted by URN, never evicted.
     std::vector<std::pair<std::string, u64>> lengths;
 
+    // --- A reload whose read failed (ADR 0212, section 3) --------------------
+    //
+    // A notice can come in the middle of its author's save, and the read it
+    // starts then finds the file short, or one no decoder opens. What was
+    // loaded before the notice is kept here and put back when that read
+    // fails, so the sound goes on being heard as it was; the failure is said
+    // once, and only when no further notice has brought a read that succeeds
+    // within `patience` seconds -- a file saved whole and wrong is not hidden.
+    // Sorted by URN; the main thread's alone.
+    struct Kept
+    {
+        std::string name;
+        std::shared_ptr<Clip> clip;
+        u64 length = 0;
+        bool failed = false;
+        bool said = false;
+        std::chrono::steady_clock::time_point failedAt{};
+    };
+    std::vector<Kept> kept;
+    f64 patience = 2.0;
+
+    [[nodiscard]] Kept* keptFor(std::string_view content) noexcept
+    {
+        const auto at = std::lower_bound(kept.begin(), kept.end(), content,
+                                         [](const Kept& entry, std::string_view key) { return entry.name < key; });
+        return at != kept.end() && at->name == content ? &*at : nullptr;
+    }
+    // What was loaded for `content`, put back after a read that failed, and
+    // nothing said; false when nothing was kept for it.
+    bool restoreKept(std::string_view content);
+    // A read of `content` that succeeded: what was kept is let go.
+    void releaseKept(std::string_view content);
+    // Each failed reload that no notice has followed for `patience`, said once.
+    void sayFailedReloads();
+
     // --- A sound in the player's language (ADR 0200) -------------------------
     //
     // `clips` and `lengths` above are keyed by the name of a FILE. A game
@@ -1408,6 +1447,7 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
 {
     if (m_impl == nullptr)
         return;
+    m_impl->sayFailedReloads();
 
     // The whole frame, not just the point: the rotation is what decides left
     // from right, and reading only the position is what made every positional
@@ -1934,6 +1974,34 @@ std::optional<u64> probeFrames(std::span<const std::byte> bytes)
     return static_cast<u64>(frames);
 }
 
+bool wholeFile(std::span<const std::byte> bytes)
+{
+    const auto tagged = [&](core::usize at, const char* tag) {
+        return at + 4 <= bytes.size() && std::memcmp(bytes.data() + at, tag, 4) == 0;
+    };
+    if (tagged(0, "RIFF") && tagged(8, "WAVE")) {
+        u64 declared = 0;
+        for (core::usize index = 4; index > 0; --index)
+            declared = (declared << 8u) | static_cast<u64>(static_cast<unsigned char>(bytes[4 + index - 1]));
+        return declared + 8u <= bytes.size();
+    }
+    if (tagged(0, "OggS")) {
+        // The last page is the one that says the stream ends (header type bit
+        // 0x04). A page is at most 64 KiB, so the search is bounded.
+        const core::usize floor = bytes.size() > 65536u + 27u ? bytes.size() - 65536u - 27u : 0u;
+        if (bytes.size() < 27u)
+            return false;
+        for (core::usize at = bytes.size() - 27u;; --at) {
+            if (tagged(at, "OggS"))
+                return (static_cast<unsigned char>(bytes[at + 5]) & 0x04u) != 0u;
+            if (at == floor)
+                break;
+        }
+        return false;
+    }
+    return true;
+}
+
 } // namespace detail
 
 bool AudioSystem::Impl::resident(std::string_view content) const noexcept
@@ -1973,9 +2041,15 @@ u64 AudioSystem::Impl::lengthOf(std::string_view content)
     if (bytes.empty() && resolved.source == asset::ResolvedContent::Source::Loose &&
         platform::readFile(resolved.path, owned))
         bytes = owned;
-    if (bytes.empty()) {
-        recordLength(content, 0);
-        return 0;
+    if (bytes.empty() || !detail::wholeFile(bytes)) {
+        // Read in the middle of a save, or after the file went: what was
+        // loaded before the notice stands, if anything was.
+        if (restoreKept(content))
+            return keptFor(content)->length;
+        if (bytes.empty()) {
+            recordLength(content, 0);
+            return 0;
+        }
     }
     // The header, when it says. Nothing is decoded and nothing is installed:
     // the frame or the prefetch makes the clip, and measures it the same way.
@@ -1986,10 +2060,53 @@ u64 AudioSystem::Impl::lengthOf(std::string_view content)
     // The floor: a format that declares no length is decoded to count it, and
     // the clip that decode made is kept rather than made twice.
     u64 length = 0;
+    const bool whole = detail::wholeFile(bytes);
     std::shared_ptr<Clip> clip = prepareClip(bytes, &owned, length);
     tickDecodes.fetch_add(1, std::memory_order_relaxed);
+    if ((clip == nullptr || !whole) && restoreKept(content))
+        return keptFor(content)->length;
+    const bool decoded = clip != nullptr;
     (void)install(content, std::move(clip), length);
+    if (decoded)
+        releaseKept(content);
     return length;
+}
+
+bool AudioSystem::Impl::restoreKept(std::string_view content)
+{
+    Kept* entry = keptFor(content);
+    if (entry == nullptr)
+        return false;
+    if (!entry->failed) {
+        entry->failed = true;
+        entry->failedAt = std::chrono::steady_clock::now();
+    }
+    (void)install(content, entry->clip, entry->length);
+    return true;
+}
+
+void AudioSystem::Impl::releaseKept(std::string_view content)
+{
+    const auto at = std::lower_bound(kept.begin(), kept.end(), content,
+                                     [](const Kept& entry, std::string_view key) { return entry.name < key; });
+    if (at != kept.end() && at->name == content)
+        kept.erase(at);
+}
+
+void AudioSystem::Impl::sayFailedReloads()
+{
+    if (kept.empty())
+        return;
+    const auto now = std::chrono::steady_clock::now();
+    for (Kept& entry : kept) {
+        if (!entry.failed || entry.said)
+            continue;
+        if (std::chrono::duration<f64>(now - entry.failedAt).count() < patience)
+            continue;
+        entry.said = true;
+        const core::I18nArg args[] = {{"content", entry.name}};
+        core::log(core::LogLevel::Warn, ENG_TR("audio.warn.undecodable"), args);
+    }
 }
 
 const Clip* AudioSystem::Impl::install(std::string_view content, std::shared_ptr<Clip> clip, u64 length)
@@ -2036,6 +2153,7 @@ void AudioSystem::Impl::beginPrefetch(std::string_view content)
         ClipWork* work = entry.work.get();
         const std::span<const std::byte> packed = resolved.bytes;
         entry.decode = jobs::schedule("audio.clip.decode", jobs::Domain::AssetIo, [work, packed]() noexcept {
+            work->whole = detail::wholeFile(packed);
             work->clip = prepareClip(packed, nullptr, work->length);
         });
     }
@@ -2074,6 +2192,7 @@ void AudioSystem::Impl::pumpPrefetch()
                     entry.read = {};
                     ClipWork* work = entry.work.get();
                     entry.decode = jobs::schedule("audio.clip.decode", jobs::Domain::AssetIo, [work]() noexcept {
+                        work->whole = detail::wholeFile(work->bytes);
                         work->clip = prepareClip(work->bytes, &work->bytes, work->length);
                     });
                 }
@@ -2090,7 +2209,12 @@ void AudioSystem::Impl::pumpPrefetch()
             }
         }
         else if (entry.decode.valid() && jobs::finished(entry.decode)) {
-            (void)install(entry.urn, std::move(entry.work->clip), entry.work->length);
+            const bool good = entry.work->clip != nullptr && entry.work->whole;
+            if (good || !restoreKept(entry.urn)) {
+                (void)install(entry.urn, std::move(entry.work->clip), entry.work->length);
+                if (good)
+                    releaseKept(entry.urn);
+            }
             done = true;
         }
         else if (!entry.decode.valid()) {
@@ -2144,8 +2268,19 @@ const Clip* AudioSystem::Impl::clipFor(std::string_view content)
 
     std::shared_ptr<Clip> clip;
     u64 length = 0;
-    if (!bytes.empty()) {
+    const bool whole = !bytes.empty() && detail::wholeFile(bytes);
+    if (!bytes.empty())
         clip = prepareClip(bytes, &owned, length);
+    // **A read in the middle of a save** finds the file short, unreadable or
+    // gone: what was loaded before the notice is put back, quietly.
+    if ((clip == nullptr || !whole) && restoreKept(content)) {
+        const auto again = std::lower_bound(clips.begin(), clips.end(), content,
+                                            [](const auto& entry, std::string_view key) { return entry.first < key; });
+        return again != clips.end() && again->first == content ? again->second.get() : nullptr;
+    }
+    if (clip != nullptr)
+        releaseKept(content);
+    if (!bytes.empty()) {
         if (clip == nullptr) {
             const core::I18nArg args[] = {{"content", std::string(content)}};
             core::log(core::LogLevel::Warn, ENG_TR("audio.warn.undecodable"), args);
@@ -2517,6 +2652,12 @@ std::string_view AudioSystem::voiceLocale() const noexcept
     return m_impl != nullptr ? std::string_view{m_impl->voiceLanguage} : std::string_view{};
 }
 
+void AudioSystem::setReloadPatience(f64 seconds) noexcept
+{
+    if (m_impl != nullptr)
+        m_impl->patience = std::max(seconds, 0.0);
+}
+
 void AudioSystem::forget(std::span<const std::string> names)
 {
     if (m_impl == nullptr || names.empty())
@@ -2528,13 +2669,32 @@ void AudioSystem::forget(std::span<const std::string> names)
     for (const std::string& name : names) {
         const auto clip = std::lower_bound(m_impl->clips.begin(), m_impl->clips.end(), std::string_view{name},
                                            [](const auto& entry, std::string_view key) { return entry.first < key; });
+        const auto length = std::lower_bound(m_impl->lengths.begin(), m_impl->lengths.end(), std::string_view{name},
+                                             [](const auto& entry, std::string_view key) { return entry.first < key; });
+        const bool measured = length != m_impl->lengths.end() && length->first == name;
+        // **What was loaded is kept until a read of the new file succeeds**:
+        // this notice may be the first of a save still under way. A notice
+        // also starts the wait for a failure to be said again.
+        if (clip != m_impl->clips.end() && clip->first == name && clip->second != nullptr) {
+            Impl::Kept* kept = m_impl->keptFor(name);
+            if (kept == nullptr) {
+                const auto at =
+                    std::lower_bound(m_impl->kept.begin(), m_impl->kept.end(), std::string_view{name},
+                                     [](const Impl::Kept& entry, std::string_view key) { return entry.name < key; });
+                kept = &*m_impl->kept.insert(at, Impl::Kept{name, nullptr, 0, false, false, {}});
+            }
+            kept->clip = clip->second;
+            kept->length = measured ? length->second : static_cast<u64>(clip->second->frames);
+        }
+        if (Impl::Kept* kept = m_impl->keptFor(name); kept != nullptr) {
+            kept->failed = false;
+            kept->said = false;
+        }
         if (clip != m_impl->clips.end() && clip->first == name) {
             m_impl->clips.erase(clip);
             any = true;
         }
-        const auto length = std::lower_bound(m_impl->lengths.begin(), m_impl->lengths.end(), std::string_view{name},
-                                             [](const auto& entry, std::string_view key) { return entry.first < key; });
-        if (length != m_impl->lengths.end() && length->first == name) {
+        if (measured) {
             m_impl->lengths.erase(length);
             any = true;
         }

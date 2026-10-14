@@ -25,6 +25,7 @@
 
 #include "engine/asset/sequence.h"
 #include "engine/core/id.h"
+#include "engine/core/kept_reads.h"
 #include "engine/core/math.h"
 #include "engine/core/name_atom.h"
 #include "engine/core/types.h"
@@ -196,8 +197,12 @@ public:
                                            std::string_view target) const;
 
     // A file changed (hot reload): read again when next asked for.
+    // What was read of a forgotten file is kept until a read of the new file
+    // succeeds (ADR 0212, section 3): a read in the middle of a save puts it
+    // back, quietly, and one no notice follows is said once at a step.
     void forget(std::span<const core::NameAtom> urns);
     void forgetAll();
+    void setReloadPatience(double seconds) noexcept { m_kept.setPatience(seconds); }
     // The world is another world: nothing of the last one is kept.
     void clear();
 
@@ -362,6 +367,7 @@ private:
     Sources m_sources;
     scene::AnimationHost* m_poser = nullptr;
     std::vector<File> m_files;
+    core::KeptReads<core::u32, asset::Sequence> m_kept;
     std::vector<State> m_states;
     Preview m_preview;
     bool m_previewLooks = true;

@@ -33,7 +33,10 @@ It is written by:
 
 - **the editor**: `Bake` on the volume, in Properties. A volume that names
   no file is given one, `asset://light/<its part's name>.irradiance`; it is
-  worked out by rays whatever it was showing, and written when it is whole;
+  worked out by rays whatever it was showing, and written when it is whole.
+  On a machine that works none out it is the only volume worked out: every
+  other stays its file's colour (amended 2026-10-14; the bake turned them
+  all on);
 - **a command**: `engine-host <project> --bake-irradiance` opens the project
   as a game is opened, with no window, works out every volume that names a
   file -- whatever that machine's settings -- writes each, and exits. It
@@ -51,6 +54,10 @@ light is the file's: there, whole, `IsReady` true, and said once in the log.
   same in the frames that follow, to be lit again as the light moves: the
   rays are what a relight needs.
 - **`Refresh`** is an author asking for rays, and gets them.
+- **A file read again is given at once** (amended 2026-10-14): baked again,
+  or changed on disk under a development session, every volume lit by it --
+  or drawn as its colour -- is given the new read, without waiting to be
+  asked for again. A change to another file starts nobody again.
 - **The file is the light of THAT volume.** With another box, `Spacing`,
   `Bounces` or `Mode` -- or a number of pieces or of points that is not the
   file's -- it is refused, said once, and the volume is worked out as one

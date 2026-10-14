@@ -722,6 +722,21 @@ const MaterialAsset* MaterialLibrary::asset(std::string_view urn)
             const std::array<core::I18nArg, 2> args{core::I18nArg{"path", key}, core::I18nArg{"field", field}};
             core::log(core::LogLevel::Warn, ENG_TR("asset.material.warn.malformed_field"), args);
         }
+        if (loaded.asset.has_value()) {
+            m_kept.release(key);
+        }
+        else if (!notes.unreadable.empty()) {
+            // **A file that is there and does not read**: in the middle of
+            // its author's save, what was read before the notice stands.
+            if (const MaterialAsset* kept = m_kept.fallBack(key, notes.unreadable); kept != nullptr) {
+                loaded.asset = *kept;
+            }
+            else {
+                const std::array<core::I18nArg, 2> args{core::I18nArg{"path", key},
+                                                        core::I18nArg{"reason", notes.unreadable}};
+                core::log(core::LogLevel::Warn, ENG_TR("asset.material.err.unreadable"), args);
+            }
+        }
     }
     const auto [at, inserted] = m_assets.emplace(key, std::move(loaded));
     (void)inserted;
@@ -757,7 +772,12 @@ const ResolvedMaterial& MaterialLibrary::resolve(std::string_view urn)
 
 void MaterialLibrary::forget(std::string_view urn)
 {
-    m_assets.erase(std::string(urn));
+    const std::string key(urn);
+    if (const auto found = m_assets.find(key); found != m_assets.end() && found->second.asset.has_value())
+        m_kept.keep(key, *found->second.asset);
+    else
+        m_kept.notice(key);
+    m_assets.erase(key);
     m_resolved.clear();
     ++m_revision;
 }
@@ -766,7 +786,16 @@ void MaterialLibrary::forgetAll()
 {
     m_assets.clear();
     m_resolved.clear();
+    m_kept.clear();
     ++m_revision;
+}
+
+void MaterialLibrary::sayFailedReloads()
+{
+    for (const auto& [path, reason] : m_kept.due()) {
+        const std::array<core::I18nArg, 2> args{core::I18nArg{"path", path}, core::I18nArg{"reason", reason}};
+        core::log(core::LogLevel::Warn, ENG_TR("asset.material.err.unreadable"), args);
+    }
 }
 
 void MaterialLibrary::put(std::string_view urn, MaterialAsset material)
@@ -1072,11 +1101,8 @@ MaterialLibrary::Source mountedMaterials(const ContentMounts& mounts)
         }
         std::string error;
         std::optional<MaterialAsset> material = readMaterialAsset(text, &notes, &error);
-        if (!material.has_value()) {
-            const std::array<core::I18nArg, 2> args{core::I18nArg{"path", std::string(urn)},
-                                                    core::I18nArg{"reason", error}};
-            core::log(core::LogLevel::Warn, ENG_TR("asset.material.err.unreadable"), args);
-        }
+        if (!material.has_value())
+            notes.unreadable = error.empty() ? std::string("?") : error;
         return material;
     };
 }

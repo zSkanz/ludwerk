@@ -281,6 +281,9 @@ script finds him the way it finds any binding: `player:FindFirstChild("Guard")`.
   -- or gone.
 - In a match he is the server's, and every machine sees him. Under the
   Timeline's scrub he is there between his keys, and nothing of him is saved.
+- In the Timeline his name is in the list of bindings a track is added on,
+  after the player's own, and a track on him is not marked unbound where the
+  scrub is outside his keys.
 
 ### What the game says
 
@@ -300,7 +303,9 @@ ambush:Play()
 It is the `SequencePlayer`'s **attribute** of that name, read when the key is
 used: a number, a boolean, a string, a `Vector3`, a `Color3` or a `Vector2`.
 Attributes travel, so what the server sets every machine reads. One nobody
-set is no value, and the track writes nothing for that key.
+set is no value, and the track writes nothing for that key. A string that
+really begins with `$` is written with two: `"$$5 a ticket"` is the text
+`$5 a ticket`.
 
 Where it is the *shape* of the scene that is the game's -- which shots, how
 many, how long -- write the whole sequence as a table:
@@ -515,5 +520,4 @@ A function bound to the camera costs what it does.
 
 Not there: a sequence inside a sequence, or two blended; recording a play
 session into a sequence; picking up a `sound` track part way after a seek (a
-line is picked up; music starts at its key); a cast drawn in the Timeline's
-own tree.
+line is picked up; music starts at its key).

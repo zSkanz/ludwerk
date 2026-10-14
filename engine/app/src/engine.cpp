@@ -6066,10 +6066,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     // with the new mesh; this half kept the old skeleton, and
                     // a model exported again moved by the clips it used to have.
                     dropped += host->forgetContent(urns);
-                    // A volume's light baked again is read again by whoever
-                    // next asks for it (ADR 0207).
-                    if (!urns.empty())
-                        indirectLight.forgetBaked();
+                    // A volume's light baked again is read again, and a
+                    // volume lit by it is given it (ADR 0207).
+                    indirectLight.forgetBaked(urns);
                     // A changed material file is forgotten too, and every
                     // variant with it -- the library re-reads what anything
                     // asks for next (ADR 0062, ADR 0090).
@@ -6536,6 +6535,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     viewEars[viewEarCount++] = camera->cframe;
             }
         }
+        // A material read in the middle of its save kept what it had; one no
+        // further notice followed is said now, once (ADR 0212, section 3).
+        materialLibrary.sayFailedReloads();
         host->audio().update(host->world(), listener,
                              sequenceHeard      ? &sequenceCamera->cframe
                              : listenWithEditor ? &editorEar
@@ -7844,6 +7846,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     // Where the tools are, somebody is there to be told.
                     .development = ENG_DEBUG_UI != 0,
                     .baking = options.bakeIrradiance || bakeAsked.valid(),
+                    .bakingOne = options.bakeIrradiance ? core::InstanceId{} : bakeAsked,
                 });
                 indirectLight.append(snapshot);
                 // **A bake the editor asked for** (ADR 0207): written the
@@ -7855,7 +7858,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     }
                     else if (indirectLight.keep(lit, bakeAsked, kept)) {
                         (void)writeBaked(lit, bakeAsked, kept);
-                        indirectLight.forgetBaked();
+                        // Read again at once, and every volume that names
+                        // the file is given the new light.
+                        const std::array<core::NameAtom, 1> written{lit.irradianceVolumes().find(bakeAsked)->baked};
+                        indirectLight.forgetBaked(written);
                         bakeAsked = {};
                     }
                 }

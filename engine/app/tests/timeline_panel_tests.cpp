@@ -8,10 +8,12 @@
 #include <cmath>
 #include <doctest/doctest.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <map>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "class_descriptors.gen.h"
 #include "engine/app/debug_overlay.h"
@@ -20,6 +22,7 @@
 #include "engine/app/sequences.h"
 #include "engine/app/timeline.h"
 #include "engine/audio/scene_types.h"
+#include "engine/core/i18n.h"
 #include "engine/render/scene_types.h"
 #include "engine/scene/world.h"
 
@@ -143,6 +146,83 @@ struct Desk
     {
         return std::get<double>(*world->getProperty(light, atoms.lookup("Brightness")));
     }
+
+    // A press and a release at one point.
+    void click(float x, float y) { drag(x, y, x, y); }
+
+    // **Where the panel's button `label` is**, found by passing the mouse
+    // over the panel until ImGui says that is what it is over: nothing is
+    // pressed on the way.
+    [[nodiscard]] ImVec2 button(const char* label)
+    {
+        down = false;
+        frame();
+        ImGuiWindow* panel = ImGui::FindWindowByName("Timeline");
+        REQUIRE(panel != nullptr);
+        const ImGuiID wanted = panel->GetID(label);
+        for (float y = 4.0f; y < 200.0f; y += 4.0f) {
+            for (float x = 4.0f; x < ImGui::GetIO().DisplaySize.x; x += 8.0f) {
+                mouseX = x;
+                mouseY = y;
+                frame();
+                if (ImGui::GetCurrentContext()->HoveredId == wanted)
+                    return ImVec2(x, y);
+            }
+        }
+        FAIL("no button ", label, " in the panel");
+        return ImVec2();
+    }
+
+    // How many popups are open, and the window of the one on top.
+    [[nodiscard]] static int popups() { return ImGui::GetCurrentContext()->OpenPopupStack.Size; }
+    [[nodiscard]] static ImGuiWindow* topPopup()
+    {
+        const ImGuiContext& context = *ImGui::GetCurrentContext();
+        return context.OpenPopupStack.Size == 0 ? nullptr : context.OpenPopupStack.back().Window;
+    }
+
+    // The middle of a popup's `line`th line of fields, one field to a line.
+    [[nodiscard]] static ImVec2 field(int line)
+    {
+        const ImGuiWindow* window = topPopup();
+        REQUIRE(window != nullptr);
+        const float frame = ImGui::GetFrameHeight();
+        return ImVec2(window->DC.CursorStartPos.x + 12.0f,
+                      window->DC.CursorStartPos.y +
+                          static_cast<float>(line) * (frame + ImGui::GetStyle().ItemSpacing.y) + frame * 0.5f);
+    }
+
+    // The `index`th entry of the list a combo opened, scrolled to first.
+    void choose(int index)
+    {
+        ImGuiWindow* list = topPopup();
+        REQUIRE(list != nullptr);
+        const float line = ImGui::GetFontSize() + ImGui::GetStyle().ItemSpacing.y;
+        for (int turn = 0; turn < 40; ++turn) {
+            list = topPopup();
+            const float y = list->DC.CursorStartPos.y + static_cast<float>(index) * line + ImGui::GetFontSize() * 0.5f;
+            if (y > list->Pos.y + 2.0f && y < list->Pos.y + list->Size.y - 2.0f) {
+                click(list->DC.CursorStartPos.x + 12.0f, y);
+                return;
+            }
+            mouseX = list->Pos.x + list->Size.x * 0.5f;
+            mouseY = list->Pos.y + list->Size.y * 0.5f;
+            ImGui::GetIO().AddMouseWheelEvent(0.0f, y > list->Pos.y ? -1.0f : 1.0f);
+            frame();
+            frame();
+        }
+        FAIL("the list's entry ", index, " was never in view");
+    }
+
+    // Typed into the field `line` of the popup on top.
+    void type(int line, const char* text)
+    {
+        const ImVec2 at = field(line);
+        click(at.x, at.y);
+        ImGui::GetIO().AddInputCharactersUTF8(text);
+        frame();
+        frame();
+    }
 };
 
 } // namespace
@@ -223,4 +303,60 @@ TEST_CASE(
     desk.frame();
     CHECK(desk.timeline.isOpen());
     CHECK(desk.timeline.sequence().tracks[0].keys.size() == 2);
+}
+
+TEST_CASE("ADR 0204: the Timeline's Add popup, pressed: a cast track, and a track on whoever it brings")
+{
+    // The popup is the editor's own window, and no test pressed it: five
+    // kinds of track could not be added from it for a batch, because its
+    // list stopped at the seventh.
+    Desk desk;
+    desk.inspector.select(desk.player);
+    desk.frame();
+    desk.frame();
+    REQUIRE(desk.timeline.isOpen());
+    const std::vector<asset::SequenceTrack>& tracks = desk.timeline.sequence().tracks;
+    const std::size_t before = tracks.size();
+
+    const ImVec2 add = desk.button(core::tr(ENG_TR("engine.editor.timeline.add_track")));
+    desk.click(add.x, add.y);
+    REQUIRE(Desk::popups() == 1);
+
+    // The kind: the last of thirteen, somebody brought for the scene.
+    ImVec2 at = Desk::field(0);
+    desk.click(at.x, at.y);
+    REQUIRE(Desk::popups() == 2);
+    desk.choose(12);
+    REQUIRE(Desk::popups() == 1);
+    desk.type(1, "Guard");
+    desk.type(2, "asset://stamps/guard.stamp.json");
+    at = Desk::field(3);
+    desk.click(at.x, at.y);
+    CHECK(Desk::popups() == 0);
+    REQUIRE(tracks.size() == before + 1);
+    CHECK(tracks.back().type == asset::SequenceTrackType::Cast);
+    CHECK(tracks.back().target == "Guard");
+    CHECK(tracks.back().model == "asset://stamps/guard.stamp.json");
+
+    // **A track on whoever it brings**: their name is in the list of
+    // bindings, after the player's own, as a binding's is.
+    desk.click(add.x, add.y);
+    REQUIRE(Desk::popups() == 1);
+    at = Desk::field(0);
+    desk.click(at.x, at.y);
+    desk.choose(1);
+    at = Desk::field(1);
+    desk.click(at.x, at.y);
+    REQUIRE(Desk::popups() == 2);
+    desk.choose(0);
+    at = Desk::field(1);
+    desk.click(at.x, at.y);
+    REQUIRE(Desk::popups() == 2);
+    desk.choose(1);
+    at = Desk::field(3);
+    desk.click(at.x, at.y);
+    REQUIRE(tracks.size() == before + 2);
+    CHECK(tracks.back().type == asset::SequenceTrackType::Animation);
+    CHECK(tracks.back().target == "Guard");
+    CHECK(desk.timeline.dirty());
 }

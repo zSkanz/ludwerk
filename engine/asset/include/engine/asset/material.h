@@ -33,6 +33,7 @@
 
 #include "engine/asset/content.h"
 #include "engine/core/content_hash.h"
+#include "engine/core/kept_reads.h"
 #include "engine/core/math.h"
 #include "engine/core/types.h"
 
@@ -269,6 +270,9 @@ struct MaterialReadNotes
     std::vector<std::string> unknownFields;
     // Fields present with a value of the wrong shape, which read as absent.
     std::vector<std::string> malformedFields;
+    // Why a file that is there could not be read as a material, or empty. Said
+    // by the library, which may have the material it read before to keep.
+    std::string unreadable;
 };
 
 // Parses a material file. Fails only for text that is not JSON, or that is not
@@ -389,9 +393,15 @@ public:
     [[nodiscard]] const ResolvedMaterial& resolve(std::string_view urn);
 
     // **A changed file** (ADR 0062): forgets it and every resolved chain,
-    // because any variant may inherit through it.
+    // because any variant may inherit through it. What was read of it is kept
+    // until a read of the new file succeeds (ADR 0212, section 3): a read in
+    // the middle of a save puts it back, quietly.
     void forget(std::string_view urn);
     void forgetAll();
+    // Each reload whose read failed and that no notice has followed for the
+    // patience, said once. The frame calls it.
+    void sayFailedReloads();
+    void setReloadPatience(double seconds) noexcept { m_kept.setPatience(seconds); }
 
     // Puts a material in without a file -- the editor's unsaved edit, a test.
     // It stays until `forget`.
@@ -410,6 +420,7 @@ private:
     Source m_source;
     std::unordered_map<std::string, Loaded> m_assets;
     std::unordered_map<std::string, ResolvedMaterial> m_resolved;
+    core::KeptReads<std::string, MaterialAsset> m_kept;
     core::u64 m_revision = 0;
 };
 

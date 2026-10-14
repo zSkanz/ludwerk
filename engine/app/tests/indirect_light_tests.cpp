@@ -10,9 +10,20 @@
 #include <cstring>
 #include <doctest/doctest.h>
 #include <limits>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
+#include "class_descriptors.gen.h"
+#include "engine/app/baked_light.h"
 #include "engine/app/indirect_light.h"
+#include "engine/audio/scene_types.h"
+#include "engine/physics/backends.h"
+#include "engine/render/renderer.h"
+#include "engine/render/scene_types.h"
+#include "engine/scene/physics_sync.h"
 
 namespace {
 
@@ -695,4 +706,235 @@ TEST_CASE("ADR 0207: a volume given its light is whole with no ray cast, and wor
     CHECK_FALSE(bake.whole());
     CHECK(bake.step(floorOf(Color3{1.0f, 1.0f, 1.0f}, &asked), whiteSky(), 0));
     CHECK(asked.load() > 0);
+}
+
+namespace {
+
+// A renderer that draws nothing: what a frame of the indirect light asks of
+// one is its settings.
+class SettingsOnly final : public render::IRenderer
+{
+public:
+    std::optional<core::EngineError> create(rhi::IDevice&, const render::ShaderLibrary&, rhi::TextureFormat) override
+    {
+        return std::nullopt;
+    }
+    void destroy(rhi::IDevice&) override {}
+    void render(rhi::IDevice&, rhi::ICmdList&, const render::RenderTarget&, const render::RenderWorld&,
+                const render::MeshCache&) override
+    {}
+    [[nodiscard]] bool valid() const noexcept override { return true; }
+    [[nodiscard]] f32 shadowRadius() const noexcept override { return 0.0f; }
+    void setSettings(const render::GraphicsSettings& settings) override { m_settings = settings; }
+    [[nodiscard]] const render::GraphicsSettings& settings() const noexcept override { return m_settings; }
+    [[nodiscard]] render::RendererStats stats() const noexcept override { return {}; }
+
+private:
+    render::GraphicsSettings m_settings;
+};
+
+// Rooms with a volume each, whose files are held here by name, on a machine
+// whose settings work no volume out.
+struct Rooms
+{
+    core::AtomTable atoms;
+    scene::ClassRegistry classes;
+    scene::EnumRegistry enums;
+    std::optional<scene::World> world;
+    physics::PhysicsResult backend;
+    std::optional<scene::PhysicsSync> physics;
+    core::InstanceId workspace;
+    std::map<std::string, std::vector<std::byte>, std::less<>> files;
+    SettingsOnly renderer;
+    render::RenderWorld snapshot;
+    app::IndirectLight light;
+    core::u64 tick = 0;
+
+    Rooms()
+    {
+        scene::generated::registerClasses(classes, atoms);
+        audio::registerSceneTypes(classes, atoms);
+        render::registerSceneTypes(classes, atoms);
+        scene::generated::registerEnums(enums, atoms);
+        world.emplace(classes, enums, atoms, 1u);
+        workspace = make("Folder", {});
+        backend = physics::createJoltPhysics();
+        REQUIRE(backend != nullptr);
+        physics.emplace(*world, *backend);
+        physics->setWorkspace(workspace);
+        render::GraphicsSettings settings;
+        settings.indirectLight = false;
+        settings.reflectionProbes = 0;
+        renderer.setSettings(settings);
+        snapshot.camera.valid = true;
+    }
+
+    core::InstanceId make(const char* className, core::InstanceId parent)
+    {
+        const scene::ClassId id = classes.findId(atoms.intern(className));
+        REQUIRE(id != scene::InvalidClass);
+        const core::InstanceId made = world->create(id);
+        if (parent.valid())
+            REQUIRE_FALSE(world->setParent(made, parent).has_value());
+        return made;
+    }
+
+    // A box four metres across at `x`, its volume lit by `urn`.
+    core::InstanceId room(core::f64 x, const char* urn)
+    {
+        const core::InstanceId box = make("Part", workspace);
+        world->parts().find(box)->cframe.position = DVec3{x, 0.0, 0.0};
+        world->parts().find(box)->size = Vec3{4.0f, 4.0f, 4.0f};
+        const core::InstanceId volume = make("IrradianceVolume", box);
+        world->irradianceVolumes().find(volume)->baked = atoms.intern(urn);
+        return volume;
+    }
+
+    // The file of `volume`'s room, every point of it `glow`.
+    void bake(core::InstanceId volume, f32 glow)
+    {
+        const scene::PartComponent& part = *world->parts().find(world->parentOf(volume));
+        const scene::IrradianceVolumeComponent& set = *world->irradianceVolumes().find(volume);
+        app::BakedLight baked;
+        baked.box = part.cframe;
+        baked.size = part.size;
+        baked.spacing = set.spacing;
+        baked.bounces = set.bounces;
+        baked.mode = set.mode;
+        for (const app::VolumePiece& tile : app::volumeTilesOf(part.cframe, part.size, set.spacing)) {
+            app::BakedPiece piece;
+            for (int axis = 0; axis < 3; ++axis)
+                piece.counts[axis] = tile.layout.counts[axis];
+            const std::size_t points = std::size_t{piece.counts[0]} * piece.counts[1] * piece.counts[2];
+            piece.samples.assign(points * 12, 0.0f);
+            for (std::size_t point = 0; point < points; ++point) {
+                for (std::size_t channel = 0; channel < 3; ++channel)
+                    piece.samples[point * 12 + channel] = glow;
+            }
+            baked.pieces.push_back(std::move(piece));
+        }
+        files[std::string(atoms.text(set.baked))] = app::writeBakedLight(baked);
+    }
+
+    void frame(core::InstanceId bakingOne = {})
+    {
+        light.update({
+            .world = &*world,
+            .physics = &*physics,
+            .renderer = &renderer,
+            .snapshot = &snapshot,
+            .workspace = workspace,
+            .tick = tick++,
+            .readContent =
+                [this](std::string_view urn, std::vector<std::byte>& out) {
+                    const auto found = files.find(urn);
+                    if (found == files.end())
+                        return false;
+                    out = found->second;
+                    return true;
+                },
+            .baking = bakingOne.valid(),
+            .bakingOne = bakingOne,
+        });
+    }
+
+    // A machine whose settings work volumes out.
+    void workOut()
+    {
+        render::GraphicsSettings settings = renderer.settings();
+        settings.indirectLight = true;
+        renderer.setSettings(settings);
+    }
+
+    // The one colour each volume drawn as its file's is lit by, red only.
+    [[nodiscard]] std::vector<f32> flats() const
+    {
+        render::RenderWorld out;
+        out.camera.valid = true;
+        light.append(out);
+        std::vector<f32> reds;
+        for (const render::RenderIrradianceVolume& drawn : out.irradianceVolumes)
+            reds.push_back(drawn.flat.r);
+        return reds;
+    }
+};
+
+} // namespace
+
+TEST_CASE("ADR 0207: a volume's file baked again is the volume's light at once, without anybody asking")
+{
+    // Read when the volume was first looked at, and not again: a file baked
+    // anew, or changed on disk, was the room's light only once something
+    // else made the volume another one.
+    Rooms rooms;
+    const core::InstanceId volume = rooms.room(0.0, "asset://light/hall.irradiance");
+    rooms.bake(volume, 0.25f);
+    for (int frame = 0; frame < 3; ++frame)
+        rooms.frame();
+    REQUIRE(rooms.flats().size() == 1);
+    CHECK(static_cast<double>(rooms.flats()[0]) == doctest::Approx(0.25));
+
+    rooms.bake(volume, 0.75f);
+    const std::array<core::NameAtom, 1> changed{rooms.atoms.intern("asset://light/hall.irradiance")};
+    rooms.light.forgetBaked(changed);
+    rooms.frame();
+    REQUIRE(rooms.flats().size() == 1);
+    CHECK(static_cast<double>(rooms.flats()[0]) == doctest::Approx(0.75));
+
+    // A file that is not this one's is read again for nobody.
+    rooms.bake(volume, 0.5f);
+    const std::array<core::NameAtom, 1> other{rooms.atoms.intern("asset://light/porch.irradiance")};
+    rooms.light.forgetBaked(other);
+    rooms.frame();
+    CHECK(static_cast<double>(rooms.flats()[0]) == doctest::Approx(0.75));
+}
+
+TEST_CASE("ADR 0207: a volume worked out from its file is given the file baked again, and no other file's")
+{
+    // A machine that works volumes out takes a volume's light from its file
+    // the frame the volume is first asked for; a file baked again waited
+    // for the volume to be moved, resized or refreshed.
+    Rooms rooms;
+    rooms.workOut();
+    const core::InstanceId volume = rooms.room(0.0, "asset://light/hall.irradiance");
+    rooms.bake(volume, 0.25f);
+    for (int frame = 0; frame < 4; ++frame)
+        rooms.frame();
+    REQUIRE(rooms.light.stats().volumes == 1);
+    CHECK(rooms.light.stats().kept == 1);
+
+    rooms.bake(volume, 0.75f);
+    const std::array<core::NameAtom, 1> changed{rooms.atoms.intern("asset://light/hall.irradiance")};
+    rooms.light.forgetBaked(changed);
+    for (int frame = 0; frame < 4; ++frame)
+        rooms.frame();
+    CHECK(rooms.light.stats().kept == 2);
+
+    const std::array<core::NameAtom, 1> other{rooms.atoms.intern("asset://light/porch.irradiance")};
+    rooms.light.forgetBaked(other);
+    for (int frame = 0; frame < 4; ++frame)
+        rooms.frame();
+    CHECK(rooms.light.stats().kept == 2);
+}
+
+TEST_CASE("ADR 0207: baking one volume on a machine that works none out works out that one, and no other")
+{
+    // The editor's Bake turns the volumes on, for the one it asked for; it
+    // turned on every volume of the scene, each worked out by rays, and
+    // drew none as its file's colour while it did.
+    Rooms rooms;
+    const core::InstanceId hall = rooms.room(0.0, "asset://light/hall.irradiance");
+    const core::InstanceId porch = rooms.room(20.0, "asset://light/porch.irradiance");
+    rooms.bake(hall, 0.25f);
+    rooms.bake(porch, 0.5f);
+    for (int frame = 0; frame < 3; ++frame)
+        rooms.frame();
+    CHECK(rooms.light.stats().volumes == 0);
+    CHECK(rooms.flats().size() == 2);
+
+    rooms.frame(hall);
+    CHECK(rooms.light.stats().volumes == 1);
+    const std::vector<f32> drawn = rooms.flats();
+    REQUIRE(drawn.size() == 1);
+    CHECK(static_cast<double>(drawn[0]) == doctest::Approx(0.5));
 }

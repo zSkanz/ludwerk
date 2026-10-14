@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <doctest/doctest.h>
 #include <filesystem>
@@ -9,6 +10,7 @@
 #include <optional>
 #include <ostream>
 #include <string>
+#include <thread>
 #include <variant>
 
 #include "../../scene/generated/class_descriptors.gen.h"
@@ -3851,6 +3853,195 @@ TEST_CASE("a model exported again has its joints and clips read again, and so ha
     // And a file nothing had read is nothing to forget.
     const std::array<core::NameAtom, 1> other{host.world().atoms().intern("asset://models/other.glb")};
     CHECK(host.forgetContent(other) == 0);
+}
+
+namespace {
+
+// How many lines of the log hold `needle`.
+[[nodiscard]] std::size_t saidTimes(const Captured& log, std::string_view needle)
+{
+    return static_cast<std::size_t>(std::count_if(log.lines.begin(), log.lines.end(), [&](const std::string& line) {
+        return line.find(needle) != std::string::npos;
+    }));
+}
+
+} // namespace
+
+TEST_CASE("an animation graph read half way through its save keeps the graph read before, and says so only if no "
+          "save follows")
+{
+    // An editor writes a file in more than one go, and the notice that it
+    // changed can come between them: the graph was forgotten, the half file
+    // did not parse, and the player went on with no graph at all until the
+    // next save -- with a warning for a file that was about to be whole.
+    Captured log;
+    Project project;
+    const std::string before = R"({ "format": "animgraph", "version": 1,
+        "parameters": { "Speed": { "number": 0 } },
+        "layers": [ { "name": "Body", "start": "Idle", "states": { "Idle": { "clip": "Idle" } } } ] })";
+    const std::string after = R"({ "format": "animgraph", "version": 1,
+        "parameters": { "Speed": { "number": 0 }, "Lean": { "number": 0 } },
+        "layers": [ { "name": "Body", "start": "Idle", "states": { "Idle": { "clip": "Idle" } } } ] })";
+    project.write("content/anim/walker.animgraph.json", before);
+    project.write("src/client/make.luau", R"(
+        local player = Instance.new("AnimationPlayer")
+        player.Graph = "asset://anim/walker.animgraph.json"
+        player.Parent = workspace
+    )");
+    asset::ContentMounts mounts;
+    mounts.mountDirectory(project.root / "content");
+    app::WorldHost host;
+    host.setContentMounts(&mounts);
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.setReloadPatience(0.05);
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    const core::NameAtom file = host.world().atoms().intern("asset://anim/walker.animgraph.json");
+    REQUIRE(host.graphs().find(file) != nullptr);
+    CHECK(host.graphs().find(file)->graph.parameters.size() == 1);
+    const std::array<core::NameAtom, 1> changed{file};
+    constexpr std::string_view Unreadable = "cannot be played";
+
+    // Half of the new file, and the notice: the old graph stands, unsaid.
+    project.write("content/anim/walker.animgraph.json", after.substr(0, after.size() / 2));
+    CHECK(host.forgetContent(changed) == 1);
+    host.tick();
+    REQUIRE(host.graphs().find(file) != nullptr);
+    CHECK(host.graphs().find(file)->graph.parameters.size() == 1);
+    CHECK(saidTimes(log, Unreadable) == 0);
+
+    // The rest of it, and the notice for that: the new graph.
+    project.write("content/anim/walker.animgraph.json", after);
+    CHECK(host.forgetContent(changed) == 1);
+    host.tick();
+    REQUIRE(host.graphs().find(file) != nullptr);
+    CHECK(host.graphs().find(file)->graph.parameters.size() == 2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    host.tick();
+    CHECK(saidTimes(log, Unreadable) == 0);
+
+    // A file left broken, that no save follows, is said -- once, after the
+    // patience -- and what was read before still plays.
+    project.write("content/anim/walker.animgraph.json", before.substr(0, before.size() / 2));
+    CHECK(host.forgetContent(changed) == 1);
+    host.tick();
+    CHECK(saidTimes(log, Unreadable) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    host.tick();
+    host.tick();
+    CHECK(saidTimes(log, Unreadable) == 1);
+    REQUIRE(host.graphs().find(file) != nullptr);
+    CHECK(host.graphs().find(file)->graph.parameters.size() == 2);
+}
+
+TEST_CASE("the roles beside a model read half way through their save keep the roles read before")
+{
+    // The roles beside a model by the same rule as its graph: a notice that
+    // came between two writes of `hero.rig.json` left the rig with the roles
+    // its joint names guess, until the next save.
+    Captured log;
+    Project project;
+    project.write("src/client/make.luau", R"(
+        local mesh = Instance.new("MeshPart")
+        mesh.Name = "Hero"
+        mesh.Anchored = true
+        mesh.MeshContent = "asset://models/hero.glb"
+        mesh.Parent = workspace
+    )");
+    {
+        // One triangle skinned to the first of two joints, and a clip.
+        asset::Model model;
+        for (const core::Vec3 corner :
+             {core::Vec3{0.0f, 0.0f, 0.0f}, core::Vec3{1.0f, 0.0f, 0.0f}, core::Vec3{0.0f, 1.0f, 0.0f}}) {
+            asset::Vertex vertex;
+            vertex.position = corner;
+            vertex.normal = core::Vec3{0.0f, 0.0f, 1.0f};
+            model.mesh.vertices.push_back(vertex);
+            asset::SkinVertex skin;
+            skin.weights[0] = 1.0f;
+            model.skin.push_back(skin);
+        }
+        model.mesh.indices = {0, 1, 2};
+        asset::Submesh submesh;
+        submesh.indexCount = 3;
+        submesh.bounds = core::AABB::fromMinMax({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 0.0f});
+        model.mesh.submeshes.push_back(submesh);
+        model.mesh.bounds = submesh.bounds;
+        model.materials.emplace_back();
+        for (core::u32 index = 0; index < 2; ++index) {
+            asset::Joint joint;
+            joint.name = "Joint" + std::to_string(index);
+            joint.parent = index == 0 ? asset::Joint::NoParent : index - 1;
+            model.joints.push_back(joint);
+        }
+        asset::AnimationClip clip;
+        clip.name = "Walk";
+        clip.duration = 1.0f;
+        asset::AnimationChannel channel;
+        channel.joint = 0;
+        channel.target = asset::AnimationChannel::Target::Translation;
+        channel.stride = 3;
+        channel.times = {0.0f, 1.0f};
+        channel.values = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+        clip.channels.push_back(channel);
+        model.clips.push_back(clip);
+        asset::CompiledMesh compiled;
+        const std::optional<core::EngineError> refused = asset::compileMesh(model, {}, {}, compiled);
+        REQUIRE_MESSAGE(!refused.has_value(), (refused.has_value() ? refused->message : ""));
+        asset::PackWriter writer;
+        const core::ContentHash hash = writer.addContent(asset::AssetKind::Mesh, asset::encodeMesh(compiled));
+        std::vector<asset::PackName> names;
+        names.push_back({core::hashText("asset://models/hero.glb"), hash, asset::AssetKind::Mesh});
+        (void)writer.addContent(asset::AssetKind::Names, asset::encodePackNames(std::move(names)));
+        const auto pack = writer.buildSealed();
+        std::ofstream out(project.root / "hero.lpack", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(pack.data()), static_cast<std::streamsize>(pack.size()));
+    }
+    const std::string before = R"({ "format": "rig", "version": 1, "roles": { "Hips": "Joint0" } })";
+    const std::string after = R"({ "format": "rig", "version": 1, "roles": { "Hips": "Joint0", "Spine": "Joint1" } })";
+    project.write("content/models/hero.rig.json", before);
+
+    asset::ContentMounts mounts;
+    REQUIRE_FALSE(mounts.mountPack(project.root / "hero.lpack").has_value());
+    mounts.mountDirectory(project.root / "content");
+    app::WorldHost host;
+    host.setContentMounts(&mounts);
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.setReloadPatience(0.05);
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    const core::NameAtom model = host.world().atoms().intern("asset://models/hero.glb");
+    REQUIRE(host.skeletons().find(model) != nullptr);
+    CHECK(host.skeletons().find(model)->roles.size() == 1);
+    const std::array<core::NameAtom, 1> changed{host.world().atoms().intern("asset://models/hero.rig.json")};
+    constexpr std::string_view Unreadable = "Could not read the roles";
+
+    project.write("content/models/hero.rig.json", after.substr(0, after.size() / 2));
+    CHECK(host.forgetContent(changed) == 1);
+    host.tick();
+    REQUIRE(host.skeletons().find(model) != nullptr);
+    CHECK(host.skeletons().find(model)->roles.size() == 1);
+    CHECK(saidTimes(log, Unreadable) == 0);
+
+    project.write("content/models/hero.rig.json", after);
+    CHECK(host.forgetContent(changed) == 1);
+    host.tick();
+    REQUIRE(host.skeletons().find(model) != nullptr);
+    CHECK(host.skeletons().find(model)->roles.size() == 2);
+
+    // Left broken: said once after the patience, and the roles stand.
+    project.write("content/models/hero.rig.json", before.substr(0, before.size() / 2));
+    CHECK(host.forgetContent(changed) == 1);
+    host.tick();
+    CHECK(saidTimes(log, Unreadable) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    host.tick();
+    host.tick();
+    CHECK(saidTimes(log, Unreadable) == 1);
+    REQUIRE(host.skeletons().find(model) != nullptr);
+    CHECK(host.skeletons().find(model)->roles.size() == 2);
 }
 
 // --- The display's rate (ADR 0136) --------------------------------------------------
