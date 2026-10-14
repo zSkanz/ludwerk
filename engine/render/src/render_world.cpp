@@ -1049,54 +1049,42 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     // `primitiveEntry` directly.
     constexpr core::i32 kPrimitiveShapes = 5;
     std::array<const MeshLibrary::Entry*, kPrimitiveShapes> primitives{};
-    bool primitivesReady = true;
-    for (core::i32 shape = 0; shape < kPrimitiveShapes; ++shape) {
+    for (core::i32 shape = 0; shape < kPrimitiveShapes; ++shape)
         primitives[static_cast<usize>(shape)] = primitiveEntry(world, meshes, shape);
-        primitivesReady = primitivesReady && primitives[static_cast<usize>(shape)] != nullptr;
-    }
     const auto primitiveOf = [&primitives](core::i32 shape) -> const MeshLibrary::Entry* {
         return shape >= 0 && shape < kPrimitiveShapes ? primitives[static_cast<usize>(shape)] : nullptr;
     };
 
     ENG_PROFILE_NEXT(stretch, "extract.lights");
-    world.parts().forEach([&](core::InstanceId id, const scene::PartComponent& part) {
-        // **The common case leaves before any other lookup.** A plain part, with
-        // a camera to draw it through and every primitive uploaded, is drawn by
-        // the solid path below and never by this one -- which is where the
-        // branches further down would have sent it too, after an ancestry walk
-        // and three searches. The result is the same part skipped; only the
-        // order of the tests moved, and each of them only returns.
-        const scene::MeshPartComponent* mesh = world.meshParts().find(id);
-        if (mesh == nullptr && out.camera.valid && primitivesReady && part.shape >= 0 && part.shape < kPrimitiveShapes)
-            return;
-        if (!membership.contains(id))
-            return;
-        if (mesh != nullptr) {
-            const MeshLibrary::Entry* loaded = meshes.find(mesh->meshContent);
-            if (loaded != nullptr && loaded->mesh.valid())
+    // **The wire box is the debug path's, and only a world with no camera has
+    // one.** With a camera the real renderer draws, and a part with nothing
+    // to draw yet -- a mesh still loading, a primitive not uploaded in the
+    // first frames -- draws nothing until it has. The box was drawn over the
+    // frame in a shipped game: a model swapped at run time flashed a thin
+    // white wire cube for the frames its mesh took to load. Without a camera
+    // it stays, as how anything is seen when the renderer is not running
+    // (`engine.cpp`'s `useRenderer`; `examples/00-clear`'s three cubes).
+    if (!out.camera.valid)
+        world.parts().forEach([&](core::InstanceId id, const scene::PartComponent& part) {
+            if (!membership.contains(id))
                 return;
-        }
-        // A `Part` has a solid path now, so the wire box is what it falls
-        // back to rather than what it is. The path stays because it is still how
-        // anything is seen when the real one is not running -- and the guard is
-        // the camera, because a world with no camera is exactly the case the
-        // host draws with the debug path instead of with the renderer
-        // (`engine.cpp`'s `useRenderer`). Without that guard `examples/00-clear`
-        // went from three wire cubes to an empty screen.
-        else if (out.camera.valid && primitiveOf(drawnShape(world, id, part)) != nullptr) {
-            return;
-        }
-        // The debug path draws the surface's colour and see-through and
-        // nothing else, which is what a wire box can show of a material.
-        const asset::ResolvedMaterial surface = world.surfaceOf(part);
-        out.parts.push_back(RenderPart{
-            .cframe = posed.part(id),
-            .size = part.size,
-            .color = surface.properties.color,
-            .transparency = surface.properties.transparency,
-            .shape = drawnShape(world, id, part),
+            // A mesh that is in is drawn by the mesh path, even here.
+            if (const scene::MeshPartComponent* mesh = world.meshParts().find(id); mesh != nullptr) {
+                const MeshLibrary::Entry* loaded = meshes.find(mesh->meshContent);
+                if (loaded != nullptr && loaded->mesh.valid())
+                    return;
+            }
+            // The debug path draws the surface's colour and see-through and
+            // nothing else, which is what a wire box can show of a material.
+            const asset::ResolvedMaterial surface = world.surfaceOf(part);
+            out.parts.push_back(RenderPart{
+                .cframe = posed.part(id),
+                .size = part.size,
+                .color = surface.properties.color,
+                .transparency = surface.properties.transparency,
+                .shape = drawnShape(world, id, part),
+            });
         });
-    });
 
     // --- Lights -------------------------------------------------------------
 

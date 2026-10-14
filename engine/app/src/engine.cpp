@@ -49,6 +49,7 @@
 #include "engine/app/dev_control.h"
 #include "engine/app/editor.h"
 #include "engine/app/editor_performance.h"
+#include "engine/app/external_changes.h"
 #include "engine/app/field_streamer.h"
 #include "engine/app/frame_pacing.h"
 #include "engine/app/frame_scheduler.h"
@@ -65,6 +66,7 @@
 #include "engine/app/preview_renderer.h"
 #include "engine/app/profile_history.h"
 #include "engine/app/project_config.h"
+#include "engine/app/project_watch.h"
 #include "engine/app/reference_grid.h"
 #include "engine/app/reload.h"
 #include "engine/app/scene_definitions.h"
@@ -3404,6 +3406,77 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // When the loop began, for the conformance run's ceiling below.
     const u64 loopBeganNs = platform::nowNs();
 
+    // **What changed in `content/`, forgotten so the next frame reads it
+    // again**: the dev server's `asset-changed`, and the editor's own watcher
+    // (the file-watching batch), which is the same news from another place.
+    // Paths are project-relative; what is not under `content/` is skipped.
+    // Answers how many things were let go.
+    const auto forgetChangedContent = [&](const std::vector<std::string>& paths) -> core::u32 {
+        std::vector<core::NameAtom> urns;
+        urns.reserve(paths.size());
+        for (const std::string& path : paths) {
+            // The watcher reports project-relative paths under
+            // `content/`; a URN is `asset://` plus the rest. Anything
+            // outside that folder is not content and is skipped
+            // rather than guessed at.
+            constexpr std::string_view kContent = "content/";
+            std::string relative = path;
+            std::replace(relative.begin(), relative.end(), '\\', '/');
+            const std::size_t at = relative.rfind(kContent);
+            if (at == std::string::npos)
+                continue;
+            relative.erase(0, at + kContent.size());
+            urns.push_back(host->world().atoms().intern("asset://" + relative));
+        }
+
+        core::u32 dropped =
+            urns.empty() ? 0u : meshLoader.forget(*device, urns, textureLibrary, meshLibrary, meshCache);
+        // And what the SIMULATION read of them: a model's
+        // joints and clips, the roles beside it, an animation
+        // graph. The drawn half was forgotten above and came back
+        // with the new mesh; this half kept the old skeleton, and
+        // a model exported again moved by the clips it used to have.
+        dropped += host->forgetContent(urns);
+        // A volume's light baked again is read again, and a
+        // volume lit by it is given it (ADR 0207).
+        indirectLight.forgetBaked(urns);
+        // A changed material file is forgotten too, and every
+        // variant with it -- the library re-reads what anything
+        // asks for next (ADR 0062, ADR 0090).
+        for (const core::NameAtom urn : urns) {
+            const std::string_view text = host->world().atoms().text(urn);
+            if (asset::isMaterialPath(text)) {
+                materialLibrary.forget(text);
+                ++dropped;
+            }
+        }
+        // A stamp changed by something other than this editor:
+        // its linked instances follow, keeping their own.
+        if (options.editor) {
+            for (const core::NameAtom urn : urns) {
+                const std::string_view text = host->world().atoms().text(urn);
+                constexpr std::string_view Suffix = ".stamp.json";
+                if (text.size() > Suffix.size() && text.ends_with(Suffix))
+                    dropped += editor.stampChangedOnDisk(host->world(), host->runtime().dataModel(),
+                                                         text.substr(std::string_view("asset://").size()));
+            }
+        }
+        return dropped;
+    };
+
+    // **The editor watches the project's files** (the file-watching batch): a
+    // script, a scene, a stamp, a material or any content changed outside --
+    // by VS Code, by an agent -- while the editor is open is noticed and taken
+    // in, as `ludwerk dev` notices it. Changes seen while the game runs are
+    // held until Stop (`heldInPlay`), so a running game's code is never
+    // changed under it; `playAgain` is a restart asked for, waiting for the
+    // stop that comes before it.
+    std::optional<ProjectWatcherThread> projectWatcher;
+    if (std::error_code watchEc; options.editor && std::filesystem::is_directory(options.scriptPath, watchEc))
+        projectWatcher.emplace(options.scriptPath, std::vector<std::string>{"src", "content", "i18n"});
+    std::vector<FileChange> heldInPlay;
+    bool playAgain = false;
+
     while (!quit) {
         // A native mobile/console suspension deferral completes at the next
         // event pump. Saves were flushed when the background event arrived;
@@ -4319,6 +4392,112 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 // could have asked (`EditorCommands::refuseAuthoring`).
                 if (!editor.authoring() && editorCommands.refuseAuthoring())
                     editor.report(core::tr(ENG_TR("engine.editor.status.stop_the_game_to_change")), true);
+
+                // **Files changed outside the editor** (the file-watching
+                // batch). Looked at twice a second on the watcher's own thread
+                // -- it says a file once it has settled -- and taken in while
+                // editing; held while the game runs, and taken in at Stop.
+                if (projectWatcher.has_value()) {
+                    std::vector<FileChange> changes = projectWatcher->take();
+                    const auto isScript = [](const FileChange& change) {
+                        return change.path.starts_with("src/") && change.path.ends_with(".luau");
+                    };
+                    if (editor.inPlayMode()) {
+                        bool scriptCame = false;
+                        for (const FileChange& change : changes) {
+                            scriptCame = scriptCame || isScript(change);
+                            heldInPlay.erase(
+                                std::remove_if(heldInPlay.begin(), heldInPlay.end(),
+                                               [&](const FileChange& held) { return held.path == change.path; }),
+                                heldInPlay.end());
+                            heldInPlay.push_back(change);
+                        }
+                        editor.setFilesChangedInPlay(static_cast<core::u32>(heldInPlay.size()));
+                        // Stop now, take them in, play again: asked from the
+                        // status bar, or the preference for a script.
+                        if (editor.takeRestartPlay() || (scriptCame && editorPerformance().restartPlayOnChange)) {
+                            editorCommands.play = false;
+                            playAgain = true;
+                        }
+                    }
+                    else {
+                        (void)editor.takeRestartPlay();
+                        if (!heldInPlay.empty()) {
+                            for (const FileChange& change : changes) {
+                                heldInPlay.erase(
+                                    std::remove_if(heldInPlay.begin(), heldInPlay.end(),
+                                                   [&](const FileChange& held) { return held.path == change.path; }),
+                                    heldInPlay.end());
+                                heldInPlay.push_back(change);
+                            }
+                            changes = std::move(heldInPlay);
+                            heldInPlay.clear();
+                            editor.setFilesChangedInPlay(0);
+                        }
+                        if (!changes.empty()) {
+                            const ExternalScriptChanges taken = applyExternalScriptChanges(*host, scripts, changes);
+                            if (taken.any())
+                                editor.report(
+                                    core::tr(ENG_TR("engine.editor.status.outside_scripts"),
+                                             {{"reloaded", static_cast<core::i64>(taken.reloaded.size())},
+                                              {"mounted", static_cast<core::i64>(taken.mounted.size())},
+                                              {"removed", static_cast<core::i64>(taken.removed.size())},
+                                              {"conflicts", static_cast<core::i64>(taken.conflicts.size() +
+                                                                                   taken.keptEdited.size())}}),
+                                    !taken.conflicts.empty() || !taken.keptEdited.empty());
+                            // **An open scene, stamp or material**: read again
+                            // when it was not edited here, asked about when it
+                            // was. A file that holds what this editor last read
+                            // or wrote of it -- its own save -- is not news.
+                            std::vector<std::string> content;
+                            for (const FileChange& change : changes) {
+                                constexpr std::string_view Content = "content/";
+                                if (!change.path.starts_with(Content))
+                                    continue;
+                                const std::string relative = change.path.substr(Content.size());
+                                if (relative == editor.openScenePath()) {
+                                    if (editor.changedOutside(relative)) {
+                                        if (!editor.sceneDirty())
+                                            editorCommands.openScene = relative;
+                                        else
+                                            editor.askAboutOutsideChange({relative, Editor::OutsideKind::Scene});
+                                    }
+                                    continue;
+                                }
+                                if (relative == editor.stampSession().path) {
+                                    if (editor.changedOutside(relative)) {
+                                        if (!editor.stampSession().dirty) {
+                                            editorCommands.closeStamp = true;
+                                            editorCommands.closeStampSaving = false;
+                                            editorCommands.openStamp = relative;
+                                        }
+                                        else {
+                                            editor.askAboutOutsideChange({relative, Editor::OutsideKind::Stamp});
+                                        }
+                                    }
+                                    continue;
+                                }
+                                if (relative == editor.materialSession().path && editor.changedOutside(relative)) {
+                                    if (editor.materialSession().dirty()) {
+                                        // What is drawn is the edited one,
+                                        // until the question is answered.
+                                        editor.askAboutOutsideChange({relative, Editor::OutsideKind::Material});
+                                        continue;
+                                    }
+                                    editor.closeMaterial();
+                                    (void)editor.openMaterial(relative);
+                                }
+                                content.push_back(change.path);
+                            }
+                            if (!content.empty())
+                                (void)forgetChangedContent(content);
+                        }
+                        if (playAgain) {
+                            editorCommands.play = true;
+                            playAgain = false;
+                        }
+                    }
+                }
                 // **Bake a volume's light to its file** (ADR 0207): named a
                 // file if it names none -- by its part's name, with the
                 // scene's other light -- and asked for afresh, as `Refresh`
@@ -4881,6 +5060,19 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     }
                 }
 
+                // **A tab whose file changed on disk while it was edited**: its
+                // two answers (the file-watching batch).
+                if (scriptCommands.keepMine.has_value()) {
+                    if (OpenScript* tab = scripts.at(*scriptCommands.keepMine);
+                        tab != nullptr && !keepEditorText(*host, *tab))
+                        editor.report(core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", tab->file}}),
+                                      true);
+                }
+                if (scriptCommands.takeDisk.has_value()) {
+                    if (OpenScript* tab = scripts.at(*scriptCommands.takeDisk); tab != nullptr)
+                        (void)takeDiskText(*host, *tab);
+                }
+
                 if (scriptCommands.close.has_value()) {
                     // **Closing a changed tab loses nothing**: its text is in
                     // the script already, typed through. The scene is marked
@@ -5024,6 +5216,26 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     if (editor.openScene(host->world(), editorCommands.openScene, inspector)) {
                         host->remountSceneScripts(editor.openScenePath());
                         host->world().engineState().currentScene = editor.openScenePath();
+                    }
+                }
+                // **"Reload from disk"**: the answer to a file changed outside
+                // while it was edited here that drops this editor's edits.
+                if (!editorCommands.reloadFromDisk.empty()) {
+                    const std::string path = editorCommands.reloadFromDisk;
+                    if (path == editor.openScenePath()) {
+                        if (editor.openScene(host->world(), path, inspector)) {
+                            host->remountSceneScripts(editor.openScenePath());
+                            host->world().engineState().currentScene = editor.openScenePath();
+                        }
+                    }
+                    else if (path == editor.stampSession().path) {
+                        (void)editor.closeStamp(host->world(), host->runtime().dataModel(), inspector, false);
+                        (void)editor.openStamp(path, host->classes(), host->enums(), host->atoms(), inspector);
+                    }
+                    else if (path == editor.materialSession().path) {
+                        editor.closeMaterial();
+                        (void)editor.openMaterial(path);
+                        (void)forgetChangedContent({"content/" + path});
                     }
                 }
                 if (!editorCommands.createFolder.empty())
@@ -6144,55 +6356,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     // stands. A packed or compiled URN reloads the same bytes,
                     // which is correct -- those are artifacts, and changing one
                     // means recompiling it.
-                    std::vector<core::NameAtom> urns;
-                    urns.reserve(command.paths.size());
-                    for (const std::string& path : command.paths) {
-                        // The watcher reports project-relative paths under
-                        // `content/`; a URN is `asset://` plus the rest. Anything
-                        // outside that folder is not content and is skipped
-                        // rather than guessed at.
-                        constexpr std::string_view kContent = "content/";
-                        std::string relative = path;
-                        std::replace(relative.begin(), relative.end(), '\\', '/');
-                        const std::size_t at = relative.rfind(kContent);
-                        if (at == std::string::npos)
-                            continue;
-                        relative.erase(0, at + kContent.size());
-                        urns.push_back(host->world().atoms().intern("asset://" + relative));
-                    }
-
-                    core::u32 dropped =
-                        urns.empty() ? 0u : meshLoader.forget(*device, urns, textureLibrary, meshLibrary, meshCache);
-                    // And what the SIMULATION read of them: a model's
-                    // joints and clips, the roles beside it, an animation
-                    // graph. The drawn half was forgotten above and came back
-                    // with the new mesh; this half kept the old skeleton, and
-                    // a model exported again moved by the clips it used to have.
-                    dropped += host->forgetContent(urns);
-                    // A volume's light baked again is read again, and a
-                    // volume lit by it is given it (ADR 0207).
-                    indirectLight.forgetBaked(urns);
-                    // A changed material file is forgotten too, and every
-                    // variant with it -- the library re-reads what anything
-                    // asks for next (ADR 0062, ADR 0090).
-                    for (const core::NameAtom urn : urns) {
-                        const std::string_view text = host->world().atoms().text(urn);
-                        if (asset::isMaterialPath(text)) {
-                            materialLibrary.forget(text);
-                            ++dropped;
-                        }
-                    }
-                    // A stamp changed by something other than this editor:
-                    // its linked instances follow, keeping their own.
-                    if (options.editor) {
-                        for (const core::NameAtom urn : urns) {
-                            const std::string_view text = host->world().atoms().text(urn);
-                            constexpr std::string_view Suffix = ".stamp.json";
-                            if (text.size() > Suffix.size() && text.ends_with(Suffix))
-                                dropped += editor.stampChangedOnDisk(host->world(), host->runtime().dataModel(),
-                                                                     text.substr(std::string_view("asset://").size()));
-                        }
-                    }
+                    const core::u32 dropped = forgetChangedContent(command.paths);
                     const core::I18nArg args[] = {{"count", static_cast<core::i64>(dropped)}};
                     core::log(core::LogLevel::Info, ENG_TR("engine.dev.info.assets_reloaded"), args);
                     replyOk("asset-changed", command.id, [dropped](core::JsonWriter& writer) {

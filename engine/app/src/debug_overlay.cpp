@@ -12270,7 +12270,9 @@ std::size_t drawPerformancePreferences(const PreferenceQuery& query)
     const bool throttle = query.shows(core::tr(ENG_TR("engine.editor.performance_preferences.background_throttle")));
     const bool quality = query.shows(core::tr(ENG_TR("engine.editor.performance_preferences.viewport_quality")));
     const bool saved = query.shows(core::tr(ENG_TR("engine.editor.performance_preferences.play_saved")));
-    const std::size_t found = (rate ? 1 : 0) + (throttle ? 1 : 0) + (quality ? 1 : 0) + (saved ? 1 : 0);
+    const bool restart = query.shows(core::tr(ENG_TR("engine.editor.performance_preferences.script_change_in_play")));
+    const std::size_t found =
+        (rate ? 1 : 0) + (throttle ? 1 : 0) + (quality ? 1 : 0) + (saved ? 1 : 0) + (restart ? 1 : 0);
     if (!query.draw || found == 0 || !beginSectionGrid("performance"))
         return found;
     EditorPerformance chosen = editorPerformance();
@@ -12318,6 +12320,20 @@ std::size_t drawPerformancePreferences(const PreferenceQuery& query)
         if (ImGui::Checkbox("##play-saved", &chosen.playWithSavedSettings))
             changeEditorPerformance(chosen);
         preferenceHint(core::tr(ENG_TR("engine.editor.performance_preferences.play_saved_hint")));
+    }
+    if (restart) {
+        sectionName(core::tr(ENG_TR("engine.editor.performance_preferences.script_change_in_play")));
+        int choice = chosen.restartPlayOnChange ? 1 : 0;
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        const char* const choices[] = {
+            core::tr(ENG_TR("engine.editor.performance_preferences.apply_at_stop")),
+            core::tr(ENG_TR("engine.editor.performance_preferences.restart_play")),
+        };
+        if (ImGui::Combo("##script-change-in-play", &choice, choices, 2)) {
+            chosen.restartPlayOnChange = choice == 1;
+            changeEditorPerformance(chosen);
+        }
+        preferenceHint(core::tr(ENG_TR("engine.editor.performance_preferences.script_change_in_play_hint")));
     }
     endSectionGrid();
     return found;
@@ -12520,6 +12536,35 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
     }
 
     drawProjectSettings(editor, commands);
+
+    // **An open file changed on disk while it was edited here**: asked, one
+    // at a time, and nothing happens to either version until it is answered.
+    if (!editor.outsideChanges().empty() && !ImGui::IsPopupOpen("###Changed on disk"))
+        ImGui::OpenPopup("###Changed on disk");
+    if (beginEditorDialog(labelled(ENG_TR("engine.editor.dialog.changed_on_disk"), "###Changed on disk").c_str(),
+                          440.0f, []() {})) {
+        if (editor.outsideChanges().empty()) {
+            ImGui::CloseCurrentPopup();
+        }
+        else {
+            const Editor::OutsideChange change = editor.outsideChanges().front();
+            ImGui::TextWrapped("%s",
+                               core::tr(ENG_TR("engine.editor.outside.message"), {{"path", change.path}}).c_str());
+            ImGui::Spacing();
+            if (dialogButton(core::tr(ENG_TR("engine.editor.outside.reload")), ImVec2(160.0f, 0.0f))) {
+                commands.reloadFromDisk = change.path;
+                editor.forgetOutsideChange(change.path);
+            }
+            if (ImGui::IsItemHovered())
+                pointerTip("%s", core::tr(ENG_TR("engine.editor.outside.reload_tip")));
+            ImGui::SameLine();
+            if (dialogButton(core::tr(ENG_TR("engine.editor.outside.keep")), ImVec2(160.0f, 0.0f)))
+                editor.keepMineOver(change.path);
+            if (ImGui::IsItemHovered())
+                pointerTip("%s", core::tr(ENG_TR("engine.editor.outside.keep_tip")));
+        }
+        ImGui::EndPopup();
+    }
 
     if (dialogs.exportWindow) {
         dialogs.exportWindow = false;
@@ -15849,6 +15894,16 @@ void drawStatusBar(Editor& editor, const Inspector* inspector, EditorPanels& pan
               scenePath.empty() ? std::string(core::tr(ENG_TR("engine.editor.status_bar.never_saved"))) : scenePath}});
         if (statusText(icons, "##scene", icons::ContentScene, sceneName, ink, height, sceneTip.c_str()))
             g_palette.open(CommandPalette::Mode::Files);
+
+        // **Files changed outside while the game runs**, held until Stop: said
+        // until then, and a click plays again with them now.
+        if (const core::u32 waiting = editor.filesChangedInPlay(); waiting > 0 && running) {
+            const std::string changed =
+                core::tr(ENG_TR("engine.editor.status.changed_in_play"), {{"count", static_cast<core::i64>(waiting)}});
+            if (statusText(icons, "##changed-in-play", icons::ActionRevert, changed, ink, height,
+                           core::tr(ENG_TR("engine.editor.status.changed_in_play_tip"))))
+                editor.requestRestartPlay();
+        }
 
         // The console's errors and warnings, counted from what it holds now --
         // so clearing the console clears the count.

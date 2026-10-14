@@ -789,24 +789,47 @@ TEST_CASE("Size over MeshSize is what a mesh is drawn at")
     }
 }
 
-TEST_CASE("a MeshPart's wire box appears only while its mesh has not loaded")
+TEST_CASE("a MeshPart whose mesh has not loaded draws nothing in a game, and a wire box with no camera")
 {
+    // **Reported**: a model swapped in a shipped game flashed a thin white wire
+    // box for the frames its mesh took to load -- the debug path's box, drawn
+    // over the frame because the real renderer was running and the part had
+    // nothing of its own yet. With a camera the real renderer is what draws;
+    // the wire box is for a world with no camera, where it is the only sign a
+    // part exists.
     Fixture fixture;
     fixture.registerRenderClasses();
     const core::InstanceId workspace = fixture.world.create(fixture.workspaceClass);
-    (void)fixture.cameraLookingDownNegativeZ(workspace);
 
     const core::NameAtom content = fixture.atoms.intern("asset://models/box.glb");
     (void)fixture.meshPartAt(workspace, core::DVec3{0.0, 0.0, -10.0}, content);
 
     render::RenderWorld snapshot;
 
-    SUBCASE("nothing loaded: the box is the only sign the part exists")
+    SUBCASE("no camera, nothing loaded: the box is the only sign the part exists")
     {
         render::extract(fixture.world, workspace, core::InstanceId{}, kNoMeshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr,
                         snapshot);
         CHECK(snapshot.parts.size() == 1);
         CHECK(snapshot.draws.empty());
+    }
+
+    (void)fixture.cameraLookingDownNegativeZ(workspace);
+
+    SUBCASE("a camera, nothing loaded: nothing at all until the mesh is in")
+    {
+        render::extract(fixture.world, workspace, core::InstanceId{}, kNoMeshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr,
+                        snapshot);
+        CHECK(snapshot.parts.empty());
+        CHECK(snapshot.draws.empty());
+    }
+
+    SUBCASE("a camera, and a plain part whose primitive has not loaded: nothing either")
+    {
+        fixture.world.parts().find(fixture.part(workspace))->cframe.position = core::DVec3{2.0, 0.0, -10.0};
+        render::extract(fixture.world, workspace, core::InstanceId{}, kNoMeshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr,
+                        snapshot);
+        CHECK(snapshot.parts.empty());
     }
 
     SUBCASE("loaded: the real geometry replaces it")
@@ -826,15 +849,6 @@ TEST_CASE("a MeshPart's wire box appears only while its mesh has not loaded")
         // but the box would still be the part's box and not the mesh's.)
         CHECK(snapshot.parts.empty());
         CHECK(snapshot.draws.size() == 1);
-    }
-
-    SUBCASE("an ordinary Part still gets its box either way")
-    {
-        const core::InstanceId plain = fixture.world.create(fixture.partClass);
-        (void)fixture.world.setParent(plain, workspace);
-        render::extract(fixture.world, workspace, core::InstanceId{}, kNoMeshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr,
-                        snapshot);
-        CHECK(snapshot.parts.size() == 2);
     }
 }
 

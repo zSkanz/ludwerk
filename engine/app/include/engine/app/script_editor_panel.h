@@ -124,10 +124,16 @@ struct ScriptEditorCommands
     // thing that may resume a parked coroutine.
     DebugStep step = DebugStep::None;
 
+    // **A tab whose file changed on disk while it was edited here**: keep
+    // this text (it is written over the file), or take the disk's.
+    std::optional<std::size_t> keepMine;
+    std::optional<std::size_t> takeDisk;
+
     [[nodiscard]] bool any() const noexcept
     {
         return save.has_value() || close.has_value() || saveAll || !edited.empty() ||
-               toggleBreakpointLine.has_value() || step != DebugStep::None || jumpTo.has_value();
+               toggleBreakpointLine.has_value() || step != DebugStep::None || jumpTo.has_value() ||
+               keepMine.has_value() || takeDisk.has_value();
     }
 };
 

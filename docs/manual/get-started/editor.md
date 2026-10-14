@@ -251,6 +251,40 @@ the saves are written -- and then throws the scripts away: their connections,
 the modules they required and the values those modules held. The next Play
 starts every script fresh, in the world as it was when you pressed Play.
 
+## Files changed outside the editor
+
+You can keep the editor open while another program changes the project's
+files. That program can be VS Code, an AI agent, a sync tool or a second
+copy of the editor. The editor checks `src/`, `content/` and `i18n/` twice a
+second and takes in each file once it has stopped changing. A file that is
+saved without being changed does nothing.
+
+- **A script** that was not edited here takes the new text. Its tab shows it,
+  and the next Play runs it. If you edited the script here too, its tab shows
+  **This file changed on disk while you were editing it**, with two buttons:
+  **Keep mine**, which writes your text over the file, and **Take the disk's**,
+  which replaces your text. Until you choose, a save keeps the file on disk
+  and puts your text in `.engine/conflicts/`.
+- **A new script file** under `src/` appears in the Explorer, in the place
+  where opening the project would have put it. **A deleted file** takes its
+  script with it. If you edited that script here, the script stays, and the
+  next save writes it back.
+- **The open scene, stamp or material** is read again if you have not edited
+  it. If you have, the editor asks: **Reload from disk** drops your edits, and
+  **Keep mine** lets the next save write over the file. A save never writes
+  over a file that changed on disk without that answer. It keeps the disk's
+  version and puts yours in `.engine/conflicts/`.
+- **Models, textures, sounds and other content** are read again the next
+  time they are drawn or played. Language files under `i18n/` are read again
+  the same way.
+
+**While the game runs**, a changed file is held, and the status bar shows how
+many are waiting. They are taken in at Stop, so the next Play runs them. The
+code of a running game is never changed while it runs. Click the status bar
+to stop, take the files in and play again. If you want that to happen every
+time a script changes, set **Preferences > Performance > A script file changed
+during Play** to **Restart Play with it**.
+
 ## Where to look next
 
 - [Scenes: the world as data](manual:world/scenes)

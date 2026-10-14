@@ -73,6 +73,8 @@ EditorPerformance loadEditorPerformance(const std::filesystem::path& file)
     }
     if (const core::JsonValue saved = root["play_with_saved_settings"]; saved.type() == core::JsonType::Boolean)
         performance.playWithSavedSettings = saved.asBool();
+    if (const core::JsonValue restart = root["restart_play_on_change"]; restart.type() == core::JsonType::Boolean)
+        performance.restartPlayOnChange = restart.asBool();
     return performance;
 }
 
@@ -87,6 +89,7 @@ bool saveEditorPerformance(const std::filesystem::path& file, const EditorPerfor
     writer.field("background_throttle", performance.backgroundThrottle);
     writer.field("viewport_quality", static_cast<core::i64>(performance.viewportQuality));
     writer.field("play_with_saved_settings", performance.playWithSavedSettings);
+    writer.field("restart_play_on_change", performance.restartPlayOnChange);
     writer.endObject();
 
     (void)platform::createDirectories(file.parent_path());

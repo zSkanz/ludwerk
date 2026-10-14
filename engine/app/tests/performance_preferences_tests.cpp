@@ -51,7 +51,7 @@ struct Desk
 
 } // namespace
 
-TEST_CASE("ADR 0147: Preferences' Performance page lays out its four settings, and a search finds each")
+TEST_CASE("ADR 0147: Preferences' Performance page lays out its five settings, and a search finds each")
 {
     Desk desk;
     // Drawn at every choice the page offers, so each one's name is asked for.
@@ -63,7 +63,7 @@ TEST_CASE("ADR 0147: Preferences' Performance page lays out its four settings, a
               .frameRate = app::EditorPerformance::kUnlimited, .viewportQuality = 3, .playWithSavedSettings = true}}) {
         app::setEditorPerformance(shown);
         for (int frame = 0; frame < 3; ++frame)
-            CHECK(desk.frame({}) == 4);
+            CHECK(desk.frame({}) == 5);
     }
     app::setEditorPerformance(before);
 
@@ -71,5 +71,7 @@ TEST_CASE("ADR 0147: Preferences' Performance page lays out its four settings, a
     CHECK(desk.frame("VIEWPORT") == 1);
     CHECK(desk.frame("saved player") == 1);
     CHECK(desk.frame("background") == 1);
+    // The file-watching batch's: what a script changed during Play does.
+    CHECK(desk.frame("during play") == 1);
     CHECK(desk.frame("nothing of the sort") == 0);
 }

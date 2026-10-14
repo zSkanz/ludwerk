@@ -2168,6 +2168,42 @@ bool scriptAction(const ScriptActionButton& button, std::string_view id, const c
     return button ? button(id, label, compact) : ImGui::Button(label);
 }
 
+// **The file changed on disk while this tab was edited**: said across the
+// top of the pane, with the two answers, until one is chosen. Neither text is
+// lost meanwhile -- a save keeps the disk and puts this text beside it.
+void drawDiskConflict(const OpenScript& tab, ScriptEditorCommands& out, std::size_t index, ImVec2 paneMin,
+                      float paneWidth, const ScriptActionButton& actionButton)
+{
+    if (!tab.changedOnDisk)
+        return;
+    const ThemePalette& p = currentTheme().palette;
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float height = ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f;
+    ImGui::SetCursorScreenPos(ImVec2(paneMin.x + 6.0f, paneMin.y + 6.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(p.surfaceRaised.r, p.surfaceRaised.g, p.surfaceRaised.b, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(p.warning.r, p.warning.g, p.warning.b, 0.8f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+    if (ImGui::BeginChild("##disk-conflict", ImVec2(std::max(paneWidth - 30.0f, 120.0f), height),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+                          ImGuiWindowFlags_NoScrollbar)) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.script.changed_on_disk")));
+        ImGui::SameLine();
+        if (scriptAction(actionButton, "keep-mine", core::tr(ENG_TR("engine.editor.script.keep_mine"))))
+            out.keepMine = index;
+        if (ImGui::IsItemHovered())
+            pointerTip("%s", core::tr(ENG_TR("engine.editor.script.keep_mine_tip")));
+        ImGui::SameLine();
+        if (scriptAction(actionButton, "take-disk", core::tr(ENG_TR("engine.editor.script.take_disk"))))
+            out.takeDisk = index;
+        if (ImGui::IsItemHovered())
+            pointerTip("%s", core::tr(ENG_TR("engine.editor.script.take_disk_tip")));
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+}
+
 void drawFindBox(OpenScript& tab, ScriptEditorCommands& out, std::size_t index, ImVec2 paneMin, float paneWidth,
                  const ScriptActionButton& actionButton)
 {
@@ -3176,6 +3212,7 @@ void drawPane(OpenScript& tab, ScriptEditor& editor, const DebugView& debug, con
 
     ImGui::EndChild();
     drawFindBox(tab, out, index, paneTopLeft, paneOuterWidth, actionButton);
+    drawDiskConflict(tab, out, index, paneTopLeft, paneOuterWidth, actionButton);
 }
 
 } // namespace

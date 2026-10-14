@@ -334,11 +334,12 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
     scene::StampLibrary stamps(world, stampSource());
     const std::string text = scene::writeScene(world, &report, &stamps);
 
-    if (!platform::createDirectories(path.parent_path()) || !platform::writeTextFileDurable(path, text)) {
-        m_status =
-            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", path.string()}}), true};
+    std::error_code relativeEc;
+    const std::string scenePath = m_content.root().empty()
+                                      ? std::string{}
+                                      : std::filesystem::relative(path, m_content.root(), relativeEc).generic_string();
+    if (!writeGuarded(path, scenePath, text))
         return false;
-    }
 
     // **The game's own file beside it** (ADR 0105): what is authored under
     // `GlobalScriptService` belongs to no scene, so it is written to the
@@ -1091,6 +1092,9 @@ bool EditorCommands::refuseAuthoring() noexcept
     drop(stampVerbSubject, none.stampVerbSubject);
     drop(stampVerbText, none.stampVerbText);
     drop(openStamp, none.openStamp);
+    // A reload from disk replaces what is edited; the dialog that asks is an
+    // editing one.
+    drop(reloadFromDisk, none.reloadFromDisk);
     drop(newStampClass, none.newStampClass);
     drop(newStampName, none.newStampName);
     // What is dropped on the world or on a property.
@@ -1915,6 +1919,13 @@ std::optional<std::size_t> Editor::followContent(scene::World& world, std::strin
         return std::nullopt;
     }
     const std::size_t files = rewritten.changed;
+    // **The files it rewrote are the editor's own writes**: what it holds of
+    // the open scene, stamp and material is what they hold now, or the next
+    // save would take the rewrite for a change from outside.
+    for (auto& [path, hash] : m_diskTexts) {
+        if (std::string text; platform::readTextFile(m_content.root() / std::filesystem::path(path), text))
+            hash = script::scriptTextHash(text);
+    }
     // The scene's world, and the stamp open over it, which is a world of its own.
     std::size_t instances = retargetWorld(world, from, to);
     if (m_stage != nullptr)
@@ -2104,6 +2115,8 @@ bool Editor::openStamp(std::string_view path, scene::ClassRegistry& classes, sce
         m_sceneHistory = std::move(m_history);
     m_stage = std::move(stage);
     m_stamp = StampSession{relative, root, false, text};
+    rememberDiskText(relative, text);
+    forgetOutsideChange(relative);
 
     // A different world in the plainest sense -- a different `scene::World`
     // object -- so everything a panel keyed by id has to go. That is what
@@ -2525,6 +2538,8 @@ bool Editor::openMaterial(std::string_view path)
     m_material.path = relative;
     m_material.asset = *read;
     m_material.saved = *read;
+    rememberDiskText(relative, text);
+    forgetOutsideChange(relative);
     m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.editing"), {{"relative", relative}}), false};
     return true;
 }
@@ -2600,11 +2615,8 @@ bool Editor::saveMaterial()
     if (!m_material.open())
         return false;
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(m_material.path);
-    if (!writeMaterialFile(absolute, m_material.asset)) {
-        m_status =
-            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", m_material.path}}), true};
+    if (!writeGuarded(absolute, m_material.path, asset::writeMaterialAsset(m_material.asset)))
         return false;
-    }
     m_material.saved = m_material.asset;
     // **Every open world updates on save** (ADR 0062): the library forgets
     // the file and reads it back, which is what a watcher's report would do a
@@ -3302,11 +3314,8 @@ bool Editor::saveStamp(scene::World& game, core::InstanceId gameRoot)
     const std::string text =
         scene::writeStamp(m_stage->world(), m_stamp.root, &report, &stamps, scene::stampBaseOf(m_stamp.baseline));
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(m_stamp.path);
-    if (!platform::createDirectories(absolute.parent_path()) || !platform::writeTextFileDurable(absolute, text)) {
-        m_status =
-            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", m_stamp.path}}), true};
+    if (!writeGuarded(absolute, m_stamp.path, text))
         return false;
-    }
 
     // **Every linked instance in the game's world follows the file** (ADR
     // 0051), measured against the text they were built from -- which is why the
@@ -4220,6 +4229,72 @@ void Editor::adoptOpenScene(std::string_view relativePath)
     // difference between the editor knowing what it has and the editor
     // discarding a world to find out.
     m_openScene = std::string(relativePath);
+    if (std::string text; platform::readTextFile(m_content.root() / std::filesystem::path(m_openScene), text))
+        rememberDiskText(m_openScene, text);
+}
+
+void Editor::rememberDiskText(std::string_view contentPath, std::string_view text)
+{
+    if (!contentPath.empty())
+        m_diskTexts[std::string(contentPath)] = script::scriptTextHash(text);
+}
+
+bool Editor::changedOutside(std::string_view contentPath) const
+{
+    const auto known = m_diskTexts.find(std::string(contentPath));
+    if (known == m_diskTexts.end() || m_content.root().empty())
+        return false;
+    std::string text;
+    if (!platform::readTextFile(m_content.root() / std::filesystem::path(contentPath), text))
+        return false;
+    return script::scriptTextHash(text) != known->second;
+}
+
+void Editor::askAboutOutsideChange(OutsideChange change)
+{
+    for (const OutsideChange& waiting : m_outside) {
+        if (waiting.path == change.path)
+            return;
+    }
+    m_outside.push_back(std::move(change));
+}
+
+void Editor::keepMineOver(std::string_view contentPath)
+{
+    if (std::string text; !m_content.root().empty() &&
+                          platform::readTextFile(m_content.root() / std::filesystem::path(contentPath), text))
+        rememberDiskText(contentPath, text);
+    forgetOutsideChange(contentPath);
+}
+
+void Editor::forgetOutsideChange(std::string_view contentPath)
+{
+    std::erase_if(m_outside, [contentPath](const OutsideChange& change) { return change.path == contentPath; });
+}
+
+bool Editor::writeGuarded(const std::filesystem::path& absolute, std::string_view contentPath, std::string_view text)
+{
+    if (changedOutside(contentPath)) {
+        // **The disk is kept, and nothing is lost**: the editor's version goes
+        // where a script's has always gone in the same case.
+        const std::filesystem::path aside =
+            m_content.root().parent_path() / ".engine" / "conflicts" / std::filesystem::path(contentPath);
+        const bool kept =
+            platform::createDirectories(aside.parent_path()) && platform::writeTextFileDurable(aside, text);
+        m_status = EditorStatus{core::tr(kept ? ENG_TR("engine.editor.status.changed_on_disk_kept_aside")
+                                              : ENG_TR("engine.editor.status.could_not_keep_aside"),
+                                         {{"file", std::string(contentPath)}}),
+                                true};
+        return false;
+    }
+    if (!platform::createDirectories(absolute.parent_path()) || !platform::writeTextFileDurable(absolute, text)) {
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", absolute.string()}}), true};
+        return false;
+    }
+    rememberDiskText(contentPath, text);
+    forgetOutsideChange(contentPath);
+    return true;
 }
 
 void Editor::openContent(const std::filesystem::path& contentRoot)
@@ -4237,6 +4312,9 @@ bool Editor::openScene(scene::World& world, std::string_view relativePath, Inspe
         return false;
 
     m_openScene = std::string(relativePath);
+    if (std::string text; platform::readTextFile(absolute, text))
+        rememberDiskText(m_openScene, text);
+    forgetOutsideChange(m_openScene);
     m_history.clear();
     m_sceneHistory.clear();
     m_sceneDirty = false;
@@ -4389,6 +4467,8 @@ Editor::ScriptSave Editor::saveSceneScript(scene::World& world, core::InstanceId
             EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", path.string()}}), true};
         return ScriptSave::Failed;
     }
+    // The editor's own write: what it holds of the scene now.
+    rememberDiskText(m_openScene, patched);
 
     // **Nothing else unsaved is left** when the world now writes exactly this
     // file -- then the scene is clean, and closing will not ask about it.

@@ -695,6 +695,10 @@ struct EditorCommands
     // all three are drained at the safe point like everything else that
     // replaces a world.
     std::string openStamp;
+    // **Read again from disk**, content-relative: the answer to "changed on
+    // disk while you edited it" that drops this editor's edits -- the scene,
+    // the stamp or the material. Drained at the safe point, as an open is.
+    std::string reloadFromDisk;
     bool saveStamp = false;
     bool closeStamp = false;
     // Whether closing writes first. False is what "close without saving" means.
@@ -1534,6 +1538,49 @@ public:
     };
 
     [[nodiscard]] const MaterialSession& materialSession() const noexcept { return m_material; }
+
+    // --- A file changed outside the editor (the file-watching batch) --------
+    //
+    // **What the editor last read or wrote of each content file it holds
+    // open** -- the scene, the stamp, the material -- as a hash of the text, by
+    // content-relative path. A file found any other way on disk was changed
+    // outside: by VS Code, an agent, a sync tool. **A save never writes over
+    // such a file**: the disk is kept, the editor's version is put beside it
+    // under `.engine/conflicts/`, and the save says so -- as a script's
+    // `Ctrl+S` has always done.
+    void rememberDiskText(std::string_view contentPath, std::string_view text);
+    // Whether the file differs from what the editor last read or wrote of it.
+    // False for a file the editor holds nothing of, and for one that is gone.
+    [[nodiscard]] bool changedOutside(std::string_view contentPath) const;
+
+    // An open file changed on disk while it was edited here: what the editor
+    // asks about, one at a time, oldest first.
+    enum class OutsideKind : core::u8
+    {
+        Scene,
+        Stamp,
+        Material,
+    };
+    struct OutsideChange
+    {
+        std::string path;
+        OutsideKind kind = OutsideKind::Scene;
+    };
+    void askAboutOutsideChange(OutsideChange change);
+    [[nodiscard]] const std::vector<OutsideChange>& outsideChanges() const noexcept { return m_outside; }
+    // **Keep this editor's**: the disk as it is now is taken as read, so the
+    // next save writes over it -- knowingly, which is the point of asking.
+    void keepMineOver(std::string_view contentPath);
+    // The question answered, whichever way.
+    void forgetOutsideChange(std::string_view contentPath);
+
+    // **Files changed outside while the game runs**: held and applied at
+    // Stop, so a running game's code never changes under it. How many wait,
+    // for the status bar, which offers to restart Play at once.
+    void setFilesChangedInPlay(core::u32 count) noexcept { m_filesChangedInPlay = count; }
+    [[nodiscard]] core::u32 filesChangedInPlay() const noexcept { return m_filesChangedInPlay; }
+    void requestRestartPlay() noexcept { m_restartPlay = true; }
+    [[nodiscard]] bool takeRestartPlay() noexcept { return std::exchange(m_restartPlay, false); }
 
     // Opens the material file at `path` in the panel. A file that cannot be
     // read is refused with the reason in `status()`.
@@ -3567,6 +3614,15 @@ private:
     StatusSlot m_status;
     ContentTree m_content;
     std::string m_openScene;
+    // `rememberDiskText`'s record, and the questions waiting for an answer.
+    std::unordered_map<std::string, core::u64> m_diskTexts;
+    std::vector<OutsideChange> m_outside;
+    core::u32 m_filesChangedInPlay = 0;
+    bool m_restartPlay = false;
+    // Writes `text` to a content file unless it changed outside since the
+    // editor last read or wrote it; then the editor's version goes beside it
+    // and the status says so. True when the file now holds `text`.
+    bool writeGuarded(const std::filesystem::path& absolute, std::string_view contentPath, std::string_view text);
     std::optional<ScriptFileRequest> m_scriptFileRequest;
     MatchSettings m_match;
     bool m_matchRunning = false;

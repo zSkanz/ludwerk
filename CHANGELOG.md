@@ -11,6 +11,10 @@ here.
 
 ### Fixed
 
+- A model whose mesh is still loading no longer flashes a thin white wire box
+  in a game. A swapped character, a new piece of armour and a preview were the
+  usual cases. With a camera, a part with nothing to draw yet draws nothing
+  until it has something; the wire box is only for a world with no camera.
 - A server takes more than eight players from one network address: a
   household, a LAN house, a school or a mobile carrier. The limit is
   `[network] max_connections_per_address` or `--max-per-address=N`, 64 by
@@ -40,6 +44,18 @@ here.
 
 ### Added
 
+- The editor notices files changed outside it while it is open, such as by
+  VS Code or another program:
+  - A script it has not edited takes the new text, and the next Play runs it.
+    A script edited in both places asks whether to keep your version or take
+    the disk's.
+  - New and deleted script files appear in or leave the Explorer.
+  - The open scene, stamp or material is reloaded, or the editor asks first if
+    you have edited it.
+  - A save never writes over a file that changed on disk. It keeps the disk's
+    version and puts yours in `.engine/conflicts/`.
+  - While the game runs, changes wait until Stop. To restart Play with them
+    instead, use the status bar or Preferences > Performance.
 - Luau's flags are a project setting: `[luau.flags]` in `project.toml`, and
   Project Settings > Luau, which offers `if local` and exported values by name
   and every flag under Advanced. The game, the editor's checker,

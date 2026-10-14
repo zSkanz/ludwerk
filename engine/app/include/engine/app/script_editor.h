@@ -310,6 +310,11 @@ struct OpenScript
     // caret on its first line, instead of waiting for a click.
     bool claimCaret = false;
 
+    // **The file changed on disk while this text was edited here** (the
+    // file-watching batch): the tab says so and offers to keep this text or
+    // take the disk's, until one is chosen.
+    bool changedOnDisk = false;
+
     [[nodiscard]] bool dirty() const
     {
         if (document.revision() == savedRevision)

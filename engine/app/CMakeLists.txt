@@ -8,6 +8,8 @@ engine_add_module(app
     SOURCES
         src/world_host.cpp
         src/luau_flags.cpp
+        src/project_watch.cpp
+        src/external_changes.cpp
         src/world_host_sub_worlds.cpp
         src/network_session.cpp
         src/match_launcher.cpp
@@ -379,6 +381,7 @@ engine_add_module_tests(app
         tests/gamepad_tests.cpp
         tests/draw_poses_tests.cpp
         tests/script_files_tests.cpp
+        tests/external_changes_tests.cpp
         tests/sub_world_tests.cpp
         tests/debug_overlay_tests.cpp
         tests/inspector_tests.cpp

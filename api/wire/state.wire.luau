@@ -3446,7 +3446,8 @@ local Classes: { Schema.Class } = {
         Name = "CharacterBody",
         Extends = "BasePart",
         Doc = "A player's body, and the one class where the authority's answer and the client's guess "
-            .. "are most visibly different. **Carries `BasePart`'s six too**, by `Extends` -- the first "
+            .. "are most visibly different. **Carries every field `BasePart` does**, by `Extends` -- its "
+            .. "place, its size, its look, `MaterialParameters` and how it collides among them; the first "
             .. "version of this entry said so in its doc and not in its data, and a replica would have "
             .. "held a character that never moved.",
         Fields = CharacterBodyFields,

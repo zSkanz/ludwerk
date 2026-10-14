@@ -35,6 +35,11 @@ struct EditorPerformance
     // Whether Play starts with the settings a player saved, rather than with
     // the project's defaults.
     bool playWithSavedSettings = false;
+    // **A script file changed outside while the game runs** (the
+    // file-watching batch): false holds it and applies it at Stop, true stops,
+    // applies it and plays again at once. A running game's code is never
+    // changed under it either way.
+    bool restartPlayOnChange = false;
 
     [[nodiscard]] bool operator==(const EditorPerformance&) const = default;
 };
