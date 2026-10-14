@@ -337,6 +337,12 @@ html[data-theme="dark"] .brand .brand-dark {
     max-width: var(--content-max);
 }
 
+/* A wide page -- the home, the reference's index -- is not a column of text:
+   its own sections centre themselves and set their own widths. */
+.layout-wide .article {
+    max-width: none;
+}
+
 /* ---------- navigation ---------- */
 
 .nav-list {
@@ -884,6 +890,12 @@ html[data-theme="dark"] .tok-type {
     margin: 1.25rem 0;
     border: 1px solid var(--border);
     border-radius: 0.5rem;
+}
+
+/* A class's icon stays on the line of its name: a long name wrapped under its
+   own icon reads as two rows. */
+td:has(> img.nav-icon) {
+    white-space: nowrap;
 }
 
 table {
