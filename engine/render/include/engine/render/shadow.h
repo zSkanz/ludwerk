@@ -61,10 +61,19 @@ inline constexpr f32 kShadowDistance = 120.0f;
 inline constexpr f32 kShadowSplitLambda = 0.85f;
 
 // How far above a cascade's sphere a caster can be and still reach into it. A
-// constant because the snapshot carries no world bounds; it buys correctness at
-// the cost of depth range, and the depth bias below is expressed in metres
-// precisely so that cost does not turn into peter-panning.
+// minimum for a scene with no caster bounds. When bounds are available, each
+// cascade extends further to include the objects that can shadow its slice.
+// Depth bias is in metres, independent of that projection's depth range.
 inline constexpr f32 kShadowCasterMargin = 25.0f;
+
+// **And a maximum**, past the slice's own sphere. A caster's bounds are a
+// sphere, and a flat one is not: a 2 km floor under everything has a sphere
+// that reaches 1.4 km towards any sun, and without this every cascade of every
+// scene with one would sweep that far for casters and spend that depth. A
+// kilometre still holds a 100-metre tower's shadow at a sun ten degrees up,
+// and at D32 its depth step is a tenth of a millimetre against the bias's
+// eight.
+inline constexpr f32 kShadowMaxCasterReach = 1000.0f;
 
 // What `extract` culls against: geometry further than this from the camera can
 // neither be seen nor cast into view.
@@ -328,6 +337,9 @@ struct ShadowCascades
     // slice's own sphere, so the two numbers stopped being the same thing.
     core::Vec3 cullCentre[kShadowCascadeCount];
     f32 cullRadius[kShadowCascadeCount]{};
+    // Distance swept from the receiver sphere towards the sun. The projection
+    // and the renderer's caster cull must use the same fitted reach.
+    f32 casterReach[kShadowCascadeCount]{};
 
     // **The fit's own memory, and it is what stops shadow edges crawling.
     // ** A box refitted to its contents every frame changes its texel

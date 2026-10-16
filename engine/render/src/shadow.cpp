@@ -186,6 +186,7 @@ ShadowCascades fitShadowCascades(const ShadowFit& fit, const ShadowCascades* pre
         // number. That is a bigger change than this defect needs.
         f32 extent = radius;
         Vec3 boxCentre = centre;
+        f32 casterReach = radius + kShadowCasterMargin;
         // Whether this cascade is reusing last frame's box. It decides two
         // things: the extent and centre above, and whether the snap below runs
         // at all -- see the comment there, which is the flicker under a moving sun.
@@ -207,14 +208,14 @@ ShadowCascades fitShadowCascades(const ShadowFit& fit, const ShadowCascades* pre
             f32 maxY = 0.0f;
             bool any = false;
             for (const ShadowCasterBounds& caster : fit.casters) {
-                // Only what this cascade will actually draw. The same test the
-                // renderer culls with, so the box cannot be fitted to a caster
-                // that is then culled away -- which would leave a shadow off the
-                // edge of its own map.
+                // A directional light can project a distant building into a
+                // near slice. Test the whole column towards the sun, rather
+                // than just the receiver sphere or a fixed extrusion.
                 const Vec3 toCaster = caster.centre - centre;
-                const f32 reach = radius + caster.radius;
-                if (core::dot(toCaster, toCaster) > reach * reach)
+                const f32 along = core::dot(toCaster, direction);
+                if (!casterReaches(centre, radius, direction * std::max(along, 0.0f), caster.centre, caster.radius))
                     continue;
+                casterReach = std::max(casterReach, along + caster.radius + kShadowCasterMargin);
 
                 const f32 x = core::dot(lightX, caster.centre);
                 const f32 y = core::dot(lightY, caster.centre);
@@ -378,11 +379,12 @@ ShadowCascades fitShadowCascades(const ShadowFit& fit, const ShadowCascades* pre
             boxCentre = boxCentre + lightAxisX * static_cast<f32>(offsetX) + lightAxisY * static_cast<f32>(offsetY);
         }
 
-        // The depth range stays the SLICE's, not the box's: the box was narrowed
-        // across the light, and how far along it a caster may stand is a
-        // different question with the same answer it had before.
-        const f32 depthRange = 2.0f * radius + kShadowCasterMargin;
-        const Mat4 view = core::lookAt(boxCentre + direction * (radius + kShadowCasterMargin), boxCentre, up);
+        casterReach = std::min(casterReach, radius + kShadowMaxCasterReach);
+        // Keep the receiver's far side and every contributing caster inside
+        // the projection. A fixed near extrusion clips long shadows at camera
+        // cascade boundaries, making a stationary patch appear to follow it.
+        const f32 depthRange = radius + casterReach;
+        const Mat4 view = core::lookAt(boxCentre + direction * casterReach, boxCentre, up);
 
         cascades.viewProjection[index] = orthographic(extent, 0.0f, depthRange) * view;
         cascades.farDistance[index] = sliceFar;
@@ -396,6 +398,7 @@ ShadowCascades fitShadowCascades(const ShadowFit& fit, const ShadowCascades* pre
 
         cascades.cullCentre[index] = centre;
         cascades.cullRadius[index] = radius;
+        cascades.casterReach[index] = casterReach;
     }
 
     cascades.fitted = true;

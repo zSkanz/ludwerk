@@ -82,6 +82,55 @@ TEST_CASE("lambda is the blend between the two schemes, and both ends are reacha
     CHECK(logarithmic[1] < uniform[1]);
 }
 
+TEST_CASE("a distant caster between the sun and a near cascade stays inside its depth range")
+{
+    const core::Vec3 sun = core::normalize(core::Vec3{-1.0f, 0.1f, 0.0f});
+    for (const double moved : {0.0, 10.0, -10.0}) {
+        auto fit = fitAt(core::DVec3{moved, 0.0, 0.0}, sun);
+        fit.nearPlane = 1.0f;
+        const auto empty = render::fitShadowCascades(fit);
+        const core::Vec3 receiver = empty.cullCentre[0];
+        const core::Vec3 caster = receiver + sun * 100.0f;
+        const std::vector<render::ShadowCasterBounds> casters{{caster, 5.0f}};
+        fit.casters = casters;
+        const auto made = render::fitShadowCascades(fit);
+        // This object shadows the slice even though it is far outside the
+        // camera's frustum and the old fixed 25-metre extrusion.
+        const auto front = core::transformPoint(made.viewProjection[0], caster + sun * 5.0f);
+        const auto back = core::transformPoint(made.viewProjection[0], receiver - sun * empty.cullRadius[0]);
+        CHECK(front.z >= 0.0f);
+        CHECK(front.z <= 1.0f);
+        CHECK(back.z >= 0.0f);
+        CHECK(back.z <= 1.00001f);
+        CHECK(render::casterReaches(made.cullCentre[0], made.cullRadius[0], sun * made.casterReach[0], caster, 5.0f));
+    }
+}
+
+TEST_CASE("a distant object beside the sunward column does not extend a cascade's depth")
+{
+    auto fit = fitAt(core::DVec3{}, core::Vec3{0.0f, 1.0f, 0.0f});
+    const auto empty = render::fitShadowCascades(fit);
+    const std::vector<render::ShadowCasterBounds> casters{{core::Vec3{10000.0f, 10000.0f, 0.0f}, 1.0f}};
+    fit.casters = casters;
+    const auto made = render::fitShadowCascades(fit);
+    for (core::u32 cascade = 0; cascade < render::kShadowCascadeCount; ++cascade)
+        CHECK(nearly(made.depthRange[cascade], empty.depthRange[cascade]));
+}
+
+TEST_CASE("a caster as big as the map stretches no cascade past the reach's maximum")
+{
+    // A floor of kilometres, the cascade inside its sphere: everything it is
+    // bounded by reaches towards the sun, and only so much of it may count.
+    auto fit = fitAt(core::DVec3{}, core::normalize(core::Vec3{-1.0f, 0.3f, 0.0f}));
+    const std::vector<render::ShadowCasterBounds> casters{{core::Vec3{0.0f, -1.0f, 0.0f}, 3000.0f}};
+    fit.casters = casters;
+    const auto made = render::fitShadowCascades(fit);
+    for (core::u32 cascade = 0; cascade < render::kShadowCascadeCount; ++cascade) {
+        CHECK(made.casterReach[cascade] <= made.cullRadius[cascade] + render::kShadowMaxCasterReach + 1e-3f);
+        CHECK(made.depthRange[cascade] <= 2.0f * made.cullRadius[cascade] + render::kShadowMaxCasterReach + 1e-3f);
+    }
+}
+
 TEST_CASE("a world point keeps its shadow texel when the camera moves under one")
 {
     const core::DVec3 world{3.0, 1.5, -12.0};

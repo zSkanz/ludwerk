@@ -1650,6 +1650,17 @@ if(ENG_BUILD_TESTS)
     # shadow's filter was turned by a different angle at every pixel where it
     # had no gaps for the turn to hide, and drew a fringe of hairs along every
     # edge that only a temporal pass was hiding. See the driver.
+    add_test(NAME shadow_reach_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/shadowreach
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/shadow-reach
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_shadow_reach_gate.cmake)
+    set_tests_properties(shadow_reach_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     add_test(NAME shadow_edge_gate
         COMMAND ${CMAKE_COMMAND}
             -DHOST=$<TARGET_FILE:engine_host>
@@ -2852,7 +2863,7 @@ if(ENG_BUILD_TESTS)
         editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived
         decal_blend_gate decal_receives_gate thin_wall_gate mesh_room_gate furnace_gate baked_room_gate relight_gate open_field_gate split_screen_gate overlay_shots_game editor_shots_timeline editor_shots_timeline-popups editor_shots_properties editor_shots_character editor_shots_profiler editor_shots_profiler-capture editor_shots_graph-surface editor_shots_graph-animation editor_shots_graph-running foliage_decal_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d
         temporal_upscale_gate frame_generation_gate motion_whole_gate morph_landing shape_keys_example texture_quality_gate scene_release_gate
-        screen_light_gate shadow_edge_gate probe_read_gate ceiling_joint_gate ceiling_joint_bare_gate
+        screen_light_gate shadow_edge_gate shadow_reach_gate probe_read_gate ceiling_joint_gate ceiling_joint_bare_gate
         cloth_shadow_flicker_gate vehicle_gate breaking_wall_gate cloth_gate)
     if(WIN32)
         list(APPEND drawn_tests morph_landing_vulkan screen_light_gate_vulkan)

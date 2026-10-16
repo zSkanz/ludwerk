@@ -9439,8 +9439,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             // And swept towards the sun as far as the map's depth goes:
             // what stands between the sphere and the sun casts into it.
             const CullSphere cull{cascades.cullCentre[index], cascades.cullRadius[index] + filterReach,
-                                  core::normalize(fit.sunDirection) *
-                                      (cascades.cullRadius[index] + kShadowCasterMargin)};
+                                  core::normalize(fit.sunDirection) * cascades.casterReach[index]};
             // **The terrain has no far side to store.** Every mesh here culls
             // its front faces, so the depth in the map is the back of a solid
             // and a lit surface never shadows itself. The ground is one

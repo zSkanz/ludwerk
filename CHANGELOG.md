@@ -11,6 +11,9 @@ here.
 
 ### Fixed
 
+- Long shadows from distant buildings no longer disappear at camera cascade
+  boundaries. Each sun-shadow projection includes the depth of the objects
+  that can shadow its visible region, rather than a fixed extrusion.
 - A model whose mesh is still loading no longer flashes a thin white wire box
   in a game. A swapped character, a new piece of armour and a preview were the
   usual cases. With a camera, a part with nothing to draw yet draws nothing
