@@ -203,6 +203,27 @@ two runs each; headless players four to a bot.
   chooses among them. What cuts the tick is fewer records to make -- ADR
   0234's dormancy and ADR 0230's channels.
 
+- **§8, in release builds**: a dedicated server, characters walking and
+  none asleep, a 20-second profile's means, `physics_threads` four against
+  nought.
+  - 1,500 wandering over 1.8 km, all but eight of them together: the tick
+    3.49 ms against 5.29, `physics.characters` 1.92 ms -- 1.28 µs a character
+    on the server's own thread -- against 3.57 (2.38 µs, the whole of the
+    step's work). The pool costs about a millisecond of processor time a
+    tick, waking and waiting: 0.48 of a core against 0.42. The same step was
+    5.2 µs a character before the character look-up stopped growing as the
+    square of the crowd.
+  - 300 players walking in a 40-metre square: 262 of them alone, 7.7 µs
+    each; the tick 2.68 ms against 2.79.
+  - 1,500 converging on one point: every one alone once they press, 13.8 µs
+    each, 21.5 ms a tick on any number of threads -- more than a server
+    holds. **That is the cost of a misuse**: 1,500 `CharacterBody`s scripted
+    to press into one point. A horde is a `Swarm`, which the engine walks with
+    nothing per enemy in Luau, and a crowd that walks a mesh is
+    `NavigationAgent`s, which steer round one another (the manual's
+    Navigation, Crowds). Whether agents that all reach one target pile up
+    there is not measured here: it is measured with the next work on NPCs.
+
 ## Script surface
 
 None new. What a script sees is the same world, sent cheaper. The numbers
@@ -240,6 +261,20 @@ print(stats.BytesSent, stats.SnapshotBytes)
 ## Not decided here
 
 How much each peer is sent (ADR 0229); which world a crowd is in (ADR 0230).
+
+**Islands of characters**, a later option: the characters stepping alone
+because they could meet -- 262 of 300 players walking in a 40-metre square,
+at 7.7 µs each -- grouped into islands of those that could meet one another,
+each island stepped in order on a worker of its own. Where the players are
+spread as in that square the islands would be small and most of the 262 would
+step in parallel -- how small is not measured; in a crowd pressed into one
+place it is one island and changes nothing.
+Island-mates have to meet each other where each one ended, without a worker
+writing their inner bodies into a world other workers read: what Jolt offers
+for that is contacts between characters themselves, which differ from the
+inner body's in where a contact comes from, in whether one character pushes
+another, in collision groups, stand-ins and touch events -- a change of
+behaviour with tests of its own.
 
 **A parallel character step**, decided in §8: the characters' controllers
 moved on several workers at once. What it was measured at before: Measured at 5.7 µs a character a tick in a
