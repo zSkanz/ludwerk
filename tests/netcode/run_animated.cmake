@@ -63,7 +63,7 @@ endif()
 # drawn. The frames are the most a slow machine is given; the joiner ends the
 # run when it has said what it saw, and the server ends when the joiner leaves.
 execute_process(
-    COMMAND "${HOST}" --headless --pace=60 "--serve=${PORT}" --frames=3600 "${game}"
+    COMMAND "${CMAKE_COMMAND}" -DOUT=server.out -P "${CMAKE_CURRENT_LIST_DIR}/apart.cmake" -- "${HOST}" --headless --pace=60 "--serve=${PORT}" --frames=3600 "${game}"
     COMMAND "${HOST}" --headless --rhi=null --pace=60 "--join=127.0.0.1:${PORT}" --frames=3000 "${game}"
     WORKING_DIRECTORY "${game}"
     RESULT_VARIABLE results

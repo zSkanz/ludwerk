@@ -325,6 +325,8 @@ struct Stats
     // the last answer**, the furthest of them, in metres, corrected or not
     // (ADR 0213): what a car left to drift under its correction is off by.
     core::f64 predictedDriftMetres = 0.0;
+    // Which predicted part that was: the furthest from the authority's.
+    core::InstanceId predictedDriftPart;
     // **The same, a seat** (ADR 0208): 0 the machine's first player, 1 to 3 its
     // guests. A correction is counted for each character that was wrong, so
     // "it is laggy for player two only" can be read back from a log.

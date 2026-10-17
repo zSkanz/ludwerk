@@ -29,7 +29,7 @@ set(game "${STAGE}/game")
 file(COPY "${PROJECT}/" DESTINATION "${game}" PATTERN ".engine" EXCLUDE PATTERN "tools" EXCLUDE)
 
 execute_process(
-    COMMAND "${HOST}" --headless --pace=60 "--serve=${PORT}" --frames=3000 "${game}"
+    COMMAND "${CMAKE_COMMAND}" -DOUT=server.out -P "${CMAKE_CURRENT_LIST_DIR}/apart.cmake" -- "${HOST}" --headless --pace=60 "--serve=${PORT}" --frames=3000 "${game}"
     COMMAND "${HOST}" --headless --rhi=null --pace=60 "--join=127.0.0.1:${PORT}" --frames=2400
             --locale=pt-BR --voice-locale=pt-BR "${game}"
     WORKING_DIRECTORY "${game}"

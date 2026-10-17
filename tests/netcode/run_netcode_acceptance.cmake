@@ -101,7 +101,7 @@ foreach(entry IN LISTS conditions)
     # runner with no GPU -- CI's Linux one -- could not open the ordinary
     # device, so the client never ran and the bot printed nothing.
     execute_process(
-        COMMAND "${HOST}" --headless --pace=60 "--serve=${port}" --frames=${serverFrames} "${game}"
+        COMMAND "${CMAKE_COMMAND}" -DOUT=server.out -P "${CMAKE_CURRENT_LIST_DIR}/apart.cmake" -- "${HOST}" --headless --pace=60 "--serve=${port}" --frames=${serverFrames} "${game}"
         COMMAND "${HOST}" --headless --rhi=null --pace=60 "--join=127.0.0.1:${port}"
                 --frames=${clientFrames}
                 "--net-delay=${delay}" "--net-jitter=${jitter}" "--net-loss=${loss}" --net-log-corrections "${game}"

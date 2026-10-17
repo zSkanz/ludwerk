@@ -547,8 +547,9 @@ struct EngineState
         u64 corrections = 0;
         f64 lastCorrectionMetres = 0.0;
         // The furthest a predicted part was from the authority's at the last
-        // answer (ADR 0213).
+        // answer (ADR 0213), and which part that was.
         f64 predictedDriftMetres = 0.0;
+        core::InstanceId predictedDriftPart;
         // **The same, a player at this machine** (ADR 0208): its first
         // player, then its guests by seat, each with a character of its own
         // that this machine predicts. A correction is counted for the

@@ -56,8 +56,9 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- The furthest any correction moved what this machine predicts, in metres:
--- what a correction looks like when there is one.
+-- The furthest any correction moved what this machine predicts, in metres,
+-- inside the measured stretches: what a correction looks like when there is
+-- one.
 local largest = 0
 
 local function corrections(seconds: number): (number, number)
@@ -197,6 +198,18 @@ task.spawn(function()
     -- pulled back softly, it stays small; one that is never pulled back
     -- would sit just under the correction for as long as it drives.
     local driftSum, driftCount, driftMax = 0, 0, 0
+    -- **The car's own**: the drift is the furthest predicted part's, and
+    -- once two cars touch the other is one of them. Its drift is kept apart,
+    -- by name. And the car's drift in the ticks no correction answered: a
+    -- correction fires at `VehicleCorrectionMetres` by design, so the tick it
+    -- fires reads at least that much.
+    local driftBetween = 0
+    local otherDrift, otherPart = 0, "--"
+    -- **Every correction of the drive, and the largest**, not only the ones
+    -- inside the stretches `corrections` counts: an 11 cm snap between two
+    -- of them was reported as none at all.
+    local runCorrections, runLargest = 0, 0
+    local runSeen = NetworkService:GetStats().Corrections
     local simulatedSpans: { number } = {}
     local function simulatedJumpOf(at: vector): number
         -- The simulated place moves a tick at a time: its line is a tick long.
@@ -214,10 +227,26 @@ task.spawn(function()
     local ticking = RunService.Heartbeat:Connect(function(dt: number)
         tickLength = dt
         simJump = math.max(simJump, simulatedJumpOf(car.Position))
-        local drift = NetworkService:GetStats().PredictedDrift
-        driftSum += drift
-        driftCount += 1
-        driftMax = math.max(driftMax, drift)
+        local stats = NetworkService:GetStats()
+        local corrected = stats.Corrections > runSeen
+        if corrected then
+            runCorrections += stats.Corrections - runSeen
+            runSeen = stats.Corrections
+            runLargest = math.max(runLargest, stats.LastCorrection)
+        end
+        local drift = stats.PredictedDrift
+        local part = stats.PredictedDriftPart
+        if part == nil or part == (car :: BasePart) then
+            driftSum += drift
+            driftCount += 1
+            driftMax = math.max(driftMax, drift)
+            if not corrected then
+                driftBetween = math.max(driftBetween, drift)
+            end
+        elseif drift > otherDrift then
+            otherDrift = drift
+            otherPart = (part :: BasePart).Name
+        end
     end)
     -- What is drawn can only be read in a frame. A frame that covers several
     -- ticks moves the car several ticks' worth off its line -- a stop in one
@@ -307,8 +336,11 @@ task.spawn(function()
             .. `stopping={stopping} contact={contact} hitches={hitches} stop={decimal(stop, 4)} `
             .. `carTicks={carTicks} walkTicks={walkTicks} ping={decimal(stats.Ping, 1)} `
             .. `predicted={stats.PredictedParts} driver={driven} closest={decimal(closest, 3)} `
-            .. `largest={decimal(largest, 3)} drawnJump={decimal(drawnJump * 1000, 1)} `
+            .. `largest={decimal(runLargest, 3)} largestInStretches={decimal(largest, 3)} `
+            .. `corrections={runCorrections} drawnJump={decimal(drawnJump * 1000, 1)} `
             .. `simJump={decimal(simJump * 1000, 1)} driftMean={decimal(driftSum / math.max(driftCount, 1) * 1000, 1)} `
-            .. `driftMax={decimal(driftMax * 1000, 1)} authorityJump={decimal(authorityJump * 1000, 1)}`
+            .. `driftMax={decimal(driftMax * 1000, 1)} driftBetween={decimal(driftBetween * 1000, 1)} `
+            .. `otherDrift={decimal(otherDrift * 1000, 1)} otherPart={otherPart} car={car.Name} `
+            .. `authorityJump={decimal(authorityJump * 1000, 1)}`
     )
 end)

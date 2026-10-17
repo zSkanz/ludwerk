@@ -64,7 +64,7 @@ set(conditions
 
 file(REMOVE_RECURSE "${STAGE}")
 file(MAKE_DIRECTORY "${STAGE}")
-set(table "| condition | seat | as it began | straight | corner | stopping | contact | largest correction (m) | drawn jump (mm) | simulated jump (mm) | the authority's own jump (mm) | drift from the authority, mean / max (mm) | long frames | stop (m) | closest (m) | ticks to answer: car, character | ping (ms) |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+set(table "| condition | seat | as it began | straight | corner | stopping | contact | between them | largest correction (m) | drawn jump (mm) | simulated jump (mm) | the authority's own jump (mm) | drift from the authority, mean / max (mm) | long frames | stop (m) | closest (m) | ticks to answer: car, character | ping (ms) |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 set(failures "")
 set(port ${PORT})
 
@@ -88,8 +88,8 @@ foreach(entry IN LISTS conditions)
                "--net-delay=${delay}" "--net-jitter=${jitter}" "--net-loss=${loss}" --net-log-corrections "${game}")
     if(clients EQUAL 2)
         execute_process(
-            COMMAND "${HOST}" --headless --pace=60 "--serve=${port}" --frames=2100 "${game}"
-            COMMAND ${client}
+            COMMAND "${CMAKE_COMMAND}" -DOUT=server.out -P "${CMAKE_CURRENT_LIST_DIR}/apart.cmake" -- "${HOST}" --headless --pace=60 "--serve=${port}" --frames=2100 "${game}"
+            COMMAND "${CMAKE_COMMAND}" -DOUT=client-1.out -P "${CMAKE_CURRENT_LIST_DIR}/apart.cmake" -- ${client}
             COMMAND ${client}
             WORKING_DIRECTORY "${game}"
             RESULT_VARIABLE results
@@ -97,7 +97,7 @@ foreach(entry IN LISTS conditions)
             ERROR_VARIABLE output)
     else()
         execute_process(
-            COMMAND "${HOST}" --headless --pace=60 "--serve=${port}" --frames=2100 "${game}"
+            COMMAND "${CMAKE_COMMAND}" -DOUT=server.out -P "${CMAKE_CURRENT_LIST_DIR}/apart.cmake" -- "${HOST}" --headless --pace=60 "--serve=${port}" --frames=2100 "${game}"
             COMMAND ${client}
             WORKING_DIRECTORY "${game}"
             RESULT_VARIABLE results
@@ -121,20 +121,30 @@ foreach(entry IN LISTS conditions)
     if(NOT said EQUAL clients)
         message("${output}")
         string(APPEND failures "  ${name}: ${said} of ${clients} bots printed a measurement\n")
-        string(APPEND table "| ${name} | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- |\n")
+        string(APPEND table
+               "| ${name} | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- |\n")
         continue()
     endif()
 
     foreach(line IN LISTS lines)
         message("${line}")
-        foreach(key seat start straight corner stopping contact hitches carTicks walkTicks)
+        foreach(key seat start straight corner stopping contact hitches carTicks walkTicks corrections)
             string(REGEX MATCH " ${key}=(-?[0-9]+)" _ "${line}")
             set(${key} ${CMAKE_MATCH_1})
         endforeach()
-        foreach(key stop ping closest largest drawnJump simJump driftMean driftMax authorityJump)
+        foreach(key stop ping closest largest drawnJump simJump driftMean driftMax driftBetween otherDrift
+                    authorityJump)
             string(REGEX MATCH " ${key}=([0-9.a-z]+)" _ "${line}")
             set(${key} ${CMAKE_MATCH_1})
         endforeach()
+        foreach(key otherPart car)
+            string(REGEX MATCH " ${key}=([^ ]+)" _ "${line}")
+            set(${key} ${CMAKE_MATCH_1})
+        endforeach()
+        # **The corrections between the measured stretches**: the drive's
+        # whole count less the stretches'. They count against the stretch
+        # rules below, as if they had fallen inside one.
+        math(EXPR outside "${corrections} - ${start} - ${straight} - ${corner} - ${stopping} - ${contact}")
         if(closest STREQUAL "inf")
             set(closest "--")
         endif()
@@ -145,20 +155,23 @@ foreach(entry IN LISTS conditions)
         endif()
         math(EXPR largestMillimetres "${largestMillimetres} + 0")
         string(APPEND table
-               "| ${name} | ${seat} | ${start} | ${straight} | ${corner} | ${stopping} | ${contact} | ${largest} | ${drawnJump} | ${simJump} | ${authorityJump} | ${driftMean} / ${driftMax} | ${hitches} | ${stop} | ${closest} | ${carTicks}, ${walkTicks} | ${ping} |\n")
+               "| ${name} | ${seat} | ${start} | ${straight} | ${corner} | ${stopping} | ${contact} | ${outside} | ${largest} | ${drawnJump} | ${simJump} | ${authorityJump} | ${driftMean} / ${driftMax} | ${hitches} | ${stop} | ${closest} | ${carTicks}, ${walkTicks} | ${ping} |\n")
 
         # A change begun in a tick the link lost costs one; a long frame on
         # either machine costs up to two.
         math(EXPR allowed "1 + 2 * ${hitches}")
         if(mode STREQUAL "park")
             math(EXPR allowedContact "3 + ${allowed}")
-            if(contact GREATER allowedContact)
-                string(APPEND failures "  ${name}: two cars touching took ${contact} corrections\n")
+            math(EXPR touched "${contact} + ${outside}")
+            if(touched GREATER allowedContact)
+                string(APPEND failures "  ${name}: two cars touching took ${touched} corrections "
+                       "(${outside} between the stretches)\n")
             endif()
         elseif(mode STREQUAL "drive")
-            math(EXPR driven "${straight} + ${corner}")
+            math(EXPR driven "${straight} + ${corner} + ${outside}")
             if(driven GREATER allowed)
-                string(APPEND failures "  ${name}: a straight and a corner took ${driven} corrections\n")
+                string(APPEND failures "  ${name}: a straight and a corner took ${driven} corrections "
+                       "(${outside} between the stretches)\n")
             endif()
         elseif(mode STREQUAL "nudge")
             # Half a metre aside, seen as half a metre.
@@ -237,12 +250,20 @@ foreach(entry IN LISTS conditions)
             string(APPEND failures "  ${name} (seat ${seat}): a correction of ${largest} m in a duel\n")
         endif()
         # **The car is not left apart from the authority's**: under its
-        # correction and pulled back each answer, the furthest it was from it
-        # stays under the correction -- on every row but the nudge (moved half
-        # a metre on purpose) and the duel (corrected past it by a crash, and
-        # held to 10 cm below).
-        if(NOT mode STREQUAL "nudge" AND NOT mode STREQUAL "duel" AND driftMax GREATER 30)
-            string(APPEND failures "  ${name}: the car drifted ${driftMax} mm from the authority's\n")
+        # correction and pulled back each answer, the furthest the driven car
+        # itself was from it stays under the correction -- on every row but
+        # the nudge (moved half a metre on purpose) and the duel (corrected
+        # past it by a crash, and held to 10 cm below). **Two cars touching
+        # are corrected by design**, and a correction fires at that very
+        # distance: there it is the car's drift in the ticks no correction
+        # answered. The parked car's own is printed, never held.
+        if(mode STREQUAL "park")
+            if(driftBetween GREATER 30)
+                string(APPEND failures "  ${name}: the car (${car}) drifted ${driftBetween} mm from the authority's "
+                       "between corrections (the most of any other part: ${otherDrift} mm, ${otherPart})\n")
+            endif()
+        elseif(NOT mode STREQUAL "nudge" AND NOT mode STREQUAL "duel" AND driftMax GREATER 30)
+            string(APPEND failures "  ${name}: the car (${car}) drifted ${driftMax} mm from the authority's\n")
         endif()
         # **And a ceiling the relative rules cannot raise**: on a clean link
         # the car steps where the authority's does, a millimetre or two a

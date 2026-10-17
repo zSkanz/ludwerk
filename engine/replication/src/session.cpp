@@ -7928,6 +7928,7 @@ void ReplicaSession::reconcileSeats(scene::World& world, std::span<Answer> answe
     // not a character's: said once, with the first answer.
     m_lastBodyCorrection = 0.0;
     f64 drift = 0.0;
+    InstanceId driftPart;
     bool pulled = false;
     if (anyComparing && m_replay != nullptr) {
         for (const scene::CharacterReplayStart::Body& body : work.front().answer->start.bodies) {
@@ -7936,7 +7937,10 @@ void ReplicaSession::reconcileSeats(scene::World& world, std::span<Answer> answe
                 continue;
             const core::DVec3 apart = body.cframe.position - mine->position;
             const f64 off = std::sqrt(apart.x * apart.x + apart.y * apart.y + apart.z * apart.z);
-            drift = std::max(drift, off);
+            if (off > drift || !driftPart.valid()) {
+                drift = std::max(drift, off);
+                driftPart = body.id;
+            }
             // **A vehicle's chassis under its own threshold is not
             // corrected, and not left either** (ADR 0213): it is stepped
             // again pulled part of the way to the authority's, so two
@@ -7991,8 +7995,10 @@ void ReplicaSession::reconcileSeats(scene::World& world, std::span<Answer> answe
         agreed = agreed && one.distance < ResyncMetres && !one.turned && !one.attributesOff;
     }
     // **Agreed is agreed**: every one of them, and what they push. Nothing to do.
-    if (anyComparing)
+    if (anyComparing) {
         m_stats.predictedDriftMetres = drift;
+        m_stats.predictedDriftPart = driftPart;
+    }
     if (agreed && m_lastBodyCorrection < ResyncMetres && !pulled)
         return;
     // **Under a centimetre, stepped again without a word** (ADR 0133). From

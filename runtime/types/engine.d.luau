@@ -5497,36 +5497,37 @@ declare extern type NetworkService extends Instance with
     --- last correction moved it, in meters. - `PredictedDrift`: how far the parts this machine predicts
     --- were from the authority's at the last answer, in meters, whether or not that was a correction.
     --- These are what its character pushes and the vehicle it drives. A driven vehicle is left a few
-    --- centimeters of drift and pulled back gently, so this stays small but is rarely zero. -
-    --- `InputBufferDepth`: how many ticks of this player's input the authority has queued.
-    --- `InputStarvations` counts the times the queue ran empty, and `InputReanchors` the times it was
-    --- restarted because the player's clock jumped, as after a long frame. - `InterpolationDelay`: how
-    --- far in the past other players are drawn, in milliseconds. It is two snapshot intervals plus the
-    --- link's jitter, and adapts to the link. - On a client, `PredictedParts` is the number of loose
-    --- parts near its character that it predicts. The table also reports how often a correction made
-    --- the client simulate them again, how many ticks it simulated again, and `ResimulationTime`, the
-    --- average time that took in milliseconds. Traffic: `BytesSent` and `BytesReceived` are totals
-    --- since the session began. Five more fields break the total down, sent and received together:
-    --- `SnapshotBytes` for world state, `AttributeBytes` for attributes, `RemoteBytes` for
-    --- `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for `UnreliableRemoteEvent`s, and
-    --- `InputBytes` for a client's input and the state of the parts it owns. `SwarmBytes` is the
-    --- positions of replicated swarms. The remainder is instances being created and removed, terrain
-    --- and the handshake. To get a rate, read a field twice, one second apart, and subtract.
-    --- `CrossWorldDropped` counts `CrossWorldService` messages this world dropped unheard: too many
-    --- waiting, or older than 10 seconds when their turn came. `WireBytesSent` and `WireBytesReceived`
-    --- are what the network itself carried: the same messages with the transport's headers,
-    --- acknowledgements, resends and encryption added. They are what a player's connection pays for,
-    --- and are larger than `BytesSent` and `BytesReceived`. On an authority, `Deferred` counts the
-    --- updates its players' budgets held back in the last second (`Player.ReplicationBudget`), and
-    --- `BudgetUsed` is how much of those budgets that second's snapshots spent, from 0 to 1; above 1
-    --- when what may not wait, such as a player joining, spent more. Both are 0 on a client. `Path`
-    --- says how the other end is reached: `"lan"` on the same network, `"direct"` across the internet,
-    --- or `"relayed"` through a relay, which adds the relay's distance to the round trip. On a host it
-    --- is the longest path among its players. It is empty when nobody is connected. `LocalPlayers` has
-    --- one entry for each local player on a machine that joined a match: the primary player first, then
-    --- the guests. Each entry has the player's `UserId` and the three correction numbers for that
-    --- player's character alone. It is empty on an authority and in single-player.
-    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, Deferred: number, BudgetUsed: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }
+    --- centimeters of drift and pulled back gently, so this stays small but is rarely zero.
+    --- `PredictedDriftPart` is the part that was furthest, or nil. - `InputBufferDepth`: how many ticks
+    --- of this player's input the authority has queued. `InputStarvations` counts the times the queue
+    --- ran empty, and `InputReanchors` the times it was restarted because the player's clock jumped, as
+    --- after a long frame. - `InterpolationDelay`: how far in the past other players are drawn, in
+    --- milliseconds. It is two snapshot intervals plus the link's jitter, and adapts to the link. - On
+    --- a client, `PredictedParts` is the number of loose parts near its character that it predicts. The
+    --- table also reports how often a correction made the client simulate them again, how many ticks it
+    --- simulated again, and `ResimulationTime`, the average time that took in milliseconds. Traffic:
+    --- `BytesSent` and `BytesReceived` are totals since the session began. Five more fields break the
+    --- total down, sent and received together: `SnapshotBytes` for world state, `AttributeBytes` for
+    --- attributes, `RemoteBytes` for `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for
+    --- `UnreliableRemoteEvent`s, and `InputBytes` for a client's input and the state of the parts it
+    --- owns. `SwarmBytes` is the positions of replicated swarms. The remainder is instances being
+    --- created and removed, terrain and the handshake. To get a rate, read a field twice, one second
+    --- apart, and subtract. `CrossWorldDropped` counts `CrossWorldService` messages this world dropped
+    --- unheard: too many waiting, or older than 10 seconds when their turn came. `WireBytesSent` and
+    --- `WireBytesReceived` are what the network itself carried: the same messages with the transport's
+    --- headers, acknowledgements, resends and encryption added. They are what a player's connection
+    --- pays for, and are larger than `BytesSent` and `BytesReceived`. On an authority, `Deferred`
+    --- counts the updates its players' budgets held back in the last second
+    --- (`Player.ReplicationBudget`), and `BudgetUsed` is how much of those budgets that second's
+    --- snapshots spent, from 0 to 1; above 1 when what may not wait, such as a player joining, spent
+    --- more. Both are 0 on a client. `Path` says how the other end is reached: `"lan"` on the same
+    --- network, `"direct"` across the internet, or `"relayed"` through a relay, which adds the relay's
+    --- distance to the round trip. On a host it is the longest path among its players. It is empty when
+    --- nobody is connected. `LocalPlayers` has one entry for each local player on a machine that joined
+    --- a match: the primary player first, then the guests. Each entry has the player's `UserId` and the
+    --- three correction numbers for that player's character alone. It is empty on an authority and in
+    --- single-player.
+    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, PredictedDriftPart: BasePart?, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, Deferred: number, BudgetUsed: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }
     --- Connects to a server at `address`, written as `host` or `host:port`. With no address, it
     --- connects to `[network] server` from `project.toml`. Joining replaces this machine's scene with
     --- the server's, and server scripts stop, because this machine is no longer the authority.

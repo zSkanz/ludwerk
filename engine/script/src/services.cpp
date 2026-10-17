@@ -1901,6 +1901,11 @@ int networkServiceGetStats(lua_State* L)
     field("CorrectionsPerSecond", stats.correctionsPerSecond);
     field("LastCorrection", stats.lastCorrectionMetres);
     field("PredictedDrift", stats.predictedDriftMetres);
+    // Which part that was, while it is still one.
+    if (world(L).alive(stats.predictedDriftPart) && !world(L).destroyed(stats.predictedDriftPart)) {
+        pushInstance(L, stats.predictedDriftPart);
+        lua_setfield(L, -2, "PredictedDriftPart");
+    }
     field("InputBufferDepth", static_cast<double>(stats.inputBufferDepth));
     field("InputStarvations", static_cast<double>(stats.inputStarvations));
     field("InputReanchors", static_cast<double>(stats.inputReanchors));

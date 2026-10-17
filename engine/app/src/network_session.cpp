@@ -808,6 +808,7 @@ void NetworkSession::update()
         shown.lossPercent = static_cast<core::f64>(status.loss) * 100.0;
         shown.lastCorrectionMetres = stats.lastCorrectionMetres;
         shown.predictedDriftMetres = stats.predictedDriftMetres;
+        shown.predictedDriftPart = stats.predictedDriftPart;
         shown.inputBufferDepth = stats.intentDepth;
         shown.inputStarvations = stats.intentStarvations;
         shown.inputReanchors = stats.intentReanchors;

@@ -178,6 +178,7 @@ here.
   pulled back gently, and drawn gliding when it is corrected. Protocol 52.
 - `NetworkService:GetStats().PredictedDrift`: how far the parts this machine
   predicts were from the authority's at the last answer.
+  `PredictedDriftPart` names the part that was furthest.
 - `BasePart:Fracture`: a box part cut into pieces held by joints that break.
   A wall that stood keeps its footing and breaks where it is struck.
 - `Cloth`: a skinned mesh that hangs as cloth, every vertex simulated, pinned
