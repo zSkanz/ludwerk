@@ -778,6 +778,21 @@ jobs:
           ctest --preset ${{ matrix.preset }} --resource-spec-file "%CD%\tests\ctest-resources-hosted.json" -LE gpu-golden -j 4 -I ${{ matrix.shard }},,${{ matrix.shards }} > ctest.log 2>&1 || (type ctest.log & exit /b 1)
           type ctest.log
 
+      # **What a netcode test saw, kept when the run fails**: each machine's
+      # log and what its bot printed, from the stage the harness ran in. A
+      # spike a shared runner showed once and no local machine reproduced was
+      # read from one line of the report and nothing else.
+      - name: The netcode stages, on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: netcode-stages-${{ matrix.preset }}-${{ strategy.job-index }}
+          path: |
+            ${{ env.ENG_BUILD_ROOT }}/${{ matrix.preset }}/engine/app/netcode-*/
+            ${{ env.ENG_BUILD_ROOT }}/${{ matrix.preset }}/engine/app/example-multiplayer-guest/
+          if-no-files-found: ignore
+          retention-days: 7
+
       # **What a runner is allowed to skip, named**. CTest counts a skip
       # as a pass, so six gates that need a graphics device or a display have
       # reported green on every push without executing: `editor_seam` and
