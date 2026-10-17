@@ -786,6 +786,7 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     count("network.max_connections_per_address", 0, 4095, config.networkMaxPerAddress);
     count("network.client_budget_kb_per_second", 0, 65536, config.networkClientBudgetKb);
     count("network.rewind_cap_ms", 0, 1000, config.networkRewindCapMs);
+    count("server.physics_threads", 0, 64, config.serverPhysicsThreads);
     for (const std::string& name : document.keys("luau.flags.")) {
         // A flag's name is one word; a dotted one is a table under it, and
         // no flag.

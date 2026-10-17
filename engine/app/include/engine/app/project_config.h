@@ -166,6 +166,10 @@ struct ProjectConfig
     // `[server] dormant_radius` (ADR 0234): metres from every player's focus
     // past which a character sleeps; 0 never; below 0, twice the load radius.
     core::f64 serverDormantRadius = -1.0;
+    // `[server] physics_threads` (ADR 0228): the worker threads a dedicated
+    // server's physics steps on, beside the tick's own; four by default, and
+    // fewer where one machine runs several worlds.
+    core::u32 serverPhysicsThreads = 4;
     // `[server] time_dilation` and `time_dilation_floor` (ADR 0233).
     bool serverTimeDilation = false;
     core::f64 serverTimeDilationFloor = 0.25;

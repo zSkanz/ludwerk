@@ -517,6 +517,25 @@ npclod.configure({ Near = 30, NearEvery = 1, Middle = 120, MiddleEvery = 4, FarE
 `Workspace:GetNearestPlayerDistance(position)` answers the same question
 for a game's own decisions -- `math.huge` when no player has a focus.
 
+## Characters step on several threads
+
+The characters awake in a tick step on several threads at once when nothing
+they could change is near them: no part that is not anchored, and no other
+character that could reach the same place in the same tick. Those that could
+-- a crowd pressing on one spot, players running into one another, someone
+pushing a crate -- step one after another, as they always have. Either way a
+world runs the same every time it is run, on any number of threads, and two
+characters never end up inside one another.
+
+A dedicated server steps on four threads beside its own. A machine running
+several worlds can give each fewer:
+
+```toml
+# project.toml
+[server]
+physics_threads = 1   # 0 steps everything on the server's own thread
+```
+
 ## How many players it holds: a load test
 
 `ludwerk server loadtest` sends bots at a running server and reports what the

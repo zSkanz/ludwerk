@@ -256,6 +256,12 @@ here.
 
 ### Changed
 
+- A dedicated server steps its characters on several threads: those that
+  nothing they could change is near -- no loose part, no other character that
+  could reach the same place in the tick -- step at once, the rest one after
+  another as before. The result is the same on any number of threads, and no
+  two characters end up inside one another. `[server] physics_threads` sets
+  how many threads beside its own a server's physics uses (four by default).
 - **Behaviour change: rays meet characters.** `Workspace:Raycast`,
   `Spherecast`, `GetBodiesInBox` and `GetBodiesInSphere` now hit a
   `CharacterBody` as they hit any part. A cast that starts inside your own

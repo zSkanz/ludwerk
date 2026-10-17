@@ -256,6 +256,8 @@ struct EngineOptions
     core::u32 maxSubWorlds = 2;
     // `[server] dormant_radius` (ADR 0234), below 0 the default.
     core::f64 dormantRadius = -1.0;
+    // `[server] physics_threads` (ADR 0228).
+    core::u32 physicsThreads = 4;
     // `[network] rewind_cap_ms` (ADR 0235).
     core::f64 rewindCapMs = 200.0;
     // `[server] time_dilation` and `time_dilation_floor`, or

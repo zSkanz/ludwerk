@@ -2990,6 +2990,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         .networkTopology = static_cast<scene::NetworkTopology>(options.network.topology),
         .maxSubWorlds = options.maxSubWorlds,
         .dormantRadius = options.dormantRadius,
+        .physicsThreads = options.physicsThreads,
         .rewindCapMs = options.rewindCapMs,
         .managedWorld = options.managedWorld,
         .saveDirectory = options.saveDirectory,

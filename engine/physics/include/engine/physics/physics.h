@@ -398,6 +398,32 @@ public:
     // a tick.
     virtual void moveCharacter(WorldHandle world, CharacterHandle character, core::Vec3 velocity, f32 fixedDt,
                                bool walking = false) = 0;
+    // **Every character's step of one tick, together** (ADR 0228, the
+    // parallel character step). Each character that no dynamic body is within
+    // reach of sweeps the world as it was at the start of the call -- the
+    // other characters where they stood, whatever their order -- and these
+    // steps run on several threads at once. Then the rest step one at a time,
+    // in `moves`' order, each meeting everything already moved, as
+    // `moveCharacter` does: a character pushing a crate pushes it as it always
+    // did. The result does not depend on the number of threads.
+    virtual void moveCharacters(WorldHandle world, std::span<const CharacterMove> moves)
+    {
+        for (const CharacterMove& move : moves)
+            moveCharacter(world, move.character, move.velocity, move.fixedDt, move.walking);
+    }
+    // **How many worker threads the world's physics steps on**, beside the
+    // thread that steps it, which works too while it waits: four unless told
+    // otherwise. A machine running several worlds gives each fewer.
+    virtual void setPhysicsThreads(WorldHandle world, u32 workers)
+    {
+        (void)world;
+        (void)workers;
+    }
+    [[nodiscard]] virtual CharacterStepCounts lastCharacterStep(WorldHandle world) const
+    {
+        (void)world;
+        return {};
+    }
     virtual void setCharacterTransform(WorldHandle world, CharacterHandle character,
                                        const core::CFrameD& transform) = 0;
     // **Moved a little, and still leaning on what it leaned on** (ADR 0133):

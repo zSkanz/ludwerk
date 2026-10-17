@@ -430,6 +430,9 @@ private:
     [[nodiscard]] CharacterMotion stepController(const CharacterRecord& record, const CharacterCommand& command,
                                                  CharacterMotion motion, bool grounded, core::Vec3 groundNormal,
                                                  core::DVec3 position);
+    // The sweep of a step: queued while the scene's bodies are being written,
+    // and taken at once otherwise -- a replay steps one character alone.
+    void sweep(physics::CharacterHandle character, core::Vec3 velocity, f32 dt, bool walking);
     // Whether a place is under a `Water`'s surface or inside a fluid block.
     [[nodiscard]] bool inFluid(core::DVec3 at) const;
 
@@ -798,6 +801,12 @@ private:
         CharacterCommand input;
     };
     std::vector<PredictedNow> m_predictedNow;
+    // The characters' sweeps of this tick, queued (`sweep`), and the worker
+    // threads the backend was last told to step on -- its own default until
+    // the world says otherwise.
+    std::vector<physics::CharacterMove> m_moves;
+    bool m_queueMoves = false;
+    u32 m_physicsThreads = 4;
     // **The characters of the step being taken again** (ADRs 0133, 0208),
     // each with its own command of that tick; empty in a live step.
     std::vector<std::pair<core::InstanceId, const CharacterCommand*>> m_replaying;

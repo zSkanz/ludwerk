@@ -64,6 +64,7 @@ endif()
 
 engine_add_module_tests(physics
     SOURCES
+        tests/character_crowd_tests.cpp
         tests/constraint_tests.cpp
         tests/physics_tests.cpp
         tests/physics2d_tests.cpp

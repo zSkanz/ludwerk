@@ -224,6 +224,8 @@ struct WorldHostOptions
     core::u32 maxSubWorlds = 2;
     // `[server] dormant_radius` (ADR 0234), below 0 the default.
     f64 dormantRadius = -1.0;
+    // `[server] physics_threads` (ADR 0228): a dedicated server's only.
+    core::u32 physicsThreads = 4;
     // `[network] rewind_cap_ms` (ADR 0235): the furthest back a shot is
     // checked; nought for never.
     f64 rewindCapMs = 200.0;

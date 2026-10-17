@@ -75,6 +75,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -85,6 +86,7 @@
 #include "engine/core/error.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
+#include "engine/core/profile.h"
 #include "engine/core/text_key.h"
 #include "engine/physics/backends.h"
 
@@ -674,6 +676,28 @@ struct CharacterRecord
     // its capsule where other characters are to meet it. While there is one,
     // the character's own inner body does not stand in a character's way.
     JPH::BodyID standIn;
+    // **Its inner body, made here and not by Jolt** (ADR 0228, the parallel
+    // character step): the kinematic capsule other bodies and characters meet.
+    // Jolt's own is put where the character is inside every step, which is a
+    // write to the world another character's sweep on another thread would
+    // read; this one is put when the step says.
+    JPH::BodyID innerBody;
+    // Jolt's default, kept because the controller does not say it afterwards:
+    // how far past its capsule a sweep looks.
+    f32 predictiveContactDistance = 0.1f;
+    // Its capsule's radius and half its axis, kept for `mayMeet`.
+    f32 radius = 0.0f;
+    f32 halfAxis = 0.0f;
+    // **This call's step** (`moveCharacters`): which call it was, where it
+    // began, how far it could reach -- across, up or down, and in all for a
+    // dynamic body -- and whether something within that reach makes it step
+    // alone and in order.
+    u32 stepCall = 0;
+    JPH::RVec3 startPosition = JPH::RVec3::sZero();
+    f32 reachAcross = 0.0f;
+    f32 reachUp = 0.0f;
+    f32 reach = 0.0f;
+    bool stepsAlone = false;
 };
 
 // What a stand-in's body carries where a body carries its handle: no record,
@@ -1370,6 +1394,28 @@ private:
 // revisit with a measurement and a trace re-record, which is what makes it a
 // constant with a name rather than a literal at the call site.
 inline constexpr int kPhysicsThreads = 4;
+// The most `[server] physics_threads` may ask for.
+inline constexpr u32 kMaxPhysicsThreads = 64;
+
+// **The parallel character step** (ADR 0228): how many characters a worker
+// takes at a time -- few enough that the last worker to finish does not wait
+// long, many enough that taking them costs nothing -- and each worker's
+// scratch memory, a hundred times what a step was measured to use.
+inline constexpr usize kCharactersPerTake = 16;
+inline constexpr JPH::uint kStepTempBytes = 1024u * 1024u;
+// How far ahead of a step Jolt looks for a stair: its own default, said
+// because the reach of a step counts it.
+inline constexpr float kStairForwardTest = 0.15f;
+// What the reach adds past everything it counts: a step's recovery out of an
+// overlap moves it by the overlap's depth at most, and characters overlap by
+// centimetres.
+inline constexpr float kReachMargin = 0.25f;
+// How far past another character's capsule a character's step is looked
+// for -- the two look-aheads, the two paddings and this margin past them -- and
+// the margin itself: a few centimetres, so a crowd walking a metre apart is
+// not taken for one that could meet.
+inline constexpr float kCharacterMeetMargin = 0.05f;
+inline constexpr float kCharacterLookAhead = 0.1f + 0.1f + 2.0f * CharacterSkin + kCharacterMeetMargin;
 
 [[nodiscard]] JPH::uint tempBytes(const WorldDesc& desc) noexcept
 {
@@ -1425,6 +1471,13 @@ public:
             if (record.alive) {
                 bodies.RemoveBody(record.id);
                 bodies.DestroyBody(record.id);
+            }
+        }
+        // As a Jolt character took its own inner body with it.
+        for (const CharacterRecord& record : m_characters) {
+            if (record.alive && !record.innerBody.IsInvalid()) {
+                bodies.RemoveBody(record.innerBody);
+                bodies.DestroyBody(record.innerBody);
             }
         }
     }
@@ -1490,6 +1543,7 @@ public:
         for (const CharacterRecord& record : m_characters) {
             if (record.character != nullptr) {
                 record.character->SetPosition(record.character->GetPosition() - delta);
+                placeInnerBody(record);
             }
         }
 
@@ -2418,7 +2472,7 @@ public:
             }
             else if (const CharacterRecord* record = resolve(each.character);
                      record != nullptr && record->character != nullptr) {
-                id = record->character->GetInnerBodyID();
+                id = record->innerBody;
             }
             if (id.IsInvalid())
                 continue;
@@ -2644,9 +2698,11 @@ public:
         // character the one pair in the world that ignores `CollisionGroup`.
         // The tests that hold this down are "two characters cannot walk through
         // each other" and "two characters whose groups do not collide walk
-        // through each other" -- both go red if this line is removed.
-        settings.mInnerBodyShape = settings.mShape;
-        settings.mInnerBodyLayer = encodeLayer(desc.group, true);
+        // through each other" -- both go red if the inner body is not made.
+        //
+        // **Made below, not by Jolt** (`CharacterRecord::innerBody`): the
+        // same capsule, kinematic, on the same layer, made at the same point
+        // in the order bodies are made -- so it has the id Jolt's had.
         // No shape offset: `transform` is the character's CENTRE, like every
         // other `BasePart`'s, so Jolt's position and the capsule's centre are
         // the same point.
@@ -2672,12 +2728,24 @@ public:
         record.alive = true;
         record.stepHeight = desc.stepHeight;
         record.userData = desc.userData;
-        record.layer = settings.mInnerBodyLayer;
+        record.layer = encodeLayer(desc.group, true);
+        record.predictiveContactDistance = settings.mPredictiveContactDistance;
+        record.radius = radius;
+        record.halfAxis = halfCylinder;
         record.character = new JPH::CharacterVirtual(&settings, toLocal(desc.transform.position),
                                                      toJolt(desc.transform.rotation), desc.userData, &m_system);
         record.character->SetListener(&m_characterContacts);
         record.queryable = true;
-        m_innerBodies[record.character->GetInnerBodyID().GetIndexAndSequenceNumber()] = slot;
+        // As Jolt made its own: never asleep, so a sensor it stands in keeps
+        // hearing it, and carrying the character's user data.
+        JPH::BodyCreationSettings inner(settings.mShape, toLocal(desc.transform.position),
+                                        toJolt(desc.transform.rotation), JPH::EMotionType::Kinematic, record.layer);
+        inner.mAllowSleeping = false;
+        inner.mUserData = desc.userData;
+        record.innerBody = m_system.GetBodyInterface().CreateAndAddBody(inner, JPH::EActivation::Activate);
+        if (!record.innerBody.IsInvalid())
+            m_innerBodies[record.innerBody.GetIndexAndSequenceNumber()] = slot;
+        m_characterIds[record.character->GetID().GetValue()] = slot;
 
         return CharacterHandle{slot, record.generation};
     }
@@ -2690,7 +2758,14 @@ public:
         }
         forgetCharacterPairs(packHandle(handle));
         removeStandIn(*record);
-        m_innerBodies.erase(record->character->GetInnerBodyID().GetIndexAndSequenceNumber());
+        if (!record->innerBody.IsInvalid()) {
+            m_innerBodies.erase(record->innerBody.GetIndexAndSequenceNumber());
+            JPH::BodyInterface& bodies = m_system.GetBodyInterface();
+            bodies.RemoveBody(record->innerBody);
+            bodies.DestroyBody(record->innerBody);
+            record->innerBody = JPH::BodyID();
+        }
+        m_characterIds.erase(record->character->GetID().GetValue());
         record->character = nullptr;
         record->alive = false;
         m_freeCharacters.push_back(handle.index);
@@ -2740,7 +2815,243 @@ public:
         if (record == nullptr) {
             return;
         }
+        stepCharacter(*record, velocity, fixedDt, walking, m_temp, false);
+        placeInnerBody(*record);
+    }
 
+    // **Every character's step of a tick** (ADR 0228, the parallel character
+    // step), in three parts:
+    //
+    // 1. On the pool, at once: each character asks whether anything its step
+    //    could change is within its reach -- a dynamic body it could push, or
+    //    another character stepping now that could reach the same space -- and
+    //    if nothing is, steps. No inner body is put anywhere and no body is
+    //    pushed until every one of these is done, so each reads the world as
+    //    the call found it.
+    // 2. Their inner bodies are put where they ended, in `moves`' order.
+    // 3. Then the rest step one at a time, in `moves`' order, each putting its
+    //    own inner body before the next steps: exactly `moveCharacter`, so a
+    //    character pushing a crate pushes it, and two running into one another
+    //    meet, as they always did.
+    //
+    // A part-1 step reads only what nothing writes until part 2, so its result
+    // is the same on any number of threads, in any order. And because no other
+    // character could reach where it went, it is the step it would have taken
+    // one after another: the start of the tick and the end of it are the same
+    // to it.
+    void moveCharacters(std::span<const CharacterMove> moves)
+    {
+        m_characterStep = {};
+        m_stepping.clear();
+        ++m_stepCall;
+        // What each step could reach, from what the call found: read here, on
+        // this thread, because on the pool another character's step is
+        // changing its own as this one asks.
+        f32 farthestAcross = 0.0f;
+        f32 farthestUp = 0.0f;
+        for (const CharacterMove& move : moves) {
+            CharacterRecord* record = resolve(move.character);
+            if (record == nullptr)
+                continue;
+            const JPH::CharacterVirtual& character = *record->character;
+            JPH::Vec3 moving = toJolt(move.velocity);
+            if (character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround)
+                moving += character.GetGroundVelocity();
+            const f32 dt = std::max(move.fixedDt, 0.0f);
+            record->stepCall = m_stepCall;
+            record->startPosition = character.GetPosition();
+            record->reachAcross = std::hypot(moving.GetX(), moving.GetZ()) * dt;
+            record->reachUp = std::abs(moving.GetY()) * dt + record->stepHeight;
+            record->reach = moving.Length() * dt + record->stepHeight + kStairForwardTest +
+                            character.GetCharacterPadding() + record->predictiveContactDistance + kReachMargin;
+            farthestAcross = std::max(farthestAcross, record->reachAcross);
+            farthestUp = std::max(farthestUp, record->reachUp);
+            m_stepping.push_back(Stepping{record, move});
+        }
+        const usize count = m_stepping.size();
+        const usize threads = static_cast<usize>(m_jobs.GetMaxConcurrency());
+        const usize jobs = std::min(threads, (count + kCharactersPerTake - 1) / kCharactersPerTake);
+        while (m_stepTemps.size() < std::max<usize>(jobs, 1))
+            m_stepTemps.push_back(std::make_unique<JPH::TempAllocatorImpl>(kStepTempBytes));
+        std::atomic<usize> next{0};
+        std::atomic<u32> metDynamic{0};
+        const auto take = [&](usize job) {
+            JPH::TempAllocator& temp = *m_stepTemps[job];
+            for (;;) {
+                const usize first = next.fetch_add(kCharactersPerTake, std::memory_order_relaxed);
+                if (first >= count)
+                    return;
+                const usize last = std::min(count, first + kCharactersPerTake);
+                for (usize at = first; at < last; ++at) {
+                    Stepping& each = m_stepping[at];
+                    CharacterRecord& record = *each.record;
+                    record.stepsAlone = mustStepAlone(record, farthestAcross, farthestUp);
+                    if (record.stepsAlone)
+                        continue;
+                    stepCharacter(record, each.move.velocity, each.move.fixedDt, each.move.walking, temp, true);
+                    if (touchesDynamic(record))
+                        metDynamic.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        };
+        // The tick's own share of the together step, waiting included; with no
+        // workers (`[server] physics_threads = 0`) it is the step's whole cost.
+        core::profile::Sections stretch;
+        ENG_PROFILE_NEXT(stretch, "physics.characters.together");
+        if (jobs <= 1) {
+            take(0);
+        }
+        else {
+            JPH::JobSystem::Barrier* barrier = m_jobs.CreateBarrier();
+            for (usize job = 0; job < jobs; ++job) {
+                JPH::JobHandle handle = m_jobs.CreateJob("characters", JPH::Color::sGreen, [&take, job] { take(job); });
+                barrier->AddJob(handle);
+            }
+            m_jobs.WaitForJobs(barrier);
+            m_jobs.DestroyBarrier(barrier);
+        }
+        m_characterStep.togetherMetDynamic = metDynamic.load(std::memory_order_relaxed);
+        // **Never, or the reach is wrong**: a step taken together that touched
+        // a dynamic body pushed it from a thread, against a world another
+        // thread was reading.
+#ifndef NDEBUG
+        if (m_characterStep.togetherMetDynamic != 0)
+            std::abort();
+#endif
+
+        ENG_PROFILE_NEXT(stretch, "physics.characters.place");
+        for (const Stepping& each : m_stepping) {
+            if (each.record->stepsAlone)
+                continue;
+            placeInnerBody(*each.record);
+            ++m_characterStep.together;
+        }
+        stretch.close();
+        for (const Stepping& each : m_stepping) {
+            if (!each.record->stepsAlone)
+                continue;
+            // One a character, so a profile counts them as well as timing them.
+            ENG_PROFILE_SCOPE("physics.characters.alone");
+            stepCharacter(*each.record, each.move.velocity, each.move.fixedDt, each.move.walking, m_temp, false);
+            placeInnerBody(*each.record);
+            ++m_characterStep.alone;
+        }
+    }
+
+    [[nodiscard]] CharacterStepCounts lastCharacterStep() const noexcept { return m_characterStep; }
+
+    void setPhysicsThreads(u32 workers)
+    {
+        const int wanted = static_cast<int>(std::min<u32>(workers, kMaxPhysicsThreads));
+        if (wanted + 1 != m_jobs.GetMaxConcurrency())
+            m_jobs.SetNumThreads(wanted);
+    }
+
+    // **Whether a character steps alone**, after the others and in order:
+    //
+    // - a dynamic body is within the reach of its step -- its capsule grown by
+    //   how far it moves (its ground's motion included), the step it may climb
+    //   or come down, how far ahead Jolt looks for a stair, its padding, how
+    //   far past the capsule a sweep looks for contacts, and a margin. A static
+    //   or kinematic body is not pushed, and does not count.
+    // - or another character stepping in this call could reach the same space:
+    //   their capsules nearer than the two steps' reach across, and their
+    //   axes nearer than the two steps' reach up and down, with both paddings,
+    //   both look-aheads and a margin besides. A character standing still is
+    //   one whose reach across is nought.
+    //
+    // Only on a layer the character meets, and **by each body's own bounds**,
+    // not the broad phase's: the broad phase widens a moved body's box until
+    // it next tidies, which differs with the order bodies moved in, and a
+    // character must be put in the same group whatever that order was (Jolt's
+    // Architecture.md, deterministic simulation).
+    [[nodiscard]] bool mustStepAlone(const CharacterRecord& record, f32 farthestAcross, f32 farthestUp) const
+    {
+        const JPH::CharacterVirtual& character = *record.character;
+        const JPH::Vec3 centre(record.startPosition);
+        const f32 extent = character.GetShape()->GetLocalBounds().GetExtent().ReduceMax();
+        const JPH::AABox reach(centre - JPH::Vec3::sReplicate(extent + record.reach),
+                               centre + JPH::Vec3::sReplicate(extent + record.reach));
+        const f32 across = record.radius + record.reachAcross + farthestAcross + kCharacterLookAhead;
+        const f32 up = record.halfAxis + record.radius + record.reachUp + farthestUp + kCharacterLookAhead;
+        const JPH::Vec3 others(across, up, across);
+        JPH::AABox box = reach;
+        box.Encapsulate(JPH::AABox(centre - others, centre + others));
+
+        class Collector final : public JPH::CollideShapeBodyCollector
+        {
+        public:
+            Collector(const JoltWorld& world, const CharacterRecord& self, const JPH::AABox& reach)
+                : m_world(world), m_self(self), m_reach(reach)
+            {}
+            void AddHit(const JPH::BodyID& id) override
+            {
+                const JPH::Body* body = m_world.m_system.GetBodyLockInterfaceNoLock().TryGetBody(id);
+                if (body == nullptr)
+                    return;
+                if (body->IsDynamic()) {
+                    if (body->GetWorldSpaceBounds().Overlaps(m_reach))
+                        alone = true;
+                }
+                else if (const auto inner = m_world.m_innerBodies.find(id.GetIndexAndSequenceNumber());
+                         inner != m_world.m_innerBodies.end()) {
+                    const CharacterRecord& other = m_world.m_characters[inner->second];
+                    alone = &other != &m_self && other.alive && other.stepCall == m_world.m_stepCall &&
+                            mayMeet(m_self, other);
+                }
+                if (alone)
+                    ForceEarlyOut();
+            }
+            bool alone = false;
+
+        private:
+            const JoltWorld& m_world;
+            const CharacterRecord& m_self;
+            const JPH::AABox& m_reach;
+        };
+        Collector collector(*this, record, reach);
+        m_system.GetBroadPhaseQuery().CollideAABox(box, collector,
+                                                   m_system.GetDefaultBroadPhaseLayerFilter(record.layer),
+                                                   m_system.GetDefaultLayerFilter(record.layer));
+        return collector.alone;
+    }
+
+    // Two upright capsules that could come within each other's look-ahead in
+    // this step: the same answer whichever of the two asks.
+    [[nodiscard]] static bool mayMeet(const CharacterRecord& a, const CharacterRecord& b) noexcept
+    {
+        const JPH::Vec3 apart(a.startPosition - b.startPosition);
+        const f32 nearest = a.radius + b.radius + a.predictiveContactDistance + b.predictiveContactDistance +
+                            2.0f * CharacterSkin + kCharacterMeetMargin;
+        const f32 across = std::hypot(apart.GetX(), apart.GetZ()) - (a.reachAcross + b.reachAcross);
+        const f32 up = std::abs(apart.GetY()) - (a.halfAxis + b.halfAxis) - (a.reachUp + b.reachUp);
+        return across < nearest && up < nearest;
+    }
+
+    [[nodiscard]] static bool touchesDynamic(const CharacterRecord& record) noexcept
+    {
+        for (const JPH::CharacterContact& contact : record.character->GetActiveContacts()) {
+            if (!contact.mBodyB.IsInvalid() && contact.mMotionTypeB == JPH::EMotionType::Dynamic)
+                return true;
+        }
+        return false;
+    }
+
+    // Its inner body where the character is.
+    void placeInnerBody(const CharacterRecord& record)
+    {
+        if (record.innerBody.IsInvalid())
+            return;
+        m_system.GetBodyInterface().SetPositionAndRotation(record.innerBody, record.character->GetPosition(),
+                                                           record.character->GetRotation(),
+                                                           JPH::EActivation::DontActivate);
+    }
+
+    // One character's step. `together` is a part-1 step of `moveCharacters`,
+    // on a worker, with that worker's own scratch memory.
+    void stepCharacter(CharacterRecord& record, core::Vec3 velocity, f32 fixedDt, bool walking,
+                       JPH::TempAllocator& temp, bool together)
+    {
         // **The character inherits its ground's motion**. Without this a
         // platform slides out from under a player who stays exactly where they
         // were -- the first thing anybody notices about a moving platform, and
@@ -2751,14 +3062,15 @@ public:
         // anything, and carrying the last platform's velocity through a jump
         // would launch it.
         JPH::Vec3 inherited = JPH::Vec3::sZero();
-        if (record->character->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround)
-            inherited = record->character->GetGroundVelocity();
+        if (record.character->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround)
+            inherited = record.character->GetGroundVelocity();
 
-        record->character->SetLinearVelocity(toJolt(velocity) + inherited);
+        record.character->SetLinearVelocity(toJolt(velocity) + inherited);
 
         JPH::CharacterVirtual::ExtendedUpdateSettings settings;
-        settings.mWalkStairsStepUp = JPH::Vec3(0.0f, record->stepHeight, 0.0f);
-        settings.mStickToFloorStepDown = JPH::Vec3(0.0f, -record->stepHeight, 0.0f);
+        settings.mWalkStairsStepUp = JPH::Vec3(0.0f, record.stepHeight, 0.0f);
+        settings.mStickToFloorStepDown = JPH::Vec3(0.0f, -record.stepHeight, 0.0f);
+        settings.mWalkStairsStepForwardTest = kStairForwardTest;
 
         // The filters are the world's, not the defaults. A default-constructed
         // `ObjectLayerFilter` accepts every layer, which made the character the
@@ -2767,11 +3079,25 @@ public:
         // stopped it, and nothing said so. `GetDefaultLayerFilter` asks the same
         // `ObjectPairFilter` every body pair goes through, against the
         // character's own layer.
-        const JPH::RVec3 before = record->character->GetPosition();
-        const bool wasSupported = record->character->IsSupported();
-        record->character->ExtendedUpdate(
-            fixedDt, toJolt(m_gravity), settings, m_system.GetDefaultBroadPhaseLayerFilter(record->layer),
-            m_system.GetDefaultLayerFilter(record->layer), JPH::BodyFilter{}, JPH::ShapeFilter{}, m_temp);
+        //
+        // **Its own inner body is no obstacle to it**, as Jolt's own was not.
+        //
+        // **A step taken together weighs nothing for the moment**: a
+        // character's mass is used only to press on what it stands on, and
+        // pressing takes the lock of the body it stands on -- the one floor
+        // a crowd shares. What it stands on is not dynamic (the reach says
+        // so), and pressing on anything else does nothing.
+        const JPH::IgnoreSingleBodyFilter own(record.innerBody);
+        const JPH::RVec3 before = record.character->GetPosition();
+        const bool wasSupported = record.character->IsSupported();
+        const float mass = record.character->GetMass();
+        if (together)
+            record.character->SetMass(0.0f);
+        record.character->ExtendedUpdate(fixedDt, toJolt(m_gravity), settings,
+                                         m_system.GetDefaultBroadPhaseLayerFilter(record.layer),
+                                         m_system.GetDefaultLayerFilter(record.layer), own, JPH::ShapeFilter{}, temp);
+        if (together)
+            record.character->SetMass(mass);
         // **A walk up a slope stays on it**. The controller sticks to
         // the floor only when the step did not rise -- and a walk up a slope
         // rises, following the ground. Over the crease where a slope of
@@ -2780,14 +3106,14 @@ public:
         // `Landed` fired, every few ticks up every hill. Walking -- not
         // jumping, not thrown -- it is put back on what is within a step
         // below, as it would have been walking down.
-        if (walking && wasSupported && !record->character->IsSupported() && record->stepHeight > 0.0f) {
-            (void)record->character->StickToFloor(
-                JPH::Vec3(0.0f, -record->stepHeight, 0.0f), m_system.GetDefaultBroadPhaseLayerFilter(record->layer),
-                m_system.GetDefaultLayerFilter(record->layer), JPH::BodyFilter{}, JPH::ShapeFilter{}, m_temp);
+        if (walking && wasSupported && !record.character->IsSupported() && record.stepHeight > 0.0f) {
+            (void)record.character->StickToFloor(
+                JPH::Vec3(0.0f, -record.stepHeight, 0.0f), m_system.GetDefaultBroadPhaseLayerFilter(record.layer),
+                m_system.GetDefaultLayerFilter(record.layer), own, JPH::ShapeFilter{}, temp);
         }
         if (fixedDt > 0.0f) {
-            const JPH::Vec3 travelled = JPH::Vec3(record->character->GetPosition() - before);
-            record->moved = fromJolt(travelled / fixedDt);
+            const JPH::Vec3 travelled = JPH::Vec3(record.character->GetPosition() - before);
+            record.moved = fromJolt(travelled / fixedDt);
         }
     }
 
@@ -2799,6 +3125,7 @@ public:
         }
         record->character->SetPosition(toLocal(transform.position));
         record->character->SetRotation(toJolt(transform.rotation));
+        placeInnerBody(*record);
         // **The contacts of where it is now, not where it was.** A controller
         // keeps the contacts of its last update, and the next update is
         // resolved against them: a character put somewhere new still leaned on
@@ -2806,9 +3133,10 @@ public:
         // it was blocked. Found replaying a replica's prediction (ADR 0076),
         // which puts a character back where the authority said every time it
         // corrects one -- and a script teleporting a character hit it too.
+        const JPH::IgnoreSingleBodyFilter own(record->innerBody);
         record->character->RefreshContacts(m_system.GetDefaultBroadPhaseLayerFilter(record->layer),
-                                           m_system.GetDefaultLayerFilter(record->layer), JPH::BodyFilter{},
-                                           JPH::ShapeFilter{}, m_temp);
+                                           m_system.GetDefaultLayerFilter(record->layer), own, JPH::ShapeFilter{},
+                                           m_temp);
     }
 
     void nudgeCharacter(CharacterHandle handle, const core::CFrameD& transform)
@@ -2816,6 +3144,7 @@ public:
         if (CharacterRecord* record = resolve(handle); record != nullptr) {
             record->character->SetPosition(toLocal(transform.position));
             record->character->SetRotation(toJolt(transform.rotation));
+            placeInnerBody(*record);
         }
     }
 
@@ -4595,12 +4924,12 @@ private:
             return CharacterHandle{};
         return CharacterHandle{slot, record.generation};
     }
-    // The record of a character as Jolt hands it to a listener: by its inner
-    // body, which every character here has.
+    // The record of a character as Jolt hands it to a listener: by its Jolt
+    // id, which every character has.
     [[nodiscard]] const CharacterRecord* recordOf(const JPH::CharacterVirtual* character) const noexcept
     {
-        const auto found = m_innerBodies.find(character->GetInnerBodyID().GetIndexAndSequenceNumber());
-        if (found == m_innerBodies.end())
+        const auto found = m_characterIds.find(character->GetID().GetValue());
+        if (found == m_characterIds.end())
             return nullptr;
         const CharacterRecord& record = m_characters[found->second];
         return record.alive && record.character.GetPtr() == character ? &record : nullptr;
@@ -4880,6 +5209,21 @@ private:
     // **And each stand-in, the same way** (ADR 0163): what a contact with
     // one names, found by its id rather than by walking every character.
     std::map<u32, u32> m_standIns;
+    // And each character by Jolt's own id for it: what a listener is handed.
+    std::map<u32, u32> m_characterIds;
+    // `moveCharacters`' list, kept so a tick does not allocate one, and each
+    // worker's scratch memory: Jolt's is one thread's.
+    struct Stepping
+    {
+        CharacterRecord* record = nullptr;
+        CharacterMove move;
+    };
+    std::vector<Stepping> m_stepping;
+    // Which `moveCharacters` call this is: a character's `stepCall` is this
+    // while it is one of the call's.
+    u32 m_stepCall = 0;
+    std::vector<std::unique_ptr<JPH::TempAllocatorImpl>> m_stepTemps;
+    CharacterStepCounts m_characterStep;
     std::vector<u32> m_freeCharacters;
     // Slot-indexed and never compacted, exactly as the bodies are: a handle is
     // an index plus a generation, and Jolt solves in the order constraints were
@@ -5409,6 +5753,24 @@ public:
         if (JoltWorld* world = resolve(handle); world != nullptr) {
             world->moveCharacter(character, velocity, fixedDt, walking);
         }
+    }
+
+    void moveCharacters(WorldHandle handle, std::span<const CharacterMove> moves) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr)
+            world->moveCharacters(moves);
+    }
+
+    void setPhysicsThreads(WorldHandle handle, u32 workers) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr)
+            world->setPhysicsThreads(workers);
+    }
+
+    [[nodiscard]] CharacterStepCounts lastCharacterStep(WorldHandle handle) const override
+    {
+        const JoltWorld* world = resolve(handle);
+        return world != nullptr ? world->lastCharacterStep() : CharacterStepCounts{};
     }
 
     void setCharacterTransform(WorldHandle handle, CharacterHandle character, const core::CFrameD& transform) override

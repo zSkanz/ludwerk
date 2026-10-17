@@ -348,6 +348,9 @@ struct EngineState
     // as the physics step last took them, with whether one of them had none
     // -- which keeps everything awake.
     f64 dormantRadius = -1.0;
+    // `[server] physics_threads`: the worker threads this world's physics
+    // steps on, beside the tick's own (ADR 0228). Four unless a server says.
+    u32 physicsThreads = 4;
     // **How fast this world's clock runs against the wall's** (ADR 0233): 1
     // at full speed; less while an overloaded authority is slowed, which its
     // replicas run at too. How often ticks run, never what one does.

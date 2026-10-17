@@ -95,6 +95,80 @@ What a held snapshot changes is when a peer is told, never what: the next one
 is against the baseline the peer acknowledged and answers every input the
 held ticks consumed.
 
+### 8. Characters step together where nothing they could change is near
+
+Measured before (Not decided here), a character's step was most of a crowded
+server's tick that dormancy does not remove, and it ran one character after
+another on one thread. **It runs in three parts now**:
+
+1. **Together, on Jolt's own pool** (ADR 0064): each character whose step
+   could change nothing but itself steps at once with the others. No inner
+   body is put anywhere and no body is pushed until every one of these steps
+   is done, so each reads the world exactly as the tick found it -- and its
+   result is the same on any number of threads, in any order.
+2. **Their inner bodies are put where they ended**, in the order the steps
+   were handed in.
+3. **The rest step alone, one after another in that order**, each putting its
+   own inner body before the next one steps: the step as it was, so a
+   character pushing a crate pushes it, and two running into one another meet,
+   exactly as they always did.
+
+**What a step could change is decided by its reach**, from where everything
+was when the tick began:
+
+- **A dynamic body** within its capsule grown by how far it moves (its
+  ground's motion included), the step it may climb or come down, how far
+  ahead Jolt looks for a stair (0.15 m), its padding, how far past its capsule
+  a sweep looks for contacts (`mPredictiveContactDistance`, 0.1 m) and a margin
+  of 0.25 m. A static or kinematic body is not pushed, and does not count.
+- **Another character stepping in the same tick that could reach the same
+  space**: their capsules nearer, across, than the two steps' reach across
+  (speed across times the tick), and their axes nearer, up and down, than
+  the two steps' reach up and down (speed up or down times the tick, and the
+  step each may climb), with both look-aheads, both paddings and 5 cm besides.
+  A character standing still reaches nothing across. The test is the same
+  whichever of the two asks.
+
+Either is found with one broad-phase query a character, and judged by each
+body's own bounds rather than the broad phase's, which widens a moved body's
+box until it next tidies and so differs with the order bodies moved in
+(Jolt's own note on deterministic simulation). In builds with assertions, a
+character stepped together that touched a dynamic body stops the program: the
+reach would be wrong.
+
+**So no two characters stepped together can end up inside one another**, and
+a character stepped together takes the step it would have taken one after
+another: nothing that could reach it moved. An earlier form of this, in which
+every character stepped from where the others began, let two characters
+running at each other both take the space between them -- 27 cm a tick at a
+walk of 16 m/s, re-made every tick while they pressed, and in a packed crowd
+never recovered: the conformance case of two characters blocking each other
+failed, and it was replaced by the rule above before it was built.
+
+**The inner body is the engine's, not Jolt's.** Jolt's own is put where the
+character is inside every step, which is a write to the world another
+character's step on another thread would read. The engine makes the same
+capsule, kinematic, on the same layer, at the same point in the order bodies
+are made, and puts it once a step and once a teleport. Rays, the rewound casts
+of ADR 0235, detectors, `CanQuery` and stand-ins (ADR 0163) all name a
+character by it as they did. Jolt put its body several times a step -- after
+the move, after each stair and floor snap, twice for a teleport -- so the
+broad phase sees fewer updates in another order, and pairs come out of it in
+another order: the `cutscene` determinism trace, whose character pushes a
+crate, was recorded again for that reason, and no other.
+
+**A replica predicts the same way.** A client's own character steps in the
+same pass under the same rule, against the other characters as the client
+has them, and a replay of its island goes through the same pass; a character
+replayed by itself (`replayAlone`) steps alone, which is the same step for a
+character that nothing could reach.
+
+**How many threads**: `[server] physics_threads`, four by default -- today's
+pool, which the rigid-body solver shares -- and fewer on a machine that runs
+several worlds; 0 steps everything on the server's own thread. On such a
+machine the threads are borrowed from the other worlds, and what saves time
+there is a cheaper step, not more threads. A client keeps four.
+
 ## Measured
 
 Development builds, each pair the same build with and without the change,
@@ -151,6 +225,12 @@ print(stats.BytesSent, stats.SnapshotBytes)
 - A dedicated server's profile has no `draw.*`, `extract.*` or `ui.world`.
 - Every replication test and the netcode suite unchanged: the grid finds the
   same sets the walk did.
+- §8: a crowd mixed with crates and a dynamic platform the same, bit for bit,
+  on 0, 1 and 4 workers; a crowd handed in reverse order the same; no two
+  characters in one another at 3, 6, 12 and 20 m/s; none stepped together
+  touching a dynamic body (`engine/physics/tests/character_crowd_tests.cpp`).
+  The push, crate, ray, ADR 0235, detector, `CanQuery`, stand-in and phase
+  tests unchanged, and the netcode suite with them.
 
 ## Consequences
 
@@ -161,8 +241,8 @@ print(stats.BytesSent, stats.SnapshotBytes)
 
 How much each peer is sent (ADR 0229); which world a crowd is in (ADR 0230).
 
-**A parallel character step**, a later option: the characters' controllers
-moved on several workers at once. Measured at 5.7 µs a character a tick in a
+**A parallel character step**, decided in §8: the characters' controllers
+moved on several workers at once. What it was measured at before: Measured at 5.7 µs a character a tick in a
 development build -- 1,000 characters, 5.75 ms -- it is the largest share of a
 crowded server's tick that dormancy (ADR 0234) does not remove. **In a
 release build**, a dedicated server with characters walking and none asleep
@@ -170,6 +250,4 @@ release build**, a dedicated server with characters walking and none asleep
 each) and 3.17 ms; 1,000, 5.17 ms (5.2 µs each) and 7.94 ms, the solver
 growing faster than the count (0.61 ms at 500, 2.03 at 1,000); 2,000, past
 what one core holds -- 13.3 ms of characters and 22.5 ms in all a tick, and
-the server catching up thirty ticks a frame. Characters
-push each other, so it needs a determinism proof of its own before it is
-built.
+the server catching up thirty ticks a frame.

@@ -944,6 +944,26 @@ struct CharacterState
     core::Vec3 groundNormal{0.0f, 1.0f, 0.0f};
 };
 
+// One character's step of a tick, as `moveCharacter` takes it.
+struct CharacterMove
+{
+    CharacterHandle character;
+    core::Vec3 velocity{0.0f, 0.0f, 0.0f};
+    f32 fixedDt = 0.0f;
+    bool walking = false;
+};
+
+// What the last `moveCharacters` did: how many characters stepped together,
+// how many stepped alone because a dynamic body was within reach, and how many
+// of those that stepped together touched a dynamic body anyway -- which is
+// always nought, or the reach is wrong.
+struct CharacterStepCounts
+{
+    u32 together = 0;
+    u32 alone = 0;
+    u32 togetherMetDynamic = 0;
+};
+
 // Seconds spent inside the last `step`, and nothing else.
 //
 // The roadmap asks the physics work's budget to be broken down as broadphase / narrowphase

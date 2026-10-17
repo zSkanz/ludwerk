@@ -1046,7 +1046,7 @@ PhysicsSync::CharacterMotion PhysicsSync::stepController(const CharacterRecord& 
         // Left as its vertical speed, so the step it leaves the fluid in
         // carries on upwards and then falls.
         motion.vertical = velocity.y;
-        m_backend.moveCharacter(m_world, record.handle, velocity, command.dt);
+        sweep(record.handle, velocity, command.dt, false);
         return motion;
     }
     // On foot the push is across the ground; what there was of it up or down
@@ -1108,8 +1108,17 @@ PhysicsSync::CharacterMotion PhysicsSync::stepController(const CharacterRecord& 
     const bool walking = grounded && !command.jump && motion.vertical <= 0.0f && groundNormal.y > Level;
     if (walking)
         velocity.y = -(horizontal.x * groundNormal.x + horizontal.z * groundNormal.z) / groundNormal.y;
-    m_backend.moveCharacter(m_world, record.handle, velocity, command.dt, walking);
+    sweep(record.handle, velocity, command.dt, walking);
     return motion;
+}
+
+void PhysicsSync::sweep(physics::CharacterHandle character, core::Vec3 velocity, f32 dt, bool walking)
+{
+    if (m_queueMoves) {
+        m_moves.push_back(physics::CharacterMove{character, velocity, dt, walking});
+        return;
+    }
+    m_backend.moveCharacter(m_world, character, velocity, dt, walking);
 }
 
 namespace {
@@ -2518,6 +2527,13 @@ void PhysicsSync::applyScene()
     // operation sequence -- so the order bodies are created in, and therefore
     // the order the backend assigns its own ids in, is deterministic (R10).
     ENG_PROFILE_NEXT(stretch, "physics.apply.bodies");
+    // **The characters' sweeps wait for every body** (ADR 0228, the parallel
+    // character step): each character's step is worked out in this walk and
+    // its sweep queued, and the backend sweeps them all together after it, so
+    // every character meets the bodies as this tick put them, whichever side
+    // of it in the walk they are.
+    m_moves.clear();
+    m_queueMoves = true;
     m_scene.rigidBodies().forEach([&](core::InstanceId id, RigidBodyComponent& body) {
         PartComponent* part = m_scene.parts().find(id);
         if (part == nullptr || !inWorld(id))
@@ -2534,6 +2550,15 @@ void PhysicsSync::applyScene()
         }
         applyBody(id, *part, body);
     });
+    m_queueMoves = false;
+    if (!m_moves.empty()) {
+        ENG_PROFILE_SCOPE("physics.characters");
+        if (const u32 threads = m_scene.engineState().physicsThreads; threads != m_physicsThreads) {
+            m_backend.setPhysicsThreads(m_world, threads);
+            m_physicsThreads = threads;
+        }
+        m_backend.moveCharacters(m_world, m_moves);
+    }
 
     // **A SECOND walk, after every body exists**, and in the constraint pool's
     // own order -- which is creation order, and which the backend solves in.

@@ -2007,6 +2007,7 @@ static int hostMain(int argc, char** argv)
         options.maxViewResolution = config.maxViewResolution;
         options.maxSubWorlds = config.maxSubWorlds;
         options.dormantRadius = config.serverDormantRadius;
+        options.physicsThreads = config.serverPhysicsThreads;
         options.rewindCapMs = static_cast<double>(config.networkRewindCapMs);
         // The run's own word, or the project's.
         options.timeDilation = options.timeDilation || config.serverTimeDilation;
