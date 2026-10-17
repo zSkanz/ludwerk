@@ -304,6 +304,14 @@ task.spawn(function()
                 local nudge = Workspace:WaitForChild("Nudge") :: RemoteFunction
                 nudge:InvokeServerAsync()
             end)
+        elseif Condition.Mode == "stall" then
+            -- A second into the straight, this machine stops for a fifth of a
+            -- second: a window dragged, a disk read, an alt-tab.
+            task.delay(1, function()
+                local from = os.clock()
+                while os.clock() - from < 0.2 do
+                end
+            end)
         end
         straight, h = corrections(3)
         hitches += h

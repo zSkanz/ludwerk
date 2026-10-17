@@ -256,3 +256,72 @@ TEST_CASE("ADR 0233: a world busy past nine tenths of each second is slowed at o
     }
     CHECK(off.rate() == 1.0);
 }
+
+TEST_CASE("a predicting client catches a stall up once, and a slow machine is clamped as before")
+{
+    constexpr core::u64 Tick = 16'666'667ull;
+    const auto steady = [](app::FrameScheduler& scheduler, core::u64& now, int frames) {
+        for (int frame = 0; frame < frames; ++frame) {
+            now += Tick;
+            (void)scheduler.beginFrame(now);
+        }
+    };
+
+    // Off, as on a server or alone: a 200 ms frame runs four and drops the rest.
+    {
+        app::FrameScheduler scheduler;
+        core::u64 now = 0;
+        (void)scheduler.beginFrame(now);
+        steady(scheduler, now, 10);
+        now += 200'000'000ull;
+        const app::Frame stalled = scheduler.beginFrame(now);
+        CHECK(stalled.simTicks == 4);
+        CHECK(stalled.clamped);
+    }
+    // On: the same frame runs the twelve it owes, and drops nothing.
+    {
+        app::FrameScheduler scheduler;
+        scheduler.setStallCatchUp(0.25);
+        core::u64 now = 0;
+        (void)scheduler.beginFrame(now);
+        steady(scheduler, now, 10);
+        now += 200'000'000ull;
+        const app::Frame stalled = scheduler.beginFrame(now);
+        CHECK(stalled.simTicks == 12);
+        CHECK_FALSE(stalled.clamped);
+        // A longer stall: a quarter of a second of it, and the rest dropped.
+        steady(scheduler, now, 10);
+        now += 600'000'000ull;
+        const app::Frame longer = scheduler.beginFrame(now);
+        CHECK(longer.simTicks == 15);
+        CHECK(longer.clamped);
+        // Two heavy frames in a row are a slow machine: the second is clamped.
+        steady(scheduler, now, 10);
+        now += 200'000'000ull;
+        CHECK(scheduler.beginFrame(now).simTicks == 12);
+        now += 200'000'000ull;
+        const app::Frame again = scheduler.beginFrame(now);
+        CHECK(again.simTicks == 4);
+        CHECK(again.clamped);
+        // And frames that are all heavy never burst.
+        for (int frame = 0; frame < 5; ++frame) {
+            now += 200'000'000ull;
+            CHECK(scheduler.beginFrame(now).simTicks == 4);
+        }
+    }
+    // A duration, not a count: at thirty ticks a second, a 200 ms stall is six.
+    {
+        app::FrameScheduler scheduler(app::FrameTiming{.fixedDt = 1.0 / 30.0});
+        scheduler.setStallCatchUp(0.25);
+        core::u64 now = 0;
+        (void)scheduler.beginFrame(now);
+        for (int frame = 0; frame < 10; ++frame) {
+            now += 2 * Tick;
+            (void)scheduler.beginFrame(now);
+        }
+        now += 200'000'000ull;
+        const app::Frame stalled = scheduler.beginFrame(now);
+        CHECK(stalled.simTicks == 6);
+        CHECK_FALSE(stalled.clamped);
+    }
+}

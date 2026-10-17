@@ -39,11 +39,16 @@ Frame FrameScheduler::beginFrame(u64 nowNs) noexcept
     frame.renderDt = static_cast<f64>(elapsedNs) / 1'000'000'000.0;
     accumulator_ += frame.renderDt * timeScale_;
 
-    const f64 maxAccumulated = timing_.fixedDt * static_cast<f64>(timing_.maxCatchUpTicks);
+    f64 maxAccumulated = timing_.fixedDt * static_cast<f64>(timing_.maxCatchUpTicks);
+    // **A stall, caught up once** (`stallCatchUpSeconds`).
+    const bool owesMore = accumulator_ > maxAccumulated;
+    if (owesMore && timing_.stallCatchUpSeconds > maxAccumulated && !lastHeavy_)
+        maxAccumulated = timing_.stallCatchUpSeconds;
     if (accumulator_ > maxAccumulated) {
         frame.clamped = true;
         accumulator_ = maxAccumulated;
     }
+    lastHeavy_ = owesMore;
 
     while (accumulator_ >= timing_.fixedDt) {
         accumulator_ -= timing_.fixedDt;

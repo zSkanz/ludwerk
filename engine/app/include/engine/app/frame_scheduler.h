@@ -28,6 +28,16 @@ struct FrameTiming
     // more ticks -- the spiral of death. Dropping simulated time is the lesser
     // evil and the one every fixed-tick engine picks.
     u32 maxCatchUpTicks = 4;
+
+    // **A stall caught up, once** (a predicting client in a match): a frame
+    // that owes more than `maxCatchUpTicks` may run up to this many seconds of
+    // them, when the frame before it was neither clamped nor such a burst. A
+    // client that dropped the rest of a 200 ms stall fell behind its own
+    // prediction, and the authority's answers moved its car 1.4 m in a tick.
+    // A duration, so a project at another tick rate is covered alike; nought
+    // is none. Two heavy frames in a row are a slow machine, not a stall, and
+    // the second is clamped as before: no spiral.
+    f64 stallCatchUpSeconds = 0.0;
 };
 
 struct Frame
@@ -163,6 +173,8 @@ public:
     [[nodiscard]] f64 timeScale() const noexcept { return timeScale_; }
     // How many ticks a frame may run to catch up; see `catchUpTicksFor`.
     void setMaxCatchUpTicks(u32 ticks) noexcept { timing_.maxCatchUpTicks = ticks > 0 ? ticks : 1; }
+    // See `FrameTiming::stallCatchUpSeconds`.
+    void setStallCatchUp(f64 seconds) noexcept { timing_.stallCatchUpSeconds = seconds > 0.0 ? seconds : 0.0; }
     // The frame loop says where a long frame's time went itself, so the
     // scheduler's own line, which can only say how long, is not wanted.
     void setQuiet(bool quiet) noexcept { quiet_ = quiet; }
@@ -194,6 +206,8 @@ private:
     // The ticks of the last frame, and the count it shared with the one
     // before it; none while they differed.
     u32 lastTicks_ = 0;
+    // Whether the last frame was clamped or caught a stall up: the next may not.
+    bool lastHeavy_ = false;
     u32 steadyTicks_ = 0;
     u64 totalTicks_ = 0;
     u64 totalFrames_ = 0;

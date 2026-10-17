@@ -36,6 +36,10 @@
 # correction must be that half metre. A run that said nought here would be a
 # measure that cannot see a correction, and every nought above with it.
 #
+# **A stall** (`stall`, 150 ms): the driver's machine stops for 200 ms in the
+# straight. It catches the ticks up and goes on as before: no correction, and
+# the car drawn no further than the glide allows.
+#
 # **Two drivers** (`duel`, 150 ms): two clients, their cars facing each other,
 # each driving at the other with a wheel that wanders from a seed of its own.
 # Neither machine knows where the other's wheel goes next, so corrections are
@@ -60,6 +64,7 @@ set(conditions
     "300ms|150|20|2|drive|1"
     "touch|25|20|2|park|1"
     "nudge|25|20|2|nudge|1"
+    "stall|75|20|2|stall|1"
     "duel|75|20|2|duel|2")
 
 file(REMOVE_RECURSE "${STAGE}")
@@ -172,6 +177,15 @@ foreach(entry IN LISTS conditions)
             if(driven GREATER allowed)
                 string(APPEND failures "  ${name}: a straight and a corner took ${driven} corrections "
                        "(${outside} between the stretches)\n")
+            endif()
+        elseif(mode STREQUAL "stall")
+            # **A stall is caught up, not dropped** (`stallCatchUpSeconds`):
+            # the machine stopped for 200 ms runs the twelve ticks it owes and
+            # goes on predicting. Not one correction, anywhere in the drive --
+            # what it dropped it used to be put at, 1.4 m on.
+            math(EXPR driven "${straight} + ${corner} + ${outside}")
+            if(driven GREATER 0)
+                string(APPEND failures "  ${name}: a stall of 200 ms took ${driven} corrections\n")
             endif()
         elseif(mode STREQUAL "nudge")
             # Half a metre aside, seen as half a metre.

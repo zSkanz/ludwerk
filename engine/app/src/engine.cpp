@@ -144,6 +144,10 @@ namespace engine::app {
 
 // How many ticks a headless server runs back to back to catch up a long frame.
 constexpr core::u32 ServerCatchUpTicks = 30;
+// And how long a stall a predicting client runs back to back once, rather
+// than dropping it (`FrameTiming::stallCatchUpSeconds`): a quarter of a
+// second, as a long frame is clamped by most engines.
+constexpr core::f64 StallCatchUpSeconds = 0.25;
 // How far round the camera the ground is meshed before a scene is shown
 // (ADR 0159): as far as a player sees clearly from where they stand.
 constexpr f64 CurtainGroundMetres = 96.0;
@@ -3802,6 +3806,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         if (frameClock.switched())
             scheduler.rebase(nowNs);
 
+        // **A predicting client catches a stall up** (`stallCatchUpSeconds`):
+        // what it drops, it no longer predicts, and the authority's answers
+        // move it there at once.
+        scheduler.setStallCatchUp(
+            host->world().engineState().networkTopology == scene::NetworkTopology::Replica ? StallCatchUpSeconds : 0.0);
         const Frame frame = scheduler.beginFrame(nowNs);
         // Simulated time dropped is a clock that moved, and a replica's
         // authority has to know it from a packet that was late.

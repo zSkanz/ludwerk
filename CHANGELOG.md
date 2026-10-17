@@ -11,6 +11,14 @@ here.
 
 ### Fixed
 
+- A client in a match that stops for a moment -- a window dragged, a disk
+  read, an alt-tab -- catches up the time it missed, up to a quarter of a
+  second, instead of dropping it. Its car or character no longer jumps a metre
+  or two ahead when it comes back. Two heavy frames in a row are clamped as
+  before, so a slow machine does not spiral.
+- A driven car's automatic gearbox shifts on the same ticks on the driver's
+  machine as on the server: a car braking from speed is no longer corrected
+  by 20 to 40 cm.
 - A driven car on a slow machine at a high ping no longer drifts sideways and
   snaps back at a corner or a stop. A car a few milliradians off the server's
   heading was pulled back in place and speed at every answer, but never in
