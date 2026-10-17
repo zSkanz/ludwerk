@@ -13,7 +13,7 @@ where it is not, it says that too.
 | Accounts, friends, achievements, a store | **Through a platform, not the engine.** `IdentityService`, `SocialService`, `AchievementService` and `StoreService` reach a platform's own services through an optional provider; Xbox on Windows is the one there is. See [Platform services](manual:guides/platform-services). |
 | Data stores | **Not planned.** A game saves on the player's machine with `SaveService`, or in a platform's cloud with `CloudSaveService`; anything shared between players is a backend you write. |
 | Analytics | **Not planned.** |
-| Matchmaking and hosted servers | **Not planned.** A match is hosted by a player's machine (`NetworkService:Host()`, or `--host`) or a server you run (`--serve`), and a script joins one with `NetworkService:Join(address)`; finding one is your backend's job. |
+| Matchmaking and hosted servers | **Servers you run, yes; a hosting service and skill matching, no.** A match is hosted by a player's machine (`NetworkService:Host()`, or `--host`) or a server you run (`--serve`), and a script joins one with `NetworkService:Join(address)`. The manager runs a game's worlds on your machine -- channels, a line at the door when a world is full, a player sent from one world to another: see [Online games](manual:guides/online-games). Matching players by skill, and anywhere to host the manager, are your own. |
 
 Replication and a game's own messages are here: see
 [Multiplayer](manual:guides/multiplayer). Anything that outlives a match is one

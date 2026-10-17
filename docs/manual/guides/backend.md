@@ -109,12 +109,21 @@ That is stated rather than prevented, because the alternative is a network API
 no backend-talking game could use. Where it matters, apply the response at a
 known tick rather than the moment it lands.
 
+## A WebSocket
+
+A backend that pushes -- a chat server, a live leaderboard -- is reached with
+`net.websocket(url)`, which opens a WebSocket and hands back what arrives on it
+as a signal. A server's scripts open one freely; a client's game opens one only
+with `websocket_client = true` under `[permissions]` in `project.toml`. See
+[Messages between worlds](manual:guides/online-games#messages-between-worlds)
+for an example and its limits.
+
 ## What is not here
 
 - **No server in a script.** `net.serve` is a reserved name. A script never opens
   a port; the only listening socket is the one a match opens when it is hosted
   -- `--host` or `--serve` on the command line, or `NetworkService:Host()`.
-- **No raw sockets, and no WebSocket client for a script.**
+- **No raw sockets.** HTTP and a WebSocket are a script's whole network.
 - **No filesystem.** A script cannot open a file. A game's own saves go through
   `SaveService` ([Saving the game](manual:guides/saves)); what players share is
   the backend's.
@@ -124,8 +133,8 @@ Players talking to each other is not this page's job: that is
 `RemoteEvent` and `RemoteFunction` for your own messages. This page is about the
 server you run yourself: scores, accounts, saves.
 
-The `[permissions]` table in `project.toml` parses and is reserved against the day
-`serve` and a filesystem arrive; nothing reads it today.
+The `[permissions]` table in `project.toml` holds `websocket_client`, and the
+rest of it is reserved against the day `serve` and a filesystem arrive.
 
 ## Sharing code with your backend
 

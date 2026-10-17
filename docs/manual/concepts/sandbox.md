@@ -160,15 +160,19 @@ Three things about it that catch people out:
   no way to turn that off. Redirects are followed -- at most five, never from
   `https` to `http`, and a credential is not carried to another host.
 
-There is no server, no raw socket and no WebSocket client for a script.
-`net.serve` is a reserved name rather than a missing feature: a script never
+A WebSocket is here too: `net.websocket(url)`, from a server's scripts, and
+from a client's game with `websocket_client = true` under `[permissions]` (see
+[Messages between worlds](manual:guides/online-games#messages-between-worlds)).
+
+There is no server and no raw socket for a script. `net.serve` is a reserved
+name rather than a missing feature: a script never
 listens on a port, which is a security property rather than an omission. The
 one port a game opens is the engine's own, when it hosts a match through
 `NetworkService`, and what arrives there is the engine's protocol, never a
 script's.
 
-The `[permissions]` table in `project.toml` parses and is reserved for the day
-`serve` and a filesystem arrive; nothing reads it today.
+The `[permissions]` table in `project.toml` holds `websocket_client`, and the
+rest of it is reserved for the day `serve` and a filesystem arrive.
 
 ## Why it is shaped this way
 
