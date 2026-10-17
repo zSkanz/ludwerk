@@ -2715,6 +2715,8 @@ public:
             settings.mUserData = kStandInUserData;
             settings.mAllowSleeping = false;
             record->standIn = bodies.CreateAndAddBody(settings, JPH::EActivation::DontActivate);
+            if (!record->standIn.IsInvalid())
+                m_standIns[record->standIn.GetIndexAndSequenceNumber()] = handle.index;
             return;
         }
         bodies.SetPositionAndRotation(record->standIn, toLocal(where->position), toJolt(where->rotation),
@@ -2726,6 +2728,7 @@ public:
         if (record.standIn.IsInvalid())
             return;
         JPH::BodyInterface& bodies = m_system.GetBodyInterface();
+        m_standIns.erase(record.standIn.GetIndexAndSequenceNumber());
         bodies.RemoveBody(record.standIn);
         bodies.DestroyBody(record.standIn);
         record.standIn = JPH::BodyID();
@@ -4570,20 +4573,37 @@ private:
         return QueryTarget{record->userData, handle, record->queryable, true};
     }
 
-    // Which character owns this body, when the body is a character's inner one.
+    // Which character owns this body, when the body is a character's inner one
+    // or its stand-in.
     //
-    // Linear over the character table, which is a handful of entries and is
-    // walked only for contacts a character actually has. A map keyed by `BodyID`
-    // would be the answer if that stopped being true.
+    // **By its id, from the maps the character keeps**: it walked the whole
+    // character table, for every contact of every character -- a thousand
+    // characters on one floor were a million comparisons a tick (the crowd
+    // amendment to ADR 0228).
     [[nodiscard]] CharacterHandle characterOfInnerBody(JPH::BodyID id) const noexcept
     {
-        for (usize slot = 0; slot < m_characters.size(); ++slot) {
-            const CharacterRecord& record = m_characters[slot];
-            if (record.alive && record.character != nullptr &&
-                (record.character->GetInnerBodyID() == id || (!record.standIn.IsInvalid() && record.standIn == id)))
-                return CharacterHandle{static_cast<u32>(slot), record.generation};
-        }
-        return CharacterHandle{};
+        const u32 key = id.GetIndexAndSequenceNumber();
+        u32 slot = 0;
+        if (const auto inner = m_innerBodies.find(key); inner != m_innerBodies.end())
+            slot = inner->second;
+        else if (const auto standIn = m_standIns.find(key); standIn != m_standIns.end())
+            slot = standIn->second;
+        else
+            return CharacterHandle{};
+        const CharacterRecord& record = m_characters[slot];
+        if (!record.alive || record.character == nullptr)
+            return CharacterHandle{};
+        return CharacterHandle{slot, record.generation};
+    }
+    // The record of a character as Jolt hands it to a listener: by its inner
+    // body, which every character here has.
+    [[nodiscard]] const CharacterRecord* recordOf(const JPH::CharacterVirtual* character) const noexcept
+    {
+        const auto found = m_innerBodies.find(character->GetInnerBodyID().GetIndexAndSequenceNumber());
+        if (found == m_innerBodies.end())
+            return nullptr;
+        const CharacterRecord& record = m_characters[found->second];
+        return record.alive && record.character.GetPtr() == character ? &record : nullptr;
     }
 
     // The same diff `buildContactEvents` makes, without the sleep exception --
@@ -4735,11 +4755,9 @@ private:
             // (ADR 0231 §4): their machine does not have it.
             if (m_world.m_contacts.anyPhase() && !contact.mBodyB.IsInvalid()) {
                 if (const u8 phase = m_world.m_contacts.phaseOf(contact.mUserData); phase != 0) {
-                    for (const CharacterRecord& own : m_world.m_characters) {
-                        if (own.alive && own.character.GetPtr() == character && own.phaseHolder &&
-                            ((own.phaseMask >> (phase - 1u)) & 1u) == 0)
-                            return false;
-                    }
+                    const CharacterRecord* own = m_world.recordOf(character);
+                    if (own != nullptr && own->phaseHolder && ((own->phaseMask >> (phase - 1u)) & 1u) == 0)
+                        return false;
                 }
             }
             // **What does not collide is never ground**. The sweep
@@ -4768,9 +4786,10 @@ private:
             // **A character that has a stand-in is met there, and not where it
             // is** (ADR 0163): its own inner body is no obstacle.
             if (!contact.mBodyB.IsInvalid() && contact.mUserData != kStandInUserData) {
-                for (const CharacterRecord& other : m_world.m_characters) {
-                    if (other.alive && other.character != nullptr && !other.standIn.IsInvalid() &&
-                        other.character->GetInnerBodyID() == contact.mBodyB)
+                const auto inner = m_world.m_innerBodies.find(contact.mBodyB.GetIndexAndSequenceNumber());
+                if (inner != m_world.m_innerBodies.end()) {
+                    const CharacterRecord& other = m_world.m_characters[inner->second];
+                    if (other.alive && other.character != nullptr && !other.standIn.IsInvalid())
                         return false;
                 }
             }
@@ -4858,6 +4877,9 @@ private:
     // what a query meets when it meets a character. Its Jolt user data is the
     // character's own, not a body's handle.
     std::map<u32, u32> m_innerBodies;
+    // **And each stand-in, the same way** (ADR 0163): what a contact with
+    // one names, found by its id rather than by walking every character.
+    std::map<u32, u32> m_standIns;
     std::vector<u32> m_freeCharacters;
     // Slot-indexed and never compacted, exactly as the bodies are: a handle is
     // an index plus a generation, and Jolt solves in the order constraints were
