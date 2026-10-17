@@ -3151,6 +3151,20 @@ public:
         state.rpm = controller.GetEngine().GetCurrentRPM();
         state.gear = controller.GetTransmission().GetCurrentGear();
         state.clutch = controller.GetTransmission().GetClutchFriction();
+        // The gearbox's clocks are its own: read as it saves itself, its
+        // values as they are, never converted.
+        {
+            JPH::StateRecorderImpl saved;
+            controller.GetTransmission().SaveState(saved);
+            saved.Rewind();
+            int gear = 0;
+            float clutch = 0.0f;
+            saved.Read(gear);
+            saved.Read(clutch);
+            saved.Read(state.gearSwitchTimeLeft);
+            saved.Read(state.clutchReleaseTimeLeft);
+            saved.Read(state.gearSwitchLatencyTimeLeft);
+        }
         state.wheels.resize(vehicle.GetWheels().size());
         for (u32 index = 0; index < static_cast<u32>(state.wheels.size()); ++index) {
             const JPH::Wheel& wheel = *vehicle.GetWheel(index);
@@ -3179,7 +3193,20 @@ public:
         JPH::VehicleConstraint& vehicle = *record->constraint;
         auto& controller = static_cast<JPH::WheeledVehicleController&>(*vehicle.GetController());
         controller.GetEngine().SetCurrentRPM(state.rpm);
-        controller.GetTransmission().Set(state.gear, state.clutch);
+        // The gear, the clutch and the gearbox's clocks together, as it
+        // restores itself.
+        {
+            JPH::StateRecorderImpl put;
+            const int gear = state.gear;
+            const float clutch = state.clutch;
+            put.Write(gear);
+            put.Write(clutch);
+            put.Write(state.gearSwitchTimeLeft);
+            put.Write(state.clutchReleaseTimeLeft);
+            put.Write(state.gearSwitchLatencyTimeLeft);
+            put.Rewind();
+            controller.GetTransmission().RestoreState(put);
+        }
         const u32 wheels =
             std::min(static_cast<u32>(vehicle.GetWheels().size()), static_cast<u32>(state.wheels.size()));
         for (u32 index = 0; index < wheels; ++index) {

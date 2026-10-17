@@ -251,6 +251,9 @@ void PhysicsSync::readVehicles()
         controller->rpm = state.rpm;
         controller->currentGear = state.gear;
         controller->clutch = state.clutch;
+        controller->gearSwitchTimeLeft = state.gearSwitchTimeLeft;
+        controller->clutchReleaseTimeLeft = state.clutchReleaseTimeLeft;
+        controller->gearSwitchLatencyTimeLeft = state.gearSwitchLatencyTimeLeft;
         for (usize at = 0; at < record.wheels.size() && at < state.wheels.size(); ++at) {
             VehicleWheelComponent* wheel = m_scene.vehicleWheels().find(record.wheels[at]);
             if (wheel == nullptr)
@@ -284,6 +287,9 @@ void PhysicsSync::putVehicle(const CharacterReplayStart::Vehicle& vehicle)
     state.rpm = vehicle.rpm;
     state.gear = vehicle.gear;
     state.clutch = vehicle.clutch;
+    state.gearSwitchTimeLeft = vehicle.gearSwitchTimeLeft;
+    state.clutchReleaseTimeLeft = vehicle.clutchReleaseTimeLeft;
+    state.gearSwitchLatencyTimeLeft = vehicle.gearSwitchLatencyTimeLeft;
     // In the order the vehicle was built with; a wheel the answer did not
     // carry keeps what the island had.
     const physics::VehicleState had = m_backend.vehicleState(m_world, record.handle);

@@ -467,6 +467,14 @@ u64 World::worldHash() const
         if (const VehicleControllerComponent* vehicle = m_vehicleControllers.find(id); vehicle != nullptr) {
             hasher.number(vehicle->clutch);
             hasher.pod(vehicle->driver);
+            // The gearbox's clocks, when one runs: a car not shifting hashes
+            // as it did before they were carried.
+            if (vehicle->gearSwitchTimeLeft != 0.0f || vehicle->clutchReleaseTimeLeft != 0.0f ||
+                vehicle->gearSwitchLatencyTimeLeft != 0.0f) {
+                hasher.number(vehicle->gearSwitchTimeLeft);
+                hasher.number(vehicle->clutchReleaseTimeLeft);
+                hasher.number(vehicle->gearSwitchLatencyTimeLeft);
+            }
         }
         if (const VehicleWheelComponent* wheel = m_vehicleWheels.find(id); wheel != nullptr) {
             hasher.number(wheel->angularVelocity);

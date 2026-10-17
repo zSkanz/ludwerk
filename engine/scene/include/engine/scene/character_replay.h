@@ -92,6 +92,10 @@ struct CharacterReplayStart
         core::f32 rpm = 0.0f;
         core::i32 gear = 0;
         core::f32 clutch = 0.0f;
+        // The gearbox's clocks (`physics::VehicleState`).
+        core::f32 gearSwitchTimeLeft = 0.0f;
+        core::f32 clutchReleaseTimeLeft = 0.0f;
+        core::f32 gearSwitchLatencyTimeLeft = 0.0f;
         struct Wheel
         {
             core::InstanceId id{};

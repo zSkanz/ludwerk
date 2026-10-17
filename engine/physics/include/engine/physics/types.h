@@ -527,6 +527,15 @@ struct VehicleState
     core::i32 gear = 0;
     // How far the clutch is in, 0 to 1.
     f32 clutch = 0.0f;
+    // **An automatic gearbox's clocks**, in seconds: the shift under way, the
+    // clutch coming back in after it, and the wait before another. They
+    // decide the tick the next shift lands on; a replica that put back the
+    // gear and not these shifted a tick or two from the authority, and a car
+    // braking from speed was corrected by 20 to 39 cm (the vehicle gate at
+    // 300 ms).
+    f32 gearSwitchTimeLeft = 0.0f;
+    f32 clutchReleaseTimeLeft = 0.0f;
+    f32 gearSwitchLatencyTimeLeft = 0.0f;
     std::vector<VehicleWheelState> wheels;
 };
 

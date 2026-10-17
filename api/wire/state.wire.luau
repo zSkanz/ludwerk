@@ -2952,6 +2952,27 @@ local VehicleControllerFields: { Schema.Field } = {
         "**Not a property: what a replica puts back** before stepping a vehicle it drives again, with "
             .. "`RPM` and `CurrentGear` -- an engine at another speed is a drive that comes out elsewhere."
     ),
+    vehicleController(
+        "GearSwitchTimeLeft",
+        22,
+        "F32",
+        "**Not a property: an automatic gearbox's clock** (protocol 55), the seconds left of a shift "
+            .. "under way. With the next two, which tick the next shift lands on: a replica that put back "
+            .. "the gear and not these shifted a tick or two from the authority, and a car braking from "
+            .. "speed was corrected by 20 to 39 cm."
+    ),
+    vehicleController(
+        "ClutchReleaseTimeLeft",
+        23,
+        "F32",
+        "The seconds left of the clutch coming back in after a shift (protocol 55)."
+    ),
+    vehicleController(
+        "GearSwitchLatencyTimeLeft",
+        24,
+        "F32",
+        "The seconds left before an automatic gearbox may shift again (protocol 55)."
+    ),
 }
 
 local VehicleWheelFields: { Schema.Field } = {

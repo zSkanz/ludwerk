@@ -8742,6 +8742,12 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
                     vehicle.gear = asI32(held->fields[at]);
                 else if (field->name == "Clutch")
                     vehicle.clutch = asF32(held->fields[at]);
+                else if (field->name == "GearSwitchTimeLeft")
+                    vehicle.gearSwitchTimeLeft = asF32(held->fields[at]);
+                else if (field->name == "ClutchReleaseTimeLeft")
+                    vehicle.clutchReleaseTimeLeft = asF32(held->fields[at]);
+                else if (field->name == "GearSwitchLatencyTimeLeft")
+                    vehicle.gearSwitchLatencyTimeLeft = asF32(held->fields[at]);
             }
             for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
                 const EntityState* wheelHeld = world.vehicleWheels().find(child) != nullptr ? heldOf(child) : nullptr;

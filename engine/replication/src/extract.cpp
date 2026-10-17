@@ -394,6 +394,9 @@ constexpr Carried<VehicleController> VehicleControllerCarried[] = {
     {"BrakeIntent", &VehicleController::brakeIntent},
     {"HandBrakeIntent", &VehicleController::handBrakeIntent},
     {"Clutch", &VehicleController::clutch},
+    {"GearSwitchTimeLeft", &VehicleController::gearSwitchTimeLeft},
+    {"ClutchReleaseTimeLeft", &VehicleController::clutchReleaseTimeLeft},
+    {"GearSwitchLatencyTimeLeft", &VehicleController::gearSwitchLatencyTimeLeft},
 };
 
 using VehicleWheel = scene::VehicleWheelComponent;

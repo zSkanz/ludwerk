@@ -187,3 +187,74 @@ TEST_CASE("ADR 0213: a vehicle needs a moving chassis and a wheel, and goes with
     road.physics->setVehicleInput(road.world, road.vehicle, VehicleInput{.forward = 1.0f});
     road.physics->step(road.world, kFixedDt);
 }
+
+TEST_CASE("ADR 0213: a vehicle put back with its gearbox's clocks shifts on the ticks it shifted on")
+{
+    // What a replica does at every answer: the vehicle put back as the
+    // authority had it, then stepped again. Put back with the gear and not
+    // the gearbox's clocks, an automatic box mid-shift shifted on other ticks,
+    // and a car braking from speed came out 20 to 39 cm from the authority's.
+    Road road;
+    road.drive(VehicleInput{}, 30);
+    // Full throttle until a shift is under way.
+    int waited = 0;
+    while (waited < 600) {
+        road.drive(VehicleInput{.forward = 1.0f}, 1);
+        waited += 1;
+        const VehicleState now = road.physics->vehicleState(road.world, road.vehicle);
+        if (now.gearSwitchTimeLeft > 0.0f || now.clutchReleaseTimeLeft > 0.0f)
+            break;
+    }
+    REQUIRE(waited < 600);
+    std::vector<u8> world;
+    REQUIRE(road.physics->saveState(road.world, world));
+    const VehicleState authority = road.physics->vehicleState(road.world, road.vehicle);
+    MESSAGE("mid-shift: gear ", authority.gear, ", ", authority.gearSwitchTimeLeft, " s of the shift, ",
+            authority.clutchReleaseTimeLeft, " s of the clutch, ", authority.gearSwitchLatencyTimeLeft,
+            " s of the wait");
+
+    struct Tick
+    {
+        f32 rpm = 0.0f;
+        core::i32 gear = 0;
+        core::DVec3 at;
+    };
+    const auto drive = [&]() {
+        std::vector<Tick> ticks;
+        for (int tick = 0; tick < 60; ++tick) {
+            road.drive(VehicleInput{.forward = 1.0f}, 1);
+            const VehicleState state = road.physics->vehicleState(road.world, road.vehicle);
+            ticks.push_back(Tick{state.rpm, state.gear, road.body().transform.position});
+        }
+        return ticks;
+    };
+    const std::vector<Tick> lived = drive();
+
+    // A replica whose gearbox had no shift under way, put back as the
+    // authority had it -- clocks and all.
+    const auto putBack = [&](bool clocks) {
+        REQUIRE(road.physics->restoreState(road.world, world));
+        VehicleState other = authority;
+        other.gearSwitchTimeLeft = 0.0f;
+        other.clutchReleaseTimeLeft = 0.0f;
+        other.gearSwitchLatencyTimeLeft = 0.0f;
+        road.physics->setVehicleState(road.world, road.vehicle, other);
+        if (clocks)
+            road.physics->setVehicleState(road.world, road.vehicle, authority);
+        return drive();
+    };
+    const std::vector<Tick> again = putBack(true);
+    REQUIRE(again.size() == lived.size());
+    for (core::usize at = 0; at < lived.size(); ++at) {
+        CHECK(again[at].rpm == lived[at].rpm);
+        CHECK(again[at].gear == lived[at].gear);
+        CHECK(again[at].at.x == lived[at].at.x);
+        CHECK(again[at].at.z == lived[at].at.z);
+    }
+    // Without the clocks, the drive is another one.
+    const std::vector<Tick> without = putBack(false);
+    bool differed = false;
+    for (core::usize at = 0; at < lived.size(); ++at)
+        differed = differed || without[at].gear != lived[at].gear || without[at].rpm != lived[at].rpm;
+    CHECK(differed);
+}

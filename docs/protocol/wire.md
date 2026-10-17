@@ -1518,6 +1518,9 @@ A vehicle (ADR 0213): what was authored, what its driver asks, and what the auth
 | 19 | BrakeIntent | NameAtom | The one that brakes. |
 | 20 | HandBrakeIntent | NameAtom | The one that pulls the hand brake. |
 | 21 | Clutch | F32 | **Not a property: what a replica puts back** before stepping a vehicle it drives again, with `RPM` and `CurrentGear` -- an engine at another speed is a drive that comes out elsewhere. |
+| 22 | GearSwitchTimeLeft | F32 | **Not a property: an automatic gearbox's clock** (protocol 55), the seconds left of a shift under way. With the next two, which tick the next shift lands on: a replica that put back the gear and not these shifted a tick or two from the authority, and a car braking from speed was corrected by 20 to 39 cm. |
+| 23 | ClutchReleaseTimeLeft | F32 | The seconds left of the clutch coming back in after a shift (protocol 55). |
+| 24 | GearSwitchLatencyTimeLeft | F32 | The seconds left before an automatic gearbox may shift again (protocol 55). |
 
 ### 49 — VehicleWheel
 

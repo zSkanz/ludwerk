@@ -417,6 +417,11 @@ struct VehicleControllerComponent
     // And the clutch, 0 to 1: with the turns and the gear, what a replica
     // puts back before stepping a driven vehicle again.
     f32 clutch = 0.0f;
+    // And an automatic gearbox's clocks, in seconds (`physics::VehicleState`):
+    // which tick the next shift lands on.
+    f32 gearSwitchTimeLeft = 0.0f;
+    f32 clutchReleaseTimeLeft = 0.0f;
+    f32 gearSwitchLatencyTimeLeft = 0.0f;
 };
 
 // One wheel of a vehicle (ADR 0213), at an attachment of the chassis.

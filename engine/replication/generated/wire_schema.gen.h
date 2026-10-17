@@ -598,6 +598,9 @@ inline constexpr FieldDesc VehicleControllerFields[] = {
     {"BrakeIntent", 19, Encoding::NameAtom, Source::Component, "vehicleControllers"},
     {"HandBrakeIntent", 20, Encoding::NameAtom, Source::Component, "vehicleControllers"},
     {"Clutch", 21, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"GearSwitchTimeLeft", 22, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"ClutchReleaseTimeLeft", 23, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"GearSwitchLatencyTimeLeft", 24, Encoding::F32, Source::Component, "vehicleControllers"},
 };
 
 inline constexpr FieldDesc VehicleWheelFields[] = {
