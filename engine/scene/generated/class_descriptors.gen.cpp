@@ -7406,13 +7406,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setPlayerCharacter2D,
         },
     }};
-    static std::array<MethodDesc, 8> playerMethods;
+    static std::array<MethodDesc, 9> playerMethods;
     playerMethods = {{
         MethodDesc{
             .name = atoms.intern("GetIntent"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Returns the value of this player's input action of the given name for the current tick. The type is the one `InputAction:GetState` returns: a boolean, a number, a `Vector2` or a `vector`. For the local player it is this machine's own action; for a remote player it is the value their machine sent. An action the player never sent reads false.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetNetworkPing"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Safe,
+            .doc = "Returns this player's network round trip, in milliseconds, for a scoreboard. On the server it is the round trip to that player's machine, which a machine's other players share. On a client it is this machine's own, for its own players. It is 0 for the host's own player, in a single-player game, for another machine's player on a client, and for a player who has left; it never raises.",
         },
         MethodDesc{
             .name = atoms.intern("AddPhase"),

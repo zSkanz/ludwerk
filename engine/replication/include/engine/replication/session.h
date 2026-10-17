@@ -493,6 +493,9 @@ public:
     void answerJoin(u32 ask, JoinAnswer answer) { m_answers[ask] = std::move(answer); }
     // Every welcomed peer's player, as an operator lists them.
     [[nodiscard]] std::vector<PeerSummary> players() const;
+    // Each welcomed player's round trip, by `UserId`, guests with their
+    // machine's: sorted by `UserId`.
+    [[nodiscard]] std::vector<std::pair<u32, u32>> playerPings() const;
     // Words for every welcomed peer (`Announce`), at most
     // `MaxRemovedReasonBytes` of them.
     void announce(std::string_view text);

@@ -292,3 +292,11 @@ describe("remote functions", function()
         remote:Destroy()
     end)
 end)
+
+describe("Player:GetNetworkPing", function()
+    it("is 0 for a single-player game's own player, a number every row can ask", function()
+        local me = NetworkService.LocalPlayer
+        assert(me, "a single-player game has its player")
+        expect(me:GetNetworkPing()):ToBe(0)
+    end)
+end)

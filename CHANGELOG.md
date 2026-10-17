@@ -11,6 +11,10 @@ here.
 
 ### Fixed
 
+- A driven car on a slow machine at a high ping no longer drifts sideways and
+  snaps back at a corner or a stop. A car a few milliradians off the server's
+  heading was pulled back in place and speed at every answer, but never in
+  heading, so it kept going sideways; it is now turned back too.
 - A ray, a sphere cast and an overlap now meet characters. Before, a ray at a
   `CharacterBody` went straight through it, or answered with whichever other
   part happened to share its number in the physics world. `CanQuery` on a
@@ -179,6 +183,9 @@ here.
 - `NetworkService:GetStats().PredictedDrift`: how far the parts this machine
   predicts were from the authority's at the last answer.
   `PredictedDriftPart` names the part that was furthest.
+- `Player:GetNetworkPing()`: one player's round trip, in milliseconds -- on
+  the server that player's, on a client its own. `GetStats().Ping` on a host
+  is the worst client's link, which a host read as its own.
 - `BasePart:Fracture`: a box part cut into pieces held by joints that break.
   A wall that stood keeps its footing and breaks where it is struck.
 - `Cloth`: a skinned mesh that hangs as cloth, every vertex simulated, pinned

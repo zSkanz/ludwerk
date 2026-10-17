@@ -5737,6 +5737,12 @@ declare extern type Player extends Instance with
     --- the local player it is this machine's own action; for a remote player it is the value their
     --- machine sent. An action the player never sent reads false.
     function GetIntent(self, action: string): boolean | number | Vector2 | vector
+    --- Returns this player's network round trip, in milliseconds, for a scoreboard. On the server it is
+    --- the round trip to that player's machine, which a machine's other players share. On a client it
+    --- is this machine's own, for its own players. It is 0 for the host's own player, in a
+    --- single-player game, for another machine's player on a client, and for a player who has left; it
+    --- never raises.
+    function GetNetworkPing(self): number
     --- Puts this player in `phase`: they see, and collide with, what has that `Phase`. Only the server
     --- calls it; the player's own machine is told, and reads it with `HasPhase` and `GetPhases`. A
     --- world names at most 64 phases, and the 65th raises.

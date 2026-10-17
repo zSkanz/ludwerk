@@ -804,6 +804,16 @@ void NetworkSession::update()
         shown.deferredPerSecond = stats.deferredLastSecond;
         shown.budgetUsed = stats.budgetUsedLastSecond;
         shown.pingMs = static_cast<core::f64>(status.pingMs);
+        // **Each player's own** (`Player:GetNetworkPing`): the worst link
+        // above is what a host's overlay reads, and no player's figure.
+        shown.playerPings = m_replication->playerPings();
+        if (state.networkTopology == scene::NetworkTopology::Replica) {
+            host->world().players().forEach([&](core::InstanceId, const scene::PlayerComponent& player) {
+                if (player.local && player.userId != 0)
+                    shown.playerPings.emplace_back(player.userId, status.pingMs);
+            });
+            std::sort(shown.playerPings.begin(), shown.playerPings.end());
+        }
         shown.jitterMs = static_cast<core::f64>(status.jitterMs);
         shown.lossPercent = static_cast<core::f64>(status.loss) * 100.0;
         shown.lastCorrectionMetres = stats.lastCorrectionMetres;

@@ -40,6 +40,10 @@ Whether this player is in the phase of `instance` and of everything above it: wh
 
 Returns the value of this player's input action of the given name for the current tick. The type is the one `InputAction:GetState` returns: a boolean, a number, a `Vector2` or a `vector`. For the local player it is this machine's own action; for a remote player it is the value their machine sent. An action the player never sent reads false.
 
+### `GetNetworkPing(): number`
+
+Returns this player's network round trip, in milliseconds, for a scoreboard. On the server it is the round trip to that player's machine, which a machine's other players share. On a client it is this machine's own, for its own players. It is 0 for the host's own player, in a single-player game, for another machine's player on a client, and for a player who has left; it never raises.
+
 ### `GetPhases(): {string}`
 
 The phases this player is in, in no particular order.

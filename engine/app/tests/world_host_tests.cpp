@@ -757,6 +757,109 @@ TEST_CASE("ADR 0213: a replay of a car setting off is the live drive again")
     CHECK(again.z == doctest::Approx(drove.z).epsilon(1e-9));
 }
 
+TEST_CASE("a predicted car turned off the authority's heading is turned back by the answers that pull it")
+{
+    // What a replica does to the car it drives at every answer under
+    // `VehicleCorrectionMetres`: its chassis put back a fifth of the way to
+    // the authority's. The place and the speed were; the heading and the spin
+    // were this machine's for ever. A car a few milliradians off went sideways
+    // along a straight answer after answer -- 3 to 5 mrad, 8 to 29 mm aside at
+    // 300 ms -- and a corner or a stop made that a correction of 21 cm. Here a
+    // car driving straight is turned 5 mrad on this machine, and each answer
+    // says the authority's car is where this one is, heading straight on.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        local floor = Instance.new("Part")
+        floor.Anchored = true
+        floor.Size = vector.create(400, 1, 400)
+        floor.Position = vector.create(0, -0.5, 0)
+        floor.Parent = workspace
+        local walker = Instance.new("CharacterBody")
+        walker.Name = "Walker"
+        walker.Position = vector.create(-8, 3, 0)
+        walker.Parent = workspace
+
+        local car = Instance.new("Part")
+        car.Name = "Car"
+        car.Size = vector.create(2, 0.6, 4)
+        car.Position = vector.create(0, 1.2, 0)
+        car.Parent = workspace
+        local controller = Instance.new("VehicleController")
+        controller.Name = "Controller"
+        controller.Parent = car
+        for _, corner in { { -0.9, -1.4 }, { 0.9, -1.4 }, { -0.9, 1.4 }, { 0.9, 1.4 } } do
+            local front = corner[2] < 0
+            local hub = Instance.new("Attachment")
+            hub.CFrame = CFrame.new(corner[1], -0.2, corner[2])
+            hub.Parent = car
+            local wheel = Instance.new("VehicleWheel")
+            wheel.Attachment = hub
+            wheel.MaxSteerAngle = if front then 30 else 0
+            wheel.Driven = not front
+            wheel.Parent = controller
+        end
+        RunService.PreSimulation:Connect(function()
+            controller.Throttle = 0.5
+        end)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 120; ++tick)
+        host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    scene::World& world = host.world();
+    const core::InstanceId walker = world.findFirstChild(host.workspace(), world.atoms().lookup("Walker"));
+    const core::InstanceId car = world.findFirstChild(host.workspace(), world.atoms().lookup("Car"));
+    REQUIRE(walker.valid());
+    REQUIRE(car.valid());
+    scene::PhysicsSync* physics = host.physics();
+    REQUIRE(physics != nullptr);
+
+    // Straight on, as the authority has it; then this machine's car turned.
+    const core::Mat3 straight = world.parts().find(car)->cframe.rotation;
+    const auto headingOff = [&]() {
+        const core::Mat3& now = world.parts().find(car)->cframe.rotation;
+        const core::Vec3 ahead = now * core::Vec3{0.0f, 0.0f, 1.0f};
+        const core::Vec3 meant = straight * core::Vec3{0.0f, 0.0f, 1.0f};
+        return std::atan2(meant.z * ahead.x - meant.x * ahead.z, meant.x * ahead.x + meant.z * ahead.z);
+    };
+    world.parts().find(car)->cframe.rotation = core::rotationY(0.005f) * straight;
+    host.tick();
+    const core::f32 before = headingOff();
+    MESSAGE("turned ", before * 1000.0f, " mrad");
+    REQUIRE(std::abs(before) > 0.004f);
+
+    // Ten answers, each the authority's car where this one is, straight on.
+    for (int answer = 0; answer < 10; ++answer) {
+        host.tick();
+        const std::optional<scene::CharacterCommand> command = physics->lastCommand(walker);
+        REQUIRE(command.has_value());
+        const core::u64 at = 2000 + static_cast<core::u64>(answer);
+        physics->remember(at);
+        scene::CharacterReplayStart start;
+        start.tick = at;
+        start.transform = world.parts().find(walker)->cframe;
+        start.verticalVelocity = world.characterBodies().find(walker)->verticalVelocity;
+        start.grounded = world.characterBodies().find(walker)->grounded;
+        const scene::RigidBodyComponent* motion = world.rigidBodies().find(car);
+        REQUIRE(motion != nullptr);
+        scene::CharacterReplayStart::Body authority;
+        authority.id = car;
+        authority.cframe = core::CFrameD{world.parts().find(car)->cframe.position, straight};
+        authority.linear = motion->linearVelocity;
+        authority.angular = core::Vec3{};
+        start.bodies.push_back(authority);
+        const std::vector<scene::CharacterCommand> one{*command};
+        (void)physics->replay(walker, start, one);
+    }
+    const core::f32 after = headingOff();
+    MESSAGE("after ten answers ", after * 1000.0f, " mrad");
+    // A fifth of the way each answer is about a tenth left after ten.
+    CHECK(std::abs(after) < 0.3f * std::abs(before));
+}
+
 TEST_CASE("a replay from the tick a predicted touch launched or moved the character is the live step again")
 {
     // A pad's predicted touch runs after the step solves, and what it writes --

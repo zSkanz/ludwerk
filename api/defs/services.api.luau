@@ -3263,6 +3263,17 @@ local Classes: { Schema.Class } = {
                     .. "the value their machine sent. An action the player never sent reads false.",
             },
             {
+                Name = "GetNetworkPing",
+                Parameters = {},
+                Returns = { "number" },
+                ThreadSafety = "Safe",
+                Doc = "Returns this player's network round trip, in milliseconds, for a scoreboard. On the "
+                    .. "server it is the round trip to that player's machine, which a machine's other players "
+                    .. "share. On a client it is this machine's own, for its own players. It is 0 for the "
+                    .. "host's own player, in a single-player game, for another machine's player on a client, "
+                    .. "and for a player who has left; it never raises.",
+            },
+            {
                 Name = "AddPhase",
                 Parameters = { { Name = "phase", Type = "string" } },
                 Returns = {},

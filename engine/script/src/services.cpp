@@ -2362,6 +2362,26 @@ int playerSetReplicationPriority(lua_State* L)
     return world(L).atoms().intern(std::string_view{text, length});
 }
 
+// **This player's round trip, in milliseconds** (`Player:GetNetworkPing`):
+// on the authority theirs, on a client its own players'; 0 where nothing is
+// measured -- the host's own player, a single-player game, another machine's
+// player on a client, one who has left.
+int playerGetNetworkPing(lua_State* L)
+{
+    World& w = world(L);
+    const core::InstanceId* self = toInstance(L, 1);
+    const scene::PlayerComponent* player = self != nullptr && w.alive(*self) ? w.players().find(*self) : nullptr;
+    double ms = 0.0;
+    if (player != nullptr && player->userId != 0) {
+        const auto& pings = w.engineState().networkStats.playerPings;
+        const auto found = std::lower_bound(pings.begin(), pings.end(), std::pair<u32, u32>{player->userId, 0});
+        if (found != pings.end() && found->first == player->userId)
+            ms = static_cast<double>(found->second);
+    }
+    lua_pushnumber(L, ms);
+    return 1;
+}
+
 int playerAddPhase(lua_State* L)
 {
     const core::InstanceId self = checkInstance(L, 1);
@@ -3664,6 +3684,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"Player", "GetIntent", playerGetIntent},
     {"Player", "SetReplicationPriority", playerSetReplicationPriority},
     {"Player", "AddPhase", playerAddPhase},
+    {"Player", "GetNetworkPing", playerGetNetworkPing},
     {"Player", "RemovePhase", playerRemovePhase},
     {"Player", "HasPhase", playerHasPhase},
     {"Player", "GetPhases", playerGetPhases},

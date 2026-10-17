@@ -7781,6 +7781,24 @@ std::vector<PeerSummary> AuthoritySession::players() const
     return out;
 }
 
+std::vector<std::pair<u32, u32>> AuthoritySession::playerPings() const
+{
+    std::vector<std::pair<u32, u32>> out;
+    for (const Peer& peer : m_peers) {
+        if (!peer.welcomed)
+            continue;
+        const u32 ping = m_transport.link(peer.id).roundTripMs;
+        if (peer.userId != 0)
+            out.emplace_back(peer.userId, ping);
+        for (const Peer::Guest& guest : peer.guests) {
+            if (guest.userId != 0)
+                out.emplace_back(guest.userId, ping);
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 std::vector<u8> refusalMessage(u8 reason, std::string_view words)
 {
     Writer refused;

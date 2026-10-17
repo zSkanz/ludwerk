@@ -1570,9 +1570,18 @@ std::vector<std::vector<core::CFrameD>> PhysicsSync::replayAll(std::span<const C
                         put.cframe.position =
                             same->cframe.position +
                             core::DVec3{off.x * VehiclePull, off.y * VehiclePull, off.z * VehiclePull};
-                        put.cframe.rotation = same->cframe.rotation;
+                        // **And its heading, the same fifth** (the vehicle
+                        // gate at 300 ms on two cores): a chassis left
+                        // turned by a few milliradians was pulled sideways
+                        // answer after answer and never straightened -- 3
+                        // to 5 mrad off along a straight, 8 to 29 mm aside,
+                        // and a corner or a stop turned that into a
+                        // correction. A rotation and a spin pulled as the
+                        // place and the speed are.
+                        put.cframe.rotation =
+                            core::slerp(same->cframe.rotation, pushed.cframe.rotation, static_cast<f32>(VehiclePull));
                         put.linear = same->linear + (pushed.linear - same->linear) * static_cast<f32>(VehiclePull);
-                        put.angular = same->angular;
+                        put.angular = same->angular + (pushed.angular - same->angular) * static_cast<f32>(VehiclePull);
                     }
                 }
                 PartComponent* place = m_scene.parts().find(pushed.id);

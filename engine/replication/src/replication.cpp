@@ -191,6 +191,11 @@ public:
         return m_authority.has_value() ? m_authority->players() : std::vector<PeerSummary>{};
     }
 
+    [[nodiscard]] std::vector<std::pair<u32, u32>> playerPings() const override
+    {
+        return m_authority.has_value() ? m_authority->playerPings() : std::vector<std::pair<u32, u32>>{};
+    }
+
     void noteTimeDropped() override
     {
         if (m_replica.has_value())

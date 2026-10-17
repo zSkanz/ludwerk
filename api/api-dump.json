@@ -6076,6 +6076,12 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "GetNetworkPing",
+          "Parameters": [],
+          "Returns": ["number"],
+          "ThreadSafety": "Safe"
+        },
+        {
           "Name": "GetPhases",
           "Parameters": [],
           "Returns": ["{string}"],

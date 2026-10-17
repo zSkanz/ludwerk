@@ -546,6 +546,10 @@ struct EngineState
         // a test or a game's own counter reads exactly.
         u64 corrections = 0;
         f64 lastCorrectionMetres = 0.0;
+        // **Each player's round trip** (`Player:GetNetworkPing`), in
+        // milliseconds, by `UserId`, sorted: on an authority every player's,
+        // on a replica this machine's own players'.
+        std::vector<std::pair<u32, u32>> playerPings;
         // The furthest a predicted part was from the authority's at the last
         // answer (ADR 0213), and which part that was.
         f64 predictedDriftMetres = 0.0;

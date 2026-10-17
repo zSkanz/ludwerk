@@ -299,6 +299,22 @@ unreliable messages this machine sent, took in and dropped, and everything it
 has sent and received in bytes (`BytesSent`, `BytesReceived` -- totals since
 the session began, so a rate is the difference over a second).
 
+**On a host or a server, `Ping` is the worst client's link**, not anybody's
+own: a host that reads 38 ms reads its slowest friend. **One player's** is
+`Player:GetNetworkPing()`, in milliseconds -- on the server, the round trip
+to that player's machine; on a client, its own, for its own players. It is 0
+for the host's own player, in a single-player game, and for a player who has
+left, so a scoreboard can ask every row without a check:
+
+```luau
+--!strict
+local NetworkService = game:GetService("NetworkService")
+
+for _, player in NetworkService:GetPlayers() do
+    print(player.Name, math.round(player:GetNetworkPing()), "ms")
+end
+```
+
 **Where the bytes go.** Six more say what those bytes were, each sent and
 received together: `SnapshotBytes` (the world's state: what moves),
 `AttributeBytes` (attributes and tags), `RemoteBytes` (your `RemoteEvent`s and

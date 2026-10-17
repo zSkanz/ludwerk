@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "engine/core/id.h"
@@ -113,6 +114,10 @@ public:
         (void)answer;
     }
     [[nodiscard]] virtual std::vector<PeerSummary> players() const { return {}; }
+    // **Each player's round trip, in milliseconds** (`Player:GetNetworkPing`):
+    // on an authority every welcomed player's, a machine's guests sharing its
+    // link. A replica has none of its own to say here.
+    [[nodiscard]] virtual std::vector<std::pair<u32, u32>> playerPings() const { return {}; }
     // **Said to every player** (ADR 0218, `Announce`): an authority's
     // operator's words. A replica says nothing.
     virtual void announce(std::string_view text) { (void)text; }

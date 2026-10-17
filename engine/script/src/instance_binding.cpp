@@ -95,6 +95,13 @@ void noteOldProperty(lua_State* L, core::InstanceId id, const scene::PropertyDes
 int methodIsAncestorOf(lua_State* L);
 int methodIsDescendantOf(lua_State* L);
 
+// `Player:GetNetworkPing` of a player who has left: nothing measured.
+int deadPing(lua_State* L)
+{
+    lua_pushnumber(L, 0.0);
+    return 1;
+}
+
 // --- Property dispatch -------------------------------------------------------
 
 [[noreturn]] void raiseUnknownInstanceMember(lua_State* L, core::InstanceId id, const char* member)
@@ -157,6 +164,12 @@ int instanceIndex(lua_State* L)
             }
             if (std::string_view{key} == "IsAncestorOf") {
                 lua_pushcfunction(L, methodIsAncestorOf, "IsAncestorOf");
+                return 1;
+            }
+            // A player who has left measured nothing: a scoreboard asks
+            // every row, and a row that left in the same frame is not an error.
+            if (std::string_view{key} == "GetNetworkPing") {
+                lua_pushcfunction(L, deadPing, "GetNetworkPing");
                 return 1;
             }
         }
@@ -390,6 +403,8 @@ int instanceNamecall(lua_State* L)
                 return methodIsDescendantOf(L);
             if (name == "IsAncestorOf")
                 return methodIsAncestorOf(L);
+            if (name == "GetNetworkPing")
+                return deadPing(L);
         }
     }
     const core::InstanceId id = liveInstance(L, 1);

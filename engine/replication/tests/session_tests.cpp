@@ -5,12 +5,14 @@
 // so a failure reproduces exactly -- which is the property a replication bug
 // most needs and a socket least provides.
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <deque>
 #include <doctest/doctest.h>
 #include <limits>
+#include <map>
 #include <optional>
 #include <random>
 #include <span>
@@ -392,9 +394,9 @@ struct RealSide
             .name = atoms.intern("Decal"),
             .super = classes.findId(atoms.intern("Instance")),
             .defaultName = atoms.intern("Decal"),
-            .attachComponents = [](scene::World& world,
-                                   core::InstanceId id) { world.decals().add(id, scene::DecalComponent{}); },
-            .detachComponents = [](scene::World& world, core::InstanceId id) { world.decals().remove(id); },
+            .attachComponents = [](scene::World& target,
+                                   core::InstanceId id) { target.decals().add(id, scene::DecalComponent{}); },
+            .detachComponents = [](scene::World& target, core::InstanceId id) { target.decals().remove(id); },
         });
         // And `Lighting`, the service whose properties travel, for the same
         // reason.
@@ -402,9 +404,9 @@ struct RealSide
             .name = atoms.intern("Lighting"),
             .super = classes.findId(atoms.intern("Instance")),
             .defaultName = atoms.intern("Lighting"),
-            .attachComponents = [](scene::World& world,
-                                   core::InstanceId id) { world.lighting().add(id, scene::LightingComponent{}); },
-            .detachComponents = [](scene::World& world, core::InstanceId id) { world.lighting().remove(id); },
+            .attachComponents = [](scene::World& target,
+                                   core::InstanceId id) { target.lighting().add(id, scene::LightingComponent{}); },
+            .detachComponents = [](scene::World& target, core::InstanceId id) { target.lighting().remove(id); },
         });
         // And the look's (ADR 0096): the abstract effect, the blur that stands
         // for all five on the wire, and the camera a viewer's effect sits on.
@@ -412,25 +414,25 @@ struct RealSide
             .name = atoms.intern("PostEffect"),
             .super = classes.findId(atoms.intern("Instance")),
             .defaultName = atoms.intern("PostEffect"),
-            .attachComponents = [](scene::World& world,
-                                   core::InstanceId id) { world.postEffects().add(id, scene::PostEffectComponent{}); },
-            .detachComponents = [](scene::World& world, core::InstanceId id) { world.postEffects().remove(id); },
+            .attachComponents = [](scene::World& target,
+                                   core::InstanceId id) { target.postEffects().add(id, scene::PostEffectComponent{}); },
+            .detachComponents = [](scene::World& target, core::InstanceId id) { target.postEffects().remove(id); },
         });
         (void)classes.registerClass({
             .name = atoms.intern("BlurEffect"),
             .super = effect,
             .defaultName = atoms.intern("BlurEffect"),
-            .attachComponents = [](scene::World& world,
-                                   core::InstanceId id) { world.blurEffects().add(id, scene::BlurEffectComponent{}); },
-            .detachComponents = [](scene::World& world, core::InstanceId id) { world.blurEffects().remove(id); },
+            .attachComponents = [](scene::World& target,
+                                   core::InstanceId id) { target.blurEffects().add(id, scene::BlurEffectComponent{}); },
+            .detachComponents = [](scene::World& target, core::InstanceId id) { target.blurEffects().remove(id); },
         });
         (void)classes.registerClass({
             .name = atoms.intern("Camera"),
             .super = classes.findId(atoms.intern("Instance")),
             .defaultName = atoms.intern("Camera"),
-            .attachComponents = [](scene::World& world,
-                                   core::InstanceId id) { world.cameras().add(id, scene::CameraComponent{}); },
-            .detachComponents = [](scene::World& world, core::InstanceId id) { world.cameras().remove(id); },
+            .attachComponents = [](scene::World& target,
+                                   core::InstanceId id) { target.cameras().add(id, scene::CameraComponent{}); },
+            .detachComponents = [](scene::World& target, core::InstanceId id) { target.cameras().remove(id); },
         });
         const auto make = [this](std::string_view name) {
             const core::InstanceId id = world.create(classes.findId(atoms.intern(name)));
@@ -6995,4 +6997,107 @@ TEST_CASE("ADR 0231: a phased thing is on the machines of the players in its pha
     for (int at = 0; at < 62; ++at)
         REQUIRE(scene::phaseBit(match.server.world, match.server.atoms.intern("p" + std::to_string(at))).has_value());
     CHECK_FALSE(scene::phaseBit(match.server.world, match.server.atoms.intern("one-too-many")).has_value());
+}
+
+namespace {
+
+// **A link's round trip, as a transport measures it**, said per peer: the
+// memory transport measures none.
+class PingTransport final : public net::ITransport
+{
+public:
+    explicit PingTransport(std::unique_ptr<net::ITransport> inner) : m_inner(std::move(inner)) {}
+
+    std::map<core::u32, core::u32> pings;
+
+    [[nodiscard]] std::optional<core::EngineError> open(const net::TransportConfig& config) override
+    {
+        return m_inner->open(config);
+    }
+    void close() override { m_inner->close(); }
+    [[nodiscard]] std::optional<core::EngineError> connect(std::string_view host, core::u16 port,
+                                                           net::PeerId& outPeer) override
+    {
+        return m_inner->connect(host, port, outPeer);
+    }
+    void disconnect(net::PeerId peer) override { m_inner->disconnect(peer); }
+    [[nodiscard]] std::optional<core::EngineError> send(net::PeerId peer, std::span<const core::u8> payload,
+                                                        net::Delivery delivery, core::u8 channel) override
+    {
+        return m_inner->send(peer, payload, delivery, channel);
+    }
+    void flush() override { m_inner->flush(); }
+    [[nodiscard]] std::optional<core::EngineError> poll(std::vector<net::TransportEvent>& out,
+                                                        core::u32 timeoutMs) override
+    {
+        return m_inner->poll(out, timeoutMs);
+    }
+    [[nodiscard]] core::usize peerCount() const noexcept override { return m_inner->peerCount(); }
+    [[nodiscard]] net::PeerLink link(net::PeerId peer) const noexcept override
+    {
+        const auto found = pings.find(peer.value);
+        return net::PeerLink{.roundTripMs = found != pings.end() ? found->second : 0u};
+    }
+
+private:
+    std::unique_ptr<net::ITransport> m_inner;
+};
+
+} // namespace
+
+TEST_CASE("each player's own round trip, where the stats say the worst one")
+{
+    // A host read its connection's "38 ms" and took it for its own: it was the
+    // worst client's. Two clients, one 40 ms away and one 180: each player's
+    // figure is their own.
+    seedCatalog();
+    std::shared_ptr<net::MemoryNetwork> network = net::createMemoryNetwork();
+    auto wrapped = std::make_unique<PingTransport>(net::createMemoryTransport(network));
+    PingTransport& server = *wrapped;
+    std::unique_ptr<net::ITransport> serverTransport = std::move(wrapped);
+    std::array<std::unique_ptr<net::ITransport>, 2> clientTransports{net::createMemoryTransport(network),
+                                                                     net::createMemoryTransport(network)};
+    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 6}).has_value());
+    RealSide authoritySide;
+    std::array<RealSide, 2> clients;
+    std::array<net::PeerId, 2> toServer{};
+    (void)scene::createPlayer(authoritySide.world, authoritySide.network, 1, true);
+    AuthoritySession authority(*serverTransport);
+    std::vector<ReplicaSession> replicas;
+    replicas.reserve(2);
+    for (std::size_t at = 0; at < 2; ++at) {
+        REQUIRE_FALSE(
+            clientTransports[at]->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
+        REQUIRE_FALSE(clientTransports[at]->connect("memory", Port, toServer[at]).has_value());
+        (void)scene::createPlayer(clients[at].world, clients[at].network, 0, true);
+        replicas.emplace_back(*clientTransports[at], toServer[at]);
+    }
+    core::u64 tick = 0;
+    const auto run = [&](int ticks) {
+        for (int at = 0; at < ticks; ++at) {
+            tick += 1;
+            authority.receive(authoritySide.world, authoritySide.workspace);
+            authority.send(authoritySide.world, authoritySide.workspace, tick);
+            authority.sendMessages(authoritySide.world);
+            for (std::size_t one = 0; one < 2; ++one) {
+                replicas[one].receive(clients[one].world, clients[one].workspace);
+                replicas[one].sendIntent(clients[one].world, tick);
+                replicas[one].sendMessages(clients[one].world);
+            }
+        }
+    };
+    run(6);
+    // Which peer is whom: the authority's player of each, by user id.
+    const std::vector<PeerSummary> joined = authority.players();
+    REQUIRE(joined.size() == 2);
+    // The memory transport numbers its peers in the order they connected.
+    server.pings[1] = 40;
+    server.pings[2] = 180;
+    const std::vector<std::pair<core::u32, core::u32>> pings = authority.playerPings();
+    REQUIRE(pings.size() == 2);
+    MESSAGE("user ", pings[0].first, ": ", pings[0].second, " ms; user ", pings[1].first, ": ", pings[1].second, " ms");
+    // The first to join is user 2, on the first link; the second user 3, on
+    // the other. The host's own player, user 1, is nobody's link.
+    CHECK(pings[0] == std::pair<core::u32, core::u32>{2, 40});
+    CHECK(pings[1] == std::pair<core::u32, core::u32>{3, 180});
 }
