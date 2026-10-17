@@ -121,6 +121,11 @@ ProjectWatcherThread::ProjectWatcherThread(std::filesystem::path root, std::vect
                                            std::chrono::milliseconds every)
     : m_watcher(std::move(root), std::move(folders)), m_every(every)
 {
+    // **The first look here, not on the thread**: it is what every later
+    // change is a change from, and taken on the thread it came whenever the
+    // thread first ran -- on a busy machine after a file had already changed,
+    // which then was where the project began, and the change was never told.
+    (void)m_watcher.poll();
     m_thread = std::thread([this] { run(); });
 }
 

@@ -11,6 +11,9 @@ here.
 
 ### Fixed
 
+- The editor tells you of a file changed outside it in the first half second
+  after it began watching the project. Before, that change was taken for how
+  the project began, and its tab kept the old text.
 - A client in a match that stops for a moment -- a window dragged, a disk
   read, an alt-tab -- catches up the time it missed, up to a quarter of a
   second, instead of dropping it. Its car or character no longer jumps a metre

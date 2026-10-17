@@ -146,6 +146,26 @@ TEST_CASE("the watcher's thread hands over what settled, one change a path, and 
     CHECK(seen == std::vector<FileChange>{{"src/client/Main.luau", FileChangeKind::Modified}});
 }
 
+TEST_CASE("a file changed the moment the watcher's thread is made is still told")
+{
+    // The first look was the thread's, an interval after it began: a change in
+    // that interval was where the project began, and was never told. The editor
+    // waits half a second; a busy machine waited longer than the test above.
+    Project project;
+    project.write("src/client/Main.luau", "print(1)");
+    std::vector<FileChange> seen;
+    {
+        app::ProjectWatcherThread watcher(project.root, {"src"}, std::chrono::milliseconds(50));
+        project.write("src/client/Main.luau", "print(2) -- changed");
+        ageFile(project, "src/client/Main.luau");
+        for (int attempt = 0; attempt < 200 && seen.empty(); ++attempt) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            seen = watcher.take();
+        }
+    }
+    CHECK(seen == std::vector<FileChange>{{"src/client/Main.luau", FileChangeKind::Modified}});
+}
+
 TEST_CASE("a script changed outside takes the disk's text, its tab too, and a touch changes nothing")
 {
     Captured log;
